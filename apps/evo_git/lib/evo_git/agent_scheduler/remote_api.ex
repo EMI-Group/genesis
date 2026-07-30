@@ -1,6 +1,6 @@
 defmodule EvoGit.AgentScheduler.RemoteAPI do
   @moduledoc """
-  RPC-accessible read-only API over scheduler ETS state.
+  RPC-accessible API over scheduler ETS state (read-only state queries + config write).
 
   This module exposes pure functions that read the scheduler's global ETS
   tables (`:evogit_sched_meta` and `:evogit_agent_state`) and return
@@ -144,6 +144,43 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.AgentScheduler.update_config(opts)
   end
 
+  @doc """
+  Writes a config map to disk on this node.
+
+  Delegates to `EvoGit.Config.save_user_config/1`, which validates the config,
+  stringifies keys, encodes to TOML, and writes to `~/.config/genesis/config.toml`.
+  This runs on the REMOTE node when called via `:erpc.call/5`, so the file is
+  written to the remote host's filesystem.
+
+  Returns `:ok` on success, or `{:error, reason}` if validation or the file
+  write fails.
+  """
+  @spec save_user_config(map()) :: :ok | {:error, term()}
+  def save_user_config(config) when is_map(config) do
+    case EvoGit.Config.save_user_config(config) do
+      :ok ->
+        reload_config()
+        :ok
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Writes a credentials map to disk on this node.
+
+  Delegates to `EvoGit.Config.save_credentials/1`, which merges and writes to
+  `~/.config/genesis/credentials.toml`. This runs on the REMOTE node when called
+  via `:erpc.call/5`, so the file is written to the remote host's filesystem.
+
+  Returns `:ok` on success, or `{:error, reason}` if the file write fails.
+  """
+  @spec save_credentials(map()) :: :ok | {:error, term()}
+  def save_credentials(creds) when is_map(creds) do
+    EvoGit.Config.save_credentials(creds)
+  end
+
   @doc false
   # Builds the keyword list passed to `AgentScheduler.update_config/1` from
   # a resolved config map. Extracted for testability.
@@ -222,6 +259,134 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec paused?() :: boolean()
   def paused? do
     EvoGit.AgentScheduler.paused?()
+  end
+
+  @doc """
+  Sends a user message to a running agent via RPC.
+
+  Routes the append through `AgentScheduler.send_user_message/2` (GenServer call)
+  so appends are serialized. Returns `:ok` on success, `{:error, :not_found}` if
+  the agent doesn't exist, or `{:error, :scheduler_not_started}` if the scheduler
+  hasn't started yet.
+
+  Designed to be called via `:erpc.call/5` from the local dashboard for a remote
+  node.
+  """
+  @spec send_agent_message(pos_integer(), String.t()) :: :ok | {:error, term()}
+  def send_agent_message(agent_id, message) when is_binary(message) do
+    case :ets.whereis(:evogit_agent_state) do
+      :undefined -> {:error, :scheduler_not_started}
+      _ -> EvoGit.AgentScheduler.send_user_message(agent_id, message)
+    end
+  end
+
+  @doc """
+  Lists all tasks from the TaskRegistry.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks/0` (a `GenServer.call`). This
+  runs on the REMOTE node when called via `:erpc.call/5`, returning native
+  `%TaskInfo{}` structs.
+
+  Returns `[%TaskInfo{}]` (empty list when no tasks exist).
+  """
+  @spec list_tasks() :: [EvoGit.TaskInfo.t()]
+  def list_tasks do
+    EvoGit.TaskRegistry.list_tasks()
+  end
+
+  @doc """
+  Returns a paginated slice of tasks with the total count.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_paginated/1` (a `GenServer.call`).
+  `opts` is a keyword list accepting `:limit`, `:offset`, and `:filters`. This
+  runs on the REMOTE node when called via `:erpc.call/5`. Both the keyword list
+  opts and the returned `%TaskInfo{}` structs transfer natively via `:erpc`.
+
+  Returns `{[%TaskInfo{}], total_count}`.
+  """
+  @spec list_tasks_paginated(keyword()) :: {[EvoGit.TaskInfo.t()], non_neg_integer()}
+  def list_tasks_paginated(opts \\ []) do
+    EvoGit.TaskRegistry.list_tasks_paginated(opts)
+  end
+
+  @doc """
+  Returns the set of unique project paths that have tasks.
+
+  Delegates to `EvoGit.TaskRegistry.get_unique_paths/0` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `[String.t()]`.
+  """
+  @spec get_unique_paths() :: [String.t()]
+  def get_unique_paths do
+    EvoGit.TaskRegistry.get_unique_paths()
+  end
+
+  @doc """
+  Cancels a running task by id.
+
+  Delegates to `EvoGit.TaskRegistry.cancel_task/1` (a `GenServer.call`). This
+  runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` on success or `{:error, reason}` if the task can't be cancelled.
+  """
+  @spec cancel_task(String.t()) :: :ok | {:error, term()}
+  def cancel_task(task_id) do
+    EvoGit.TaskRegistry.cancel_task(task_id)
+  end
+
+  @doc """
+  Deletes a task by id.
+
+  Delegates to `EvoGit.TaskRegistry.delete_task/1` (a `GenServer.cast`). This
+  runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` (fire-and-forget cast).
+  """
+  @spec delete_task(String.t()) :: :ok
+  def delete_task(task_id) do
+    EvoGit.TaskRegistry.delete_task(task_id)
+  end
+
+  @doc """
+  Clears all finished tasks from the registry.
+
+  Delegates to `EvoGit.TaskRegistry.clear_finished_tasks/0` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok`.
+  """
+  @spec clear_finished_tasks() :: :ok
+  def clear_finished_tasks do
+    EvoGit.TaskRegistry.clear_finished_tasks()
+  end
+
+  @doc """
+  Lists recent projects from the TaskRegistry.
+
+  Delegates to `EvoGit.TaskRegistry.list_recent_projects/0` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`, returning native
+  `%EvoGit.RecentProject{}` structs.
+
+  Returns `[%EvoGit.RecentProject{}]` (empty list when no projects exist).
+  """
+  @spec list_recent_projects() :: [EvoGit.RecentProject.t()]
+  def list_recent_projects do
+    EvoGit.TaskRegistry.list_recent_projects()
+  end
+
+  @doc """
+  Adds or updates a recent project entry on the remote node.
+
+  Delegates to `EvoGit.TaskRegistry.add_recent_project/2` (a `GenServer.call`).
+  `path` is the project path (string), `name` is the display name (string). This
+  runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok`.
+  """
+  @spec add_recent_project(String.t(), String.t()) :: :ok
+  def add_recent_project(path, name) do
+    EvoGit.TaskRegistry.add_recent_project(path, name)
   end
 
   # ── Private: ETS access ────────────────────────────────────────────

@@ -26,13 +26,13 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
     test "values in minutes and seconds" do
       assert ShellTool.format_duration(60000) == "1m 0s"
       assert ShellTool.format_duration(65000) == "1m 5s"
-      assert ShellTool.format_duration(125000) == "2m 5s"
+      assert ShellTool.format_duration(125_000) == "2m 5s"
     end
 
     test "values in hours, minutes, and seconds" do
-      assert ShellTool.format_duration(3600000) == "1h 0m 0s"
-      assert ShellTool.format_duration(3723000) == "1h 2m 3s"
-      assert ShellTool.format_duration(7384000) == "2h 3m 4s"
+      assert ShellTool.format_duration(3_600_000) == "1h 0m 0s"
+      assert ShellTool.format_duration(3_723_000) == "1h 2m 3s"
+      assert ShellTool.format_duration(7_384_000) == "2h 3m 4s"
     end
 
     test "large value" do
@@ -123,7 +123,8 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
 
   describe "redundant_cd?/3" do
     test "returns true when cd to own worktree" do
-      assert ShellTool.redundant_cd?("cd #{@repo_path} && mix test", @repo_path, @repo_root) == true
+      assert ShellTool.redundant_cd?("cd #{@repo_path} && mix test", @repo_path, @repo_root) ==
+               true
     end
 
     test "returns false for other commands" do
@@ -238,6 +239,53 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert Map.has_key?(result, :description)
       assert is_binary(result.header)
       assert is_binary(result.description)
+    end
+  end
+
+  describe "execute/3 result formatting" do
+    @describetag :tmp_dir
+
+    test "success includes [Exit Code: 0] in the status prefix", %{tmp_dir: tmp_dir} do
+      result = ShellTool.execute(%{"command" => "echo hello"}, tmp_dir, tmp_dir)
+
+      assert result =~ ~S"[Exit Code: 0]"
+      assert result =~ "Command executed successfully"
+      assert result =~ "hello"
+    end
+
+    test "general failure includes [Exit Code: N] in the status prefix", %{tmp_dir: tmp_dir} do
+      # `exit 42` produces a non-zero, non-signal exit code.
+      result = ShellTool.execute(%{"command" => "exit 42"}, tmp_dir, tmp_dir)
+
+      assert result =~ ~S"[Exit Code: 42]"
+      assert result =~ "Command failed."
+    end
+
+    test "exit code appears immediately after the [Took: ...] prefix", %{tmp_dir: tmp_dir} do
+      result = ShellTool.execute(%{"command" => "echo hi"}, tmp_dir, tmp_dir)
+
+      assert result =~ ~r/^\[Took: [^\]]+\] \[Exit Code: 0\]/
+    end
+
+    test "signal-kill exit code (>= 128) is shown in the prefix", %{tmp_dir: tmp_dir} do
+      # `kill -TERM $$` sends SIGTERM to the shell → exit code 143.
+      result = ShellTool.execute(%{"command" => "kill -TERM $$"}, tmp_dir, tmp_dir)
+
+      assert result =~ ~S"[Exit Code: 143]"
+      assert result =~ "was killed by signal"
+    end
+
+    test "timeout does not include an [Exit Code:] prefix", %{tmp_dir: tmp_dir} do
+      # `sleep` exceeds a 1ms timeout, hitting the timeout branch (no exit code).
+      result =
+        ShellTool.execute(
+          %{"command" => "sleep 30", "timeout" => 1},
+          tmp_dir,
+          tmp_dir
+        )
+
+      refute result =~ ~S"[Exit Code:"
+      assert result =~ "Command timed out"
     end
   end
 end

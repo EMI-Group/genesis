@@ -260,6 +260,163 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.reload_config(node)
   end
 
+  @doc """
+  Saves a user config map to the config file on the given node.
+
+  Delegates to `EvoGit.RemoteNode.save_user_config/2`. Returns `:ok` on
+  success or an error tuple.
+  """
+  @spec save_user_config(node(), map()) :: :ok | {:error, term()}
+  def save_user_config(node, config) do
+    EvoGit.RemoteNode.save_user_config(node, config)
+  end
+
+  @doc """
+  Saves credentials to the credentials file on the given node.
+
+  Delegates to `EvoGit.RemoteNode.save_credentials/2`. Returns `:ok` on
+  success or an error tuple.
+  """
+  @spec save_credentials(node(), map()) :: :ok | {:error, term()}
+  def save_credentials(node, credentials) do
+    EvoGit.RemoteNode.save_credentials(node, credentials)
+  end
+
+  @doc """
+  Sends a user message to an agent on the given node.
+
+  Delegates to `EvoGit.RemoteNode.send_agent_message/3`.
+  """
+  @spec send_user_message(node(), pos_integer(), String.t()) :: {:ok, term()} | {:error, term()}
+  def send_user_message(node, agent_id, message) do
+    EvoGit.RemoteNode.send_agent_message(node, agent_id, message)
+  end
+
+  @doc """
+  Restarts the remote node's BEAM VM via RPC.
+
+  Calls `System.restart/0` on the remote node through `:erpc`. The remote node
+  tears down mid-call (it's restarting), so the RPC failure is EXPECTED and
+  not an error — the restart command has been received. Always returns `:ok`.
+
+  For the local node, this function should not be called (the system page uses
+  `System.restart/0` directly for local nodes).
+  """
+  @spec restart_remote(node()) :: :ok
+  def restart_remote(node) do
+    # System.restart/0 on the remote node tears down the VM mid-RPC. The
+    # :erpc call will fail with an exit — this is expected, not an error.
+    _ = call_remote(node, System, :restart, [])
+    :ok
+  end
+
+  @doc """
+  Stops the remote node's BEAM VM via RPC.
+
+  Calls `System.stop/0` on the remote node through `:erpc`. The remote node
+  shuts down mid-call, so the RPC failure is EXPECTED and not an error — the
+  stop command has been received. Always returns `:ok`.
+
+  For the local node, this function should not be called (the system page uses
+  `System.stop/0` directly for local nodes).
+  """
+  @spec stop_remote(node()) :: :ok
+  def stop_remote(node) do
+    # System.stop/0 on the remote node shuts down the VM mid-RPC. The
+    # :erpc call will fail with an exit — this is expected, not an error.
+    _ = call_remote(node, System, :stop, [])
+    :ok
+  end
+
+  @doc """
+  Lists all tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks/1`. Returns `[]` if the remote
+  call fails.
+  """
+  @spec list_tasks(node()) :: [EvoGit.TaskInfo.t()]
+  def list_tasks(node) do
+    EvoGit.RemoteNode.list_tasks(node)
+  end
+
+  @doc """
+  Returns a paginated slice of tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks_paginated/2`. Returns `{[], 0}`
+  if the remote call fails.
+  """
+  @spec list_tasks_paginated(node(), keyword()) ::
+          {[EvoGit.TaskInfo.t()], non_neg_integer()}
+  def list_tasks_paginated(node, opts \\ []) do
+    EvoGit.RemoteNode.list_tasks_paginated(node, opts)
+  end
+
+  @doc """
+  Returns the set of unique project paths with tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.get_unique_paths/1`. Returns `[]` if the
+  remote call fails.
+  """
+  @spec get_unique_paths(node()) :: [String.t()]
+  def get_unique_paths(node) do
+    EvoGit.RemoteNode.get_unique_paths(node)
+  end
+
+  @doc """
+  Cancels a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.cancel_task/2`. Returns `:ok` on success
+  or `{:error, reason}` on failure.
+  """
+  @spec cancel_task(node(), String.t()) :: :ok | {:error, term()}
+  def cancel_task(node, task_id) do
+    EvoGit.RemoteNode.cancel_task(node, task_id)
+  end
+
+  @doc """
+  Deletes a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.delete_task/2`. Returns `:ok` on success
+  or `{:error, reason}` on failure.
+  """
+  @spec delete_task(node(), String.t()) :: :ok | {:error, term()}
+  def delete_task(node, task_id) do
+    EvoGit.RemoteNode.delete_task(node, task_id)
+  end
+
+  @doc """
+  Clears all finished tasks on the given node.
+
+  Delegates to `EvoGit.RemoteNode.clear_finished_tasks/1`. Returns `:ok` on
+  success or `{:error, reason}` on failure.
+  """
+  @spec clear_finished_tasks(node()) :: :ok | {:error, term()}
+  def clear_finished_tasks(node) do
+    EvoGit.RemoteNode.clear_finished_tasks(node)
+  end
+
+  @doc """
+  Lists recent projects on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_recent_projects/1`. Returns `[]` if the
+  remote call fails.
+  """
+  @spec list_recent_projects(node()) :: [EvoGit.RecentProject.t()]
+  def list_recent_projects(node) do
+    EvoGit.RemoteNode.list_recent_projects(node)
+  end
+
+  @doc """
+  Adds a recent project on the given node.
+
+  Delegates to `EvoGit.RemoteNode.add_recent_project/3`. Returns `:ok` on
+  success or `{:error, term()}` on failure.
+  """
+  @spec add_recent_project(node(), String.t(), String.t()) :: :ok | {:error, term()}
+  def add_recent_project(node, path, name) do
+    EvoGit.RemoteNode.add_recent_project(node, path, name)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning

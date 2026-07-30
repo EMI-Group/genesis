@@ -159,6 +159,7 @@ defmodule EvoGit.Config do
           kp = Map.get(err, :key_path, [])
           msg = Map.get(err, :message, "unknown error")
           val = Map.get(err, :value, nil)
+
           Logger.warning(
             "Config validation error at #{inspect(kp)}: #{msg} (got: #{inspect(val)})"
           )
@@ -175,6 +176,12 @@ defmodule EvoGit.Config do
         mode = Map.get(sandbox_config, :mode)
         new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
         put_in(acc, [:sandbox, :mode], new_mode)
+
+      # Git CoW worktree creation: "auto" | "enabled" | "disabled" -> :auto | :enabled | :disabled
+      {:git, git_config}, acc when is_map(git_config) ->
+        cow = Map.get(git_config, :cow_worktree_creation)
+        new_cow = atomize_if_string(cow, [:auto, :enabled, :disabled])
+        put_in(acc, [:git, :cow_worktree_creation], new_cow)
 
       # LLM model normalization:
       # 1. Flat [llm].model map → normalize to string or atomized map
@@ -230,6 +237,7 @@ defmodule EvoGit.Config do
           acc = put_in(acc, [:tools, :search, :provider], new_provider)
 
           tavily_config = Map.get(search_config, :tavily, %{})
+
           if is_map(tavily_config) do
             search_depth = Map.get(tavily_config, :search_depth)
             new_depth = atomize_if_string(search_depth, [:basic, :advanced])
@@ -619,40 +627,44 @@ defmodule EvoGit.Config do
     the last `resolve/0` call, or empty list if none
   """
   @spec config_status() :: %{
-    missing: [atom()],
-    warnings: [String.t()],
-    ok?: boolean(),
-    validation_errors: [EvoGit.Config.Schema.ValidationError.t()]
-  }
+          missing: [atom()],
+          warnings: [String.t()],
+          ok?: boolean(),
+          validation_errors: [EvoGit.Config.Schema.ValidationError.t()]
+        }
   def config_status do
     resolved = resolve()
 
     checks = [
-      {:llm_model, "LLM model is not configured. Set [llm] model in config.toml.", fn ->
-        # Check that at least one model profile has a non-nil/non-empty model
-        profiles = EvoGit.Config.Schema.model_profiles(resolved)
+      {:llm_model, "LLM model is not configured. Set [llm] model in config.toml.",
+       fn ->
+         # Check that at least one model profile has a non-nil/non-empty model
+         profiles = EvoGit.Config.Schema.model_profiles(resolved)
 
-        has_model =
-          Enum.any?(profiles, fn profile ->
-            case Map.get(profile, :model) do
-              nil -> false
-              "" -> false
-              _ -> true
-            end
-          end)
+         has_model =
+           Enum.any?(profiles, fn profile ->
+             case Map.get(profile, :model) do
+               nil -> false
+               "" -> false
+               _ -> true
+             end
+           end)
 
-        not has_model
-      end},
-      {:api_key, "No API key found. Add keys to credentials.toml or configure via the settings page.", fn ->
-        not api_key_present?(credentials())
-      end},
-      {:search_api_key, "Web search is enabled but the API key is not configured.", fn ->
-        # Use get_in_path (safe accessor) instead of get_in: if a user wrote
-        # `tools = "string"` instead of a [tools] table, get_in would crash
-        # because strings don't implement Access.
-        tools_search_enabled?() == false and
-          get_in_path(resolved, [:tools, :search, :enabled]) == true
-      end}
+         not has_model
+       end},
+      {:api_key,
+       "No API key found. Add keys to credentials.toml or configure via the settings page.",
+       fn ->
+         not api_key_present?(credentials())
+       end},
+      {:search_api_key, "Web search is enabled but the API key is not configured.",
+       fn ->
+         # Use get_in_path (safe accessor) instead of get_in: if a user wrote
+         # `tools = "string"` instead of a [tools] table, get_in would crash
+         # because strings don't implement Access.
+         tools_search_enabled?() == false and
+           get_in_path(resolved, [:tools, :search, :enabled]) == true
+       end}
     ]
 
     missing = for {key, _msg, check} <- checks, check.(), do: key
@@ -901,17 +913,20 @@ defmodule EvoGit.Config do
   @spec tools_search_enabled?() :: boolean()
   def tools_search_enabled? do
     config = resolve()
-    
+
     case get_in(config, [:tools, :search, :enabled]) do
       true ->
         provider = get_in(config, [:tools, :search, :provider]) || :tavily
+
         default_credential_key =
           get_in(config, [:tools, :search, :tavily, :api_key_credential_key]) || "TAVILY_API_KEY"
 
         api_key_credential_key =
-          get_in(config, [:tools, :search, provider, :api_key_credential_key]) || default_credential_key
+          get_in(config, [:tools, :search, provider, :api_key_credential_key]) ||
+            default_credential_key
 
         reqllm_key = credential_key_to_reqllm_key(api_key_credential_key)
+
         if is_nil(reqllm_key) do
           false
         else
@@ -919,7 +934,8 @@ defmodule EvoGit.Config do
           key != nil and key != ""
         end
 
-      _ -> false
+      _ ->
+        false
     end
   end
 
@@ -965,6 +981,7 @@ defmodule EvoGit.Config do
       {key, value} when is_binary(key) ->
         atom_key = safe_atomize(key)
         {atom_key, atomize_keys(value)}
+
       {key, value} ->
         {key, atomize_keys(value)}
     end)

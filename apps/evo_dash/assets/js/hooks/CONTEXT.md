@@ -65,10 +65,21 @@ undo the collapse state. This is why collapse state survives route changes.
   rest inline in `app.js`). Do not rely on `.exh` colocated hook generation.
 - `SidebarCollapse` is the only hook exported as a proper ES module (`export default`); the
   rest are `const` objects declared inline in `app.js`.
-- **Known issue — mobile sidebar**: The `#sidebar-mobile-toggle` hamburger button and
-  `#sidebar-overlay` (lines 50-62 of `layouts.ex`) are rendered in markup but have **NO
-  JavaScript handler** anywhere in `assets/`. The mobile drawer toggle does not function.
-  Only the desktop collapse toggle (`#sidebar-collapse-toggle`) is wired up.
+- **Mobile sidebar toggle**: The `#sidebar-mobile-toggle` hamburger button and
+`#sidebar-overlay` (lines 50-62 of `layouts.ex`) are wired up by the
+`SidebarCollapse` hook. On mobile (< lg breakpoint, checked via
+`window.matchMedia('(max-width: 1023.98px)')`):
+- Hamburger click **opens** the sidebar (removes `-translate-x-full` from
+  `#sidebar`, shows overlay by removing `opacity-0`/`pointer-events-none`,
+  locks body scroll via `overflow-hidden`).
+- Overlay click **closes** the sidebar (reverses the above).
+- Nav link clicks inside the sidebar close it (event delegation on the
+  sidebar element, survives morphdom re-renders).
+- `updated()` re-applies the mobile open/close state after LiveView
+  navigation patches reset the sidebar's classes.
+Mobile state is tracked independently from desktop collapse state via
+`this.mobileOpen`. On desktop, the mobile handlers are no-ops (guarded by
+`isMobile()`).
 - **`SetLocale` is NOT a JS hook** — it is a server-side Elixir LiveView on-mount hook
   (`EvoDashWeb.LiveHooks.SetLocale` in `lib/evo_dash_web/live_hooks/set_locale.ex`).
   Do not look for it in JS assets.

@@ -77,26 +77,20 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               </p>
             </div>
           </div>
-          <%= if @remote do %>
-            <span class="text-xs text-base-content/50 italic shrink-0 self-center">
-              {gettext("Pause/resume is local-only — switch to the remote node to control its scheduler.")}
-            </span>
-          <% else %>
-            <button
-              type="button"
-              phx-click="toggle_pause"
-              class={[
-                "btn rounded-md font-medium shrink-0",
-                if(@scheduler_paused,
-                  do: "bg-success/20 hover:bg-success/30 text-success-content",
-                  else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
-                )
-              ]}
-            >
-              <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-              {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
-            </button>
-          <% end %>
+          <button
+            type="button"
+            phx-click="toggle_pause"
+            class={[
+              "btn rounded-md font-medium shrink-0",
+              if(@scheduler_paused,
+                do: "bg-success/20 hover:bg-success/30 text-success-content",
+                else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
+              )
+            ]}
+          >
+            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
+            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
+          </button>
         </div>
 
         <!-- System Self-Check -->
@@ -301,8 +295,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
             <button
               type="button"
               phx-click="request_restart"
-              disabled={@remote}
-              title={if(@remote, do: gettext("Restart is local-only — this controls the local dashboard VM, not the remote node."))}
               class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
             >
               <.icon name="hero-arrow-path" class="size-5" />
@@ -311,8 +303,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
             <button
               type="button"
               phx-click="request_stop"
-              disabled={@remote}
-              title={if(@remote, do: gettext("Stop is local-only — this controls the local dashboard VM, not the remote node."))}
               class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
             >
               <.icon name="hero-power" class="size-5" />
@@ -351,7 +341,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_restart"
-                disabled={@remote}
               >
                 <.icon name="hero-arrow-path" class="size-4.5" />
                 {gettext("Restart System")}
@@ -390,7 +379,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_stop"
-                disabled={@remote}
               >
                 <.icon name="hero-power" class="size-4.5" />
                 {gettext("Stop System")}

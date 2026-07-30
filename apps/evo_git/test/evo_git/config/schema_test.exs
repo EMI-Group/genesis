@@ -95,18 +95,31 @@ defmodule EvoGit.Config.SchemaTest do
       for schema <- Schema.all_schemas() do
         assert Map.has_key?(schema, :key_path), "missing :key_path in #{inspect(schema.key_path)}"
         assert Map.has_key?(schema, :type), "missing :type in #{inspect(schema.key_path)}"
-        assert Map.has_key?(schema, :default) or Map.has_key?(schema, :default), "missing :default in #{inspect(schema.key_path)}"
-        assert Map.has_key?(schema, :validation), "missing :validation in #{inspect(schema.key_path)}"
+
+        assert Map.has_key?(schema, :default) or Map.has_key?(schema, :default),
+               "missing :default in #{inspect(schema.key_path)}"
+
+        assert Map.has_key?(schema, :validation),
+               "missing :validation in #{inspect(schema.key_path)}"
+
         assert Map.has_key?(schema, :category), "missing :category in #{inspect(schema.key_path)}"
-        assert Map.has_key?(schema, :sub_category), "missing :sub_category in #{inspect(schema.key_path)}"
-        assert Map.has_key?(schema, :description), "missing :description in #{inspect(schema.key_path)}"
-        assert is_binary(schema.description), "description must be a string for #{inspect(schema.key_path)}"
-        assert String.length(schema.description) > 0, "description must not be empty for #{inspect(schema.key_path)}"
+
+        assert Map.has_key?(schema, :sub_category),
+               "missing :sub_category in #{inspect(schema.key_path)}"
+
+        assert Map.has_key?(schema, :description),
+               "missing :description in #{inspect(schema.key_path)}"
+
+        assert is_binary(schema.description),
+               "description must be a string for #{inspect(schema.key_path)}"
+
+        assert String.length(schema.description) > 0,
+               "description must not be empty for #{inspect(schema.key_path)}"
       end
     end
 
-    test "has exactly 64 schemas" do
-      assert length(Schema.all_schemas()) == 64
+    test "has exactly 65 schemas" do
+      assert length(Schema.all_schemas()) == 65
     end
   end
 
@@ -189,9 +202,9 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.node.enabled == false
       assert defaults.node.node_name == "genesis@127.0.0.1"
       assert defaults.node.shortnames == false
-      assert defaults.node.cookie == "genesis_cookie"
+      assert defaults.node.cookie == "genesis_remote_cookie"
       assert defaults.node.dist_port == 9000
-      assert defaults.node.start_epmd == true
+      assert defaults.node.start_epmd == false
     end
 
     test "llm model has nil default" do
@@ -232,7 +245,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2
-      assert length(grouped[:git]) == 1
+      assert length(grouped[:git]) == 2
       assert length(grouped[:server]) == 2
       assert length(grouped[:tools]) == 8
       assert length(grouped[:node]) == 6
@@ -511,9 +524,10 @@ defmodule EvoGit.Config.SchemaTest do
 
       assert {:error, errors} = Schema.validate(config)
       assert is_list(errors)
+
       assert Enum.any?(errors, fn e ->
-        String.contains?(e.message, "extra")
-      end)
+               String.contains?(e.message, "extra")
+             end)
     end
 
     test "rejects a map where extra is a list" do
@@ -526,9 +540,10 @@ defmodule EvoGit.Config.SchemaTest do
 
       assert {:error, errors} = Schema.validate(config)
       assert is_list(errors)
+
       assert Enum.any?(errors, fn e ->
-        String.contains?(e.message, "extra")
-      end)
+               String.contains?(e.message, "extra")
+             end)
     end
   end
 
@@ -539,72 +554,75 @@ defmodule EvoGit.Config.SchemaTest do
 
     test "accepts a valid tuple with id + base_url override" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6-sol", base_url: "https://sub.yeluo.cloud/v1"]})
+        put_in(
+          Schema.defaults(),
+          [:llm, :model],
+          {:openai, [id: "gpt-5.6-sol", base_url: "https://sub.yeluo.cloud/v1"]}
+        )
 
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "accepts a valid tuple with id + extra map" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6-sol", extra: %{family: "glm"}]})
+        put_in(
+          Schema.defaults(),
+          [:llm, :model],
+          {:openai, [id: "gpt-5.6-sol", extra: %{family: "glm"}]}
+        )
 
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "accepts a valid tuple with just id" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6-sol"]})
+        put_in(Schema.defaults(), [:llm, :model], {:openai, [id: "gpt-5.6-sol"]})
 
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "rejects a tuple missing the id key" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [base_url: "https://x"]})
+        put_in(Schema.defaults(), [:llm, :model], {:openai, [base_url: "https://x"]})
 
       assert {:error, _} = Schema.validate(config)
     end
 
     test "rejects a tuple with empty id string" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: ""]})
+        put_in(Schema.defaults(), [:llm, :model], {:openai, [id: ""]})
 
       assert {:error, _} = Schema.validate(config)
     end
 
     test "rejects a tuple with nil id" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: nil]})
+        put_in(Schema.defaults(), [:llm, :model], {:openai, [id: nil]})
 
       assert {:error, _} = Schema.validate(config)
     end
 
     test "rejects a tuple with non-map extra" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, [id: "gpt-5.6-sol", extra: "not-a-map"]})
+        put_in(
+          Schema.defaults(),
+          [:llm, :model],
+          {:openai, [id: "gpt-5.6-sol", extra: "not-a-map"]}
+        )
 
       assert {:error, _} = Schema.validate(config)
     end
 
     test "rejects a 3-element tuple" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {:openai, :whatever, [id: "x"]})
+        put_in(Schema.defaults(), [:llm, :model], {:openai, :whatever, [id: "x"]})
 
       assert {:error, _} = Schema.validate(config)
     end
 
     test "rejects a tuple with non-atom first element" do
       config =
-        put_in(Schema.defaults(), [:llm, :model],
-          {"openai", [id: "x"]})
+        put_in(Schema.defaults(), [:llm, :model], {"openai", [id: "x"]})
 
       assert {:error, _} = Schema.validate(config)
     end
@@ -626,47 +644,62 @@ defmodule EvoGit.Config.SchemaTest do
     end
 
     test "accepts a single valid profile" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "default", model: "anthropic:claude-sonnet-4"}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "default", model: "anthropic:claude-sonnet-4"}
+        ])
+
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "accepts multiple valid profiles" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "default", model: "anthropic:claude-sonnet-4", concurrency: 5},
-        %{id: "fast", model: "google:gemini-flash", temperature: 0.5}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "default", model: "anthropic:claude-sonnet-4", concurrency: 5},
+          %{id: "fast", model: "google:gemini-flash", temperature: 0.5}
+        ])
+
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "accepts a map-model profile" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "openai-custom", model: %{provider: "openai", id: "my-model", base_url: "https://x"}}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "openai-custom",
+            model: %{provider: "openai", id: "my-model", base_url: "https://x"}
+          }
+        ])
+
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "rejects a profile missing id" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{model: "anthropic:claude-sonnet-4"}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{model: "anthropic:claude-sonnet-4"}
+        ])
+
       assert {:error, errors} = Schema.validate(config)
       assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :id]))
     end
 
     test "rejects a profile with empty id" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "", model: "anthropic:claude-sonnet-4"}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "", model: "anthropic:claude-sonnet-4"}
+        ])
+
       assert {:error, errors} = Schema.validate(config)
       assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :id]))
     end
 
     test "rejects a profile missing model" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "default"}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "default"}
+        ])
+
       assert {:error, errors} = Schema.validate(config)
       assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :model]))
     end
@@ -682,24 +715,30 @@ defmodule EvoGit.Config.SchemaTest do
     end
 
     test "accepts a profile with a valid provider_options map" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "default", model: "openai:gpt-5", provider_options: %{store: false}}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "default", model: "openai:gpt-5", provider_options: %{store: false}}
+        ])
+
       assert {:ok, _} = Schema.validate(config)
     end
 
     test "rejects a profile with a non-map provider_options" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "default", model: "openai:gpt-5", provider_options: "not-a-map"}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "default", model: "openai:gpt-5", provider_options: "not-a-map"}
+        ])
+
       assert {:error, errors} = Schema.validate(config)
       assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :provider_options]))
     end
 
     test "accepts a profile with no provider_options (optional)" do
-      config = put_in(Schema.defaults(), [:llm, :models], [
-        %{id: "default", model: "anthropic:claude"}
-      ])
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "default", model: "anthropic:claude"}
+        ])
+
       assert {:ok, _} = Schema.validate(config)
     end
   end
@@ -885,7 +924,9 @@ defmodule EvoGit.Config.SchemaTest do
     end
 
     test "returns store: false for OpenAI map model" do
-      assert Schema.LLM.provider_options_for_model(%{provider: :openai, id: "gpt-5"}) == [store: false]
+      assert Schema.LLM.provider_options_for_model(%{provider: :openai, id: "gpt-5"}) == [
+               store: false
+             ]
     end
 
     test "returns store: false for OpenAI tuple model" do

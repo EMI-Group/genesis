@@ -515,6 +515,16 @@ defmodule EvoGit.Config.Schema.Definitions do
         description:
           "When true, appends a 'Co-authored-by: Genesis <noreply@evogit.ai>' trailer to all agent-generated git commits. Disable to omit the co-author attribution."
       },
+      %{
+        key_path: [:git, :cow_worktree_creation],
+        type: :atom,
+        default: :auto,
+        validation: [in: [:auto, :enabled, :disabled]],
+        category: :git,
+        sub_category: nil,
+        description:
+          "Controls CoW (copy-on-write) optimized worktree creation. 'auto' enables it on platforms with cp available (Linux/macOS) and falls back to standard git worktree creation otherwise. 'enabled' forces CoW (falls back on failure). 'disabled' always uses standard git worktree creation."
+      },
       # ── Tools ────────────────────────────────────────────────────────────
       %{
         key_path: [:tools, :search, :enabled],
@@ -523,8 +533,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Enable web search tool for agents. Requires a configured API key."
+        description: "Enable web search tool for agents. Requires a configured API key."
       },
       %{
         key_path: [:tools, :search, :provider],
@@ -533,8 +542,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [in: [:tavily]],
         category: :tools,
         sub_category: nil,
-        description:
-          "Search service provider."
+        description: "Search service provider."
       },
       %{
         key_path: [:tools, :search, :tavily, :api_key_credential_key],
@@ -543,8 +551,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Credential key name for the Tavily API key."
+        description: "Credential key name for the Tavily API key."
       },
       %{
         key_path: [:tools, :search, :tavily, :base_url],
@@ -553,8 +560,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Tavily API endpoint URL."
+        description: "Tavily API endpoint URL."
       },
       %{
         key_path: [:tools, :search, :tavily, :search_depth],
@@ -563,8 +569,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [in: [:basic, :advanced]],
         category: :tools,
         sub_category: nil,
-        description:
-          "Search depth (basic or advanced)."
+        description: "Search depth (basic or advanced)."
       },
       %{
         key_path: [:tools, :search, :tavily, :max_results],
@@ -573,8 +578,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [min: 1, max: 50],
         category: :tools,
         sub_category: nil,
-        description:
-          "Maximum number of search results (1-50)."
+        description: "Maximum number of search results (1-50)."
       },
       %{
         key_path: [:tools, :search, :tavily, :timeout],
@@ -583,8 +587,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Search request timeout in milliseconds."
+        description: "Search request timeout in milliseconds."
       },
       %{
         key_path: [:tools, :search, :tavily, :max_bytes],
@@ -593,8 +596,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Maximum output size in bytes."
+        description: "Maximum output size in bytes."
       },
       # ── Server ─────────────────────────────────────────────────────────
       %{
@@ -651,7 +653,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:node, :cookie],
         type: :string,
-        default: "genesis_cookie",
+        default: "genesis_remote_cookie",
         validation: [],
         category: :node,
         sub_category: nil,
@@ -671,12 +673,12 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:node, :start_epmd],
         type: :boolean,
-        default: true,
+        default: false,
         validation: [],
         category: :node,
         sub_category: nil,
         description:
-          "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Set to false for EPMD-less distribution where nodes connect directly on a pinned port."
+          "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Default is false — distribution uses a custom EPMD module (EvoGit.EpmdDist) that does not require an external epmd process. Set to true only if you need the standard Erlang EPMD daemon."
       }
     ]
   end

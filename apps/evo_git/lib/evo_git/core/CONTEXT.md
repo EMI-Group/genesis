@@ -55,7 +55,17 @@ Struct: `id` (string), `root` (absolute path), `name` (optional string).
 ## Constraints
 
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd` or shell calls.
-- `ContextNode.build_context/2` truncates file contents at 10,000 characters to bound AI prompt size.
+- `ContextNode.build_context/2` truncates CONTEXT.md content at `context_max_bytes` (default 64 KB) to bound AI prompt size. Truncation is UTF-8-safe (uses `String.byte_slice/3`, the Elixir stdlib function that works on bytes and adjusts to eliminate truncated codepoints).
 - `PhyloGraphNode`: `base_commit` is immutable after creation; only `current_commit` advances.
 - All `ContextNode` paths use `"./"` convention; absolute or `..`-prefixed paths are rejected.
 - File names mirror module names (`context_node.ex` → `ContextNode`).
+
+## Resolved Issue — UTF-8 Truncation Crash in `build_context/2` (FIXED)
+
+A critical crash previously occurred when `build_context/2` truncated large CONTEXT.md content with raw `binary_part(display_content, 0, context_max)`, which could split a multi-byte UTF-8 character (e.g. em-dash `—` = `0xE2 0x80 0x94`). The resulting invalid-UTF-8 string flowed into the agent's `<context>` prompt and crashed `Jason.encode!` in the req_llm request pipeline, throwing the agent into an infinite retry loop:
+
+```
+%Jason.EncodeError{message: "invalid byte 0xE2 in \"<context>\\n# Context Tree\\n...\""}
+```
+
+**Fix applied:** `build_context/2` now uses `String.byte_slice/3` (Elixir stdlib), which works on bytes and then adjusts to eliminate truncated codepoints, avoiding splitting a multi-byte UTF-8 character. The same approach is used in `EvoGit.Sandbox.Helpers.truncate_output/2` and `read_truncated/3` (sandbox output truncation), which had the same byte-boundary bug class. **Any new truncation site must use `String.byte_slice/3` — never raw `binary_part/3` on potentially-multibyte content.**

@@ -32,10 +32,11 @@ defmodule EvoDashWeb.DashboardLive do
           phx-hook="StatePersistence"
           data-project={@active_project_path}
           data-task-mode={@task_mode}
+          class="flex flex-col min-h-full"
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
-          <div id="browser-notifications" phx-hook="BrowserNotifications">
+          <div id="browser-notifications" phx-hook="BrowserNotifications" class="flex-1 flex flex-col min-h-0">
             <%= if @remote? do %>
               <!-- Remote node view: show the remote node's active agents.
                    The local task list and project management are LOCAL
@@ -511,15 +512,21 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def mount(_params, session, socket) do
-    # On the dead render (initial HTTP request), check the session for the
-    # onboarding flag and redirect to /welcome if not completed. The session
-    # is set by WelcomeController.complete/2 when the user finishes onboarding.
-    #
-    # For WebSocket-connected mounts (e.g. push_navigate after redirect),
-    # the session cookie already reflects completed onboarding, so we skip
-    # the check here.
-    if !connected?(socket) and session["onboarding_completed"] != true do
+  def mount(_params, _session, socket) do
+    # On the dead render (initial HTTP request), use server-based detection to
+    # decide whether to redirect first-time users to /welcome. The check is
+    # backed by EvoGit.Config.VersionState.onboarding_needed?/0 (which reports
+    # whether the version-state file has ever been created). It runs ONLY on
+    # the dead render; connected mounts skip it to avoid redirect loops.
+    onboarding_needed =
+      !connected?(socket) and
+        if Code.ensure_loaded?(EvoGit.Config.VersionState) do
+          EvoGit.Config.VersionState.onboarding_needed?()
+        else
+          false
+        end
+
+    if onboarding_needed do
       {:ok, push_navigate(socket, to: "/welcome")}
     else
       if connected?(socket) do
@@ -630,67 +637,92 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
+    # Reload recent projects from the correct node on every handle_params run.
+    # When remote, load via RPC; when local, load from the local TaskRegistry.
+    # This ensures the project list refreshes on every node switch
+    # (local→remote and remote→local).
+    socket =
+      if socket.assigns.remote? do
+        assign(
+          socket,
+          :recent_projects,
+          EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+        )
+      else
+        assign(socket, :recent_projects, TaskRegistry.list_recent_projects())
+      end
+
     project_path = params["project"]
 
     socket =
-      if project_path && project_path != "" do
-        expanded = Path.expand(project_path)
-
-        if File.dir?(expanded) do
-          activate_project(socket, expanded)
-        else
-          # Project path in URL is invalid, clear it
-          tasks = TaskRegistry.list_tasks()
-
-          socket
-          |> assign(:tasks, tasks)
-          |> assign(
-            :notified_task_ids,
-            Assigns.build_notified_task_ids(tasks, socket.assigns.notified_task_ids)
-          )
-          |> assign(
-            active_project: nil,
-            active_project_path: nil
-          )
-          |> Assigns.assign_running_and_pending_tasks()
-        end
+      if socket.assigns.remote? do
+        # Remote node — do not activate local projects or check local file
+        # paths. The remote render branch shows remote agents instead of the
+        # project UI. Clear local project assigns so no stale local state
+        # leaks into the remote view.
+        socket
+        |> assign(:active_project, nil)
+        |> assign(:active_project_path, nil)
       else
-        # No project in URL — try auto-loading most recent project, or load all tasks
-        socket =
-          if is_nil(socket.assigns.active_project) do
-            case List.first(socket.assigns.recent_projects) do
-              %{path: recent_path} when is_binary(recent_path) ->
-                if File.dir?(recent_path) do
-                  activate_project(socket, recent_path)
-                else
+        if project_path && project_path != "" do
+          expanded = Path.expand(project_path)
+
+          if File.dir?(expanded) do
+            activate_project(socket, expanded)
+          else
+            # Project path in URL is invalid, clear it
+            all_tasks = TaskRegistry.list_tasks()
+
+            socket
+            |> Assigns.assign_running_and_pending_tasks(all_tasks)
+            |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+            |> assign(
+              :notified_task_ids,
+              Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+            )
+            |> assign(
+              active_project: nil,
+              active_project_path: nil
+            )
+          end
+        else
+          # No project in URL — try auto-loading most recent project, or load all tasks
+          socket =
+            if is_nil(socket.assigns.active_project) do
+              case List.first(socket.assigns.recent_projects) do
+                %{path: recent_path} when is_binary(recent_path) ->
+                  if File.dir?(recent_path) do
+                    activate_project(socket, recent_path)
+                  else
+                    all_tasks = TaskRegistry.list_tasks()
+
+                    socket
+                    |> Assigns.assign_running_and_pending_tasks(all_tasks)
+                    |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+                    |> assign(
+                      :notified_task_ids,
+                      Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+                    )
+                  end
+
+                _ ->
                   all_tasks = TaskRegistry.list_tasks()
 
                   socket
-                  |> assign(:tasks, all_tasks)
+                  |> Assigns.assign_running_and_pending_tasks(all_tasks)
+                  |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
                   |> assign(
                     :notified_task_ids,
                     Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
                   )
-                  |> Assigns.assign_running_and_pending_tasks()
-                end
-
-              _ ->
-                all_tasks = TaskRegistry.list_tasks()
-
-                socket
-                |> assign(:tasks, all_tasks)
-                |> assign(
-                  :notified_task_ids,
-                  Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
-                )
-                |> Assigns.assign_running_and_pending_tasks()
+              end
+            else
+              # We had a project but navigated away and back without it
+              socket
             end
-          else
-            # We had a project but navigated away and back without it
-            socket
-          end
 
-        socket
+          socket
+        end
       end
 
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
@@ -958,9 +990,9 @@ defmodule EvoDashWeb.DashboardLive do
 
       opts =
         if task_type == :genesis do
-          Keyword.put(opts, :prompt, prompt)
+          Keyword.put(opts, :prompt, String.trim(prompt))
         else
-          Keyword.put(opts, :objective, prompt)
+          Keyword.put(opts, :objective, String.trim(prompt))
         end
 
       build_system_param = params["build_system"]
@@ -1018,6 +1050,8 @@ defmodule EvoDashWeb.DashboardLive do
 
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
+          all_tasks = TaskRegistry.list_tasks_by_path(path)
+
           {:noreply,
            socket
            |> put_flash(
@@ -1027,8 +1061,8 @@ defmodule EvoDashWeb.DashboardLive do
                id: task.id
              )
            )
-           |> assign(:tasks, TaskRegistry.list_tasks_by_path(path))
-           |> Assigns.assign_running_and_pending_tasks()
+           |> Assigns.assign_running_and_pending_tasks(all_tasks)
+           |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
            |> Assigns.assign_form_defaults()
            |> reload_current_page()
            |> StatePersistence.maybe_persist_state()}
@@ -1051,12 +1085,13 @@ defmodule EvoDashWeb.DashboardLive do
     case TaskRegistry.cancel_task(task_id) do
       :ok ->
         expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+        all_tasks = Assigns.current_tasks(socket)
 
         {:noreply,
          socket
-         |> assign(:tasks, Assigns.current_tasks(socket))
+         |> Assigns.assign_running_and_pending_tasks(all_tasks)
+         |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
          |> assign(:expanded_task_ids, expanded)
-         |> Assigns.assign_running_and_pending_tasks()
          |> reload_current_page()}
 
       {:error, reason} ->
@@ -1104,12 +1139,13 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("clear_task_history", _params, socket) do
     TaskRegistry.clear_finished_tasks()
+    all_tasks = Assigns.current_tasks(socket)
 
     {:noreply,
      socket
-     |> assign(:tasks, Assigns.current_tasks(socket))
+     |> Assigns.assign_running_and_pending_tasks(all_tasks)
+     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
      |> assign(:expanded_task_ids, MapSet.new())
-     |> Assigns.assign_running_and_pending_tasks()
      |> reload_current_page()}
   end
 
@@ -1117,12 +1153,13 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
     TaskRegistry.delete_task(task_id)
     expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+    all_tasks = Assigns.current_tasks(socket)
 
     {:noreply,
      socket
-     |> assign(:tasks, Assigns.current_tasks(socket))
+     |> Assigns.assign_running_and_pending_tasks(all_tasks)
+     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
      |> assign(:expanded_task_ids, expanded)
-     |> Assigns.assign_running_and_pending_tasks()
      |> reload_current_page()}
   end
 
@@ -1231,6 +1268,14 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:new_repo_id, "")
      |> assign(:new_repo_path, "")
      |> assign(:new_repo_description, "")}
+  end
+
+  @impl true
+  def handle_event("toggle_project_settings", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:show_project_settings, !socket.assigns.show_project_settings)
+     |> StatePersistence.maybe_persist_state()}
   end
 
   @impl true
@@ -1453,17 +1498,19 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:notified_task_ids, updated_notified)
-     |> assign(:tasks, new_tasks)
-     |> Assigns.assign_running_and_pending_tasks()
+     |> Assigns.assign_running_and_pending_tasks(new_tasks)
+     |> assign(:tasks, Enum.map(new_tasks, &lightweight_task/1))
      |> reload_current_page()}
   end
 
   @impl true
   def handle_info({:task_status, _task_id, _status}, socket) do
+    all_tasks = Assigns.current_tasks(socket)
+
     {:noreply,
      socket
-     |> assign(:tasks, Assigns.current_tasks(socket))
-     |> Assigns.assign_running_and_pending_tasks()
+     |> Assigns.assign_running_and_pending_tasks(all_tasks)
+     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
      |> reload_current_page()}
   end
 
@@ -1481,6 +1528,9 @@ defmodule EvoDashWeb.DashboardLive do
     # cache so this deferred read is fast.
     {:noreply, assign(socket, :config_status, config_status())}
   end
+
+  @impl true
+  def handle_info(_message, socket), do: {:noreply, socket}
 
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
   #
@@ -1535,6 +1585,13 @@ defmodule EvoDashWeb.DashboardLive do
     end
   end
 
+  # Strips heavy fields from a %TaskInfo{} struct to reduce binary retention
+  # in LiveView assigns. The stripped fields (logs, result, usage, archive_metadata)
+  # are the primary sources of ~30MB memory pressure from holding full task data.
+  defp lightweight_task(task) do
+    %{task | logs: [], result: nil, usage: nil, archive_metadata: nil}
+  end
+
   defp activate_project(socket, path) do
     name = Path.basename(path)
     is_project_change = socket.assigns[:active_project_path] != path
@@ -1562,7 +1619,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(
       active_project: %{path: path, name: name},
       active_project_path: path,
-      tasks: tasks,
+      tasks: Enum.map(tasks, &lightweight_task/1),
       notified_task_ids: Assigns.build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
@@ -1575,7 +1632,7 @@ defmodule EvoDashWeb.DashboardLive do
       foreign_repos: foreign_repos,
       show_add_foreign_repo_form: false
     )
-    |> Assigns.assign_running_and_pending_tasks()
+    |> Assigns.assign_running_and_pending_tasks(tasks)
     |> Project.maybe_put_flash_mode_info(mode_info)
   end
 
@@ -1632,7 +1689,10 @@ defmodule EvoDashWeb.DashboardLive do
   # (e.g. a stale/high page number).
   defp load_page(requested_page, page_size, filters) do
     offset = (requested_page - 1) * page_size
-    {tasks, total_count} = TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset, filters: filters)
+
+    {tasks, total_count} =
+      TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset, filters: filters)
+
     total_pages = total_pages(total_count, page_size)
     clamped_page = min(max(1, requested_page), total_pages)
 
@@ -1640,7 +1700,11 @@ defmodule EvoDashWeb.DashboardLive do
       clamped_offset = (clamped_page - 1) * page_size
 
       {clamped_tasks, ^total_count} =
-        TaskRegistry.list_tasks_paginated(limit: page_size, offset: clamped_offset, filters: filters)
+        TaskRegistry.list_tasks_paginated(
+          limit: page_size,
+          offset: clamped_offset,
+          filters: filters
+        )
 
       {clamped_tasks, clamped_page, total_count, total_pages}
     else
@@ -1674,6 +1738,7 @@ defmodule EvoDashWeb.DashboardLive do
 
   defp load_page_into_socket(socket, page) do
     filters = build_filters_from_assigns(socket)
+
     {tasks, current_page, total_count, total_pages} =
       load_page(page, socket.assigns.page_size, filters)
 

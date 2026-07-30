@@ -592,14 +592,14 @@ defmodule EvoGit.CLI do
     cond do
       opts[:file] ->
         if File.exists?(opts[:file]) do
-          File.read!(opts[:file])
+          File.read!(opts[:file]) |> String.trim()
         else
           IO.puts("Error: File not found: #{opts[:file]}")
           nil
         end
 
       rest != [] ->
-        Enum.join(rest, " ")
+        Enum.join(rest, " ") |> String.trim()
 
       true ->
         nil

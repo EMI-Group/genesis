@@ -598,12 +598,12 @@ button, a, input, textarea, select, summary,
   @apply flex flex-col md:flex-row;
 }
 
-/* Sticky sidebar in fullscreen mode — sticks below navbar + tab bar (desktop only) */
+/* Sticky sidebar in fullscreen mode — sticks to top of the scroll container (desktop only) */
 @media (min-width: 768px) {
   .diff-fullscreen-layout .diff-file-sidebar {
     position: sticky;
-    top: 108px;
-    height: calc(100dvh - 108px);
+    top: 0;
+    height: 100dvh;
     overflow-y: auto;
   }
 }
@@ -613,9 +613,9 @@ button, a, input, textarea, select, summary,
   overflow: visible;
 }
 
-/* File headers stick below tab bar in fullscreen */
+/* File headers stick to top of the scroll container in fullscreen */
 .diff-fullscreen-layout .diff-file-header {
-  top: 108px;
+  top: 0;
   z-index: 20;
 }
 
@@ -644,10 +644,10 @@ button, a, input, textarea, select, summary,
   @apply bg-base-200/50;
 }
 .diff-file-sidebar .dir-group-header {
-  @apply px-3 py-1.5 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-1.5 text-xs sticky top-0 z-5;
+  @apply py-1.5 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-1.5 text-xs;
   list-style: none;
 }
-.diff-file-sidebar .dir-group-header::-webkit-details-marker {
+.diff-file-sidebar .dir-group summary::-webkit-details-marker {
   display: none;
 }
 .diff-file-sidebar .dir-group-header .dir-icon {
@@ -660,10 +660,7 @@ button, a, input, textarea, select, summary,
   @apply text-[10px] text-base-content/40 font-mono shrink-0 flex items-center gap-1;
 }
 .diff-file-sidebar .dir-files {
-  /* Files within a directory group are indented */
-}
-.diff-file-sidebar .file-item-indented {
-  @apply pl-7;
+  /* Files within a directory group are indented via inline style based on depth */
 }
 
 .diff-main-content {
@@ -1244,6 +1241,16 @@ button, a, input, textarea, select, summary,
 [dir="rtl"] .dropdown-end .dropdown-content {
   left: 0;
   right: auto;
+}
+
+/* Node switch fade animation — plays on the <main> content area when the
+   node context changes (local ↔ remote switch via the sidebar node selector) */
+@keyframes node-switch-fade {
+  0% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+.node-switch-fade {
+  animation: node-switch-fade 0.25s ease-out;
 }
 
 /* RTL: Shimmer animation direction */

@@ -34,10 +34,10 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   def task_form(assigns) do
     ~H"""
-    <.form for={%{}} id="task-form" phx-submit="task_submit" class="w-full">
-      <div class={["transition-opacity", @disabled && "opacity-40 pointer-events-none select-none"]}>
+    <.form for={%{}} id="task-form" phx-submit="task_submit" class="w-full flex-1 flex flex-col min-h-0">
+      <div class={["transition-opacity flex-1 flex flex-col min-h-0", @disabled && "opacity-40 pointer-events-none select-none"]}>
         <!-- Prompt hero — the centerpiece (full width at top) -->
-        <div class="relative">
+        <div class="relative flex-1 flex flex-col min-h-0">
           <!-- Welcome hint overlay when disabled (no project active) -->
           <%= if @disabled do %>
             <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
@@ -59,7 +59,7 @@ defmodule EvoDashWeb.TaskFormComponents do
             name="prompt"
             id="prompt"
             phx-update="ignore"
-            class="w-full min-h-[360px] p-5 text-base leading-relaxed rounded-2xl border border-base-300 bg-base-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y placeholder:text-base-content/30 transition-all"
+            class="w-full flex-1 min-h-[200px] p-5 text-base leading-relaxed rounded-2xl border border-base-300 bg-base-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 resize-y placeholder:text-base-content/30 transition-all"
             placeholder={
               cond do
                 @mode == "genesis_existing" ->
@@ -74,7 +74,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         </div>
 
         <!-- Prompt label (below textarea, subtle) -->
-        <div class="px-1 mt-2">
+        <div class="px-1 mt-2 shrink-0">
           <%= if String.starts_with?(@mode, "evolve") do %>
             <span class="text-xs text-base-content/40">
               <%!-- zh_CN: evolution → "演进" --%>
@@ -89,7 +89,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         </div>
 
         <!-- Unified toolbar row: Mode | (spacer) | mode_info | Execute -->
-        <div class="flex flex-wrap items-end gap-x-5 gap-y-2.5 mt-4">
+        <div class="flex flex-wrap items-end gap-x-5 gap-y-2.5 mt-4 shrink-0">
           <!-- Task Mode -->
           <div class="flex flex-col gap-1">
             <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
@@ -232,5 +232,4 @@ defmodule EvoDashWeb.TaskFormComponents do
     <% end %>
     """
   end
-
 end

@@ -22,9 +22,16 @@ defmodule EvoGit.Agent.OutputSanitizer do
   require Logger
 
   @high_output_tools MapSet.new([
-    "run_bash", "run_powershell", "read_file", "rg", "curl",
-    "run_git", "search_web", "search_context", "search_history"
-  ])
+                       "run_bash",
+                       "run_powershell",
+                       "read_file",
+                       "rg",
+                       "curl",
+                       "run_git",
+                       "search_web",
+                       "search_context",
+                       "search_history"
+                     ])
 
   @ansi_regex ~r/\e\[[0-9;]*[a-zA-Z]|\e\][^\x07]*\x07|\e[()][AB012]|\e\[[0-9;]*m/
   @progress_bar_regex ~r/^[\s\r]*\[[=\->#*_ ]+\]\s*\d*%?\s*$/
@@ -41,7 +48,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
   truncation occurred, or `%{reason: atom, original_size: pos_integer, truncated_size: pos_integer}`.
   """
   def sanitize_and_truncate(result, tool_name, tool_args) do
-    {result, utf8_info} = ensure_utf8(result)
+    {result, utf8_info} = EvoGit.UTF8.ensure_utf8(result)
 
     result =
       result
@@ -56,37 +63,15 @@ defmodule EvoGit.Agent.OutputSanitizer do
   @doc """
   Ensure output is valid UTF-8. Repairs or truncates invalid sequences.
 
+  Delegates to `EvoGit.UTF8.ensure_utf8/1`. Kept as a public function for
+  backward compatibility with callers that use the sanitizer module directly.
+
   - If the result is valid UTF-8, returns `{result, nil}`.
   - If invalid, attempts repair via `:unicode.characters_to_binary/3`.
   - On repair failure, appends a warning and returns `{repaired_result, truncation_info}`.
   - Non-binary results pass through as `{result, nil}`.
   """
-  def ensure_utf8(result) when is_binary(result) do
-    if String.valid?(result) do
-      {result, nil}
-    else
-      original_size = byte_size(result)
-
-      case :unicode.characters_to_binary(result, :utf8, :utf8) do
-        {:error, valid, _} ->
-          warning = "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
-
-          {valid <> warning,
-           %{reason: :invalid_utf8, original_size: original_size, truncated_size: byte_size(valid) + byte_size(warning)}}
-
-        {:incomplete, valid, _} ->
-          warning = "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
-
-          {valid <> warning,
-           %{reason: :invalid_utf8, original_size: original_size, truncated_size: byte_size(valid) + byte_size(warning)}}
-
-        valid when is_binary(valid) ->
-          {valid, nil}
-      end
-    end
-  end
-
-  def ensure_utf8(result) when not is_binary(result), do: {result, nil}
+  def ensure_utf8(result), do: EvoGit.UTF8.ensure_utf8(result)
 
   @doc """
   Strip ANSI escape sequences from a string.
@@ -160,8 +145,8 @@ defmodule EvoGit.Agent.OutputSanitizer do
 
       original_size = byte_size(result)
       half_size = div(truncate_size, 2)
-      first_part = safe_binary_part(result, 0, half_size)
-      last_part = safe_binary_part_from_end(result, half_size)
+      first_part = String.byte_slice(result, 0, half_size)
+      last_part = String.byte_slice(result, -half_size, half_size)
       omitted = original_size - truncate_size
 
       truncated =
@@ -175,7 +160,12 @@ defmodule EvoGit.Agent.OutputSanitizer do
         """
         |> String.trim()
 
-      {truncated, %{reason: :size_exceeded, original_size: original_size, truncated_size: byte_size(truncated)}}
+      {truncated,
+       %{
+         reason: :size_exceeded,
+         original_size: original_size,
+         truncated_size: byte_size(truncated)
+       }}
     end
   end
 
@@ -229,59 +219,4 @@ defmodule EvoGit.Agent.OutputSanitizer do
       true -> false
     end
   end
-
-  # Extracts `len` bytes starting at `start` from binary, ensuring we don't
-  # split a multi-byte UTF-8 codepoint.
-  defp safe_binary_part(binary, start, len) do
-    if start + len >= byte_size(binary) do
-      # Requested range exceeds the binary; just take what's available
-      part = binary_part(binary, start, byte_size(binary) - start)
-      if String.valid?(part), do: part, else: adjust_boundary(binary, start, byte_size(binary) - start)
-    else
-      part = binary_part(binary, start, len)
-      if String.valid?(part), do: part, else: adjust_boundary(binary, start, len)
-    end
-  end
-
-  # Extracts `len` bytes from the end of binary, ensuring we don't split a
-  # multi-byte UTF-8 codepoint.
-  defp safe_binary_part_from_end(binary, len) do
-    total = byte_size(binary)
-    start = total - len
-
-    start = max(start, 0)
-    available = total - start
-
-    part = binary_part(binary, start, available)
-    if String.valid?(part), do: part, else: adjust_boundary_from_end(binary, start, available)
-  end
-
-  # Backs up 1-3 bytes from the end until the result is valid UTF-8.
-  defp adjust_boundary(binary, start, len) when len > 0 do
-    adjusted_len = len - 1
-    part = binary_part(binary, start, adjusted_len)
-
-    if String.valid?(part) do
-      part
-    else
-      adjust_boundary(binary, start, adjusted_len)
-    end
-  end
-
-  defp adjust_boundary(_binary, _start, 0), do: ""
-
-  # Trims 1-3 bytes from the start until the result is valid UTF-8.
-  defp adjust_boundary_from_end(binary, start, len) when len > 0 do
-    adjusted_start = start + 1
-    adjusted_len = len - 1
-    part = binary_part(binary, adjusted_start, adjusted_len)
-
-    if String.valid?(part) do
-      part
-    else
-      adjust_boundary_from_end(binary, adjusted_start, adjusted_len)
-    end
-  end
-
-  defp adjust_boundary_from_end(_binary, _start, 0), do: ""
 end

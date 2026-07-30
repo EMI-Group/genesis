@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.TasksLiveTest do
+defmodule EvoDashWeb.DashboardTasksLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
@@ -168,7 +168,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   describe ":task_status broadcast handling" do
     # The EvoGit runtime broadcasts {:task_status, task_id, status} on the "tasks"
-    # PubSub topic. Before the fix, TasksLive had no clause matching this tuple,
+    # PubSub topic. Before the fix, the task history LiveView had no clause matching this tuple,
     # so a :finalizing status transition crashed the LiveView. These tests verify
     # the handle_info clauses added by the fix handle these messages gracefully.
 
@@ -330,6 +330,18 @@ defmodule EvoDashWeb.TasksLiveTest do
       # The completed prompts should NOT appear.
       refute html =~ "completed task number 19"
       refute html =~ "completed task number 0"
+    end
+  end
+
+  describe "node-aware behavior" do
+    test "task list UI renders (no remote-only info message)", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "visible task"])
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      # The old info message should NOT appear — the full UI always renders.
+      refute html =~ "Task history is only available when viewing the local node"
+      assert html =~ "Search by task ID, prompt, or objective"
     end
   end
 end

@@ -26,6 +26,8 @@ defmodule EvoGit.RemoteConnections do
   serialized to TOML.
   """
 
+  require Logger
+
   @config_filename "remote_connections.toml"
 
   @default_dist_port 9000
@@ -55,17 +57,25 @@ defmodule EvoGit.RemoteConnections do
 
   Reads the TOML file and returns a list of atom-keyed connection maps.
   Returns `[]` if the file does not exist or is empty.
+
+  If the remote connections file does not exist yet, a skeleton file is
+  created silently (no warning is logged for the normal "no file yet" case).
   """
   @spec list() :: [map()]
   def list do
-    data = EvoGit.Config.read_toml_file(path(), %{}, description: "remote connections")
+    unless File.exists?(path()) do
+      ensure_file()
+      []
+    else
+      data = EvoGit.Config.read_toml_file(path(), %{}, description: "remote connections")
 
-    case Map.get(data, "connections") do
-      connections when is_list(connections) ->
-        Enum.map(connections, &atomize_connection/1)
+      case Map.get(data, "connections") do
+        connections when is_list(connections) ->
+          Enum.map(connections, &atomize_connection/1)
 
-      _ ->
-        []
+        _ ->
+          []
+      end
     end
   end
 
@@ -180,6 +190,32 @@ defmodule EvoGit.RemoteConnections do
 
   defp path do
     Path.join(EvoGit.Config.config_dir(), @config_filename)
+  end
+
+  @skeleton_toml """
+  # Genesis Remote Connections
+  # Add SSH targets below as [[connections]] entries.
+  # See documentation for field descriptions.
+  """
+
+  # Creates a skeleton remote connections TOML file if it doesn't exist.
+  # This prevents a misleading "Failed to read remote connections" warning
+  # on first access — no file is the normal/expected initial state.
+  defp ensure_file do
+    dir = EvoGit.Config.config_dir()
+    file_path = path()
+
+    with :ok <- File.mkdir_p(dir),
+         :ok <- File.write(file_path, @skeleton_toml, [:write]) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to create remote connections file at #{file_path}: #{inspect(reason)}"
+        )
+
+        :error
+    end
   end
 
   # Backward compatibility: if a loaded/saved target has the old `host` field

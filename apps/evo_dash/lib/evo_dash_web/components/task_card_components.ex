@@ -79,7 +79,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
         <!-- Middle row: Objective text -->
         <div class="pr-2 -mt-2">
-          <% objective_text = @task.opts[:prompt] || @task.opts[:objective] || "" %>
+          <% objective_text = (@task.opts[:prompt] || @task.opts[:objective] || "") |> String.trim() %>
           <%= if objective_text != "" do %>
             <p
               class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
@@ -509,11 +509,17 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
-    wrapper_class = if truncate,
-      do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-      else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
-    assigns = %{reason: inspect(reason, limit: limit), size_class: size_class, wrapper_class: wrapper_class}
+    wrapper_class =
+      if truncate,
+        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
+        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{
+      reason: inspect(reason, limit: limit),
+      size_class: size_class,
+      wrapper_class: wrapper_class
+    }
 
     ~H"""
     <div class={@wrapper_class}>
@@ -529,11 +535,17 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
-    wrapper_class = if truncate,
-      do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-      else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
-    assigns = %{reason: inspect(reason, limit: limit), size_class: size_class, wrapper_class: wrapper_class}
+    wrapper_class =
+      if truncate,
+        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
+        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{
+      reason: inspect(reason, limit: limit),
+      size_class: size_class,
+      wrapper_class: wrapper_class
+    }
 
     ~H"""
     <div class={@wrapper_class}>
@@ -693,9 +705,11 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
     inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
-    wrapper_class = if truncate,
-      do: "bg-base-100 p-3 rounded-lg border border-base-200",
-      else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    wrapper_class =
+      if truncate,
+        do: "bg-base-100 p-3 rounded-lg border border-base-200",
+        else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       result: inspect(result, inspect_opts),
@@ -712,9 +726,11 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
     inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
-    wrapper_class = if truncate,
-      do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
-      else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    wrapper_class =
+      if truncate,
+        do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
+        else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       result: inspect(result, inspect_opts),

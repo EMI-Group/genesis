@@ -66,7 +66,7 @@ defmodule EvoDashWeb.Layouts do
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 lg:z-auto h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-hidden"
+        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible"
       >
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
@@ -177,8 +177,8 @@ defmodule EvoDashWeb.Layouts do
       </aside>
 
       <!-- Main Content Area -->
-      <div class="flex-1 flex flex-col overflow-auto min-w-0">
-        <main class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900">
+      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0">
+        <main id="main-content" class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900" phx-hook="NodeSwitchFade" data-node-id={@current_node_id || "local"}>
           {render_slot(@inner_block)}
         </main>
       </div>
@@ -229,6 +229,7 @@ defmodule EvoDashWeb.Layouts do
   # Extract a display label for a task: objective > prompt > truncated task ID
   defp task_label(task) do
     label = task.opts[:objective] || task.opts[:prompt] || String.slice(task.id, 0, 8)
+
     if String.length(label) > 30 do
       String.slice(label, 0, 30) <> "..."
     else
@@ -241,6 +242,7 @@ defmodule EvoDashWeb.Layouts do
 
   defp format_elapsed(dt) do
     diff = DateTime.diff(DateTime.utc_now(), dt)
+
     cond do
       diff < 30 -> gettext("just now")
       diff < 60 -> "#{diff}s ago"
@@ -348,7 +350,7 @@ defmodule EvoDashWeb.Layouts do
 
   def flash_group(assigns) do
     ~H"""
-    <div id={@id} aria-live="polite">
+    <div id={@id} aria-live="polite" class="fixed top-4 right-4 z-[60] flex flex-col gap-2 w-80 sm:w-96 pointer-events-none">
       <.flash kind={:info} flash={@flash} />
       <.flash kind={:success} flash={@flash} />
       <.flash kind={:error} flash={@flash} />
@@ -540,34 +542,59 @@ defmodule EvoDashWeb.Layouts do
   # {data-art value, label, swatch inline style}
   defp art_styles do
     [
-      {"default", gettext("Default Light"), "background: linear-gradient(135deg, #ffffff 50%, oklch(55% 0.2 265) 50%); border-radius: 50%"},
-      {"default-dark", gettext("Default Dark"), "background: linear-gradient(135deg, oklch(22% 0.015 260) 50%, oklch(70% 0.2 265) 50%); border-radius: 50%"},
-      {"constructivism", gettext("Constructivism"), "background: linear-gradient(135deg, oklch(48% 0.21 28) 50%, oklch(92% 0.025 95) 50%)"},
-      {"swiss", gettext("Swiss International"), "background: #fff; box-shadow: inset 4px 0 0 oklch(54% 0.22 27); border: 1px solid #111"},
-      {"terminal", gettext("Terminal"), "background: #000; box-shadow: inset 0 -3px 0 oklch(85% 0.28 145); border: 1px solid oklch(85% 0.28 145)"},
-      {"ink", gettext("Ink Wash"), "background: oklch(94% 0.02 95); box-shadow: inset -4px -3px 0 oklch(45% 0.16 30); border: 1px solid oklch(45% 0.02 60)"},
-      {"bauhaus", gettext("Bauhaus"), "background: linear-gradient(135deg, oklch(45% 0.18 255) 33%, oklch(55% 0.22 28) 33% 66%, oklch(75% 0.18 90) 66%); border: 1px solid #111"},
-      {"memphis", gettext("Memphis"), "background: linear-gradient(135deg, oklch(55% 0.25 350) 33%, oklch(70% 0.15 190) 33% 66%, oklch(80% 0.18 95) 66%); border: 2px solid #111"},
-      {"brutalism", gettext("Brutalism"), "background: linear-gradient(180deg, #f4f4f4, #dcdcdc); border: 2px outset #fff"},
-      {"glass", gettext("Glassmorphism"), "background: linear-gradient(135deg, oklch(45% 0.15 290), oklch(50% 0.15 330)); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px"},
-      {"neumorphism", gettext("Neumorphism"), "background: oklch(90% 0.012 250); box-shadow: 2px 2px 4px oklch(75% 0.015 250), -2px -2px 4px #fff; border-radius: 4px"},
-      {"cyberpunk", gettext("Cyberpunk"), "background: oklch(12% 0.03 290); box-shadow: inset 0 -3px 0 oklch(85% 0.2 195), inset 3px 0 0 oklch(70% 0.28 330)"},
-      {"vaporwave", gettext("Vaporwave"), "background: linear-gradient(180deg, oklch(30% 0.1 310), oklch(55% 0.18 350))"},
-      {"nord", gettext("Nord"), "background: oklch(24% 0.02 250); box-shadow: inset 0 -3px 0 oklch(75% 0.1 215)"},
-      {"gruvbox", gettext("Gruvbox"), "background: oklch(24% 0.025 70); box-shadow: inset 0 -3px 0 oklch(75% 0.15 90)"},
-      {"solarized-light", gettext("Solarized Light"), "background: oklch(95% 0.025 95); box-shadow: inset 0 -3px 0 oklch(50% 0.12 230)"},
-      {"solarized-dark", gettext("Solarized Dark"), "background: oklch(22% 0.03 220); box-shadow: inset 0 -3px 0 oklch(65% 0.12 230)"},
-      {"mono", gettext("Monochrome"), "background: linear-gradient(135deg, #fff 50%, #111 50%); border: 1px solid #111"},
-      {"blueprint", gettext("Blueprint"), "background: oklch(30% 0.1 255); border: 1px dashed rgba(255,255,255,0.85)"},
-      {"kraft", gettext("Kraft Paper"), "background: oklch(80% 0.05 85); box-shadow: inset -3px -3px 0 oklch(50% 0.14 30); border: 1px solid oklch(45% 0.08 70)"}
+      {"default", gettext("Default Light"),
+       "background: linear-gradient(135deg, #ffffff 50%, oklch(55% 0.2 265) 50%); border-radius: 50%"},
+      {"default-dark", gettext("Default Dark"),
+       "background: linear-gradient(135deg, oklch(22% 0.015 260) 50%, oklch(70% 0.2 265) 50%); border-radius: 50%"},
+      {"constructivism", gettext("Constructivism"),
+       "background: linear-gradient(135deg, oklch(48% 0.21 28) 50%, oklch(92% 0.025 95) 50%)"},
+      {"swiss", gettext("Swiss International"),
+       "background: #fff; box-shadow: inset 4px 0 0 oklch(54% 0.22 27); border: 1px solid #111"},
+      {"terminal", gettext("Terminal"),
+       "background: #000; box-shadow: inset 0 -3px 0 oklch(85% 0.28 145); border: 1px solid oklch(85% 0.28 145)"},
+      {"ink", gettext("Ink Wash"),
+       "background: oklch(94% 0.02 95); box-shadow: inset -4px -3px 0 oklch(45% 0.16 30); border: 1px solid oklch(45% 0.02 60)"},
+      {"bauhaus", gettext("Bauhaus"),
+       "background: linear-gradient(135deg, oklch(45% 0.18 255) 33%, oklch(55% 0.22 28) 33% 66%, oklch(75% 0.18 90) 66%); border: 1px solid #111"},
+      {"memphis", gettext("Memphis"),
+       "background: linear-gradient(135deg, oklch(55% 0.25 350) 33%, oklch(70% 0.15 190) 33% 66%, oklch(80% 0.18 95) 66%); border: 2px solid #111"},
+      {"brutalism", gettext("Brutalism"),
+       "background: linear-gradient(180deg, #f4f4f4, #dcdcdc); border: 2px outset #fff"},
+      {"glass", gettext("Glassmorphism"),
+       "background: linear-gradient(135deg, oklch(45% 0.15 290), oklch(50% 0.15 330)); border: 1px solid rgba(255,255,255,0.5); border-radius: 4px"},
+      {"neumorphism", gettext("Neumorphism"),
+       "background: oklch(90% 0.012 250); box-shadow: 2px 2px 4px oklch(75% 0.015 250), -2px -2px 4px #fff; border-radius: 4px"},
+      {"cyberpunk", gettext("Cyberpunk"),
+       "background: oklch(12% 0.03 290); box-shadow: inset 0 -3px 0 oklch(85% 0.2 195), inset 3px 0 0 oklch(70% 0.28 330)"},
+      {"vaporwave", gettext("Vaporwave"),
+       "background: linear-gradient(180deg, oklch(30% 0.1 310), oklch(55% 0.18 350))"},
+      {"nord", gettext("Nord"),
+       "background: oklch(24% 0.02 250); box-shadow: inset 0 -3px 0 oklch(75% 0.1 215)"},
+      {"gruvbox", gettext("Gruvbox"),
+       "background: oklch(24% 0.025 70); box-shadow: inset 0 -3px 0 oklch(75% 0.15 90)"},
+      {"solarized-light", gettext("Solarized Light"),
+       "background: oklch(95% 0.025 95); box-shadow: inset 0 -3px 0 oklch(50% 0.12 230)"},
+      {"solarized-dark", gettext("Solarized Dark"),
+       "background: oklch(22% 0.03 220); box-shadow: inset 0 -3px 0 oklch(65% 0.12 230)"},
+      {"mono", gettext("Monochrome"),
+       "background: linear-gradient(135deg, #fff 50%, #111 50%); border: 1px solid #111"},
+      {"blueprint", gettext("Blueprint"),
+       "background: oklch(30% 0.1 255); border: 1px dashed rgba(255,255,255,0.85)"},
+      {"kraft", gettext("Kraft Paper"),
+       "background: oklch(80% 0.05 85); box-shadow: inset -3px -3px 0 oklch(50% 0.14 30); border: 1px solid oklch(45% 0.08 70)"}
     ] ++
-    [
-      {"botanical", gettext("Botanical"), "background: oklch(95% 0.02 120); box-shadow: inset 0 -3px 0 oklch(40% 0.08 145)"},
-      {"noir", gettext("Film Noir"), "background: #0c0c0c; box-shadow: inset 3px 0 0 #fff"},
-      {"pastel", gettext("Pastel"), "background: oklch(97% 0.015 340); box-shadow: inset 0 -3px 0 oklch(70% 0.1 340); border-radius: 4px"},
-      {"ocean", gettext("Ocean"), "background: oklch(20% 0.05 230); box-shadow: inset 0 -3px 0 oklch(70% 0.14 210)"},
-      {"desert", gettext("Desert"), "background: oklch(90% 0.035 90); box-shadow: inset 0 -3px 0 oklch(48% 0.14 40); border: 1px solid oklch(48% 0.14 40)"},
-      {"artdeco", gettext("Art Deco"), "background: oklch(18% 0.04 220); border: 1px solid oklch(70% 0.12 90)"}
-    ]
+      [
+        {"botanical", gettext("Botanical"),
+         "background: oklch(95% 0.02 120); box-shadow: inset 0 -3px 0 oklch(40% 0.08 145)"},
+        {"noir", gettext("Film Noir"), "background: #0c0c0c; box-shadow: inset 3px 0 0 #fff"},
+        {"pastel", gettext("Pastel"),
+         "background: oklch(97% 0.015 340); box-shadow: inset 0 -3px 0 oklch(70% 0.1 340); border-radius: 4px"},
+        {"ocean", gettext("Ocean"),
+         "background: oklch(20% 0.05 230); box-shadow: inset 0 -3px 0 oklch(70% 0.14 210)"},
+        {"desert", gettext("Desert"),
+         "background: oklch(90% 0.035 90); box-shadow: inset 0 -3px 0 oklch(48% 0.14 40); border: 1px solid oklch(48% 0.14 40)"},
+        {"artdeco", gettext("Art Deco"),
+         "background: oklch(18% 0.04 220); border: 1px solid oklch(70% 0.12 90)"}
+      ]
   end
 end

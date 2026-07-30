@@ -23,6 +23,7 @@ defmodule EvoDashWeb.DashboardLive.StatePersistence do
       task_starting_commit: socket.assigns.task_starting_commit,
       task_resume_from: socket.assigns.task_resume_from,
       show_advanced: socket.assigns.show_advanced,
+      show_project_settings: socket.assigns.show_project_settings,
       task_archive: socket.assigns.task_archive,
       foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos])
     }

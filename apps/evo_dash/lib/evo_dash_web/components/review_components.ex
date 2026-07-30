@@ -12,6 +12,7 @@ defmodule EvoDashWeb.ReviewComponents do
   defdelegate review_header(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate task_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate agent_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
+  defdelegate objective_section(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate action_buttons(assigns), to: EvoDashWeb.ReviewComponents.Actions
   defdelegate extract_skills_modal(assigns), to: EvoDashWeb.ReviewComponents.Actions
   defdelegate diff_stats_bar(assigns), to: EvoDashWeb.ReviewComponents.Stats
@@ -40,8 +41,16 @@ defmodule EvoDashWeb.ReviewComponents do
         phx-value-tab="conversation"
         class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :conversation && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
       >
-        <.icon name="hero-chat-bubble-left-right" class="size-4 mr-2" />
-        {gettext("Conversation")}
+        <.icon name="hero-document-text" class="size-4 mr-2" />
+        {gettext("Agent Report")}
+      </button>
+      <button
+        phx-click="switch_tab"
+        phx-value-tab="objective"
+        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :objective && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+      >
+        <.icon name="hero-chat-bubble-bottom-center-text" class="size-4 mr-2" />
+        {gettext("Objective")}
       </button>
       <button
         phx-click="switch_tab"

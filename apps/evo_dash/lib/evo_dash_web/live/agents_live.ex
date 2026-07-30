@@ -38,6 +38,8 @@ defmodule EvoDashWeb.AgentsLive do
         selected_history_entry: nil,
         selected_objective: nil,
         show_usage: false,
+        send_message_agent_id: nil,
+        send_message_text: "",
         agents: agents,
         id_to_display: id_to_display,
         repo_trees: build_repo_trees(agents),
@@ -102,7 +104,7 @@ defmodule EvoDashWeb.AgentsLive do
     # schedule overlapping timers on repeated handle_params calls.
     socket =
       if current_node != node() and connected?(socket) and
-           not socket.assigns[:remote_poll_timer] do
+           !socket.assigns[:remote_poll_timer] do
         Process.send_after(self(), :remote_poll, 3_000)
         assign(socket, :remote_poll_timer, true)
       else
@@ -535,6 +537,44 @@ defmodule EvoDashWeb.AgentsLive do
     {:noreply, assign(socket, :selected_objective, nil)}
   end
 
+  @impl true
+  def handle_event("open_send_message", %{"id" => id}, socket) do
+    agent_id = String.to_integer(id)
+    {:noreply, assign(socket, send_message_agent_id: agent_id, send_message_text: "")}
+  end
+
+  @impl true
+  def handle_event("close_send_message", _params, socket) do
+    {:noreply, assign(socket, send_message_agent_id: nil, send_message_text: "")}
+  end
+
+  @impl true
+  def handle_event("validate_send_message", %{"message" => message}, socket) do
+    {:noreply, assign(socket, :send_message_text, message)}
+  end
+
+  @impl true
+  def handle_event("send_agent_message", %{"agent_id" => id, "message" => message}, socket) do
+    agent_id = String.to_integer(id)
+    node = socket.assigns.current_node
+
+    case EvoDash.NodeContext.send_user_message(node, agent_id, message) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Message sent to agent"))
+         |> assign(send_message_agent_id: nil, send_message_text: "")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :error,
+           gettext("Failed to send message: %{reason}", reason: inspect(reason))
+         )}
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
@@ -864,6 +904,7 @@ defmodule EvoDashWeb.AgentsLive do
         worktree: summary[:worktree],
         retries: summary[:retries] || 0,
         agent_module: parse_agent_module(summary[:agent_module]),
+        model_id: summary[:model_id],
         objective: summary[:objective] || "",
         context_path: summary[:context_path],
         current_commit: summary[:current_commit],
@@ -1021,20 +1062,150 @@ defmodule EvoDashWeb.AgentsLive do
   defp demo_agents do
     [
       # Tree A — task #1 构建一个 Web 应用
-      %{id: 1, parent_id: nil, task_id: "demo-1", task_number: 1, task_local_id: "1", status: :waiting, depth: 0, objective: "构建一个 Web 应用", agent_module: EvoGit.Agents.Manager},
-      %{id: 2, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.1", status: :completed, depth: 1, objective: "需求分析", agent_module: EvoGit.Agents.Generalist},
-      %{id: 3, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.2", status: :running, depth: 1, objective: "架构设计", agent_module: EvoGit.Agents.CodebaseLead},
-      %{id: 4, parent_id: 3, task_id: "demo-1", task_number: 1, task_local_id: "1.2.1", status: :completed, depth: 2, objective: "数据模型", agent_module: EvoGit.Agents.Executor},
-      %{id: 5, parent_id: 3, task_id: "demo-1", task_number: 1, task_local_id: "1.2.2", status: :running, depth: 2, objective: "API 实现", agent_module: EvoGit.Agents.Executor},
-      %{id: 6, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.3", status: :waiting, depth: 1, objective: "前端页面", agent_module: EvoGit.Agents.Manager},
-      %{id: 7, parent_id: 6, task_id: "demo-1", task_number: 1, task_local_id: "1.3.1", status: :pending, depth: 2, objective: "样式主题", agent_module: EvoGit.Agents.Executor},
-      %{id: 8, parent_id: 6, task_id: "demo-1", task_number: 1, task_local_id: "1.3.2", status: :blocked, depth: 2, objective: "单元测试", agent_module: EvoGit.Agents.Executor},
-      %{id: 9, parent_id: 1, task_id: "demo-1", task_number: 1, task_local_id: "1.4", status: :ready, depth: 1, objective: "代码审查", agent_module: EvoGit.Agents.Evaluator},
+      %{
+        id: 1,
+        parent_id: nil,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1",
+        status: :waiting,
+        depth: 0,
+        objective: "构建一个 Web 应用",
+        agent_module: EvoGit.Agents.Manager
+      },
+      %{
+        id: 2,
+        parent_id: 1,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.1",
+        status: :completed,
+        depth: 1,
+        objective: "需求分析",
+        agent_module: EvoGit.Agents.Generalist
+      },
+      %{
+        id: 3,
+        parent_id: 1,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.2",
+        status: :running,
+        depth: 1,
+        objective: "架构设计",
+        agent_module: EvoGit.Agents.CodebaseLead
+      },
+      %{
+        id: 4,
+        parent_id: 3,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.2.1",
+        status: :completed,
+        depth: 2,
+        objective: "数据模型",
+        agent_module: EvoGit.Agents.Executor
+      },
+      %{
+        id: 5,
+        parent_id: 3,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.2.2",
+        status: :running,
+        depth: 2,
+        objective: "API 实现",
+        agent_module: EvoGit.Agents.Executor
+      },
+      %{
+        id: 6,
+        parent_id: 1,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.3",
+        status: :waiting,
+        depth: 1,
+        objective: "前端页面",
+        agent_module: EvoGit.Agents.Manager
+      },
+      %{
+        id: 7,
+        parent_id: 6,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.3.1",
+        status: :pending,
+        depth: 2,
+        objective: "样式主题",
+        agent_module: EvoGit.Agents.Executor
+      },
+      %{
+        id: 8,
+        parent_id: 6,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.3.2",
+        status: :blocked,
+        depth: 2,
+        objective: "单元测试",
+        agent_module: EvoGit.Agents.Executor
+      },
+      %{
+        id: 9,
+        parent_id: 1,
+        task_id: "demo-1",
+        task_number: 1,
+        task_local_id: "1.4",
+        status: :ready,
+        depth: 1,
+        objective: "代码审查",
+        agent_module: EvoGit.Agents.Evaluator
+      },
       # Tree B — task #2 开发数据处理管线（完全独立）
-      %{id: 20, parent_id: nil, task_id: "demo-2", task_number: 2, task_local_id: "1", status: :running, depth: 0, objective: "开发数据处理管线", agent_module: EvoGit.Agents.Manager},
-      %{id: 21, parent_id: 20, task_id: "demo-2", task_number: 2, task_local_id: "1.1", status: :completed, depth: 1, objective: "数据源接入", agent_module: EvoGit.Agents.Executor},
-      %{id: 22, parent_id: 20, task_id: "demo-2", task_number: 2, task_local_id: "1.2", status: :failed, depth: 1, objective: "转换层", agent_module: EvoGit.Agents.Generalist},
-      %{id: 23, parent_id: 20, task_id: "demo-2", task_number: 2, task_local_id: "1.3", status: :pending, depth: 1, objective: "报表输出", agent_module: EvoGit.Agents.Executor}
+      %{
+        id: 20,
+        parent_id: nil,
+        task_id: "demo-2",
+        task_number: 2,
+        task_local_id: "1",
+        status: :running,
+        depth: 0,
+        objective: "开发数据处理管线",
+        agent_module: EvoGit.Agents.Manager
+      },
+      %{
+        id: 21,
+        parent_id: 20,
+        task_id: "demo-2",
+        task_number: 2,
+        task_local_id: "1.1",
+        status: :completed,
+        depth: 1,
+        objective: "数据源接入",
+        agent_module: EvoGit.Agents.Executor
+      },
+      %{
+        id: 22,
+        parent_id: 20,
+        task_id: "demo-2",
+        task_number: 2,
+        task_local_id: "1.2",
+        status: :failed,
+        depth: 1,
+        objective: "转换层",
+        agent_module: EvoGit.Agents.Generalist
+      },
+      %{
+        id: 23,
+        parent_id: 20,
+        task_id: "demo-2",
+        task_number: 2,
+        task_local_id: "1.3",
+        status: :pending,
+        depth: 1,
+        objective: "报表输出",
+        agent_module: EvoGit.Agents.Executor
+      }
     ]
   end
 
@@ -1086,7 +1257,9 @@ defmodule EvoDashWeb.AgentsLive do
         size: length(members)
       }
     end)
-    |> Enum.sort_by(fn t -> {not t.running?, -(if(is_integer(t.task_number), do: t.task_number, else: 0))} end)
+    |> Enum.sort_by(fn t ->
+      {not t.running?, -if(is_integer(t.task_number), do: t.task_number, else: 0)}
+    end)
   end
 
   # Recomputes the tab list and makes sure `selected_task_id` still points at

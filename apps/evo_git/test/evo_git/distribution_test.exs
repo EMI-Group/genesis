@@ -3,6 +3,33 @@ defmodule EvoGit.DistributionTest do
 
   alias EvoGit.Distribution
 
+  # Redirect XDG_CONFIG_HOME to a temp dir so that Distribution.maybe_enable/0
+  # (which calls EvoGit.Config.resolve() → user_config()) never reads the
+  # real ~/.config/genesis/config.toml. Without this isolation, a user config
+  # with node.enabled = true would cause maybe_enable/0 to attempt starting
+  # :net_kernel, which fails with :nodistribution on a non-distributed BEAM.
+  setup do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      if original_xdg do
+        System.put_env("XDG_CONFIG_HOME", original_xdg)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    :ok
+  end
+
   describe "distributed?/0" do
     test "returns a boolean" do
       assert is_boolean(Distribution.distributed?())
@@ -20,6 +47,32 @@ defmodule EvoGit.DistributionTest do
     test "returns :ok when distribution is disabled (default config)" do
       # By default, node.enabled is false, so maybe_enable should be a no-op.
       assert :ok = Distribution.maybe_enable()
+    end
+  end
+
+  describe "enable_for_remote/1" do
+    # async: false — starting real distribution changes global BEAM state
+    # (node() becomes non-nonode@nohost) which would break sibling tests
+    # that assume :nonode@nohost.
+    @describetag :enable_for_remote
+
+    test "returns :ok when already distributed" do
+      if Distribution.distributed?() do
+        assert :ok = Distribution.enable_for_remote(%{})
+      end
+    end
+
+    test "accepts a target map with dist_port and cookie" do
+      # Just verify the function doesn't crash on a valid target map.
+      # In test env, distribution is likely not started; if it starts, great.
+      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: "genesis_remote_cookie"})
+      assert result == :ok or match?({:error, _}, result)
+
+      # If this test actually started distribution, stop it so it doesn't
+      # leak into sibling tests.
+      if node() != :nonode@nohost and result == :ok do
+        :net_kernel.stop()
+      end
     end
   end
 

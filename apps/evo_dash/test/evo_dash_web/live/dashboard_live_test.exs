@@ -24,8 +24,39 @@ defmodule EvoDashWeb.DashboardLiveTest do
     {:ok, Map.put(context, :tmp_dir, tmp_dir)}
   end
 
+  # The DashboardLive mount redirects first-time users to /welcome via
+  # server-based detection (EvoGit.Config.VersionState.onboarding_needed?/0,
+  # which is true when no version-state file exists). To keep the dashboard
+  # tests deterministic regardless of host state, isolate the config dir to a
+  # temp directory and mark onboarding complete by writing a version-state
+  # file there. This mirrors WelcomeLiveTest's XDG isolation approach.
   defp set_onboarding_completed(%{conn: conn} = _context) do
-    {:ok, conn: Plug.Test.init_test_session(conn, onboarding_completed: true)}
+    tmp_config =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_dashboard_test_config_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp_config)
+    original = System.get_env("XDG_CONFIG_HOME")
+    System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+    # Create the version-state file so onboarding_needed?/0 returns false.
+    if Code.ensure_loaded?(EvoGit.Config.VersionState) do
+      EvoGit.Config.VersionState.complete_onboarding()
+    end
+
+    on_exit(fn ->
+      if original do
+        System.put_env("XDG_CONFIG_HOME", original)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_config)
+    end)
+
+    {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end
 
   describe "dashboard without active project" do
@@ -43,17 +74,20 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Task form is always visible
       assert html =~ "Execute Task"
-      # Project selector shows "No project selected"
-      assert html =~ "No project selected"
+      # Project selector shows the new workflow empty state.
+      assert html =~ "Select a project first"
       # Open Project button exists
       assert html =~ "Open Project"
     end
 
-    test "project settings panel is present but collapsed when no project", %{conn: conn} do
+    test "advanced options are present but project settings are hidden when no project", %{
+      conn: conn
+    } do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      # The settings panel header is always present
-      assert html =~ "Project Settings"
+      # Project settings are nested under Advanced and only rendered for an active project.
+      assert html =~ "Advanced"
+      refute html =~ ~s(phx-click="toggle_project_settings")
       # When collapsed (no project), the details element does not have the open attribute
       # but the content is still rendered in the HTML. We can check that project-specific
       # content like "genesis.toml found" is NOT shown (it requires @project_config to be truthy)
@@ -79,10 +113,13 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "/home/user/my-project"
 
       # Submit the form with a path
-      html =
-        view
-        |> element("form[phx-submit='open_project']")
-        |> render_submit(%{path: tmp_dir})
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
+      html = render(view)
 
       # Project should be active — task form enabled
       assert html =~ "Execute Task"
@@ -127,6 +164,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
       html = render(view)
 
       # Empty directory has no genesis.toml — shows defaults message
@@ -142,6 +181,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
       html = render(view)
 
       # The Foreign Repos section should be visible
@@ -157,6 +198,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
       html = render(view)
 
       # No foreign repos registered (scheduler not running in tests)
@@ -166,7 +209,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "opening project via URL params" do
     test "activates project from URL query param", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, _view, html} = live(conn, ~p"/?project=#{URI.encode(tmp_dir)}")
+      {:ok, _view, html} = live(conn, ~p"/?project=#{tmp_dir}")
 
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
@@ -230,18 +273,21 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
       # The project must be a real directory so activate_project runs.
-      html =
-        render_hook(view, "restore_state", %{
-          "project" => tmp_dir,
-          "foreign_repos" => [
-            %{
-              "id" => "original",
-              "path" => "/Source/original-proj",
-              "description" => "The original"
-            },
-            %{"id" => "reference", "path" => "/Source/ref", "description" => nil}
-          ]
-        })
+      render_hook(view, "restore_state", %{
+        "project" => tmp_dir,
+        "foreign_repos" => [
+          %{
+            "id" => "original",
+            "path" => "/Source/original-proj",
+            "description" => "The original"
+          },
+          %{"id" => "reference", "path" => "/Source/ref", "description" => nil}
+        ]
+      })
+
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
+      html = render(view)
 
       # Foreign repos should be restored and visible in the project settings.
       # The component renders repo.id and repo.root for each foreign repo.
@@ -254,11 +300,14 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      html =
-        render_hook(view, "restore_state", %{
-          "project" => tmp_dir,
-          "foreign_repos" => []
-        })
+      render_hook(view, "restore_state", %{
+        "project" => tmp_dir,
+        "foreign_repos" => []
+      })
+
+      # Expand the project settings panel
+      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
+      html = render(view)
 
       # No repos restored — shows the empty state message
       assert html =~ "No foreign repositories registered"

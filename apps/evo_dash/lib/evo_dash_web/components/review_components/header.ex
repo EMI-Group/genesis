@@ -50,13 +50,42 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   end
 
   # ---------------------------------------------------------------------------
-  # task_summary/1 — Compact stats strip showing token/cost usage and agent count
+  # objective_section/1 — Prominent card showing the original objective/prompt
+  # ---------------------------------------------------------------------------
+
+  attr(:objective, :string, default: nil)
+
+  def objective_section(assigns) do
+    ~H"""
+    <%= if @objective do %>
+      <div class="bg-base-100 border border-base-200 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <div class="bg-primary/15 text-primary p-2 shrink-0">
+            <.icon name="hero-bullseye" class="size-5" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-xs font-bold text-base-content/50 uppercase tracking-wide mb-1">
+              {gettext("Objective")}
+            </h3>
+            <p class="text-sm text-base-content/90 leading-relaxed whitespace-pre-wrap break-words">
+              {@objective}
+            </p>
+          </div>
+        </div>
+      </div>
+    <% end %>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # task_summary/1 — Compact stats strip + collapsible full usage breakdown
   # ---------------------------------------------------------------------------
 
   attr(:usage, :map, default: nil)
   attr(:agent_count, :integer, default: nil)
   attr(:task_type, :atom, default: nil)
   attr(:status, :atom, default: nil)
+  attr(:model_id, :string, default: nil)
   attr(:started_at, :any, default: nil)
   attr(:finished_at, :any, default: nil)
 
@@ -114,46 +143,209 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             <span class="text-sm font-semibold text-base-content mt-0.5 capitalize">{@task_type}</span>
           </div>
         <% end %>
+        <%= if @started_at do %>
+          <div class="flex flex-col">
+            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+              <.icon name="hero-play" class="size-3.5" /> {gettext("Started")}
+            </span>
+            <span class="text-sm font-semibold text-base-content mt-0.5">{relative_time(@started_at)}</span>
+          </div>
+        <% end %>
+        <%= if @finished_at do %>
+          <div class="flex flex-col">
+            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+              <.icon name="hero-stop" class="size-3.5" /> {gettext("Finished")}
+            </span>
+            <span class="text-sm font-semibold text-base-content mt-0.5">{relative_time(@finished_at)}</span>
+          </div>
+        <% end %>
       </div>
+
+      <%= if @usage do %>
+        <!-- Collapsible full Token & Cost Usage breakdown (hidden by default) -->
+        <details class="mt-3">
+          <summary class="cursor-pointer text-xs font-medium text-base-content/60 hover:text-base-content flex items-center gap-1.5 select-none outline-none py-1 w-fit">
+            <.icon name="hero-currency-dollar" class="size-3.5 text-primary" />
+            {gettext("Token & Cost Usage")}
+            <.icon name="hero-chevron-down" class="size-3.5 text-base-content/40" />
+          </summary>
+          <div class="mt-3 bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <div class="text-xs text-base-content/50 mb-1">
+                  <%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}
+                </div>
+                <div class="text-sm font-semibold">
+                  {format_number(Map.get(@usage, :input_tokens, 0))}
+                </div>
+              </div>
+              <div>
+                <div class="text-xs text-base-content/50 mb-1">
+                  <%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}
+                </div>
+                <div class="text-sm font-semibold">
+                  {format_number(Map.get(@usage, :output_tokens, 0))}
+                </div>
+              </div>
+              <div>
+                <div class="text-xs text-base-content/50 mb-1">
+                  <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
+                </div>
+                <div class="text-sm font-semibold">
+                  {format_number(Map.get(@usage, :total_tokens, 0))}
+                </div>
+              </div>
+            </div>
+
+            <%= if Map.get(@usage, :cached_tokens, 0) > 0 or Map.get(@usage, :cache_creation_tokens, 0) > 0 do %>
+              <div class="mt-4 pt-4 border-t border-base-200">
+                <div class="grid grid-cols-3 gap-3">
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">
+                      <%!-- zh_CN: Token → "词元" --%>{gettext("Cached Tokens")}
+                    </div>
+                    <div class="text-sm font-semibold">
+                      {format_number(Map.get(@usage, :cached_tokens, 0))}
+                    </div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">
+                      {gettext("Cache Creation")}
+                    </div>
+                    <div class="text-sm font-semibold">
+                      {format_number(Map.get(@usage, :cache_creation_tokens, 0))}
+                    </div>
+                  </div>
+                  <div>
+                    <div class="text-xs text-base-content/50 mb-1">
+                      {gettext("Cache Hit Rate")}
+                    </div>
+                    <div class="text-sm font-semibold text-success">
+                      {format_cache_hit_rate(@usage)}
+                    </div>
+                    <progress
+                      class="progress progress-success w-full mt-1"
+                      value={
+                        input_tokens = Map.get(@usage, :input_tokens, 0)
+                        cached = Map.get(@usage, :cached_tokens, 0)
+                        if input_tokens > 0,
+                          do: min(round(cached / input_tokens * 100), 100),
+                          else: 0
+                      }
+                      max="100"
+                    ></progress>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+
+            <div class="mt-4 pt-4 border-t border-base-200">
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
+                  <div class="text-sm font-semibold">
+                    ${format_cost(Map.get(@usage, :input_cost, 0))}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
+                  <div class="text-sm font-semibold">
+                    ${format_cost(Map.get(@usage, :output_cost, 0))}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
+                  <div class="text-sm font-semibold text-primary">
+                    ${format_cost(Map.get(@usage, :total_cost, 0))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <%= if @agent_count do %>
+              <div class="mt-4 pt-4 border-t border-base-200 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs text-base-content/50 flex items-center gap-1">
+                    <.icon name="hero-user-group" class="size-3.5" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
+                      "Agents Spawned"
+                    )}
+                  </span>
+                  <span class="text-sm font-bold text-primary">{format_number(@agent_count)}</span>
+                </div>
+                <%= if @model_id do %>
+                  <span class="text-xs font-medium text-base-content/50">
+                    {gettext("Model")}: <span class="font-mono">{@model_id}</span>
+                  </span>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
+        </details>
+      <% end %>
     </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # agent_summary/1 — Collapsible panel showing agent result
+  # agent_summary/1 — Static panel showing agent result (markdown/raw toggle)
   # ---------------------------------------------------------------------------
 
   attr(:summary, :string, required: true)
-  attr(:open, :boolean, default: true)
+  attr(:summary_raw, :boolean, default: false)
 
   def agent_summary(assigns) do
     ~H"""
     <div class="bg-base-100 border-b border-base-200 ">
       <div class="relative">
-        <details open={@open}>
-          <summary class="p-5 md:p-6 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-4 list-none">
-            <div class="bg-success/15 text-success p-2.5">
-              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
-            </div>
-            <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
-            <div class="flex-1"></div>
-            <.icon name="hero-chevron-down" class="size-4 text-base-content/40" />
-          </summary>
-          <div class="px-5 md:px-6 pb-5 md:pb-6">
+        <!-- static header -->
+        <div class="p-5 md:p-6 pr-44 flex items-center gap-4">
+          <div class="bg-success/15 text-success p-2.5">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
+          </div>
+          <span class="font-semibold text-base-content/80">{gettext("Agent Summary")}</span>
+        </div>
+        <!-- content -->
+        <div class="px-5 md:px-6 pb-5 md:pb-6">
+          <%= if @summary_raw do %>
+            <pre class="text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@summary}</pre>
+          <% else %>
             <div class="md-content text-sm leading-relaxed">
               {raw(EvoDash.MarkdownRender.render(@summary))}
             </div>
+          <% end %>
+        </div>
+        <!-- Markdown / Raw toggle + copy button -->
+        <div class="absolute top-3 right-3 z-10 flex items-center gap-1">
+          <div class="flex gap-0">
+            <button
+              class={["btn btn-xs rounded-r-none border-base-300", !@summary_raw && "btn-active btn-primary"]}
+              phx-click="toggle_summary_view"
+              phx-value-mode="markdown"
+              title={gettext("Rendered Markdown")}
+            >
+              <.icon name="hero-document-text" class="size-3.5" />
+              {gettext("Markdown")}
+            </button>
+            <button
+              class={["btn btn-xs rounded-l-none border-base-300", @summary_raw && "btn-active btn-primary"]}
+              phx-click="toggle_summary_view"
+              phx-value-mode="raw"
+              title={gettext("Raw Text")}
+            >
+              <.icon name="hero-code-bracket" class="size-3.5" />
+              {gettext("Raw")}
+            </button>
           </div>
-        </details>
-        <button
-          id="summary-copy-btn"
-          class="btn btn-ghost btn-sm btn-square absolute top-4 right-4 z-10"
-          phx-hook="ClipboardCopy"
-          data-content={@summary}
-          title={gettext("Copy agent summary")}
-        >
-          <.icon name="hero-clipboard" class="size-4" />
-        </button>
+          <button
+            id="summary-copy-btn"
+            class="btn btn-ghost btn-sm btn-square"
+            phx-hook="ClipboardCopy"
+            data-content={@summary}
+            title={gettext("Copy agent summary")}
+          >
+            <.icon name="hero-clipboard" class="size-4" />
+          </button>
+        </div>
       </div>
     </div>
     """

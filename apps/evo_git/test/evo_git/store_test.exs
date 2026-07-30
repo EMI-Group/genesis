@@ -693,7 +693,11 @@ defmodule EvoGit.StoreTest do
       for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
 
       {tasks, total} =
-        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0, filters: [status: "failed"])
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [status: "failed"]
+        )
 
       assert length(tasks) == 2
       assert total == 2
@@ -748,10 +752,12 @@ defmodule EvoGit.StoreTest do
 
     test "project path filter returns only matching tasks" do
       for i <- 0..2,
-          do: insert_filtered!(i, id: "a-#{i}", opts: [path: "/tmp/proj_a", prompt: "proj a #{i}"])
+          do:
+            insert_filtered!(i, id: "a-#{i}", opts: [path: "/tmp/proj_a", prompt: "proj a #{i}"])
 
       for i <- 0..1,
-          do: insert_filtered!(i, id: "b-#{i}", opts: [path: "/tmp/proj_b", prompt: "proj b #{i}"])
+          do:
+            insert_filtered!(i, id: "b-#{i}", opts: [path: "/tmp/proj_b", prompt: "proj b #{i}"])
 
       {tasks, total} =
         Store.safe_select_paginated_tasks(Store,
@@ -1310,6 +1316,8 @@ defmodule EvoGit.StoreTest do
           2,
           "sha1",
           "sha2",
+          nil,
+          nil,
           nil,
           nil,
           nil

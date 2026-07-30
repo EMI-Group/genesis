@@ -26,6 +26,7 @@ import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import EvolutionGraph from "./hooks/evolution_graph.js"
+import NodeSwitchFade from "./hooks/node_switch_fade.js"
 
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
@@ -190,11 +191,6 @@ const StatePersistence = {
 
     // Listen for save requests from the server (still needed for task_mode changes, project switches, task starts)
     this.handleEvent("persist_state", (state) => {
-      // Also capture current DOM state for HTML-managed toggles
-      const detailsEl = this.el.querySelector('details');
-      if (detailsEl) {
-        state.show_project_settings = detailsEl.open;
-      }
       sessionStorage.setItem('dashboard_state', JSON.stringify(state));
     });
 
@@ -217,11 +213,6 @@ const StatePersistence = {
           task_starting_commit: this.el.querySelector('[name="starting_commit"]')?.value || '',
           selected_model_id: this.el.querySelector('[name="model_id"]')?.value || '',
         });
-        // Also capture project settings toggle state
-        const detailsEl = this.el.querySelector('details');
-        if (detailsEl) {
-          state.show_project_settings = detailsEl.open;
-        }
         sessionStorage.setItem('dashboard_state', JSON.stringify(state));
       }, 300);
     };
@@ -268,6 +259,8 @@ const ClipboardCopy = {
       const content = this.el.dataset.content;
       if (content && navigator.clipboard) {
         navigator.clipboard.writeText(content).then(() => {
+          // Push event so the LiveView shows a flash message
+          this.pushEvent("copied", {});
           // Visual feedback: briefly show checkmark icon
           const iconEl = this.el.querySelector("svg");
           if (iconEl) {
@@ -308,28 +301,19 @@ const ScrollToFile = {
         const target = document.getElementById(target_id);
         if (!target) return;
 
-        const fullscreenLayout = target.closest('.diff-fullscreen-layout');
-        if (fullscreenLayout) {
-          // Fullscreen mode — scroll the page to the target
-          const rect = target.getBoundingClientRect();
-          window.scrollTo({
-            top: window.scrollY + rect.top - 116, // 108px sticky offset + 8px padding
+        // The main content area is the scroll container (not window)
+        const scrollContainer = document.getElementById('main-scroll');
+        if (scrollContainer) {
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const scrollOffset = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+          scrollContainer.scrollTo({
+            top: scrollOffset,
             behavior: "smooth"
           });
         } else {
-          // Normal mode — scroll within the diff container
-          const container = target.closest('.diff-main-content');
-          if (container) {
-            const containerRect = container.getBoundingClientRect();
-            const targetRect = target.getBoundingClientRect();
-            const scrollOffset = targetRect.top - containerRect.top + container.scrollTop;
-            container.scrollTo({
-              top: scrollOffset - 8,
-              behavior: "smooth"
-            });
-          } else {
-            target.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
+          // Fallback
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
         }
       }, 50);
     });
@@ -490,7 +474,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph, NodeSwitchFade},
 })
 
 // Show progress bar on live navigation and form submits

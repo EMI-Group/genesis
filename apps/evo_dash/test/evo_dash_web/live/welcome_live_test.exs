@@ -67,7 +67,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
       # Each model button carries the model_string in the format provider:model
-      # so save_quick_setup can be driven from it.
+      # so save_welcome_setup can be driven from it.
       html = element(view, "[phx-click='select_welcome_model']", "Gemini 3.5 Flash") |> render()
       assert html =~ "google:gemini-3.5-flash"
     end
@@ -81,65 +81,67 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # Alibaba models appear (twice — once per variant)
       assert html =~ "Qwen 3.7 Max"
     end
+
+    test "providers are sorted alphabetically (case-insensitive)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      html = render(view)
+
+      # Find the position of provider header names in the rendered HTML.
+      # "Alibaba" should appear before "Anthropic" (alphabetical sort).
+      alibaba_pos = String.split(html, "Alibaba Cloud") |> List.first() |> String.length()
+      anthropic_pos = String.split(html, "Anthropic") |> List.first() |> String.length()
+
+      assert alibaba_pos < anthropic_pos,
+             "expected \"Alibaba\" to appear before \"Anthropic\" in the model grid"
+
+      # DeepSeek before Google before OpenAI
+      deepseek_pos = String.split(html, "DeepSeek") |> List.first() |> String.length()
+      google_pos = String.split(html, "Google") |> List.first() |> String.length()
+      openai_pos = String.split(html, "OpenAI") |> List.first() |> String.length()
+
+      assert deepseek_pos < google_pos, "expected \"DeepSeek\" before \"Google\""
+      assert google_pos < openai_pos, "expected \"Google\" before \"OpenAI\""
+    end
   end
 
-  describe "model selection + API key save flow" do
+  describe "model selection + merged save flow" do
     test "selecting a model shows the API key field with correct credential key", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      html = render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      html =
+        render_click(view, "select_welcome_model", %{
+          "model_string" => "anthropic:claude-sonnet-5"
+        })
 
       # The credential_key label appears (mirrors settings_components pattern)
       assert html =~ "anthropic_api_key"
       assert html =~ "Enter your API key"
     end
 
-    test "saving an API key persists it and shows success flash", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/welcome")
-
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
-
-      html =
-        render_submit(view, "save_api_key", %{
-          "credential_key" => "anthropic_api_key",
-          "api_key" => "sk-ant-test-123"
-        })
-
-      assert html =~ "API key saved successfully."
-
-      # The credential is persisted to credentials.toml
-      creds = EvoGit.Config.credentials()
-      assert Map.get(creds, "anthropic_api_key") == "sk-ant-test-123"
-    end
-
-    test "rejects empty API key", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/welcome")
-
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
-
-      html =
-        render_submit(view, "save_api_key", %{
-          "credential_key" => "anthropic_api_key",
-          "api_key" => "   "
-        })
-
-      assert html =~ "API key cannot be empty."
-    end
-
-    test "save_quick_setup adds a model profile and transitions to all-set state", %{conn: conn} do
+    test "merged save persists API key and model profile, then shows success", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
       # Initially in setup state (no model profiles)
       refute assigns(view).has_model?
 
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
       html =
-        render_click(view, "save_quick_setup", %{
+        render_submit(view, "save_welcome_setup", %{
+          "credential_key" => "anthropic_api_key",
+          "api_key" => "sk-ant-test-123",
           "model_string" => "anthropic:claude-sonnet-5",
           "provider_id" => "anthropic",
           "variant_id" => ""
         })
 
-      assert html =~ "Model selected and saved."
+      # Combined success flash
+      assert html =~ "Model and API key saved."
+
+      # The credential is persisted to credentials.toml
+      creds = EvoGit.Config.credentials()
+      assert Map.get(creds, "anthropic_api_key") == "sk-ant-test-123"
 
       # After saving, a model profile exists
       models = get_in(assigns(view).file_config, [:llm, :models]) || []
@@ -151,17 +153,26 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert html =~ "You&#39;re All Set!"
     end
 
-    test "save_quick_setup with variant resolves correct provider atom", %{conn: conn} do
+    test "merged save with variant resolves correct provider atom", %{conn: conn} do
+      # Write a pre-existing credential BEFORE mounting so the socket's cached
+      # credentials contain the key (the save proceeds without needing a new key).
+      creds = creds_file()
+      File.mkdir_p!(Path.dirname(creds))
+      File.write!(creds, ~s(alibaba_cn_api_key = "sk-test-cn"\n))
+      on_exit(fn -> File.rm(creds_file()) end)
+
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
       html =
-        render_click(view, "save_quick_setup", %{
+        render_click(view, "save_welcome_setup", %{
+          "credential_key" => "alibaba_cn_api_key",
+          "api_key" => "",
           "model_string" => "alibaba:qwen-3.7-max",
           "provider_id" => "alibaba",
           "variant_id" => "cn"
         })
 
-      assert html =~ "Model selected and saved."
+      assert html =~ "Model and API key saved."
 
       models = get_in(assigns(view).file_config, [:llm, :models]) || []
       assert length(models) == 1
@@ -170,17 +181,165 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert model == "alibaba_cn:qwen-3.7-max"
     end
 
+    test "merged save button is disabled when no key entered and no key set", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      html = render(view)
+
+      # The submit button should be disabled (no key typed, no existing key)
+      assert html =~ ~s(disabled="")
+    end
+
+    test "merged save button is enabled when a key is typed", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      # Type a key via phx-change
+      render_change(view, "api_key_changed", %{"api_key" => "sk-ant-typed"})
+
+      html = render(view)
+
+      # The submit button should NOT be disabled now
+      assert html =~ "Save &amp; Use this model"
+      refute html =~ ~s(disabled="")
+    end
+
+    test "server-side guard: empty key with no existing key shows error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      html =
+        render_submit(view, "save_welcome_setup", %{
+          "credential_key" => "anthropic_api_key",
+          "api_key" => "   ",
+          "model_string" => "anthropic:claude-sonnet-5",
+          "provider_id" => "anthropic",
+          "variant_id" => ""
+        })
+
+      assert html =~ "Please enter your API key first."
+    end
+
     test "selecting different models updates the credential key", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
       # Anthropic uses anthropic_api_key
-      html1 = render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      html1 =
+        render_click(view, "select_welcome_model", %{
+          "model_string" => "anthropic:claude-sonnet-5"
+        })
+
       assert html1 =~ "anthropic_api_key"
 
       # Google uses google_api_key
-      html2 = render_click(view, "select_welcome_model", %{"model_string" => "google:gemini-3.5-flash"})
+      html2 =
+        render_click(view, "select_welcome_model", %{"model_string" => "google:gemini-3.5-flash"})
+
       assert html2 =~ "google_api_key"
       refute html2 =~ "anthropic_api_key"
+    end
+  end
+
+  describe "search filtering" do
+    test "search filters models by model display name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      # Type a search query for a specific model
+      render_change(view, "search_models", %{"search_query" => "Gemini"})
+
+      html = render(view)
+
+      # Gemini should still be visible
+      assert html =~ "Gemini 3.5 Flash"
+      # A model that doesn't match should be hidden
+      refute html =~ "Claude Sonnet 5"
+    end
+
+    test "search filters models by provider display name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_change(view, "search_models", %{"search_query" => "Anthropic"})
+
+      html = render(view)
+
+      # Anthropic's model visible
+      assert html =~ "Claude Sonnet 5"
+      assert html =~ "Anthropic"
+      # Google model hidden
+      refute html =~ "Gemini 3.5 Flash"
+    end
+
+    test "search filters by variant display name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_change(view, "search_models", %{"search_query" => "Global"})
+
+      html = render(view)
+
+      # Alibaba Global variant visible
+      assert html =~ "Global"
+      assert html =~ "Qwen 3.7 Max"
+      # CN variant model is in a separate group — "CN" suffix should not appear
+      # when filtering for "Global". (The variant suffix " · CN" is part of the
+      # button text, so filtering it out confirms group-level filtering.)
+      refute html =~ "· CN"
+    end
+
+    test "search is case-insensitive", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_change(view, "search_models", %{"search_query" => "anthropic"})
+
+      html = render(view)
+
+      assert html =~ "Claude Sonnet 5"
+    end
+
+    test "search with no matches shows zero-results message", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_change(view, "search_models", %{"search_query" => "zzznonexistentzzz"})
+
+      html = render(view)
+
+      assert html =~ "No models match your search."
+    end
+
+    test "clearing search restores all models", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_change(view, "search_models", %{"search_query" => "Gemini"})
+      render_change(view, "search_models", %{"search_query" => ""})
+
+      html = render(view)
+
+      # Both Gemini and Claude are back
+      assert html =~ "Gemini 3.5 Flash"
+      assert html =~ "Claude Sonnet 5"
+    end
+  end
+
+  describe "end-of-list guidance" do
+    test "shows Settings link guidance at end of model list", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/welcome")
+
+      assert html =~ "Settings page"
+      assert html =~ ~p"/settings"
+    end
+
+    test "zero-results still shows Settings guidance", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_change(view, "search_models", %{"search_query" => "zzznonexistentzzz"})
+
+      html = render(view)
+
+      assert html =~ "No models match your search."
+      assert html =~ "Settings page"
     end
   end
 
@@ -266,10 +425,31 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      html = render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      html =
+        render_click(view, "select_welcome_model", %{
+          "model_string" => "anthropic:claude-sonnet-5"
+        })
 
       assert html =~ "API key is already set"
       assert html =~ "Set"
+    end
+
+    test "button enabled when existing key is set (no new key needed)", %{conn: conn} do
+      creds = creds_file()
+      File.mkdir_p!(Path.dirname(creds))
+      File.write!(creds, ~s(anthropic_api_key = "sk-test-existing"\n))
+
+      on_exit(fn -> File.rm(creds_file()) end)
+
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      html = render(view)
+
+      # Button should be enabled since key is already set
+      refute html =~ ~s(disabled="")
+      assert html =~ "Save &amp; Use this model"
     end
   end
 end

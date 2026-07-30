@@ -15,9 +15,8 @@
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <link rel="icon" type="image/svg+xml" href={~p"/images/favicon.svg"} />
-    <link rel="icon" type="image/svg+xml" href={~p"/images/favicon-dark.svg"} media="(prefers-color-scheme: dark)" />
-    <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/favicon.svg"} />
+    <link rel="icon" type="image/svg+xml" href={~p"/images/logo.svg"} id="favicon" />
+    <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/logo.svg"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
     <script>
@@ -25,11 +24,24 @@
         const resolveSystemTheme = () =>
           window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 
-        const applyTheme = (theme) => {
-          document.documentElement.setAttribute("data-theme", theme);
-          document.documentElement.setAttribute("data-theme-mode", theme);
+        const updateThemeColor = (theme) => {
           const meta = document.querySelector('meta[name="theme-color"]');
           if (meta) meta.content = theme === "dark" ? "#020617" : "#f8fafc";
+        };
+
+        const updateFavicon = (theme) => {
+          const favicon = document.getElementById("favicon");
+          if (favicon) {
+            favicon.href = theme === "dark" ? "/images/logo-alt.svg" : "/images/logo.svg";
+          }
+        };
+
+        const applyTheme = (theme) => {
+          const resolved = theme === "system" ? resolveSystemTheme() : theme;
+          document.documentElement.setAttribute("data-theme", resolved);
+          document.documentElement.setAttribute("data-theme-mode", resolved);
+          updateThemeColor(resolved);
+          updateFavicon(resolved);
         };
 
         // --- Art style（默认白天 / 默认黑夜 / 其他艺术风格，单选，不再独立明暗开关） ---
@@ -60,10 +72,6 @@
         } else {
           setArt(localStorage.getItem("phx:art") || "default");
         }
-        window.addEventListener("phx:set-art", (e) => setArt(e.target.dataset.phxArt || "default"));
-        window.addEventListener("storage", (e) => {
-          if (e.key === "phx:art") setArt(e.newValue || "default");
-        });
         // ?art=<style> —— 链接级风格预览（同时写入偏好）
         const urlArt = new URLSearchParams(window.location.search).get("art");
         if (urlArt) setArt(urlArt);

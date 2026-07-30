@@ -68,6 +68,7 @@ defmodule EvoDashWeb.ReviewLive do
                 agent_count={@agent_count}
                 task_type={@task_type}
                 status={@task_status}
+                model_id={@model_id}
                 started_at={@started_at}
                 finished_at={@finished_at}
               />
@@ -92,7 +93,10 @@ defmodule EvoDashWeb.ReviewLive do
                       <div class="space-y-4 p-4 sm:p-6 lg:p-8">
                         <!-- Agent Summary -->
                         <%= if @agent_summary do %>
-                          <EvoDashWeb.ReviewComponents.agent_summary summary={@agent_summary} />
+                          <EvoDashWeb.ReviewComponents.agent_summary
+                            summary={@agent_summary}
+                            summary_raw={@summary_raw}
+                          />
                         <% end %>
 
                         <!-- Diff Stats -->
@@ -122,6 +126,11 @@ defmodule EvoDashWeb.ReviewLive do
                         <EvoDashWeb.ReviewComponents.extract_skills_modal
                           show={@show_extract_modal}
                         />
+                      </div>
+
+                    <% @review_tab == :objective -> %>
+                      <div class="p-4 sm:p-6 lg:p-8">
+                        <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
                       </div>
 
                     <% @review_tab == :commits -> %>
@@ -217,6 +226,8 @@ defmodule EvoDashWeb.ReviewLive do
         task_usage: nil,
         agent_count: nil,
         task_status: nil,
+        model_id: nil,
+        summary_raw: false,
         started_at: nil,
         finished_at: nil
       )
@@ -246,6 +257,10 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply, assign(socket, :review_tab, :conversation)}
   end
 
+  def handle_event("switch_tab", %{"tab" => "objective"}, socket) do
+    {:noreply, assign(socket, :review_tab, :objective)}
+  end
+
   def handle_event("switch_tab", %{"tab" => "files_changed"}, socket) do
     {:noreply, assign(socket, :review_tab, :files_changed)}
   end
@@ -260,6 +275,16 @@ defmodule EvoDashWeb.ReviewLive do
 
   def handle_event("switch_tab", _params, socket) do
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_summary_view", %{"mode" => mode}, socket) do
+    {:noreply, assign(socket, :summary_raw, mode == "raw")}
+  end
+
+  @impl true
+  def handle_event("copied", _params, socket) do
+    {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
   @impl true
@@ -570,6 +595,7 @@ defmodule EvoDashWeb.ReviewLive do
           task_usage: nil,
           agent_count: nil,
           task_status: nil,
+          model_id: nil,
           started_at: nil,
           finished_at: nil
         )
@@ -594,7 +620,7 @@ defmodule EvoDashWeb.ReviewLive do
               {nil, nil, nil, nil, nil}
           end
 
-        objective = task.opts[:prompt] || task.opts[:objective]
+        objective = (task.opts[:prompt] || task.opts[:objective]) |> to_string() |> String.trim()
 
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
@@ -686,6 +712,7 @@ defmodule EvoDashWeb.ReviewLive do
           task_usage: task.usage,
           agent_count: task.agent_count,
           task_status: task.status,
+          model_id: task.model_id,
           started_at: task.started_at,
           finished_at: task.finished_at
         )

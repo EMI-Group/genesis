@@ -45,11 +45,23 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Loads all tasks from EvoGit.TaskRegistry and assigns running/pending task lists
-  to the socket. Same logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+  Loads all tasks and assigns running/pending task lists to the socket. Same
+  logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+
+  Node-aware: when `@current_node` is the local BEAM node, tasks are read from
+  the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
+  via `EvoDash.NodeContext.list_tasks/1` (RPC). The filtering logic is identical
+  either way — only the source of `all_tasks` changes.
   """
   def load_running_and_pending_tasks(socket) do
-    all_tasks = TaskRegistry.list_tasks()
+    current_node = socket.assigns[:current_node] || node()
+
+    all_tasks =
+      if current_node == node() do
+        TaskRegistry.list_tasks()
+      else
+        EvoDash.NodeContext.list_tasks(current_node)
+      end
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
@@ -80,36 +92,58 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   or `"local"`, the context falls back to the local BEAM node. When a target id
   is given, it is looked up via `EvoDash.NodeContext.get_target/1`; if the
   target exists AND is currently connected, the context is set to that target.
-  Otherwise it falls back to local.
+  If the target exists but is not yet connected, the context is "pending" —
+  data comes from the local node but `@current_node_id` is preserved so that
+  `handle_connection_status/2` can re-resolve once the connection completes.
+  Unknown ids fall back to local.
   """
   def assign_node(socket, params) do
     node_param = params["node"]
 
-    case resolve_node_context(node_param) do
-      :local ->
-        socket
-        |> assign(:current_node, node())
-        |> assign(:current_node_name, "Local")
-        |> assign(:current_node_id, nil)
+    socket =
+      case resolve_node_context(node_param) do
+        :local ->
+          socket
+          |> assign(:current_node, node())
+          |> assign(:current_node_name, "Local")
+          |> assign(:current_node_id, nil)
 
-      {:remote, target, remote_node} ->
-        # The remote BEAM node name is resolved from the connection manager's
-        # status map (`:node` field, e.g. "genesis_remote@127.0.0.1"). We store
-        # it as an atom so `EvoDash.NodeContext.list_agents(@current_node)`
-        # routes `:erpc.call/5` to the correct node.
-        socket
-        |> assign(:current_node, remote_node)
-        |> assign(:current_node_name, target.name)
-        |> assign(:current_node_id, node_param)
-    end
+        {:remote, target, remote_node} ->
+          # The remote BEAM node name is resolved from the connection manager's
+          # status map (`:node` field, e.g. "genesis_remote@127.0.0.1"). We store
+          # it as an atom so `EvoDash.NodeContext.list_agents(@current_node)`
+          # routes `:erpc.call/5` to the correct node.
+          socket
+          |> assign(:current_node, remote_node)
+          |> assign(:current_node_name, target.name)
+          |> assign(:current_node_id, node_param)
+
+        {:pending, target} ->
+          # A known target that exists but isn't connected yet (e.g. a
+          # connection was just initiated). Data still comes from the local node
+          # until the connection completes, but we MUST preserve the target id in
+          # `@current_node_id` so that `handle_connection_status/2` can match it
+          # later and re-resolve `@current_node` to the remote BEAM node.
+          socket
+          |> assign(:current_node, node())
+          |> assign(:current_node_name, target.name)
+          |> assign(:current_node_id, node_param)
+      end
+
+    # Reload sidebar tasks from the (possibly changed) node so the "Active
+    # Tasks" section always reflects the node being viewed. This runs on every
+    # `handle_params` call, including node switches.
+    load_running_and_pending_tasks(socket)
   end
 
-  # Resolves a node param string into `:local` or
-  # `{:remote, target_map, remote_node_atom}`.
+  # Resolves a node param string into `:local`, `{:remote, target_map,
+  # remote_node_atom}`, or `{:pending, target_map}`.
   #
-  # Falls back to `:local` for nil, "local", unknown ids, disconnected targets,
-  # or connected targets whose connection manager has not yet reported a node
-  # name (the `:node` field is nil until distribution completes).
+  # Falls back to `:local` for nil, "local", and unknown ids.
+  # Returns `{:pending, target}` for known-but-disconnected targets so the
+  # caller can preserve the target id until the connection completes.
+  # Returns `{:remote, ...}` for connected targets whose connection manager has
+  # reported a node name (the `:node` field is nil until distribution completes).
   defp resolve_node_context(nil), do: :local
   defp resolve_node_context("local"), do: :local
 
@@ -124,7 +158,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
             {:remote, target, String.to_atom(remote_node)}
 
           _ ->
-            :local
+            # Known target that isn't connected yet — keep the target id so
+            # `handle_connection_status` can re-resolve once connected.
+            {:pending, target}
         end
 
       {:error, :not_found} ->
@@ -155,8 +191,69 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   @doc """
   Handles a `{:remote_connection_status, _target_id, _status}` broadcast by
-  refreshing the `@connection_statuses` assign. Returns `{:noreply, socket}`.
+  refreshing the `@connection_statuses` assign. When the status change is for
+  the currently selected node AND represents a meaningful local↔remote
+  transition, it triggers a `push_patch` to the current path (preserving the
+  `?node=` param) so that `handle_params/3` re-runs and reloads all
+  page-specific node data (remote agents, remote config, remote paused state,
+  etc.). This is the DRYest solution: `handle_params` already contains all the
+  node-specific data loading for every LiveView, so re-running it uniformly
+  reloads everything correctly without per-page duplication.
+
+  Only actual transitions trigger a `push_patch`:
+    * `:connected` with a node name → local→remote (the node just became
+      usable as remote). Only a transition when `@current_node` is currently
+      local (`node()`), i.e. the page was showing pending/local data.
+    * `:disconnected` / `:error` → remote→local (the node was remote but is
+      now gone). Only a transition when `@current_node` is currently NOT
+      local, i.e. the page was showing remote data.
+
+  Non-transition statuses (`:connecting`, `:bootstrapping`, or a status for a
+  node already in the correct state, or a status for a non-selected node) only
+  refresh `@connection_statuses` and do NOT reload page data. Returns
+  `{:noreply, socket}`.
   """
+  def handle_connection_status(socket, {:remote_connection_status, target_id, status}) do
+    socket = assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())
+
+    current_node_id = socket.assigns[:current_node_id]
+    current_node = socket.assigns[:current_node]
+
+    transition? =
+      current_node_id == target_id and
+        case status do
+          %{phase: :connected, node: remote_node} when is_binary(remote_node) ->
+            # local → remote: only a transition when the page is currently
+            # showing local/pending data (a duplicate :connected for a node
+            # already in remote state is not a reload-worthy transition).
+            current_node == node()
+
+          %{phase: phase} when phase in [:disconnected, :error] ->
+            # remote → local: only a transition when the page is currently
+            # showing remote data (a disconnect/error for a node already
+            # showing local/pending data is not a reload-worthy transition).
+            current_node != node()
+
+          # :connecting, :bootstrapping, and other phases are not reload-worthy
+          # transitions — the page is already showing local/pending data.
+          _ ->
+            false
+        end
+
+    if transition? do
+      # Re-invoke handle_params by patching the current path with the ?node=
+      # param. handle_params calls assign_node → resolve_node_context, which
+      # now resolves to {:remote, ...} (on :connected) or :local (on
+      # disconnect/error), and then reloads all page-specific data.
+      path = socket.assigns[:current_path] || "/"
+      to = path <> "?node=" <> current_node_id
+      {:noreply, Phoenix.LiveView.push_patch(socket, to: to)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Fallback for unexpected message shapes — just refresh statuses.
   def handle_connection_status(socket, _message) do
     {:noreply, assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())}
   end

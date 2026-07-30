@@ -59,12 +59,24 @@
                     <span class={agent_status_color(agent.status)}>{String.upcase(to_string(agent.status))}</span>
                   </div>
                 </div>
-                <button
-                  class="btn btn-sm btn-ghost btn-circle"
-                  phx-click="close_details"
-                >
-                  <.icon name="hero-x-mark" class="size-4" />
-                </button>
+                <div class="flex items-center gap-1">
+                  <%= if agent.status in [:running, :waiting, :pending, :blocked] do %>
+                    <button
+                      class="btn btn-sm btn-ghost btn-circle tooltip"
+                      data-tip={gettext("Send Message")}
+                      phx-click="open_send_message"
+                      phx-value-id={agent.id}
+                    >
+                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-4" />
+                    </button>
+                  <% end %>
+                  <button
+                    class="btn btn-sm btn-ghost btn-circle"
+                    phx-click="close_details"
+                  >
+                    <.icon name="hero-x-mark" class="size-4" />
+                  </button>
+                </div>
               </div>
               
 <!-- Details -->
@@ -77,6 +89,14 @@
                     </h4>
                     <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
                       {inspect(agent.agent_module)}
+                    </code>
+                  </div>
+                  <div class="shrink-0 min-w-[130px]">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                      <%= gettext("Model") %>
+                    </h4>
+                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                      {agent.model_id || gettext("N/A")}
                     </code>
                   </div>
                   <div class="flex-1 min-w-[150px]">
@@ -566,6 +586,46 @@
       </div>
 
       <div class="modal-backdrop" phx-click="close_objective_modal">
+        <button class="cursor-default"><%= gettext("close") %></button>
+      </div>
+    </div>
+  <% end %>
+
+  <!-- Send Message Modal -->
+  <%= if @send_message_agent_id do %>
+    <div class="modal modal-open bg-black/50" id="send-message-modal">
+      <div class="modal-box w-11/12 max-w-2xl">
+        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+          <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
+          <%= gettext("Send Message to Agent #%{id}", id: @id_to_display[@send_message_agent_id] || @send_message_agent_id) %>
+        </h3>
+
+        <p class="text-sm text-base-content/60 mb-4">
+          <%= gettext("Your message will be added to the agent's context on its next turn.") %>
+        </p>
+
+        <form phx-submit="send_agent_message" phx-change="validate_send_message">
+          <input type="hidden" name="agent_id" value={@send_message_agent_id} />
+          <textarea
+            class="textarea textarea-bordered w-full min-h-32"
+            name="message"
+            placeholder={gettext("Type your message here...")}
+            autofocus
+          ><%= @send_message_text %></textarea>
+
+          <div class="modal-action">
+            <button type="button" class="btn btn-ghost" phx-click="close_send_message">
+              <%= gettext("Cancel") %>
+            </button>
+            <button type="submit" class="btn btn-primary">
+              <.icon name="hero-paper-airplane" class="size-4" />
+              <%= gettext("Send") %>
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="modal-backdrop" phx-click="close_send_message">
         <button class="cursor-default"><%= gettext("close") %></button>
       </div>
     </div>

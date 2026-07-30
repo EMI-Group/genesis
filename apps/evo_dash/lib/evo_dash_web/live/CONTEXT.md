@@ -37,6 +37,15 @@ All LiveViews register the `EvoDashWeb.LiveHooks.NodeAware` on-mount hook (via t
 - All pages use `EvoDashWeb.Layouts.app/1` layout with `current_page` for nav highlighting. Sidebar nav: **Tasks (`/`), Agents (`/agents`), Settings (`/settings`)**.
 - Styled with DaisyUI/Tailwind CSS; business logic delegated to context modules.
 
+### UI Patterns (modals, forms, events)
+These patterns are used consistently across the LiveViews. Follow them when adding new interactive features.
+
+- **Modal pattern (rendered in the LiveView's own template/component):** A modal is conditionally rendered with `<%= if @some_assign do %>` wrapping a `<div class="modal modal-open bg-black/50" id="...">` containing a `<div class="modal-box ...">`. The open/close state is driven by a `nil`/value socket assign. Opening: a `phx-click="open_modal"` handler sets the assign (optionally carrying an `phx-value-id`). Closing: a `phx-click="close_modal"` handler resets the assign to `nil`. The backdrop `<div class="modal-backdrop" phx-click="close_modal">` also closes. See `AgentsLive`'s `view_full_message`/`close_message_modal` and `view_full_objective`/`close_objective_modal` (in `agents_live.html.heex` + `agents_live.ex`), and `EvoDashWeb.Helpers`'s reusable modal component.
+- **Inline form submission (inline editor pattern):** Instead of a full modal, list editors use a `<form phx-submit="save_..." >` with hidden `<input type="hidden" name="id" value=...>` + visible inputs, submitted by a `<button type="submit">`. The edit state is toggled by an `@editing_...` assign. See `SettingsComponents.ModelProfilesEditor.model_profile_edit_form/1` (`phx-submit="save_model_profile"`).
+- **Event naming:** Events use `phx-click` (buttons) and `phx-submit` (forms). Values passed via `phx-value-<key>="<value>"` (received in the handler's params map as string keys). IDs that are integers arrive as strings — `String.to_integer/1` is used to convert (e.g. `select_agent` → `%{"id" => id}`).
+- **`ModalHelpers` (`live/modal_helpers.ex`):** A `__using__` macro injecting shared modal event handlers (`view_full_result/2`, `close_result_modal/1`, etc.) into a host LiveView. `DashboardLive`/`TasksLive` `use EvoDashWeb.ModalHelpers`.
+- **LiveComponent event routing:** Inside a `use EvoDashWeb, :live_component`, events use `JS.push("event", target: @myself, value: %{...})` (targets the component itself) or plain `phx-click` (targets the parent LiveView). See `NodeSelectorComponent` (`select_node` targets `@myself`, then `send(self(), {:node_selected, id})` to the parent).
+
 ## Constraints
 - Each LiveView uses either an inline `render/1` or a companion `.html.heex` template — not both. (Three render inline; `AgentsLive` uses a separate template.)
 - Auto-refresh intervals must be gated behind `connected?/1` to avoid leaking timers.

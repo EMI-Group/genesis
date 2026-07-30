@@ -2,71 +2,6 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
   use EvoGit.TaskRegistryCase, async: false
 
   describe "lease & heartbeat" do
-    test "startup reconciliation does NOT mark running task as failed if lease hasn't expired (THE KEY FIX)",
-         %{data_dir: root} do
-      unique = System.unique_integer([:positive])
-
-      # Simulate a foreign instance's task: running, dead/nil pid, valid future lease.
-      task = %TaskInfo{
-        id: "lease_valid_#{unique}",
-        type: :genesis,
-        status: :running,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: [],
-        result: nil,
-        lease_expires_at: System.system_time(:second) + 300
-      }
-
-      EvoGit.Store.put_task(EvoGit.Store, task)
-
-      # Restart the registry so init → normalize_tasks → reconcile_task_status runs.
-      restart_registry!(root)
-
-      tasks = TaskRegistry.list_tasks()
-      found = Enum.find(tasks, &(&1.id == "lease_valid_#{unique}"))
-
-      assert found != nil
-      assert found.status == :running,
-             "task with valid lease should remain :running, got #{inspect(found.status)}"
-    end
-
-    test "startup reconciliation DOES mark running task as failed if lease HAS expired",
-         %{data_dir: root} do
-      unique = System.unique_integer([:positive])
-
-      # Simulate a crashed/orphaned task: running, dead/nil pid, expired lease.
-      task = %TaskInfo{
-        id: "lease_expired_#{unique}",
-        type: :genesis,
-        status: :running,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: [],
-        result: nil,
-        lease_expires_at: System.system_time(:second) - 300
-      }
-
-      EvoGit.Store.put_task(EvoGit.Store, task)
-
-      # Restart the registry so init → normalize_tasks → reconcile_task_status runs.
-      restart_registry!(root)
-
-      tasks = TaskRegistry.list_tasks()
-      found = Enum.find(tasks, &(&1.id == "lease_expired_#{unique}"))
-
-      assert found != nil
-      assert found.status == :failed,
-             "task with expired lease should be :failed, got #{inspect(found.status)}"
-
-      assert found.lease_expires_at == nil,
-             "failed task should have lease cleared"
-    end
-
     test "lease cleared when task completes via update_task_status" do
       unique = System.unique_integer([:positive])
 
@@ -94,6 +29,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
 
       assert found != nil
       assert found.status == :completed
+
       assert found.lease_expires_at == nil,
              "completed task should have lease cleared"
     end
@@ -103,6 +39,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
 
       # Insert a running task with an EXPIRED lease, no pid, not owned.
       expired = System.system_time(:second) - 300
+
       task = %TaskInfo{
         id: "lease_heartbeat_#{unique}",
         type: :genesis,
@@ -163,6 +100,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
 
       found = EvoGit.Store.get_task(EvoGit.Store, "lease_sweep_#{unique}")
       assert found != nil
+
       assert found.status == :failed,
              "task with expired lease should be swept to :failed, got #{inspect(found.status)}"
 

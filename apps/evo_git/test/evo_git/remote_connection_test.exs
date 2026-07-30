@@ -47,7 +47,9 @@ defmodule EvoGit.RemoteConnectionTest do
     end
 
     if Process.whereis(EvoGit.RemoteConnection.Supervisor) == nil do
-      start_supervised!({DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one})
+      start_supervised!(
+        {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one}
+      )
     end
   end
 
@@ -129,14 +131,16 @@ defmodule EvoGit.RemoteConnectionTest do
   end
 
   describe "connect/1" do
-    test "returns {:error, :local_node_not_distributed} when node is nonode@nohost" do
+    test "does not return :local_node_not_distributed (auto-enables distribution)" do
       ensure_registry_and_supervisor()
       target_id = save_test_target()
 
-      # In the test environment, the BEAM is not distributed.
-      assert node() == :nonode@nohost
-
-      assert {:error, :local_node_not_distributed} = EvoGit.RemoteConnection.connect(target_id)
+      # With the fix, do_connect auto-enables distribution instead of
+      # returning :local_node_not_distributed. The actual SSH connection
+      # will fail (no real remote), but the error should be something else
+      # (e.g. :distribution_failed or :node_connect_failed).
+      result = EvoGit.RemoteConnection.connect(target_id)
+      refute match?({:error, :local_node_not_distributed}, result)
 
       cleanup_connections()
     end
