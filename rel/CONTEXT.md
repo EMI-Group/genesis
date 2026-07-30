@@ -21,7 +21,7 @@ Mix does NOT automatically use per-release overlay directories (`rel/genesis/`, 
 |------|---------|
 | `vm.args.eex` | VM arguments template for ALL releases. Uses EEx conditionals: `genesis_remote` gets EPMD-less distribution (`-dist_listen true`, pinned port 9000); other releases get plain `-start_epmd false`. Also includes desktop optimization flags (`+sbwt none`, `+P 40000`, `+t 80000`). |
 | `remote.vm.args.eex` | VM arguments for the `remote` and `rpc` shell commands. Same EEx conditional: EPMD-less for `genesis_remote`, plain EPMD-disable for others. |
-| `env.sh.eex` | Shell environment template for ALL releases. EEx conditional: `genesis_remote` exports `RELEASE_DISTRIBUTION=name`, `RELEASE_NODE=genesis_remote@127.0.0.1`, and `RELEASE_COOKIE`; other releases get commented-out examples only. |
+| `env.sh.eex` | Shell environment template for ALL releases. EEx conditional: `genesis_remote` exports `RELEASE_DISTRIBUTION=name`, `RELEASE_NODE="${RELEASE_NODE:-genesis_remote@127.0.0.1}"` (respects pre-existing env var), and `RELEASE_COOKIE`; other releases get commented-out examples only. |
 | `env.bat.eex` | Windows batch environment template. |
 
 ### Per-Release Directories (documentation only — NOT used by Mix)
