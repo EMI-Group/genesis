@@ -52,6 +52,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
   via `EvoDash.NodeContext.list_tasks/1` (RPC). The filtering logic is identical
   either way — only the source of `all_tasks` changes.
+
+  Strips heavy fields (logs, usage, archive_metadata) after fetching — the
+  sidebar only needs lightweight data (status, type, id, etc.). Once
+  `TaskRegistry.list_tasks_summary/0` is available, the local path can use it
+  directly instead of post-fetch stripping.
   """
   def load_running_and_pending_tasks(socket) do
     current_node = socket.assigns[:current_node] || node()
@@ -60,8 +65,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       if current_node == node() do
         TaskRegistry.list_tasks()
       else
+        # Remote: fetch full task list via RPC, then strip locally.
+        # TODO: use list_tasks_summary RPC when available on the remote side.
         EvoDash.NodeContext.list_tasks(current_node)
       end
+      |> Enum.map(&strip_heavy_task_fields/1)
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
@@ -84,6 +92,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
        do: true
 
   defp show_review_button?(_), do: false
+
+  defp strip_heavy_task_fields(task) do
+    %{task | logs: [], usage: nil, archive_metadata: nil}
+  end
 
   @doc """
   Resolves the `?node=` query param into node-context assigns.

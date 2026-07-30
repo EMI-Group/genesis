@@ -10,6 +10,11 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   alias EvoDashWeb.DashboardLive.Project
   import Phoenix.Component, only: [assign: 2, assign: 3]
 
+  # Heavy fields stripped from task data used in sidebar displays.
+  # These fields (logs, usage, archive_metadata) contain large JSON blobs
+  # that are unnecessary for running/pending task lists.
+  @heavy_fields [:logs, :usage, :archive_metadata]
+
   @doc """
   Builds the set of notified task IDs by merging existing notified IDs with
   all finished tasks in the given list.
@@ -24,9 +29,12 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
 
   @doc """
   Assigns `:running_tasks` and `:pending_tasks` from `socket.assigns.tasks`.
+
+  Uses lightweight queries — strips heavy fields (logs, usage, archive_metadata)
+  that are unnecessary for the sidebar task display.
   """
   def assign_running_and_pending_tasks(socket) do
-    all_tasks = TaskRegistry.list_tasks()
+    all_tasks = TaskRegistry.list_tasks() |> Enum.map(&strip_heavy_fields/1)
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
@@ -50,7 +58,7 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   to compute running/pending before stripping heavy fields for `@tasks`.
   """
   def assign_running_and_pending_tasks(socket, _all_tasks) do
-    all_tasks = TaskRegistry.list_tasks()
+    all_tasks = TaskRegistry.list_tasks() |> Enum.map(&strip_heavy_fields/1)
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
@@ -104,13 +112,27 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
 
   @doc """
   Returns the current task list for the socket, scoped to the active project
-  path if one is set.
+  path if one is set. Strips heavy fields (logs, usage, archive_metadata).
   """
   def current_tasks(socket) do
-    if socket.assigns.active_project_path do
-      TaskRegistry.list_tasks_by_path(socket.assigns.active_project_path)
-    else
-      TaskRegistry.list_tasks()
-    end
+    tasks =
+      if socket.assigns.active_project_path do
+        TaskRegistry.list_tasks_by_path(socket.assigns.active_project_path)
+      else
+        TaskRegistry.list_tasks()
+      end
+
+    Enum.map(tasks, &strip_heavy_fields/1)
+  end
+
+  @doc """
+  Strips heavy JSON fields (logs, usage, archive_metadata) from a task struct,
+  returning a lightweight copy suitable for sidebar/list displays.
+
+  Once `TaskRegistry.list_tasks_summary/0` is available in evo_git, callers
+  can use that directly instead of this post-fetch strip.
+  """
+  def strip_heavy_fields(task) do
+    %{task | logs: [], usage: nil, archive_metadata: nil}
   end
 end
