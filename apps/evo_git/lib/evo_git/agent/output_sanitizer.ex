@@ -61,19 +61,6 @@ defmodule EvoGit.Agent.OutputSanitizer do
   end
 
   @doc """
-  Ensure output is valid UTF-8. Repairs or truncates invalid sequences.
-
-  Delegates to `EvoGit.UTF8.ensure_utf8/1`. Kept as a public function for
-  backward compatibility with callers that use the sanitizer module directly.
-
-  - If the result is valid UTF-8, returns `{result, nil}`.
-  - If invalid, attempts repair via `:unicode.characters_to_binary/3`.
-  - On repair failure, appends a warning and returns `{repaired_result, truncation_info}`.
-  - Non-binary results pass through as `{result, nil}`.
-  """
-  def ensure_utf8(result), do: EvoGit.UTF8.ensure_utf8(result)
-
-  @doc """
   Strip ANSI escape sequences from a string.
 
   Removes:
@@ -187,7 +174,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
     end
   end
 
-  defp format_bytes(bytes) do
+  def format_bytes(bytes) do
     cond do
       bytes >= 1024 * 1024 -> "#{Float.round(bytes / (1024 * 1024), 1)} MB"
       bytes >= 1024 -> "#{Float.round(bytes / 1024, 1)} KB"
