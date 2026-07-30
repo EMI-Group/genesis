@@ -116,8 +116,13 @@ defmodule EvoGit.Distribution do
         # Set the distribution cookie to match the remote daemon. Must be
         # done after :net_kernel.start succeeds — set_cookie/1 crashes on
         # a non-distributed node (:nonode@nohost).
-        cookie = Map.get(target, :cookie, "genesis_remote_cookie") |> String.to_atom()
-        Node.set_cookie(cookie)
+        case Map.get(target, :cookie) do
+          nil ->
+            Logger.debug("Skipping Node.set_cookie/1 in enable_for_connection: no cookie in target map")
+
+          cookie when is_binary(cookie) ->
+            Node.set_cookie(String.to_atom(cookie))
+        end
         Logger.info("Distribution enabled for remote connection: #{node()}")
         :ok
 
@@ -210,9 +215,15 @@ defmodule EvoGit.Distribution do
 
   @doc false
   def set_cookie(node_config) do
-    cookie = Map.get(node_config, :cookie, "genesis_remote_cookie")
-    Node.set_cookie(String.to_atom(cookie))
-    :ok
+    case Map.get(node_config, :cookie) do
+      nil ->
+        Logger.debug("Skipping Node.set_cookie/1: no cookie configured")
+        :ok
+
+      cookie when is_binary(cookie) ->
+        Node.set_cookie(String.to_atom(cookie))
+        :ok
+    end
   end
 
   defp node_name_from_config(node_config) do
