@@ -208,7 +208,7 @@ defmodule EvoDashWeb.SystemLive do
 
               <!-- Supervisor Row -->
               <.system_check_row
-                title={gettext("EvoX Genesis Process Tree")}
+                title={gettext("Genesis Process Tree")}
                 icon="hero-server-stack"
                 status={if Status.supervisor_healthy?(@supervisor_check), do: :ok, else: :error}
               >
