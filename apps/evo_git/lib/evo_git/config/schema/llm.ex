@@ -96,6 +96,50 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   @doc """
+  Builds a single "default" model profile from flat (legacy) `[llm]` and
+  `[scheduler]` config sections.
+
+  Used when `[[llm.models]]` is empty or absent, so the runtime always has at
+  least one profile to work with. Generation params from the flat `[llm]`
+  section are included; nil values are omitted.
+
+  The returned profile always has at least `:id`, `:model`, and `:concurrency`
+  keys. The `:model` value may be `nil` when no model is configured.
+
+  ## Example
+
+      iex> Schema.LLM.build_legacy_default_profile(%{
+      ...>   llm: %{model: "anthropic:claude", temperature: 0.7},
+      ...>   scheduler: %{max_concurrency: 5}
+      ...> })
+      %{id: "default", model: "anthropic:claude", concurrency: 5, temperature: 0.7}
+  """
+  @spec build_legacy_default_profile(map()) :: map()
+  def build_legacy_default_profile(config) when is_map(config) do
+    raw_llm = Map.get(config, :llm, %{})
+    llm = if is_map(raw_llm), do: raw_llm, else: %{}
+    raw_scheduler = Map.get(config, :scheduler, %{})
+    scheduler = if is_map(raw_scheduler), do: raw_scheduler, else: %{}
+    concurrency = Map.get(scheduler, :max_concurrency, 3)
+
+    %{
+      id: "default",
+      model: Map.get(llm, :model),
+      concurrency: concurrency
+    }
+    |> maybe_put(:temperature, Map.get(llm, :temperature))
+    |> maybe_put(:max_tokens, Map.get(llm, :max_tokens))
+    |> maybe_put(:reasoning_effort, Map.get(llm, :reasoning_effort))
+    |> maybe_put(:top_p, Map.get(llm, :top_p))
+    |> maybe_put(:top_k, Map.get(llm, :top_k))
+    |> maybe_put(:frequency_penalty, Map.get(llm, :frequency_penalty))
+    |> maybe_put(:presence_penalty, Map.get(llm, :presence_penalty))
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  @doc """
   Default provider options for OpenAI models.
 
   Disables the OpenAI Responses API server-side storage (`store: false`), which in turn
