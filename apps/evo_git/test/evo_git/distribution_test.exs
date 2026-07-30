@@ -132,8 +132,9 @@ defmodule EvoGit.DistributionTest do
 
   describe "nil cookie handling in set_cookie/1" do
     test "Map.get with no default returns nil when key is missing" do
-      # Verify that Map.get(%{}, :cookie) returns nil (no default)
-      assert is_nil(Map.get(%{}, :cookie))
+      # Verify that Map.get/2 returns nil when the key is missing
+      empty_map = %{}
+      assert is_nil(Map.get(empty_map, :cookie))
     end
 
     test "Map.get returns the cookie value when present" do
