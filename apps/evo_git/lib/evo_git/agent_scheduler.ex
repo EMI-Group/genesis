@@ -124,7 +124,7 @@ defmodule EvoGit.AgentScheduler do
   Returns nil if not in a scheduled agent.
   """
   def current_repo_root do
-    Process.get(:evogit_repo_root)
+    Process.get(:genesis_repo_root)
   end
 
   @doc """

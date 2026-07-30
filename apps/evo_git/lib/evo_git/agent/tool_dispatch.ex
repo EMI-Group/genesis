@@ -703,7 +703,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   @doc false
   def process_standard_calls(indexed_calls, %LoopState{} = state) do
     repo_root =
-      Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
+      Process.get(:genesis_repo_root) || raise "genesis_repo_root not in process dictionary"
 
     indexed_results =
       batch_execute_tools(
