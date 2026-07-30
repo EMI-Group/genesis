@@ -1,23 +1,23 @@
 msgid ""
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:1566
+#: lib/evo_dash_web/live/settings_live.ex:1529
 #, elixir-autogen, elixir-format
 msgid "%{action} completed."
 msgstr "%{action} terminé."
 
-#: lib/evo_dash_web/live/settings_live.ex:1562
+#: lib/evo_dash_web/live/settings_live.ex:1525
 #, elixir-autogen, elixir-format
 msgid "%{action} failed: %{reason}"
 msgstr "%{action} a échoué : %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1553
-#: lib/evo_dash_web/live/settings_live.ex:1556
+#: lib/evo_dash_web/live/settings_live.ex:1516
+#: lib/evo_dash_web/live/settings_live.ex:1519
 #, elixir-autogen, elixir-format
 msgid "%{action} succeeded."
 msgstr "%{action} a réussi."
 
-#: lib/evo_dash_web/live/settings_live.ex:1547
+#: lib/evo_dash_web/live/settings_live.ex:1510
 #, elixir-autogen, elixir-format
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} indisponible — le sous-système de connexion distante n'est pas en cours d'exécution."
@@ -69,36 +69,36 @@ msgstr "%{count} profils de modèle"
 msgid "%{count} setting(s) matching \"%{query}\""
 msgstr "%{count} paramètre(s) correspondant à \"%{query}\""
 
-#: lib/evo_dash_web/live/tasks_live.ex:141
+#: lib/evo_dash_web/live/tasks_live.ex:145
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
 msgstr[0] "%{count} tâche trouvée"
 msgstr[1] "%{count} tâche trouvée"
 
-#: lib/evo_dash_web/live/system_live.ex:167
+#: lib/evo_dash_web/live/system_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
 msgstr[0] "%{count} avertissement de validation"
 msgstr[1] "%{count} avertissement de validation"
 
-#: lib/evo_dash_web/helpers.ex:212
+#: lib/evo_dash_web/helpers.ex:211
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr "il y a %{count}j"
 
-#: lib/evo_dash_web/helpers.ex:211
+#: lib/evo_dash_web/helpers.ex:210
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr "il y a %{count}h"
 
-#: lib/evo_dash_web/helpers.ex:210
+#: lib/evo_dash_web/helpers.ex:209
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr "il y a %{count}min"
 
-#: lib/evo_dash_web/helpers.ex:209
+#: lib/evo_dash_web/helpers.ex:208
 #, elixir-autogen, elixir-format
 msgid "%{count}s ago"
 msgstr "il y a %{count}s"
@@ -108,7 +108,7 @@ msgstr "il y a %{count}s"
 msgid "%{n} slots"
 msgstr "%{n} créneaux"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:752
+#: lib/evo_dash_web/live/dashboard_live.ex:777
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
 msgstr "Tâche %{type} démarrée avec l'ID : %{id}"
@@ -144,7 +144,7 @@ msgstr "<strong>Vous ne trouvez pas votre fournisseur ?</strong> Vous pouvez s
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "Un SHA de commit Git, un nom de branche ou un tag à utiliser comme base. Par défaut : HEAD."
 
-#: lib/evo_dash_web/live/settings_live.ex:1087
+#: lib/evo_dash_web/live/settings_live.ex:1049
 #, elixir-autogen, elixir-format
 msgid "A profile with id \"%{id}\" already exists."
 msgstr "Un profil avec l'identifiant \"%{id}\" existe déjà."
@@ -159,13 +159,13 @@ msgstr "Un identifiant unique pour ce profil"
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "Identifiant unique pour ce dépôt (ex. : « original », « amont »)"
 
-#: lib/evo_dash_web/helpers.ex:423
+#: lib/evo_dash_web/helpers.ex:422
 #: lib/evo_dash_web/live/system_live/status.ex:76
 #, elixir-autogen, elixir-format
 msgid "API Key"
 msgstr "Clé API"
 
-#: lib/evo_dash_web/live/settings_live.ex:1148
+#: lib/evo_dash_web/live/settings_live.ex:1100
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "La clé API ne peut pas être vide."
@@ -176,7 +176,7 @@ msgstr "La clé API ne peut pas être vide."
 msgid "API key is already set"
 msgstr "Clé API déjà configurée"
 
-#: lib/evo_dash_web/live/settings_live.ex:1158
+#: lib/evo_dash_web/live/settings_live.ex:1130
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "Clé API enregistrée avec succès."
@@ -196,19 +196,19 @@ msgstr "Actions"
 msgid "Active Tasks"
 msgstr "Tâches actives"
 
-#: lib/evo_dash_web/live/tasks_live.ex:103
+#: lib/evo_dash_web/live/tasks_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Active filters:"
 msgstr "Filtres actifs :"
 
 #: lib/evo_dash_web/components/project_components.ex:448
-#: lib/evo_dash_web/live/settings_live.ex:370
+#: lib/evo_dash_web/live/settings_live.ex:330
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr "Ajouter"
 
-#: lib/evo_dash_web/live/settings_live.ex:285
-#: lib/evo_dash_web/live/settings_live.ex:382
+#: lib/evo_dash_web/live/settings_live.ex:251
+#: lib/evo_dash_web/live/settings_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "Add Connection"
 msgstr "Ajouter une connexion"
@@ -303,38 +303,38 @@ msgstr "Les agents et les créneaux sont accordés normalement."
 msgid "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
 msgstr "Les agents ne peuvent pas s'exécuter tant que vous n'avez pas défini un modèle. Allez dans la catégorie LLM et remplissez le champ Modèle."
 
-#: lib/evo_dash_web/live/tasks_live.ex:43
+#: lib/evo_dash_web/live/tasks_live.ex:47
 #, elixir-autogen, elixir-format
 msgid "All Projects"
 msgstr "Tous les projets"
 
-#: lib/evo_dash_web/live/tasks_live.ex:59
+#: lib/evo_dash_web/live/tasks_live.ex:63
 #, elixir-autogen, elixir-format
 msgid "All Reviews"
 msgstr "Toutes les relectures"
 
-#: lib/evo_dash_web/live/tasks_live.ex:27
+#: lib/evo_dash_web/live/tasks_live.ex:31
 #, elixir-autogen, elixir-format
 msgid "All Statuses"
 msgstr "Tous les statuts"
 
-#: lib/evo_dash_web/helpers.ex:400
-#: lib/evo_dash_web/live/system_live.ex:154
+#: lib/evo_dash_web/helpers.ex:399
+#: lib/evo_dash_web/live/system_live.ex:144
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "Tout est configuré"
 
-#: lib/evo_dash_web/helpers.ex:401
+#: lib/evo_dash_web/helpers.ex:400
 #, elixir-autogen, elixir-format
 msgid "All critical configuration values are set"
 msgstr "Toutes les valeurs de configuration critiques sont définies"
 
-#: lib/evo_dash_web/live/system_live.ex:844
+#: lib/evo_dash_web/live/system_live.ex:819
 #, elixir-autogen, elixir-format
 msgid "All healthy"
 msgstr "Tout est en bonne santé"
 
-#: lib/evo_dash_web/live/system_live.ex:413
+#: lib/evo_dash_web/live/system_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "Tout l'état en mémoire de l'environnement d'exécution (tâches en cours, état du planificateur, agents en cours) sera perdu. Cette action est irréversible."
@@ -344,7 +344,7 @@ msgstr "Tout l'état en mémoire de l'environnement d'exécution (tâches en cou
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "Analysez les modifications de cette PR et extrayez les connaissances réutilisables en tant que compétences EvoGit. L'Agent examinera le diff, identifiera les schémas utiles et créera des fichiers de compétences dans .agents/skills/."
 
-#: lib/evo_dash_web/helpers.ex:531
+#: lib/evo_dash_web/helpers.ex:530
 #, elixir-autogen, elixir-format
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "Analyse une base de code existante et génère des contrats spatiaux CONTEXT.md pour celle-ci."
@@ -424,14 +424,14 @@ msgstr "Commit de base"
 msgid "Base URL"
 msgstr "URL de base"
 
-#: lib/evo_dash_web/live/settings_live.ex:909
-#: lib/evo_dash_web/live/settings_live.ex:992
+#: lib/evo_dash_web/live/settings_live.ex:886
+#: lib/evo_dash_web/live/settings_live.ex:964
 #: lib/evo_dash_web/live/welcome_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "L'URL de base ne peut pas être vide."
 
-#: lib/evo_dash_web/live/system_live.ex:251
+#: lib/evo_dash_web/live/system_live.ex:241
 #, elixir-autogen, elixir-format
 msgid "Binary"
 msgstr "Binaire"
@@ -441,8 +441,8 @@ msgstr "Binaire"
 msgid "Blocked"
 msgstr "Bloqué"
 
-#: lib/evo_dash_web/live/settings_live.ex:240
-#: lib/evo_dash_web/live/settings_live.ex:547
+#: lib/evo_dash_web/live/settings_live.ex:207
+#: lib/evo_dash_web/live/settings_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "Bootstrap"
 msgstr "Amorçage"
@@ -492,32 +492,22 @@ msgstr "Jetons mis en cache"
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:397
 #: lib/evo_dash_web/components/task_card_components.ex:129
 #: lib/evo_dash_web/live/agents_live.html.heex:646
-#: lib/evo_dash_web/live/settings_live.ex:364
-#: lib/evo_dash_web/live/system_live.ex:420
-#: lib/evo_dash_web/live/system_live.ex:459
+#: lib/evo_dash_web/live/settings_live.ex:324
+#: lib/evo_dash_web/live/system_live.ex:416
+#: lib/evo_dash_web/live/system_live.ex:460
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "Annuler"
 
-#: lib/evo_dash_web/live/tasks_live.ex:32
+#: lib/evo_dash_web/live/tasks_live.ex:36
 #, elixir-autogen, elixir-format
 msgid "Cancelled"
 msgstr "Annulé"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:940
+#: lib/evo_dash_web/live/dashboard_live.ex:965
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "Impossible de supprimer le dépôt principal."
-
-#: lib/evo_dash_web/live/system_live.ex:637
-#, elixir-autogen, elixir-format
-msgid "Cannot restart a remote node from the dashboard"
-msgstr "Impossible de redémarrer un nœud distant depuis le tableau de bord"
-
-#: lib/evo_dash_web/live/system_live.ex:692
-#, elixir-autogen, elixir-format
-msgid "Cannot stop a remote node from the dashboard"
-msgstr "Impossible d'arrêter un nœud distant depuis le tableau de bord"
 
 #: lib/evo_dash_web/components/project_components.ex:52
 #, elixir-autogen, elixir-format
@@ -549,12 +539,12 @@ msgstr "Modifications rejetées. La branche %{branch} a été supprimée."
 msgid "Chat History / Session Memory"
 msgstr "Historique de discussion / Mémoire de session"
 
-#: lib/evo_dash_web/live/system_live.ex:143
+#: lib/evo_dash_web/live/system_live.ex:133
 #, elixir-autogen, elixir-format
 msgid "Checking system status..."
 msgstr "Vérification de l'état du système…"
 
-#: lib/evo_dash_web/live/system_live.ex:134
+#: lib/evo_dash_web/live/system_live.ex:124
 #, elixir-autogen, elixir-format
 msgid "Checking..."
 msgstr "Vérification…"
@@ -564,34 +554,34 @@ msgstr "Vérification…"
 msgid "Children"
 msgstr "Enfants"
 
-#: lib/evo_dash_web/live/tasks_live.ex:227
+#: lib/evo_dash_web/live/tasks_live.ex:231
 #, elixir-autogen, elixir-format
 msgid "Clear History"
 msgstr "Effacer l'historique"
 
-#: lib/evo_dash_web/live/tasks_live.ex:226
+#: lib/evo_dash_web/live/tasks_live.ex:230
 #, elixir-autogen, elixir-format
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "Effacer tout l'historique des tâches terminées ? Cette action est irréversible."
 
-#: lib/evo_dash_web/helpers.ex:468
+#: lib/evo_dash_web/helpers.ex:467
 #: lib/evo_dash_web/live/agents_live.html.heex:588
 #: lib/evo_dash_web/live/agents_live.html.heex:612
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "Fermer"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1008
+#: lib/evo_dash_web/live/dashboard_live.ex:1033
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Commande « %{command} » terminée :\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1016
+#: lib/evo_dash_web/live/dashboard_live.ex:1041
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Commande « %{command} » échouée (code %{code}) :\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:981
+#: lib/evo_dash_web/live/dashboard_live.ex:1006
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Commande introuvable : %{command}"
@@ -608,7 +598,7 @@ msgstr "Commits"
 
 #: lib/evo_dash_web/components/archive_components.ex:181
 #: lib/evo_dash_web/components/review_components.ex:243
-#: lib/evo_dash_web/live/tasks_live.ex:30
+#: lib/evo_dash_web/live/tasks_live.ex:34
 #, elixir-autogen, elixir-format
 msgid "Completed"
 msgstr "Terminé"
@@ -618,7 +608,7 @@ msgstr "Terminé"
 msgid "Concurrency"
 msgstr "Concurrence"
 
-#: lib/evo_dash_web/live/system_live.ex:148
+#: lib/evo_dash_web/live/system_live.ex:138
 #, elixir-autogen, elixir-format
 msgid "Configuration"
 msgstr "Configuration"
@@ -628,28 +618,8 @@ msgstr "Configuration"
 msgid "Configuration file"
 msgstr "Fichier de configuration"
 
-#: lib/evo_dash_web/live/settings_live.ex:619
-#: lib/evo_dash_web/live/settings_live.ex:698
-#: lib/evo_dash_web/live/settings_live.ex:773
-#: lib/evo_dash_web/live/settings_live.ex:860
-#: lib/evo_dash_web/live/settings_live.ex:878
-#: lib/evo_dash_web/live/settings_live.ex:944
-#: lib/evo_dash_web/live/settings_live.ex:1029
-#: lib/evo_dash_web/live/settings_live.ex:1069
-#: lib/evo_dash_web/live/settings_live.ex:1125
-#: lib/evo_dash_web/live/settings_live.ex:1145
-#: lib/evo_dash_web/live/settings_live.ex:1230
-#: lib/evo_dash_web/live/settings_live.ex:1260
-#: lib/evo_dash_web/live/settings_live.ex:1288
-#: lib/evo_dash_web/live/settings_live.ex:1308
-#: lib/evo_dash_web/live/settings_live.ex:1335
-#: lib/evo_dash_web/live/settings_live.ex:1351
-#, elixir-autogen, elixir-format
-msgid "Configuration is read-only on a remote node."
-msgstr "La configuration est en lecture seule sur un nœud distant."
-
-#: lib/evo_dash_web/live/settings_live.ex:659
-#: lib/evo_dash_web/live/settings_live.ex:729
+#: lib/evo_dash_web/live/settings_live.ex:625
+#: lib/evo_dash_web/live/settings_live.ex:707
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "Configuration enregistrée avec succès."
@@ -704,24 +674,24 @@ msgstr "Configurez via l'éditeur ci-dessous"
 msgid "Configure your LLM model in the LLM category to resolve these issues."
 msgstr "Configurez votre modèle LLM dans la catégorie LLM pour résoudre ces problèmes."
 
-#: lib/evo_dash_web/live/settings_live.ex:267
+#: lib/evo_dash_web/live/settings_live.ex:233
 #, elixir-autogen, elixir-format
 msgid "Configure your SSH server in `~/.ssh/config` and set up SSH key authentication."
 msgstr "Configurez votre serveur SSH dans `~/.ssh/config` et mettez en place l'authentification par clé SSH."
 
-#: lib/evo_dash_web/live/settings_live.ex:249
-#: lib/evo_dash_web/live/settings_live.ex:1342
+#: lib/evo_dash_web/live/settings_live.ex:215
+#: lib/evo_dash_web/live/settings_live.ex:1294
 #, elixir-autogen, elixir-format
 msgid "Connect"
 msgstr "Connecter"
 
 #: lib/evo_dash_web/components/settings_components.ex:429
-#: lib/evo_dash_web/live/settings_live.ex:1604
+#: lib/evo_dash_web/live/settings_live.ex:1571
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "Connecté"
 
-#: lib/evo_dash_web/live/settings_live.ex:1605
+#: lib/evo_dash_web/live/settings_live.ex:1572
 #, elixir-autogen, elixir-format
 msgid "Connecting..."
 msgstr "Connexion en cours..."
@@ -731,22 +701,22 @@ msgstr "Connexion en cours..."
 msgid "Connection Test"
 msgstr "Test de connexion"
 
-#: lib/evo_dash_web/live/settings_live.ex:155
+#: lib/evo_dash_web/live/settings_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
 msgstr "Les données de connexion sont stockées dans `~/.config/genesis/remote_connections.toml`, séparément du fichier de configuration principal."
 
-#: lib/evo_dash_web/live/settings_live.ex:1294
+#: lib/evo_dash_web/live/settings_live.ex:1254
 #, elixir-autogen, elixir-format
 msgid "Connection deleted."
 msgstr "Connexion supprimée."
 
-#: lib/evo_dash_web/live/settings_live.ex:1300
+#: lib/evo_dash_web/live/settings_live.ex:1260
 #, elixir-autogen, elixir-format
 msgid "Connection not found."
 msgstr "Connexion introuvable."
 
-#: lib/evo_dash_web/live/settings_live.ex:1269
+#: lib/evo_dash_web/live/settings_live.ex:1233
 #, elixir-autogen, elixir-format
 msgid "Connection saved."
 msgstr "Connexion enregistrée."
@@ -761,7 +731,7 @@ msgstr "Contexte"
 msgid "Context Path"
 msgstr "Chemin de contexte"
 
-#: lib/evo_dash_web/helpers.ex:357
+#: lib/evo_dash_web/helpers.ex:356
 #, elixir-autogen, elixir-format
 msgid "Context tree detected — Evolution mode selected"
 msgstr "Arbre de contexte détecté — Mode Évolution sélectionné"
@@ -772,9 +742,9 @@ msgstr "Arbre de contexte détecté — Mode Évolution sélectionné"
 msgid "Continue from Here"
 msgstr "Continuer à partir d'ici"
 
-#: lib/evo_dash_web/helpers.ex:119
-#: lib/evo_dash_web/live/tasks_live.ex:63
-#: lib/evo_dash_web/live/tasks_live.ex:128
+#: lib/evo_dash_web/helpers.ex:118
+#: lib/evo_dash_web/live/tasks_live.ex:67
+#: lib/evo_dash_web/live/tasks_live.ex:132
 #, elixir-autogen, elixir-format
 msgid "Continued"
 msgstr "Continué"
@@ -835,12 +805,12 @@ msgstr "Créer une PR GitHub"
 msgid "Create a credentials.toml file at %{path} with your API key. Only one key is required — set the one matching your LLM provider (e.g., GOOGLE_API_KEY for Google Gemini). Alternatively, you can set API keys directly as environment variables (e.g., export GOOGLE_API_KEY=AIza...)."
 msgstr "Créez un fichier credentials.toml à %{path} avec votre clé API. Une seule clé est nécessaire — définissez celle qui correspond à votre fournisseur LLM (par exemple, GOOGLE_API_KEY pour Google Gemini). Vous pouvez également définir les clés API directement comme variables d'environnement (par exemple, export GOOGLE_API_KEY=AIza...)."
 
-#: lib/evo_dash_web/helpers.ex:525
+#: lib/evo_dash_web/helpers.ex:524
 #, elixir-autogen, elixir-format
 msgid "Creates a brand new codebase from scratch in an empty directory using your prompt."
 msgstr "Crée une toute nouvelle base de code à partir de zéro dans un répertoire vide en utilisant votre prompt."
 
-#: lib/evo_dash_web/live/system_live.ex:374
+#: lib/evo_dash_web/live/system_live.ex:364
 #, elixir-autogen, elixir-format
 msgid "Credentials Reference"
 msgstr "Référence des identifiants"
@@ -850,7 +820,7 @@ msgstr "Référence des identifiants"
 msgid "Current Commit"
 msgstr "Commit actuel"
 
-#: lib/evo_dash_web/live/settings_live.ex:935
+#: lib/evo_dash_web/live/settings_live.ex:912
 #, elixir-autogen, elixir-format
 msgid "Custom model saved."
 msgstr "Modèle personnalisé enregistré."
@@ -872,7 +842,7 @@ msgstr "Valeurs par défaut"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:114
 #: lib/evo_dash_web/components/task_card_components.ex:170
-#: lib/evo_dash_web/live/settings_live.ex:204
+#: lib/evo_dash_web/live/settings_live.ex:173
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "Supprimer"
@@ -914,7 +884,7 @@ msgstr "Description (optionnelle)"
 msgid "Details"
 msgstr "Détails"
 
-#: lib/evo_dash_web/live/settings_live.ex:229
+#: lib/evo_dash_web/live/settings_live.ex:197
 #, elixir-autogen, elixir-format
 msgid "Detecting OS"
 msgstr "Détection du système d'exploitation"
@@ -924,50 +894,50 @@ msgstr "Détection du système d'exploitation"
 msgid "Dev Commands"
 msgstr "Commandes de développement"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:563
+#: lib/evo_dash_web/live/dashboard_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
 msgstr "Le répertoire n'existe pas : %{path}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:540
+#: lib/evo_dash_web/live/dashboard_live.ex:565
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}. Create a new project instead?"
 msgstr "Le répertoire n'existe pas : %{path}. Créer un nouveau projet à la place ?"
 
-#: lib/evo_dash_web/live/system_live.ex:204
-#: lib/evo_dash_web/live/system_live.ex:248
+#: lib/evo_dash_web/live/system_live.ex:194
+#: lib/evo_dash_web/live/system_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "Disabled"
 msgstr "Désactivé"
 
-#: lib/evo_dash_web/live/settings_live.ex:215
-#: lib/evo_dash_web/live/settings_live.ex:1358
+#: lib/evo_dash_web/live/settings_live.ex:183
+#: lib/evo_dash_web/live/settings_live.ex:1306
 #, elixir-autogen, elixir-format
 msgid "Disconnect"
 msgstr "Déconnecter"
 
-#: lib/evo_dash_web/live/settings_live.ex:1608
+#: lib/evo_dash_web/live/settings_live.ex:1575
 #, elixir-autogen, elixir-format
 msgid "Disconnected"
 msgstr "Déconnecté"
 
-#: lib/evo_dash_web/live/settings_live.ex:1606
+#: lib/evo_dash_web/live/settings_live.ex:1573
 #, elixir-autogen, elixir-format
 msgid "Disconnecting..."
 msgstr "Déconnexion en cours..."
 
-#: lib/evo_dash_web/live/settings_live.ex:332
+#: lib/evo_dash_web/live/settings_live.ex:295
 #, elixir-autogen, elixir-format
 msgid "Dist Port"
 msgstr "Port de distribution"
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:104
-#: lib/evo_dash_web/live/settings_live.ex:195
+#: lib/evo_dash_web/live/settings_live.ex:165
 #, elixir-autogen, elixir-format
 msgid "Edit"
 msgstr "Modifier"
 
-#: lib/evo_dash_web/live/settings_live.ex:283
+#: lib/evo_dash_web/live/settings_live.ex:249
 #, elixir-autogen, elixir-format
 msgid "Edit Connection"
 msgstr "Modifier la connexion"
@@ -982,13 +952,13 @@ msgstr "Modifier le profil"
 msgid "Edit your config.toml file at %{path} and set the model field in a [[llm.models]] profile (e.g., model = \"anthropic:claude-sonnet-4-20250514\"). You can define multiple profiles and select one per task from the dashboard's Model dropdown. You can also adjust the model temporarily from the Settings page in the dashboard."
 msgstr "Modifiez votre fichier config.toml à %{path} et définissez le champ model dans un profil [[llm.models]] (par exemple, model = \"anthropic:claude-sonnet-4-20250514\"). Vous pouvez définir plusieurs profils et en sélectionner un par tâche depuis le menu déroulant Modèle du tableau de bord. Vous pouvez aussi ajuster le modèle temporairement depuis la page Paramètres du tableau de bord."
 
-#: lib/evo_dash_web/helpers.ex:350
+#: lib/evo_dash_web/helpers.ex:349
 #, elixir-autogen, elixir-format
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "Répertoire vide détecté — Mode Nouvelle base de code sélectionné"
 
-#: lib/evo_dash_web/live/system_live.ex:204
-#: lib/evo_dash_web/live/system_live.ex:248
+#: lib/evo_dash_web/live/system_live.ex:194
+#: lib/evo_dash_web/live/system_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "Enabled"
 msgstr "Activé"
@@ -999,7 +969,7 @@ msgstr "Activé"
 msgid "End Commit"
 msgstr "Commit de fin"
 
-#: lib/evo_dash_web/live/settings_live.ex:270
+#: lib/evo_dash_web/live/settings_live.ex:236
 #, elixir-autogen, elixir-format
 msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`)."
 msgstr "Saisissez la cible SSH (la même chaîne que vous taperiez après `ssh`, par ex. `gpu-server` ou `utilisateur@hôte`)."
@@ -1022,47 +992,37 @@ msgid "Enter your API key. It should start with"
 msgstr "Saisissez votre clé API. Elle doit commencer par"
 
 #: lib/evo_dash_web/components/task_card_components.ex:521
-#: lib/evo_dash_web/live/settings_live.ex:1607
+#: lib/evo_dash_web/live/settings_live.ex:1574
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "Erreur"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1027
+#: lib/evo_dash_web/live/dashboard_live.ex:1052
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Erreur lors de l'exécution de « %{command} » : %{error}"
 
-#: lib/evo_dash_web/live/system_live.ex:232
+#: lib/evo_dash_web/live/system_live.ex:222
 #, elixir-autogen, elixir-format
 msgid "EvoDash"
 msgstr "EvoDash"
 
-#: lib/evo_dash_web/live/system_live.ex:228
+#: lib/evo_dash_web/live/system_live.ex:218
 #, elixir-autogen, elixir-format
 msgid "EvoGit"
 msgstr "EvoGit"
-
-#: lib/evo_dash_web/live/system_live.ex:221
-#, elixir-autogen, elixir-format
-msgid "EvoX Genesis Process Tree"
-msgstr "Arbre des processus EvoX Genesis"
-
-#: lib/evo_dash_web/live/system_live/content.ex:178
-#, elixir-autogen, elixir-format
-msgid "EvoX Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
-msgstr "EvoX Genesis modélise votre base de code comme un arbre de contexte hiérarchique. Chaque répertoire possède un fichier CONTEXT.md qui agit comme un contrat spatial — documentant son objectif, sa surface d'API, ses contraintes et le routage vers les sous-répertoires. Les agents lisent ces fichiers pour comprendre la structure de la base de code et acheminer le travail vers les sous-répertoires appropriés."
 
 #: lib/evo_dash_web/components/task_form_components.ex:111
 #, elixir-autogen, elixir-format
 msgid "Evolution"
 msgstr "Évolution"
 
-#: lib/evo_dash_web/live/system_live.ex:317
+#: lib/evo_dash_web/live/system_live.ex:307
 #, elixir-autogen, elixir-format
 msgid "Example Configuration"
 msgstr "Exemple de configuration"
 
-#: lib/evo_dash_web/live/system_live.ex:331
+#: lib/evo_dash_web/live/system_live.ex:321
 #, elixir-autogen, elixir-format
 msgid "Example Usage"
 msgstr "Exemple d'utilisation"
@@ -1096,13 +1056,13 @@ msgstr "Exporter JSON"
 msgid "Extract Skills"
 msgstr "Extraire les compétences"
 
-#: lib/evo_dash_web/live/tasks_live.ex:31
+#: lib/evo_dash_web/live/tasks_live.ex:35
 #, elixir-autogen, elixir-format
 msgid "Failed"
 msgstr "Échoué"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:793
-#: lib/evo_dash_web/live/tasks_live.ex:484
+#: lib/evo_dash_web/live/dashboard_live.ex:818
+#: lib/evo_dash_web/live/tasks_live.ex:521
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "Échec de l'annulation de la tâche : %{reason}"
@@ -1128,26 +1088,26 @@ msgstr "Échec du chargement du diff pour %{path} : %{reason}"
 msgid "Failed to reject changes: %{reason}"
 msgstr "Échec du rejet des modifications : %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:805
+#: lib/evo_dash_web/live/settings_live.ex:792
 #, elixir-autogen, elixir-format
 msgid "Failed to reset key: %{reason}"
 msgstr "Échec de la réinitialisation de la clé : %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1165
+#: lib/evo_dash_web/live/settings_live.ex:1137
 #: lib/evo_dash_web/live/welcome_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "Échec de l'enregistrement de la clé API : %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:676
-#: lib/evo_dash_web/live/settings_live.ex:749
-#: lib/evo_dash_web/live/settings_live.ex:1404
+#: lib/evo_dash_web/live/settings_live.ex:647
+#: lib/evo_dash_web/live/settings_live.ex:732
+#: lib/evo_dash_web/live/settings_live.ex:1371
 #: lib/evo_dash_web/live/welcome_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "Échec de l'enregistrement de la configuration : %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1279
+#: lib/evo_dash_web/live/settings_live.ex:1243
 #, elixir-autogen, elixir-format
 msgid "Failed to save: %{reason}"
 msgstr "Échec de l'enregistrement : %{reason}"
@@ -1157,7 +1117,7 @@ msgstr "Échec de l'enregistrement : %{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "Échec du démarrage de l'extraction de compétence : %{reason}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:767
+#: lib/evo_dash_web/live/dashboard_live.ex:792
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "Échec du démarrage de la tâche : %{reason}"
@@ -1172,7 +1132,7 @@ msgstr "Le fichier n'existe pas encore"
 msgid "Files Changed"
 msgstr "Fichiers modifiés"
 
-#: lib/evo_dash_web/live/system_live.ex:208
+#: lib/evo_dash_web/live/system_live.ex:198
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation"
 msgstr "Isolation du système de fichiers"
@@ -1193,7 +1153,7 @@ msgstr "Filtrer les paramètres..."
 msgid "Finished"
 msgstr "Terminé"
 
-#: lib/evo_dash_web/live/system_live.ex:258
+#: lib/evo_dash_web/live/system_live.ex:248
 #, elixir-autogen, elixir-format
 msgid "Flake valid"
 msgstr "Flake valide"
@@ -1208,7 +1168,7 @@ msgstr "Pour les points d'accès proxy/agrégateur. Laissez vide pour les points
 msgid "For proxy/aggregator endpoints; leave empty for standard providers."
 msgstr "Pour les points d'accès proxy/agrégateur ; laisser vide pour les fournisseurs standard."
 
-#: lib/evo_dash_web/live/system_live.ex:388
+#: lib/evo_dash_web/live/system_live.ex:378
 #, elixir-autogen, elixir-format
 msgid "For security, credentials cannot be edited from this page. Edit the file directly on your system."
 msgstr "Pour des raisons de sécurité, les identifiants ne peuvent pas être modifiés depuis cette page. Modifiez le fichier directement sur votre système."
@@ -1218,12 +1178,12 @@ msgstr "Pour des raisons de sécurité, les identifiants ne peuvent pas être mo
 msgid "Foreign Repositories"
 msgstr "Dépôts externes"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:927
+#: lib/evo_dash_web/live/dashboard_live.ex:952
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "Dépôt externe « %{repo_id} » enregistré avec succès."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:954
+#: lib/evo_dash_web/live/dashboard_live.ex:979
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Dépôt externe « %{repo_id} » supprimé avec succès."
@@ -1238,7 +1198,7 @@ msgstr "Les dépôts externes sont des bases de code supplémentaires accessible
 msgid "Frequency Penalty"
 msgstr "Pénalité de fréquence"
 
-#: lib/evo_dash_web/live/system_live.ex:345
+#: lib/evo_dash_web/live/system_live.ex:335
 #, elixir-autogen, elixir-format
 msgid "Frequently Asked Questions"
 msgstr "Foire aux questions"
@@ -1251,7 +1211,7 @@ msgstr "Complet"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:604
 #: lib/evo_dash_web/live/dashboard_live.ex:240
-#: lib/evo_dash_web/live/tasks_live.ex:247
+#: lib/evo_dash_web/live/tasks_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "Objectif complet"
@@ -1286,13 +1246,13 @@ msgstr "Genesis utilise des valeurs par défaut intégrées pour la plupart des 
 msgid "Git"
 msgstr "Git"
 
-#: lib/evo_dash_web/helpers.ex:424
+#: lib/evo_dash_web/helpers.ex:423
 #: lib/evo_dash_web/live/system_live/status.ex:77
 #, elixir-autogen, elixir-format
 msgid "GitHub Username"
 msgstr "Nom d'utilisateur GitHub"
 
-#: lib/evo_dash_web/live/system_live.ex:81
+#: lib/evo_dash_web/live/system_live.ex:75
 #, elixir-autogen, elixir-format
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "Redémarrez ou arrêtez la VM Erlang en douceur. Le redémarrage détruit et relance toutes les applications ; l'arrêt éteint la VM qui devra être redémarrée manuellement. L'état en mémoire de l'environnement d'exécution sera perdu dans les deux cas."
@@ -1332,7 +1292,7 @@ msgstr "Ignorer"
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "Ignorer cette revue ? Elle sera retirée des revues en attente."
 
-#: lib/evo_dash_web/helpers.ex:120
+#: lib/evo_dash_web/helpers.ex:119
 #, elixir-autogen, elixir-format
 msgid "Ignored"
 msgstr "Ignoré"
@@ -1353,17 +1313,17 @@ msgstr "Coût d'entrée"
 msgid "Input Tokens"
 msgstr "Jetons d'entrée"
 
-#: lib/evo_dash_web/live/settings_live.ex:782
+#: lib/evo_dash_web/live/settings_live.ex:760
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
 msgstr "Chemin de clé invalide."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:500
+#: lib/evo_dash_web/live/dashboard_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "Invalid project name"
 msgstr "Nom de projet invalide"
 
-#: lib/evo_dash_web/live/system_live.ex:382
+#: lib/evo_dash_web/live/system_live.ex:372
 #, elixir-autogen, elixir-format
 msgid "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
 msgstr "Les clés du fichier credentials.toml sont chargées comme variables d'environnement au démarrage. Vous pouvez également définir les clés API directement via des variables d'environnement (par exemple, GOOGLE_API_KEY)."
@@ -1373,18 +1333,18 @@ msgstr "Les clés du fichier credentials.toml sont chargées comme variables d'e
 msgid "LLM"
 msgstr "LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:273
+#: lib/evo_dash_web/live/system_live.ex:263
 #, elixir-autogen, elixir-format
 msgid "LLM Connection"
 msgstr "Connexion LLM"
 
-#: lib/evo_dash_web/helpers.ex:422
+#: lib/evo_dash_web/helpers.ex:421
 #: lib/evo_dash_web/live/system_live/status.ex:75
 #, elixir-autogen, elixir-format
 msgid "LLM Model"
 msgstr "Modèle LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:279
+#: lib/evo_dash_web/live/system_live.ex:269
 #, elixir-autogen, elixir-format
 msgid "LLM connection testing is now available on the Settings page."
 msgstr "Le test de connexion LLM est désormais disponible sur la page Paramètres."
@@ -1429,7 +1389,7 @@ msgstr "Chargement des données de la revue…"
 msgid "Local"
 msgstr "Local"
 
-#: lib/evo_dash_web/live/settings_live.ex:319
+#: lib/evo_dash_web/live/settings_live.ex:283
 #, elixir-autogen, elixir-format
 msgid "Local Release Tarball"
 msgstr "Chemin du binaire local"
@@ -1445,7 +1405,7 @@ msgid "Manage Connections..."
 msgstr "Gérer les connexions..."
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:82
-#: lib/evo_dash_web/live/settings_live.ex:146
+#: lib/evo_dash_web/live/settings_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Manage SSH connections to remote Genesis daemons."
 msgstr "Gérer les connexions SSH aux démons Genesis distants."
@@ -1485,22 +1445,22 @@ msgstr "Échec de la fusion : %{reason}"
 msgid "Merge these changes into the current branch?"
 msgstr "Fusionner ces modifications dans la branche actuelle ?"
 
-#: lib/evo_dash_web/helpers.ex:117
-#: lib/evo_dash_web/live/tasks_live.ex:61
-#: lib/evo_dash_web/live/tasks_live.ex:126
+#: lib/evo_dash_web/helpers.ex:116
+#: lib/evo_dash_web/live/tasks_live.ex:65
+#: lib/evo_dash_web/live/tasks_live.ex:130
 #, elixir-autogen, elixir-format
 msgid "Merged"
 msgstr "Fusionné"
 
 #: lib/evo_dash_web/components/layouts.ex:216
-#: lib/evo_dash_web/helpers.ex:407
+#: lib/evo_dash_web/helpers.ex:406
 #: lib/evo_dash_web/live/settings_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "Configuration manquante"
 
-#: lib/evo_dash_web/helpers.ex:331
-#: lib/evo_dash_web/helpers.ex:338
+#: lib/evo_dash_web/helpers.ex:330
+#: lib/evo_dash_web/helpers.ex:337
 #, elixir-autogen, elixir-format
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "Mode : %{mode} | %{prompt}"
@@ -1518,7 +1478,7 @@ msgstr "Modèle"
 msgid "Model ID"
 msgstr "ID du modèle"
 
-#: lib/evo_dash_web/live/settings_live.ex:1103
+#: lib/evo_dash_web/live/settings_live.ex:1065
 #, elixir-autogen, elixir-format
 msgid "Model ID cannot be empty."
 msgstr "L'identifiant du modèle ne peut pas être vide."
@@ -1533,25 +1493,25 @@ msgstr "Nom du modèle"
 msgid "Model Profiles"
 msgstr "Profils de modèles"
 
-#: lib/evo_dash_web/live/settings_live.ex:894
-#: lib/evo_dash_web/live/settings_live.ex:959
+#: lib/evo_dash_web/live/settings_live.ex:871
+#: lib/evo_dash_web/live/settings_live.ex:931
 #: lib/evo_dash_web/live/welcome_live.ex:418
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "Le nom du modèle ne peut pas être vide."
 
-#: lib/evo_dash_web/live/settings_live.ex:1137
+#: lib/evo_dash_web/live/settings_live.ex:1094
 #, elixir-autogen, elixir-format
 msgid "Model profile deleted."
 msgstr "Profil de modèle supprimé."
 
-#: lib/evo_dash_web/live/settings_live.ex:1100
+#: lib/evo_dash_web/live/settings_live.ex:1062
 #, elixir-autogen, elixir-format
 msgid "Model profile saved."
 msgstr "Profil de modèle enregistré."
 
-#: lib/evo_dash_web/live/settings_live.ex:870
-#: lib/evo_dash_web/live/settings_live.ex:1016
+#: lib/evo_dash_web/live/settings_live.ex:852
+#: lib/evo_dash_web/live/settings_live.ex:988
 #, elixir-autogen, elixir-format
 msgid "Model selected and saved."
 msgstr "Modèle sélectionné et enregistré."
@@ -1562,12 +1522,12 @@ msgstr "Modèle sélectionné et enregistré."
 msgid "N/A"
 msgstr "N/D"
 
-#: lib/evo_dash_web/live/settings_live.ex:293
+#: lib/evo_dash_web/live/settings_live.ex:259
 #, elixir-autogen, elixir-format
 msgid "Name"
 msgstr "Nom"
 
-#: lib/evo_dash_web/live/settings_live.ex:1046
+#: lib/evo_dash_web/live/settings_live.ex:1013
 #, elixir-autogen, elixir-format
 msgid "New profile added — fill in the details and save."
 msgstr "Nouveau profil ajouté — remplissez les détails et enregistrez."
@@ -1577,19 +1537,19 @@ msgstr "Nouveau profil ajouté — remplissez les détails et enregistrez."
 msgid "Nix"
 msgstr "Nix"
 
-#: lib/evo_dash_web/live/system_live.ex:241
+#: lib/evo_dash_web/live/system_live.ex:231
 #, elixir-autogen, elixir-format
 msgid "Nix Environment"
 msgstr "Environnement Nix"
 
-#: lib/evo_dash_web/helpers.ex:353
+#: lib/evo_dash_web/helpers.ex:352
 #, elixir-autogen, elixir-format
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr "Aucun CONTEXT.md trouvé — Mode Base de code existante sélectionné"
 
 #: lib/evo_dash_web/components/task_card_components.ex:569
 #: lib/evo_dash_web/components/task_card_components.ex:578
-#: lib/evo_dash_web/helpers.ex:121
+#: lib/evo_dash_web/helpers.ex:120
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr "Aucune modification"
@@ -1664,12 +1624,12 @@ msgstr "Aucun préfixe (hexadécimal)"
 msgid "No project selected"
 msgstr "Aucun projet sélectionné"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:669
+#: lib/evo_dash_web/live/dashboard_live.ex:694
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "Aucun projet sélectionné. Veuillez d'abord ouvrir un projet."
 
-#: lib/evo_dash_web/live/settings_live.ex:259
+#: lib/evo_dash_web/live/settings_live.ex:225
 #, elixir-autogen, elixir-format
 msgid "No remote connections configured."
 msgstr "Aucune connexion distante configurée."
@@ -1684,7 +1644,7 @@ msgstr "Pas de bac à sable sur cette plateforme. Les commandes s'exécuteront d
 msgid "No settings found matching \"%{query}\""
 msgstr "Aucun paramètre trouvé pour \"%{query}\""
 
-#: lib/evo_dash_web/live/tasks_live.ex:150
+#: lib/evo_dash_web/live/tasks_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "No tasks found"
 msgstr "Aucune tâche trouvée"
@@ -1722,7 +1682,7 @@ msgid "Objective"
 msgstr "Objectif"
 
 #: lib/evo_dash_web/components/project_components.ex:165
-#: lib/evo_dash_web/helpers.ex:116
+#: lib/evo_dash_web/helpers.ex:115
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr "Ouvrir"
@@ -1764,7 +1724,7 @@ msgstr "Coût de sortie"
 msgid "Output Tokens"
 msgstr "Jetons de sortie"
 
-#: lib/evo_dash_web/live/tasks_live.ex:219
+#: lib/evo_dash_web/live/tasks_live.ex:223
 #, elixir-autogen, elixir-format
 msgid "Page %{current} of %{total}"
 msgstr "Page %{current} sur %{total}"
@@ -1774,7 +1734,7 @@ msgstr "Page %{current} sur %{total}"
 msgid "Parent"
 msgstr "Parent"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:494
+#: lib/evo_dash_web/live/dashboard_live.ex:519
 #, elixir-autogen, elixir-format
 msgid "Parent directory does not exist: %{path}"
 msgstr "Le répertoire parent n'existe pas : %{path}"
@@ -1784,30 +1744,25 @@ msgstr "Le répertoire parent n'existe pas : %{path}"
 msgid "Path"
 msgstr "Chemin"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:886
+#: lib/evo_dash_web/live/dashboard_live.ex:911
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "Le chemin ne peut pas être vide."
 
-#: lib/evo_dash_web/live/system_live.ex:67
+#: lib/evo_dash_web/live/system_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "Pause Scheduler"
 msgstr "Mettre le planificateur en pause"
 
-#: lib/evo_dash_web/live/system_live.ex:52
-#, elixir-autogen, elixir-format
-msgid "Pause/resume is local-only — switch to the remote node to control its scheduler."
-msgstr "La pause/reprise est locale uniquement — passez au nœud distant pour contrôler son planificateur."
-
 #: lib/evo_dash_web/live/agents_live.html.heex:53
-#: lib/evo_dash_web/live/tasks_live.ex:29
+#: lib/evo_dash_web/live/tasks_live.ex:33
 #, elixir-autogen, elixir-format
 msgid "Pending"
 msgstr "En attente"
 
 #: lib/evo_dash_web/components/layouts.ex:160
-#: lib/evo_dash_web/live/tasks_live.ex:60
-#: lib/evo_dash_web/live/tasks_live.ex:125
+#: lib/evo_dash_web/live/tasks_live.ex:64
+#: lib/evo_dash_web/live/tasks_live.ex:129
 #, elixir-autogen, elixir-format
 msgid "Pending Review"
 msgstr "En attente de révision"
@@ -1844,7 +1799,7 @@ msgstr "Les limites de processus ne sont disponibles que sur Linux avec systemd-
 msgid "Profile ID"
 msgstr "ID du profil"
 
-#: lib/evo_dash_web/live/settings_live.ex:1078
+#: lib/evo_dash_web/live/settings_live.ex:1040
 #, elixir-autogen, elixir-format
 msgid "Profile id cannot be empty."
 msgstr "L'identifiant du profil ne peut pas être vide."
@@ -1859,7 +1814,7 @@ msgstr "Racine du projet"
 msgid "Project Settings"
 msgstr "Paramètres du projet"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:513
+#: lib/evo_dash_web/live/dashboard_live.ex:538
 #, elixir-autogen, elixir-format
 msgid "Project created: %{path}"
 msgstr "Projet créé : %{path}"
@@ -1904,7 +1859,7 @@ msgstr "Raccourcis rapides pour les commandes de développement courantes. Cliqu
 msgid "Quick-select a model:"
 msgstr "Sélection rapide d'un modèle :"
 
-#: lib/evo_dash_web/live/system_live.ex:135
+#: lib/evo_dash_web/live/system_live.ex:125
 #, elixir-autogen, elixir-format
 msgid "Re-check"
 msgstr "Re-vérifier"
@@ -1929,20 +1884,15 @@ msgstr "Rejeter les modifications"
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "Rejeter et supprimer ces modifications ? Cette action est irréversible."
 
-#: lib/evo_dash_web/helpers.ex:118
-#: lib/evo_dash_web/live/tasks_live.ex:62
-#: lib/evo_dash_web/live/tasks_live.ex:127
+#: lib/evo_dash_web/helpers.ex:117
+#: lib/evo_dash_web/live/tasks_live.ex:66
+#: lib/evo_dash_web/live/tasks_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "Rejeté"
 
-#: lib/evo_dash_web/live/settings_live.ex:98
-#, elixir-autogen, elixir-format
-msgid "Remote Configuration — Read Only"
-msgstr "Configuration distante — Lecture seule"
-
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:30
-#: lib/evo_dash_web/live/settings_live.ex:142
+#: lib/evo_dash_web/live/settings_live.ex:123
 #, elixir-autogen, elixir-format
 msgid "Remote Connections"
 msgstr "Connexions distantes"
@@ -1952,27 +1902,22 @@ msgstr "Connexions distantes"
 msgid "Remote Node — Active Agents"
 msgstr "Nœud distant — Agents actifs"
 
-#: lib/evo_dash_web/live/settings_live.ex:345
+#: lib/evo_dash_web/live/settings_live.ex:307
 #, elixir-autogen, elixir-format
 msgid "Remote Path"
 msgstr "Chemin distant"
-
-#: lib/evo_dash_web/live/settings_live.ex:164
-#, elixir-autogen, elixir-format
-msgid "Remote connection management is not available when viewing a remote node."
-msgstr "La gestion des connexions distantes n'est pas disponible lors de la visualisation d'un nœud distant."
 
 #: lib/evo_dash_web/live/dashboard_live.ex:150
 #, elixir-autogen, elixir-format
 msgid "Repo"
 msgstr "Dépôt"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:902
+#: lib/evo_dash_web/live/dashboard_live.ex:927
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "Le dépôt « %{id} » est déjà enregistré."
 
-#: lib/evo_dash_web/live/dashboard_live.ex:946
+#: lib/evo_dash_web/live/dashboard_live.ex:971
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "Dépôt « %{id} » introuvable."
@@ -1982,7 +1927,7 @@ msgstr "Dépôt « %{id} » introuvable."
 msgid "Repo ID"
 msgstr "ID du dépôt"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:883
+#: lib/evo_dash_web/live/dashboard_live.ex:908
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "L'ID du dépôt ne peut pas être vide."
@@ -1993,7 +1938,7 @@ msgstr "L'ID du dépôt ne peut pas être vide."
 msgid "Repo: %{repo_id}"
 msgstr "Dépôt : %{repo_id}"
 
-#: lib/evo_dash_web/live/system_live.ex:179
+#: lib/evo_dash_web/live/system_live.ex:169
 #, elixir-autogen, elixir-format
 msgid "Required Tools"
 msgstr "Outils requis"
@@ -2003,17 +1948,17 @@ msgstr "Outils requis"
 msgid "Required for OpenAI-compatible providers."
 msgstr "Requis pour les fournisseurs compatibles OpenAI."
 
-#: lib/evo_dash_web/live/tasks_live.ex:94
+#: lib/evo_dash_web/live/tasks_live.ex:98
 #, elixir-autogen, elixir-format
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: lib/evo_dash_web/live/settings_live.ex:798
+#: lib/evo_dash_web/live/settings_live.ex:785
 #, elixir-autogen, elixir-format
 msgid "Reset %{key} to default."
 msgstr "Réinitialiser %{key} par défaut."
 
-#: lib/evo_dash_web/live/tasks_live.ex:92
+#: lib/evo_dash_web/live/tasks_live.ex:96
 #, elixir-autogen, elixir-format
 msgid "Reset all filters"
 msgstr "Réinitialiser tous les filtres"
@@ -2023,7 +1968,7 @@ msgstr "Réinitialiser tous les filtres"
 msgid "Reset to default"
 msgstr "Réinitialiser par défaut"
 
-#: lib/evo_dash_web/live/system_live.ex:210
+#: lib/evo_dash_web/live/system_live.ex:200
 #, elixir-autogen, elixir-format
 msgid "Resource limits"
 msgstr "Limites de ressources"
@@ -2043,21 +1988,16 @@ msgstr "Ressources"
 msgid "Response"
 msgstr "Réponse"
 
-#: lib/evo_dash_web/live/system_live.ex:96
-#: lib/evo_dash_web/live/system_live.ex:429
+#: lib/evo_dash_web/live/system_live.ex:88
+#: lib/evo_dash_web/live/system_live.ex:424
 #, elixir-autogen, elixir-format
 msgid "Restart System"
 msgstr "Redémarrer le système"
 
-#: lib/evo_dash_web/live/system_live.ex:404
+#: lib/evo_dash_web/live/system_live.ex:394
 #, elixir-autogen, elixir-format
 msgid "Restart System?"
 msgstr "Redémarrer le système ?"
-
-#: lib/evo_dash_web/live/system_live.ex:92
-#, elixir-autogen, elixir-format
-msgid "Restart is local-only — this controls the local dashboard VM, not the remote node."
-msgstr "Le redémarrage est local uniquement — cela contrôle la VM du tableau de bord local, pas le nœud distant."
 
 #: lib/evo_dash_web/components/archive_components.ex:96
 #: lib/evo_dash_web/components/review_components.ex:161
@@ -2066,7 +2006,7 @@ msgstr "Le redémarrage est local uniquement — cela contrôle la VM du tableau
 msgid "Result"
 msgstr "Résultat"
 
-#: lib/evo_dash_web/live/system_live.ex:67
+#: lib/evo_dash_web/live/system_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "Resume Scheduler"
 msgstr "Reprendre le planificateur"
@@ -2129,7 +2069,7 @@ msgstr "Exécuter"
 
 #: lib/evo_dash_web/components/layouts.ex:160
 #: lib/evo_dash_web/live/agents_live.html.heex:57
-#: lib/evo_dash_web/live/tasks_live.ex:28
+#: lib/evo_dash_web/live/tasks_live.ex:32
 #, elixir-autogen, elixir-format
 msgid "Running"
 msgstr "En cours"
@@ -2139,33 +2079,28 @@ msgstr "En cours"
 msgid "Running agents continue. No new slots or agents will be granted until resumed."
 msgstr "Les agents en cours continuent. Aucun nouveau créneau ou agent ne sera accordé jusqu'à la reprise."
 
-#: lib/evo_dash_web/live/settings_live.ex:306
+#: lib/evo_dash_web/live/settings_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "SSH Target"
 msgstr "Cible SSH"
 
-#: lib/evo_dash_web/live/settings_live.ex:273
+#: lib/evo_dash_web/live/settings_live.ex:239
 #, elixir-autogen, elixir-format
 msgid "SSH port, identity file, and other options are read from your SSH config — no need to enter them here."
 msgstr "Le port SSH, le fichier d'identité et les autres options sont lus depuis votre configuration SSH — inutile de les saisir ici."
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:24
-#: lib/evo_dash_web/live/system_live.ex:194
+#: lib/evo_dash_web/live/system_live.ex:184
 #, elixir-autogen, elixir-format
 msgid "Sandbox"
 msgstr "Bac à sable"
-
-#: lib/evo_dash_web/live/system_live/content.ex:173
-#, elixir-autogen, elixir-format
-msgid "Sandbox mode controls how EvoX Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
-msgstr "Le mode bac à sable contrôle comment EvoX Genesis isole le code généré par LLM. Sous Linux, il utilise systemd-run pour un bac à sable complet (isolation du système de fichiers, limites de ressources, filtrage des appels système). Sous macOS, il utilise sandbox-exec pour l'isolation du système de fichiers uniquement. « auto » active le backend approprié pour votre plateforme. « enabled » force l'activation du bac à sable. « disabled » le désactive complètement — à utiliser avec précaution. Les limites de ressources (Linux uniquement) peuvent être configurées dans config.toml sous [sandbox.resources] et [sandbox.process]."
 
 #: lib/evo_dash_web/live/system_live/content.ex:188
 #, elixir-autogen, elixir-format
 msgid "Sandbox resource limits can be set in your config.toml under the [sandbox.resources] section (aggregate limits) and [sandbox.process] section (per-process limits). Resource limits are only available on Linux with systemd-run. On macOS, sandbox-exec provides filesystem isolation only. You can adjust settings from the Settings page in the dashboard."
 msgstr "Les limites de ressources du bac à sable peuvent être définies dans votre config.toml sous la section [sandbox.resources] (limites globales) et [sandbox.process] (limites par processus). Les limites de ressources sont uniquement disponibles sous Linux avec systemd-run. Sous macOS, sandbox-exec fournit uniquement l'isolation du système de fichiers. Vous pouvez ajuster les paramètres depuis la page Paramètres du tableau de bord."
 
-#: lib/evo_dash_web/live/settings_live.ex:368
+#: lib/evo_dash_web/live/settings_live.ex:328
 #, elixir-autogen, elixir-format
 msgid "Save"
 msgstr "Enregistrer"
@@ -2206,17 +2141,12 @@ msgstr "Planificateur actif"
 msgid "Scheduler Paused"
 msgstr "Planificateur en pause"
 
-#: lib/evo_dash_web/live/system_live.ex:570
-#, elixir-autogen, elixir-format
-msgid "Scheduler controls are local-only. Switch to the remote node to control its scheduler."
-msgstr "Les commandes du planificateur sont locales uniquement. Passez au nœud distant pour contrôler son planificateur."
-
 #: lib/evo_dash_web/live/system_live.ex:595
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "Planificateur en pause. Les agents en cours continuent, mais aucun nouveau créneau ou agent ne sera accordé."
 
-#: lib/evo_dash_web/live/system_live.ex:584
+#: lib/evo_dash_web/live/system_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "Planificateur repris. De nouveaux agents et créneaux sont accordés."
@@ -2226,7 +2156,7 @@ msgstr "Planificateur repris. De nouveaux agents et créneaux sont accordés."
 msgid "Search Results"
 msgstr "Résultats de recherche"
 
-#: lib/evo_dash_web/live/tasks_live.ex:79
+#: lib/evo_dash_web/live/tasks_live.ex:83
 #, elixir-autogen, elixir-format
 msgid "Search by task ID, prompt, or objective..."
 msgstr "Rechercher par ID de tâche, prompt ou objectif..."
@@ -2251,7 +2181,7 @@ msgstr "Sélectionnez un agent pour voir les détails"
 msgid "Select which model profile to use for this task"
 msgstr "Sélectionnez le profil de modèle à utiliser pour cette tâche"
 
-#: lib/evo_dash_web/live/settings_live.ex:1214
+#: lib/evo_dash_web/live/settings_live.ex:1185
 #, elixir-autogen, elixir-format
 msgid "Selected profile has no model configured."
 msgstr "Le profil sélectionné n'a aucun modèle configuré."
@@ -2277,7 +2207,7 @@ msgstr "Définir le modèle"
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "Définir votre identité utilisateur pour les commits Git et la collaboration."
 
-#: lib/evo_dash_web/live/settings_live.ex:228
+#: lib/evo_dash_web/live/settings_live.ex:196
 #, elixir-autogen, elixir-format
 msgid "Setting permissions"
 msgstr "Définition des permissions"
@@ -2292,7 +2222,7 @@ msgstr "Paramètres"
 msgid "Short description of what this repo does"
 msgstr "Brève description de l'utilité de ce dépôt"
 
-#: lib/evo_dash_web/live/tasks_live.ex:179
+#: lib/evo_dash_web/live/tasks_live.ex:183
 #, elixir-autogen, elixir-format
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "Affichage des tâches %{start} à %{end} sur %{total}"
@@ -2341,7 +2271,7 @@ msgstr "Commit de départ"
 msgid "Starting Node"
 msgstr "Nœud de départ"
 
-#: lib/evo_dash_web/live/settings_live.ex:230
+#: lib/evo_dash_web/live/settings_live.ex:198
 #, elixir-autogen, elixir-format
 msgid "Starting daemon"
 msgstr "Démarrage du démon"
@@ -2356,21 +2286,16 @@ msgstr "Statut"
 msgid "Status Legend"
 msgstr "Légende des statuts"
 
-#: lib/evo_dash_web/live/system_live.ex:106
+#: lib/evo_dash_web/live/system_live.ex:96
 #: lib/evo_dash_web/live/system_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Stop System"
 msgstr "Arrêter le système"
 
-#: lib/evo_dash_web/live/system_live.ex:443
+#: lib/evo_dash_web/live/system_live.ex:438
 #, elixir-autogen, elixir-format
 msgid "Stop System?"
 msgstr "Arrêter le système ?"
-
-#: lib/evo_dash_web/live/system_live.ex:102
-#, elixir-autogen, elixir-format
-msgid "Stop is local-only — this controls the local dashboard VM, not the remote node."
-msgstr "L'arrêt est local uniquement — cela contrôle la VM du tableau de bord local, pas le nœud distant."
 
 #: lib/evo_dash_web/live/components/node_selector_component.ex:26
 #, elixir-autogen, elixir-format
@@ -2383,39 +2308,33 @@ msgstr "Changer de nœud"
 msgid "System"
 msgstr "Système"
 
-#: lib/evo_dash_web/live/system_live.ex:78
+#: lib/evo_dash_web/live/system_live.ex:72
 #, elixir-autogen, elixir-format
 msgid "System Control"
 msgstr "Contrôle du système"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:35
-#: lib/evo_dash_web/live/system_live.ex:301
+#: lib/evo_dash_web/live/system_live.ex:291
 #, elixir-autogen, elixir-format
 msgid "System Dashboard"
 msgstr "Tableau de bord système"
 
-#: lib/evo_dash_web/live/system_live.ex:118
+#: lib/evo_dash_web/live/system_live.ex:108
 #, elixir-autogen, elixir-format
 msgid "System Self-Check"
 msgstr "Auto-vérification du système"
 
-#: lib/evo_dash_web/live/system_live.ex:654
+#: lib/evo_dash_web/live/system_live.ex:642
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "Le système redémarre. Veuillez patienter pendant que la VM Erlang se relance."
 
-#: lib/evo_dash_web/live/system_live.ex:710
+#: lib/evo_dash_web/live/system_live.ex:685
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "Le système s'arrête. La VM Erlang va s'éteindre et devra être redémarrée manuellement."
 
-#: lib/evo_dash_web/live/system_live.ex:610
-#: lib/evo_dash_web/live/system_live.ex:666
-#, elixir-autogen, elixir-format
-msgid "System restart/stop is local-only — this controls the local dashboard VM, not the remote node."
-msgstr "Le redémarrage/arrêt du système est local uniquement — cela contrôle la VM du tableau de bord local, pas le nœud distant."
-
-#: lib/evo_dash_web/live/system_live.ex:120
+#: lib/evo_dash_web/live/system_live.ex:110
 #, elixir-autogen, elixir-format
 msgid "System status and health overview"
 msgstr "Aperçu de l'état et de la santé du système"
@@ -2436,7 +2355,7 @@ msgid "Task ID"
 msgstr "ID de tâche"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:229
-#: lib/evo_dash_web/live/tasks_live.ex:236
+#: lib/evo_dash_web/live/tasks_live.ex:240
 #, elixir-autogen, elixir-format
 msgid "Task Result"
 msgstr "Résultat de la tâche"
@@ -2461,7 +2380,7 @@ msgstr "Tâche introuvable. Elle a peut-être été supprimée."
 msgid "Tasks"
 msgstr "Tâches"
 
-#: lib/evo_dash_web/live/tasks_live.ex:155
+#: lib/evo_dash_web/live/tasks_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "Les tâches apparaîtront ici une fois que vous les aurez lancées depuis le tableau de bord."
@@ -2477,7 +2396,7 @@ msgstr "Température"
 msgid "Test Connection"
 msgstr "Tester la connexion"
 
-#: lib/evo_dash_web/live/system_live.ex:284
+#: lib/evo_dash_web/live/system_live.ex:274
 #, elixir-autogen, elixir-format
 msgid "Test in Settings"
 msgstr "Tester dans les paramètres"
@@ -2497,7 +2416,7 @@ msgstr "L'ID d'une tâche précédente à poursuivre. Injecte le contexte de la 
 msgid "The LLM provider name"
 msgstr "Le nom du fournisseur LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:452
+#: lib/evo_dash_web/live/system_live.ex:453
 #, elixir-autogen, elixir-format
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "La VM va s'arrêter et devra être redémarrée manuellement. Tout l'état en mémoire de l'environnement d'exécution (tâches en cours, état du planificateur, agents en cours) sera perdu. Cette action est irréversible."
@@ -2539,7 +2458,7 @@ msgstr "Réflexion"
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "Cette branche n'existe plus. Vous pouvez la rejeter avec Ignorer."
 
-#: lib/evo_dash_web/live/system_live.ex:408
+#: lib/evo_dash_web/live/system_live.ex:403
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
 msgstr "Cela redémarrera la VM Erlang en douceur. Toutes les applications seront détruites et relancées."
@@ -2624,12 +2543,12 @@ msgstr "Troncature"
 msgid "Try a different search term."
 msgstr "Essayez un autre terme de recherche."
 
-#: lib/evo_dash_web/live/tasks_live.ex:153
+#: lib/evo_dash_web/live/tasks_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Try adjusting your filters or search query."
 msgstr "Essayez de modifier vos filtres ou votre requête de recherche."
 
-#: lib/evo_dash_web/helpers.ex:172
+#: lib/evo_dash_web/helpers.ex:171
 #, elixir-autogen, elixir-format
 msgid "Turn %{turn}"
 msgstr "Tour %{turn}"
@@ -2639,10 +2558,10 @@ msgstr "Tour %{turn}"
 msgid "Type a model string or use Quick Setup above"
 msgstr "Saisissez une chaîne de modèle ou utilisez la configuration rapide ci-dessus"
 
-#: lib/evo_dash_web/helpers.ex:122
-#: lib/evo_dash_web/helpers.ex:323
+#: lib/evo_dash_web/helpers.ex:121
+#: lib/evo_dash_web/helpers.ex:322
 #: lib/evo_dash_web/live/dashboard_live.ex:137
-#: lib/evo_dash_web/live/settings_live.ex:1609
+#: lib/evo_dash_web/live/settings_live.ex:1576
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "Inconnu"
@@ -2652,15 +2571,15 @@ msgstr "Inconnu"
 msgid "Unknown Repo"
 msgstr "Dépôt inconnu"
 
-#: lib/evo_dash_web/live/settings_live.ex:838
-#: lib/evo_dash_web/live/settings_live.ex:891
-#: lib/evo_dash_web/live/settings_live.ex:956
+#: lib/evo_dash_web/live/settings_live.ex:824
+#: lib/evo_dash_web/live/settings_live.ex:868
+#: lib/evo_dash_web/live/settings_live.ex:928
 #: lib/evo_dash_web/live/welcome_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "Fournisseur inconnu."
 
-#: lib/evo_dash_web/live/settings_live.ex:227
+#: lib/evo_dash_web/live/settings_live.ex:195
 #, elixir-autogen, elixir-format
 msgid "Uploading binary"
 msgstr "Téléversement du binaire"
@@ -2670,13 +2589,13 @@ msgstr "Téléversement du binaire"
 msgid "User"
 msgstr "Utilisateur"
 
-#: lib/evo_dash_web/helpers.ex:535
+#: lib/evo_dash_web/helpers.ex:534
 #, elixir-autogen, elixir-format
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "Utilise un seul agent descendant pour modifier la base de code selon votre objectif."
 
-#: lib/evo_dash_web/live/settings_live.ex:689
-#: lib/evo_dash_web/live/settings_live.ex:764
+#: lib/evo_dash_web/live/settings_live.ex:660
+#: lib/evo_dash_web/live/settings_live.ex:747
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "La validation a échoué. Veuillez corriger les erreurs ci-dessous."
@@ -2712,7 +2631,7 @@ msgstr "Voir la PR GitHub"
 msgid "View PR"
 msgstr "Voir la PR"
 
-#: lib/evo_dash_web/live/system_live.ex:303
+#: lib/evo_dash_web/live/system_live.ex:293
 #, elixir-autogen, elixir-format
 msgid "View system metrics, processes, and application telemetry"
 msgstr "Consulter les métriques système, les processus et la télémétrie des applications"
@@ -2757,17 +2676,12 @@ msgstr "Script d'initialisation de l'arbre de travail"
 msgid "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
 msgstr "Vous visualisez les agents s'exécutant sur un nœud distant. Le lancement de tâches et la gestion de projet sont des fonctionnalités du tableau de bord local."
 
-#: lib/evo_dash_web/live/settings_live.ex:101
-#, elixir-autogen, elixir-format
-msgid "You are viewing the configuration of a remote node. Changes cannot be saved from here — use config push to update the remote node."
-msgstr "Vous consultez la configuration d'un nœud distant. Les modifications ne peuvent pas être enregistrées depuis ici — utilisez config push pour mettre à jour le nœud distant."
-
 #: lib/evo_dash_web/components/settings_components.ex:349
 #, elixir-autogen, elixir-format
 msgid "Your API key is configured and ready to use."
 msgstr "Votre clé API est configurée et prête à l'emploi."
 
-#: lib/evo_dash_web/helpers.ex:474
+#: lib/evo_dash_web/helpers.ex:473
 #: lib/evo_dash_web/live/agents_live.html.heex:593
 #: lib/evo_dash_web/live/agents_live.html.heex:617
 #: lib/evo_dash_web/live/agents_live.html.heex:657
@@ -2780,7 +2694,7 @@ msgstr "fermer"
 msgid "directories"
 msgstr "répertoires"
 
-#: lib/evo_dash_web/live/settings_live.ex:299
+#: lib/evo_dash_web/live/settings_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "e.g. GPU Server"
 msgstr "ex. Serveur GPU"
@@ -2836,7 +2750,7 @@ msgstr "ex. : abc1234 ou HEAD"
 msgid "empty"
 msgstr "vide"
 
-#: lib/evo_dash_web/live/system_live.ex:254
+#: lib/evo_dash_web/live/system_live.ex:244
 #, elixir-autogen, elixir-format
 msgid "flake.nix"
 msgstr "flake.nix"
@@ -2856,7 +2770,7 @@ msgstr "genesis.toml"
 msgid "genesis.toml found — using project settings"
 msgstr "genesis.toml trouvé — utilisation des paramètres du projet"
 
-#: lib/evo_dash_web/live/settings_live.ex:312
+#: lib/evo_dash_web/live/settings_live.ex:277
 #, elixir-autogen, elixir-format
 msgid "gpu-server or user@host"
 msgstr "gpu-server ou utilisateur@hôte"
@@ -2868,7 +2782,7 @@ msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
 #: lib/evo_dash_web/components/layouts.ex:265
-#: lib/evo_dash_web/helpers.ex:208
+#: lib/evo_dash_web/helpers.ex:207
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "à l'instant"
@@ -3258,12 +3172,12 @@ msgstr "Saisissez votre clé API pour %{provider}."
 msgid "Extra Config (JSON)"
 msgstr "Config supplémentaire (JSON)"
 
-#: lib/evo_dash_web/live/settings_live.ex:1109
+#: lib/evo_dash_web/live/settings_live.ex:1071
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be a JSON object (map)."
 msgstr "La config supplémentaire doit être un objet JSON (map)."
 
-#: lib/evo_dash_web/live/settings_live.ex:1106
+#: lib/evo_dash_web/live/settings_live.ex:1068
 #, elixir-autogen, elixir-format
 msgid "Extra Config must be valid JSON."
 msgstr "La config supplémentaire doit être un JSON valide."
@@ -3329,7 +3243,7 @@ msgstr "Ouvrir les paramètres"
 msgid "Optional — leave empty and click Execute to initialize an existing codebase"
 msgstr "Facultatif — laissez vide et cliquez sur Exécuter pour initialiser une base de code existante"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:889
+#: lib/evo_dash_web/live/dashboard_live.ex:914
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "Le chemin doit être absolu."
@@ -3349,12 +3263,12 @@ msgstr "Prompt — décrivez ce que vous souhaitez construire"
 msgid "Provider Options (JSON)"
 msgstr "Options fournisseur (JSON)"
 
-#: lib/evo_dash_web/live/settings_live.ex:1115
+#: lib/evo_dash_web/live/settings_live.ex:1077
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be a JSON object (map)."
 msgstr "Les options du fournisseur doivent être un objet JSON (map)."
 
-#: lib/evo_dash_web/live/settings_live.ex:1112
+#: lib/evo_dash_web/live/settings_live.ex:1074
 #, elixir-autogen, elixir-format
 msgid "Provider Options must be valid JSON."
 msgstr "Les options du fournisseur doivent être un JSON valide."
@@ -3569,3 +3483,38 @@ msgstr "Z.ai (Zhipu AI)"
 #, elixir-autogen, elixir-format
 msgid "xAI"
 msgstr "xAI"
+
+#: lib/evo_dash_web/live/system_live.ex:211
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Genesis Process Tree"
+msgstr "Arbre des processus EvoX Genesis"
+
+#: lib/evo_dash_web/live/system_live/content.ex:178
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Genesis models your codebase as a hierarchical Context Tree. Each directory has a CONTEXT.md file that acts as a spatial contract — documenting its purpose, API surface, constraints, and routing to child directories. Agents read these files to understand the codebase structure and route work to the appropriate subdirectories."
+msgstr "EvoX Genesis modélise votre base de code comme un arbre de contexte hiérarchique. Chaque répertoire possède un fichier CONTEXT.md qui agit comme un contrat spatial — documentant son objectif, sa surface d'API, ses contraintes et le routage vers les sous-répertoires. Les agents lisent ces fichiers pour comprendre la structure de la base de code et acheminer le travail vers les sous-répertoires appropriés."
+
+#: lib/evo_dash_web/live/system_live.ex:625
+#, elixir-autogen, elixir-format
+msgid "Remote node is restarting. Please wait for it to come back up, then reconnect."
+msgstr ""
+
+#: lib/evo_dash_web/live/system_live.ex:667
+#, elixir-autogen, elixir-format
+msgid "Remote node is stopping. It will need to be started again on the remote host."
+msgstr ""
+
+#: lib/evo_dash_web/live/system_live/content.ex:173
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Sandbox mode controls how Genesis isolates LLM-generated code. On Linux, it uses systemd-run for full sandboxing (filesystem isolation, resource limits, syscall filtering). On macOS, it uses sandbox-exec for filesystem isolation only. \"auto\" enables the appropriate backend for your platform. \"enabled\" forces sandboxing on. \"disabled\" turns it off entirely — use with caution. Resource limits (Linux only) can be configured in config.toml under [sandbox.resources] and [sandbox.process]."
+msgstr "Le mode bac à sable contrôle comment EvoX Genesis isole le code généré par LLM. Sous Linux, il utilise systemd-run pour un bac à sable complet (isolation du système de fichiers, limites de ressources, filtrage des appels système). Sous macOS, il utilise sandbox-exec pour l'isolation du système de fichiers uniquement. « auto » active le backend approprié pour votre plateforme. « enabled » force l'activation du bac à sable. « disabled » le désactive complètement — à utiliser avec précaution. Les limites de ressources (Linux uniquement) peuvent être configurées dans config.toml sous [sandbox.resources] et [sandbox.process]."
+
+#: lib/evo_dash_web/live/system_live.ex:399
+#, elixir-autogen, elixir-format, fuzzy
+msgid "This will gracefully restart the remote node's Erlang VM. All applications on the remote node will be torn down and restarted."
+msgstr "Cela redémarrera la VM Erlang en douceur. Toutes les applications seront détruites et relancées."
+
+#: lib/evo_dash_web/live/system_live.ex:443
+#, elixir-autogen, elixir-format, fuzzy
+msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
+msgstr "Cela arrêtera la VM Erlang en douceur. Toutes les applications seront arrêtées dans l'ordre."
