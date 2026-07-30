@@ -756,10 +756,6 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
-  # Backward compat / defensive: atom repo_ids from older ETS data.
-  defp repo_display_name(repo_id) when is_atom(repo_id),
-    do: gettext("Repo: %{repo_id}", repo_id: Atom.to_string(repo_id))
-
   defp repo_display_name(_), do: gettext("Unknown Repo")
 
   defp commit_bg_class(agent) do
