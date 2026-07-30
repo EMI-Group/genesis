@@ -248,7 +248,8 @@ defmodule EvoDashWeb.Layouts do
 
   # Extract a display label for a task: objective > prompt > truncated task ID
   defp task_label(task) do
-    label = task.opts[:objective] || task.opts[:prompt] || String.slice(task.id, 0, 8)
+    opts = Map.get(task, :opts, []) || []
+    label = opts[:objective] || opts[:prompt] || String.slice(task.id, 0, 8)
     if String.length(label) > 30 do
       String.slice(label, 0, 30) <> "..."
     else
@@ -287,7 +288,7 @@ defmodule EvoDashWeb.Layouts do
 
     grouped =
       Enum.group_by(all, fn task ->
-        case task.opts[:path] do
+        case Map.get(task, :project_path) do
           nil -> nil
           path -> Path.basename(path)
         end

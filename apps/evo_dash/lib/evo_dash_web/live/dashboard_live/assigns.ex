@@ -106,14 +106,27 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
 
   @doc """
   Returns the current task list for the socket, scoped to the active project
-  path if one is set. Uses lightweight summary queries that omit heavy JSON
-  fields (logs, usage, archive_metadata).
+  path if one is set. Strips heavy fields (logs, usage, archive_metadata) for
+  the main task card display. Task cards need the full `opts` field (objective,
+  mode, etc.), so we use `list_tasks` + manual strip rather than the lightweight
+  `list_tasks_summary` (which omits opts).
   """
   def current_tasks(socket) do
-    if socket.assigns.active_project_path do
-      TaskRegistry.list_tasks_summary_by_path(socket.assigns.active_project_path)
-    else
-      TaskRegistry.list_tasks_summary()
-    end
+    tasks =
+      if socket.assigns.active_project_path do
+        TaskRegistry.list_tasks_by_path(socket.assigns.active_project_path)
+      else
+        TaskRegistry.list_tasks()
+      end
+
+    Enum.map(tasks, &strip_heavy_fields/1)
+  end
+
+  @doc """
+  Strips heavy JSON fields (logs, usage, archive_metadata) from a task struct,
+  returning a lightweight copy suitable for the main task card list.
+  """
+  def strip_heavy_fields(task) do
+    %{task | logs: [], usage: nil, archive_metadata: nil}
   end
 end
