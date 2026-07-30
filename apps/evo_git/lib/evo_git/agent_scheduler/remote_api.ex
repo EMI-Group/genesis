@@ -198,19 +198,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     model_profiles =
       case raw_model_profiles do
         [] ->
-          legacy_model =
-            case Map.get(config, :llm) do
-              llm when is_map(llm) -> Map.get(llm, :model)
-              _ -> nil
-            end
-
-          [
-            %{
-              id: "default",
-              model: legacy_model,
-              concurrency: Map.get(scheduler, :max_concurrency, 3)
-            }
-          ]
+          [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
 
         profiles ->
           profiles

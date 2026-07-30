@@ -389,7 +389,6 @@ defmodule EvoGit.AgentScheduler do
     } = config
 
     %{
-      max_concurrency: max_concurrency,
       max_tool_concurrency: max_tool_concurrency,
       agent_max_retries: agent_max_retries,
       max_agent_depth: max_depth,
@@ -408,15 +407,7 @@ defmodule EvoGit.AgentScheduler do
       case raw_model_profiles do
         [] ->
           # Legacy path: build a single "default" profile from flat config
-          legacy_model = config[:llm] |> Map.get(:model)
-
-          [
-            %{
-              id: "default",
-              model: legacy_model,
-              concurrency: max_concurrency
-            }
-          ]
+          [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
 
         profiles ->
           profiles
