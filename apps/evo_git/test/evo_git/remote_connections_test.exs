@@ -150,34 +150,23 @@ defmodule EvoGit.RemoteConnectionsTest do
     end
   end
 
-  describe "backward compatibility" do
-    test "migrates old host field to ssh_target (host only)" do
-      assert {:ok, target} = EvoGit.RemoteConnections.save(%{host: "example.com"})
-
-      assert target.ssh_target == "example.com"
-      refute Map.has_key?(target, :host)
-      refute Map.has_key?(target, :user)
-      refute Map.has_key?(target, :port)
-      refute Map.has_key?(target, :identity_file)
+  describe "old field rejection" do
+    test "rejects old host field — requires ssh_target" do
+      assert {:error, :missing_ssh_target} =
+               EvoGit.RemoteConnections.save(%{host: "example.com"})
     end
 
-    test "migrates old host+user fields to ssh_target (user@host)" do
-      assert {:ok, target} =
+    test "rejects old host+user fields — requires ssh_target" do
+      assert {:error, :missing_ssh_target} =
                EvoGit.RemoteConnections.save(%{host: "example.com", user: "alice"})
-
-      assert target.ssh_target == "alice@example.com"
     end
 
-    test "migrates old host+user+port fields, ignoring port" do
-      assert {:ok, target} =
+    test "rejects old host+user+port fields — requires ssh_target" do
+      assert {:error, :missing_ssh_target} =
                EvoGit.RemoteConnections.save(%{host: "example.com", user: "bob", port: 2222})
-
-      assert target.ssh_target == "bob@example.com"
-      # port is not stored in the new schema
-      refute Map.has_key?(target, :port)
     end
 
-    test "prefers ssh_target over old host field when both present" do
+    test "ignores old host/user fields when ssh_target is present" do
       assert {:ok, target} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "new@example.com",
