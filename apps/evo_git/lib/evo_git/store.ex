@@ -215,6 +215,22 @@ defmodule EvoGit.Store do
     GenServer.call(store, :select_cleanup_info)
   end
 
+  @doc """
+  Returns lightweight task summaries for all tasks — only columns needed for
+  the dashboard sidebar listing. No heavy JSON fields (logs, usage, opts,
+  archive_metadata) are decoded. Returns a list of plain maps.
+  """
+  def select_tasks_summary(store \\ __MODULE__) do
+    GenServer.call(store, :select_tasks_summary)
+  end
+
+  @doc """
+  Same as select_tasks_summary/1 but filtered to a specific project_path.
+  """
+  def select_tasks_summary_by_path(store \\ __MODULE__, project_path) do
+    GenServer.call(store, {:select_tasks_summary_by_path, project_path})
+  end
+
   ## Public API — Projects
 
   @doc "Inserts or replaces a project. Validates that path is present."
@@ -566,6 +582,59 @@ defmodule EvoGit.Store do
         {:ok, %{rows: rows}} ->
           Enum.map(rows, fn [id, finished_at] ->
             %{id: id, finished_at: Codec.decode_datetime(finished_at)}
+          end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: reads only id, status, review_status, result, started_at,
+  # finished_at, type, project_path. No heavy JSON fields (logs, usage, opts,
+  # archive_metadata) are decoded.
+  @impl true
+  def handle_call(:select_tasks_summary, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path FROM tasks", []) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path] ->
+            %{
+              id: id,
+              status: Codec.decode_atom(status),
+              review_status: Codec.decode_atom(review_status),
+              result: Codec.decode_result(result),
+              started_at: Codec.decode_datetime(started_at),
+              finished_at: Codec.decode_datetime(finished_at),
+              type: Codec.decode_atom(type),
+              project_path: project_path
+            }
+          end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call({:select_tasks_summary_by_path, project_path}, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path FROM tasks WHERE project_path = ?1", [project_path]) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path] ->
+            %{
+              id: id,
+              status: Codec.decode_atom(status),
+              review_status: Codec.decode_atom(review_status),
+              result: Codec.decode_result(result),
+              started_at: Codec.decode_datetime(started_at),
+              finished_at: Codec.decode_datetime(finished_at),
+              type: Codec.decode_atom(type),
+              project_path: project_path
+            }
           end)
 
         _ ->
