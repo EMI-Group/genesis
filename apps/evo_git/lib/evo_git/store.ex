@@ -42,7 +42,7 @@ defmodule EvoGit.Store do
 
   require Logger
 
-  alias EvoGit.Store.{Codec, Schema}
+  alias EvoGit.Store.{Codec, Queries, Schema}
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -391,7 +391,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, task_select_sql() <> " WHERE id = ?1", [task_id]) do
+      case XqliteNIF.query(state.conn, Queries.task_select_sql() <> " WHERE id = ?1", [task_id]) do
         {:ok, %{rows: [row | _]}} -> Codec.decode_task(row)
         {:ok, %{rows: []}} -> nil
       end
@@ -417,7 +417,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call(:select_all_tasks, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, task_select_sql(), []) do
+      case XqliteNIF.query(state.conn, Queries.task_select_sql(), []) do
         {:ok, %{rows: rows}} -> Enum.map(rows, &Codec.decode_task/1)
       end
 
@@ -433,15 +433,15 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:safe_select_paginated_tasks, opts}, _from, state) do
     filters = Keyword.get(opts, :filters, [])
-    {where_clause, where_params} = build_where(filters)
-    limit = clamp_limit(Keyword.get(opts, :limit))
-    offset = clamp_offset(Keyword.get(opts, :offset))
+    {where_clause, where_params} = Queries.build_where(filters)
+    limit = Queries.clamp_limit(Keyword.get(opts, :limit))
+    offset = Queries.clamp_offset(Keyword.get(opts, :offset))
 
     limit_idx = length(where_params) + 1
     offset_idx = length(where_params) + 2
 
     select_sql =
-      task_select_sql() <> where_clause <>
+      Queries.task_select_sql() <> where_clause <>
         " ORDER BY started_at DESC LIMIT ?" <> Integer.to_string(limit_idx) <>
         " OFFSET ?" <> Integer.to_string(offset_idx)
 
@@ -537,7 +537,7 @@ defmodule EvoGit.Store do
   # Lightweight write: updates only the specified columns for a task.
   @impl true
   def handle_call({:update_task_columns, task_id, columns}, _from, state) do
-    {set_clauses, values} = build_update_set(columns, 1)
+    {set_clauses, values} = Queries.build_update_set(columns, 1)
 
     {:ok, _} =
       XqliteNIF.execute(
@@ -603,7 +603,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_project, path}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, project_select_sql() <> " WHERE path = ?1", [path]) do
+      case XqliteNIF.query(state.conn, Queries.project_select_sql() <> " WHERE path = ?1", [path]) do
         {:ok, %{rows: [row | _]}} -> Codec.decode_project(row)
         {:ok, %{rows: []}} -> nil
       end
@@ -620,7 +620,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call(:select_all_projects, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, project_select_sql(), []) do
+      case XqliteNIF.query(state.conn, Queries.project_select_sql(), []) do
         {:ok, %{rows: rows}} -> Enum.map(rows, &Codec.decode_project/1)
       end
 
@@ -700,57 +700,11 @@ defmodule EvoGit.Store do
 
   ## Private — SQL builders
 
-  defp task_select_sql do
-    "SELECT #{Enum.join(Codec.task_columns(), ", ")} FROM tasks"
-  end
-
-  defp project_select_sql do
-    "SELECT #{Enum.join(Codec.project_columns(), ", ")} FROM projects"
-  end
-
   defp table_columns("tasks"), do: Codec.task_columns()
   defp table_columns("projects"), do: Codec.project_columns()
 
   defp pk_column("tasks"), do: "id"
   defp pk_column("projects"), do: "path"
-
-  # Builds the SET clause and value list for a targeted UPDATE from a keyword
-  # list of column names to values. Each value is encoded through the
-  # appropriate Codec.encode_* function based on column semantics:
-  # atoms, datetimes, lists/maps get encoded; scalars pass through as-is.
-  defp build_update_set(columns, start_idx) do
-    {clauses, values, _idx} =
-      Enum.reduce(columns, {[], [], start_idx}, fn {col, value}, {clauses, values, idx} ->
-        encoded = encode_column_value(col, value)
-        clause = "#{col} = ?#{idx}"
-        {[clause | clauses], [encoded | values], idx + 1}
-      end)
-
-    {Enum.join(Enum.reverse(clauses), ", "), Enum.reverse(values)}
-  end
-
-  # Encodes a column value for an UPDATE SET clause. Uses the same Codec
-  # functions as encode_task for consistency.
-  defp encode_column_value(_col, nil), do: nil
-
-  defp encode_column_value(:status, value), do: Codec.encode_atom(value)
-  defp encode_column_value(:type, value), do: Codec.encode_atom(value)
-  defp encode_column_value(:review_status, value), do: Codec.encode_atom(value)
-  defp encode_column_value(:started_at, value), do: Codec.encode_datetime(value)
-  defp encode_column_value(:finished_at, value), do: Codec.encode_datetime(value)
-  defp encode_column_value(:logs, value), do: Codec.encode_logs(value)
-  defp encode_column_value(:result, value), do: Codec.encode_result(value)
-  defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
-  defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
-  defp encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
-  defp encode_column_value(:project_path, value), do: value
-  defp encode_column_value(:branch_name, value), do: value
-  defp encode_column_value(:agent_count, value), do: value
-  defp encode_column_value(:lease_expires_at, value), do: value
-  defp encode_column_value(:model_id, value), do: value
-  defp encode_column_value(:base_sha, value), do: value
-  defp encode_column_value(:commit_sha, value), do: value
-  defp encode_column_value(_col, value), do: value
 
   # Reads only the status column for a task id. Returns the decoded atom status
   # or nil if the row doesn't exist. Uses the same XqliteNIF.query pattern as
@@ -817,110 +771,6 @@ defmodule EvoGit.Store do
   defp count_table(conn, table) do
     {:ok, %{rows: [[count]]}} = XqliteNIF.query(conn, "SELECT COUNT(*) FROM #{table}", [])
     count
-  end
-
-  ## Private — Pagination clamping helpers
-
-  # Ensures limit is a positive integer (default 50). Non-integer or
-  # non-positive values fall back to the default.
-  defp clamp_limit(nil), do: 50
-  defp clamp_limit(n) when is_integer(n) and n > 0, do: n
-  defp clamp_limit(_), do: 50
-
-  # Ensures offset is a non-negative integer (default 0). Non-integer or
-  # negative values fall back to 0.
-  defp clamp_offset(nil), do: 0
-  defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
-  defp clamp_offset(_), do: 0
-
-  ## Private — WHERE clause builder for filtered pagination
-
-  # Builds a SQL WHERE clause (with leading space) and an ordered param list
-  # from the filters keyword list. Returns `{"", []}` when no filters apply.
-  #
-  # Filters:
-  #   - :status         — atom/string status or "all" (default "all")
-  #   - :project_path   — path string or "all" (default "all"); matches the
-  #                       `path` key embedded in the JSON opts column
-  #   - :review_status  — "all", "pending", "merged", "rejected", "continued"
-  #   - :search         — non-empty search string; matches id or opts JSON text
-  #
-  # Placeholders use incremental ?N indexing so LIMIT/OFFSET can append their
-  # own placeholders after the WHERE params.
-  defp build_where(filters) do
-    # status filter
-    {clauses, params, idx} =
-      case Keyword.get(filters, :status, "all") do
-        "all" ->
-          {[], [], 1}
-
-        status ->
-          {["status = ?1"], [status], 2}
-      end
-
-    # project_path filter — matches the denormalized project_path column
-    {clauses, params, idx} =
-      case Keyword.get(filters, :project_path, "all") do
-        "all" ->
-          {clauses, params, idx}
-
-        path ->
-          {clauses ++ ["project_path = ?" <> Integer.to_string(idx)],
-           params ++ [path], idx + 1}
-      end
-
-    # review_status filter ("pending" is a composite of completed + null review + branch)
-    {clauses, params, idx} =
-      case Keyword.get(filters, :review_status, "all") do
-        "all" ->
-          {clauses, params, idx}
-
-        "pending" ->
-          # Completed tasks with no review status whose result contains a
-          # branch_name (meaning they're awaiting review).
-          c1 = "status = ?" <> Integer.to_string(idx)
-          c2 = "review_status IS NULL"
-          c3 = "branch_name IS NOT NULL"
-
-          {clauses ++ [c1, c2, c3],
-           params ++ ["completed"], idx + 1}
-
-        rs ->
-          {clauses ++ ["review_status = ?" <> Integer.to_string(idx)], params ++ [rs], idx + 1}
-      end
-
-    # search filter — matches id, raw opts JSON text, or project_path
-    {clauses, params, _idx} =
-      case Keyword.get(filters, :search) do
-        nil ->
-          {clauses, params, idx}
-
-        "" ->
-          {clauses, params, idx}
-
-        search ->
-          pat = "%#{escape_like(search)}%"
-          c1 = "id LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"
-          c2 = "opts LIKE ?" <> Integer.to_string(idx + 1) <> " ESCAPE '\\'"
-          c3 = "project_path LIKE ?" <> Integer.to_string(idx + 2) <> " ESCAPE '\\'"
-          {clauses ++ ["(#{c1} OR #{c2} OR #{c3})"], params ++ [pat, pat, pat], idx + 3}
-      end
-
-    case clauses do
-      [] -> {"", []}
-      _ -> {" WHERE " <> Enum.join(clauses, " AND "), params}
-    end
-  end
-
-  # Escapes the SQL LIKE-special characters (`%`, `_`, `\`) by prefixing them
-  # with a backslash. Used together with `ESCAPE '\'` on LIKE clauses so that
-  # user-supplied values (e.g. project paths containing underscores) are matched
-  # literally instead of being interpreted as wildcards.
-  defp escape_like(value) do
-    value
-    |> String.replace("\\", "\\\\")
-    |> String.replace("%", "\\%")
-    |> String.replace("_", "\\_")
   end
 
   ## Private — Safe select (quarantine bad rows)
