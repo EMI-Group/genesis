@@ -42,7 +42,7 @@ defmodule EvoGit.Store do
 
   require Logger
 
-  alias EvoGit.Store.Codec
+  alias EvoGit.Store.{Codec, Schema}
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -314,8 +314,8 @@ defmodule EvoGit.Store do
 
     case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
       {:ok, conn} ->
-        create_tables(conn)
-        migrate_schema(conn)
+        Schema.create_tables(conn)
+        Schema.migrate_schema(conn)
 
         # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
@@ -697,111 +697,6 @@ defmodule EvoGit.Store do
   end
 
   ## GenServer — Periodic memory cleanup
-
-  ## Private — Schema creation
-
-  defp create_tables(conn) do
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        """
-        CREATE TABLE IF NOT EXISTS tasks (
-          id TEXT PRIMARY KEY,
-          type TEXT,
-          status TEXT NOT NULL,
-          opts TEXT,
-          started_at TEXT,
-          finished_at TEXT,
-          logs TEXT,
-          result TEXT,
-          review_status TEXT,
-          usage TEXT,
-          agent_count INTEGER,
-          base_sha TEXT,
-          commit_sha TEXT,
-          archive_metadata TEXT,
-          lease_expires_at INTEGER,
-          model_id TEXT,
-          project_path TEXT,
-          branch_name TEXT
-        )
-        """,
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        """
-        CREATE TABLE IF NOT EXISTS projects (
-          path TEXT PRIMARY KEY,
-          name TEXT,
-          last_opened_at TEXT
-        )
-        """,
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE TABLE IF NOT EXISTS tasks_quarantine (id TEXT PRIMARY KEY, data TEXT)",
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE TABLE IF NOT EXISTS projects_quarantine (id TEXT PRIMARY KEY, data TEXT)",
-        []
-      )
-
-    # Indexes for common query patterns (idempotent — IF NOT EXISTS).
-    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)", [])
-    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_finished_at ON tasks(finished_at)", [])
-    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_lease_expires_at ON tasks(lease_expires_at)", [])
-    {:ok, _} = XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_project_path ON tasks(project_path)", [])
-
-    :ok
-  end
-
-  ## Private — Schema migration
-
-  # Idempotent schema migration: adds the `lease_expires_at` column to the tasks
-  # table if it doesn't already exist (handles databases created before the
-  # column was introduced). Safe to run on every init, including fresh DBs where
-  # CREATE TABLE already includes the column.
-  defp migrate_schema(conn) do
-    columns = existing_columns(conn, "tasks")
-
-    if "lease_expires_at" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN lease_expires_at INTEGER", [])
-    end
-
-    if "model_id" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN model_id TEXT", [])
-    end
-
-    if "project_path" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN project_path TEXT", [])
-    end
-
-    if "branch_name" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN branch_name TEXT", [])
-    end
-
-    :ok
-  end
-
-  defp existing_columns(conn, table) do
-    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "PRAGMA table_info(#{table})", [])
-    # PRAGMA table_info returns rows of [cid, name, type, notnull, dflt_value, pk]
-    Enum.map(rows, fn [_cid, name | _] -> name end)
-  end
 
   ## Private — SQL builders
 
