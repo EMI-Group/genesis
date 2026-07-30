@@ -661,12 +661,12 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:node, :cookie],
         type: :string,
-        default: "genesis_remote_cookie",
+        default: nil,
         validation: [],
         category: :node,
         sub_category: nil,
         description:
-          "The Erlang magic cookie for distribution authentication. Must match the cookie used by remote nodes you want to connect to."
+          "The Erlang magic cookie for distribution authentication. Auto-generated during the first remote bootstrap. Must match the cookie used by remote nodes you want to connect to. Defaults to nil — a secure random cookie is generated on first use when bootstrapping an SSH remote connection."
       },
       %{
         key_path: [:node, :dist_port],

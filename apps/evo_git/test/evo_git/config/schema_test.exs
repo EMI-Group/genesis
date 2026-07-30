@@ -189,7 +189,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.node.enabled == false
       assert defaults.node.node_name == "genesis@127.0.0.1"
       assert defaults.node.shortnames == false
-      assert defaults.node.cookie == "genesis_remote_cookie"
+      assert is_nil(defaults.node.cookie)
       assert defaults.node.dist_port == 9000
       assert defaults.node.start_epmd == false
     end
