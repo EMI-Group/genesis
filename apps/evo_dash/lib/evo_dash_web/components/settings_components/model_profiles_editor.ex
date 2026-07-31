@@ -486,6 +486,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     {provider_str, id_str, base_url_str, extra_str}
   end
 
+  defp model_model_fields(model) when is_binary(model) do
+    case String.split(model, ":", parts: 2) do
+      [provider, id] -> {provider, id, "", ""}
+      [_only] -> {"", model, "", ""}
+    end
+  end
+
   defp model_model_fields(_), do: {"", "", "", ""}
 
   # Builds a compact summary string of generation params, e.g.
