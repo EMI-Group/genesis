@@ -218,7 +218,8 @@ defmodule EvoGit.Store do
   @doc """
   Returns lightweight task summaries for all tasks — only columns needed for
   the dashboard sidebar listing. No heavy JSON fields (logs, usage, opts,
-  archive_metadata) are decoded. Returns a list of plain maps.
+  archive_metadata) are decoded. Returns a list of plain maps with an :opts key
+  (decoded keyword list containing :objective and :prompt).
   """
   def select_tasks_summary(store \\ __MODULE__) do
     GenServer.call(store, :select_tasks_summary)
@@ -592,14 +593,14 @@ defmodule EvoGit.Store do
   end
 
   # Lightweight query: reads only id, status, review_status, result, started_at,
-  # finished_at, type, project_path. No heavy JSON fields (logs, usage, opts,
+  # finished_at, type, project_path, opts. No heavy JSON fields (logs, usage,
   # archive_metadata) are decoded.
   @impl true
   def handle_call(:select_tasks_summary, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path FROM tasks", []) do
+      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts FROM tasks", []) do
         {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path] ->
+          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path, opts] ->
             %{
               id: id,
               status: Codec.decode_atom(status),
@@ -608,7 +609,8 @@ defmodule EvoGit.Store do
               started_at: Codec.decode_datetime(started_at),
               finished_at: Codec.decode_datetime(finished_at),
               type: Codec.decode_atom(type),
-              project_path: project_path
+              project_path: project_path,
+              opts: Codec.decode_opts(opts)
             }
           end)
 
@@ -622,9 +624,9 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:select_tasks_summary_by_path, project_path}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path FROM tasks WHERE project_path = ?1", [project_path]) do
+      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts FROM tasks WHERE project_path = ?1", [project_path]) do
         {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path] ->
+          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path, opts] ->
             %{
               id: id,
               status: Codec.decode_atom(status),
@@ -633,7 +635,8 @@ defmodule EvoGit.Store do
               started_at: Codec.decode_datetime(started_at),
               finished_at: Codec.decode_datetime(finished_at),
               type: Codec.decode_atom(type),
-              project_path: project_path
+              project_path: project_path,
+              opts: Codec.decode_opts(opts)
             }
           end)
 
