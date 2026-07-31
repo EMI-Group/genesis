@@ -88,12 +88,19 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   keys and correctly-typed values.
 
   Reads the structured model fields `provider`, `model_id`, and `base_url`
-  (instead of the flat single `model` string) and composes a ReqLLM-native
-  map model spec `%{provider: atom, id: string}` with `base_url` included only
-  when provided/non-empty.
+  (instead of the flat single `model` string) and produces the `:model` value
+  in one of two formats:
+
+  - Compact STRING form `"provider:model_id"` (or just `model_id` when the
+    provider is empty) when there are no genuine overrides — no `base_url`
+    and no `extra` JSON. This is the default stored format for profiles saved
+    without overrides.
+  - ReqLLM-native MAP spec `%{provider: atom, id: string}` (+ `:base_url`
+    and/or `:extra`) when a custom `base_url` or `extra` JSON override is
+    present.
 
   Returns `{:ok, profile_map}` on success, or `{:error, reason_string}` when
-  validation fails (model_id required, provider must be a known catalog entry).
+  validation fails (model_id required, invalid extra/provider_options JSON).
   """
   def parse_model_profile_params(params, id) do
     provider_str = String.trim(params["provider"] || "")
@@ -124,6 +131,8 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
         # Parse extra JSON config
         extra_raw = String.trim(params["extra"] || "")
+        extra_present? = extra_raw != ""
+
         spec_result =
           if extra_raw == "" do
             {:ok, spec}
@@ -155,10 +164,23 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
           end
 
         case {spec_result, provider_options_result} do
-          {{:ok, spec}, {:ok, provider_options}} ->
+          {{:ok, final_spec}, {:ok, provider_options}} ->
+            # Determine the final :model value. When there are no genuine
+            # overrides (no base_url, no extra JSON) store the compact STRING
+            # form `"provider:model_id"` (or just `model_id` for an empty
+            # provider). Otherwise keep the ReqLLM-native map spec (`final_spec`
+            # carries :extra when present). provider_options is a profile-level
+            # field (sibling of temperature) and never forces the map form.
+            model_value =
+              if base_url == "" and not extra_present? do
+                if provider_str == "", do: model_id, else: "#{provider_str}:#{model_id}"
+              else
+                final_spec
+              end
+
             profile =
               %{id: id}
-              |> Map.put(:model, spec)
+              |> Map.put(:model, model_value)
               |> maybe_put_int(:concurrency, params["concurrency"], 3)
               |> maybe_put_float(:temperature, params["temperature"])
               |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
