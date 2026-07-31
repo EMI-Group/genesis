@@ -297,6 +297,4 @@ defmodule EvoDashWeb.TaskFormComponents do
     model = Map.get(profile, :model) || Map.get(profile, "model")
     model_display(model)
   end
-
-  defp profile_model_label(_), do: ""
 end
