@@ -61,12 +61,23 @@ defmodule EvoDashWeb.Layouts do
       <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden">
       </div>
 
-      <!-- Sidebar -->
+      <!-- Sidebar
+        NOTE: `overflow-visible!` (important) is deliberate. The SidebarCollapse
+        hook (assets/js/hooks/sidebar_collapse.js) re-applies `overflow-hidden`
+        in the EXPANDED state on every mount/update, which clips the SSH
+        node-selector dropdown (w-72 = 288px) at the expanded sidebar's edge
+        (w-60 = 240px) — the main body then appears to cover the SSH switch.
+        The !important modifier pins overflow to visible so dropdown menus
+        (node selector, language, theme) are never clipped. The sidebar is a
+        z-50 stacking context above the main content (z-0), so overflowing
+        menus paint above the main body. If the hook is fixed at the source
+        (stop toggling overflow-hidden on expand), revert this to plain
+        `overflow-visible`. -->
       <aside
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible"
+        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
@@ -250,6 +261,7 @@ defmodule EvoDashWeb.Layouts do
   defp task_label(task) do
     opts = Map.get(task, :opts, []) || []
     label = opts[:objective] || opts[:prompt] || String.slice(task.id, 0, 8)
+
     if String.length(label) > 30 do
       String.slice(label, 0, 30) <> "..."
     else
@@ -262,6 +274,7 @@ defmodule EvoDashWeb.Layouts do
 
   defp format_elapsed(dt) do
     diff = DateTime.diff(DateTime.utc_now(), dt)
+
     cond do
       diff < 30 -> gettext("just now")
       diff < 60 -> "#{diff}s ago"
