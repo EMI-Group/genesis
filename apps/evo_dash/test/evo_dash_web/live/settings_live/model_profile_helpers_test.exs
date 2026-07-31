@@ -142,4 +142,81 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
              "incomplete draft should be dropped even with a map model spec"
     end
   end
+
+  describe "parse_model_profile_params/2 serialization format" do
+    test "stores compact string form when no overrides exist" do
+      params = %{
+        "provider" => "deepseek",
+        "model_id" => "deepseek-v4-pro",
+        "base_url" => "",
+        "extra" => ""
+      }
+
+      assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+      assert profile.model == "deepseek:deepseek-v4-pro"
+    end
+
+    test "stores bare model string when provider is empty and no overrides exist" do
+      params = %{"provider" => "", "model_id" => "gpt-4o", "base_url" => "", "extra" => ""}
+
+      assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+      assert profile.model == "gpt-4o"
+    end
+
+    test "keeps map spec with base_url when a base_url override is present" do
+      params = %{
+        "provider" => "deepseek",
+        "model_id" => "deepseek-v4-pro",
+        "base_url" => "https://custom.example.com/v1",
+        "extra" => ""
+      }
+
+      assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert %{provider: :deepseek, id: "deepseek-v4-pro", base_url: "https://custom.example.com/v1"} =
+               profile.model
+    end
+
+    test "keeps map spec with extra when extra JSON is present" do
+      params = %{
+        "provider" => "deepseek",
+        "model_id" => "deepseek-v4-pro",
+        "base_url" => "",
+        "extra" => ~s({"reasoning_effort": "high"})
+      }
+
+      assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert %{provider: :deepseek, id: "deepseek-v4-pro"} = profile.model
+      assert profile.model.extra == %{"reasoning_effort" => "high"}
+    end
+
+    test "round-trips a legacy provider:model string back to the compact string form" do
+      # Simulates the edit form pre-fill for a profile whose :model is the
+      # compact string "provider:model" — the form splits on the first colon
+      # (in the component) and re-saving with no overrides must restore it.
+      model = "deepseek:deepseek-v4-pro"
+      [provider, model_id] = String.split(model, ":", parts: 2)
+      params = %{"provider" => provider, "model_id" => model_id, "base_url" => "", "extra" => ""}
+
+      assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+      assert profile.model == model
+    end
+
+    test "model ids containing colons survive the round-trip (first-colon-only split)" do
+      model = "openai:gpt-4o:extended"
+      [provider, model_id] = String.split(model, ":", parts: 2)
+      params = %{"provider" => provider, "model_id" => model_id, "base_url" => "", "extra" => ""}
+
+      assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+      assert profile.model == model
+    end
+
+    test "returns error when model_id is empty" do
+      params = %{"provider" => "deepseek", "model_id" => "", "base_url" => "", "extra" => ""}
+
+      assert {:error, "model_id_empty"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+    end
+  end
 end
