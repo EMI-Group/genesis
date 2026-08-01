@@ -17,6 +17,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           {gettext("Changed Files")}
         </h3>
       </div>
+
       <%= for node <- build_file_tree(@files) do %>
         <.tree_node node={node} depth={0} selected_file={@selected_file} />
       <% end %>
@@ -39,12 +40,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         <span class="dir-name font-mono text-xs truncate">
           {@node.name}/
         </span>
+
         <span class="dir-stats">
           {ngettext("%{count} file", "%{count} files", @node.file_count, count: @node.file_count)}
           <span class="text-success">+{@node.additions}</span>
           <span class="text-error">-{@node.deletions}</span>
         </span>
       </summary>
+
       <%= for child <- @node.children do %>
         <.tree_node node={child} depth={@depth + 1} selected_file={@selected_file} />
       <% end %>
@@ -99,15 +102,18 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
             <.icon
               name={file_status_icon(file.status)}
               class={"size-3.5 #{file_status_color(file.status)}"}
-            />
-            <span class="truncate flex-1">{file.path}</span>
+            /> <span class="truncate flex-1">{file.path}</span>
             <span class="text-[10px] text-success font-mono">+{file.additions}</span>
             <span class="text-[10px] text-error font-mono">-{file.deletions}</span>
           </button>
+
           <%= if Map.get(@expanded_files, file.path, false) do %>
             <div class="overflow-x-auto">
-              <% context_level = Map.get(@file_context_levels, file.path, 3) %>
-              {render_diff_content(file, file.path, context_level)}
+              <% context_level = Map.get(@file_context_levels, file.path, 3) %> {render_diff_content(
+                file,
+                file.path,
+                context_level
+              )}
             </div>
           <% end %>
         </div>
@@ -153,10 +159,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
           <div class="flex-1 min-w-0">
             <h1 class="text-lg font-bold leading-tight">{@commit.message}</h1>
+
             <div class="flex flex-wrap items-center gap-2 mt-2">
               <span class="badge badge-sm badge-ghost px-2 py-1.5 font-mono">
-                <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
-                {String.slice(@commit.sha, 0..7)}
+                <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" /> {String.slice(
+                  @commit.sha,
+                  0..7
+                )}
               </span>
               <span class="text-sm text-base-content/50">{@commit.author_name}</span>
               <span class="text-sm text-base-content/30">·</span>
@@ -239,6 +248,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <%= if length(@segments) > 0 and @context_level != :all do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} />
           <% end %>
+
           <%= for segment <- @segments do %>
             <%= case segment do %>
               <% {:pre_hunk, pre_lines} -> %>
@@ -251,11 +261,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                 <div class="diff-split-hunk">
                   <span class="diff-line-content" phx-no-format>{hunk_line.content}</span>
                 </div>
+
                 <%= for pair <- pairs do %>
                   <.diff_split_row pair={pair} highlighted={@highlighted} />
                 <% end %>
             <% end %>
           <% end %>
+
           <%= if show_bottom_expand do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} />
           <% end %>
@@ -305,10 +317,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
     ~H"""
     <div class={@row_class}>
-      <span class="diff-split-gutter diff-split-gutter-left">{@left_num}</span>
-      <span class="diff-split-cell diff-split-cell-left" phx-no-format>{@left_content}</span>
-      <span class="diff-split-gutter diff-split-gutter-right">{@right_num}</span>
-      <span class="diff-split-cell diff-split-cell-right" phx-no-format>{@right_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-left">{@left_num}</span> <span
+        class="diff-split-cell diff-split-cell-left"
+        phx-no-format
+      >{@left_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-right">{@right_num}</span> <span
+        class="diff-split-cell diff-split-cell-right"
+        phx-no-format
+      >{@right_content}</span>
     </div>
     """
   end

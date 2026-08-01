@@ -89,7 +89,10 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
     do: gettext("Configure the local Genesis node identity and distribution settings.")
 
   def category_description(:system),
-    do: gettext("Pause/resume the scheduler, restart or stop the system, and run system self-checks.")
+    do:
+      gettext(
+        "Pause/resume the scheduler, restart or stop the system, and run system self-checks."
+      )
 
   def category_description(:help),
     do: gettext("Usage guides, example configuration, and frequently asked questions.")

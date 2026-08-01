@@ -32,16 +32,28 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   def update_runtime_from_file_config(file_config, socket) do
     updates =
       []
-      |> SettingsUtils.maybe_add_kw(:max_concurrency, get_in(file_config, [:scheduler, :max_concurrency]))
+      |> SettingsUtils.maybe_add_kw(
+        :max_concurrency,
+        get_in(file_config, [:scheduler, :max_concurrency])
+      )
       |> SettingsUtils.maybe_add_kw(
         :max_tool_concurrency,
         get_in(file_config, [:scheduler, :max_tool_concurrency])
       )
-      |> SettingsUtils.maybe_add_kw(:agent_max_retries, get_in(file_config, [:scheduler, :agent_max_retries]))
-      |> SettingsUtils.maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
+      |> SettingsUtils.maybe_add_kw(
+        :agent_max_retries,
+        get_in(file_config, [:scheduler, :agent_max_retries])
+      )
+      |> SettingsUtils.maybe_add_kw(
+        :max_agent_depth,
+        get_in(file_config, [:scheduler, :max_agent_depth])
+      )
       |> SettingsUtils.maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
       |> SettingsUtils.maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
-      |> SettingsUtils.maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
+      |> SettingsUtils.maybe_add_kw(
+        :max_turns_root,
+        get_in(file_config, [:scheduler, :max_turns_root])
+      )
 
     # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
     # at execution time — no runtime push needed here.

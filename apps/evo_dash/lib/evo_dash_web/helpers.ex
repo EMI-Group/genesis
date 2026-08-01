@@ -398,7 +398,10 @@ defmodule EvoDashWeb.Helpers do
         <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
         <div>
           <p class="font-semibold text-success">{gettext("All configured")}</p>
-          <p class="text-xs text-success/70">{gettext("All critical configuration values are set")}</p>
+
+          <p class="text-xs text-success/70">
+            {gettext("All critical configuration values are set")}
+          </p>
         </div>
       </div>
     <% else %>
@@ -406,11 +409,11 @@ defmodule EvoDashWeb.Helpers do
         <h3 class="font-semibold text-warning flex items-center gap-2 mb-2">
           <.icon name="hero-exclamation-triangle" class="size-5" /> {gettext("Missing Configuration")}
         </h3>
+
         <div class="flex flex-wrap gap-2">
           <%= for item <- @status.missing do %>
             <span class="badge badge-warning badge-sm">
-              <.icon name="hero-x-mark" class="size-3" />
-              {format_config_item(item)}
+              <.icon name="hero-x-mark" class="size-3" /> {format_config_item(item)}
             </span>
           <% end %>
         </div>
@@ -465,8 +468,7 @@ defmodule EvoDashWeb.Helpers do
         </div>
 
         <div class="modal-action">
-          <button class="btn" phx-click={@on_close}>{gettext("Close")}</button>
-          {render_slot(@actions)}
+          <button class="btn" phx-click={@on_close}>{gettext("Close")}</button> {render_slot(@actions)}
         </div>
       </div>
 
@@ -502,7 +504,10 @@ defmodule EvoDashWeb.Helpers do
 
     ~H"""
     <span class={["tooltip", @position_class, "cursor-help"]} data-tip={@text}>
-      <.icon name={@icon} class={"size-4 text-base-content/40 hover:text-base-content/70 transition-colors inline-block align-middle #{@class}"} />
+      <.icon
+        name={@icon}
+        class={"size-4 text-base-content/40 hover:text-base-content/70 transition-colors inline-block align-middle #{@class}"}
+      />
     </span>
     """
   end

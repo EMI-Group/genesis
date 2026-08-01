@@ -16,12 +16,22 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:settings}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <%= if @active_category != :remote_connections do %>
         <%!-- Config file path display --%>
         <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
           <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
-          <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext("Configuration file")}</span>
+          <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext(
+            "Configuration file"
+          )}</span>
           <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
           <button
             id="settings-config-path-copy"
@@ -33,17 +43,18 @@ defmodule EvoDashWeb.SettingsLive do
             <.icon name="hero-clipboard-document" class="size-4" />
           </button>
         </div>
+
         <%= if not @config_file_exists do %>
           <p class="mb-4 text-xs text-base-content/70">{gettext("File does not exist yet")}</p>
         <% end %>
       <% end %>
-
       <%!-- Config Status Warning --%>
       <%= if @config_status && not @config_status.ok? do %>
         <div class="mb-4 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
           <div>
             <h3 class="font-bold text-sm text-warning mb-2">{gettext("Missing Configuration")}</h3>
+
             <ul class="space-y-1.5 mb-3">
               <%= for warning <- @config_status.warnings do %>
                 <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
@@ -52,24 +63,26 @@ defmodule EvoDashWeb.SettingsLive do
                 </li>
               <% end %>
             </ul>
+
             <p class="text-sm font-semibold text-base-content/80">
               {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
             </p>
           </div>
         </div>
       <% end %>
-
       <%!-- No LLM Model Warning (local only — remote config_status covers this) --%>
       <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div>
             <h3 class="font-bold text-sm text-error mb-2">{gettext("No LLM Model Configured")}</h3>
+
             <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
               {gettext(
                 "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
               )}
             </p>
+
             <div class="flex items-center gap-3 flex-wrap">
               <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext(
                 "Example model names:"
@@ -99,9 +112,7 @@ defmodule EvoDashWeb.SettingsLive do
             categories={@schemas_by_category}
             active_category={@active_category}
             search_text={@search_text}
-          />
-
-          <%!-- Content area --%>
+          /> <%!-- Content area --%>
           <%= if @search_text != "" do %>
             <.form
               for={%{}}
@@ -119,256 +130,311 @@ defmodule EvoDashWeb.SettingsLive do
           <% else %>
             <%= cond do %>
               <% @active_category == :remote_connections -> %>
-              <%!-- Remote Connections UI — same design as category_section but
+                <%!-- Remote Connections UI — same design as category_section but
                    for the special :remote_connections pseudo-category --%>
-              <div class="flex-1 flex flex-col min-w-0">
-                <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
-                  <div class="flex items-center gap-3 mb-1">
-                    <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
-                    <h2 class="text-lg font-bold text-base-content">
-                      {gettext("Remote Connections")}
-                    </h2>
-                  </div>
-                  <p class="text-sm text-base-content/60">
-                    {gettext("Manage SSH connections to remote Genesis daemons.")}
-                  </p>
-                </div>
+                <div class="flex-1 flex flex-col min-w-0">
+                  <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
+                    <div class="flex items-center gap-3 mb-1">
+                      <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
+                      <h2 class="text-lg font-bold text-base-content">
+                        {gettext("Remote Connections")}
+                      </h2>
+                    </div>
 
-                <div class="p-6 space-y-5">
-                  <%!-- Note about separate TOML file --%>
-                  <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
-                    <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
-                    <p class="text-sm text-base-content/80">
-                      {gettext("Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file.")}
+                    <p class="text-sm text-base-content/60">
+                      {gettext("Manage SSH connections to remote Genesis daemons.")}
                     </p>
                   </div>
 
-                  <%!-- Existing targets --%>
-                  <div :if={@remote_targets != []} class="space-y-3">
-                    <div :for={target <- @remote_targets} class="rounded-lg border border-base-200 bg-base-100 p-4">
-                      <div class="flex items-start justify-between gap-2">
-                        <div class="flex items-center gap-3 min-w-0">
-                          <span class={["w-2.5 h-2.5 rounded-full shrink-0 mt-1", remote_target_dot_color(target.id, @remote_statuses)]}></span>
-                          <div class="min-w-0">
-                            <p class="font-semibold text-sm truncate">{target.name}</p>
-                            <p class="text-xs text-base-content/50 font-mono truncate">
-                              {target[:ssh_target] || "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
-                            </p>
-                          </div>
-                        </div>
-                        <span class={remote_status_badge_class(target.id, @remote_statuses)}>
-                          {remote_status_label(target.id, @remote_statuses)}
-                        </span>
-                      </div>
+                  <div class="p-6 space-y-5">
+                    <%!-- Note about separate TOML file --%>
+                    <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
+                      <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                      <p class="text-sm text-base-content/80">
+                        {gettext(
+                          "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
+                        )}
+                      </p>
+                    </div>
+                    <%!-- Existing targets --%>
+                    <div :if={@remote_targets != []} class="space-y-3">
+                      <div
+                        :for={target <- @remote_targets}
+                        class="rounded-lg border border-base-200 bg-base-100 p-4"
+                      >
+                        <div class="flex items-start justify-between gap-2">
+                          <div class="flex items-center gap-3 min-w-0">
+                            <span class={[
+                              "w-2.5 h-2.5 rounded-full shrink-0 mt-1",
+                              remote_target_dot_color(target.id, @remote_statuses)
+                            ]}></span>
+                            <div class="min-w-0">
+                              <p class="font-semibold text-sm truncate">{target.name}</p>
 
-                      <div class="flex items-center gap-1 mt-3 flex-wrap">
-                        <button
-                          class="btn btn-xs btn-ghost gap-1"
-                          phx-click="edit_remote_target"
-                          phx-value-id={target.id}
-                        >
-                          <.icon name="hero-pencil-square" class="size-3.5" />
-                          {gettext("Edit")}
-                        </button>
-                        <button
-                          class="btn btn-xs btn-ghost gap-1"
-                          phx-click="delete_remote_target"
-                          phx-value-id={target.id}
-                        >
-                          <.icon name="hero-trash" class="size-3.5" />
-                          {gettext("Delete")}
-                        </button>
-                        <div class="flex-1"></div>
-                        <%= if remote_connected?(target.id, @remote_statuses) do %>
+                              <p class="text-xs text-base-content/50 font-mono truncate">
+                                {target[:ssh_target] ||
+                                  "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <span class={remote_status_badge_class(target.id, @remote_statuses)}>
+                            {remote_status_label(target.id, @remote_statuses)}
+                          </span>
+                        </div>
+
+                        <div class="flex items-center gap-1 mt-3 flex-wrap">
                           <button
-                            class="btn btn-xs btn-ghost gap-1 text-warning"
-                            phx-click="disconnect_remote_target"
+                            class="btn btn-xs btn-ghost gap-1"
+                            phx-click="edit_remote_target"
                             phx-value-id={target.id}
                           >
-                            <.icon name="hero-arrow-left-end-on-rectangle" class="size-3.5" />
-                            {gettext("Disconnect")}
+                            <.icon name="hero-pencil-square" class="size-3.5" /> {gettext("Edit")}
                           </button>
-                        <% else %>
-                          <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
-                            <% stage_idx = case get_in(@bootstrap_progress, [target.id, :stage]) do
-                              :uploading -> 0
-                              :setting_permissions -> 1
-                              :detecting_os -> 2
-                              :starting_daemon -> 3
-                              _ -> -1
-                            end %>
-                            <ul class="steps steps-horizontal text-xs w-full">
-                              <li class={["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])}>{gettext("Uploading binary")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])}>{gettext("Setting permissions")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])}>{gettext("Detecting OS")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])}>{gettext("Starting daemon")}</li>
-                            </ul>
+
+                          <button
+                            class="btn btn-xs btn-ghost gap-1"
+                            phx-click="delete_remote_target"
+                            phx-value-id={target.id}
+                          >
+                            <.icon name="hero-trash" class="size-3.5" /> {gettext("Delete")}
+                          </button>
+
+                          <div class="flex-1"></div>
+
+                          <%= if remote_connected?(target.id, @remote_statuses) do %>
+                            <button
+                              class="btn btn-xs btn-ghost gap-1 text-warning"
+                              phx-click="disconnect_remote_target"
+                              phx-value-id={target.id}
+                            >
+                              <.icon name="hero-arrow-left-end-on-rectangle" class="size-3.5" /> {gettext(
+                                "Disconnect"
+                              )}
+                            </button>
                           <% else %>
-                            <button
-                              class="btn btn-xs btn-ghost gap-1"
-                              phx-click="bootstrap_remote_target"
-                              phx-value-id={target.id}
-      >
-                              <.icon name="hero-rocket-launch" class="size-3.5" />
-                              {gettext("Bootstrap")}
-                            </button>
-                            <button
-                              class="btn btn-xs btn-primary gap-1"
-                              phx-click="connect_remote_target"
-                              phx-value-id={target.id}
-      >
-                              <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" />
-                              {gettext("Connect")}
-                            </button>
+                            <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
+                              <% stage_idx =
+                                case get_in(@bootstrap_progress, [target.id, :stage]) do
+                                  :uploading -> 0
+                                  :setting_permissions -> 1
+                                  :detecting_os -> 2
+                                  :starting_daemon -> 3
+                                  _ -> -1
+                                end %>
+                              <ul class="steps steps-horizontal text-xs w-full">
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Uploading binary")}
+                                </li>
+
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Setting permissions")}
+                                </li>
+
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Detecting OS")}
+                                </li>
+
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Starting daemon")}
+                                </li>
+                              </ul>
+                            <% else %>
+                              <button
+                                class="btn btn-xs btn-ghost gap-1"
+                                phx-click="bootstrap_remote_target"
+                                phx-value-id={target.id}
+                              >
+                                <.icon name="hero-rocket-launch" class="size-3.5" /> {gettext(
+                                  "Bootstrap"
+                                )}
+                              </button>
+
+                              <button
+                                class="btn btn-xs btn-primary gap-1"
+                                phx-click="connect_remote_target"
+                                phx-value-id={target.id}
+                              >
+                                <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" /> {gettext(
+                                  "Connect"
+                                )}
+                              </button>
+                            <% end %>
                           <% end %>
-                        <% end %>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div :if={@remote_targets == []} class="text-center py-10 text-base-content/50">
-                    <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 opacity-40" />
-                    <p class="text-sm">{gettext("No remote connections configured.")}</p>
-                  </div>
+                    <div :if={@remote_targets == []} class="text-center py-10 text-base-content/50">
+                      <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 opacity-40" />
+                      <p class="text-sm">{gettext("No remote connections configured.")}</p>
+                    </div>
+                    <%!-- SSH config help banner --%>
+                    <div class="rounded-lg border border-base-300 bg-base-200 p-3 flex items-start gap-3">
+                      <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                      <div class="space-y-1.5">
+                        <p class="text-sm text-base-content/80">
+                          {gettext(
+                            "Configure your SSH server in `~/.ssh/config` and set up SSH key authentication."
+                          )}
+                        </p>
 
-                  <%!-- SSH config help banner --%>
-                  <div class="rounded-lg border border-base-300 bg-base-200 p-3 flex items-start gap-3">
-                    <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
-                    <div class="space-y-1.5">
-                      <p class="text-sm text-base-content/80">
-                        {gettext("Configure your SSH server in `~/.ssh/config` and set up SSH key authentication.")}
-                      </p>
-                      <p class="text-sm text-base-content/80">
-                        {gettext("Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`).")}
-                      </p>
-                      <p class="text-sm text-base-content/80">
-                        {gettext("SSH port, identity file, and other options are read from your SSH config — no need to enter them here.")}
-                      </p>
+                        <p class="text-sm text-base-content/80">
+                          {gettext(
+                            "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`)."
+                          )}
+                        </p>
+
+                        <p class="text-sm text-base-content/80">
+                          {gettext(
+                            "SSH port, identity file, and other options are read from your SSH config — no need to enter them here."
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <%!-- Add / Edit target form --%>
+                    <div class="border-t border-base-200 pt-5">
+                      <%= if @remote_form_target do %>
+                        <h4 class="font-semibold text-sm mb-4">
+                          <%= if @remote_form_target[:id] do %>
+                            {gettext("Edit Connection")}
+                          <% else %>
+                            {gettext("Add Connection")}
+                          <% end %>
+                        </h4>
+
+                        <form phx-submit="save_remote_target" class="space-y-4">
+                          <input type="hidden" name="_id" value={@remote_form_target[:id]} />
+                          <div class="grid grid-cols-2 gap-4">
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Name")}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="name"
+                                value={@remote_form_target[:name]}
+                                placeholder={gettext("e.g. GPU Server")}
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("SSH Target")}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="ssh_target"
+                                value={@remote_form_target[:ssh_target]}
+                                placeholder={gettext("gpu-server or user@host")}
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext(
+                                  "Local Release Tarball"
+                                )}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="local_binary_path"
+                                value={@remote_form_target[:local_binary_path]}
+                                placeholder="_build/prod/rel/genesis_remote.tar.gz"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Dist Port")}</span>
+                              </label>
+
+                              <input
+                                type="number"
+                                name="dist_port"
+                                value={@remote_form_target[:dist_port]}
+                                placeholder="9000"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="remote_path"
+                                value={@remote_form_target[:remote_path]}
+                                placeholder="/tmp/genesis_remote"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          <div class="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm rounded-lg"
+                              phx-click="cancel_edit_remote"
+                            >
+                              {gettext("Cancel")}
+                            </button>
+
+                            <button type="submit" class="btn btn-primary btn-sm rounded-lg">
+                              <%= if @remote_form_target[:id] do %>
+                                {gettext("Save")}
+                              <% else %>
+                                {gettext("Add")}
+                              <% end %>
+                            </button>
+                          </div>
+                        </form>
+                      <% else %>
+                        <button
+                          class="btn btn-ghost btn-sm gap-2 w-full border border-dashed border-base-300 rounded-lg"
+                          phx-click="add_remote_target"
+                        >
+                          <.icon name="hero-plus" class="size-4" /> {gettext("Add Connection")}
+                        </button>
+                      <% end %>
                     </div>
                   </div>
-
-                  <%!-- Add / Edit target form --%>
-                  <div class="border-t border-base-200 pt-5">
-                    <%= if @remote_form_target do %>
-                      <h4 class="font-semibold text-sm mb-4">
-                        <%= if @remote_form_target[:id] do %>
-                          {gettext("Edit Connection")}
-                        <% else %>
-                          {gettext("Add Connection")}
-                        <% end %>
-                      </h4>
-                      <form phx-submit="save_remote_target" class="space-y-4">
-                        <input type="hidden" name="_id" value={@remote_form_target[:id]} />
-                        <div class="grid grid-cols-2 gap-4">
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Name")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="name"
-                              value={@remote_form_target[:name]}
-                              placeholder={gettext("e.g. GPU Server")}
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("SSH Target")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="ssh_target"
-                              value={@remote_form_target[:ssh_target]}
-                              placeholder={gettext("gpu-server or user@host")}
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Local Release Tarball")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="local_binary_path"
-                              value={@remote_form_target[:local_binary_path]}
-                              placeholder="_build/prod/rel/genesis_remote.tar.gz"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Dist Port")}</span>
-                            </label>
-                            <input
-                              type="number"
-                              name="dist_port"
-                              value={@remote_form_target[:dist_port]}
-                              placeholder="9000"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="remote_path"
-                              value={@remote_form_target[:remote_path]}
-                              placeholder="/tmp/genesis_remote"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                        </div>
-                        <div class="flex items-center justify-end gap-2 pt-1">
-                          <button
-                            type="button"
-                            class="btn btn-ghost btn-sm rounded-lg"
-                            phx-click="cancel_edit_remote"
-                          >
-                            {gettext("Cancel")}
-                          </button>
-                          <button type="submit" class="btn btn-primary btn-sm rounded-lg">
-                            <%= if @remote_form_target[:id] do %>
-                              {gettext("Save")}
-                            <% else %>
-                              {gettext("Add")}
-                            <% end %>
-                          </button>
-                        </div>
-                      </form>
-                    <% else %>
-                      <button
-                        class="btn btn-ghost btn-sm gap-2 w-full border border-dashed border-base-300 rounded-lg"
-                        phx-click="add_remote_target"
-                      >
-                        <.icon name="hero-plus" class="size-4" />
-                        {gettext("Add Connection")}
-                      </button>
-                    <% end %>
-                  </div>
                 </div>
-              </div>
               <% @active_category == :system -> %>
-              <SystemSection.system_category
-                scheduler_paused={@scheduler_paused}
-                remote={@remote?}
-                system_checks_status={@system_checks_status}
-                sys_config_status={@sys_config_status}
-                tool_check={@tool_check}
-                sandbox_check={@sandbox_check}
-                supervisor_check={@supervisor_check}
-                nix_check={@nix_check}
-                show_restart_confirm={@show_restart_confirm}
-                show_stop_confirm={@show_stop_confirm}
-              />
+                <SystemSection.system_category
+                  scheduler_paused={@scheduler_paused}
+                  remote={@remote?}
+                  system_checks_status={@system_checks_status}
+                  sys_config_status={@sys_config_status}
+                  tool_check={@tool_check}
+                  sandbox_check={@sandbox_check}
+                  supervisor_check={@supervisor_check}
+                  nix_check={@nix_check}
+                  show_restart_confirm={@show_restart_confirm}
+                  show_stop_confirm={@show_stop_confirm}
+                />
               <% @active_category == :help -> %>
-              <%= if @help_content do %>
-                <SystemSection.help_category help_content={@help_content} />
-              <% end %>
+                <%= if @help_content do %>
+                  <SystemSection.help_category help_content={@help_content} />
+                <% end %>
               <% true -> %>
-            <%!-- category_section renders its own <form phx-submit="save_category">
+                <%!-- category_section renders its own <form phx-submit="save_category">
                  internally. The LLM category's Quick Setup panel and Model
                  Profiles editor contain their own nested forms (save_api_key,
                  save_custom_model, save_model_profile), so they must NOT be
@@ -376,23 +442,23 @@ defmodule EvoDashWeb.SettingsLive do
                  are invalid HTML — browsers ignore the inner <form> tag, causing
                  the profile editor's Save button to submit save_category instead
                  of save_model_profile, which deletes the models list). --%>
-            <EvoDashWeb.SettingsComponents.category_section
-              category={@active_category}
-              schemas={Map.get(@schemas_by_category, @active_category, [])}
-              file_config={@file_config}
-              errors={Map.get(@per_category_errors, @active_category, [])}
-              sandbox_backend={@scheduler_config[:sandbox_backend]}
-              sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-              llm_providers={@llm_providers}
-              selected_provider_id={@selected_provider_id}
-              selected_provider_models={@selected_provider_models}
-              selected_variant_id={@selected_variant_id}
-              llm_test_status={@llm_test_status}
-              model_profiles={@file_config[:llm][:models] || []}
-              editing_profile_id={@editing_profile_id}
-              test_profile_id={@test_profile_id}
-              credentials={@credentials}
-            />
+                <EvoDashWeb.SettingsComponents.category_section
+                  category={@active_category}
+                  schemas={Map.get(@schemas_by_category, @active_category, [])}
+                  file_config={@file_config}
+                  errors={Map.get(@per_category_errors, @active_category, [])}
+                  sandbox_backend={@scheduler_config[:sandbox_backend]}
+                  sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+                  llm_providers={@llm_providers}
+                  selected_provider_id={@selected_provider_id}
+                  selected_provider_models={@selected_provider_models}
+                  selected_variant_id={@selected_variant_id}
+                  llm_test_status={@llm_test_status}
+                  model_profiles={@file_config[:llm][:models] || []}
+                  editing_profile_id={@editing_profile_id}
+                  test_profile_id={@test_profile_id}
+                  credentials={@credentials}
+                />
             <% end %>
           <% end %>
         </div>

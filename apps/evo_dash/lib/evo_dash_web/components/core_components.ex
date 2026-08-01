@@ -74,18 +74,32 @@ defmodule EvoDashWeb.CoreComponents do
         @kind == :warning && "alert-warning"
       ]}>
         <div class="flex items-start gap-3">
-          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-current" />
-          <.icon :if={@kind == :success} name="hero-check-circle" class="size-5 shrink-0 text-current" />
-          <.icon :if={@kind == :error} name="hero-x-circle" class="size-5 shrink-0 text-current" />
-          <.icon :if={@kind == :warning} name="hero-exclamation-triangle" class="size-5 shrink-0 text-current" />
+          <.icon
+            :if={@kind == :info}
+            name="hero-information-circle"
+            class="size-5 shrink-0 text-current"
+          />
+          <.icon
+            :if={@kind == :success}
+            name="hero-check-circle"
+            class="size-5 shrink-0 text-current"
+          /> <.icon :if={@kind == :error} name="hero-x-circle" class="size-5 shrink-0 text-current" />
+          <.icon
+            :if={@kind == :warning}
+            name="hero-exclamation-triangle"
+            class="size-5 shrink-0 text-current"
+          />
           <div class="flex-1">
             <p :if={@title} class="text-sm font-semibold">{@title}</p>
+
             <p class="text-sm">{msg}</p>
           </div>
+
           <button type="button" class="opacity-60 hover:opacity-100 shrink-0" aria-label="close">
             <.icon name="hero-x-mark" class="size-5" />
           </button>
         </div>
+
         <div class="absolute bottom-0 left-0 h-0.5 w-full bg-current/10">
           <div class="h-full animate-countdown bg-current/60" />
         </div>
@@ -218,6 +232,7 @@ defmodule EvoDashWeb.CoreComponents do
           />{@label}
         </span>
       </label>
+
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -239,6 +254,7 @@ defmodule EvoDashWeb.CoreComponents do
           {Phoenix.HTML.Form.options_for_select(@options, @value)}
         </select>
       </label>
+
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -248,8 +264,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
-        <textarea
+        <span :if={@label} class="label mb-1">{@label}</span> <textarea
           id={@id}
           name={@name}
           class={[
@@ -259,6 +274,7 @@ defmodule EvoDashWeb.CoreComponents do
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
       </label>
+
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -282,6 +298,7 @@ defmodule EvoDashWeb.CoreComponents do
           {@rest}
         />
       </label>
+
       <.error :for={msg <- @errors}>{msg}</.error>
     </div>
     """
@@ -291,8 +308,7 @@ defmodule EvoDashWeb.CoreComponents do
   defp error(assigns) do
     ~H"""
     <p class="mt-1.5 flex gap-2 items-center text-sm text-error">
-      <.icon name="hero-exclamation-circle" class="size-5" />
-      {render_slot(@inner_block)}
+      <.icon name="hero-exclamation-circle" class="size-5" /> {render_slot(@inner_block)}
     </p>
     """
   end
@@ -311,10 +327,12 @@ defmodule EvoDashWeb.CoreComponents do
         <h1 class="text-lg font-semibold leading-8">
           {render_slot(@inner_block)}
         </h1>
+
         <p :if={@subtitle != []} class="text-sm text-base-content/70">
           {render_slot(@subtitle)}
         </p>
       </div>
+
       <div class="flex-none">{render_slot(@actions)}</div>
     </header>
     """
@@ -358,11 +376,13 @@ defmodule EvoDashWeb.CoreComponents do
         <thead>
           <tr>
             <th :for={col <- @col}>{col[:label]}</th>
+
             <th :if={@action != []}>
               <span class="sr-only">{Gettext.gettext(EvoDashWeb.Gettext, "Actions")}</span>
             </th>
           </tr>
         </thead>
+
         <tbody id={@id} phx-update={is_struct(@rows, Phoenix.LiveView.LiveStream) && "stream"}>
           <tr :for={row <- @rows} id={@row_id && @row_id.(row)}>
             <td
@@ -372,6 +392,7 @@ defmodule EvoDashWeb.CoreComponents do
             >
               {render_slot(col, @row_item.(row))}
             </td>
+
             <td :if={@action != []} class="w-0 font-semibold">
               <div class="flex gap-4">
                 <%= for action <- @action do %>
@@ -406,6 +427,7 @@ defmodule EvoDashWeb.CoreComponents do
       <li :for={item <- @item} class="list-row">
         <div class="list-col-grow">
           <div class="font-bold">{item.title}</div>
+
           <div>{render_slot(item)}</div>
         </div>
       </li>
@@ -448,7 +470,7 @@ defmodule EvoDashWeb.CoreComponents do
   def icon(%{name: "brand-" <> _} = assigns) do
     ~H"""
     <span class={["inline-block shrink-0", @class]}>
-      <%= raw(brand_svg_content(@name)) %>
+      {raw(brand_svg_content(@name))}
     </span>
     """
   end
@@ -530,12 +552,20 @@ defmodule EvoDashWeb.CoreComponents do
 
   def collapsible_card(assigns) do
     ~H"""
-    <details id={@id} open={@open} class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
+    <details
+      id={@id}
+      open={@open}
+      class="overflow-hidden group border-b border-slate-200 dark:border-slate-800"
+    >
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
         <.icon :if={@icon} name={@icon} class="size-5 shrink-0" />
         <span class="font-semibold flex-1">{@title}</span>
-        <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+        <.icon
+          name="hero-chevron-down"
+          class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+        />
       </summary>
+
       <div class="p-4">
         {render_slot(@inner_block)}
       </div>

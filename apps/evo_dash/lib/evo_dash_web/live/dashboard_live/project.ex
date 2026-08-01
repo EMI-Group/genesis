@@ -217,7 +217,9 @@ defmodule EvoDashWeb.DashboardLive.Project do
         repos
         |> Enum.flat_map(fn {id_str, cfg} ->
           case build_foreign_repo(id_str, cfg) do
-            {:ok, repo} -> [repo]
+            {:ok, repo} ->
+              [repo]
+
             {:error, reason} ->
               Logger.warning("Failed to parse foreign_repos '#{id_str}': #{reason}")
               []

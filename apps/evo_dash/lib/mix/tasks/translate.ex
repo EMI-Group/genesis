@@ -27,25 +27,44 @@ defmodule Mix.Tasks.Translate do
   @glossary %{
     # ===== Arabic =====
     "ar" => %{
-      "Agent" => "وكيل", # TODO: verify
-      "Base commit" => "الإيداع الأساسي", # TODO: verify
-      "Branch" => "فرع", # TODO: verify
-      "Commit" => "إيداع", # TODO: verify
-      "Concurrency" => "تزامن", # TODO: verify
-      "Context Tree" => "شجرة السياق", # TODO: verify
-      "Context window" => "نافذة السياق", # TODO: verify
-      "Evolve" => "تطوّر", # TODO: verify
-      "Genesis" => "جينيسيس", # TODO: verify
-      "Genesis (command)" => "إنشاء", # TODO: verify
-      "Graceful restart" => "إعادة تشغيل سلسة", # TODO: verify
-      "Prompt" => "موجّه", # TODO: verify
-      "Provider" => "مزوّد", # TODO: verify
-      "Runtime" => "وقت التشغيل", # TODO: verify
-      "Sandbox" => "صندوق الرمل", # TODO: verify
-      "Scheduler" => "مجدول", # TODO: verify
-      "Token" => "وحدة", # TODO: verify
-      "Tool call" => "استدعاء الأداة", # TODO: verify
-      "Worktree" => "شجرة العمل" # TODO: verify
+      # TODO: verify
+      "Agent" => "وكيل",
+      # TODO: verify
+      "Base commit" => "الإيداع الأساسي",
+      # TODO: verify
+      "Branch" => "فرع",
+      # TODO: verify
+      "Commit" => "إيداع",
+      # TODO: verify
+      "Concurrency" => "تزامن",
+      # TODO: verify
+      "Context Tree" => "شجرة السياق",
+      # TODO: verify
+      "Context window" => "نافذة السياق",
+      # TODO: verify
+      "Evolve" => "تطوّر",
+      # TODO: verify
+      "Genesis" => "جينيسيس",
+      # TODO: verify
+      "Genesis (command)" => "إنشاء",
+      # TODO: verify
+      "Graceful restart" => "إعادة تشغيل سلسة",
+      # TODO: verify
+      "Prompt" => "موجّه",
+      # TODO: verify
+      "Provider" => "مزوّد",
+      # TODO: verify
+      "Runtime" => "وقت التشغيل",
+      # TODO: verify
+      "Sandbox" => "صندوق الرمل",
+      # TODO: verify
+      "Scheduler" => "مجدول",
+      # TODO: verify
+      "Token" => "وحدة",
+      # TODO: verify
+      "Tool call" => "استدعاء الأداة",
+      # TODO: verify
+      "Worktree" => "شجرة العمل"
     },
     # ===== German =====
     "de" => %{
@@ -56,9 +75,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "Nebenläufigkeit",
       "Context Tree" => "Kontextbaum",
       "Context window" => "Kontextfenster",
-      "Evolve" => "Evolution", # TODO: verify
+      # TODO: verify
+      "Evolve" => "Evolution",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "Genesis", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "Genesis",
       "Graceful restart" => "sanfter Neustart",
       "Prompt" => "Prompt",
       "Provider" => "Anbieter",
@@ -78,9 +99,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "concurrencia",
       "Context Tree" => "árbol de contexto",
       "Context window" => "ventana de contexto",
-      "Evolve" => "evolucionar", # TODO: verify
+      # TODO: verify
+      "Evolve" => "evolucionar",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "génesis", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "génesis",
       "Graceful restart" => "reinicio controlado",
       "Prompt" => "prompt",
       "Provider" => "proveedor",
@@ -100,9 +123,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "concurrence",
       "Context Tree" => "arbre de contexte",
       "Context window" => "fenêtre de contexte",
-      "Evolve" => "évolution", # TODO: verify
+      # TODO: verify
+      "Evolve" => "évolution",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "genèse", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "genèse",
       "Graceful restart" => "redémarrage en douceur",
       "Prompt" => "prompt",
       "Provider" => "fournisseur",
@@ -115,25 +140,44 @@ defmodule Mix.Tasks.Translate do
     },
     # ===== Indonesian =====
     "id" => %{
-      "Agent" => "Agen", # TODO: verify
-      "Base commit" => "commit dasar", # TODO: verify
-      "Branch" => "cabang", # TODO: verify
-      "Commit" => "commit", # TODO: verify
-      "Concurrency" => "konkurensi", # TODO: verify
-      "Context Tree" => "pohon konteks", # TODO: verify
-      "Context window" => "jendela konteks", # TODO: verify
-      "Evolve" => "evolusi", # TODO: verify
-      "Genesis" => "Genesis", # TODO: verify
-      "Genesis (command)" => "genesis", # TODO: verify
-      "Graceful restart" => "mulai ulang halus", # TODO: verify
-      "Prompt" => "prompt", # TODO: verify
-      "Provider" => "penyedia", # TODO: verify
-      "Runtime" => "runtime", # TODO: verify
-      "Sandbox" => "kotak pasir", # TODO: verify
-      "Scheduler" => "penjadwal", # TODO: verify
-      "Token" => "Token", # TODO: verify
-      "Tool call" => "panggilan alat", # TODO: verify
-      "Worktree" => "pohon kerja" # TODO: verify
+      # TODO: verify
+      "Agent" => "Agen",
+      # TODO: verify
+      "Base commit" => "commit dasar",
+      # TODO: verify
+      "Branch" => "cabang",
+      # TODO: verify
+      "Commit" => "commit",
+      # TODO: verify
+      "Concurrency" => "konkurensi",
+      # TODO: verify
+      "Context Tree" => "pohon konteks",
+      # TODO: verify
+      "Context window" => "jendela konteks",
+      # TODO: verify
+      "Evolve" => "evolusi",
+      # TODO: verify
+      "Genesis" => "Genesis",
+      # TODO: verify
+      "Genesis (command)" => "genesis",
+      # TODO: verify
+      "Graceful restart" => "mulai ulang halus",
+      # TODO: verify
+      "Prompt" => "prompt",
+      # TODO: verify
+      "Provider" => "penyedia",
+      # TODO: verify
+      "Runtime" => "runtime",
+      # TODO: verify
+      "Sandbox" => "kotak pasir",
+      # TODO: verify
+      "Scheduler" => "penjadwal",
+      # TODO: verify
+      "Token" => "Token",
+      # TODO: verify
+      "Tool call" => "panggilan alat",
+      # TODO: verify
+      "Worktree" => "pohon kerja"
     },
     # ===== Italian =====
     "it" => %{
@@ -144,9 +188,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "concorrenza",
       "Context Tree" => "albero di contesto",
       "Context window" => "finestra di contesto",
-      "Evolve" => "evoluzione", # TODO: verify
+      # TODO: verify
+      "Evolve" => "evoluzione",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "genesi", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "genesi",
       "Graceful restart" => "riavvio controllato",
       "Prompt" => "prompt",
       "Provider" => "fornitore",
@@ -166,9 +212,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "並行性",
       "Context Tree" => "コンテキストツリー",
       "Context window" => "コンテキストウィンドウ",
-      "Evolve" => "進化", # TODO: verify
+      # TODO: verify
+      "Evolve" => "進化",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "生成", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "生成",
       "Graceful restart" => "グレースフルリスタート",
       "Prompt" => "プロンプト",
       "Provider" => "プロバイダー",
@@ -188,10 +236,13 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "동시성",
       "Context Tree" => "컨텍스트 트리",
       "Context window" => "컨텍스트 윈도우",
-      "Evolve" => "진화", # TODO: verify
+      # TODO: verify
+      "Evolve" => "진화",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "생성", # TODO: verify
-      "Graceful restart" => "정상 재시작", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "생성",
+      # TODO: verify
+      "Graceful restart" => "정상 재시작",
       "Prompt" => "프롬프트",
       "Provider" => "제공자",
       "Runtime" => "런타임",
@@ -210,9 +261,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "concorrência",
       "Context Tree" => "árvore de contexto",
       "Context window" => "janela de contexto",
-      "Evolve" => "evoluir", # TODO: verify
+      # TODO: verify
+      "Evolve" => "evoluir",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "gênese", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "gênese",
       "Graceful restart" => "reinicialização controlada",
       "Prompt" => "prompt",
       "Provider" => "provedor",
@@ -232,9 +285,11 @@ defmodule Mix.Tasks.Translate do
       "Concurrency" => "конкурентность",
       "Context Tree" => "дерево контекста",
       "Context window" => "контекстное окно",
-      "Evolve" => "развитие", # TODO: verify
+      # TODO: verify
+      "Evolve" => "развитие",
       "Genesis" => "Genesis",
-      "Genesis (command)" => "создание", # TODO: verify
+      # TODO: verify
+      "Genesis (command)" => "создание",
       "Graceful restart" => "плавный перезапуск",
       "Prompt" => "промпт",
       "Provider" => "провайдер",
@@ -247,47 +302,85 @@ defmodule Mix.Tasks.Translate do
     },
     # ===== Thai =====
     "th" => %{
-      "Agent" => "เอเจนต์", # TODO: verify
-      "Base commit" => "คอมมิตพื้นฐาน", # TODO: verify
-      "Branch" => "แบรนช์", # TODO: verify
-      "Commit" => "คอมมิต", # TODO: verify
-      "Concurrency" => "ภาวะพร้อมกัน", # TODO: verify
-      "Context Tree" => "ต้นไม้บริบท", # TODO: verify
-      "Context window" => "หน้าต่างบริบท", # TODO: verify
-      "Evolve" => "วิวัฒนาการ", # TODO: verify
-      "Genesis" => "Genesis", # TODO: verify
-      "Genesis (command)" => "การสร้าง", # TODO: verify
-      "Graceful restart" => "การรีสตาร์ทแบบนุ่มนวล", # TODO: verify
-      "Prompt" => "พรอมต์", # TODO: verify
-      "Provider" => "ผู้ให้บริการ", # TODO: verify
-      "Runtime" => "รันไทม์", # TODO: verify
-      "Sandbox" => "แซนด์บ็อกซ์", # TODO: verify
-      "Scheduler" => "ตัวจัดตาราง", # TODO: verify
-      "Token" => "โทเค็น", # TODO: verify
-      "Tool call" => "การเรียกใช้เครื่องมือ", # TODO: verify
-      "Worktree" => "เวิร์กทรี" # TODO: verify
+      # TODO: verify
+      "Agent" => "เอเจนต์",
+      # TODO: verify
+      "Base commit" => "คอมมิตพื้นฐาน",
+      # TODO: verify
+      "Branch" => "แบรนช์",
+      # TODO: verify
+      "Commit" => "คอมมิต",
+      # TODO: verify
+      "Concurrency" => "ภาวะพร้อมกัน",
+      # TODO: verify
+      "Context Tree" => "ต้นไม้บริบท",
+      # TODO: verify
+      "Context window" => "หน้าต่างบริบท",
+      # TODO: verify
+      "Evolve" => "วิวัฒนาการ",
+      # TODO: verify
+      "Genesis" => "Genesis",
+      # TODO: verify
+      "Genesis (command)" => "การสร้าง",
+      # TODO: verify
+      "Graceful restart" => "การรีสตาร์ทแบบนุ่มนวล",
+      # TODO: verify
+      "Prompt" => "พรอมต์",
+      # TODO: verify
+      "Provider" => "ผู้ให้บริการ",
+      # TODO: verify
+      "Runtime" => "รันไทม์",
+      # TODO: verify
+      "Sandbox" => "แซนด์บ็อกซ์",
+      # TODO: verify
+      "Scheduler" => "ตัวจัดตาราง",
+      # TODO: verify
+      "Token" => "โทเค็น",
+      # TODO: verify
+      "Tool call" => "การเรียกใช้เครื่องมือ",
+      # TODO: verify
+      "Worktree" => "เวิร์กทรี"
     },
     # ===== Vietnamese =====
     "vi" => %{
-      "Agent" => "Tác tử", # TODO: verify
-      "Base commit" => "commit cơ sở", # TODO: verify
-      "Branch" => "nhánh", # TODO: verify
-      "Commit" => "commit", # TODO: verify
-      "Concurrency" => "đồng thời", # TODO: verify
-      "Context Tree" => "cây ngữ cảnh", # TODO: verify
-      "Context window" => "cửa sổ ngữ cảnh", # TODO: verify
-      "Evolve" => "tiến hóa", # TODO: verify
-      "Genesis" => "Genesis", # TODO: verify
-      "Genesis (command)" => "khởi tạo", # TODO: verify
-      "Graceful restart" => "khởi động lại nhẹ nhàng", # TODO: verify
-      "Prompt" => "lời nhắc", # TODO: verify
-      "Provider" => "nhà cung cấp", # TODO: verify
-      "Runtime" => "thời gian chạy", # TODO: verify
-      "Sandbox" => "hộp cát", # TODO: verify
-      "Scheduler" => "bộ lập lịch", # TODO: verify
-      "Token" => "Token", # TODO: verify
-      "Tool call" => "gọi công cụ", # TODO: verify
-      "Worktree" => "cây làm việc" # TODO: verify
+      # TODO: verify
+      "Agent" => "Tác tử",
+      # TODO: verify
+      "Base commit" => "commit cơ sở",
+      # TODO: verify
+      "Branch" => "nhánh",
+      # TODO: verify
+      "Commit" => "commit",
+      # TODO: verify
+      "Concurrency" => "đồng thời",
+      # TODO: verify
+      "Context Tree" => "cây ngữ cảnh",
+      # TODO: verify
+      "Context window" => "cửa sổ ngữ cảnh",
+      # TODO: verify
+      "Evolve" => "tiến hóa",
+      # TODO: verify
+      "Genesis" => "Genesis",
+      # TODO: verify
+      "Genesis (command)" => "khởi tạo",
+      # TODO: verify
+      "Graceful restart" => "khởi động lại nhẹ nhàng",
+      # TODO: verify
+      "Prompt" => "lời nhắc",
+      # TODO: verify
+      "Provider" => "nhà cung cấp",
+      # TODO: verify
+      "Runtime" => "thời gian chạy",
+      # TODO: verify
+      "Sandbox" => "hộp cát",
+      # TODO: verify
+      "Scheduler" => "bộ lập lịch",
+      # TODO: verify
+      "Token" => "Token",
+      # TODO: verify
+      "Tool call" => "gọi công cụ",
+      # TODO: verify
+      "Worktree" => "cây làm việc"
     },
     # ===== Chinese (Simplified) =====
     "zh_CN" => %{
@@ -392,7 +485,9 @@ defmodule Mix.Tasks.Translate do
           end
 
         if map_size(messages_by_file) == 0 do
-          Mix.shell().info("No messages found#{if prefix, do: " matching prefix '#{prefix}'", else: ""}.")
+          Mix.shell().info(
+            "No messages found#{if prefix, do: " matching prefix '#{prefix}'", else: ""}."
+          )
 
           :ok
         else
@@ -436,10 +531,15 @@ defmodule Mix.Tasks.Translate do
                   end)
 
                 if untranslated == [] do
-                  Mix.shell().info("  ✅ #{Map.get(@languages, target_lang, target_lang)} — all up to date")
+                  Mix.shell().info(
+                    "  ✅ #{Map.get(@languages, target_lang, target_lang)} — all up to date"
+                  )
+
                   acc
                 else
-                  Mix.shell().info("  📝 #{Map.get(@languages, target_lang, target_lang)} — #{length(untranslated)} entries to translate")
+                  Mix.shell().info(
+                    "  📝 #{Map.get(@languages, target_lang, target_lang)} — #{length(untranslated)} entries to translate"
+                  )
 
                   case translate_batch(context, untranslated, target_lang) do
                     {:ok, translations} ->

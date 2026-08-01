@@ -28,28 +28,36 @@ defmodule EvoDashWeb.AgentsComponents do
         <%= if @depth > 0 do %>
           <!-- L-connector from parent's trunk to this node's folder icon -->
           <!-- Connects x=10px (parent trunk) to x=24px (left edge of this child's folder icon) -->
-          <div class="absolute -left-3.5 top-0 w-3.5 h-[18px] border-l-2 border-b-2 border-base-content/20 rounded-bl-sm z-0 pointer-events-none"></div>
-          
+          <div class="absolute -left-3.5 top-0 w-3.5 h-[18px] border-l-2 border-b-2 border-base-content/20 rounded-bl-sm z-0 pointer-events-none">
+          </div>
           <!-- Continuation trunk for next siblings -->
           <%= if not is_last do %>
-             <div class="absolute -left-3.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
+            <div class="absolute -left-3.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none">
+            </div>
           <% end %>
         <% end %>
-
         <!-- This Node's Content Row -->
         <div class="relative z-10 flex flex-col xl:flex-row xl:items-start gap-3 py-1">
           <!-- Path info -->
-          <div class="flex items-center gap-2 h-7 shrink-0 relative w-full xl:w-[var(--agent-max-width)]" style={"--agent-max-width: #{@max_width}ch"}>
+          <div
+            class="flex items-center gap-2 h-7 shrink-0 relative w-full xl:w-[var(--agent-max-width)]"
+            style={"--agent-max-width: #{@max_width}ch"}
+          >
             <%= if length(node.children) > 0 do %>
-              <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
+              <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none">
+              </div>
             <% end %>
-            <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0 relative z-10 bg-base-100/50 rounded" />
+
+            <.icon
+              name="hero-folder"
+              class="size-5 text-base-content/50 shrink-0 relative z-10 bg-base-100/50 rounded"
+            />
             <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
-              <div class="grow border-b-2 border-dotted border-base-content/10 mx-2 hidden xl:block"></div>
+              <div class="grow border-b-2 border-dotted border-base-content/10 mx-2 hidden xl:block">
+              </div>
             <% end %>
           </div>
-
           <!-- Agents Row -->
           <%= if length(node.agents) > 0 do %>
             <div class="flex flex-wrap gap-2 flex-1 mt-1 xl:mt-0">
@@ -74,9 +82,9 @@ defmodule EvoDashWeb.AgentsComponents do
                       <.icon
                         name={agent_status_icon(agent.status)}
                         class={"size-4 #{agent_status_color(agent.status)}"}
-                      />
-                      <span class="font-bold text-sm">#<%= agent.task_local_id || agent.id %></span>
+                      /> <span class="font-bold text-sm">#{agent.task_local_id || agent.id}</span>
                     </div>
+
                     <span class={[
                       "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold",
                       agent_status_color(agent.status),
@@ -90,8 +98,12 @@ defmodule EvoDashWeb.AgentsComponents do
                     <div class="text-xs text-base-content/70 truncate">
                       {format_module_name(agent.agent_module)}
                     </div>
+
                     <div class="flex items-center gap-1">
-                      <span class="text-[10px] text-base-content/40 font-mono" title={"Task ##{agent.task_number || agent.task_id}"}>T{agent.task_number || agent.task_id}</span>
+                      <span
+                        class="text-[10px] text-base-content/40 font-mono"
+                        title={"Task ##{agent.task_number || agent.task_id}"}
+                      >T{agent.task_number || agent.task_id}</span>
                       <%= if agent.retries > 0 do %>
                         <span class="badge badge-warning badge-sm">Retry {agent.retries}</span>
                       <% end %>
@@ -100,7 +112,13 @@ defmodule EvoDashWeb.AgentsComponents do
 
                   <%= if agent.has_children do %>
                     <div class="text-[10px] text-base-content/50">
-                      {dngettext("default", "%{count} child", "%{count} children", length(agent.children), count: length(agent.children))}
+                      {dngettext(
+                        "default",
+                        "%{count} child",
+                        "%{count} children",
+                        length(agent.children),
+                        count: length(agent.children)
+                      )}
                     </div>
                   <% end %>
                 </div>
@@ -108,7 +126,6 @@ defmodule EvoDashWeb.AgentsComponents do
             </div>
           <% end %>
         </div>
-
         <!-- Children container -->
         <%= if length(node.children) > 0 do %>
           <div class="ml-6 relative">

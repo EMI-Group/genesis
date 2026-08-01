@@ -75,12 +75,16 @@ defmodule EvoDashWeb.Plugs.Locale do
     |> Enum.map(&String.trim/1)
     |> Enum.map(fn part ->
       case String.split(part, ";") do
-        [tag] -> {tag, 1.0}
+        [tag] ->
+          {tag, 1.0}
+
         [tag, q_part] ->
-          q = case Float.parse(String.replace(q_part, "q=", "")) do
-            {val, _} -> val
-            :error -> 1.0
-          end
+          q =
+            case Float.parse(String.replace(q_part, "q=", "")) do
+              {val, _} -> val
+              :error -> 1.0
+            end
+
           {tag, q}
       end
     end)

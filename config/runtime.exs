@@ -23,7 +23,7 @@ if config_env() == :dev do
         cond do
           # [[llm.models]] 数组表及其全部子表（如 [llm.models.model]）
           String.starts_with?(trimmed, "[[llm.models") or
-            String.starts_with?(trimmed, "[llm.models") ->
+              String.starts_with?(trimmed, "[llm.models") ->
             {acc, :llm_models}
 
           trimmed == "[llm]" ->
@@ -36,7 +36,7 @@ if config_env() == :dev do
             {acc, section}
 
           section == :llm and
-            (String.starts_with?(trimmed, "model =") or String.starts_with?(trimmed, "models =")) ->
+              (String.starts_with?(trimmed, "model =") or String.starts_with?(trimmed, "models =")) ->
             {acc, section}
 
           true ->

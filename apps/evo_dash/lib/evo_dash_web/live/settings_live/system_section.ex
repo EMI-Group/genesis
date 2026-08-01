@@ -47,6 +47,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
             {gettext("System")}
           </h2>
         </div>
+
         <p class="text-sm text-base-content/60">
           {gettext("Scheduler and system controls, plus system health self-check.")}
         </p>
@@ -66,6 +67,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                   do: gettext("Scheduler Paused"),
                   else: gettext("Scheduler Active")} <% # zh_CN: "调度器" %>
               </h2>
+
               <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
                 <%= if @scheduler_paused do %>
                   {gettext(
@@ -77,6 +79,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               </p>
             </div>
           </div>
+
           <button
             type="button"
             phx-click="toggle_pause"
@@ -88,11 +91,14 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               )
             ]}
           >
-            <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
+            <.icon
+              name={if @scheduler_paused, do: "hero-play", else: "hero-pause"}
+              class="size-5 mr-2"
+            /> {if @scheduler_paused,
+              do: gettext("Resume Scheduler"),
+              else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
           </button>
         </div>
-
         <!-- System Self-Check -->
         <div class="border border-base-200 rounded-lg">
           <div class="p-4">
@@ -101,11 +107,13 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                 <.icon name="hero-shield-check" class="size-5 text-success" />
                 <div>
                   <h2 class="font-bold text-base">{gettext("System Self-Check")}</h2>
+
                   <p class="text-sm text-base-content/60">
                     {gettext("System status and health overview")}
                   </p>
                 </div>
               </div>
+
               <button
                 phx-click="rerun_checks"
                 class="btn btn-ghost btn-sm gap-2"
@@ -114,8 +122,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                 <.icon
                   name="hero-arrow-path"
                   class={"size-4 #{if @system_checks_status == :checking, do: "animate-spin"}"}
-                />
-                {if @system_checks_status == :checking,
+                /> {if @system_checks_status == :checking,
                   do: gettext("Checking..."),
                   else: gettext("Re-check")}
               </button>
@@ -141,12 +148,12 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                       <div class="flex flex-wrap gap-1.5">
                         <%= for item <- (@sys_config_status[:missing] || []) do %>
                           <span class="badge badge-warning badge-sm gap-1">
-                            <.icon name="hero-x-mark" class="size-3" />
-                            {format_config_item(item)}
+                            <.icon name="hero-x-mark" class="size-3" /> {format_config_item(item)}
                           </span>
                         <% end %>
                       </div>
                     <% end %>
+
                     <%= if @sys_config_status != nil and @sys_config_status[:validation_errors] not in [[], nil] do %>
                       <div class="mt-1 text-xs text-warning">
                         {ngettext(
@@ -158,7 +165,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                     <% end %>
                   </:details>
                 </.system_check_row>
-
                 <!-- Tools Row -->
                 <.system_check_row
                   title={gettext("Required Tools")}
@@ -172,7 +178,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                     </div>
                   </:details>
                 </.system_check_row>
-
                 <!-- Sandbox Row -->
                 <% # zh_CN: "沙箱" %>
                 <.system_check_row
@@ -185,9 +190,11 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                       <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
                         {format_backend(@sandbox_check.backend)}
                       </span>
+
                       <span class="text-sm text-base-content/60">
                         {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
                       </span>
+
                       <%= if @sandbox_check.backend != :none do %>
                         <span class="text-xs text-base-content/40">
                           {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
@@ -200,7 +207,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                     </div>
                   </:details>
                 </.system_check_row>
-
                 <!-- Supervisor Row -->
                 <.system_check_row
                   title={gettext("EvoX Genesis Process Tree")}
@@ -220,7 +226,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                     </div>
                   </:details>
                 </.system_check_row>
-
                 <!-- Nix Environment Row -->
                 <.system_check_row
                   title={gettext("Nix Environment")}
@@ -232,27 +237,29 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                       <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
                         {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
                       </span>
+
                       <span class="text-sm text-base-content/60">
                         {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
                       </span>
+
                       <span class="text-sm text-base-content/60">
                         {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
                       </span>
+
                       <%= if @nix_check.flake_present do %>
                         <span class="text-xs text-base-content/40">
                           {gettext("Flake valid")}: {if @nix_check.dev_env_built, do: "✓", else: "✗"}
                         </span>
                       <% end %>
                     </div>
+
                     <%= if @nix_check[:error] do %>
                       <div class="mt-1 text-xs text-error/80">
-                        <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
-                        {@nix_check.error}
+                        <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" /> {@nix_check.error}
                       </div>
                     <% end %>
                   </:details>
                 </.system_check_row>
-
                 <!-- LLM Test Row -->
                 <.system_check_row
                   title={gettext("LLM Connection")}
@@ -263,10 +270,12 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                     <div class="flex items-center gap-3">
                       <span class="text-sm text-base-content/60">{gettext(
                         "LLM connection testing is now available on the Settings page."
-                        )}</span>
-                      <.link navigate={~p"/settings?category=llm"} class="btn btn-primary btn-sm gap-2">
-                        <.icon name="hero-sparkles" class="size-4" />
-                        {gettext("Test in Settings")}
+                      )}</span>
+                      <.link
+                        navigate={~p"/settings?category=llm"}
+                        class="btn btn-primary btn-sm gap-2"
+                      >
+                        <.icon name="hero-sparkles" class="size-4" /> {gettext("Test in Settings")}
                       </.link>
                     </div>
                   </:details>
@@ -275,7 +284,6 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
             </div>
           </div>
         </div>
-
         <!-- System Control section (destructive actions) -->
         <div class="border border-error/30 bg-error/5 p-4 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div class="flex items-start gap-3">
@@ -284,6 +292,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               <h2 class="text-base font-bold tracking-tight text-error mb-0.5">
                 {gettext("System Control")}
               </h2>
+
               <p class="text-sm text-base-content/60 max-w-lg">
                 {gettext(
                   "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
@@ -291,31 +300,31 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               </p>
             </div>
           </div>
+
           <div class="flex flex-col sm:flex-row gap-3 shrink-0">
             <button
               type="button"
               phx-click="request_restart"
               class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
             >
-              <.icon name="hero-arrow-path" class="size-5" />
-              {gettext("Restart System")}
+              <.icon name="hero-arrow-path" class="size-5" /> {gettext("Restart System")}
             </button>
+
             <button
               type="button"
               phx-click="request_stop"
               class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
             >
-              <.icon name="hero-power" class="size-5" />
-              {gettext("Stop System")}
+              <.icon name="hero-power" class="size-5" /> {gettext("Stop System")}
             </button>
           </div>
         </div>
       </div>
-
       <!-- Restart confirmation modal -->
       <%= if @show_restart_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
+
           <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
             <div class="flex items-center gap-3 mb-4">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
@@ -327,6 +336,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                 "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
               )} <% # zh_CN: "平滑重启" %>
             </p>
+
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
               {gettext(
                 "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
@@ -337,23 +347,23 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_restart">
                 {gettext("Cancel")}
               </button>
+
               <button
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_restart"
               >
-                <.icon name="hero-arrow-path" class="size-4.5" />
-                {gettext("Restart System")}
+                <.icon name="hero-arrow-path" class="size-4.5" /> {gettext("Restart System")}
               </button>
             </div>
           </div>
         </div>
       <% end %>
-
       <!-- Stop confirmation modal -->
       <%= if @show_stop_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
+
           <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
             <div class="flex items-center gap-3 mb-4">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
@@ -365,6 +375,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                 "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
               )}
             </p>
+
             <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
               {gettext(
                 "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
@@ -375,13 +386,13 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
               <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_stop">
                 {gettext("Cancel")}
               </button>
+
               <button
                 type="button"
                 class="btn btn-error rounded-md px-6 gap-2"
                 phx-click="confirm_stop"
               >
-                <.icon name="hero-power" class="size-4.5" />
-                {gettext("Stop System")}
+                <.icon name="hero-power" class="size-4.5" /> {gettext("Stop System")}
               </button>
             </div>
           </div>
@@ -407,6 +418,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
             {gettext("Help & Guides")}
           </h2>
         </div>
+
         <p class="text-sm text-base-content/60">
           {gettext("Usage guides, example configuration, and frequently asked questions.")}
         </p>
@@ -414,36 +426,54 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
 
       <div class="p-6 space-y-6">
         <!-- Example Configuration -->
-        <details id="config-reference" open class="overflow-hidden group border border-base-200 rounded-lg">
+        <details
+          id="config-reference"
+          open
+          class="overflow-hidden group border border-base-200 rounded-lg"
+        >
           <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
             <.icon name="hero-book-open" class="size-5 shrink-0 text-info" />
             <span class="font-semibold flex-1">{gettext("Example Configuration")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+            <.icon
+              name="hero-chevron-down"
+              class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+            />
           </summary>
+
           <div class="p-4">
             <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@help_content.config_reference}</pre>
           </div>
         </details>
-
         <!-- Example Usage -->
-        <details id="usage-reference" open class="overflow-hidden group border border-base-200 rounded-lg">
+        <details
+          id="usage-reference"
+          open
+          class="overflow-hidden group border border-base-200 rounded-lg"
+        >
           <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
             <.icon name="hero-command-line" class="size-5 shrink-0 text-success" />
             <span class="font-semibold flex-1">{gettext("Example Usage")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+            <.icon
+              name="hero-chevron-down"
+              class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+            />
           </summary>
+
           <div class="p-4">
             <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@help_content.usage_reference}</pre>
           </div>
         </details>
-
         <!-- FAQ -->
         <details id="faq" open class="overflow-hidden group border border-base-200 rounded-lg">
           <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
             <.icon name="hero-question-mark-circle" class="size-5 shrink-0 text-accent" />
             <span class="font-semibold flex-1">{gettext("Frequently Asked Questions")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+            <.icon
+              name="hero-chevron-down"
+              class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+            />
           </summary>
+
           <div class="p-4">
             <div class="space-y-4">
               <%= for {{question, answer}, idx} <- Enum.with_index(@help_content.faq_content) do %>
@@ -452,9 +482,9 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                     <.icon
                       name="hero-chevron-down"
                       class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
-                    />
-                    <span class="font-semibold text-sm">{question}</span>
+                    /> <span class="font-semibold text-sm">{question}</span>
                   </summary>
+
                   <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
                     <p id={"faq-answer-#{idx}"}>{answer}</p>
                   </div>
@@ -463,14 +493,21 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
             </div>
           </div>
         </details>
-
         <!-- Credentials Reference -->
-        <details id="credentials-reference" open class="overflow-hidden group border border-base-200 rounded-lg">
+        <details
+          id="credentials-reference"
+          open
+          class="overflow-hidden group border border-base-200 rounded-lg"
+        >
           <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
             <.icon name="hero-key" class="size-5 shrink-0 text-accent" />
             <span class="font-semibold flex-1">{gettext("Credentials Reference")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+            <.icon
+              name="hero-chevron-down"
+              class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
+            />
           </summary>
+
           <div class="p-4">
             <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@help_content.credentials_reference}</pre>
             <div class="mt-4 space-y-2">
@@ -480,6 +517,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
                   "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
                 )}</span>
               </p>
+
               <p class="text-sm text-base-content/60 flex items-start gap-2.5">
                 <.icon name="hero-shield-check" class="size-4.5 shrink-0 mt-0.5" />
                 <span>{gettext(
@@ -582,6 +620,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
       <div class={"p-2 rounded-md #{status_bg(@status)}"}>
         <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
       </div>
+
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1">
           <span class="font-semibold text-sm">{@title}</span>
@@ -634,8 +673,7 @@ defmodule EvoDashWeb.SettingsLive.SystemSection do
         <% else %>
           <%= for child <- @children, child.status != :running do %>
             <span class="badge badge-sm badge-error">
-              <.icon name="hero-x-mark" class="size-3" />
-              {child.id}
+              <.icon name="hero-x-mark" class="size-3" /> {child.id}
             </span>
           <% end %>
         <% end %>
