@@ -45,7 +45,10 @@ defmodule EvoDashWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <div class="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300" id="app-layout">
+    <div
+      class="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300"
+      id="app-layout"
+    >
       <!-- Mobile hamburger button (visible on < lg screens) -->
       <div class="lg:hidden fixed top-0 left-0 z-50 p-2">
         <button
@@ -56,11 +59,12 @@ defmodule EvoDashWeb.Layouts do
           <.icon name="hero-bars-3" class="w-5 h-5" />
         </button>
       </div>
-
       <!-- Mobile overlay (hidden by default, JS-controlled) -->
-      <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden">
+      <div
+        id="sidebar-overlay"
+        class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
+      >
       </div>
-
       <!-- Sidebar -->
       <aside
         id="sidebar"
@@ -71,118 +75,139 @@ defmodule EvoDashWeb.Layouts do
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
           <.link
-            navigate={with_node_param(~p"/", @current_node_id)}
+            navigate={with_node_param(~p"/dashboard", @current_node_id)}
             class="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
           >
             <%!-- zh_CN: Genesis → "启元" --%>
             <img
-              src={~p"/images/logo.svg"}
-              class="h-7 w-auto block dark:hidden shrink-0"
+              src={~p"/images/evox-logo.png"}
+              class="h-6 w-auto block dark:hidden shrink-0"
               alt={gettext("Genesis")}
-            />
-            <%!-- zh_CN: Genesis → "启元" --%>
+            /> <%!-- zh_CN: Genesis → "启元" --%>
             <img
-              src={~p"/images/logo-alt.svg"}
-              class="h-7 w-auto hidden dark:block shrink-0"
+              src={~p"/images/evox-logo-white.png"}
+              class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("Genesis")}
             />
             <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent truncate sidebar-label">
-              <%!-- zh_CN: Genesis → "启元" --%>
-              {gettext("Genesis")}
+              <%!-- zh_CN: Genesis → "启元" --%> {gettext("Genesis")}
             </span>
           </.link>
         </div>
-
         <!-- Navigation Links -->
         <%= if !@simple_nav do %>
-        <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/", @current_node_id)}
-            current={@current_page == :dashboard}
-            icon="hero-squares-2x2"
-          >{gettext("Tasks")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/agents", @current_node_id)}
-            current={@current_page == :agents}
-            icon="hero-server"
-          >{gettext("Agents")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/settings", @current_node_id)}
-            current={@current_page == :settings}
-            icon="hero-cog-6-tooth"
-          >{gettext("Settings")}</.sidebar_nav_link>
-
-          <!-- Task Indicators Section -->
-          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4 border-t border-slate-200 dark:border-slate-800">
-            <div class="px-3 mb-3 mt-1">
-              <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
-                {gettext("Active Tasks")}
-              </span>
-            </div>
-            <div class="space-y-1">
-              <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
-                <!-- Project group header -->
-                <div class="px-3 pt-2 pb-1 first:pt-0">
-                  <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
-                    <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
-                    {project_name}
-                  </span>
-                </div>
-                <!-- Tasks in this group -->
-                <%= for task <- tasks do %>
-                  <% is_running = task.status in [:running, :pending, :finalizing] %>
-                  <.link
-                    navigate={if is_running, do: with_node_param(~p"/agents", @current_node_id), else: with_node_param(~p"/review/#{task.id}", @current_node_id)}
-                    data-sidebar-task-link
-                    title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
-                    class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
-                  >
-                    <span class={["w-2.5 h-2.5 rounded-full shrink-0", task_status_dot_color(task), is_running && "animate-pulse"]} title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}></span>
-                    <div class="min-w-0 flex-1 sidebar-label">
-                      <span class="block truncate group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                        {task_label(task)}
-                      </span>
-                      <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                        <%= if is_running do %>
-                          {format_elapsed(task.started_at)}
-                        <% else %>
-                          {gettext("completed")} {format_elapsed(task.finished_at)}
-                        <% end %>
-                      </span>
-                    </div>
-                  </.link>
-                <% end %>
-              <% end %>
-            </div>
-          </div>
-        </nav>
-
-        <!-- Bottom section: Language + Theme + Collapse -->
-        <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
-          <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
-            <div data-sidebar-bottom-group class="flex items-center gap-1">
-              <.language_selector drop_up={true} />
-              <.art_style_selector drop_up={true} />
-            </div>
-            <button
-              id="sidebar-collapse-toggle"
-              class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
-              title={gettext("Collapse sidebar")}
+          <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/dashboard", @current_node_id)}
+              current={@current_page == :dashboard}
+              icon="hero-squares-2x2"
+            >{gettext("Tasks")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/agents", @current_node_id)}
+              current={@current_page == :agents}
+              icon="hero-server"
+            >{gettext("Agents")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/settings", @current_node_id)}
+              current={@current_page == :settings}
+              icon="hero-cog-6-tooth"
+            >{gettext("Settings")}</.sidebar_nav_link>
+            <!-- Task Indicators Section -->
+            <div
+              :if={@running_tasks != [] or @pending_tasks != []}
+              class="pt-5 mt-4 border-t border-slate-200 dark:border-slate-800"
             >
-              <.icon name="hero-chevron-double-left" class="w-4 h-4" />
-            </button>
+              <div class="px-3 mb-3 mt-1">
+                <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                  {gettext("Active Tasks")}
+                </span>
+              </div>
+
+              <div class="space-y-1">
+                <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
+                  <!-- Project group header -->
+                  <div class="px-3 pt-2 pb-1 first:pt-0">
+                    <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                      <.icon name="hero-folder" class="w-3 h-3 shrink-0" /> {project_name}
+                    </span>
+                  </div>
+                  <!-- Tasks in this group -->
+                  <%= for task <- tasks do %>
+                    <% is_running = task.status in [:running, :pending, :finalizing] %>
+                    <.link
+                      navigate={
+                        if is_running,
+                          do: with_node_param(~p"/agents", @current_node_id),
+                          else: with_node_param(~p"/review/#{task.id}", @current_node_id)
+                      }
+                      data-sidebar-task-link
+                      title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
+                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                    >
+                      <span
+                        class={[
+                          "w-2.5 h-2.5 rounded-full shrink-0",
+                          task_status_dot_color(task),
+                          is_running && "animate-pulse"
+                        ]}
+                        title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}
+                      ></span>
+                      <div class="min-w-0 flex-1 sidebar-label">
+                        <span class="block truncate group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                          {task_label(task)}
+                        </span>
+
+                        <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          <%= if is_running do %>
+                            {format_elapsed(task.started_at)}
+                          <% else %>
+                            {gettext("completed")} {format_elapsed(task.finished_at)}
+                          <% end %>
+                        </span>
+                      </div>
+                    </.link>
+                  <% end %>
+                <% end %>
+              </div>
+            </div>
+          </nav>
+          <!-- Bottom section: Language + Theme + Collapse -->
+          <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+            <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
+              <div data-sidebar-bottom-group class="flex items-center gap-1">
+                <.language_selector drop_up={true} /> <.art_style_selector drop_up={true} />
+                <.link
+                  navigate={~p"/"}
+                  id="sidebar-simple-mode-link"
+                  class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  title={gettext("Simple mode")}
+                >
+                  <.icon name="hero-home" class="size-5" />
+                </.link>
+              </div>
+
+              <button
+                id="sidebar-collapse-toggle"
+                class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
+                title={gettext("Collapse sidebar")}
+              >
+                <.icon name="hero-chevron-double-left" class="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        </div>
         <% end %>
       </aside>
-
       <!-- Main Content Area -->
       <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0">
-        <main id="main-content" class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900" phx-hook="NodeSwitchFade" data-node-id={@current_node_id || "local"}>
+        <main
+          id="main-content"
+          class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900"
+          phx-hook="NodeSwitchFade"
+          data-node-id={@current_node_id || "local"}
+        >
           {render_slot(@inner_block)}
         </main>
       </div>
-
       <!-- Config Warning Banner -->
       <%= if @config_status && not @config_status.ok? do %>
         <div class="fixed bottom-4 right-4 z-40 max-w-sm w-full animate-fade-in-up">
@@ -194,16 +219,19 @@ defmodule EvoDashWeb.Layouts do
               />
               <div class="flex-1 min-w-0">
                 <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
+
                 <ul class="mt-1 space-y-0.5">
                   <%= for warning <- @config_status.warnings do %>
                     <li class="text-xs opacity-90">{warning}</li>
                   <% end %>
                 </ul>
+
                 <.link
                   navigate={~p"/settings"}
                   class="text-xs font-medium underline mt-2 inline-block hover:text-amber-700 dark:hover:text-amber-300"
                 >{gettext("Configure now →")}</.link>
               </div>
+
               <button
                 class="p-1 rounded-md hover:bg-amber-100 dark:hover:bg-amber-800/50 transition-colors"
                 onclick="this.closest('.fixed').remove()"
@@ -214,10 +242,86 @@ defmodule EvoDashWeb.Layouts do
           </div>
         </div>
       <% end %>
-
       <.flash_group flash={@flash} />
     </div>
+    """
+  end
 
+  @doc """
+  Renders the minimal "simple mode" layout: no sidebar, no navigation, just
+  flash messages and the page content inside a fixed light `.simple-ui` scope
+  that is isolated from the `data-art` art-style system.
+  """
+  attr(:flash, :map, required: true, doc: "the map of flash messages")
+  slot(:inner_block, required: true)
+
+  def simple(assigns) do
+    ~H"""
+    <div class="simple-ui relative min-h-screen flex flex-col bg-white text-slate-900">
+      <.simple_theme_selector />
+      {render_slot(@inner_block)} <.flash_group flash={@flash} />
+    </div>
+    """
+  end
+
+  @doc """
+  Simple-mode theme switcher (白天/黑夜/水墨/终端), fixed top-right on all
+  simple pages. Client-side only — persisted as `phx:simple-theme` in
+  localStorage and applied as `data-simple-theme` on <html>; the active option
+  is marked client-side via the `.simple-theme-active` class.
+  """
+  def simple_theme_selector(assigns) do
+    ~H"""
+    <details id="simple-theme-selector" class="dropdown dropdown-end fixed top-3 right-4 z-50">
+      <summary
+        class="btn btn-sm btn-ghost btn-circle rounded-full"
+        title={gettext("Art style")}
+      >
+        <.icon name="hero-swatch" class="size-5" />
+      </summary>
+      <div class="dropdown-content mt-2 z-50 w-44 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+        <div class="flex flex-col gap-0.5">
+          <button
+            :for={{id, label} <- simple_themes()}
+            class="simple-theme-option flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content"
+            phx-click={JS.dispatch("phx:set-simple-theme")}
+            data-phx-simple-theme={id}
+          >
+            <span class="flex-1 text-left">{label}</span>
+            <.icon name="hero-check-solid" class="simple-theme-check size-4 text-indigo-500 shrink-0" />
+          </button>
+        </div>
+      </div>
+    </details>
+    """
+  end
+
+  # {data-simple-theme value, label} — labels reuse the existing art-style
+  # msgids so translations are shared with the pro-mode style selector.
+  defp simple_themes do
+    [
+      {"day", gettext("Default Light")},
+      {"night", gettext("Default Dark")},
+      {"ink", gettext("Ink Wash")},
+      {"terminal", gettext("Terminal")}
+    ]
+  end
+
+  @doc """
+  Small fixed corner link that enters the pro (full) dashboard. Used by all
+  simple-mode pages.
+  """
+  attr(:navigate, :string, default: "/dashboard")
+
+  def pro_corner(assigns) do
+    ~H"""
+    <.link
+      id="pro-corner"
+      navigate={@navigate}
+      class="fixed bottom-4 right-4 z-50 text-xs text-slate-400 hover:text-slate-600 transition-colors"
+    >
+      {gettext("Pro")}
+    </.link>
     """
   end
 
@@ -324,8 +428,7 @@ defmodule EvoDashWeb.Layouts do
         "w-5 h-5 transition-colors " <>
         if(@current, do: "text-indigo-500 dark:text-indigo-400", else: "text-slate-400 dark:text-slate-500")
       }
-      />
-      <span class="sidebar-label">{render_slot(@inner_block)}</span>
+      /> <span class="sidebar-label">{render_slot(@inner_block)}</span>
     </.link>
     """
   end
@@ -333,8 +436,9 @@ defmodule EvoDashWeb.Layouts do
   @doc """
   Maps current page atom to its route path.
   """
-  def current_page(:dashboard), do: "/"
-  def current_page(:phx_dashboard), do: "/dashboard"
+  def current_page(:home), do: "/"
+  def current_page(:dashboard), do: "/dashboard"
+  def current_page(:phx_dashboard), do: "/phoenix/dashboard"
   def current_page(:agents), do: "/agents"
   def current_page(:tasks), do: "/tasks"
   def current_page(:settings), do: "/settings"
@@ -350,12 +454,13 @@ defmodule EvoDashWeb.Layouts do
 
   def flash_group(assigns) do
     ~H"""
-    <div id={@id} aria-live="polite" class="fixed top-4 right-4 z-[60] flex flex-col gap-2 w-80 sm:w-96 pointer-events-none">
-      <.flash kind={:info} flash={@flash} />
-      <.flash kind={:success} flash={@flash} />
-      <.flash kind={:error} flash={@flash} />
-      <.flash kind={:warning} flash={@flash} />
-
+    <div
+      id={@id}
+      aria-live="polite"
+      class="fixed top-4 right-4 z-[60] flex flex-col gap-2 w-80 sm:w-96 pointer-events-none"
+    >
+      <.flash kind={:info} flash={@flash} /> <.flash kind={:success} flash={@flash} />
+      <.flash kind={:error} flash={@flash} /> <.flash kind={:warning} flash={@flash} />
       <.flash
         id="client-error"
         kind={:error}
@@ -393,7 +498,6 @@ defmodule EvoDashWeb.Layouts do
       <div class="absolute inset-y-1 left-1 w-9 rounded-full bg-white dark:bg-slate-700 shadow transition-transform duration-300 ease-out z-0
         [[data-theme-mode=light]_&]:translate-x-9
         [[data-theme-mode=dark]_&]:translate-x-[4.5rem]" />
-
       <button
         class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -468,6 +572,7 @@ defmodule EvoDashWeb.Layouts do
       >
         <.icon name="hero-language" class="size-5" />
       </summary>
+
       <div class={[
         "dropdown-content",
         (@drop_up && "mb-2") || "mt-2",
@@ -517,6 +622,7 @@ defmodule EvoDashWeb.Layouts do
       >
         <.icon name="hero-swatch" class="size-5" />
       </summary>
+
       <div class={[
         "dropdown-content",
         (@drop_up && "mb-2") || "mt-2",

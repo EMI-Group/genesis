@@ -107,6 +107,12 @@ const EvolutionGraph = {
     this.buildLegend();
     const toggle = this.el.querySelector('.evo-legend-toggle');
     const body = this.el.querySelector('.evo-legend-body');
+    // data-legend="collapsed" (simple /tree mode): legend starts hidden on the
+    // left, only the small "图例 ▸" affordance hints it can expand.
+    if (this.el.dataset.legend === 'collapsed') {
+      body.style.display = 'none';
+      toggle.textContent = '图例 ▸';
+    }
     toggle.onclick = () => {
       const open = body.style.display !== 'none';
       body.style.display = open ? 'none' : '';

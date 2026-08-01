@@ -17,121 +17,139 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-      <EvoDashWeb.Layouts.app
-        flash={@flash}
-        current_page={:dashboard}
-        config_status={@config_status}
-        current_node_id={@current_node_id}
-        current_node_name={@current_node_name}
-        tasks={@tasks}
-        running_tasks={@running_tasks}
-        pending_tasks={@pending_tasks}
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:dashboard}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      tasks={@tasks}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
+      <div
+        id="dashboard-root"
+        phx-hook="StatePersistence"
+        data-project={@active_project_path}
+        data-task-mode={@task_mode}
+        class="flex flex-col min-h-full"
       >
+        <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
+
+        <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
+
         <div
-          id="dashboard-root"
-          phx-hook="StatePersistence"
-          data-project={@active_project_path}
-          data-task-mode={@task_mode}
-          class="flex flex-col min-h-full"
+          id="browser-notifications"
+          phx-hook="BrowserNotifications"
+          class="flex-1 flex flex-col min-h-0"
         >
-          <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
-          <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
-          <div id="browser-notifications" phx-hook="BrowserNotifications" class="flex-1 flex flex-col min-h-0">
-            <%= if @remote? do %>
-              <!-- Remote node view: show the remote node's active agents.
+          <%= if @remote? do %>
+            <!-- Remote node view: show the remote node's active agents.
                    The local task list and project management are LOCAL
                    concerns — the remote daemon runs evo_git only, no
                    evo_dash (no TaskRegistry/Store). -->
-              <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
-                <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
-                <div>
-                  <h2 class="font-bold text-sm text-info mb-0.5">
-                    {gettext("Remote Node — Active Agents")}
+            <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
+              <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
+              <div>
+                <h2 class="font-bold text-sm text-info mb-0.5">
+                  {gettext("Remote Node — Active Agents")}
+                </h2>
+
+                <p class="text-sm text-base-content/70">
+                  {gettext(
+                    "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <%= if @remote_agents == [] do %>
+              <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+                <div class="animate-float">
+                  <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+                </div>
+
+                <p class="text-base font-medium">{gettext("No active agents")}</p>
+
+                <p class="text-sm mt-1">
+                  {gettext("There are no running agents on this remote node.")}
+                </p>
+              </div>
+            <% else %>
+              <div class="mt-6 animate-fade-in-up">
+                <div class="flex items-center gap-2 mb-4">
+                  <div class="bg-success/15 text-success p-2 rounded-lg">
+                    <.icon name="hero-play-circle" class="size-5" />
+                  </div>
+
+                  <h2 class="text-lg font-semibold text-base-content/80">
+                    {gettext("Agents")}
                   </h2>
-                  <p class="text-sm text-base-content/70">
-                    {gettext(
-                      "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
-                    )}
-                  </p>
+                  <span class="badge badge-success">{length(@remote_agents)}</span>
+                </div>
+
+                <div class="space-y-3">
+                  <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
+                    <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
+                      <div class="flex items-center justify-between gap-3 mb-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <span class="badge badge-ghost badge-sm font-mono shrink-0">
+                            #{Map.get(agent, :id, "?")}
+                          </span>
+
+                          <code class="text-xs text-base-content/60 truncate">
+                            {Map.get(agent, :agent_module, "")}
+                          </code>
+                        </div>
+
+                        <span class={[
+                          "badge badge-sm shrink-0",
+                          case Map.get(agent, :status) do
+                            :running -> "badge-success"
+                            :pending -> "badge-warning"
+                            :waiting -> "badge-info"
+                            :ready -> "badge-info"
+                            :blocked -> "badge-error"
+                            _ -> "badge-ghost"
+                          end
+                        ]}>
+                          {case Map.get(agent, :status) do
+                            s when is_atom(s) ->
+                              Gettext.gettext(
+                                EvoDashWeb.Gettext,
+                                String.capitalize(Atom.to_string(s))
+                              )
+
+                            _ ->
+                              gettext("Unknown")
+                          end}
+                        </span>
+                      </div>
+                      <% objective = Map.get(agent, :objective) %>
+                      <%= if objective do %>
+                        <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
+                      <% end %>
+
+                      <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
+                        <%= if Map.get(agent, :model_id) do %>
+                          <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
+                        <% end %>
+
+                        <%= if Map.get(agent, :repo_id) do %>
+                          <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
+                        <% end %>
+                        <% usage = Map.get(agent, :usage) || %{} %> <% total =
+                          Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
+                        <%= if total > 0 do %>
+                          <span>{gettext("Tokens")}: {total}</span>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% end %>
                 </div>
               </div>
-
-              <%= if @remote_agents == [] do %>
-                <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
-                  <div class="animate-float">
-                    <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
-                  </div>
-                  <p class="text-base font-medium">{gettext("No active agents")}</p>
-                  <p class="text-sm mt-1">
-                    {gettext("There are no running agents on this remote node.")}
-                  </p>
-                </div>
-              <% else %>
-                <div class="mt-6 animate-fade-in-up">
-                  <div class="flex items-center gap-2 mb-4">
-                    <div class="bg-success/15 text-success p-2 rounded-lg">
-                      <.icon name="hero-play-circle" class="size-5" />
-                    </div>
-                    <h2 class="text-lg font-semibold text-base-content/80">
-                      {gettext("Agents")}
-                    </h2>
-                    <span class="badge badge-success">{length(@remote_agents)}</span>
-                  </div>
-                  <div class="space-y-3">
-                    <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
-                      <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
-                        <div class="flex items-center justify-between gap-3 mb-2">
-                          <div class="flex items-center gap-2 min-w-0">
-                            <span class="badge badge-ghost badge-sm font-mono shrink-0">
-                              #{Map.get(agent, :id, "?")}
-                            </span>
-                            <code class="text-xs text-base-content/60 truncate">
-                              {Map.get(agent, :agent_module, "")}
-                            </code>
-                          </div>
-                          <span class={[
-                            "badge badge-sm shrink-0",
-                            case Map.get(agent, :status) do
-                              :running -> "badge-success"
-                              :pending -> "badge-warning"
-                              :waiting -> "badge-info"
-                              :ready -> "badge-info"
-                              :blocked -> "badge-error"
-                              _ -> "badge-ghost"
-                            end
-                          ]}>
-                            {case Map.get(agent, :status) do
-                              s when is_atom(s) ->
-                                Gettext.gettext(EvoDashWeb.Gettext, String.capitalize(Atom.to_string(s)))
-
-                              _ ->
-                                gettext("Unknown")
-                            end}
-                          </span>
-                        </div>
-                        <% objective = Map.get(agent, :objective) %>
-                        <%= if objective do %>
-                          <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
-                        <% end %>
-                        <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
-                          <%= if Map.get(agent, :model_id) do %>
-                            <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
-                          <% end %>
-                          <%= if Map.get(agent, :repo_id) do %>
-                            <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
-                          <% end %>
-                          <% usage = Map.get(agent, :usage) || %{} %>
-                          <% total = Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
-                          <%= if total > 0 do %>
-                            <span>{gettext("Tokens")}: {total}</span>
-                          <% end %>
-                        </div>
-                      </div>
-                    <% end %>
-                  </div>
-                </div>
-              <% end %>
-            <% else %>
+            <% end %>
+          <% else %>
             <!-- ① Select Project -->
             <div class="animate-fade-in-up">
               <.step_header number="1" title={gettext("Select Project")} />
@@ -145,7 +163,6 @@ defmodule EvoDashWeb.DashboardLive do
                 platform={@platform}
               />
             </div>
-
             <!-- ② Describe the Task -->
             <div class="mt-6 animate-fade-in-up animation-delay-100">
               <.step_header number="2" title={gettext("Describe the Task")} />
@@ -165,9 +182,11 @@ defmodule EvoDashWeb.DashboardLive do
                 selected_build_system={@task_build_system}
               />
             </div>
-
             <!-- Advanced — hidden, but the entry is obvious -->
-            <details class="group mt-5 rounded-2xl border-2 border-dashed border-base-300 bg-base-100 overflow-hidden animate-fade-in-up animation-delay-100" open={@show_advanced}>
+            <details
+              class="group mt-5 rounded-2xl border-2 border-dashed border-base-300 bg-base-100 overflow-hidden animate-fade-in-up animation-delay-100"
+              open={@show_advanced}
+            >
               <summary
                 class="p-4 cursor-pointer hover:bg-base-200/40 transition-colors flex items-center gap-2.5 list-none [&::-webkit-details-marker]:hidden"
                 phx-click="toggle_advanced"
@@ -177,14 +196,21 @@ defmodule EvoDashWeb.DashboardLive do
                 <span class="text-xs text-base-content/45 truncate">
                   {gettext("Model, build system, archive, node/commit, project settings")}
                 </span>
+
                 <span class="ml-auto badge badge-ghost badge-sm shrink-0">
-                  <%= if @selected_model_id do %>{@selected_model_id}<% else %>{gettext("defaults")}<% end %>
+                  <%= if @selected_model_id do %>
+                    {@selected_model_id}
+                  <% else %>
+                    {gettext("defaults")}
+                  <% end %>
                 </span>
+
                 <.icon
                   name="hero-chevron-down"
                   class="size-4 text-base-content/40 group-open:rotate-180 transition-transform shrink-0"
                 />
               </summary>
+
               <div class="p-4 space-y-4 border-t border-base-200">
                 <!-- Model / Build System / Archive (associated to task-form) -->
                 <div class="flex flex-wrap items-end gap-x-5 gap-y-2.5">
@@ -193,6 +219,7 @@ defmodule EvoDashWeb.DashboardLive do
                       <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
                         {gettext("Model")}
                       </label>
+
                       <select
                         name="model_id"
                         form="task-form"
@@ -213,14 +240,19 @@ defmodule EvoDashWeb.DashboardLive do
                       <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
                         {gettext("Build System")}
                       </label>
+
                       <select
                         name="build_system"
                         form="task-form"
                         class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
                       >
                         <option value="">{gettext("No build system")}</option>
+
                         <%= for bs <- @build_systems do %>
-                          <option value={to_string(bs.id)} selected={@task_build_system == to_string(bs.id)}>
+                          <option
+                            value={to_string(bs.id)}
+                            selected={@task_build_system == to_string(bs.id)}
+                          >
                             {bs.name}
                           </option>
                         <% end %>
@@ -232,8 +264,15 @@ defmodule EvoDashWeb.DashboardLive do
                     <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
                       {gettext("Archive")}
                     </label>
+
                     <label class="label cursor-pointer flex items-center gap-2 py-0">
-                      <input type="checkbox" name="archive" form="task-form" value="true" class="toggle toggle-sm toggle-primary" />
+                      <input
+                        type="checkbox"
+                        name="archive"
+                        form="task-form"
+                        value="true"
+                        class="toggle toggle-sm toggle-primary"
+                      />
                       <span class="text-sm text-base-content/60">{gettext("Archive agent details")}</span>
                     </label>
                   </div>
@@ -265,14 +304,12 @@ defmodule EvoDashWeb.DashboardLive do
                 <% end %>
               </div>
             </details>
-
             <!-- Task History (merged from /tasks) -->
             <div class="mt-6 animate-fade-in-up animation-delay-200">
               <.step_header number="3" title={gettext("Tasks")} />
               <p class="text-sm text-base-content/50 mb-3 -mt-1">
                 {dngettext("default", "%{count} task found", "%{count} tasks found", @total_count)}
               </p>
-
               <!-- Filter Bar -->
               <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
                 <form id="task-filters" phx-submit="noop">
@@ -284,15 +321,31 @@ defmodule EvoDashWeb.DashboardLive do
                         class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
                         phx-change="filter_tasks"
                       >
-                        <option value="all" selected={@status_filter == "all"}>{gettext("All Statuses")}</option>
-                        <option value="running" selected={@status_filter == "running"}>{gettext("Running")}</option>
-                        <option value="pending" selected={@status_filter == "pending"}>{gettext("Pending")}</option>
-                        <option value="completed" selected={@status_filter == "completed"}>{gettext("Completed")}</option>
-                        <option value="failed" selected={@status_filter == "failed"}>{gettext("Failed")}</option>
-                        <option value="cancelled" selected={@status_filter == "cancelled"}>{gettext("Cancelled")}</option>
+                        <option value="all" selected={@status_filter == "all"}>
+                          {gettext("All Statuses")}
+                        </option>
+
+                        <option value="running" selected={@status_filter == "running"}>
+                          {gettext("Running")}
+                        </option>
+
+                        <option value="pending" selected={@status_filter == "pending"}>
+                          {gettext("Pending")}
+                        </option>
+
+                        <option value="completed" selected={@status_filter == "completed"}>
+                          {gettext("Completed")}
+                        </option>
+
+                        <option value="failed" selected={@status_filter == "failed"}>
+                          {gettext("Failed")}
+                        </option>
+
+                        <option value="cancelled" selected={@status_filter == "cancelled"}>
+                          {gettext("Cancelled")}
+                        </option>
                       </select>
                     </div>
-
                     <!-- Project Filter -->
                     <div class="form-control">
                       <select
@@ -300,15 +353,17 @@ defmodule EvoDashWeb.DashboardLive do
                         class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
                         phx-change="filter_tasks"
                       >
-                        <option value="all" selected={@project_filter == "all"}>{gettext("All Projects")}</option>
+                        <option value="all" selected={@project_filter == "all"}>
+                          {gettext("All Projects")}
+                        </option>
+
                         <%= for path <- @project_paths do %>
                           <option value={path} selected={@project_filter == path}>
-                            <%= Path.basename(path) %> (<%= String.slice(path, 0, 30) %>...)
+                            {Path.basename(path)} ({String.slice(path, 0, 30)}...)
                           </option>
                         <% end %>
                       </select>
                     </div>
-
                     <!-- Review Status Filter -->
                     <div class="form-control">
                       <select
@@ -316,14 +371,27 @@ defmodule EvoDashWeb.DashboardLive do
                         class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
                         phx-change="filter_review"
                       >
-                        <option value="all" selected={@review_status_filter == "all"}>{gettext("All Reviews")}</option>
-                        <option value="pending" selected={@review_status_filter == "pending"}>{gettext("Pending Review")}</option>
-                        <option value="merged" selected={@review_status_filter == "merged"}>{gettext("Merged")}</option>
-                        <option value="rejected" selected={@review_status_filter == "rejected"}>{gettext("Rejected")}</option>
-                        <option value="continued" selected={@review_status_filter == "continued"}>{gettext("Continued")}</option>
+                        <option value="all" selected={@review_status_filter == "all"}>
+                          {gettext("All Reviews")}
+                        </option>
+
+                        <option value="pending" selected={@review_status_filter == "pending"}>
+                          {gettext("Pending Review")}
+                        </option>
+
+                        <option value="merged" selected={@review_status_filter == "merged"}>
+                          {gettext("Merged")}
+                        </option>
+
+                        <option value="rejected" selected={@review_status_filter == "rejected"}>
+                          {gettext("Rejected")}
+                        </option>
+
+                        <option value="continued" selected={@review_status_filter == "continued"}>
+                          {gettext("Continued")}
+                        </option>
                       </select>
                     </div>
-
                     <!-- Search -->
                     <div class="form-control flex-1">
                       <div class="relative">
@@ -342,7 +410,6 @@ defmodule EvoDashWeb.DashboardLive do
                         />
                       </div>
                     </div>
-
                     <!-- Actions -->
                     <div class="flex items-center gap-2 shrink-0">
                       <button
@@ -356,7 +423,6 @@ defmodule EvoDashWeb.DashboardLive do
                     </div>
                   </div>
                 </form>
-
                 <!-- Active filters indicator -->
                 <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
                   <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
@@ -364,43 +430,69 @@ defmodule EvoDashWeb.DashboardLive do
                     <%= if @status_filter != "all" do %>
                       <span class="badge badge-primary gap-1 rounded-md">
                         {@status_filter}
-                        <button phx-click="clear_filter" phx-value-filter="status" class="hover:opacity-70">×</button>
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="status"
+                          class="hover:opacity-70"
+                        >×</button>
                       </span>
                     <% end %>
+
                     <%= if @project_filter != "all" do %>
                       <span class="badge badge-secondary gap-1 rounded-md">
                         {Path.basename(@project_filter)}
-                        <button phx-click="clear_filter" phx-value-filter="project" class="hover:opacity-70">×</button>
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="project"
+                          class="hover:opacity-70"
+                        >×</button>
                       </span>
                     <% end %>
+
                     <%= if @search_query != "" do %>
                       <span class="badge badge-accent gap-1 rounded-md">
-                        "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20, do: "..."}"
-                        <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
+                        "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20,
+                          do: "..."}"
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="search"
+                          class="hover:opacity-70"
+                        >×</button>
                       </span>
                     <% end %>
+
                     <%= if @review_status_filter != "all" do %>
                       <span class="badge badge-accent gap-1 rounded-md">
                         <%= case @review_status_filter do %>
-                          <% "pending" -> %>{gettext("Pending Review")}
-                          <% "merged" -> %>{gettext("Merged")}
-                          <% "rejected" -> %>{gettext("Rejected")}
-                          <% "continued" -> %>{gettext("Continued")}
-                          <% _ -> %>{@review_status_filter}
+                          <% "pending" -> %>
+                            {gettext("Pending Review")}
+                          <% "merged" -> %>
+                            {gettext("Merged")}
+                          <% "rejected" -> %>
+                            {gettext("Rejected")}
+                          <% "continued" -> %>
+                            {gettext("Continued")}
+                          <% _ -> %>
+                            {@review_status_filter}
                         <% end %>
-                        <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
+
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="review"
+                          class="hover:opacity-70"
+                        >×</button>
                       </span>
                     <% end %>
                   </div>
                 <% end %>
               </div>
-
               <!-- Task List -->
               <div class="space-y-4 lg:space-y-5">
                 <%= if @history_tasks == [] do %>
                   <div class="text-center py-12 sm:py-16 text-base-content/50">
                     <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
                     <p class="text-lg font-medium">{gettext("No tasks found")}</p>
+
                     <p class="text-sm mt-1">
                       <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
                         {gettext("Try adjusting your filters or search query.")}
@@ -411,7 +503,10 @@ defmodule EvoDashWeb.DashboardLive do
                   </div>
                 <% else %>
                   <%= for {task, idx} <- Enum.with_index(@history_tasks) do %>
-                    <div class={["relative z-10 has-[[open]]:z-30 animate-fade-in-up", animation_delay_class(idx)]}>
+                    <div class={[
+                      "relative z-10 has-[[open]]:z-30 animate-fade-in-up",
+                      animation_delay_class(idx)
+                    ]}>
                       <EvoDashWeb.TaskCardComponents.task_card
                         task={task}
                         show_details={MapSet.member?(@expanded_task_ids, task.id)}
@@ -420,13 +515,11 @@ defmodule EvoDashWeb.DashboardLive do
                   <% end %>
                 <% end %>
               </div>
-
               <!-- Pagination Controls -->
               <%= if @total_count > 0 do %>
-                <% offset = (@current_page - 1) * @page_size %>
-                <% range_start = offset + 1 %>
-                <% range_end = min(offset + @page_size, @total_count) %>
-                <% pages = page_window(@current_page, @total_pages) %>
+                <% offset = (@current_page - 1) * @page_size %> <% range_start = offset + 1 %> <% range_end =
+                  min(offset + @page_size, @total_count) %> <% pages =
+                  page_window(@current_page, @total_pages) %>
                 <div class="mt-4 flex flex-col items-center gap-3">
                   <p class="text-sm text-base-content/60">
                     {gettext("Showing %{start}–%{end} of %{total} tasks",
@@ -435,6 +528,7 @@ defmodule EvoDashWeb.DashboardLive do
                       total: @total_count
                     )}
                   </p>
+
                   <div class="flex items-center gap-2">
                     <div class="join">
                       <button
@@ -444,6 +538,7 @@ defmodule EvoDashWeb.DashboardLive do
                       >
                         <.icon name="hero-chevron-left" class="size-4" />
                       </button>
+
                       <%= for p <- pages do %>
                         <%= if p == @current_page do %>
                           <button class="join-item btn btn-sm btn-primary" disabled>
@@ -459,6 +554,7 @@ defmodule EvoDashWeb.DashboardLive do
                           </button>
                         <% end %>
                       <% end %>
+
                       <button
                         class="join-item btn btn-sm"
                         phx-click="next_page"
@@ -468,46 +564,54 @@ defmodule EvoDashWeb.DashboardLive do
                       </button>
                     </div>
                   </div>
+
                   <p class="text-xs text-base-content/50">
-                    {gettext("Page %{current} of %{total}", current: @current_page, total: @total_pages)}
+                    {gettext("Page %{current} of %{total}",
+                      current: @current_page,
+                      total: @total_pages
+                    )}
                   </p>
                 </div>
               <% end %>
-
               <!-- Clear History (moved to bottom for safety) -->
               <div class="mt-6 flex justify-center sm:justify-end">
-                <button type="button" class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1" phx-click="clear_task_history" phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1"
+                  phx-click="clear_task_history"
+                  phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
+                >
                   <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
                 </button>
               </div>
             </div>
-
             <!-- Full Result Modal -->
             <%= if @selected_result do %>
               <EvoDashWeb.Helpers.modal on_close="close_result_modal">
                 <:title>
-                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                  {gettext("Task Result")}
+                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" /> {gettext(
+                    "Task Result"
+                  )}
                 </:title>
                 {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
               </EvoDashWeb.Helpers.modal>
             <% end %>
-
             <!-- Full Options Modal -->
             <%= if @selected_options do %>
               <EvoDashWeb.Helpers.modal on_close="close_options_modal">
                 <:title>
-                  <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-                  {gettext("Full Objective")}
+                  <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" /> {gettext(
+                    "Full Objective"
+                  )}
                 </:title>
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
               </EvoDashWeb.Helpers.modal>
             <% end %>
-            <% end %>
-            <%!-- end of @remote? else branch --%>
-          </div>
+          <% end %>
+          <%!-- end of @remote? else branch --%>
         </div>
-      </EvoDashWeb.Layouts.app>
+      </div>
+    </EvoDashWeb.Layouts.app>
     """
   end
 
@@ -619,7 +723,7 @@ defmodule EvoDashWeb.DashboardLive do
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/")
+      |> assign(:current_path, ~p"/dashboard")
       |> assign(:query_params, params)
       |> assign(:remote?, socket.assigns.current_node != node())
 
@@ -819,7 +923,7 @@ defmodule EvoDashWeb.DashboardLive do
               |> assign(:show_new_project_form, false)
               |> put_flash(:info, gettext("Project created: %{path}", path: full_path))
 
-            {:noreply, push_patch(socket, to: ~p"/?project=#{full_path}")}
+            {:noreply, push_patch(socket, to: ~p"/dashboard?project=#{full_path}")}
         end
     end
   end
@@ -838,7 +942,7 @@ defmodule EvoDashWeb.DashboardLive do
         |> assign(:show_open_project_form, false)
 
       # Push URL params to persist project across navigation
-      {:noreply, push_patch(socket, to: ~p"/?project=#{expanded}")}
+      {:noreply, push_patch(socket, to: ~p"/dashboard?project=#{expanded}")}
     else
       {:noreply,
        socket
@@ -864,7 +968,7 @@ defmodule EvoDashWeb.DashboardLive do
         socket
         |> assign(:recent_projects, recent_projects)
 
-      {:noreply, push_patch(socket, to: ~p"/?project=#{expanded}")}
+      {:noreply, push_patch(socket, to: ~p"/dashboard?project=#{expanded}")}
     else
       {:noreply,
        put_flash(socket, :error, gettext("Directory does not exist: %{path}", path: path))}
@@ -1649,7 +1753,9 @@ defmodule EvoDashWeb.DashboardLive do
       <span class="step-badge inline-flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-primary-content text-sm font-bold shrink-0">
         {@number}
       </span>
+
       <h2 class="text-base font-bold tracking-tight shrink-0">{@title}</h2>
+
       <div class="flex-1 border-t border-base-200"></div>
     </div>
     """
@@ -1671,14 +1777,17 @@ defmodule EvoDashWeb.DashboardLive do
 
   # push_patch helper for history pagination. Preserves the current query
   # params (project, starting_commit, resume_from, node) so paginating never
-  # resets the active project.
+  # resets the active project. Patches the current page's own path (/dashboard
+  # or /tasks) — never the simple-mode home at "/".
   defp patch_history_page(socket, page) do
     query =
       socket.assigns.query_params
       |> Map.put("page", to_string(page))
       |> URI.encode_query()
 
-    push_patch(socket, to: "/?" <> query)
+    base = if socket.assigns[:live_action] == :tasks, do: "/tasks", else: "/dashboard"
+
+    push_patch(socket, to: base <> "?" <> query)
   end
 
   # Fetches one page of tasks (server-side LIMIT/OFFSET). Returns

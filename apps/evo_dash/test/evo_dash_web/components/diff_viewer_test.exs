@@ -309,18 +309,21 @@ defmodule EvoDashWeb.DiffViewerTest do
       # The addition line should have syntax highlighting (spans).
       addition_line = Enum.find(lines, &(&1.type == :addition))
       addition_hl = unwrap(Map.get(result, addition_line.line_number))
+
       assert String.contains?(addition_hl, "<span"),
              "expected highlighted HTML, got: #{inspect(addition_hl)}"
 
       # Context lines should also be highlighted.
       context_line = Enum.find(lines, &(&1.type == :context and &1.content == "def foo do"))
       context_hl = unwrap(Map.get(result, context_line.line_number))
+
       assert String.contains?(context_hl, "<span"),
              "expected highlighted HTML, got: #{inspect(context_hl)}"
 
       # Deletion lines should be highlighted from the old file's highlighting.
       deletion_line = Enum.find(lines, &(&1.type == :deletion))
       deletion_hl = unwrap(Map.get(result, deletion_line.line_number))
+
       assert String.contains?(deletion_hl, "<span"),
              "expected highlighted HTML, got: #{inspect(deletion_hl)}"
     end
@@ -622,5 +625,4 @@ defmodule EvoDashWeb.DiffViewerTest do
   # Helper: unwrap {:safe, html} that raw/1 wraps around highlighted values.
   defp unwrap({:safe, html}), do: html
   defp unwrap(other), do: other
-
 end

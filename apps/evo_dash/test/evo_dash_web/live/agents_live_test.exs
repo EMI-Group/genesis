@@ -6,7 +6,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     test "renders the agents page", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/agents")
 
-      assert html =~ "Agent Tree"
+      assert html =~ "agents-page-layout"
     end
 
     test "shows empty state when no agents are running", %{conn: conn} do
@@ -32,7 +32,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # The page should render the agent tree section without crashing, proving
       # config_status was loaded successfully by the node-aware helper.
-      assert html =~ "Agent Tree"
+      assert html =~ "agents-page-layout"
     end
   end
 

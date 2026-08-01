@@ -18,12 +18,21 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     File.mkdir_p!(tmp_config)
     original = System.get_env("XDG_CONFIG_HOME")
     System.put_env("XDG_CONFIG_HOME", tmp_config)
+    # Windows: EvoGit.Config.config_dir/0 honours APPDATA instead of XDG.
+    original_appdata = System.get_env("APPDATA")
+    System.put_env("APPDATA", tmp_config)
 
     on_exit(fn ->
       if original do
         System.put_env("XDG_CONFIG_HOME", original)
       else
         System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      if original_appdata do
+        System.put_env("APPDATA", original_appdata)
+      else
+        System.delete_env("APPDATA")
       end
 
       File.rm_rf!(tmp_config)
@@ -43,7 +52,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     test "renders welcome message and version display", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/welcome")
 
-      assert html =~ "Welcome to Genesis"
+      assert html =~ "Set up your LLM"
       # Version display in footer
       version = Application.spec(:evo_git, :vsn) |> to_string()
       assert html =~ version
@@ -362,7 +371,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       # Shows the all-set state (HEEx escapes the apostrophe in "You're")
       assert html =~ "You&#39;re All Set!"
-      assert html =~ "Go to Dashboard"
+      assert html =~ "Get started"
       # Does NOT show the setup grid
       refute html =~ "Add your first LLM"
       refute html =~ "Choose a model:"
@@ -383,7 +392,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      assert has_element?(view, "button", "Go to Dashboard")
+      assert has_element?(view, "button", "Get started")
     end
   end
 

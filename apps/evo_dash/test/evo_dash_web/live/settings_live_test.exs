@@ -18,12 +18,21 @@ defmodule EvoDashWeb.SettingsLiveTest do
     File.mkdir_p!(tmp_config)
     original = System.get_env("XDG_CONFIG_HOME")
     System.put_env("XDG_CONFIG_HOME", tmp_config)
+    # Windows: EvoGit.Config.config_dir/0 honours APPDATA instead of XDG.
+    original_appdata = System.get_env("APPDATA")
+    System.put_env("APPDATA", tmp_config)
 
     on_exit(fn ->
       if original do
         System.put_env("XDG_CONFIG_HOME", original)
       else
         System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      if original_appdata do
+        System.put_env("APPDATA", original_appdata)
+      else
+        System.delete_env("APPDATA")
       end
 
       File.rm_rf!(tmp_config)
@@ -85,7 +94,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 
   describe "LLM quick setup API key detection (credentials.toml)" do
-
     # The credentials.toml file is written under the test's isolated XDG dir
     # (see the file-level `setup` block), so EvoGit.Config.credentials_path/0
     # resolves to a path we can control. Each test cleans up after itself so no
@@ -243,7 +251,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # openai_compatible catalog entry resolves to the canonical :openai atom.
       # With base_url, the model has overrides → normalized to a map spec.
       models = current_models(view)
-      assert hd(models).model == %{provider: :openai, id: "my-model", base_url: "https://api.example.com/v1"}
+
+      assert hd(models).model == %{
+               provider: :openai,
+               id: "my-model",
+               base_url: "https://api.example.com/v1"
+             }
     end
 
     test "rejects empty model name", %{conn: conn} do
@@ -646,7 +659,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
-      assert profile.model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+
+      assert profile.model == %{
+               provider: :openai,
+               id: "gpt-4o",
+               base_url: "https://my-proxy.com/v1"
+             }
     end
 
     test "save_model_profile rejects empty model id", %{conn: conn} do
@@ -757,7 +775,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Custom model saved."
       models = current_models(view)
-      assert hd(models).model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+
+      assert hd(models).model == %{
+               provider: :openai,
+               id: "gpt-4o",
+               base_url: "https://my-proxy.com/v1"
+             }
     end
 
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
@@ -825,8 +848,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # a result with a MAP model — the exact shape that crashed before the fix.
       # `render/1` synchronously processes pending messages for the LiveView
       # process, so the info message is handled before the HTML is produced.
-      send(view.pid, {:llm_test_result,
-       {:ok, %{response: "hello", model: %{id: "deepseek-v4-pro", provider: :deepseek}}}})
+      send(
+        view.pid,
+        {:llm_test_result,
+         {:ok, %{response: "hello", model: %{id: "deepseek-v4-pro", provider: :deepseek}}}}
+      )
 
       html = render(view)
 
@@ -883,7 +909,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       file_config =
         EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [%{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}])
+        |> put_in([:llm, :models], [
+          %{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}
+        ])
 
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
@@ -911,7 +939,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       file_config =
         EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [%{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}])
+        |> put_in([:llm, :models], [
+          %{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}
+        ])
 
       socket = %Phoenix.LiveView.Socket{
         assigns: %{

@@ -40,6 +40,9 @@ defmodule EvoDashWeb.DashboardLiveTest do
     File.mkdir_p!(tmp_config)
     original = System.get_env("XDG_CONFIG_HOME")
     System.put_env("XDG_CONFIG_HOME", tmp_config)
+    # Windows: EvoGit.Config.config_dir/0 honours APPDATA instead of XDG.
+    original_appdata = System.get_env("APPDATA")
+    System.put_env("APPDATA", tmp_config)
 
     # Create the version-state file so onboarding_needed?/0 returns false.
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do
@@ -51,6 +54,12 @@ defmodule EvoDashWeb.DashboardLiveTest do
         System.put_env("XDG_CONFIG_HOME", original)
       else
         System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      if original_appdata do
+        System.put_env("APPDATA", original_appdata)
+      else
+        System.delete_env("APPDATA")
       end
 
       File.rm_rf!(tmp_config)
@@ -70,7 +79,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "renders the dashboard with task form and project selector", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/dashboard")
 
       # Task form is always visible
       assert html =~ "Execute Task"
@@ -83,7 +92,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "advanced options are present but project settings are hidden when no project", %{
       conn: conn
     } do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/dashboard")
 
       # Project settings are nested under Advanced and only rendered for an active project.
       assert html =~ "Advanced"
@@ -95,7 +104,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "task form is disabled when no project is active", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/dashboard")
 
       # The form should be present but in disabled state
       assert html =~ "Execute Task"
@@ -106,7 +115,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "opening a project" do
     test "can open project via toggle and form submission", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       # Click to show the open project form
       html = render_click(view, "toggle_open_project_form", %{})
@@ -128,7 +137,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "detects genesis_new mode for empty directory", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_click(view, "toggle_open_project_form", %{})
 
@@ -142,7 +151,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "shows project info in selector after opening", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_click(view, "toggle_open_project_form", %{})
 
@@ -156,7 +165,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "project settings panel shows config status", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_click(view, "toggle_open_project_form", %{})
 
@@ -173,7 +182,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "project settings shows worktree init script status", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_click(view, "toggle_open_project_form", %{})
 
@@ -190,7 +199,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "project settings shows no foreign repos by default", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_click(view, "toggle_open_project_form", %{})
 
@@ -209,7 +218,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "opening project via URL params" do
     test "activates project from URL query param", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, _view, html} = live(conn, ~p"/?project=#{tmp_dir}")
+      {:ok, _view, html} = live(conn, ~p"/dashboard?project=#{tmp_dir}")
 
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
@@ -230,7 +239,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "shows error for non-existent directory", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_click(view, "toggle_open_project_form", %{})
 
@@ -269,7 +278,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "foreign repos round-trip via restore_state event", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
       # The project must be a real directory so activate_project runs.
@@ -298,7 +307,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       render_hook(view, "restore_state", %{
         "project" => tmp_dir,
@@ -316,7 +325,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "prompt textarea with phx-update=ignore" do
     test "objective textarea has phx-update=ignore attribute", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       # Open a project so the task form renders
       render_click(view, "toggle_open_project_form", %{})
@@ -334,7 +343,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "select_model does not modify the task_prompt assign", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       # Open a project
       render_click(view, "toggle_open_project_form", %{})
@@ -353,7 +362,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
 
     test "task_change does not modify the task_prompt assign", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/dashboard")
 
       # Open a project
       render_click(view, "toggle_open_project_form", %{})

@@ -19,9 +19,12 @@ defmodule EvoDashWeb.Router do
   scope "/", EvoDashWeb do
     pipe_through(:browser)
 
-    live("/", DashboardLive, :index)
+    live("/", SimpleLive.Home, :index)
+    live("/dashboard", DashboardLive, :index)
     live("/tasks", DashboardLive, :tasks)
     live("/welcome", WelcomeLive, :index)
+    live("/tree", AgentsLive, :simple)
+    live("/tree/review/:task_id", ReviewLive, :simple)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)
     live("/system", SettingsLive, :system)
@@ -29,6 +32,12 @@ defmodule EvoDashWeb.Router do
     live("/review/:task_id/commit/:commit_sha", ReviewLive, :commit)
     get("/tasks/:task_id/export", TaskExportController, :export)
     get("/welcome/complete", WelcomeController, :complete)
+
+    # Dev-only demo seeding: builds a full demo flow (repo + branch + task).
+    if Mix.env() == :dev do
+      get("/demo/seed", DemoController, :seed)
+    end
+
     live_dashboard("/phoenix/dashboard")
   end
 

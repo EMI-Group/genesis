@@ -470,11 +470,30 @@ const DialogModal = {
   }
 };
 
+// AutoGrowTextarea hook: fallback for browsers without CSS `field-sizing: content`
+// (Chrome/Edge 123+, Safari 26.2+, Firefox 152+ handle it natively — the hook no-ops there).
+const AutoGrowTextarea = {
+  mounted() {
+    this._native = window.CSS && CSS.supports && CSS.supports("field-sizing", "content");
+    this._grow = () => {
+      if (this._native) return;
+      const el = this.el;
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 192) + "px"; // 12rem cap, mirrors the CSS
+    };
+    this.el.addEventListener("input", this._grow);
+    this._grow();
+  },
+  updated() {
+    this._grow();
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph, NodeSwitchFade},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph, NodeSwitchFade, AutoGrowTextarea},
 })
 
 // Show progress bar on live navigation and form submits

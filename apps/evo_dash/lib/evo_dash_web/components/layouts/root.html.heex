@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang={Gettext.get_locale(EvoDashWeb.Gettext)} dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}>
+<html
+  lang={Gettext.get_locale(EvoDashWeb.Gettext)}
+  dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -19,6 +22,7 @@
     <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/logo.svg"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
+
     <script>
       (() => {
         const resolveSystemTheme = () =>
@@ -80,6 +84,40 @@
           if (e.key === "phx:art") setArt(e.newValue || "default");
         });
 
+        // --- Simple-mode theme（极简版独立主题：白天/黑夜/水墨/终端，只作用于 .simple-ui 页面） ---
+        const SIMPLE_THEMES = ["day", "night", "ink", "terminal"];
+        const setSimpleTheme = (t) => {
+          if (!SIMPLE_THEMES.includes(t)) t = "day";
+          if (t === "day") {
+            localStorage.removeItem("phx:simple-theme");
+          } else {
+            localStorage.setItem("phx:simple-theme", t);
+          }
+          document.documentElement.setAttribute("data-simple-theme", t);
+          document.querySelectorAll("[data-phx-simple-theme]").forEach(b =>
+            b.classList.toggle("simple-theme-active", b.dataset.phxSimpleTheme === t));
+        };
+        setSimpleTheme(localStorage.getItem("phx:simple-theme") || "day");
+        window.addEventListener("phx:set-simple-theme", (e) =>
+          setSimpleTheme(e.target.dataset.phxSimpleTheme || "day"));
+        window.addEventListener("storage", (e) => {
+          if (e.key === "phx:simple-theme") setSimpleTheme(e.newValue || "day");
+        });
+
+        // --- 隔离：极简页（.simple-ui）不受专业版 data-art 艺术风格影响 ---
+        // 艺术风格用 :root[data-art] 下的全局元素选择器（textarea/.btn/圆角重置等），
+        // 会穿透 .simple-ui 的变量隔离。进入极简页时直接摘掉 data-art；
+        // 回到专业版页面时按 localStorage 里的偏好恢复。
+        const syncArtForSimplePages = () => {
+          if (document.querySelector(".simple-ui")) {
+            document.documentElement.removeAttribute("data-art");
+          } else {
+            setArt(localStorage.getItem("phx:art") || "default");
+          }
+        };
+        document.addEventListener("DOMContentLoaded", syncArtForSimplePages);
+        window.addEventListener("phx:page-loading-stop", syncArtForSimplePages);
+
         // --- Locale ---
         const rtlLocales = ['ar', 'he', 'fa', 'ur'];
         const setDirection = (locale) => {
@@ -128,6 +166,7 @@
       })();
     </script>
   </head>
+
   <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased h-screen overflow-hidden selection:bg-indigo-500/30">
     {@inner_content}
   </body>

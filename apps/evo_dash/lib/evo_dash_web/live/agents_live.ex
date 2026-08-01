@@ -49,6 +49,7 @@ defmodule EvoDashWeb.AgentsLive do
         new_agent_ids: MapSet.new(),
         changed_status_ids: MapSet.new(),
         previous_node: current_node,
+        simple_mode: false,
         demo_mode: false,
         last_graph_payload: nil,
         graph_tasks: [],
@@ -64,6 +65,7 @@ defmodule EvoDashWeb.AgentsLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/agents")
+      |> assign(:simple_mode, socket.assigns[:live_action] == :simple)
 
     current_node = socket.assigns.current_node
     previous_node = socket.assigns[:previous_node] || current_node

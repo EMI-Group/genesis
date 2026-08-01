@@ -3599,3 +3599,78 @@ msgstr "日光纸"
 #, elixir-autogen, elixir-format
 msgid "Vaporwave"
 msgstr "蒸汽波"
+
+msgid "Please select a project first."
+msgstr "请先选择一个项目。"
+
+msgid "What do you want to build?"
+msgstr "想做什么？"
+
+msgid "Select project"
+msgstr "选择项目"
+
+msgid "Open a project path…"
+msgstr "打开项目路径…"
+
+msgid "Please describe what you want to do."
+msgstr "请先描述要做什么。"
+
+msgid "Directory not found: %{path}"
+msgstr "目录不存在：%{path}"
+
+msgid "Set up your LLM"
+msgstr "配置你的 LLM"
+
+msgid "Get started"
+msgstr "开始使用"
+
+msgid "Simple mode"
+msgstr "简洁模式"
+
+msgid "Start a task"
+msgstr "开始一个任务"
+
+msgid "Start task"
+msgstr "开始任务"
+
+msgid "Pro"
+msgstr "专业版"
+
+msgid "Home"
+msgstr "首页"
+
+msgid "Project name or path…"
+msgstr "项目名或路径…"
+
+msgid "Enter an existing path to open it, or a new name to create the project folder automatically."
+msgstr "输入已存在的路径直接打开；输入新名字会自动创建项目文件夹。"
+
+msgid "Start"
+msgstr "开始"
+
+msgid "New task"
+msgstr "新的任务"
+
+msgid "Develop new software"
+msgstr "开发新软件"
+
+msgid "Refactor existing software"
+msgstr "重构已有软件"
+
+msgid "Enter your development requirements"
+msgstr "请输入开发需求"
+
+msgid "Development path, e.g. web-calendar (auto-created)"
+msgstr "开发路径，例如：web-calendar（自动创建）"
+
+msgid "Original software path, e.g. C:\\projects\\old-app (must exist)"
+msgstr "原软件路径，例如：C:\\projects\\old-app（必须已存在）"
+
+msgid "New software path, e.g. old-app-v2 (optional; empty = refactor in place)"
+msgstr "新软件路径，例如：old-app-v2（可选；留空则在原项目中重构）"
+
+msgid "Recent:"
+msgstr "最近："
+
+msgid "Original software (refactor reference)"
+msgstr "原软件（重构参考）"

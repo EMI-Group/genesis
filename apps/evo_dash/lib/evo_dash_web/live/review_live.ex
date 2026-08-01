@@ -10,14 +10,117 @@ defmodule EvoDashWeb.ReviewLive do
   alias EvoGit.Review
 
   @impl true
+  def render(%{live_action: :simple} = assigns) do
+    ~H"""
+    <EvoDashWeb.Layouts.simple flash={@flash}>
+      <div class="min-h-screen flex flex-col">
+        <%!-- Thin top bar: back to the tree + task title --%>
+        <div class="flex items-center gap-3 px-4 h-11 shrink-0 border-b border-slate-200 bg-white sticky top-0 z-40">
+          <.link
+            id="simple-review-back"
+            navigate={~p"/tree"}
+            class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 transition-colors shrink-0"
+          >
+            <.icon name="hero-arrow-left" class="size-4" />
+            {gettext("Back")}
+          </.link>
+          <span class="text-sm font-medium text-slate-900 truncate">{@title}</span>
+        </div>
+
+        <div class="flex-1 w-full max-w-5xl mx-auto px-4 py-6">
+          <%= cond do %>
+            <% @error -> %>
+              <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center">
+                <.icon
+                  name="hero-exclamation-triangle"
+                  class="size-8 text-red-500 mx-auto mb-4"
+                />
+                <h2 class="text-lg font-bold text-slate-900 mb-2">
+                  {gettext("Review Not Available")}
+                </h2>
+                <p class="text-sm text-slate-500 mb-5">{@error}</p>
+                <.link navigate={~p"/"} class="text-sm text-slate-500 underline">
+                  {gettext("Back")}
+                </.link>
+              </div>
+            <% @loading -> %>
+              <div class="flex items-center justify-center py-20 text-slate-400">
+                <span class="loading loading-spinner loading-md"></span>
+                <span class="ml-3 text-sm">{gettext("Loading review data...")}</span>
+              </div>
+            <% true -> %>
+              <%= if @agent_summary do %>
+                <EvoDashWeb.ReviewComponents.agent_summary
+                  summary={@agent_summary}
+                  summary_raw={@summary_raw}
+                />
+              <% end %>
+
+              <%= if @review_data do %>
+                <div class="mt-4">
+                  <EvoDashWeb.ReviewComponents.diff_stats_bar
+                    files_count={@review_data.changed_files_count}
+                    additions={@review_data.total_additions}
+                    deletions={@review_data.total_deletions}
+                    commits_count={length(@commits)}
+                  />
+                </div>
+              <% end %>
+
+              <div class="mt-4">
+                <EvoDashWeb.ReviewComponents.action_buttons
+                  branch_exists={@branch_exists}
+                  can_continue={@can_continue}
+                  has_pr={@has_pr}
+                  pr_url={@pr_url}
+                  loading={@action_loading}
+                  is_no_changes={@is_no_changes}
+                />
+              </div>
+
+              <div class="mt-6">
+                <%= if @review_data do %>
+                  <EvoDashWeb.ReviewComponents.split_diff_layout
+                    files={@review_data.files}
+                    expanded_files={@expanded_files}
+                    selected_file={@selected_file}
+                    file_context_levels={@file_context_levels}
+                  />
+                <% else %>
+                  <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center">
+                    <p class="text-sm text-slate-400">
+                      {gettext("No diff data available for this review.")}
+                    </p>
+                  </div>
+                <% end %>
+              </div>
+          <% end %>
+        </div>
+
+        <EvoDashWeb.Layouts.pro_corner navigate={~p"/review/#{@task_id}"} />
+      </div>
+    </EvoDashWeb.Layouts.simple>
+    """
+  end
+
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:review}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <%= if @error do %>
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
+
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
+
           <.link navigate={~p"/"} class="btn btn-primary px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
@@ -36,7 +139,6 @@ defmodule EvoDashWeb.ReviewLive do
               </.link>
             <% end %>
           </div>
-
           <!-- Loading state -->
           <%= if @loading do %>
             <div class="flex items-center justify-center py-20">
@@ -62,7 +164,6 @@ defmodule EvoDashWeb.ReviewLive do
                 commit_sha={@commit_sha}
                 status={@review_status}
               />
-
               <EvoDashWeb.ReviewComponents.task_summary
                 usage={@task_usage}
                 agent_count={@agent_count}
@@ -72,7 +173,6 @@ defmodule EvoDashWeb.ReviewLive do
                 started_at={@started_at}
                 finished_at={@finished_at}
               />
-
               <!-- Unified review card: tab bar + content -->
               <div class="review-card">
                 <!-- Tab Bar (sticky header of the card) -->
@@ -85,7 +185,6 @@ defmodule EvoDashWeb.ReviewLive do
                     agents_count={if @archive_metadata, do: length(@archive_metadata), else: 0}
                   />
                 </div>
-
                 <!-- Content area -->
                 <div class="review-card-content">
                   <%= cond do %>
@@ -98,7 +197,6 @@ defmodule EvoDashWeb.ReviewLive do
                             summary_raw={@summary_raw}
                           />
                         <% end %>
-
                         <!-- Diff Stats -->
                         <%= if @review_data do %>
                           <EvoDashWeb.ReviewComponents.diff_stats_bar
@@ -108,7 +206,6 @@ defmodule EvoDashWeb.ReviewLive do
                             commits_count={length(@commits)}
                           />
                         <% end %>
-
                         <!-- Action Buttons -->
                         <EvoDashWeb.ReviewComponents.action_buttons
                           branch_exists={@branch_exists}
@@ -119,23 +216,25 @@ defmodule EvoDashWeb.ReviewLive do
                           is_no_changes={@is_no_changes}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
-                          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary gap-2" download>
-                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext("Export JSON")}
+                          <.link
+                            href={"/tasks/#{@task_id}/export"}
+                            class="btn btn-sm btn-outline btn-primary gap-2"
+                            download
+                          >
+                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext(
+                              "Export JSON"
+                            )}
                           </.link>
                         <% end %>
-                        <EvoDashWeb.ReviewComponents.extract_skills_modal
-                          show={@show_extract_modal}
-                        />
-                      </div>
 
+                        <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
+                      </div>
                     <% @review_tab == :objective -> %>
                       <div class="p-4 sm:p-6 lg:p-8">
                         <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
                       </div>
-
                     <% @review_tab == :commits -> %>
                       <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-
                     <% @review_tab == :files_changed -> %>
                       <%= if @review_data do %>
                         <EvoDashWeb.ReviewComponents.split_diff_layout
@@ -146,11 +245,15 @@ defmodule EvoDashWeb.ReviewLive do
                         />
                       <% else %>
                         <div class="p-8 text-center">
-                          <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
-                          <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                          <.icon
+                            name="hero-document-magnifying-glass"
+                            class="size-10 text-base-content/30 mx-auto mb-3"
+                          />
+                          <p class="text-sm text-base-content/50">
+                            {gettext("No diff data available for this review.")}
+                          </p>
                         </div>
                       <% end %>
-
                     <% @review_tab == :archive -> %>
                       <%= if @archive_metadata not in [nil, []] do %>
                         <div class="p-4 sm:p-6 lg:p-8">
@@ -161,8 +264,13 @@ defmodule EvoDashWeb.ReviewLive do
                         </div>
                       <% else %>
                         <div class="p-8 text-center">
-                          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/30 mx-auto mb-3" />
-                          <p class="text-sm text-base-content/50">{gettext("No archived agent data available for this task.")}</p>
+                          <.icon
+                            name="hero-archive-box-x-mark"
+                            class="size-10 text-base-content/30 mx-auto mb-3"
+                          />
+                          <p class="text-sm text-base-content/50">
+                            {gettext("No archived agent data available for this task.")}
+                          </p>
                         </div>
                       <% end %>
                   <% end %>
@@ -172,7 +280,11 @@ defmodule EvoDashWeb.ReviewLive do
               <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
                 <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
                   <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
-                  <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
+                  <p class="text-sm text-warning">
+                    {gettext(
+                      "Could not load diff data. The branch may have been modified externally."
+                    )}
+                  </p>
                 </div>
               <% end %>
             <% end %>
