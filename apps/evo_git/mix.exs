@@ -33,6 +33,10 @@ defmodule EvoGit.MixProject do
       {:toml_elixir, "~> 3.1"},
       {:yaml_elixir, "~> 2.11"},
       {:xqlite, "~> 0.10"},
+      # Needed only when building the xqlite NIF from source (XQLITE_BUILD=1),
+      # e.g. on Windows machines where app-control policy blocks the
+      # precompiled NIF DLL.
+      {:rustler, "~> 0.38.0", optional: true},
       {:jason, "~> 1.2"}
     ]
   end
