@@ -9,7 +9,6 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Agents.ContextExtractor
   alias EvoGit.Agent.Usage
   alias EvoGit.Agent.Result
-  alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.ProjectConfig
   alias EvoGit.Runtime
   alias EvoGit.Runtime.Helpers
@@ -159,10 +158,6 @@ defmodule EvoGit.Runtime.Genesis do
          task_id,
          scripts
        ) do
-    # Clear the architect's archive records from ETS to prevent double-counting
-    # when the Manager (second root agent, same task_id) completes.
-    Lifecycle.clear_archive_records(task_id)
-
     # Start the Manager from the architect's final commit (or original base if no commit)
     architect_commit = architect_output.commit_sha || base_sha
     phylo_node = PhyloGraphNode.new(repo_path, architect_commit)

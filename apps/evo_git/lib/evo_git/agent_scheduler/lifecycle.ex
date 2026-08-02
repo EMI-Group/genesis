@@ -258,6 +258,15 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
               archive_records = collect_archive_records(meta.task_id)
               result = inject_archive_records(result, archive_records)
 
+              # Per-task collection is consumed at successful root completion;
+              # a later run reusing the same task_id cannot re-collect stale
+              # records. Non-success results retain their records — the
+              # task-start reset covers them later.
+              case result do
+                {:ok, %EvoGit.Agent.Result{}} -> clear_archive_records(meta.task_id)
+                _ -> :ok
+              end
+
               GenServer.reply(meta.from, result)
 
               state = %{
@@ -335,34 +344,15 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   `:evogit_archive_records` ETS table.
   """
   def collect_archive_records(task_id) do
-    case :ets.whereis(:evogit_archive_records) do
-      :undefined ->
-        []
-
-      _tid ->
-        :ets.lookup(:evogit_archive_records, task_id)
-        |> Enum.map(fn {_task_id, record} -> record end)
-    end
+    Store.collect_archive_records(task_id)
   end
 
   @doc """
-  Clears all archive records for the given task ID from the
-  `:evogit_archive_records` ETS table.
-
-  Used when multiple root agents share the same task_id (e.g., genesis two-phase
-  mode where a CodebaseLead runs first, then a Manager runs second with the same
-  task_id) to prevent the first agent's archive records from being collected again
-  when the second agent completes.
+  Resets the per-task archive collection; called at task start (defensive) and
+  after successful collection at root completion.
   """
   def clear_archive_records(task_id) do
-    case :ets.whereis(:evogit_archive_records) do
-      :undefined ->
-        :ok
-
-      _tid ->
-        :ets.match_delete(:evogit_archive_records, {task_id, :_})
-        :ok
-    end
+    Store.clear_archive_records(task_id)
   end
 
   @doc """
@@ -370,7 +360,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   Non-success results pass through unchanged.
   """
   def inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records)
-       when is_list(records) do
+      when is_list(records) do
     {:ok, %{res | archive_records: records}}
   end
 

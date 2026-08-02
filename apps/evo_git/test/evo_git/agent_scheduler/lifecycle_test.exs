@@ -485,4 +485,109 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       end
     end
   end
+
+  describe "archive record collection" do
+    setup do
+      # The app owns :evogit_archive_records — create it only if missing, and
+      # only clear its contents for isolation (never delete the table itself).
+      create_ets_if_missing(:evogit_archive_records)
+
+      if :ets.whereis(:evogit_archive_records) != :undefined do
+        :ets.delete_all_objects(:evogit_archive_records)
+      end
+
+      on_exit(fn ->
+        if :ets.whereis(:evogit_archive_records) != :undefined do
+          :ets.delete_all_objects(:evogit_archive_records)
+        end
+      end)
+
+      :ok
+    end
+
+    test "collect_archive_records is scoped per task" do
+      :ets.insert(:evogit_archive_records, {{"t1", "a1"}, %{agent_id: "a1", task: "t1"}})
+      :ets.insert(:evogit_archive_records, {{"t2", "b1"}, %{agent_id: "b1", task: "t2"}})
+
+      assert Lifecycle.collect_archive_records("t1") == [%{agent_id: "a1", task: "t1"}]
+
+      assert Lifecycle.clear_archive_records("t1") == :ok
+      assert Lifecycle.collect_archive_records("t1") == []
+
+      # The other task's records are untouched.
+      assert Lifecycle.collect_archive_records("t2") == [%{agent_id: "b1", task: "t2"}]
+    end
+
+    test "handle_task_result collects and clears per-task archive records at root completion" do
+      ref = make_ref()
+      from_ref = make_ref()
+      from = {self(), from_ref}
+
+      put_sched_meta("root1", %SchedMeta{
+        id: "root1",
+        depth: 0,
+        spec: agent_spec(),
+        task_id: "t1",
+        parent_id: nil,
+        from: from,
+        result_sent: false
+      })
+
+      # One archive record for task "t1" (consumed at completion) plus a control
+      # record for a different task ("t2") that must survive.
+      :ets.insert(:evogit_archive_records, {{"t1", "a1"}, %{agent_id: "a1"}})
+      :ets.insert(:evogit_archive_records, {{"t2", "b1"}, %{agent_id: "b1"}})
+
+      state =
+        base_state([])
+        |> struct!(ref_to_agent: %{ref => "root1"}, task_agent_counts: %{"t1" => 1})
+
+      assert {:noreply, _} =
+               Lifecycle.handle_task_result(
+                 ref,
+                 {:ok, %EvoGit.Agent.Result{result: "done", commit_sha: "abc"}},
+                 state
+               )
+
+      assert_receive {^from_ref, {:ok, %EvoGit.Agent.Result{archive_records: records}}}
+      assert length(records) == 1
+      assert hd(records).agent_id == "a1"
+
+      # The successful collection CONSUMED the task's records…
+      assert Lifecycle.collect_archive_records("t1") == []
+
+      # …but the other task's control record is untouched.
+      assert [%{agent_id: "b1"}] = Lifecycle.collect_archive_records("t2")
+    end
+
+    test "handle_task_result does NOT clear archive records on error results" do
+      ref = make_ref()
+      from_ref = make_ref()
+      from = {self(), from_ref}
+
+      put_sched_meta("root2", %SchedMeta{
+        id: "root2",
+        depth: 0,
+        spec: agent_spec(),
+        task_id: "t3",
+        parent_id: nil,
+        from: from,
+        result_sent: false
+      })
+
+      :ets.insert(:evogit_archive_records, {{"t3", "c1"}, %{agent_id: "c1"}})
+
+      state =
+        base_state([])
+        |> struct!(ref_to_agent: %{ref => "root2"}, task_agent_counts: %{"t3" => 1})
+
+      assert {:noreply, _} =
+               Lifecycle.handle_task_result(ref, {:error, :recovery_failed}, state)
+
+      assert_receive {^from_ref, {:error, :recovery_failed}}
+
+      # Non-{:ok, %Result{}} results must NOT consume/clear the collection.
+      assert [%{agent_id: "c1"}] = Lifecycle.collect_archive_records("t3")
+    end
+  end
 end
