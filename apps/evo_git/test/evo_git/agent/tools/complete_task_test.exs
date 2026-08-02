@@ -696,11 +696,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.delete(:evogit_started_at)
     end
 
-    test "writes a single archive record when the same agent completes twice (crash-retry idempotency)", %{
-      tmp_dir: tmp_dir,
-      base_commit: base_commit,
-      final_commit: final_commit
-    } do
+    test "writes a single archive record when the same agent completes twice (crash-retry idempotency)",
+         %{
+           tmp_dir: tmp_dir,
+           base_commit: base_commit,
+           final_commit: final_commit
+         } do
       Process.put(:repo_path, tmp_dir)
 
       :ets.insert(:evogit_sched_meta, {"agent_arc5", %{task_id: "5", task_number: 5}})
@@ -730,11 +731,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.delete(:repo_path)
     end
 
-    test "two runs sharing a task_id produce archives with only their own records (no stale leak)", %{
-      tmp_dir: tmp_dir,
-      base_commit: base_commit,
-      final_commit: final_commit
-    } do
+    test "two runs sharing a task_id produce archives with only their own records (no stale leak)",
+         %{
+           tmp_dir: tmp_dir,
+           base_commit: base_commit,
+           final_commit: final_commit
+         } do
       Process.put(:repo_path, tmp_dir)
 
       # Run 1: two agents sharing the same task_id

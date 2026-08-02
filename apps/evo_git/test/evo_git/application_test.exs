@@ -81,7 +81,9 @@ defmodule EvoGit.ApplicationTest do
       assert GenServer.whereis(EvoGit.AgentScheduler) == nil
 
       # 5. Restart the scheduler child.
-      assert {:ok, new_pid} = Supervisor.restart_child(EvoGit.AgentGroupSupervisor, EvoGit.AgentScheduler)
+      assert {:ok, new_pid} =
+               Supervisor.restart_child(EvoGit.AgentGroupSupervisor, EvoGit.AgentScheduler)
+
       assert is_pid(new_pid)
       assert new_pid != old_pid, "scheduler should be a new process after restart"
 
