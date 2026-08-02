@@ -520,6 +520,11 @@ defmodule EvoGit.AgentScheduler do
     task_id =
       spec.opts[:task_id] || :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
+    # Defensive per-task archive reset: any leftover records from a previous run
+    # sharing this task_id (e.g., a crash before the task completed) must not leak
+    # into this run's collected archive.
+    Lifecycle.clear_archive_records(task_id)
+
     repo_root = Dispatch.resolve_agent_repo_root(spec, state)
     task_number = Dispatch.next_task_number(repo_root)
 
@@ -866,7 +871,8 @@ defmodule EvoGit.AgentScheduler do
   progress. Reset to 0 on each context compression.
   """
   @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
-  def update_total_tokens(agent_id, total_tokens), do: Store.update_total_tokens(agent_id, total_tokens)
+  def update_total_tokens(agent_id, total_tokens),
+    do: Store.update_total_tokens(agent_id, total_tokens)
 
   @doc """
   Increments the compression count for an agent in the agent state table.

@@ -13,10 +13,13 @@ defmodule EvoGit.Application do
     ensure_ets_table(:evogit_agent_state, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
 
+    # Archive records keyed by {task_id, agent_id} — at most one record per
+    # agent per task, so re-writes (e.g. crash-retry double completion) are
+    # idempotent overwrites.
     ensure_ets_table(:evogit_archive_records, [
       :named_table,
       :public,
-      :duplicate_bag,
+      :set,
       read_concurrency: true
     ])
 
@@ -35,8 +38,14 @@ defmodule EvoGit.Application do
       {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
       {EvoGit.Store,
        data_dir:
-         Path.join(Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()), "tasks.sqlite")},
-      {Registry, keys: :unique, name: EvoGit.TaskRegistry.ProcessRegistry, id: :task_registry_process_registry},
+         Path.join(
+           Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
+           "tasks.sqlite"
+         )},
+      {Registry,
+       keys: :unique,
+       name: EvoGit.TaskRegistry.ProcessRegistry,
+       id: :task_registry_process_registry},
       {EvoGit.TaskRegistry, []},
       {EvoGit.AgentScheduler.WorktreeManager, []},
       {EvoGit.AgentGroupSupervisor, []}
