@@ -49,7 +49,7 @@ There is no `running_count` field. The running count is always derived as `map_s
 The scheduler supports multiple concurrent tasks targeting different repos. Repo root resolution follows this priority:
 
 1. **Per-agent ETS** (`AgentState.repo_root`) — set at registration via `Dispatch.resolve_agent_repo_root/2`, derived from spec data. Used by `Lifecycle` for worktree cleanup.
-2. **Process dictionary** (`Process.get(:evogit_repo_root)`) — set at dispatch time in `try_dispatch/2`. Preferred by `current_repo_root/0` for runtime lookups.
+2. **Process dictionary** (`Process.get(:genesis_repo_root)`) — set at dispatch time in `try_dispatch/2`. Preferred by `current_repo_root/0` for runtime lookups.
 
 There is no global `state.repo_root` fallback — repo root resolution is always per-agent. The scheduler tracks which repos have been initialized via the `initialized_repos` map (`%{String.t() => true}`).
 
@@ -115,6 +115,7 @@ Handles agent completion and crash recovery:
 - `SchedMeta.task_ref` stores a `%Task{}` struct (for `Task.shutdown/2`), NOT a bare reference. The `ref_to_agent` map still keys on `task.ref` (the monitor reference).
 - `case`/`with` guards on ETS lookups are used ONLY where a genuine race can cause the entry to be absent (recycle_agent, try_dispatch, cancel_agent). Not used defensively everywhere.
 - Cross-module calls: `Dispatch.process_queue/1` calls `Subagents.dispatch_ready_parent/3` for ready parents. `Lifecycle.handle_agent_crash/3` calls `Dispatch.try_dispatch/2`, `Dispatch.process_queue/1`, `Subagents.store_sub_result/3`, and `Subagents.maybe_resume_parent/2`.
+- **Task archive table**: `:evogit_archive_records` is a **`:set` keyed by `{task_id, agent_id}`** (at most one record per agent per task — idempotent writes via `EvoGit.AgentScheduler.Store.put_archive_record/3` fix the crash-retry double-write race). Records are written at agent exit, consumed (collected into `Result.archive_records`) **AND** cleared at successful root completion in `Lifecycle.handle_task_result/3`, and reset defensively at task start in the `run_agent` call. The old "clear between Mode B phases" mechanism (`genesis.ex`) is gone — the architect root's records are already consumed+cleared at its own completion.
 
 ### ⚠️ Sending a user message to a running agent — no existing mechanism
 There is **NO existing mechanism to send/queue a user message to a running agent**. The RPC surface (`EvoGit.AgentScheduler.RemoteAPI` + `EvoGit.RemoteNode`) is strictly **read-only**. Agents run as plain synchronous `Task` processes (`Task.Supervisor.async_nolink/5` in `Dispatch.try_dispatch/2`, dispatch.ex:201-207) — they are **NOT GenServers**, have **no `receive`/`handle_info`**, and never check a mailbox. The agent loop (`EvoGit.Agent.Runner.loop/1` → `ToolDispatch.do_turn/5`) is a tight tail-recursive function that does not poll for messages.

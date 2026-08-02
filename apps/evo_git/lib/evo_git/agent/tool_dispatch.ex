@@ -644,7 +644,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         max_retries: agent_state.max_retries,
         max_agent_depth: agent_state.max_depth,
         foreign_repos: agent_state.foreign_repos,
-        compression_threshold: EvoGit.Defaults.compression_threshold_tokens(),
+        compression_threshold: EvoGit.Config.resolve([:llm, :compression_threshold_tokens]),
         agent_type: agent_type_from_module(state.agent_module),
         context_node_path: state.node_path
       )
@@ -703,7 +703,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   @doc false
   def process_standard_calls(indexed_calls, %LoopState{} = state) do
     repo_root =
-      Process.get(:evogit_repo_root) || raise "evogit_repo_root not in process dictionary"
+      Process.get(:genesis_repo_root) || raise "genesis_repo_root not in process dictionary"
 
     indexed_results =
       batch_execute_tools(

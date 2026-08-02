@@ -50,7 +50,7 @@ persistence (`"sidebar-collapsed"`, `"true"`/`"false"`). It toggles these select
 - `[data-sidebar-bottom-bar]` — bottom container: switches between `flex justify-between` (expanded) and `flex-col items-center` (collapsed)
 - `[data-sidebar-bottom-group]` — button group inside the bottom bar (same flex-dir toggle)
 - `#sidebar-collapse-toggle` — the chevron button; swaps `hero-chevron-double-left` ↔ `hero-chevron-double-right` via innerHTML regex replacement and updates its `title`
-- width: toggles `w-60` (expanded, 240px) ↔ `w-16` (collapsed, 64px); also toggles `overflow-hidden` ↔ `overflow-visible`
+- width: toggles `w-60` (expanded, 240px) ↔ `w-16` (collapsed, 64px). Overflow stays `overflow-visible` in BOTH states — dropdown menus (SSH node selector `w-72` = 288px, language, theme) extend beyond the expanded sidebar's `w-60` = 240px edge without being clipped. Do NOT re-add `overflow-hidden` on expand (that was the root cause of the clipped node-selector dropdown).
 
 **Critical**: the `updated()` callback re-applies state on every LiveView update because
 LiveView's morphdom resets server-rendered classes after navigation, which would otherwise

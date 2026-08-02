@@ -331,11 +331,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       context_node_path: data[:context_node_path]
     }
 
-    # Write to the archive records ETS table (if it exists)
-    case :ets.whereis(:evogit_archive_records) do
-      :undefined -> :ok
-      _tid -> :ets.insert(:evogit_archive_records, {task_id, record})
-    end
+    # Write to the archive records ETS table (if it exists). The table is a
+    # :set keyed by {task_id, agent_id}, so this is an idempotent overwrite —
+    # a crash-retry completing twice cannot produce a duplicate record.
+    EvoGit.AgentScheduler.Store.put_archive_record(task_id, agent_id, record)
 
     Logger.info("Archive: Wrote refs #{ref_start} and #{ref_final} for agent #{agent_id}")
   end

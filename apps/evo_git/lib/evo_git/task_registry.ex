@@ -94,6 +94,21 @@ defmodule EvoGit.TaskRegistry do
     GenServer.call(__MODULE__, {:list_tasks_by_path, path})
   end
 
+  @doc """
+  Returns lightweight task summaries for all tasks — only columns needed for
+  the dashboard sidebar listing. Returns a list of plain maps.
+  """
+  def list_tasks_summary do
+    GenServer.call(__MODULE__, :list_tasks_summary)
+  end
+
+  @doc """
+  Same as list_tasks_summary/0 but filtered to a specific project_path.
+  """
+  def list_tasks_summary_by_path(path) do
+    GenServer.call(__MODULE__, {:list_tasks_summary_by_path, path})
+  end
+
   def get_unique_paths do
     GenServer.call(__MODULE__, :get_unique_paths)
   end
@@ -331,6 +346,18 @@ defmodule EvoGit.TaskRegistry do
     paths = EvoGit.Store.select_task_paths(state.task_store)
 
     {:reply, paths, state}
+  end
+
+  @impl true
+  def handle_call(:list_tasks_summary, _from, state) do
+    tasks = EvoGit.Store.select_tasks_summary(state.task_store)
+    {:reply, tasks, state}
+  end
+
+  @impl true
+  def handle_call({:list_tasks_summary_by_path, path}, _from, state) do
+    tasks = EvoGit.Store.select_tasks_summary_by_path(state.task_store, path)
+    {:reply, tasks, state}
   end
 
   @impl true

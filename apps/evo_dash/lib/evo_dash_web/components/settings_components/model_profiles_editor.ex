@@ -487,21 +487,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   end
 
   defp model_model_fields(model) when is_binary(model) do
-    case :binary.split(model, ":") do
-      [provider, id] ->
-        {provider, id, "", ""}
-
-      [_no_colon] ->
-        {"", model, "", ""}
+    case String.split(model, ":", parts: 2) do
+      [provider, id] -> {provider, id, "", ""}
+      [_only] -> {"", model, "", ""}
     end
   end
 
-  defp model_model_fields({provider, opts}) when is_atom(provider) and is_list(opts) do
-    provider_str = to_string(provider)
-    id_str = Keyword.get(opts, :id, "") |> to_string()
-    base_url_str = Keyword.get(opts, :base_url, "") |> to_string()
-    {provider_str, id_str, base_url_str, ""}
-  end
+  defp model_model_fields(_), do: {"", "", "", ""}
 
   # Builds a compact summary string of generation params, e.g.
   # "temp: 0.7, max_tokens: 4096". Returns nil if no params are set.

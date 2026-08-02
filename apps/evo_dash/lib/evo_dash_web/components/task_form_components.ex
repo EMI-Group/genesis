@@ -14,6 +14,8 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   use EvoDashWeb, :html
 
+  defdelegate model_display(value), to: EvoDashWeb.SettingsComponents.SettingCard
+
   # ---------------------------------------------------------------------------
   # task_form/1 — Immersive prompt composer (hero textarea + unified toolbar)
   # ---------------------------------------------------------------------------
@@ -287,27 +289,12 @@ defmodule EvoDashWeb.TaskFormComponents do
     """
   end
 
-  # Renders a compact label for a profile's model spec, handling both the new
-  # map format (%{provider: atom, id: string, base_url: ...}) or tuple format
-  # ({:provider, [id: "id", base_url: "..."]) and the legacy
-  # "provider:id" string format. The `<>` binary operator crashes on maps, so we
-  # normalize to a string here.
-  defp profile_model_label(%{model: model} = _profile) when is_map(model) do
-    provider = model[:provider] || model["provider"]
-    id = model[:id] || model["id"]
-
-    cond do
-      provider != nil and id != nil -> "#{provider}:#{id}"
-      id != nil -> to_string(id)
-      true -> ""
-    end
+  # Renders a compact label for a profile's model spec. Handles both
+  # string models (e.g., "gpt-5.6-sol") and map models
+  # (e.g., %{provider: "openai", id: "gpt-4"}). Delegates to
+  # model_display/1 (defined in SettingCard) for consistent rendering.
+  defp profile_model_label(profile) when is_map(profile) do
+    model = Map.get(profile, :model) || Map.get(profile, "model")
+    model_display(model)
   end
-
-  defp profile_model_label(%{model: {provider, opts}}) when is_atom(provider) and is_list(opts) do
-    id = Keyword.get(opts, :id)
-    if id && id != "", do: "#{provider}:#{id}"
-  end
-
-  defp profile_model_label(%{model: model}) when is_binary(model), do: model
-  defp profile_model_label(_profile), do: ""
 end

@@ -11,7 +11,7 @@ This is an **Elixir umbrella project** with two child applications:
 | `:evo_git` | `./apps/evo_git/` | Core runtime — agent execution, Git interactions, CLI |
 | `:evo_dash` | `./apps/evo_dash/` | Phoenix LiveView dashboard — real-time visualization and task management |
 
-The full design specification is in `AGENTS.md`.
+The full design specification is documented across the CONTEXT.md tree.
 
 ## Routing Table
 
@@ -32,7 +32,6 @@ The full design specification is in `AGENTS.md`.
 | `mix.exs` | Umbrella Mix project — apps_path, three releases: `genesis` (both apps), `genesis_desktop` (standard mix release with `include_erts`, bundled as Tauri resource), `genesis_remote` (headless evo_git-only daemon tarball for SSH remote dev). Version is read dynamically from `VERSION` (single source of truth). |
 | `VERSION` | Single source of truth for the project version (e.g. `0.1.0`). All umbrella `mix.exs` files read this; the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` provides a complete NixOS toolchain (Erlang/OTP 29, Elixir 1.20, Rust, Tauri v2 native deps) for local desktop app builds |
-| `AGENTS.md` | Full EvoGit design specification (dual-dimension architecture, agent model, runtime phases) |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
 | `.formatter.exs` | Code format configuration |
 | `.tool-versions` | Pinned Erlang/OTP 29 and Elixir 1.20.1 (for asdf/mise/CI) |
@@ -93,6 +92,16 @@ mix bump.version 0.2.0
 ```
 
 This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
+
+### Runtime Data Directory (`tasks.sqlite`)
+
+The SQLite task database (`tasks.sqlite`) lives in the platform data directory, resolved at runtime by `EvoGit.Platform.data_dir/0` (`apps/evo_git/lib/evo_git/platform.ex:106-132`) — NOT via Tauri's `path_resolver`/`app_data_dir`. The Tauri sidecar passes no data-dir env vars (only `PORT`, `PHX_IP`, `PHX_SERVER`, `SECRET_KEY_BASE`, `RELEASE_DISTRIBUTION`, `EVOGIT_DESKTOP`; `desktop/src-tauri/src/sidecar.rs:44-55`) — the Elixir backend decides the path itself:
+
+- **macOS**: `~/Library/Application Support/genesis/tasks.sqlite`
+- **Linux**: `$XDG_DATA_HOME/genesis/tasks.sqlite` (default `~/.local/share/genesis/tasks.sqlite`)
+- **Windows**: `%APPDATA%\genesis\tasks.sqlite` (default `~\genesis\tasks.sqlite` if APPDATA unset)
+
+Path is computed in `EvoGit.Application.start/2` (`apps/evo_git/lib/evo_git/application.ex:36-38`): `Path.join(Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()), "tasks.sqlite")`, passed to `EvoGit.Store`, which `mkdir_p!`s the parent dir and opens with SQLite WAL mode (`store.ex:328-332`; WAL sidecars `tasks.sqlite-wal`/`-shm` sit beside it). `EvoGit.TaskRegistry.init/1` mirrors the same resolution (`task_registry.ex:151-161`). **Override**: set the application env `config :evo_git, :data_dir` (only `config/test.exs:29` does this today); there is NO dedicated env var and NO TOML config key (`EvoGit.Config` schema has no data-dir option). Indirect env influence only: `HOME` (macOS), `XDG_DATA_HOME` (Linux), `APPDATA` (Windows). The desktop log file uses the same dir (`<data_dir>/logs/backend.log`, `config/runtime.exs:121`), and the `genesis_remote` daemon uses the same resolution on its host (macOS remote: `~/Library/Application Support/genesis/tasks.sqlite`).
 
 ### SSH Remote Development
 

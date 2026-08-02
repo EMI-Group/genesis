@@ -345,6 +345,42 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Returns lightweight task summaries on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary/0` directly.
+  On a remote node, routes the call through `:erpc` via `call_remote/4`. Returns
+  `[]` if the remote call fails.
+  """
+  @spec list_tasks_summary(node()) :: [map()]
+  def list_tasks_summary(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_summary, []) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Returns lightweight task summaries filtered to a specific project_path on the given node.
+  """
+  @spec list_tasks_summary_by_path(node(), String.t()) :: [map()]
+  def list_tasks_summary_by_path(node, path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary_by_path(path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_summary_by_path, [path]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
   Cancels a task on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.cancel_task/1` directly.

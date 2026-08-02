@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.7.0-8b5cf6" alt="Version"></a>
+  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.8.5-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20·%20Linux%20·%20Windows-success" alt="Platform">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <img src="https://img.shields.io/badge/built%20with-Elixir-4B275F" alt="Elixir">

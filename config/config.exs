@@ -57,7 +57,6 @@ config :phoenix, :json_library, Jason
 config :evo_git,
   sandbox: :auto
 
-# config/config.exs
 config :req_llm,
   # HTTP timeouts (all values in milliseconds)
   # Default response timeout
