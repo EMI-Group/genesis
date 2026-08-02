@@ -127,7 +127,7 @@ defmodule EvoGit.Agent do
 
       `:low` — The agent receives precise, well-scoped objectives and primarily
       does the work itself. Subagent delegation, if used at all, is occasional.
-      These are worker agents (Executor, TaskScheduler, Evaluator, etc.).
+      These are worker agents (Executor, TaskScheduler, etc.).
 
       The turn-budget warning system uses this to adjust its behavior: low-level
       agents receive significantly fewer delegation reminders since they are not
