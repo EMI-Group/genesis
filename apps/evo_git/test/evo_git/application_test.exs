@@ -29,7 +29,7 @@ defmodule EvoGit.ApplicationTest do
   @table_specs %{
     @agent_table => [:named_table, :public, :set, read_concurrency: true],
     @sched_table => [:named_table, :public, :set, read_concurrency: true],
-    @archive_table => [:named_table, :public, :duplicate_bag, read_concurrency: true]
+    @archive_table => [:named_table, :public, :set, read_concurrency: true]
   }
 
   setup do
