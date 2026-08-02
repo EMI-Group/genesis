@@ -93,6 +93,16 @@ mix bump.version 0.2.0
 
 This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
 
+### Runtime Data Directory (`tasks.sqlite`)
+
+The SQLite task database (`tasks.sqlite`) lives in the platform data directory, resolved at runtime by `EvoGit.Platform.data_dir/0` (`apps/evo_git/lib/evo_git/platform.ex:106-132`) — NOT via Tauri's `path_resolver`/`app_data_dir`. The Tauri sidecar passes no data-dir env vars (only `PORT`, `PHX_IP`, `PHX_SERVER`, `SECRET_KEY_BASE`, `RELEASE_DISTRIBUTION`, `EVOGIT_DESKTOP`; `desktop/src-tauri/src/sidecar.rs:44-55`) — the Elixir backend decides the path itself:
+
+- **macOS**: `~/Library/Application Support/genesis/tasks.sqlite`
+- **Linux**: `$XDG_DATA_HOME/genesis/tasks.sqlite` (default `~/.local/share/genesis/tasks.sqlite`)
+- **Windows**: `%APPDATA%\genesis\tasks.sqlite` (default `~\genesis\tasks.sqlite` if APPDATA unset)
+
+Path is computed in `EvoGit.Application.start/2` (`apps/evo_git/lib/evo_git/application.ex:36-38`): `Path.join(Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()), "tasks.sqlite")`, passed to `EvoGit.Store`, which `mkdir_p!`s the parent dir and opens with SQLite WAL mode (`store.ex:328-332`; WAL sidecars `tasks.sqlite-wal`/`-shm` sit beside it). `EvoGit.TaskRegistry.init/1` mirrors the same resolution (`task_registry.ex:151-161`). **Override**: set the application env `config :evo_git, :data_dir` (only `config/test.exs:29` does this today); there is NO dedicated env var and NO TOML config key (`EvoGit.Config` schema has no data-dir option). Indirect env influence only: `HOME` (macOS), `XDG_DATA_HOME` (Linux), `APPDATA` (Windows). The desktop log file uses the same dir (`<data_dir>/logs/backend.log`, `config/runtime.exs:121`), and the `genesis_remote` daemon uses the same resolution on its host (macOS remote: `~/Library/Application Support/genesis/tasks.sqlite`).
+
 ### SSH Remote Development
 
 Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemon runs on a remote server, and the local Phoenix dashboard controls it over an SSH tunnel via Erlang distribution.
