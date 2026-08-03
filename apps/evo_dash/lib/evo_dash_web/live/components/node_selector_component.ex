@@ -21,71 +21,87 @@ defmodule EvoDashWeb.NodeSelectorComponent do
     ~H"""
     <div id={@id}>
       <details class="dropdown dropdown-start" id={"#{@id}-details"}>
-      <summary
-        class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-        title={gettext("Switch node")}
-      >
-        <span class={dot_color_class(@current_node_id, @connection_statuses)}></span>
-        <span class="text-sm font-medium text-slate-700 dark:text-slate-300 sidebar-label">
-          {@current_node_name}
-        </span>
-      </summary>
-      <div class="dropdown-content mt-2 z-50 w-72 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
-        <div class="flex flex-col gap-0.5">
-          <button
-            class={[
-              "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-              is_nil(@current_node_id) &&
-                "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
-              not is_nil(@current_node_id) &&
-                "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-            ]}
-            phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
-          >
-            <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-            <span class="flex-1 text-left">{gettext("Local")}</span>
-            <.icon :if={is_nil(@current_node_id)} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
-          </button>
+        <summary
+          class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          title={gettext("Switch node")}
+        >
+          <span class={dot_color_class(@current_node_id, @connection_statuses)}></span>
+          <span class="text-sm font-medium text-slate-700 dark:text-slate-300 sidebar-label">
+            {@current_node_name}
+          </span>
+        </summary>
 
-          <div
-            :if={@remote_targets != []}
-            class="my-1 border-t border-base-200"
-          >
-          </div>
+        <div class="dropdown-content mt-2 z-50 w-72 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+          <div class="flex flex-col gap-0.5">
+            <button
+              class={[
+                "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                is_nil(@current_node_id) &&
+                  "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+                not is_nil(@current_node_id) &&
+                  "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+              ]}
+              phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
+            >
+              <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+              <span class="flex-1 text-left">{gettext("Local")}</span>
+              <.icon
+                :if={is_nil(@current_node_id)}
+                name="hero-check-solid"
+                class="size-4 text-indigo-500 shrink-0"
+              />
+            </button>
 
-          <button
-            :for={target <- @remote_targets}
-            class={[
-              "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-              @current_node_id == target.id &&
-                "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
-              @current_node_id != target.id &&
-                "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-            ]}
-            phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
-          >
-            <span class={["w-2 h-2 rounded-full shrink-0", target_dot_color(target.id, @connection_statuses)]}></span>
-            <span class="flex-1 text-left">
-              <span class="block">{target.name}</span>
-              <span class="block text-xs text-base-content/50">
-                {target[:ssh_target] || "#{target[:user]}#{maybe_at()}#{target[:host]}#{if(target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: "")}"}
+            <div
+              :if={@remote_targets != []}
+              class="my-1 border-t border-base-200"
+            >
+            </div>
+
+            <button
+              :for={target <- @remote_targets}
+              class={[
+                "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                @current_node_id == target.id &&
+                  "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+                @current_node_id != target.id &&
+                  "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+              ]}
+              phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
+            >
+              <span class={[
+                "w-2 h-2 rounded-full shrink-0",
+                target_dot_color(target.id, @connection_statuses)
+              ]}></span>
+              <span class="flex-1 text-left">
+                <span class="block">{target.name}</span>
+                <span class="block text-xs text-base-content/50">
+                  {target[:ssh_target] ||
+                    "#{target[:user]}#{maybe_at()}#{target[:host]}#{if(target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: "")}"}
+                </span>
               </span>
-            </span>
-            <.icon :if={@current_node_id == target.id} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
-          </button>
 
-          <div class="my-1 border-t border-base-200"></div>
+              <.icon
+                :if={@current_node_id == target.id}
+                name="hero-check-solid"
+                class="size-4 text-indigo-500 shrink-0"
+              />
+            </button>
 
-          <.link
-            navigate={~p"/settings?category=remote_connections#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"}
-            class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-          >
-            <.icon name="hero-server-stack" class="size-4 shrink-0" />
-            <span class="flex-1 text-left"><%= gettext("Manage Connections...") %></span>
-          </.link>
+            <div class="my-1 border-t border-base-200"></div>
+
+            <.link
+              navigate={
+                ~p"/settings?category=remote_connections#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"
+              }
+              class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            >
+              <.icon name="hero-server-stack" class="size-4 shrink-0" />
+              <span class="flex-1 text-left">{gettext("Manage Connections...")}</span>
+            </.link>
+          </div>
         </div>
-      </div>
-    </details>
+      </details>
     </div>
     """
   end

@@ -74,8 +74,8 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   Returns `true` if the completed task has a branch ready for review.
   """
   def show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
-       when is_binary(branch) and branch != "",
-       do: true
+      when is_binary(branch) and branch != "",
+      do: true
 
   def show_review_button?(_), do: false
 

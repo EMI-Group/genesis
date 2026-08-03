@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.TasksLiveTest do
+defmodule EvoDashWeb.DashboardTasksLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
@@ -168,7 +168,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   describe ":task_status broadcast handling" do
     # The EvoGit runtime broadcasts {:task_status, task_id, status} on the "tasks"
-    # PubSub topic. Before the fix, TasksLive had no clause matching this tuple,
+    # PubSub topic. Before the fix, the task history LiveView had no clause matching this tuple,
     # so a :finalizing status transition crashed the LiveView. These tests verify
     # the handle_info clauses added by the fix handle these messages gracefully.
 

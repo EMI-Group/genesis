@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.SystemLiveTest do
+defmodule EvoDashWeb.SettingsSystemLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
@@ -10,14 +10,14 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
 
     test "shows configuration guidance section", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
+      {:ok, _view, html} = live(conn, ~p"/settings?category=help")
 
       assert html =~ "Example Configuration"
       assert html =~ "config.toml"
     end
 
     test "shows CLI usage examples", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
+      {:ok, _view, html} = live(conn, ~p"/settings?category=help")
 
       assert html =~ "Example Usage"
       assert html =~ "genesis"
@@ -25,14 +25,14 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
 
     test "shows FAQ section", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
+      {:ok, _view, html} = live(conn, ~p"/settings?category=help")
 
       assert html =~ "Frequently Asked Questions"
       assert html =~ "How do I set my API key?"
     end
 
     test "shows credentials reference", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
+      {:ok, _view, html} = live(conn, ~p"/settings?category=help")
 
       assert html =~ "Credentials Reference"
       assert html =~ "credentials.toml"
@@ -124,7 +124,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # restart_remote/1 (it normalizes the node-down error and always returns
       # :ok), so this is safe to run. The handler should close the modal and
       # show an info flash about the remote node restarting.
-      alias EvoDashWeb.SystemLive
+      alias EvoDashWeb.SettingsLive
 
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
@@ -137,7 +137,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       }
 
       assert {:noreply, result_socket} =
-               SystemLive.handle_event("confirm_restart", %{}, socket)
+               SettingsLive.handle_event("confirm_restart", %{}, socket)
 
       # Modal closed
       refute result_socket.assigns.show_restart_confirm
@@ -148,7 +148,7 @@ defmodule EvoDashWeb.SystemLiveTest do
     test "confirm_stop stops the remote node via RPC when remote" do
       # ISSUE 2 fix: confirm_stop now operates on the REMOTE node via
       # EvoDash.NodeContext.stop_remote/1 (erpc RPC) instead of refusing.
-      alias EvoDashWeb.SystemLive
+      alias EvoDashWeb.SettingsLive
 
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
@@ -161,7 +161,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       }
 
       assert {:noreply, result_socket} =
-               SystemLive.handle_event("confirm_stop", %{}, socket)
+               SettingsLive.handle_event("confirm_stop", %{}, socket)
 
       # Modal closed
       refute result_socket.assigns.show_stop_confirm

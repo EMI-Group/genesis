@@ -73,6 +73,20 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   @doc """
+  Mirrors the first profile's model into the flat `[:llm, :model]` for backward
+  compatibility (the config-status check and older code paths still read the
+  flat field).
+  """
+  def mirror_default_model(file_config) do
+    models = get_in(file_config, [:llm, :models]) || []
+
+    case models do
+      [%{model: model} | _] -> put_in(file_config, [:llm, :model], model)
+      _ -> file_config
+    end
+  end
+
+  @doc """
   Checks whether `new_id` is already used by a profile OTHER than the one
   being edited (`old_id`). Returns `true` on collision.
   """
@@ -88,19 +102,12 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   keys and correctly-typed values.
 
   Reads the structured model fields `provider`, `model_id`, and `base_url`
-  (instead of the flat single `model` string) and produces the `:model` value
-  in one of two formats:
-
-  - Compact STRING form `"provider:model_id"` (or just `model_id` when the
-    provider is empty) when there are no genuine overrides — no `base_url`
-    and no `extra` JSON. This is the default stored format for profiles saved
-    without overrides.
-  - ReqLLM-native MAP spec `%{provider: atom, id: string}` (+ `:base_url`
-    and/or `:extra`) when a custom `base_url` or `extra` JSON override is
-    present.
+  (instead of the legacy single `model` string) and composes a ReqLLM-native
+  map model spec `%{provider: atom, id: string}` with `base_url` included only
+  when provided/non-empty.
 
   Returns `{:ok, profile_map}` on success, or `{:error, reason_string}` when
-  validation fails (model_id required, invalid extra/provider_options JSON).
+  validation fails (model_id required, provider must be a known catalog entry).
   """
   def parse_model_profile_params(params, id) do
     provider_str = String.trim(params["provider"] || "")
@@ -140,8 +147,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
             case Jason.decode(extra_raw) do
               {:ok, extra_map} when is_map(extra_map) ->
                 {:ok, Map.put(spec, :extra, extra_map)}
+
               {:ok, _} ->
                 {:error, "extra_must_be_object"}
+
               {:error, _} ->
                 {:error, "invalid_extra_json"}
             end
@@ -149,6 +158,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
         # Parse provider_options JSON config (profile-level, sibling of temperature etc.)
         provider_options_raw = String.trim(params["provider_options"] || "")
+
         provider_options_result =
           if provider_options_raw == "" do
             {:ok, nil}
@@ -156,8 +166,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
             case Jason.decode(provider_options_raw) do
               {:ok, po_map} when is_map(po_map) ->
                 {:ok, po_map}
+
               {:ok, _} ->
                 {:error, "provider_options_must_be_object"}
+
               {:error, _} ->
                 {:error, "invalid_provider_options_json"}
             end

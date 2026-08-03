@@ -8,7 +8,7 @@ defmodule EvoDashWeb.DashboardLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
-  alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow}
+  alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns}
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
@@ -17,152 +17,142 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <%= if @live_action == :system_dashboard do %>
-      <EvoDashWeb.Layouts.app
-        flash={@flash}
-        current_page={:phx_dashboard}
-        config_status={@config_status}
-        current_node_id={@current_node_id}
-        current_node_name={@current_node_name}
-        running_tasks={@running_tasks}
-        pending_tasks={@pending_tasks}
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:dashboard}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      tasks={@tasks}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
+      <div
+        id="dashboard-root"
+        phx-hook="StatePersistence"
+        data-project={@active_project_path}
+        data-task-mode={@task_mode}
+        class="flex flex-col min-h-full"
       >
-        <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
-          <div class="bg-info/15 text-info p-3 rounded-xl">
-            <.icon name="hero-chart-bar" class="size-6" />
-          </div>
-          <div>
-            <h1 class="text-xl font-bold">{gettext("System Dashboard")}</h1>
-            <p class="text-sm text-base-content/60">
-              {gettext("Phoenix LiveDashboard — system metrics, processes, and application telemetry")}
-            </p>
-          </div>
-        </div>
-        <iframe
-          src={~p"/phoenix/dashboard/home"}
-          class="w-full rounded-xl"
-          style="min-height: calc(100vh - 200px); border: none;"
-          title="Phoenix LiveDashboard"
-        ></iframe>
-      </EvoDashWeb.Layouts.app>
-    <% else %>
-      <EvoDashWeb.Layouts.app
-        flash={@flash}
-        current_page={:dashboard}
-        config_status={@config_status}
-        current_node_id={@current_node_id}
-        current_node_name={@current_node_name}
-        tasks={@tasks}
-        running_tasks={@running_tasks}
-        pending_tasks={@pending_tasks}
-      >
+        <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
+
+        <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
+
         <div
-          id="dashboard-root"
-          phx-hook="StatePersistence"
-          data-project={@active_project_path}
-          data-task-mode={@task_mode}
-          class="flex flex-col min-h-full"
+          id="browser-notifications"
+          phx-hook="BrowserNotifications"
+          class="flex-1 flex flex-col min-h-0"
         >
-          <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
-          <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
-          <div id="browser-notifications" phx-hook="BrowserNotifications" class="flex-1 flex flex-col min-h-0">
-            <%= if @remote? do %>
-              <!-- Remote node view: show the remote node's active agents.
+          <%= if @remote? do %>
+            <!-- Remote node view: show the remote node's active agents.
                    The local task list and project management are LOCAL
                    concerns — the remote daemon runs evo_git only, no
                    evo_dash (no TaskRegistry/Store). -->
-              <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
-                <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
-                <div>
-                  <h2 class="font-bold text-sm text-info mb-0.5">
-                    {gettext("Remote Node — Active Agents")}
+            <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
+              <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
+              <div>
+                <h2 class="font-bold text-sm text-info mb-0.5">
+                  {gettext("Remote Node — Active Agents")}
+                </h2>
+
+                <p class="text-sm text-base-content/70">
+                  {gettext(
+                    "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <%= if @remote_agents == [] do %>
+              <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+                <div class="animate-float">
+                  <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+                </div>
+
+                <p class="text-base font-medium">{gettext("No active agents")}</p>
+
+                <p class="text-sm mt-1">
+                  {gettext("There are no running agents on this remote node.")}
+                </p>
+              </div>
+            <% else %>
+              <div class="mt-6 animate-fade-in-up">
+                <div class="flex items-center gap-2 mb-4">
+                  <div class="bg-success/15 text-success p-2 rounded-lg">
+                    <.icon name="hero-play-circle" class="size-5" />
+                  </div>
+
+                  <h2 class="text-lg font-semibold text-base-content/80">
+                    {gettext("Agents")}
                   </h2>
-                  <p class="text-sm text-base-content/70">
-                    {gettext(
-                      "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
-                    )}
-                  </p>
+                  <span class="badge badge-success">{length(@remote_agents)}</span>
+                </div>
+
+                <div class="space-y-3">
+                  <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
+                    <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
+                      <div class="flex items-center justify-between gap-3 mb-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <span class="badge badge-ghost badge-sm font-mono shrink-0">
+                            #{Map.get(agent, :id, "?")}
+                          </span>
+
+                          <code class="text-xs text-base-content/60 truncate">
+                            {Map.get(agent, :agent_module, "")}
+                          </code>
+                        </div>
+
+                        <span class={[
+                          "badge badge-sm shrink-0",
+                          case Map.get(agent, :status) do
+                            :running -> "badge-success"
+                            :pending -> "badge-warning"
+                            :waiting -> "badge-info"
+                            :ready -> "badge-info"
+                            :blocked -> "badge-error"
+                            _ -> "badge-ghost"
+                          end
+                        ]}>
+                          {case Map.get(agent, :status) do
+                            s when is_atom(s) ->
+                              Gettext.gettext(
+                                EvoDashWeb.Gettext,
+                                String.capitalize(Atom.to_string(s))
+                              )
+
+                            _ ->
+                              gettext("Unknown")
+                          end}
+                        </span>
+                      </div>
+                      <% objective = Map.get(agent, :objective) %>
+                      <%= if objective do %>
+                        <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
+                      <% end %>
+
+                      <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
+                        <%= if Map.get(agent, :model_id) do %>
+                          <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
+                        <% end %>
+
+                        <%= if Map.get(agent, :repo_id) do %>
+                          <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
+                        <% end %>
+                        <% usage = Map.get(agent, :usage) || %{} %> <% total =
+                          Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
+                        <%= if total > 0 do %>
+                          <span>{gettext("Tokens")}: {total}</span>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% end %>
                 </div>
               </div>
-
-              <%= if @remote_agents == [] do %>
-                <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
-                  <div class="animate-float">
-                    <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
-                  </div>
-                  <p class="text-base font-medium">{gettext("No active agents")}</p>
-                  <p class="text-sm mt-1">
-                    {gettext("There are no running agents on this remote node.")}
-                  </p>
-                </div>
-              <% else %>
-                <div class="mt-6 animate-fade-in-up">
-                  <div class="flex items-center gap-2 mb-4">
-                    <div class="bg-success/15 text-success p-2 rounded-lg">
-                      <.icon name="hero-play-circle" class="size-5" />
-                    </div>
-                    <h2 class="text-lg font-semibold text-base-content/80">
-                      {gettext("Agents")}
-                    </h2>
-                    <span class="badge badge-success">{length(@remote_agents)}</span>
-                  </div>
-                  <div class="space-y-3">
-                    <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
-                      <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
-                        <div class="flex items-center justify-between gap-3 mb-2">
-                          <div class="flex items-center gap-2 min-w-0">
-                            <span class="badge badge-ghost badge-sm font-mono shrink-0">
-                              #{Map.get(agent, :id, "?")}
-                            </span>
-                            <code class="text-xs text-base-content/60 truncate">
-                              {Map.get(agent, :agent_module, "")}
-                            </code>
-                          </div>
-                          <span class={[
-                            "badge badge-sm shrink-0",
-                            case Map.get(agent, :status) do
-                              :running -> "badge-success"
-                              :pending -> "badge-warning"
-                              :waiting -> "badge-info"
-                              :ready -> "badge-info"
-                              :blocked -> "badge-error"
-                              _ -> "badge-ghost"
-                            end
-                          ]}>
-                            {case Map.get(agent, :status) do
-                              s when is_atom(s) ->
-                                Gettext.gettext(EvoDashWeb.Gettext, String.capitalize(Atom.to_string(s)))
-
-                              _ ->
-                                gettext("Unknown")
-                            end}
-                          </span>
-                        </div>
-                        <% objective = Map.get(agent, :objective) %>
-                        <%= if objective do %>
-                          <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
-                        <% end %>
-                        <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
-                          <%= if Map.get(agent, :model_id) do %>
-                            <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
-                          <% end %>
-                          <%= if Map.get(agent, :repo_id) do %>
-                            <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
-                          <% end %>
-                          <% usage = Map.get(agent, :usage) || %{} %>
-                          <% total = Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
-                          <%= if total > 0 do %>
-                            <span>{gettext("Tokens")}: {total}</span>
-                          <% end %>
-                        </div>
-                      </div>
-                    <% end %>
-                  </div>
-                </div>
-              <% end %>
-            <% else %>
-            <!-- Immersive project selector (flush to top-left, minimal margin) -->
-            <div class="mb-4 animate-fade-in-up shrink-0">
+            <% end %>
+          <% else %>
+            <!-- ① Select Project -->
+            <div class="animate-fade-in-up">
+              <.step_header number="1" title={gettext("Select Project")} />
               <EvoDashWeb.ProjectComponents.project_selector
                 active_project={@active_project}
                 recent_projects={@recent_projects}
@@ -173,9 +163,9 @@ defmodule EvoDashWeb.DashboardLive do
                 platform={@platform}
               />
             </div>
-
-            <!-- Full-width prompt + toolbar (task form) -->
-            <div class="animate-fade-in-up animation-delay-100 flex-1 flex flex-col min-h-0">
+            <!-- ② Describe the Task -->
+            <div class="mt-6 animate-fade-in-up animation-delay-100">
+              <.step_header number="2" title={gettext("Describe the Task")} />
               <EvoDashWeb.TaskFormComponents.task_form
                 prompt={@task_prompt}
                 mode={@task_mode}
@@ -192,62 +182,436 @@ defmodule EvoDashWeb.DashboardLive do
                 selected_build_system={@task_build_system}
               />
             </div>
+            <!-- Advanced — hidden, but the entry is obvious -->
+            <details
+              class="group mt-5 rounded-2xl border-2 border-dashed border-base-300 bg-base-100 overflow-hidden animate-fade-in-up animation-delay-100"
+              open={@show_advanced}
+            >
+              <summary
+                class="p-4 cursor-pointer hover:bg-base-200/40 transition-colors flex items-center gap-2.5 list-none [&::-webkit-details-marker]:hidden"
+                phx-click="toggle_advanced"
+              >
+                <.icon name="hero-adjustments-horizontal" class="size-5 text-primary" />
+                <span class="text-sm font-bold">{gettext("Advanced")}</span>
+                <span class="text-xs text-base-content/45 truncate">
+                  {gettext("Model, build system, archive, node/commit, project settings")}
+                </span>
 
-            <!-- Side-by-side: Project Settings + Advanced Options -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 items-start shrink-0 animate-fade-in-up animation-delay-100">
-              <%= if @active_project do %>
-                <EvoDashWeb.ProjectComponents.project_settings_panel
-                  active_project={@active_project_path}
-                  show={@show_project_settings}
-                  project_config={@project_config}
-                  worktree_script={@worktree_script}
-                  commands={@commands}
-                  foreign_repos={@foreign_repos}
-                  show_add_foreign_repo={@show_add_foreign_repo_form}
-                  new_repo_id={@new_repo_id}
-                  new_repo_path={@new_repo_path}
-                  new_repo_description={@new_repo_description}
-                  tauri_detected={@tauri_detected}
-                  platform={@platform}
+                <span class="ml-auto badge badge-ghost badge-sm shrink-0">
+                  <%= if @selected_model_id do %>
+                    {@selected_model_id}
+                  <% else %>
+                    {gettext("defaults")}
+                  <% end %>
+                </span>
+
+                <.icon
+                  name="hero-chevron-down"
+                  class="size-4 text-base-content/40 group-open:rotate-180 transition-transform shrink-0"
                 />
-              <% end %>
-              <EvoDashWeb.TaskFormComponents.advanced_options
-                show_advanced={@show_advanced}
-                node_path={@task_node_path}
-                starting_commit={@task_starting_commit}
-                resume_from={@task_resume_from}
-                mode={@task_mode}
-                disabled={is_nil(@active_project)}
-              />
-            </div>
+              </summary>
 
+              <div class="p-4 space-y-4 border-t border-base-200">
+                <!-- Model / Build System / Archive (associated to task-form) -->
+                <div class="flex flex-wrap items-end gap-x-5 gap-y-2.5">
+                  <%= if @model_profiles != [] do %>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
+                        {gettext("Model")}
+                      </label>
+
+                      <select
+                        name="model_id"
+                        form="task-form"
+                        phx-change="select_model"
+                        class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[10rem]"
+                      >
+                        <%= for profile <- @model_profiles do %>
+                          <option value={profile.id} selected={@selected_model_id == profile.id}>
+                            {profile.id}
+                          </option>
+                        <% end %>
+                      </select>
+                    </div>
+                  <% end %>
+
+                  <%= if String.starts_with?(@task_mode, "genesis") do %>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
+                        {gettext("Build System")}
+                      </label>
+
+                      <select
+                        name="build_system"
+                        form="task-form"
+                        class="select select-bordered select-sm bg-base-100 shadow-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                      >
+                        <option value="">{gettext("No build system")}</option>
+
+                        <%= for bs <- @build_systems do %>
+                          <option
+                            value={to_string(bs.id)}
+                            selected={@task_build_system == to_string(bs.id)}
+                          >
+                            {bs.name}
+                          </option>
+                        <% end %>
+                      </select>
+                    </div>
+                  <% end %>
+
+                  <div class="flex flex-col gap-1">
+                    <label class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 leading-none">
+                      {gettext("Archive")}
+                    </label>
+
+                    <label class="label cursor-pointer flex items-center gap-2 py-0">
+                      <input
+                        type="checkbox"
+                        name="archive"
+                        form="task-form"
+                        value="true"
+                        class="toggle toggle-sm toggle-primary"
+                      />
+                      <span class="text-sm text-base-content/60">{gettext("Archive agent details")}</span>
+                    </label>
+                  </div>
+                </div>
+
+                <EvoDashWeb.TaskFormComponents.advanced_options
+                  show_advanced={@show_advanced}
+                  node_path={@task_node_path}
+                  starting_commit={@task_starting_commit}
+                  resume_from={@task_resume_from}
+                  mode={@task_mode}
+                  disabled={is_nil(@active_project)}
+                />
+                <%= if @active_project do %>
+                  <EvoDashWeb.ProjectComponents.project_settings_panel
+                    active_project={@active_project_path}
+                    show={@show_project_settings}
+                    project_config={@project_config}
+                    worktree_script={@worktree_script}
+                    commands={@commands}
+                    foreign_repos={@foreign_repos}
+                    show_add_foreign_repo={@show_add_foreign_repo_form}
+                    new_repo_id={@new_repo_id}
+                    new_repo_path={@new_repo_path}
+                    new_repo_description={@new_repo_description}
+                    tauri_detected={@tauri_detected}
+                    platform={@platform}
+                  />
+                <% end %>
+              </div>
+            </details>
+            <!-- Task History (merged from /tasks) -->
+            <div class="mt-6 animate-fade-in-up animation-delay-200">
+              <.step_header number="3" title={gettext("Tasks")} />
+              <p class="text-sm text-base-content/50 mb-3 -mt-1">
+                {dngettext("default", "%{count} task found", "%{count} tasks found", @total_count)}
+              </p>
+              <!-- Filter Bar -->
+              <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
+                <form id="task-filters" phx-submit="noop">
+                  <div class="flex flex-col sm:flex-row gap-3">
+                    <!-- Status Filter -->
+                    <div class="form-control">
+                      <select
+                        name="status_filter"
+                        class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                        phx-change="filter_tasks"
+                      >
+                        <option value="all" selected={@status_filter == "all"}>
+                          {gettext("All Statuses")}
+                        </option>
+
+                        <option value="running" selected={@status_filter == "running"}>
+                          {gettext("Running")}
+                        </option>
+
+                        <option value="pending" selected={@status_filter == "pending"}>
+                          {gettext("Pending")}
+                        </option>
+
+                        <option value="completed" selected={@status_filter == "completed"}>
+                          {gettext("Completed")}
+                        </option>
+
+                        <option value="failed" selected={@status_filter == "failed"}>
+                          {gettext("Failed")}
+                        </option>
+
+                        <option value="cancelled" selected={@status_filter == "cancelled"}>
+                          {gettext("Cancelled")}
+                        </option>
+                      </select>
+                    </div>
+                    <!-- Project Filter -->
+                    <div class="form-control">
+                      <select
+                        name="project_filter"
+                        class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                        phx-change="filter_tasks"
+                      >
+                        <option value="all" selected={@project_filter == "all"}>
+                          {gettext("All Projects")}
+                        </option>
+
+                        <%= for path <- @project_paths do %>
+                          <option value={path} selected={@project_filter == path}>
+                            {Path.basename(path)} ({String.slice(path, 0, 30)}...)
+                          </option>
+                        <% end %>
+                      </select>
+                    </div>
+                    <!-- Review Status Filter -->
+                    <div class="form-control">
+                      <select
+                        name="review_filter"
+                        class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                        phx-change="filter_review"
+                      >
+                        <option value="all" selected={@review_status_filter == "all"}>
+                          {gettext("All Reviews")}
+                        </option>
+
+                        <option value="pending" selected={@review_status_filter == "pending"}>
+                          {gettext("Pending Review")}
+                        </option>
+
+                        <option value="merged" selected={@review_status_filter == "merged"}>
+                          {gettext("Merged")}
+                        </option>
+
+                        <option value="rejected" selected={@review_status_filter == "rejected"}>
+                          {gettext("Rejected")}
+                        </option>
+
+                        <option value="continued" selected={@review_status_filter == "continued"}>
+                          {gettext("Continued")}
+                        </option>
+                      </select>
+                    </div>
+                    <!-- Search -->
+                    <div class="form-control flex-1">
+                      <div class="relative">
+                        <.icon
+                          name="hero-magnifying-glass"
+                          class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
+                        />
+                        <input
+                          type="text"
+                          name="search_query"
+                          value={@search_query}
+                          class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
+                          placeholder={gettext("Search by task ID, prompt, or objective...")}
+                          phx-change="search_tasks"
+                          phx-debounce="200"
+                        />
+                      </div>
+                    </div>
+                    <!-- Actions -->
+                    <div class="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-md"
+                        phx-click="reset_filters"
+                        title={gettext("Reset all filters")}
+                      >
+                        <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+                <!-- Active filters indicator -->
+                <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
+                  <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
+                    <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
+                    <%= if @status_filter != "all" do %>
+                      <span class="badge badge-primary gap-1 rounded-md">
+                        {@status_filter}
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="status"
+                          class="hover:opacity-70"
+                        >×</button>
+                      </span>
+                    <% end %>
+
+                    <%= if @project_filter != "all" do %>
+                      <span class="badge badge-secondary gap-1 rounded-md">
+                        {Path.basename(@project_filter)}
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="project"
+                          class="hover:opacity-70"
+                        >×</button>
+                      </span>
+                    <% end %>
+
+                    <%= if @search_query != "" do %>
+                      <span class="badge badge-accent gap-1 rounded-md">
+                        "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20,
+                          do: "..."}"
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="search"
+                          class="hover:opacity-70"
+                        >×</button>
+                      </span>
+                    <% end %>
+
+                    <%= if @review_status_filter != "all" do %>
+                      <span class="badge badge-accent gap-1 rounded-md">
+                        <%= case @review_status_filter do %>
+                          <% "pending" -> %>
+                            {gettext("Pending Review")}
+                          <% "merged" -> %>
+                            {gettext("Merged")}
+                          <% "rejected" -> %>
+                            {gettext("Rejected")}
+                          <% "continued" -> %>
+                            {gettext("Continued")}
+                          <% _ -> %>
+                            {@review_status_filter}
+                        <% end %>
+
+                        <button
+                          phx-click="clear_filter"
+                          phx-value-filter="review"
+                          class="hover:opacity-70"
+                        >×</button>
+                      </span>
+                    <% end %>
+                  </div>
+                <% end %>
+              </div>
+              <!-- Task List -->
+              <div class="space-y-4 lg:space-y-5">
+                <%= if @history_tasks == [] do %>
+                  <div class="text-center py-12 sm:py-16 text-base-content/50">
+                    <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
+                    <p class="text-lg font-medium">{gettext("No tasks found")}</p>
+
+                    <p class="text-sm mt-1">
+                      <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
+                        {gettext("Try adjusting your filters or search query.")}
+                      <% else %>
+                        {gettext("Tasks will appear here once you start them from the dashboard.")}
+                      <% end %>
+                    </p>
+                  </div>
+                <% else %>
+                  <%= for {task, idx} <- Enum.with_index(@history_tasks) do %>
+                    <div class={[
+                      "relative z-10 has-[[open]]:z-30 animate-fade-in-up",
+                      animation_delay_class(idx)
+                    ]}>
+                      <EvoDashWeb.TaskCardComponents.task_card
+                        task={task}
+                        show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                      />
+                    </div>
+                  <% end %>
+                <% end %>
+              </div>
+              <!-- Pagination Controls -->
+              <%= if @total_count > 0 do %>
+                <% offset = (@current_page - 1) * @page_size %> <% range_start = offset + 1 %> <% range_end =
+                  min(offset + @page_size, @total_count) %> <% pages =
+                  page_window(@current_page, @total_pages) %>
+                <div class="mt-4 flex flex-col items-center gap-3">
+                  <p class="text-sm text-base-content/60">
+                    {gettext("Showing %{start}–%{end} of %{total} tasks",
+                      start: range_start,
+                      end: range_end,
+                      total: @total_count
+                    )}
+                  </p>
+
+                  <div class="flex items-center gap-2">
+                    <div class="join">
+                      <button
+                        class="join-item btn btn-sm"
+                        phx-click="prev_page"
+                        disabled={@current_page <= 1}
+                      >
+                        <.icon name="hero-chevron-left" class="size-4" />
+                      </button>
+
+                      <%= for p <- pages do %>
+                        <%= if p == @current_page do %>
+                          <button class="join-item btn btn-sm btn-primary" disabled>
+                            {p}
+                          </button>
+                        <% else %>
+                          <button
+                            class="join-item btn btn-sm"
+                            phx-click="goto_page"
+                            phx-value-page={p}
+                          >
+                            {p}
+                          </button>
+                        <% end %>
+                      <% end %>
+
+                      <button
+                        class="join-item btn btn-sm"
+                        phx-click="next_page"
+                        disabled={@current_page >= @total_pages}
+                      >
+                        <.icon name="hero-chevron-right" class="size-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <p class="text-xs text-base-content/50">
+                    {gettext("Page %{current} of %{total}",
+                      current: @current_page,
+                      total: @total_pages
+                    )}
+                  </p>
+                </div>
+              <% end %>
+              <!-- Clear History (moved to bottom for safety) -->
+              <div class="mt-6 flex justify-center sm:justify-end">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1"
+                  phx-click="clear_task_history"
+                  phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
+                >
+                  <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
+                </button>
+              </div>
+            </div>
             <!-- Full Result Modal -->
             <%= if @selected_result do %>
               <EvoDashWeb.Helpers.modal on_close="close_result_modal">
                 <:title>
-                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                  {gettext("Task Result")}
+                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" /> {gettext(
+                    "Task Result"
+                  )}
                 </:title>
                 {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
               </EvoDashWeb.Helpers.modal>
             <% end %>
-
             <!-- Full Options Modal -->
             <%= if @selected_options do %>
               <EvoDashWeb.Helpers.modal on_close="close_options_modal">
                 <:title>
-                  <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-                  {gettext("Full Objective")}
+                  <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" /> {gettext(
+                    "Full Objective"
+                  )}
                 </:title>
                 <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
               </EvoDashWeb.Helpers.modal>
             <% end %>
-            <% end %>
-            <%!-- end of @remote? else branch --%>
-          </div>
+          <% end %>
+          <%!-- end of @remote? else branch --%>
         </div>
-      </EvoDashWeb.Layouts.app>
-    <% end %>
+      </div>
+    </EvoDashWeb.Layouts.app>
     """
   end
 
@@ -333,7 +697,19 @@ defmodule EvoDashWeb.DashboardLive do
           task_build_system: nil,
           config_status: config_status,
           remote?: false,
-          remote_agents: []
+          remote_agents: [],
+          # Task history section (merged from /tasks)
+          history_tasks: [],
+          project_paths: [],
+          status_filter: "all",
+          project_filter: "all",
+          search_query: "",
+          review_status_filter: "all",
+          current_page: 1,
+          page_size: 25,
+          total_count: 0,
+          total_pages: 1,
+          query_params: %{}
         )
 
       socket = Assigns.assign_running_and_pending_tasks(socket)
@@ -347,7 +723,8 @@ defmodule EvoDashWeb.DashboardLive do
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/")
+      |> assign(:current_path, ~p"/dashboard")
+      |> assign(:query_params, params)
       |> assign(:remote?, socket.assigns.current_node != node())
 
     # When viewing a remote node, the dashboard shows the remote node's active
@@ -478,19 +855,36 @@ defmodule EvoDashWeb.DashboardLive do
           socket
       end
 
+    # Load the task history page (server-side pagination) unless we're viewing
+    # a remote node (the history section is hidden in that branch).
+    socket =
+      if socket.assigns.remote? do
+        socket
+      else
+        load_page_into_socket(socket, parse_page(params["page"]))
+      end
+
     {:noreply, socket}
   end
 
   # --- Project Management Events ---
 
   @impl true
-  def handle_event("toggle_open_project_form", params, socket) do
-    ProjectFlow.toggle_open_project_form(socket, params)
+  def handle_event("toggle_open_project_form", _params, socket) do
+    {:noreply,
+     assign(socket,
+       show_open_project_form: !socket.assigns.show_open_project_form,
+       show_new_project_form: false
+     )}
   end
 
   @impl true
-  def handle_event("toggle_new_project_form", params, socket) do
-    ProjectFlow.toggle_new_project_form(socket, params)
+  def handle_event("toggle_new_project_form", _params, socket) do
+    {:noreply,
+     assign(socket,
+       show_new_project_form: !socket.assigns.show_new_project_form,
+       show_open_project_form: false
+     )}
   end
 
   @impl true
@@ -499,18 +893,86 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("create_project", params, socket) do
-    ProjectFlow.create_project(socket, params)
+  def handle_event("create_project", %{"location" => location, "name" => name}, socket) do
+    location = Path.expand(location)
+
+    cond do
+      not File.dir?(location) ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Parent directory does not exist: %{path}", path: location)
+         )}
+
+      true ->
+        case Project.validate_project_name(name) do
+          {:error, :invalid_name} ->
+            {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
+
+          {:ok, sanitized} ->
+            full_path = Path.join(location, sanitized)
+            File.mkdir!(full_path)
+
+            TaskRegistry.add_recent_project(full_path, sanitized)
+            recent_projects = TaskRegistry.list_recent_projects()
+
+            socket =
+              socket
+              |> assign(:recent_projects, recent_projects)
+              |> assign(:show_new_project_form, false)
+              |> put_flash(:info, gettext("Project created: %{path}", path: full_path))
+
+            {:noreply, push_patch(socket, to: ~p"/dashboard?project=#{full_path}")}
+        end
+    end
   end
 
   @impl true
-  def handle_event("open_project", params, socket) do
-    ProjectFlow.open_project(socket, params)
+  def handle_event("open_project", %{"path" => path}, socket) do
+    expanded = Path.expand(path)
+
+    if File.dir?(expanded) do
+      TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+      recent_projects = TaskRegistry.list_recent_projects()
+
+      socket =
+        socket
+        |> assign(:recent_projects, recent_projects)
+        |> assign(:show_open_project_form, false)
+
+      # Push URL params to persist project across navigation
+      {:noreply, push_patch(socket, to: ~p"/dashboard?project=#{expanded}")}
+    else
+      {:noreply,
+       socket
+       |> put_flash(
+         :error,
+         gettext(
+           "Directory does not exist: %{path}. Create a new project instead?",
+           path: path
+         )
+       )}
+    end
   end
 
   @impl true
-  def handle_event("select_project", params, socket) do
-    ProjectFlow.select_project(socket, params)
+  def handle_event("select_project", %{"path" => path}, socket) do
+    expanded = Path.expand(path)
+
+    if File.dir?(expanded) do
+      TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+      recent_projects = TaskRegistry.list_recent_projects()
+
+      socket =
+        socket
+        |> assign(:recent_projects, recent_projects)
+
+      {:noreply, push_patch(socket, to: ~p"/dashboard?project=#{expanded}")}
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("Directory does not exist: %{path}", path: path))}
+    end
   end
 
   # --- Task Form Events ---
@@ -642,7 +1104,20 @@ defmodule EvoDashWeb.DashboardLive do
       opts =
         if task_type == :genesis and is_binary(build_system_param) and
              String.trim(build_system_param) != "" do
-          Keyword.put(opts, :build_system, String.to_existing_atom(build_system_param))
+          # Validate against the known build systems — a crafted/invalid value
+          # must not crash the LiveView via String.to_existing_atom/1.
+          build_system =
+            try do
+              String.to_existing_atom(String.trim(build_system_param))
+            rescue
+              ArgumentError -> nil
+            end
+
+          if build_system && EvoGit.Runtime.WorktreeInitScript.get_build_system(build_system) do
+            Keyword.put(opts, :build_system, build_system)
+          else
+            opts
+          end
         else
           opts
         end
@@ -706,6 +1181,7 @@ defmodule EvoDashWeb.DashboardLive do
            |> Assigns.assign_running_and_pending_tasks(all_tasks)
            |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
            |> Assigns.assign_form_defaults()
+           |> reload_current_page()
            |> StatePersistence.maybe_persist_state()}
 
         {:error, reason} ->
@@ -732,7 +1208,8 @@ defmodule EvoDashWeb.DashboardLive do
          socket
          |> Assigns.assign_running_and_pending_tasks(all_tasks)
          |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
-         |> assign(:expanded_task_ids, expanded)}
+         |> assign(:expanded_task_ids, expanded)
+         |> reload_current_page()}
 
       {:error, reason} ->
         {:noreply,
@@ -785,7 +1262,8 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> Assigns.assign_running_and_pending_tasks(all_tasks)
      |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
-     |> assign(:expanded_task_ids, MapSet.new())}
+     |> assign(:expanded_task_ids, MapSet.new())
+     |> reload_current_page()}
   end
 
   @impl true
@@ -798,7 +1276,103 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> Assigns.assign_running_and_pending_tasks(all_tasks)
      |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
-     |> assign(:expanded_task_ids, expanded)}
+     |> assign(:expanded_task_ids, expanded)
+     |> reload_current_page()}
+  end
+
+  # --- Task History Events (merged from /tasks) ---
+
+  @impl true
+  def handle_event("filter_tasks", params, socket) do
+    status_filter = params["status_filter"] || socket.assigns.status_filter
+    project_filter = params["project_filter"] || socket.assigns.project_filter
+
+    {:noreply,
+     socket
+     |> assign(:status_filter, status_filter)
+     |> assign(:project_filter, project_filter)
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("filter_review", %{"review_filter" => filter}, socket) do
+    {:noreply,
+     socket
+     |> assign(:review_status_filter, filter)
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("search_tasks", %{"search_query" => query}, socket) do
+    {:noreply,
+     socket
+     |> assign(:search_query, query)
+     |> load_page_into_socket(1)}
+  end
+
+  # Prevents page reload when pressing Enter in the filter/search form
+  @impl true
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("reset_filters", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(
+       status_filter: "all",
+       project_filter: "all",
+       search_query: "",
+       review_status_filter: "all"
+     )
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("clear_filter", %{"filter" => "status"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:status_filter, "all")
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("clear_filter", %{"filter" => "project"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:project_filter, "all")
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("clear_filter", %{"filter" => "search"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:search_query, "")
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("clear_filter", %{"filter" => "review"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:review_status_filter, "all")
+     |> load_page_into_socket(1)}
+  end
+
+  @impl true
+  def handle_event("goto_page", %{"page" => page}, socket) do
+    {:noreply, patch_history_page(socket, page)}
+  end
+
+  @impl true
+  def handle_event("prev_page", _params, socket) do
+    {:noreply, patch_history_page(socket, max(1, socket.assigns.current_page - 1))}
+  end
+
+  @impl true
+  def handle_event("next_page", _params, socket) do
+    page = min(socket.assigns.total_pages, socket.assigns.current_page + 1)
+    {:noreply, patch_history_page(socket, page)}
   end
 
   # --- Project Settings Events ---
@@ -1042,7 +1616,8 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:notified_task_ids, updated_notified)
      |> Assigns.assign_running_and_pending_tasks(new_tasks)
-     |> assign(:tasks, Enum.map(new_tasks, &lightweight_task/1))}
+     |> assign(:tasks, Enum.map(new_tasks, &lightweight_task/1))
+     |> reload_current_page()}
   end
 
   @impl true
@@ -1052,7 +1627,8 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> Assigns.assign_running_and_pending_tasks(all_tasks)
-     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))}
+     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+     |> reload_current_page()}
   end
 
   @impl true
@@ -1069,6 +1645,9 @@ defmodule EvoDashWeb.DashboardLive do
     # cache so this deferred read is fast.
     {:noreply, assign(socket, :config_status, config_status())}
   end
+
+  @impl true
+  def handle_info(_message, socket), do: {:noreply, socket}
 
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
   #
@@ -1173,4 +1752,135 @@ defmodule EvoDashWeb.DashboardLive do
     |> Assigns.assign_running_and_pending_tasks(tasks)
     |> Project.maybe_put_flash_mode_info(mode_info)
   end
+
+  # --- Task History Helpers (merged from /tasks) ---
+
+  # Numbered step header for the simplified dashboard workflow
+  # (1 Select Project → 2 Describe the Task → 3 Tasks).
+  attr(:number, :string, required: true)
+  attr(:title, :string, required: true)
+
+  defp step_header(assigns) do
+    ~H"""
+    <div class="step-header flex items-center gap-2.5 mb-3">
+      <span class="step-badge inline-flex items-center justify-center w-7 h-7 rounded-lg bg-primary text-primary-content text-sm font-bold shrink-0">
+        {@number}
+      </span>
+
+      <h2 class="text-base font-bold tracking-tight shrink-0">{@title}</h2>
+
+      <div class="flex-1 border-t border-base-200"></div>
+    </div>
+    """
+  end
+
+  # Parses the ?page= query param into a positive integer (default 1).
+  # Uses Integer.parse/1 (returns :error for non-integers) — no try/rescue,
+  # no String.to_existing_atom.
+  defp parse_page(nil), do: 1
+
+  defp parse_page(raw) when is_binary(raw) do
+    case Integer.parse(raw) do
+      {n, ""} when n >= 1 -> n
+      _ -> 1
+    end
+  end
+
+  defp parse_page(_), do: 1
+
+  # push_patch helper for history pagination. Preserves the current query
+  # params (project, starting_commit, resume_from, node) so paginating never
+  # resets the active project. Patches the current page's own path (/dashboard
+  # or /tasks) — never the simple-mode home at "/".
+  defp patch_history_page(socket, page) do
+    query =
+      socket.assigns.query_params
+      |> Map.put("page", to_string(page))
+      |> URI.encode_query()
+
+    base = if socket.assigns[:live_action] == :tasks, do: "/tasks", else: "/dashboard"
+
+    push_patch(socket, to: base <> "?" <> query)
+  end
+
+  # Fetches one page of tasks (server-side LIMIT/OFFSET). Returns
+  # {tasks, clamped_page, total_count, total_pages}. The requested page is
+  # clamped against the actual total_pages derived from the returned count.
+  # If clamping changes the page, a second fetch is performed for the
+  # clamped page. This is at most one extra fetch and only on edge cases
+  # (e.g. a stale/high page number).
+  defp load_page(requested_page, page_size, filters) do
+    offset = (requested_page - 1) * page_size
+
+    {tasks, total_count} =
+      TaskRegistry.list_tasks_paginated(limit: page_size, offset: offset, filters: filters)
+
+    total_pages = total_pages(total_count, page_size)
+    clamped_page = min(max(1, requested_page), total_pages)
+
+    if clamped_page != requested_page do
+      clamped_offset = (clamped_page - 1) * page_size
+
+      {clamped_tasks, ^total_count} =
+        TaskRegistry.list_tasks_paginated(
+          limit: page_size,
+          offset: clamped_offset,
+          filters: filters
+        )
+
+      {clamped_tasks, clamped_page, total_count, total_pages}
+    else
+      {tasks, clamped_page, total_count, total_pages}
+    end
+  end
+
+  defp total_pages(total_count, page_size) when page_size > 0 do
+    max(1, ceil(total_count / page_size))
+  end
+
+  # Returns a windowed range of page numbers around the current page for the
+  # pagination button group. Shows up to 7 page buttons centered on the
+  # current page, clamped to the valid range 1..total_pages.
+  defp page_window(current_page, total_pages) do
+    window = 3
+    start_page = max(1, current_page - window)
+    end_page = min(total_pages, current_page + window)
+    Enum.to_list(start_page..end_page)
+  end
+
+  # Reloads the current history page into the socket assigns. Used by PubSub
+  # handlers and mutating events so the history section stays consistent.
+  defp reload_current_page(socket) do
+    if socket.assigns[:remote?] do
+      socket
+    else
+      load_page_into_socket(socket, socket.assigns.current_page)
+    end
+  end
+
+  defp load_page_into_socket(socket, page) do
+    filters = build_filters_from_assigns(socket)
+
+    {tasks, current_page, total_count, total_pages} =
+      load_page(page, socket.assigns.page_size, filters)
+
+    socket
+    |> assign(:history_tasks, tasks)
+    |> assign(:current_page, current_page)
+    |> assign(:total_count, total_count)
+    |> assign(:total_pages, total_pages)
+    |> assign(:project_paths, TaskRegistry.get_unique_paths())
+  end
+
+  defp build_filters_from_assigns(socket) do
+    [
+      status: socket.assigns.status_filter,
+      project_path: socket.assigns.project_filter,
+      review_status: socket.assigns.review_status_filter,
+      search: socket.assigns.search_query
+    ]
+  end
+
+  defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"
+  defp animation_delay_class(_), do: ""
 end

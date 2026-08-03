@@ -6,7 +6,9 @@ defmodule EvoDashWeb.NodeAwareTest do
   #
   # This avoids booting a real LiveView or remote node — we only test the
   # pure transition-detection logic in the hook.
-  use ExUnit.Case, async: true
+  # async: false — one describe block reads TaskRegistry.list_tasks/0 from the
+# shared store, which tasks_live_test swaps for an isolated one mid-run.
+use ExUnit.Case, async: false
 
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoGit.TaskInfo
@@ -225,7 +227,8 @@ defmodule EvoDashWeb.NodeAwareTest do
 
   describe "handle_connection_status/2 — always refreshes connection_statuses" do
     test "refreshes connection_statuses even when not a transition" do
-      socket = socket(%{current_node: node(), current_node_id: "gpu-server", connection_statuses: %{}})
+      socket =
+        socket(%{current_node: node(), current_node_id: "gpu-server", connection_statuses: %{}})
 
       # node() calls to EvoDash.NodeContext.connection_status/0 should be fine
       # even in test env (returns %{} when subsystem unavailable).
@@ -264,6 +267,7 @@ defmodule EvoDashWeb.NodeAwareTest do
     test "local node: reads from TaskRegistry.list_tasks/0" do
       # Insert a running task and a completed task with a branch (reviewable)
       insert_fixture!(EvoGit.Store, status: :running)
+
       insert_fixture!(EvoGit.Store,
         status: :completed,
         result: {:ok, %{branch_name: "feature-1"}},

@@ -1,10 +1,12 @@
-defmodule EvoDashWeb.SystemLive.Content do
+defmodule EvoDashWeb.SettingsLive.HelpContent do
   @moduledoc """
-  Static content helpers for the SystemLive page.
+  Static content helpers for the `:help` pseudo-category on the Settings page.
 
   Provides the example configuration, credentials, and usage reference
   strings (with path interpolation) and the runtime-built FAQ content list.
   These are pure functions with no LiveView state.
+
+  Ported from the retired `/system` page (`EvoDashWeb.SystemLive.Content`).
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
@@ -74,7 +76,7 @@ defmodule EvoDashWeb.SystemLive.Content do
   @credentials_reference """
   # Genesis Credentials Reference
   # Save this as: __CREDENTIALS_PATH__
-  # 
+  #
   # API keys are stored separately from config.toml for security.
   # Only ONE key is required — choose the provider matching your LLM model.
   # Keys are set as environment variables on load.

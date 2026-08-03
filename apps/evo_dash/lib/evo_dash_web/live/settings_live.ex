@@ -1,24 +1,37 @@
 defmodule EvoDashWeb.SettingsLive do
   @moduledoc """
-  Settings page with two tabs: runtime scheduler/sandbox controls and a
-  GUI editor for the user configuration file (config.toml).
+  Settings page: a GUI editor for the user configuration file (config.toml)
+  organized in schema-driven categories, plus pseudo-categories
+  `:remote_connections` (SSH targets), `:system` (scheduler pause/resume,
+  restart/stop with confirmation, system self-check) and `:help` (guides,
+  example config, FAQ) — the latter two ported from the retired `/system` page.
   """
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
   alias EvoDashWeb.SettingsLive.ConfigIO
-  alias EvoDashWeb.SettingsLive.ModelProfileEvents
+  alias EvoDashWeb.SettingsLive.HelpContent
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
-  alias EvoDashWeb.SettingsLive.SearchEvents
+  alias EvoDashWeb.SettingsLive.SystemSection
 
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:settings}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <%= if @active_category != :remote_connections do %>
         <%!-- Config file path display --%>
         <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
           <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
-          <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext("Configuration file")}</span>
+          <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext(
+            "Configuration file"
+          )}</span>
           <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
           <button
             id="settings-config-path-copy"
@@ -30,17 +43,18 @@ defmodule EvoDashWeb.SettingsLive do
             <.icon name="hero-clipboard-document" class="size-4" />
           </button>
         </div>
+
         <%= if not @config_file_exists do %>
           <p class="mb-4 text-xs text-base-content/70">{gettext("File does not exist yet")}</p>
         <% end %>
       <% end %>
-
       <%!-- Config Status Warning --%>
       <%= if @config_status && not @config_status.ok? do %>
         <div class="mb-4 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
           <div>
             <h3 class="font-bold text-sm text-warning mb-2">{gettext("Missing Configuration")}</h3>
+
             <ul class="space-y-1.5 mb-3">
               <%= for warning <- @config_status.warnings do %>
                 <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
@@ -49,24 +63,26 @@ defmodule EvoDashWeb.SettingsLive do
                 </li>
               <% end %>
             </ul>
+
             <p class="text-sm font-semibold text-base-content/80">
               {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
             </p>
           </div>
         </div>
       <% end %>
-
       <%!-- No LLM Model Warning (local only — remote config_status covers this) --%>
-      <%= if is_nil(get_in(@file_config, [:llm, :models])) or Enum.empty?(get_in(@file_config, [:llm, :models]) || []) do %>
+      <%= if is_nil(get_in(@file_config, [:llm, :model])) do %>
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div>
             <h3 class="font-bold text-sm text-error mb-2">{gettext("No LLM Model Configured")}</h3>
+
             <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
               {gettext(
                 "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
               )}
             </p>
+
             <div class="flex items-center gap-3 flex-wrap">
               <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext(
                 "Example model names:"
@@ -96,9 +112,7 @@ defmodule EvoDashWeb.SettingsLive do
             categories={@schemas_by_category}
             active_category={@active_category}
             search_text={@search_text}
-          />
-
-          <%!-- Content area --%>
+          /> <%!-- Content area --%>
           <%= if @search_text != "" do %>
             <.form
               for={%{}}
@@ -114,240 +128,313 @@ defmodule EvoDashWeb.SettingsLive do
               />
             </.form>
           <% else %>
-            <%= if @active_category == :remote_connections do %>
-              <%!-- Remote Connections UI — same design as category_section but
+            <%= cond do %>
+              <% @active_category == :remote_connections -> %>
+                <%!-- Remote Connections UI — same design as category_section but
                    for the special :remote_connections pseudo-category --%>
-              <div class="flex-1 flex flex-col min-w-0">
-                <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
-                  <div class="flex items-center gap-3 mb-1">
-                    <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
-                    <h2 class="text-lg font-bold text-base-content">
-                      {gettext("Remote Connections")}
-                    </h2>
-                  </div>
-                  <p class="text-sm text-base-content/60">
-                    {gettext("Manage SSH connections to remote Genesis daemons.")}
-                  </p>
-                </div>
+                <div class="flex-1 flex flex-col min-w-0">
+                  <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
+                    <div class="flex items-center gap-3 mb-1">
+                      <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
+                      <h2 class="text-lg font-bold text-base-content">
+                        {gettext("Remote Connections")}
+                      </h2>
+                    </div>
 
-                <div class="p-6 space-y-5">
-                  <%!-- Note about separate TOML file --%>
-                  <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
-                    <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
-                    <p class="text-sm text-base-content/80">
-                      {gettext("Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file.")}
+                    <p class="text-sm text-base-content/60">
+                      {gettext("Manage SSH connections to remote Genesis daemons.")}
                     </p>
                   </div>
 
-                  <%!-- Existing targets --%>
-                  <div :if={@remote_targets != []} class="space-y-3">
-                    <div :for={target <- @remote_targets} class="rounded-lg border border-base-200 bg-base-100 p-4">
-                      <div class="flex items-start justify-between gap-2">
-                        <div class="flex items-center gap-3 min-w-0">
-                          <span class={["w-2.5 h-2.5 rounded-full shrink-0 mt-1", remote_target_dot_color(target.id, @remote_statuses)]}></span>
-                          <div class="min-w-0">
-                            <p class="font-semibold text-sm truncate">{target.name}</p>
-                            <p class="text-xs text-base-content/50 font-mono truncate">
-                              {target[:ssh_target] || "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
-                            </p>
-                          </div>
-                        </div>
-                        <span class={remote_status_badge_class(target.id, @remote_statuses)}>
-                          {remote_status_label(target.id, @remote_statuses)}
-                        </span>
-                      </div>
+                  <div class="p-6 space-y-5">
+                    <%!-- Note about separate TOML file --%>
+                    <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
+                      <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                      <p class="text-sm text-base-content/80">
+                        {gettext(
+                          "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
+                        )}
+                      </p>
+                    </div>
+                    <%!-- Existing targets --%>
+                    <div :if={@remote_targets != []} class="space-y-3">
+                      <div
+                        :for={target <- @remote_targets}
+                        class="rounded-lg border border-base-200 bg-base-100 p-4"
+                      >
+                        <div class="flex items-start justify-between gap-2">
+                          <div class="flex items-center gap-3 min-w-0">
+                            <span class={[
+                              "w-2.5 h-2.5 rounded-full shrink-0 mt-1",
+                              remote_target_dot_color(target.id, @remote_statuses)
+                            ]}></span>
+                            <div class="min-w-0">
+                              <p class="font-semibold text-sm truncate">{target.name}</p>
 
-                      <div class="flex items-center gap-1 mt-3 flex-wrap">
-                        <button
-                          class="btn btn-xs btn-ghost gap-1"
-                          phx-click="edit_remote_target"
-                          phx-value-id={target.id}
-                        >
-                          <.icon name="hero-pencil-square" class="size-3.5" />
-                          {gettext("Edit")}
-                        </button>
-                        <button
-                          class="btn btn-xs btn-ghost gap-1"
-                          phx-click="delete_remote_target"
-                          phx-value-id={target.id}
-                        >
-                          <.icon name="hero-trash" class="size-3.5" />
-                          {gettext("Delete")}
-                        </button>
-                        <div class="flex-1"></div>
-                        <%= if remote_connected?(target.id, @remote_statuses) do %>
+                              <p class="text-xs text-base-content/50 font-mono truncate">
+                                {target[:ssh_target] ||
+                                  "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <span class={remote_status_badge_class(target.id, @remote_statuses)}>
+                            {remote_status_label(target.id, @remote_statuses)}
+                          </span>
+                        </div>
+
+                        <div class="flex items-center gap-1 mt-3 flex-wrap">
                           <button
-                            class="btn btn-xs btn-ghost gap-1 text-warning"
-                            phx-click="disconnect_remote_target"
+                            class="btn btn-xs btn-ghost gap-1"
+                            phx-click="edit_remote_target"
                             phx-value-id={target.id}
                           >
-                            <.icon name="hero-arrow-left-end-on-rectangle" class="size-3.5" />
-                            {gettext("Disconnect")}
+                            <.icon name="hero-pencil-square" class="size-3.5" /> {gettext("Edit")}
                           </button>
-                        <% else %>
-                          <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
-                            <% stage_idx = case get_in(@bootstrap_progress, [target.id, :stage]) do
-                              :uploading -> 0
-                              :setting_permissions -> 1
-                              :detecting_os -> 2
-                              :starting_daemon -> 3
-                              _ -> -1
-                            end %>
-                            <ul class="steps steps-horizontal text-xs w-full">
-                              <li class={["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])}>{gettext("Uploading binary")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])}>{gettext("Setting permissions")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])}>{gettext("Detecting OS")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])}>{gettext("Starting daemon")}</li>
-                            </ul>
+
+                          <button
+                            class="btn btn-xs btn-ghost gap-1"
+                            phx-click="delete_remote_target"
+                            phx-value-id={target.id}
+                          >
+                            <.icon name="hero-trash" class="size-3.5" /> {gettext("Delete")}
+                          </button>
+
+                          <div class="flex-1"></div>
+
+                          <%= if remote_connected?(target.id, @remote_statuses) do %>
+                            <button
+                              class="btn btn-xs btn-ghost gap-1 text-warning"
+                              phx-click="disconnect_remote_target"
+                              phx-value-id={target.id}
+                            >
+                              <.icon name="hero-arrow-left-end-on-rectangle" class="size-3.5" /> {gettext(
+                                "Disconnect"
+                              )}
+                            </button>
                           <% else %>
-                            <button
-                              class="btn btn-xs btn-ghost gap-1"
-                              phx-click="bootstrap_remote_target"
-                              phx-value-id={target.id}
-      >
-                              <.icon name="hero-rocket-launch" class="size-3.5" />
-                              {gettext("Bootstrap")}
-                            </button>
-                            <button
-                              class="btn btn-xs btn-primary gap-1"
-                              phx-click="connect_remote_target"
-                              phx-value-id={target.id}
-      >
-                              <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" />
-                              {gettext("Connect")}
-                            </button>
+                            <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
+                              <% stage_idx =
+                                case get_in(@bootstrap_progress, [target.id, :stage]) do
+                                  :uploading -> 0
+                                  :setting_permissions -> 1
+                                  :detecting_os -> 2
+                                  :starting_daemon -> 3
+                                  _ -> -1
+                                end %>
+                              <ul class="steps steps-horizontal text-xs w-full">
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Uploading binary")}
+                                </li>
+
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Setting permissions")}
+                                </li>
+
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Detecting OS")}
+                                </li>
+
+                                <li class={
+                                  ["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])
+                                }>
+                                  {gettext("Starting daemon")}
+                                </li>
+                              </ul>
+                            <% else %>
+                              <button
+                                class="btn btn-xs btn-ghost gap-1"
+                                phx-click="bootstrap_remote_target"
+                                phx-value-id={target.id}
+                              >
+                                <.icon name="hero-rocket-launch" class="size-3.5" /> {gettext(
+                                  "Bootstrap"
+                                )}
+                              </button>
+
+                              <button
+                                class="btn btn-xs btn-primary gap-1"
+                                phx-click="connect_remote_target"
+                                phx-value-id={target.id}
+                              >
+                                <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" /> {gettext(
+                                  "Connect"
+                                )}
+                              </button>
+                            <% end %>
                           <% end %>
-                        <% end %>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div :if={@remote_targets == []} class="text-center py-10 text-base-content/50">
-                    <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 opacity-40" />
-                    <p class="text-sm">{gettext("No remote connections configured.")}</p>
-                  </div>
+                    <div :if={@remote_targets == []} class="text-center py-10 text-base-content/50">
+                      <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 opacity-40" />
+                      <p class="text-sm">{gettext("No remote connections configured.")}</p>
+                    </div>
+                    <%!-- SSH config help banner --%>
+                    <div class="rounded-lg border border-base-300 bg-base-200 p-3 flex items-start gap-3">
+                      <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                      <div class="space-y-1.5">
+                        <p class="text-sm text-base-content/80">
+                          {gettext(
+                            "Configure your SSH server in `~/.ssh/config` and set up SSH key authentication."
+                          )}
+                        </p>
 
-                  <%!-- SSH config help banner --%>
-                  <div class="rounded-lg border border-base-300 bg-base-200 p-3 flex items-start gap-3">
-                    <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
-                    <div class="space-y-1.5">
-                      <p class="text-sm text-base-content/80">
-                        {gettext("Configure your SSH server in `~/.ssh/config` and set up SSH key authentication.")}
-                      </p>
-                      <p class="text-sm text-base-content/80">
-                        {gettext("Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`).")}
-                      </p>
-                      <p class="text-sm text-base-content/80">
-                        {gettext("SSH port, identity file, and other options are read from your SSH config — no need to enter them here.")}
-                      </p>
+                        <p class="text-sm text-base-content/80">
+                          {gettext(
+                            "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`)."
+                          )}
+                        </p>
+
+                        <p class="text-sm text-base-content/80">
+                          {gettext(
+                            "SSH port, identity file, and other options are read from your SSH config — no need to enter them here."
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <%!-- Add / Edit target form --%>
+                    <div class="border-t border-base-200 pt-5">
+                      <%= if @remote_form_target do %>
+                        <h4 class="font-semibold text-sm mb-4">
+                          <%= if @remote_form_target[:id] do %>
+                            {gettext("Edit Connection")}
+                          <% else %>
+                            {gettext("Add Connection")}
+                          <% end %>
+                        </h4>
+
+                        <form phx-submit="save_remote_target" class="space-y-4">
+                          <input type="hidden" name="_id" value={@remote_form_target[:id]} />
+                          <div class="grid grid-cols-2 gap-4">
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Name")}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="name"
+                                value={@remote_form_target[:name]}
+                                placeholder={gettext("e.g. GPU Server")}
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("SSH Target")}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="ssh_target"
+                                value={@remote_form_target[:ssh_target]}
+                                placeholder={gettext("gpu-server or user@host")}
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext(
+                                  "Local Release Tarball"
+                                )}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="local_binary_path"
+                                value={@remote_form_target[:local_binary_path]}
+                                placeholder="_build/prod/rel/genesis_remote.tar.gz"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Dist Port")}</span>
+                              </label>
+
+                              <input
+                                type="number"
+                                name="dist_port"
+                                value={@remote_form_target[:dist_port]}
+                                placeholder="9000"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+
+                            <div class="form-control">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
+                              </label>
+
+                              <input
+                                type="text"
+                                name="remote_path"
+                                value={@remote_form_target[:remote_path]}
+                                placeholder="/tmp/genesis_remote"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          <div class="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm rounded-lg"
+                              phx-click="cancel_edit_remote"
+                            >
+                              {gettext("Cancel")}
+                            </button>
+
+                            <button type="submit" class="btn btn-primary btn-sm rounded-lg">
+                              <%= if @remote_form_target[:id] do %>
+                                {gettext("Save")}
+                              <% else %>
+                                {gettext("Add")}
+                              <% end %>
+                            </button>
+                          </div>
+                        </form>
+                      <% else %>
+                        <button
+                          class="btn btn-ghost btn-sm gap-2 w-full border border-dashed border-base-300 rounded-lg"
+                          phx-click="add_remote_target"
+                        >
+                          <.icon name="hero-plus" class="size-4" /> {gettext("Add Connection")}
+                        </button>
+                      <% end %>
                     </div>
                   </div>
-
-                  <%!-- Add / Edit target form --%>
-                  <div class="border-t border-base-200 pt-5">
-                    <%= if @remote_form_target do %>
-                      <h4 class="font-semibold text-sm mb-4">
-                        <%= if @remote_form_target[:id] do %>
-                          {gettext("Edit Connection")}
-                        <% else %>
-                          {gettext("Add Connection")}
-                        <% end %>
-                      </h4>
-                      <form phx-submit="save_remote_target" class="space-y-4">
-                        <input type="hidden" name="_id" value={@remote_form_target[:id]} />
-                        <div class="grid grid-cols-2 gap-4">
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Name")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="name"
-                              value={@remote_form_target[:name]}
-                              placeholder={gettext("e.g. GPU Server")}
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("SSH Target")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="ssh_target"
-                              value={@remote_form_target[:ssh_target]}
-                              placeholder={gettext("gpu-server or user@host")}
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Local Release Tarball")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="local_binary_path"
-                              value={@remote_form_target[:local_binary_path]}
-                              placeholder="_build/prod/rel/genesis_remote.tar.gz"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Dist Port")}</span>
-                            </label>
-                            <input
-                              type="number"
-                              name="dist_port"
-                              value={@remote_form_target[:dist_port]}
-                              placeholder="9000"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="remote_path"
-                              value={@remote_form_target[:remote_path]}
-                              placeholder="/tmp/genesis_remote"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
-                          </div>
-                        </div>
-                        <div class="flex items-center justify-end gap-2 pt-1">
-                          <button
-                            type="button"
-                            class="btn btn-ghost btn-sm rounded-lg"
-                            phx-click="cancel_edit_remote"
-                          >
-                            {gettext("Cancel")}
-                          </button>
-                          <button type="submit" class="btn btn-primary btn-sm rounded-lg">
-                            <%= if @remote_form_target[:id] do %>
-                              {gettext("Save")}
-                            <% else %>
-                              {gettext("Add")}
-                            <% end %>
-                          </button>
-                        </div>
-                      </form>
-                    <% else %>
-                      <button
-                        class="btn btn-ghost btn-sm gap-2 w-full border border-dashed border-base-300 rounded-lg"
-                        phx-click="add_remote_target"
-                      >
-                        <.icon name="hero-plus" class="size-4" />
-                        {gettext("Add Connection")}
-                      </button>
-                    <% end %>
-                  </div>
                 </div>
-              </div>
-            <% else %>
-            <%!-- category_section renders its own <form phx-submit="save_category">
+              <% @active_category == :system -> %>
+                <SystemSection.system_category
+                  scheduler_paused={@scheduler_paused}
+                  remote={@remote?}
+                  system_checks_status={@system_checks_status}
+                  sys_config_status={@sys_config_status}
+                  tool_check={@tool_check}
+                  sandbox_check={@sandbox_check}
+                  supervisor_check={@supervisor_check}
+                  nix_check={@nix_check}
+                  show_restart_confirm={@show_restart_confirm}
+                  show_stop_confirm={@show_stop_confirm}
+                />
+              <% @active_category == :help -> %>
+                <%= if @help_content do %>
+                  <SystemSection.help_category help_content={@help_content} />
+                <% end %>
+              <% true -> %>
+                <%!-- category_section renders its own <form phx-submit="save_category">
                  internally. The LLM category's Quick Setup panel and Model
                  Profiles editor contain their own nested forms (save_api_key,
                  save_custom_model, save_model_profile), so they must NOT be
@@ -355,23 +442,23 @@ defmodule EvoDashWeb.SettingsLive do
                  are invalid HTML — browsers ignore the inner <form> tag, causing
                  the profile editor's Save button to submit save_category instead
                  of save_model_profile, which deletes the models list). --%>
-            <EvoDashWeb.SettingsComponents.category_section
-              category={@active_category}
-              schemas={Map.get(@schemas_by_category, @active_category, [])}
-              file_config={@file_config}
-              errors={Map.get(@per_category_errors, @active_category, [])}
-              sandbox_backend={@scheduler_config[:sandbox_backend]}
-              sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-              llm_providers={@llm_providers}
-              selected_provider_id={@selected_provider_id}
-              selected_provider_models={@selected_provider_models}
-              selected_variant_id={@selected_variant_id}
-              llm_test_status={@llm_test_status}
-              model_profiles={@file_config[:llm][:models] || []}
-              editing_profile_id={@editing_profile_id}
-              test_profile_id={@test_profile_id}
-              credentials={@credentials}
-            />
+                <EvoDashWeb.SettingsComponents.category_section
+                  category={@active_category}
+                  schemas={Map.get(@schemas_by_category, @active_category, [])}
+                  file_config={@file_config}
+                  errors={Map.get(@per_category_errors, @active_category, [])}
+                  sandbox_backend={@scheduler_config[:sandbox_backend]}
+                  sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+                  llm_providers={@llm_providers}
+                  selected_provider_id={@selected_provider_id}
+                  selected_provider_models={@selected_provider_models}
+                  selected_variant_id={@selected_variant_id}
+                  llm_test_status={@llm_test_status}
+                  model_profiles={@file_config[:llm][:models] || []}
+                  editing_profile_id={@editing_profile_id}
+                  test_profile_id={@test_profile_id}
+                  credentials={@credentials}
+                />
             <% end %>
           <% end %>
         </div>
@@ -395,7 +482,11 @@ defmodule EvoDashWeb.SettingsLive do
     models = get_in(file_config, [:llm, :models]) || []
     test_profile_id = if models != [], do: ModelProfileHelpers.profile_id(hd(models))
 
-    schemas_by_category = Map.put(schemas_by_category, :remote_connections, [])
+    schemas_by_category =
+      schemas_by_category
+      |> Map.put(:remote_connections, [])
+      |> Map.put(:system, [])
+      |> Map.put(:help, [])
 
     socket =
       assign(socket,
@@ -420,7 +511,20 @@ defmodule EvoDashWeb.SettingsLive do
         bootstrap_progress: %{},
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
-        remote_form_target: nil
+        remote_form_target: nil,
+        # :system pseudo-category (ported from the retired /system page)
+        remote?: false,
+        scheduler_paused: false,
+        show_restart_confirm: false,
+        show_stop_confirm: false,
+        system_checks_status: :idle,
+        sys_config_status: nil,
+        tool_check: nil,
+        sandbox_check: nil,
+        supervisor_check: nil,
+        nix_check: nil,
+        # :help pseudo-category
+        help_content: nil
       )
 
     {:ok, socket}
@@ -428,11 +532,27 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_params(params, _url, socket) do
+    previous_remote? = socket.assigns[:remote?]
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/settings")
+      |> assign(:remote?, socket.assigns.current_node != node())
+      |> assign(:scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
       |> load_node_config()
+
+    # Node context changed (e.g. switched Local ↔ remote) — clear stale
+    # restart/stop confirm flags so a modal opened on one node can't be
+    # confirmed on another.
+    socket =
+      if previous_remote? != nil and previous_remote? != socket.assigns.remote? do
+        socket
+        |> assign(:show_restart_confirm, false)
+        |> assign(:show_stop_confirm, false)
+      else
+        socket
+      end
 
     # Map the raw query param to a known category atom via a whitelist lookup
     # built from the existing schemas_by_category map (atom keys). Stringify
@@ -440,9 +560,17 @@ defmodule EvoDashWeb.SettingsLive do
     # untrusted input, fully crash-safe for unknown values.
     category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category)
 
+    requested_category =
+      case socket.assigns.live_action do
+        :system -> "system"
+        _ -> params["category"]
+      end
+
     category =
-      case params["category"] do
+      case requested_category do
         "remote_connections" -> :remote_connections
+        "system" -> :system
+        "help" -> :help
         cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
         _ -> nil
       end
@@ -456,6 +584,13 @@ defmodule EvoDashWeb.SettingsLive do
       else
         socket
       end
+
+    # Lazily kick off the (expensive) system self-check only when the :system
+    # category is actually opened; same for the :help content load.
+    socket =
+      socket
+      |> maybe_spawn_system_checks(category)
+      |> maybe_load_help_content(category)
 
     {:noreply, socket}
   end
@@ -511,7 +646,22 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_info({:scheduler_config_updated}, socket) do
-    {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
+    {:noreply,
+     socket
+     |> assign(:scheduler_config, ConfigIO.load_scheduler_config())
+     |> assign(:scheduler_paused, load_paused_state())}
+  end
+
+  @impl true
+  def handle_info({:system_checks_result, result}, socket) do
+    {:noreply,
+     socket
+     |> assign(:system_checks_status, :done)
+     |> assign(:sys_config_status, result[:config])
+     |> assign(:tool_check, result[:tools])
+     |> assign(:sandbox_check, result[:sandbox])
+     |> assign(:supervisor_check, result[:supervisor])
+     |> assign(:nix_check, result[:nix])}
   end
 
   @impl true
@@ -541,7 +691,7 @@ defmodule EvoDashWeb.SettingsLive do
     # known schema category atoms. Unknown value → nil → keep current category.
     cat =
       Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
-        (if cat_str == "remote_connections", do: :remote_connections) ||
+        if(cat_str == "remote_connections", do: :remote_connections) ||
         socket.assigns.active_category
 
     socket =
@@ -564,11 +714,13 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("search", params, socket), do: SearchEvents.handle_search(socket, params)
+  def handle_event("search", %{"value" => text}, socket) do
+    {:noreply, assign(socket, :search_text, text)}
+  end
 
   # Prevents page reload when pressing Enter in the search form
   @impl true
-  def handle_event("noop", params, socket), do: SearchEvents.handle_noop(socket, params)
+  def handle_event("noop", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("save_category", params, socket) do
@@ -612,7 +764,13 @@ defmodule EvoDashWeb.SettingsLive do
                 EvoDash.NodeContext.reload_remote_config(node)
                 remote_cfg = EvoDash.NodeContext.get_remote_config(node)
                 fc = remote_config_to_file_config(remote_cfg)
-                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+
+                {fc,
+                 assign(
+                   socket,
+                   :config_status,
+                   EvoDash.NodeContext.get_remote_config_status(node)
+                 )}
               end
 
             config_file_exists = File.exists?(socket.assigns.config_path)
@@ -694,7 +852,13 @@ defmodule EvoDashWeb.SettingsLive do
                 EvoDash.NodeContext.reload_remote_config(node)
                 remote_cfg = EvoDash.NodeContext.get_remote_config(node)
                 fc = remote_config_to_file_config(remote_cfg)
-                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+
+                {fc,
+                 assign(
+                   socket,
+                   :config_status,
+                   EvoDash.NodeContext.get_remote_config_status(node)
+                 )}
               end
 
             config_file_exists = File.exists?(socket.assigns.config_path)
@@ -749,7 +913,53 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("reset_key", params, socket), do: SearchEvents.handle_reset_key(socket, params)
+  def handle_event("reset_key", %{"key_path" => path_str}, socket) do
+    key_path = ConfigIO.parse_key_path(path_str, socket.assigns.schemas_by_category)
+    schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
+
+    # An unknown or stale key_path / schema means untrusted client input did not
+    # resolve to a known setting — surface a friendly flash instead of crashing
+    # on put_in with a nil path or a nil schema.default.
+    if is_nil(key_path) or is_nil(schema) do
+      {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
+    else
+      config = put_in(socket.assigns.file_config, key_path, schema.default)
+      node = socket.assigns.current_node
+
+      case EvoDash.NodeContext.save_user_config(node, config) do
+        :ok ->
+          {file_config, socket} =
+            if node == node() do
+              fc = ConfigIO.load_file_config()
+              {fc, assign(socket, :config_status, config_status())}
+            else
+              EvoDash.NodeContext.reload_remote_config(node)
+              remote_cfg = EvoDash.NodeContext.get_remote_config(node)
+              fc = remote_config_to_file_config(remote_cfg)
+
+              {fc,
+               assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+            end
+
+          config_file_exists = File.exists?(socket.assigns.config_path)
+
+          {:noreply,
+           socket
+           |> assign(:file_config, file_config)
+           |> assign(:config_file_exists, config_file_exists)
+           |> assign(:per_category_errors, %{})
+           |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> put_flash(
+             :error,
+             gettext("Failed to reset key: %{reason}", reason: inspect(reason))
+           )}
+      end
+    end
+  end
 
   @impl true
   def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
@@ -796,47 +1006,267 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("select_llm_model_shortcut", params, socket) do
-    ModelProfileEvents.select_llm_model_shortcut(socket, params)
+  def handle_event("select_llm_model_shortcut", %{"model_string" => model_string}, socket) do
+    # Add a new model profile using the selected model string, and mirror it to
+    # the flat [:llm, :model] for backward compatibility (older code paths and
+    # the config-status check still read the flat field).
+    file_config =
+      socket.assigns.file_config
+      |> ModelProfileHelpers.add_model_profile(model_string)
+      |> ModelProfileHelpers.mirror_default_model()
+
+    persist_file_config(file_config, socket, gettext("Model selected and saved."))
   end
 
   @impl true
   def handle_event("save_custom_model", params, socket) do
-    ModelProfileEvents.save_custom_model(socket, params)
+    model_name = params["model_name"]
+    base_url = params["base_url"]
+    provider_id_str = params["provider_id"]
+
+    # Build a whitelist map keyed by the string form of each provider's atom id,
+    # so untrusted POST data is matched without String.to_existing_atom.
+    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+
+    result =
+      cond do
+        is_nil(provider) ->
+          {:error, gettext("Unknown provider.")}
+
+        String.trim(model_name || "") == "" ->
+          {:error, gettext("Model name cannot be empty.")}
+
+        true ->
+          # Resolve the canonical provider atom from the catalog entry's
+          # provider_atoms list directly (e.g. :openai_compatible entry → :openai
+          # atom, :openrouter → :openrouter). We use hd/1 on provider_atoms
+          # because resolve_provider_atom/1 looks up by membership, NOT by
+          # catalog id — it would leave :openai_compatible unchanged (the bug).
+          provider_atom = hd(provider.provider_atoms)
+
+          # Validate base_url requirement using the catalog function (NOT the
+          # dead provider[:requires_base_url] struct field).
+          requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
+
+          if requires_base_url and String.trim(base_url || "") == "" do
+            {:error, gettext("Base URL cannot be empty.")}
+          else
+            # Build the map spec via resolve_model_spec/3 — it omits nil/empty
+            # base_url and resolves model shortcuts/variants. Produces a MAP for
+            # ALL providers (including OpenRouter), not a legacy string.
+            opts =
+              if String.trim(base_url || "") == "",
+                do: [],
+                else: [base_url: String.trim(base_url)]
+
+            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
+          end
+      end
+
+    case result do
+      {:error, msg} ->
+        {:noreply, put_flash(socket, :error, msg)}
+
+      {:ok, model_value} ->
+        # Add a new model profile using the custom model, and mirror it to the
+        # flat [:llm, :model] for backward compatibility.
+        file_config =
+          socket.assigns.file_config
+          |> ModelProfileHelpers.add_model_profile(model_value)
+          |> ModelProfileHelpers.mirror_default_model()
+
+        persist_file_config(file_config, socket, gettext("Custom model saved."))
+    end
   end
 
   @impl true
   def handle_event("save_quick_setup", params, socket) do
-    ModelProfileEvents.save_quick_setup(socket, params)
+    model_string = params["model_string"]
+    base_url = params["base_url"]
+    provider_id_str = params["provider_id"]
+    variant_id_str = params["variant_id"]
+
+    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+
+    result =
+      cond do
+        is_nil(provider) ->
+          {:error, gettext("Unknown provider.")}
+
+        String.trim(model_string || "") == "" ->
+          {:error, gettext("Model name cannot be empty.")}
+
+        true ->
+          # Resolve the canonical provider atom. Start from hd(provider_atoms)
+          # then apply variant resolution if a variant was selected.
+          provider_atom = hd(provider.provider_atoms)
+
+          resolved_atom =
+            if variant_id_str != nil and variant_id_str != "" do
+              # Whitelist variant lookup via variant_id_by_str (safe Map.get,
+              # no String.to_existing_atom on untrusted input). Falls back
+              # to the canonical provider atom for unknown/empty values.
+              variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
+              EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom, variant_atom)
+            else
+              EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_atom)
+            end
+
+          # The model_string from shortcut buttons is in "provider:model"
+          # format (e.g. "openai:gpt-5.5"). resolve_model_spec expects
+          # just the model id portion, so we strip the provider prefix.
+          model_name =
+            if String.contains?(model_string, ":") do
+              [_provider_prefix, name] = :binary.split(model_string, ":")
+              name
+            else
+              model_string
+            end
+
+          # Validate base_url requirement
+          requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
+
+          if requires_base_url and String.trim(base_url || "") == "" do
+            {:error, gettext("Base URL cannot be empty.")}
+          else
+            opts =
+              if String.trim(base_url || "") == "",
+                do: [],
+                else: [base_url: String.trim(base_url)]
+
+            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_name, opts)}
+          end
+      end
+
+    case result do
+      {:error, msg} ->
+        {:noreply, put_flash(socket, :error, msg)}
+
+      {:ok, model_value} ->
+        # Add a new model profile using the selected model, and mirror it to the
+        # flat [:llm, :model] for backward compatibility.
+        file_config =
+          socket.assigns.file_config
+          |> ModelProfileHelpers.add_model_profile(model_value)
+          |> ModelProfileHelpers.mirror_default_model()
+
+        persist_file_config(file_config, socket, gettext("Model selected and saved."))
+    end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Model Profiles editor events
+  # ───────────────────────────────────────────────────────────────────────────
+
+  @impl true
+  def handle_event("add_model_profile", _params, socket) do
+    # Add the profile to the in-memory file_config (not persisted yet — the
+    # profile has no model until the user fills in the edit form, and persisting
+    # now would fail schema validation). Enter edit mode immediately so the
+    # user can complete the profile, then save.
+    file_config =
+      socket.assigns.file_config
+      |> ModelProfileHelpers.add_model_profile(nil)
+
+    models = get_in(file_config, [:llm, :models]) || []
+    new_id = models |> List.last() |> ModelProfileHelpers.profile_id()
+
+    socket =
+      socket
+      |> assign(:file_config, file_config)
+      |> assign(:editing_profile_id, new_id)
+      |> put_flash(:info, gettext("New profile added — fill in the details and save."))
+
+    {:noreply, socket}
   end
 
   @impl true
-  def handle_event("add_model_profile", params, socket) do
-    ModelProfileEvents.add_model_profile(socket, params)
+  def handle_event("edit_model_profile", %{"profile_id" => id}, socket) do
+    {:noreply,
+     assign(socket,
+       editing_profile_id: if(socket.assigns.editing_profile_id == id, do: nil, else: id)
+     )}
   end
 
   @impl true
-  def handle_event("edit_model_profile", params, socket) do
-    ModelProfileEvents.edit_model_profile(socket, params)
-  end
-
-  @impl true
-  def handle_event("cancel_edit_model_profile", params, socket) do
-    ModelProfileEvents.cancel_edit_model_profile(socket, params)
+  def handle_event("cancel_edit_model_profile", _params, socket) do
+    {:noreply, assign(socket, :editing_profile_id, nil)}
   end
 
   @impl true
   def handle_event("save_model_profile", params, socket) do
-    ModelProfileEvents.save_model_profile(socket, params)
+    old_id = params["profile_id"]
+    new_id = String.trim(params["profile_id_new"] || "")
+
+    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+
+    cond do
+      new_id == "" ->
+        {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
+
+      # Duplicate id check: another profile (with a different old id) already
+      # uses the requested id.
+      ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("A profile with id \"%{id}\" already exists.", id: new_id)
+         )}
+
+      true ->
+        case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
+          {:ok, updated_profile} ->
+            file_config =
+              socket.assigns.file_config
+              |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
+              |> ModelProfileHelpers.mirror_default_model()
+
+            socket = socket |> assign(:editing_profile_id, nil)
+
+            persist_file_config(file_config, socket, gettext("Model profile saved."))
+
+          {:error, "model_id_empty"} ->
+            {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
+
+          {:error, "invalid_extra_json"} ->
+            {:noreply, put_flash(socket, :error, gettext("Extra Config must be valid JSON."))}
+
+          {:error, "extra_must_be_object"} ->
+            {:noreply,
+             put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
+
+          {:error, "invalid_provider_options_json"} ->
+            {:noreply, put_flash(socket, :error, gettext("Provider Options must be valid JSON."))}
+
+          {:error, "provider_options_must_be_object"} ->
+            {:noreply,
+             put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
+        end
+    end
   end
 
   @impl true
-  def handle_event("delete_model_profile", params, socket) do
-    ModelProfileEvents.delete_model_profile(socket, params)
+  def handle_event("delete_model_profile", %{"profile_id" => id}, socket) do
+    models = get_in(socket.assigns.file_config, [:llm, :models]) || []
+    new_models = Enum.reject(models, fn p -> ModelProfileHelpers.profile_id(p) == id end)
+
+    file_config =
+      socket.assigns.file_config
+      |> ModelProfileHelpers.put_in_model_profiles(new_models)
+      |> ModelProfileHelpers.mirror_default_model()
+
+    socket = socket |> assign(:editing_profile_id, nil)
+
+    persist_file_config(file_config, socket, gettext("Model profile deleted."))
   end
 
   @impl true
-  def handle_event("save_api_key", %{"credential_key" => credential_key, "api_key" => api_key}, socket) do
+  def handle_event(
+        "save_api_key",
+        %{"credential_key" => credential_key, "api_key" => api_key},
+        socket
+      ) do
     if String.trim(api_key) == "" do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
     else
@@ -899,12 +1329,12 @@ defmodule EvoDashWeb.SettingsLive do
       # Collect profile-specific generation params to pass alongside the model spec.
       gen_opts =
         []
-        |> ModelProfileEvents.maybe_put_gen_opt(:temperature, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:max_tokens, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:top_p, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:top_k, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:frequency_penalty, profile)
-        |> ModelProfileEvents.maybe_put_gen_opt(:presence_penalty, profile)
+        |> maybe_put_gen_opt(:temperature, profile)
+        |> maybe_put_gen_opt(:max_tokens, profile)
+        |> maybe_put_gen_opt(:top_p, profile)
+        |> maybe_put_gen_opt(:top_k, profile)
+        |> maybe_put_gen_opt(:frequency_penalty, profile)
+        |> maybe_put_gen_opt(:presence_penalty, profile)
 
       parent = self()
       remote? = socket.assigns.current_node != node()
@@ -938,7 +1368,8 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("add_remote_target", _params, socket) do
-    {:noreply, assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote"})}
+    {:noreply,
+     assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote"})}
   end
 
   @impl true
@@ -1049,11 +1480,158 @@ defmodule EvoDashWeb.SettingsLive do
     {:noreply, socket}
   end
 
+  # ---------------------------------------------------------------------------
+  # :system pseudo-category events (ported from the retired /system page)
+  # ---------------------------------------------------------------------------
+
+  @impl true
+  def handle_event("rerun_checks", _params, socket) do
+    spawn_system_checks(socket)
+
+    socket =
+      assign(socket,
+        system_checks_status: :checking,
+        sys_config_status: nil,
+        tool_check: nil,
+        sandbox_check: nil,
+        supervisor_check: nil,
+        nix_check: nil
+      )
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_pause", _params, socket) do
+    selected_node = socket.assigns.current_node
+    remote? = selected_node != node()
+
+    if socket.assigns.scheduler_paused do
+      if remote? do
+        EvoDash.NodeContext.call_remote(selected_node, EvoGit.AgentScheduler, :resume, [])
+      else
+        EvoGit.AgentScheduler.resume()
+      end
+
+      {:noreply,
+       socket
+       |> assign(:scheduler_paused, false)
+       |> put_flash(
+         :info,
+         gettext("Scheduler resumed. New agents and slots are being granted.")
+       )}
+    else
+      if remote? do
+        EvoDash.NodeContext.call_remote(selected_node, EvoGit.AgentScheduler, :pause, [])
+      else
+        EvoGit.AgentScheduler.pause()
+      end
+
+      {:noreply,
+       socket
+       |> assign(:scheduler_paused, true)
+       |> put_flash(
+         :info,
+         gettext(
+           "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
+         )
+       )}
+    end
+  end
+
+  @impl true
+  def handle_event("request_restart", _params, socket) do
+    {:noreply, assign(socket, :show_restart_confirm, true)}
+  end
+
+  @impl true
+  def handle_event("cancel_restart", _params, socket) do
+    {:noreply, assign(socket, :show_restart_confirm, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_restart", _params, socket) do
+    if socket.assigns.remote? do
+      EvoDash.NodeContext.restart_remote(socket.assigns.current_node)
+
+      {:noreply,
+       socket
+       |> assign(:show_restart_confirm, false)
+       |> put_flash(
+         :info,
+         gettext("Remote node is restarting. Please wait for it to come back up, then reconnect.")
+       )}
+    else
+      spawn(fn ->
+        Process.sleep(150)
+        System.restart()
+      end)
+
+      {:noreply,
+       socket
+       |> assign(:show_restart_confirm, false)
+       |> put_flash(
+         :info,
+         gettext("System is restarting. Please wait while the Erlang VM comes back up.")
+       )}
+    end
+  end
+
+  @impl true
+  def handle_event("request_stop", _params, socket) do
+    {:noreply, assign(socket, :show_stop_confirm, true)}
+  end
+
+  @impl true
+  def handle_event("cancel_stop", _params, socket) do
+    {:noreply, assign(socket, :show_stop_confirm, false)}
+  end
+
+  @impl true
+  def handle_event("confirm_stop", _params, socket) do
+    if socket.assigns.remote? do
+      EvoDash.NodeContext.stop_remote(socket.assigns.current_node)
+
+      {:noreply,
+       socket
+       |> assign(:show_stop_confirm, false)
+       |> put_flash(
+         :info,
+         gettext("Remote node is stopping. It will need to be started again on the remote host.")
+       )}
+    else
+      spawn(fn ->
+        Process.sleep(150)
+        System.stop()
+      end)
+
+      {:noreply,
+       socket
+       |> assign(:show_stop_confirm, false)
+       |> put_flash(
+         :info,
+         gettext(
+           "System is stopping. The Erlang VM will shut down and must be started again manually."
+         )
+       )}
+    end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: Generation params
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Conditionally adds a generation param from a profile map to a keyword list.
+  # Skips keys whose value is nil or absent in the profile.
+  defp maybe_put_gen_opt(opts, key, profile) do
+    value = Map.get(profile, key) || Map.get(profile, to_string(key))
+    if value != nil, do: Keyword.put(opts, key, value), else: opts
+  end
+
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Config persistence
   # ───────────────────────────────────────────────────────────────────────────
 
-  @doc false
   def persist_file_config(file_config, socket, success_msg) do
     # Always update in-memory state so the UI reflects the change immediately
     socket = assign(socket, :file_config, file_config)
@@ -1306,5 +1884,66 @@ defmodule EvoDashWeb.SettingsLive do
       :disconnected -> gettext("Disconnected")
       _ -> gettext("Unknown")
     end
+  end
+
+  # --- :system / :help private helpers ---
+
+  # Starts the system self-check in the background when the :system category
+  # is opened for the first time (keeps Settings mount cheap).
+  defp maybe_spawn_system_checks(socket, :system) do
+    if socket.assigns.system_checks_status == :idle do
+      spawn_system_checks(socket)
+      assign(socket, :system_checks_status, :checking)
+    else
+      socket
+    end
+  end
+
+  defp maybe_spawn_system_checks(socket, _category), do: socket
+
+  defp maybe_load_help_content(socket, :help) do
+    if socket.assigns.help_content do
+      socket
+    else
+      config_dir = EvoGit.Platform.config_dir()
+      config_path = Path.join(config_dir, "config.toml")
+      credentials_path = Path.join(config_dir, "credentials.toml")
+
+      assign(socket, :help_content, %{
+        config_reference: HelpContent.config_reference(config_path),
+        credentials_reference: HelpContent.credentials_reference(credentials_path),
+        usage_reference: HelpContent.usage_reference(),
+        faq_content: HelpContent.faq_content(config_path, credentials_path)
+      })
+    end
+  end
+
+  defp maybe_load_help_content(socket, _category), do: socket
+
+  defp spawn_system_checks(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = safe_system_checks(node)
+      send(parent, {:system_checks_result, result})
+    end)
+  end
+
+  # Runs the system self-check. On a remote node, the config-status row should
+  # reflect the remote node's config (via RPC); tools/sandbox/supervisor/nix are
+  # inherently local to the dashboard VM, so they are NOT fetched remotely.
+  defp safe_system_checks(node) when node != node() do
+    base = EvoGit.SystemCheck.run_all_checks()
+    remote_status = EvoDash.NodeContext.get_remote_config_status(node)
+    Map.put(base, :config, remote_status)
+  end
+
+  defp safe_system_checks(_node) do
+    EvoGit.SystemCheck.run_all_checks()
+  end
+
+  defp load_paused_state do
+    Map.get(EvoGit.AgentScheduler.get_config(), :paused, false)
   end
 end
