@@ -22,10 +22,10 @@ defmodule EvoDashWeb.ArchiveComponents do
       <div class="bg-base-200/30 p-5 rounded-2xl border border-base-200/80 hover:border-base-300 transition-colors">
         <div class="flex items-center justify-between mb-4">
           <h4 class="text-sm font-bold flex items-center gap-2">
-            <.icon name="hero-archive-box" class="size-4.5 text-primary" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
-              "Archived Agent Details"
-            )}
+            <.icon name="hero-archive-box" class="size-4.5 text-primary" />
+            <%!-- zh_CN: Agent → "智能体" --%>{gettext("Archived Agent Details")}
           </h4>
+
           <%= if @task_id do %>
             <.link
               href={"/tasks/#{@task_id}/export"}
@@ -79,43 +79,44 @@ defmodule EvoDashWeb.ArchiveComponents do
             <span class="badge badge-ghost badge-sm font-mono">{gettext("Depth")}: {@agent[:depth]}</span>
           <% end %>
         </div>
-
         <!-- Objective -->
         <%= if @agent[:objective] not in [nil, ""] do %>
           <div>
             <div class="text-xs text-base-content/50 mb-0.5">{gettext("Objective")}</div>
+
             <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
               {@agent[:objective]}
             </div>
           </div>
         <% end %>
-
         <!-- Result -->
         <%= if @agent[:result] not in [nil, ""] do %>
           <div>
             <div class="text-xs text-base-content/50 mb-0.5">{gettext("Result")}</div>
+
             <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
               {@agent[:result]}
             </div>
           </div>
         <% end %>
-
         <!-- Commits -->
         <div class="flex flex-wrap gap-x-6 gap-y-1">
           <%= if @agent[:base_commit] not in [nil, ""] do %>
             <div>
-              <%!-- zh_CN: Commit → "提交" --%><span class="text-xs text-base-content/50">{gettext("Start Commit")}: </span>
-              <span class="text-xs font-mono">{@agent[:base_commit]}</span>
+              <%!-- zh_CN: Commit → "提交" --%><span class="text-xs text-base-content/50">{gettext(
+                "Start Commit"
+              )}: </span> <span class="text-xs font-mono">{@agent[:base_commit]}</span>
             </div>
           <% end %>
+
           <%= if @agent[:final_commit] not in [nil, ""] do %>
             <div>
-              <%!-- zh_CN: Commit → "提交" --%><span class="text-xs text-base-content/50">{gettext("End Commit")}: </span>
-              <span class="text-xs font-mono">{@agent[:final_commit]}</span>
+              <%!-- zh_CN: Commit → "提交" --%><span class="text-xs text-base-content/50">{gettext(
+                "End Commit"
+              )}: </span> <span class="text-xs font-mono">{@agent[:final_commit]}</span>
             </div>
           <% end %>
         </div>
-
         <!-- Archive refs -->
         <div class="flex flex-wrap gap-x-6 gap-y-1">
           <%= if @agent[:archive_ref_start] not in [nil, ""] do %>
@@ -124,6 +125,7 @@ defmodule EvoDashWeb.ArchiveComponents do
               <span class="text-xs font-mono">{@agent[:archive_ref_start]}</span>
             </div>
           <% end %>
+
           <%= if @agent[:archive_ref_final] not in [nil, ""] do %>
             <div>
               <span class="text-xs text-base-content/50">{gettext("Archive Final Ref")}: </span>
@@ -134,39 +136,48 @@ defmodule EvoDashWeb.ArchiveComponents do
 
         <%= if @agent[:branch_name] not in [nil, ""] do %>
           <div>
-            <%!-- zh_CN: Branch → "分支" --%><span class="text-xs text-base-content/50">{gettext("Branch")}: </span>
-            <span class="text-xs font-mono">{@agent[:branch_name]}</span>
+            <%!-- zh_CN: Branch → "分支" --%><span class="text-xs text-base-content/50">{gettext(
+              "Branch"
+            )}: </span> <span class="text-xs font-mono">{@agent[:branch_name]}</span>
           </div>
         <% end %>
-
         <!-- Token usage -->
         <%= if @agent[:usage] do %>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-base-200">
             <div>
-              <%!-- zh_CN: Token → "词元" --%><div class="text-xs text-base-content/50">{gettext("Input Tokens")}</div>
+              <%!-- zh_CN: Token → "词元" --%>
+              <div class="text-xs text-base-content/50">{gettext("Input Tokens")}</div>
+
               <div class="text-sm font-semibold">
                 {format_number(@agent[:usage][:input_tokens] || 0)}
               </div>
             </div>
+
             <div>
-              <%!-- zh_CN: Token → "词元" --%><div class="text-xs text-base-content/50">{gettext("Output Tokens")}</div>
+              <%!-- zh_CN: Token → "词元" --%>
+              <div class="text-xs text-base-content/50">{gettext("Output Tokens")}</div>
+
               <div class="text-sm font-semibold">
                 {format_number(@agent[:usage][:output_tokens] || 0)}
               </div>
             </div>
+
             <div>
-              <%!-- zh_CN: Token → "词元" --%><div class="text-xs text-base-content/50">{gettext("Total Tokens")}</div>
+              <%!-- zh_CN: Token → "词元" --%>
+              <div class="text-xs text-base-content/50">{gettext("Total Tokens")}</div>
+
               <div class="text-sm font-semibold">
                 {format_number(@agent[:usage][:total_tokens] || 0)}
               </div>
             </div>
+
             <div>
               <div class="text-xs text-base-content/50">{gettext("Cost")}</div>
+
               <div class="text-sm font-semibold">${format_cost(@agent[:usage][:cost] || 0)}</div>
             </div>
           </div>
         <% end %>
-
         <!-- Timestamps -->
         <%= if @agent[:started_at] || @agent[:completed_at] do %>
           <div class="flex flex-wrap gap-x-6 gap-y-1 pt-2 border-t border-base-200">
@@ -176,6 +187,7 @@ defmodule EvoDashWeb.ArchiveComponents do
                 <span class="text-xs">{format_datetime(@agent[:started_at])}</span>
               </div>
             <% end %>
+
             <%= if @agent[:completed_at] do %>
               <div>
                 <span class="text-xs text-base-content/50">{gettext("Completed")}: </span>

@@ -24,15 +24,16 @@ defmodule EvoDash.MarkdownRender do
   Returns an empty string for `nil` input. For binary input, uses `MDEx.to_html/1`
   (the non-crashing variant). On success returns the rendered HTML; on failure,
   logs a warning and falls back to HTML-escaped text so the result is always safe.
+
+  Raw HTML inside the markdown is escaped (MDEx's default — `unsafe_` is NOT
+  enabled): the summary is LLM-generated content, and rendering raw HTML would
+  be a stored-XSS vector (a prompt-injected repo could make the agent emit
+  markup that executes in the reviewer's browser).
   """
   def render(nil), do: ""
 
   def render(text) when is_binary(text) do
-    MDEx.new(
-      markdown: text,
-      extension: @md_extensions,
-      render: [unsafe_: true]
-    )
+    MDEx.new(markdown: text, extension: @md_extensions)
     |> MDEx.to_html()
     |> case do
       {:ok, html} ->

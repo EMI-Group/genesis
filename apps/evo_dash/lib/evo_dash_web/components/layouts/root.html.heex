@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang={Gettext.get_locale(EvoDashWeb.Gettext)} dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}>
+<html
+  lang={Gettext.get_locale(EvoDashWeb.Gettext)}
+  dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -15,61 +18,105 @@
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <link rel="icon" type="image/svg+xml" href={~p"/images/logo.svg"} id="favicon" />
-    <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/favicon.svg"} />
+    <link rel="icon" type="image/svg+xml" href={~p"/images/evox-logo.svg"} id="favicon" />
+    <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/evox-logo.svg"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
+
     <script>
       (() => {
         const resolveSystemTheme = () =>
           window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 
+        const updateThemeColor = (theme) => {
+          const meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = theme === "dark" ? "#020617" : "#f8fafc";
+        };
+
+        const updateFavicon = (theme) => {
+          const favicon = document.getElementById("favicon");
+          if (favicon) {
+            favicon.href = theme === "dark" ? "/images/evox-logo-white.svg" : "/images/evox-logo.svg";
+          }
+        };
+
         const applyTheme = (theme) => {
           const resolved = theme === "system" ? resolveSystemTheme() : theme;
           document.documentElement.setAttribute("data-theme", resolved);
-          document.documentElement.setAttribute("data-theme-mode", theme);
+          document.documentElement.setAttribute("data-theme-mode", resolved);
           updateThemeColor(resolved);
           updateFavicon(resolved);
         };
 
-        const setTheme = (theme) => {
-          if (theme === "system") {
-            localStorage.removeItem("phx:theme");
+        // --- Art style（默认白天 / 默认黑夜 / 其他艺术风格，单选，不再独立明暗开关） ---
+        const ART_STYLES = [
+          "default", "default-dark", "constructivism", "swiss", "terminal", "ink",
+          "bauhaus", "memphis", "brutalism", "glass", "neumorphism", "cyberpunk",
+          "vaporwave", "nord", "gruvbox", "solarized-light", "solarized-dark",
+          "mono", "blueprint", "kraft", "botanical", "noir", "pastel", "ocean",
+          "desert", "artdeco"
+        ];
+        const setArt = (art) => {
+          if (!ART_STYLES.includes(art)) art = "default";
+          if (art === "default") {
+            localStorage.removeItem("phx:art");
           } else {
-            localStorage.setItem("phx:theme", theme);
+            localStorage.setItem("phx:art", art);
           }
-          applyTheme(theme);
+          document.documentElement.setAttribute("data-art", art);
+          // 风格即主题：默认黑夜 → dark；其余一律 light（各艺术风格自带完整配色）
+          applyTheme(art === "default-dark" ? "dark" : "light");
+          // 标记切换器中的当前项
+          document.querySelectorAll("[data-phx-art]").forEach(b =>
+            b.classList.toggle("art-active", b.dataset.phxArt === art));
         };
-
-        const updateThemeColor = (resolvedTheme) => {
-          const meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) {
-            meta.content = resolvedTheme === "dark" ? "#020617" : "#f8fafc";
-          }
-        };
-
-        const updateFavicon = (resolvedTheme) => {
-          const favicon = document.getElementById("favicon");
-          if (favicon) {
-            favicon.href = resolvedTheme === "dark" ? "/images/logo-alt.svg" : "/images/logo.svg";
-          }
-        };
-
-        // Apply on load
-        applyTheme(localStorage.getItem("phx:theme") || "system");
-
-        // Cross-tab sync
+        // 迁移旧的独立明暗偏好（一次性）
+        if (!localStorage.getItem("phx:art") && localStorage.getItem("phx:theme")) {
+          setArt(localStorage.getItem("phx:theme") === "dark" ? "default-dark" : "default");
+        } else {
+          setArt(localStorage.getItem("phx:art") || "default");
+        }
+        // ?art=<style> —— 链接级风格预览（同时写入偏好）
+        const urlArt = new URLSearchParams(window.location.search).get("art");
+        if (urlArt) setArt(urlArt);
+        window.addEventListener("phx:set-art", (e) => setArt(e.target.dataset.phxArt || "default"));
         window.addEventListener("storage", (e) => {
-          if (e.key === "phx:theme") setTheme(e.newValue || "system");
+          if (e.key === "phx:art") setArt(e.newValue || "default");
         });
 
-        // Theme toggle buttons
-        window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
-
-        // System theme change — re-resolve when in system mode
-        window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-          if (!localStorage.getItem("phx:theme")) applyTheme("system");
+        // --- Simple-mode theme（极简版独立主题：白天/黑夜/水墨/终端，只作用于 .simple-ui 页面） ---
+        const SIMPLE_THEMES = ["day", "night", "ink", "terminal"];
+        const setSimpleTheme = (t) => {
+          if (!SIMPLE_THEMES.includes(t)) t = "day";
+          if (t === "day") {
+            localStorage.removeItem("phx:simple-theme");
+          } else {
+            localStorage.setItem("phx:simple-theme", t);
+          }
+          document.documentElement.setAttribute("data-simple-theme", t);
+          document.querySelectorAll("[data-phx-simple-theme]").forEach(b =>
+            b.classList.toggle("simple-theme-active", b.dataset.phxSimpleTheme === t));
+        };
+        setSimpleTheme(localStorage.getItem("phx:simple-theme") || "day");
+        window.addEventListener("phx:set-simple-theme", (e) =>
+          setSimpleTheme(e.target.dataset.phxSimpleTheme || "day"));
+        window.addEventListener("storage", (e) => {
+          if (e.key === "phx:simple-theme") setSimpleTheme(e.newValue || "day");
         });
+
+        // --- 隔离：极简页（.simple-ui）不受专业版 data-art 艺术风格影响 ---
+        // 艺术风格用 :root[data-art] 下的全局元素选择器（textarea/.btn/圆角重置等），
+        // 会穿透 .simple-ui 的变量隔离。进入极简页时直接摘掉 data-art；
+        // 回到专业版页面时按 localStorage 里的偏好恢复。
+        const syncArtForSimplePages = () => {
+          if (document.querySelector(".simple-ui")) {
+            document.documentElement.removeAttribute("data-art");
+          } else {
+            setArt(localStorage.getItem("phx:art") || "default");
+          }
+        };
+        document.addEventListener("DOMContentLoaded", syncArtForSimplePages);
+        window.addEventListener("phx:page-loading-stop", syncArtForSimplePages);
 
         // --- Locale ---
         const rtlLocales = ['ar', 'he', 'fa', 'ur'];
@@ -119,6 +166,7 @@
       })();
     </script>
   </head>
+
   <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased h-screen overflow-hidden selection:bg-indigo-500/30">
     {@inner_content}
   </body>

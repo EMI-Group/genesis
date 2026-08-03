@@ -33,12 +33,14 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
             <.icon name="hero-arrow-path" class="size-3.5" />
           </button>
         </div>
+
         <p
           class="text-xs text-base-content/70 truncate mt-0.5"
           title={Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}
         >
           {Gettext.gettext(EvoDashWeb.Gettext, @schema.description)}
         </p>
+
         <p class="text-[11px] text-base-content/70 mt-0.5">
           <span class="uppercase tracking-wider">{gettext("Default")}</span>
           <span class="font-mono">{default_label(@schema.default)}</span>
@@ -57,12 +59,14 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                 <option value="" selected={is_nil(@value)}>
                   <%!-- zh_CN: provider → "服务商" --%>{gettext("(provider default)")}
                 </option>
+
                 <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
                   <option value={opt} selected={to_string(@value) == opt}>
                     {opt}
                   </option>
                 <% end %>
               </select>
+
               <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
                 <.icon name="hero-chevron-down" class="size-4" />
               </div>
@@ -130,6 +134,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       </option>
                     <% end %>
                   </select>
+
                   <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
                     <.icon name="hero-chevron-down" class="size-4" />
                   </div>
@@ -162,9 +167,11 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                 <% profiles = @value || [] %>
                 <div class="w-full text-right">
                   <span class="badge badge-primary badge-sm gap-1 font-mono">
-                    <.icon name="hero-cpu-chip" class="size-3" />
-                    {gettext("%{count} model profiles", count: length(profiles))}
+                    <.icon name="hero-cpu-chip" class="size-3" /> {gettext("%{count} model profiles",
+                      count: length(profiles)
+                    )}
                   </span>
+
                   <p class="text-[11px] text-base-content/70 mt-1">
                     {gettext("Configure via the editor below")}
                   </p>
@@ -172,10 +179,10 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
             <% end %>
           <% end %>
         </div>
+
         <%= if @error do %>
           <p class="text-xs text-error font-medium mt-1.5 flex items-center gap-1">
-            <.icon name="hero-exclamation-circle" class="size-3.5 shrink-0" />
-            {@error.message}
+            <.icon name="hero-exclamation-circle" class="size-3.5 shrink-0" /> {@error.message}
           </p>
         <% end %>
       </div>

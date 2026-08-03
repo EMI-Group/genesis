@@ -6,7 +6,12 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
   use EvoDashWeb, :html
 
   import EvoDashWeb.SettingsComponents.CategoryMetadata,
-    only: [category_icon: 1, category_display_name: 1, sort_categories: 1, category_match_count: 3]
+    only: [
+      category_icon: 1,
+      category_display_name: 1,
+      sort_categories: 1,
+      category_match_count: 3
+    ]
 
   # ───────────────────────────────────────────────────────────────────────────
   # settings_sidebar/1 — Category sidebar
@@ -27,6 +32,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               class="size-4 text-base-content/70 group-focus-within:text-primary transition-colors"
             />
           </div>
+
           <form id="settings-search" class="contents" phx-submit="noop">
             <input
               type="text"
@@ -37,6 +43,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-200 rounded-md font-medium text-sm h-10"
             />
           </form>
+
           <%= if @search_text != "" do %>
             <button
               type="button"
@@ -52,8 +59,8 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
 
       <nav class="space-y-2 mt-2 pb-4">
         <%= for {category, schemas} <- sort_categories(@categories) do %>
-          <% match_count = category_match_count(category, schemas, @search_text) %>
-          <% total = length(schemas) %>
+          <% match_count = category_match_count(category, schemas, @search_text) %> <% total =
+            length(schemas) %>
           <button
             type="button"
             phx-click="select_category"

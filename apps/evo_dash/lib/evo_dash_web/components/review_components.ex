@@ -39,45 +39,65 @@ defmodule EvoDashWeb.ReviewComponents do
       <button
         phx-click="switch_tab"
         phx-value-tab="conversation"
-        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :conversation && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={[
+          "review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap",
+          (@active_tab == :conversation && "bg-base-200 text-base-content") ||
+            "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+        ]}
       >
-        <.icon name="hero-document-text" class="size-4 mr-2" />
-        {gettext("Agent Report")}
+        <.icon name="hero-document-text" class="size-4 mr-2" /> {gettext("Agent Report")}
       </button>
+
       <button
         phx-click="switch_tab"
         phx-value-tab="objective"
-        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :objective && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={[
+          "review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap",
+          (@active_tab == :objective && "bg-base-200 text-base-content") ||
+            "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+        ]}
       >
-        <.icon name="hero-chat-bubble-bottom-center-text" class="size-4 mr-2" />
-        {gettext("Objective")}
+        <.icon name="hero-chat-bubble-bottom-center-text" class="size-4 mr-2" /> {gettext("Objective")}
       </button>
+
       <button
         phx-click="switch_tab"
         phx-value-tab="commits"
-        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :commits && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={[
+          "review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap",
+          (@active_tab == :commits && "bg-base-200 text-base-content") ||
+            "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+        ]}
       >
         <.icon name="hero-clock" class="size-4 mr-2" />
         <%!-- zh_CN: Commit → "提交" --%>{gettext("Commits")}
         <span class="badge badge-sm badge-ghost ml-2">{@commits_count}</span>
       </button>
+
       <button
         phx-click="switch_tab"
         phx-value-tab="files_changed"
-        class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :files_changed && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+        class={[
+          "review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap",
+          (@active_tab == :files_changed && "bg-base-200 text-base-content") ||
+            "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+        ]}
       >
-        <.icon name="hero-code-bracket" class="size-4 mr-2" />
-        {gettext("Files Changed")}
+        <.icon name="hero-code-bracket" class="size-4 mr-2" /> {gettext("Files Changed")}
         <span class="badge badge-sm badge-ghost ml-2">{@files_count}</span>
       </button>
+
       <%= if @show_archive do %>
         <button
           phx-click="switch_tab"
           phx-value-tab="archive"
-          class={["review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap", @active_tab == :archive && "bg-base-200 text-base-content" || "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"]}
+          class={[
+            "review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap",
+            (@active_tab == :archive && "bg-base-200 text-base-content") ||
+              "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+          ]}
         >
-          <.icon name="hero-archive-box-arrow-down" class="size-4 mr-2" />
-          {gettext("Archive")}
+          <.icon name="hero-archive-box-arrow-down" class="size-4 mr-2" /> {gettext("Archive")}
           <span class="badge badge-sm badge-ghost ml-2">{@agents_count}</span>
         </button>
       <% end %>
@@ -103,16 +123,20 @@ defmodule EvoDashWeb.ReviewComponents do
       <div class="flex items-center justify-between gap-3 p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
         <div class="flex items-center gap-3">
           <.icon name="hero-archive-box-arrow-down" class="size-5 text-base-content/60" />
-          <%!-- zh_CN: Agent → "智能体" --%><h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
+          <%!-- zh_CN: Agent → "智能体" --%>
+          <h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
         </div>
+
         <%= if @task_id do %>
-          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary gap-2" download>
-            <.icon name="hero-arrow-down-tray" class="size-4" />
-            {gettext("Export JSON")}
+          <.link
+            href={"/tasks/#{@task_id}/export"}
+            class="btn btn-sm btn-outline btn-primary gap-2"
+            download
+          >
+            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext("Export JSON")}
           </.link>
         <% end %>
       </div>
-
       <!-- Agent tree -->
       <div class="p-4 sm:p-6 space-y-3">
         <%= for {agent, children} <- @archive_tree do %>
@@ -136,117 +160,155 @@ defmodule EvoDashWeb.ReviewComponents do
           <span class="badge badge-sm badge-ghost rounded-full">
             {gettext("Depth")} {@agent[:depth]}
           </span>
+
           <%= if @agent[:started_at] do %>
             <span class="text-xs text-base-content/50 ml-auto">
-              <.icon name="hero-clock" class="size-3.5 mr-1 inline" />
-              {relative_time(@agent[:started_at])}
+              <.icon name="hero-clock" class="size-3.5 mr-1 inline" /> {relative_time(
+                @agent[:started_at]
+              )}
             </span>
           <% end %>
         </div>
-
         <!-- Objective -->
         <%= if @agent[:objective] do %>
           <div class="mb-3">
             <p class="text-xs font-medium text-base-content/50 uppercase tracking-wide mb-1">
               {gettext("Objective")}
             </p>
+
             <p class="text-sm text-base-content/80 leading-relaxed">{@agent[:objective]}</p>
           </div>
         <% end %>
-
         <!-- Result -->
         <%= if @agent[:result] do %>
           <div class="mb-3">
             <p class="text-xs font-medium text-base-content/50 uppercase tracking-wide mb-1">
               {gettext("Result")}
             </p>
+
             <p class="text-sm text-base-content/80 leading-relaxed">{@agent[:result]}</p>
           </div>
         <% end %>
-
         <!-- Commits -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
           <%= if @agent[:base_commit] do %>
             <div class="flex items-center gap-2">
-              <span class="text-xs text-base-content/50 shrink-0"><%!-- zh_CN: Commit → "提交" --%>{gettext("Start Commit")}</span>
+              <span class="text-xs text-base-content/50 shrink-0"><%!-- zh_CN: Commit → "提交" --%>{gettext(
+                "Start Commit"
+              )}</span>
               <span class="font-mono text-xs text-base-content/70 bg-base-200/50 rounded-full px-2 py-0.5 truncate">
                 {String.slice(@agent[:base_commit], 0..7)}
               </span>
             </div>
           <% end %>
+
           <%= if @agent[:final_commit] do %>
             <div class="flex items-center gap-2">
-              <span class="text-xs text-base-content/50 shrink-0"><%!-- zh_CN: Commit → "提交" --%>{gettext("End Commit")}</span>
+              <span class="text-xs text-base-content/50 shrink-0"><%!-- zh_CN: Commit → "提交" --%>{gettext(
+                "End Commit"
+              )}</span>
               <span class="font-mono text-xs text-base-content/70 bg-base-200/50 rounded-full px-2 py-0.5 truncate">
                 {String.slice(@agent[:final_commit], 0..7)}
               </span>
             </div>
           <% end %>
         </div>
-
         <!-- Archive refs -->
         <%= if @agent[:archive_ref_start] || @agent[:archive_ref_final] do %>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
             <%= if @agent[:archive_ref_start] do %>
               <div class="flex items-center gap-2">
                 <span class="text-xs text-base-content/50 shrink-0">{gettext("Archive Start")}</span>
-                <span class="font-mono text-xs text-base-content/60 truncate" title={@agent[:archive_ref_start]}>
+                <span
+                  class="font-mono text-xs text-base-content/60 truncate"
+                  title={@agent[:archive_ref_start]}
+                >
                   {@agent[:archive_ref_start]}
                 </span>
               </div>
             <% end %>
+
             <%= if @agent[:archive_ref_final] do %>
               <div class="flex items-center gap-2">
                 <span class="text-xs text-base-content/50 shrink-0">{gettext("Archive End")}</span>
-                <span class="font-mono text-xs text-base-content/60 truncate" title={@agent[:archive_ref_final]}>
+                <span
+                  class="font-mono text-xs text-base-content/60 truncate"
+                  title={@agent[:archive_ref_final]}
+                >
                   {@agent[:archive_ref_final]}
                 </span>
               </div>
             <% end %>
           </div>
         <% end %>
-
         <!-- Token usage -->
         <%= if @agent[:usage] do %>
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
             <div class="bg-base-200/40 p-2.5 text-center">
-              <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Input Tokens")}</p>
-              <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:input_tokens] || 0)}</p>
+              <%!-- zh_CN: Token → "词元" --%>
+              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">
+                {gettext("Input Tokens")}
+              </p>
+
+              <p class="text-sm font-mono font-semibold text-base-content/80">
+                {format_number(@agent[:usage][:input_tokens] || 0)}
+              </p>
             </div>
+
             <div class="bg-base-200/40 p-2.5 text-center">
-              <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Output Tokens")}</p>
-              <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:output_tokens] || 0)}</p>
+              <%!-- zh_CN: Token → "词元" --%>
+              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">
+                {gettext("Output Tokens")}
+              </p>
+
+              <p class="text-sm font-mono font-semibold text-base-content/80">
+                {format_number(@agent[:usage][:output_tokens] || 0)}
+              </p>
             </div>
+
             <div class="bg-base-200/40 p-2.5 text-center">
-              <%!-- zh_CN: Token → "词元" --%><p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Total Tokens")}</p>
-              <p class="text-sm font-mono font-semibold text-base-content/80">{format_number(@agent[:usage][:total_tokens] || 0)}</p>
+              <%!-- zh_CN: Token → "词元" --%>
+              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">
+                {gettext("Total Tokens")}
+              </p>
+
+              <p class="text-sm font-mono font-semibold text-base-content/80">
+                {format_number(@agent[:usage][:total_tokens] || 0)}
+              </p>
             </div>
+
             <div class="bg-base-200/40 p-2.5 text-center">
-              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">{gettext("Cost")}</p>
-              <p class="text-sm font-mono font-semibold text-base-content/80">${format_cost(@agent[:usage][:cost])}</p>
+              <p class="text-[10px] text-base-content/50 uppercase tracking-wide">
+                {gettext("Cost")}
+              </p>
+
+              <p class="text-sm font-mono font-semibold text-base-content/80">
+                ${format_cost(@agent[:usage][:cost])}
+              </p>
             </div>
           </div>
         <% end %>
-
         <!-- Timestamps -->
         <%= if @agent[:started_at] || @agent[:completed_at] do %>
           <div class="flex flex-wrap items-center gap-4 text-xs text-base-content/50">
             <%= if @agent[:started_at] do %>
               <span class="flex items-center gap-1">
-                <.icon name="hero-play-circle" class="size-3.5" />
-                {gettext("Started")} {format_datetime(@agent[:started_at])}
+                <.icon name="hero-play-circle" class="size-3.5" /> {gettext("Started")} {format_datetime(
+                  @agent[:started_at]
+                )}
               </span>
             <% end %>
+
             <%= if @agent[:completed_at] do %>
               <span class="flex items-center gap-1">
-                <.icon name="hero-check-circle" class="size-3.5" />
-                {gettext("Completed")} {format_datetime(@agent[:completed_at])}
+                <.icon name="hero-check-circle" class="size-3.5" /> {gettext("Completed")} {format_datetime(
+                  @agent[:completed_at]
+                )}
               </span>
             <% end %>
           </div>
         <% end %>
       </div>
-
       <!-- Children -->
       <%= if @children != [] do %>
         <div class="mt-2 pl-4 sm:pl-6 border-l-2 border-base-200/60 space-y-3">

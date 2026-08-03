@@ -17,6 +17,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           {gettext("Changed Files")}
         </h3>
       </div>
+
       <%= for node <- build_file_tree(@files) do %>
         <.tree_node node={node} depth={0} selected_file={@selected_file} />
       <% end %>
@@ -39,12 +40,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         <span class="dir-name font-mono text-xs truncate">
           {@node.name}/
         </span>
+
         <span class="dir-stats">
           {ngettext("%{count} file", "%{count} files", @node.file_count, count: @node.file_count)}
           <span class="text-success">+{@node.additions}</span>
           <span class="text-error">-{@node.deletions}</span>
         </span>
       </summary>
+
       <%= for child <- @node.children do %>
         <.tree_node node={child} depth={@depth + 1} selected_file={@selected_file} />
       <% end %>
@@ -99,15 +102,18 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
             <.icon
               name={file_status_icon(file.status)}
               class={"size-3.5 #{file_status_color(file.status)}"}
-            />
-            <span class="truncate flex-1">{file.path}</span>
+            /> <span class="truncate flex-1">{file.path}</span>
             <span class="text-[10px] text-success font-mono">+{file.additions}</span>
             <span class="text-[10px] text-error font-mono">-{file.deletions}</span>
           </button>
+
           <%= if Map.get(@expanded_files, file.path, false) do %>
             <div class="overflow-x-auto">
-              <% context_level = Map.get(@file_context_levels, file.path, 3) %>
-              {render_diff_content(file, file.path, context_level)}
+              <% context_level = Map.get(@file_context_levels, file.path, 3) %> {render_diff_content(
+                file,
+                file.path,
+                context_level
+              )}
             </div>
           <% end %>
         </div>
@@ -153,10 +159,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
           <div class="flex-1 min-w-0">
             <h1 class="text-lg font-bold leading-tight">{@commit.message}</h1>
+
             <div class="flex flex-wrap items-center gap-2 mt-2">
               <span class="badge badge-sm badge-ghost px-2 py-1.5 font-mono">
-                <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
-                {String.slice(@commit.sha, 0..7)}
+                <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" /> {String.slice(
+                  @commit.sha,
+                  0..7
+                )}
               </span>
               <span class="text-sm text-base-content/50">{@commit.author_name}</span>
               <span class="text-sm text-base-content/30">·</span>
@@ -239,6 +248,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <%= if length(@segments) > 0 and @context_level != :all do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} />
           <% end %>
+
           <%= for segment <- @segments do %>
             <%= case segment do %>
               <% {:pre_hunk, pre_lines} -> %>
@@ -251,11 +261,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                 <div class="diff-split-hunk">
                   <span class="diff-line-content" phx-no-format>{hunk_line.content}</span>
                 </div>
+
                 <%= for pair <- pairs do %>
                   <.diff_split_row pair={pair} highlighted={@highlighted} />
                 <% end %>
             <% end %>
           <% end %>
+
           <%= if show_bottom_expand do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} />
           <% end %>
@@ -305,10 +317,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
     ~H"""
     <div class={@row_class}>
-      <span class="diff-split-gutter diff-split-gutter-left">{@left_num}</span>
-      <span class="diff-split-cell diff-split-cell-left" phx-no-format>{@left_content}</span>
-      <span class="diff-split-gutter diff-split-gutter-right">{@right_num}</span>
-      <span class="diff-split-cell diff-split-cell-right" phx-no-format>{@right_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-left">{@left_num}</span> <span
+        class="diff-split-cell diff-split-cell-left"
+        phx-no-format
+      >{@left_content}</span>
+      <span class="diff-split-gutter diff-split-gutter-right">{@right_num}</span> <span
+        class="diff-split-cell diff-split-cell-right"
+        phx-no-format
+      >{@right_content}</span>
     </div>
     """
   end
@@ -679,7 +695,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         # highlighting (the "after" version) so surrounding code matches the
         # final result. Both offsets advance (the line exists in both sides).
         line_num = new_start + new_off
-        hl = lookup_highlight(new_hl, line_num) || line.content
+        hl = lookup_highlight(new_hl, line_num) || escape_line(line.content)
 
         map_hunk_body(
           rest,
@@ -694,7 +710,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
       :addition ->
         line_num = new_start + new_off
-        hl = lookup_highlight(new_hl, line_num) || line.content
+        hl = lookup_highlight(new_hl, line_num) || escape_line(line.content)
 
         map_hunk_body(
           rest,
@@ -709,7 +725,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
       :deletion ->
         line_num = old_start + old_off
-        hl = lookup_highlight(old_hl, line_num) || line.content
+        hl = lookup_highlight(old_hl, line_num) || escape_line(line.content)
 
         map_hunk_body(
           rest,
@@ -848,16 +864,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   end
 
   # Call Lumis once for a whole code block, return per-line highlighted HTML as
-  # a map %{line_number => inner_html}. Returns %{1 => plain, ...} for nil
-  # language or empty code (1-based line numbers).
+  # a map %{line_number => inner_html}. Returns escaped plain lines for nil
+  # language or empty code (1-based line numbers) — callers wrap values in
+  # raw(), so fallbacks MUST be HTML-escaped source text.
   defp highlight_code_block(code, language) do
     if code == "" or is_nil(language) do
-      code
-      |> String.split("\n")
-      |> Enum.with_index(1)
-      |> Enum.reduce(%{}, fn {content, line_num}, acc ->
-        Map.put(acc, line_num, content)
-      end)
+      plain_line_map(code)
     else
       try do
         Lumis.highlight!(code,
@@ -869,15 +881,25 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         )
         |> parse_lumis_lines()
       rescue
-        _ ->
-          code
-          |> String.split("\n")
-          |> Enum.with_index(1)
-          |> Enum.reduce(%{}, fn {content, line_num}, acc ->
-            Map.put(acc, line_num, content)
-          end)
+        _ -> plain_line_map(code)
       end
     end
+  end
+
+  # %{1-based line_number => HTML-escaped line content} — safe to raw().
+  defp plain_line_map(code) do
+    code
+    |> String.split("\n")
+    |> Enum.with_index(1)
+    |> Enum.reduce(%{}, fn {content, line_num}, acc ->
+      Map.put(acc, line_num, escape_line(content))
+    end)
+  end
+
+  # HTML-escape raw source text before it is wrapped in raw()/1 — diff content
+  # is repository source code and must never be injected as live markup.
+  defp escape_line(content) do
+    content |> Phoenix.HTML.html_escape() |> Phoenix.HTML.safe_to_string()
   end
 
   # Parse Lumis HTML output into a map of %{line_number => inner_html}.

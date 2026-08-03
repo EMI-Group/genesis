@@ -29,7 +29,9 @@ defmodule EvoDashWeb.SettingsComponents do
   #    model_profiles_editor, flat_llm_schemas) are already callable
   #    as EvoDashWeb.SettingsComponents.func/arity via import. ──
 
-  defdelegate schema_matches?(schema, search_text), to: EvoDashWeb.SettingsComponents.CategoryMetadata
+  defdelegate schema_matches?(schema, search_text),
+    to: EvoDashWeb.SettingsComponents.CategoryMetadata
+
   defdelegate model_display(value), to: EvoDashWeb.SettingsComponents.SettingCard
   defdelegate search_results(assigns), to: EvoDashWeb.SettingsComponents.SearchResults
   defdelegate settings_sidebar(assigns), to: EvoDashWeb.SettingsComponents.Sidebar
@@ -64,10 +66,12 @@ defmodule EvoDashWeb.SettingsComponents do
           <div class="text-primary/60">
             <.icon name={category_icon(@category)} class="size-5" />
           </div>
+
           <h2 class="text-lg font-bold tracking-tight text-base-content">
             {category_display_name(@category)}
           </h2>
         </div>
+
         <p class="text-sm font-medium text-base-content/80">{category_description(@category)}</p>
       </div>
 
@@ -83,10 +87,12 @@ defmodule EvoDashWeb.SettingsComponents do
             <%!-- LLM Provider Quick Setup --%>
             <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
               <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
-              <p class="text-sm text-base-content/80 mb-5">
-                <%!-- zh_CN: provider → "服务商" --%>{gettext("Select a provider to quickly configure your model and API key.")}
-              </p>
 
+              <p class="text-sm text-base-content/80 mb-5">
+                <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                  "Select a provider to quickly configure your model and API key."
+                )}
+              </p>
               <%!-- Provider buttons --%>
               <div class="flex flex-wrap gap-2 mb-5">
                 <%= for provider <- @llm_providers do %>
@@ -105,33 +111,31 @@ defmodule EvoDashWeb.SettingsComponents do
                   </button>
                 <% end %>
               </div>
-
               <%!-- Variant and model shortcuts when provider is selected --%>
               <%= if @selected_provider_id != nil do %>
                 <% provider =
-                  Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %>
-                <% variants = provider[:variants] %>
-                <% credential_key =
+                  Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == @selected_provider_id)) %> <% variants =
+                  provider[:variants] %> <% credential_key =
                   if @selected_variant_id && is_list(variants) do
                     variant = Enum.find(variants, &(&1.id == @selected_variant_id))
-                    if variant && Map.get(variant, :credential_key), do: variant.credential_key, else: Map.get(provider, :credential_key)
+
+                    if variant && Map.get(variant, :credential_key),
+                      do: variant.credential_key,
+                      else: Map.get(provider, :credential_key)
                   else
                     Map.get(provider, :credential_key)
-                  end
-                %>
-                <% has_variants = is_list(variants) and length(variants) > 0 %>
-                <% show_models = not has_variants or @selected_variant_id != nil %>
-                <% models = get_in(@file_config, [:llm, :models]) || [] %>
-                <% first_profile = Enum.at(models, 0) %>
-                <% current_model = if first_profile, do: (first_profile[:model] || first_profile["model"]), else: nil %>
-                <% show_custom_input = provider[:custom_model] == true %>
-                <% show_model_buttons = show_models and not show_custom_input %>
+                  end %> <% has_variants = is_list(variants) and length(variants) > 0 %> <% show_models =
+                  not has_variants or @selected_variant_id != nil %> <% current_model =
+                  get_in(@file_config, [:llm, :model]) %> <% show_custom_input =
+                  provider[:custom_model] == true %> <% show_model_buttons =
+                  show_models and not show_custom_input %>
                 <%!-- Variant selection (only if provider has variants) --%>
                 <%= if has_variants do %>
                   <div class="mb-5">
                     <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
                       {gettext("Select a variant:")}
                     </p>
+
                     <div class="flex flex-wrap gap-2">
                       <%= for variant <- variants do %>
                         <button
@@ -161,14 +165,14 @@ defmodule EvoDashWeb.SettingsComponents do
                       <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
                         {gettext("Quick-select a model:")}
                       </p>
+
                       <div class="flex flex-wrap gap-2">
                         <%= for model <- @selected_provider_models do %>
                           <% resolved_atom =
                             EvoGit.Config.LLMCatalog.resolve_provider_atom(
                               @selected_provider_id,
                               @selected_variant_id
-                            ) %>
-                          <% model_string = "#{resolved_atom}:#{model.id}" %>
+                            ) %> <% model_string = "#{resolved_atom}:#{model.id}" %>
                           <button
                             type="submit"
                             name="model_string"
@@ -185,15 +189,16 @@ defmodule EvoDashWeb.SettingsComponents do
                         <% end %>
                       </div>
                     </div>
-
-                    <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                    <% shortcut_prefill_base_url =
+                    <% requires_base_url =
+                      EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %> <% shortcut_prefill_base_url =
                       cond do
                         is_map(current_model) ->
                           to_string(current_model[:base_url] || current_model["base_url"] || "")
+
                         is_tuple(current_model) and tuple_size(current_model) == 2 ->
                           opts = elem(current_model, 1)
                           if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+
                         true ->
                           ""
                       end %>
@@ -206,6 +211,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           <% end %>
                         </span>
                       </label>
+
                       <input
                         type="text"
                         name="base_url"
@@ -230,30 +236,35 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- Custom model input (for providers with custom_model: true, e.g. OpenRouter / OpenAI-Compatible) --%>
                 <%= if show_custom_input do %>
-                  <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                  <%!-- Pre-fill helpers: read the current flat model for the selected provider --%>
-                  <% custom_prefill_id =
+                  <% requires_base_url =
+                    EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
+                  <%!-- Pre-fill helpers: read the current flat model for the selected provider --%> <% custom_prefill_id =
                     cond do
                       is_map(current_model) ->
                         to_string(current_model[:id] || current_model["id"] || "")
+
                       is_tuple(current_model) and tuple_size(current_model) == 2 ->
                         opts = elem(current_model, 1)
                         if is_list(opts), do: to_string(Keyword.get(opts, :id, "")), else: ""
+
                       is_binary(current_model) and String.contains?(current_model, ":") ->
                         [_provider, id] = :binary.split(current_model, ":")
                         id
+
                       is_binary(current_model) ->
                         current_model
+
                       true ->
                         ""
-                    end %>
-                  <% custom_prefill_base_url =
+                    end %> <% custom_prefill_base_url =
                     cond do
                       is_map(current_model) ->
                         to_string(current_model[:base_url] || current_model["base_url"] || "")
+
                       is_tuple(current_model) and tuple_size(current_model) == 2 ->
                         opts = elem(current_model, 1)
                         if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+
                       true ->
                         ""
                     end %>
@@ -263,6 +274,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       <label class="label">
                         <span class="label-text font-bold text-sm mb-2 block">{gettext("Model Name")}</span>
                       </label>
+
                       <input
                         type="text"
                         name="model_name"
@@ -271,6 +283,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
                       />
                     </div>
+
                     <div class="form-control">
                       <label class="label">
                         <span class="label-text font-bold text-sm mb-2 block">
@@ -280,6 +293,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           <% end %>
                         </span>
                       </label>
+
                       <input
                         type="text"
                         name="base_url"
@@ -299,6 +313,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         <% end %>
                       </p>
                     </div>
+
                     <%= if requires_base_url do %>
                       <div class="bg-warning/5 border border-warning/20 rounded-xl p-3 flex gap-2 items-start">
                         <.icon
@@ -312,14 +327,15 @@ defmodule EvoDashWeb.SettingsComponents do
                         </p>
                       </div>
                     <% end %>
+
                     <button type="submit" class="btn btn-primary btn-sm rounded-xl">
                       {gettext("Set Model")}
                     </button>
                   </form>
                 <% end %>
 
-                <%!-- API Key input --%>
-                <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
+                <%!-- API Key input --%> <% key_is_set =
+                  Map.get(@credentials, credential_key) not in [nil, ""] %>
                 <form phx-submit="save_api_key" class="pt-6 pb-4">
                   <input type="hidden" name="credential_key" value={credential_key} />
                   <label class="label">
@@ -328,6 +344,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
                     <% end %>
                   </label>
+
                   <div class="flex items-stretch gap-3">
                     <input
                       type="password"
@@ -346,6 +363,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       {gettext("Save Key")}
                     </button>
                   </div>
+
                   <%= if key_is_set do %>
                     <p class="text-[11px] text-success/70 mt-1.5 font-medium">
                       ✓ {gettext("Your API key is configured and ready to use.")}
@@ -363,26 +381,26 @@ defmodule EvoDashWeb.SettingsComponents do
                 </form>
               <% end %>
             </div>
-
             <%!-- Model Profiles List Editor --%>
             <.model_profiles_editor
               profiles={@model_profiles}
               editing_profile_id={@editing_profile_id}
-            />
-
-            <%!-- LLM Connection Test --%>
+            /> <%!-- LLM Connection Test --%>
             <div class="mb-6 bg-base-100 rounded-lg border border-base-200 p-4">
               <div class="flex items-center gap-3 mb-3">
                 <div class="text-info/60">
                   <.icon name="hero-signal" class="size-5" />
                 </div>
+
                 <div>
                   <h4 class="font-semibold text-sm">{gettext("Connection Test")}</h4>
+
                   <p class="text-xs text-base-content/70">
                     {gettext("Verify your LLM configuration is working")}
                   </p>
                 </div>
               </div>
+
               <div class="flex flex-wrap items-center gap-3">
                 <%= case @llm_test_status do %>
                   <% :idle -> %>
@@ -391,8 +409,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         "No model profiles configured — add a profile first"
                       )}</span>
                       <button disabled class="btn btn-primary btn-sm gap-2 opacity-50">
-                        <.icon name="hero-signal" class="size-4" />
-                        {gettext("Test Connection")}
+                        <.icon name="hero-signal" class="size-4" /> {gettext("Test Connection")}
                       </button>
                     <% else %>
                       <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>
@@ -409,14 +426,14 @@ defmodule EvoDashWeb.SettingsComponents do
                             </option>
                           <% end %>
                         </select>
+
                         <button
                           phx-click="test_llm"
                           phx-value-profile_id={profile_id_val}
                           class="btn btn-primary btn-sm gap-2"
                           disabled={@disabled}
                         >
-                          <.icon name="hero-signal" class="size-4" />
-                          {gettext("Test Connection")}
+                          <.icon name="hero-signal" class="size-4" /> {gettext("Test Connection")}
                         </button>
                       </form>
                     <% end %>
@@ -435,6 +452,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           50
                         )}"</span>
                       </div>
+
                       <form phx-submit="noop" class="flex items-center gap-2">
                         <select
                           name="profile_id"
@@ -448,14 +466,14 @@ defmodule EvoDashWeb.SettingsComponents do
                             </option>
                           <% end %>
                         </select>
+
                         <button
                           phx-click="test_llm"
                           phx-value-profile_id={profile_id_val}
                           class="btn btn-primary btn-sm gap-2"
                           disabled={@disabled}
                         >
-                          <.icon name="hero-arrow-path" class="size-4" />
-                          {gettext("Retest")}
+                          <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retest")}
                         </button>
                       </form>
                     </div>
@@ -466,6 +484,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         <.icon name="hero-x-circle" class="size-5 text-error" />
                         <span class="text-sm text-error">{reason}</span>
                       </div>
+
                       <form phx-submit="noop" class="flex items-center gap-2">
                         <select
                           name="profile_id"
@@ -479,21 +498,20 @@ defmodule EvoDashWeb.SettingsComponents do
                             </option>
                           <% end %>
                         </select>
+
                         <button
                           phx-click="test_llm"
                           phx-value-profile_id={profile_id_val}
                           class="btn btn-primary btn-sm gap-2"
                           disabled={@disabled}
                         >
-                          <.icon name="hero-arrow-path" class="size-4" />
-                          {gettext("Retry")}
+                          <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retry")}
                         </button>
                       </form>
                     </div>
                 <% end %>
               </div>
             </div>
-
             <%!-- Help text for other providers --%>
             <div class="mb-6 bg-base-200/30 rounded-lg p-4 border border-base-200">
               <p class="text-xs text-base-content/70 leading-relaxed">
@@ -513,9 +531,8 @@ defmodule EvoDashWeb.SettingsComponents do
               phx-submit="save_category"
               id={"settings-form-#{@category}"}
             >
-              <input type="hidden" name="category" value={@category} />
-
-              <% reordered = flat_llm_schemas(@schemas) %>
+              <input type="hidden" name="category" value={@category} /> <% reordered =
+                flat_llm_schemas(@schemas) %>
               <%= if reordered != [] do %>
                 <div class="rounded-lg border border-base-200 overflow-hidden mb-8">
                   <%= for schema <- reordered do %>
@@ -528,12 +545,13 @@ defmodule EvoDashWeb.SettingsComponents do
                   <% end %>
                 </div>
               <% end %>
-
               <%!-- Sticky Footer --%>
               <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
                 <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
-                  <.icon name="hero-document-check" class="size-5 mr-1.5" />
-                  {gettext("Save %{category} Settings", category: category_display_name(@category))}
+                  <.icon name="hero-document-check" class="size-5 mr-1.5" /> {gettext(
+                    "Save %{category} Settings",
+                    category: category_display_name(@category)
+                  )}
                 </button>
               </div>
             </.form>
@@ -549,9 +567,7 @@ defmodule EvoDashWeb.SettingsComponents do
           class="flex-1 flex flex-col min-w-0 relative"
           id={"settings-form-#{@category}"}
         >
-          <input type="hidden" name="category" value={@category} />
-
-          <%!-- Scrollable Content --%>
+          <input type="hidden" name="category" value={@category} /> <%!-- Scrollable Content --%>
           <div class="flex-1 overflow-y-auto px-8 py-8 relative">
             <div class="">
               <%= if @category == :sandbox do %>
@@ -563,11 +579,13 @@ defmodule EvoDashWeb.SettingsComponents do
                         <div class="text-success mt-0.5">
                           <.icon name="hero-check-badge" class="size-5" />
                         </div>
+
                         <div>
                           <h3 class="font-bold text-success mb-1 flex items-center gap-2">
                             systemd-run
                             <span class="badge badge-success badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                           </h3>
+
                           <p class="text-sm font-medium text-success/80 leading-relaxed">
                             <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
                               "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
@@ -580,11 +598,13 @@ defmodule EvoDashWeb.SettingsComponents do
                         <div class="text-warning mt-0.5">
                           <.icon name="hero-shield-exclamation" class="size-5" />
                         </div>
+
                         <div>
                           <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
                             sandbox-exec
                             <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                           </h3>
+
                           <p class="text-sm font-medium text-warning/80 leading-relaxed">
                             {gettext(
                               "Filesystem isolation is active. Note: Resource limits are not available on macOS."
@@ -597,11 +617,13 @@ defmodule EvoDashWeb.SettingsComponents do
                         <div class="text-error mt-0.5">
                           <.icon name="hero-x-circle" class="size-5" />
                         </div>
+
                         <div>
                           <h3 class="font-bold text-error mb-1 flex items-center gap-2">
                             {gettext("Not Available")}
                             <span class="badge badge-error badge-sm text-[10px] uppercase tracking-wider font-bold">Disabled</span>
                           </h3>
+
                           <p class="text-sm font-medium text-error/80 leading-relaxed">
                             <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
                               "No sandbox support on this platform. Commands will run directly on the host."
@@ -611,7 +633,6 @@ defmodule EvoDashWeb.SettingsComponents do
                       </div>
                   <% end %>
                 </div>
-
                 <%!-- Sandbox mode (sub_category: nil) at top --%>
                 <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil and &1.key_path == [:sandbox, :mode])) do %>
                   <div class="mb-10">
@@ -624,14 +645,16 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <%!-- Resources sub-header --%>
-                <% resources_schemas = Enum.filter(@schemas, &(&1.sub_category == :resources)) %>
+                <%!-- Resources sub-header --%> <% resources_schemas =
+                  Enum.filter(@schemas, &(&1.sub_category == :resources)) %>
                 <%= if resources_schemas != [] do %>
                   <div class="flex items-center gap-4 mb-6 mt-10">
                     <div class="h-px bg-base-200 flex-1"></div>
+
                     <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
                       {gettext("Resources")}
                     </h3>
+
                     <div class="h-px bg-base-200 flex-1"></div>
                   </div>
 
@@ -656,14 +679,16 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <%!-- Process Limits sub-header --%>
-                <% process_schemas = Enum.filter(@schemas, &(&1.sub_category == :process)) %>
+                <%!-- Process Limits sub-header --%> <% process_schemas =
+                  Enum.filter(@schemas, &(&1.sub_category == :process)) %>
                 <%= if process_schemas != [] do %>
                   <div class="flex items-center gap-4 mb-6 mt-10">
                     <div class="h-px bg-base-200 flex-1"></div>
+
                     <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
                       {gettext("Process Limits")}
                     </h3>
+
                     <div class="h-px bg-base-200 flex-1"></div>
                   </div>
 
@@ -688,14 +713,16 @@ defmodule EvoDashWeb.SettingsComponents do
                   </div>
                 <% end %>
 
-                <%!-- Linux Security sub-header --%>
-                <% linux_schemas = Enum.filter(@schemas, &(&1.sub_category == :linux)) %>
+                <%!-- Linux Security sub-header --%> <% linux_schemas =
+                  Enum.filter(@schemas, &(&1.sub_category == :linux)) %>
                 <%= if linux_schemas != [] do %>
                   <div class="flex items-center gap-4 mb-6 mt-10">
                     <div class="h-px bg-base-200 flex-1"></div>
+
                     <h3 class="text-xs font-black uppercase tracking-widest text-base-content/70">
                       {gettext("Linux Security")}
                     </h3>
+
                     <div class="h-px bg-base-200 flex-1"></div>
                   </div>
 
@@ -703,7 +730,9 @@ defmodule EvoDashWeb.SettingsComponents do
                     <div class="bg-info/5 border border-info/20 rounded-lg p-4 mb-6 flex items-start gap-3">
                       <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
                       <p class="text-sm font-medium text-info/90 leading-relaxed">
-                        {gettext("Linux security features are only available on Linux with systemd-run.")}
+                        {gettext(
+                          "Linux security features are only available on Linux with systemd-run."
+                        )}
                       </p>
                     </div>
                   <% end %>
@@ -734,12 +763,13 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
             </div>
           </div>
-
           <%!-- Sticky Footer --%>
           <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
             <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
-              <.icon name="hero-document-check" class="size-5 mr-1.5" />
-              {gettext("Save %{category} Settings", category: category_display_name(@category))}
+              <.icon name="hero-document-check" class="size-5 mr-1.5" /> {gettext(
+                "Save %{category} Settings",
+                category: category_display_name(@category)
+              )}
             </button>
           </div>
         </.form>
@@ -747,8 +777,6 @@ defmodule EvoDashWeb.SettingsComponents do
     </div>
     """
   end
-
-
 
   # ── Connection test profile selector helpers ──
 
