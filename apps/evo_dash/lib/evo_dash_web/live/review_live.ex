@@ -10,14 +10,258 @@ defmodule EvoDashWeb.ReviewLive do
   alias EvoGit.Review
 
   @impl true
+  def render(%{live_action: :simple} = assigns) do
+    ~H"""
+    <EvoDashWeb.Layouts.simple flash={@flash}>
+      <div class="min-h-screen flex flex-col">
+        <%!-- Thin top bar: back to the tree + task title --%>
+        <div class="flex items-center gap-3 px-4 h-11 shrink-0 border-b border-slate-200 bg-white sticky top-0 z-40">
+          <.link
+            id="simple-review-back"
+            navigate={~p"/tree/review"}
+            class="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800 transition-colors shrink-0"
+          >
+            <.icon name="hero-arrow-left" class="size-4" />
+            {gettext("Back")}
+          </.link>
+          <span class="text-sm font-medium text-slate-900 truncate">{@title}</span>
+        </div>
+
+        <div class="flex-1 w-full max-w-5xl mx-auto px-4 py-6">
+          <%= cond do %>
+            <% @error -> %>
+              <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center">
+                <.icon
+                  name="hero-exclamation-triangle"
+                  class="size-8 text-red-500 mx-auto mb-4"
+                />
+                <h2 class="text-lg font-bold text-slate-900 mb-2">
+                  {gettext("Review Not Available")}
+                </h2>
+                <p class="text-sm text-slate-500 mb-5">{@error}</p>
+                <.link navigate={~p"/tree/review"} class="text-sm text-slate-500 underline">
+                  {gettext("Back")}
+                </.link>
+              </div>
+            <% @loading -> %>
+              <div class="flex items-center justify-center py-20 text-slate-400">
+                <span class="loading loading-spinner loading-md"></span>
+                <span class="ml-3 text-sm">{gettext("Loading review data...")}</span>
+              </div>
+            <% true -> %>
+              <%= if @agent_summary do %>
+                <EvoDashWeb.ReviewComponents.agent_summary
+                  summary={@agent_summary}
+                  summary_raw={@summary_raw}
+                />
+              <% end %>
+
+              <%= if @review_data do %>
+                <div class="mt-4">
+                  <EvoDashWeb.ReviewComponents.diff_stats_bar
+                    files_count={@review_data.changed_files_count}
+                    additions={@review_data.total_additions}
+                    deletions={@review_data.total_deletions}
+                    commits_count={length(@commits)}
+                  />
+                </div>
+              <% end %>
+
+              <%!-- Mini agent tree: pure static SVG, lines + circles only,
+                   no zoom/pan/click — just the task's topology. --%>
+              <%= if @mini_tree_agents do %>
+                <% mt = mini_tree_layout(@mini_tree_agents) %>
+                <div class="mt-4">
+                  <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                    {gettext("Task tree")}
+                  </p>
+                  <div class="review-mini-tree">
+                    <svg viewBox={"0 0 #{mt.w} #{mt.h}"} width={mt.w} height={mt.h} class="block max-w-full" role="img">
+                      <%= for edge <- mt.edges do %>
+                        <path d={mt_curve(edge)} class="mt-edge" />
+                      <% end %>
+                      <%= for n <- mt.nodes do %>
+                        <circle cx={n.x} cy={n.y} r={n.r} class={["mt-node", n.root? && "mt-root"]}>
+                          <title>{n.label}</title>
+                        </circle>
+                      <% end %>
+                    </svg>
+                  </div>
+                </div>
+              <% end %>
+
+              <%!-- Mini change tree: full tree for new projects, old+new trees
+                   for refactors (modified=red, added=green) --%>
+              <%= if @change_tree do %>
+                <div class="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                  <%= cond do %>
+                    <% @change_tree[:full] -> %>
+                      <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                        {gettext("Project structure")}
+                      </p>
+                      <div class="max-h-72 overflow-y-auto">
+                        <.change_tree_nodes nodes={@change_tree.full} />
+                      </div>
+                    <% true -> %>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                            {gettext("Before")}
+                          </p>
+                          <div class="max-h-72 overflow-y-auto">
+                            <.change_tree_nodes nodes={@change_tree.old} />
+                          </div>
+                        </div>
+                        <div>
+                          <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-2">
+                            {gettext("After")}
+                          </p>
+                          <div class="max-h-72 overflow-y-auto">
+                            <.change_tree_nodes nodes={@change_tree.new} />
+                          </div>
+                        </div>
+                      </div>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <%!-- Minimal actions: adopt / discard up front, pro actions folded away --%>
+              <div class="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                <%= if @branch_exists do %>
+                  <div class="flex flex-wrap items-center gap-3">
+                    <button
+                      id="simple-merge-btn"
+                      class="btn rounded-full px-6 bg-slate-900 text-white hover:bg-slate-700 border-none"
+                      phx-click="merge"
+                      phx-confirm={gettext("Merge these changes into the current branch?")}
+                      disabled={@action_loading}
+                    >
+                      {gettext("Apply these changes")}
+                    </button>
+                    <button
+                      id="simple-reject-btn"
+                      class="btn btn-outline rounded-full px-6"
+                      phx-click="reject"
+                      phx-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
+                      disabled={@action_loading}
+                    >
+                      {gettext("Discard these changes")}
+                    </button>
+
+                    <details class="dropdown">
+                      <summary class="btn btn-ghost btn-sm rounded-full text-slate-500">
+                        {gettext("More actions")}
+                      </summary>
+                      <div class="dropdown-content z-50 mt-2 w-56 rounded-xl border border-slate-200 bg-white shadow-lg p-2 flex flex-col gap-1">
+                        <button
+                          :if={@can_continue}
+                          class="btn btn-ghost btn-sm justify-start"
+                          phx-click="continue"
+                          disabled={@action_loading}
+                        >
+                          {gettext("Continue from Here")}
+                        </button>
+                        <button
+                          :if={not @has_pr}
+                          class="btn btn-ghost btn-sm justify-start"
+                          phx-click="create_pr"
+                          disabled={@action_loading}
+                        >
+                          {gettext("Create GitHub PR")}
+                        </button>
+                        <button
+                          class="btn btn-ghost btn-sm justify-start"
+                          phx-click="ignore"
+                          phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
+                          disabled={@action_loading}
+                        >
+                          {gettext("Ignore")}
+                        </button>
+                      </div>
+                    </details>
+                  </div>
+                  <p class="text-[11px] text-slate-400 mt-2">
+                    {gettext("Apply merges the changes into your project; discard removes them permanently.")}
+                  </p>
+                <% else %>
+                  <div class="flex flex-wrap items-center gap-3">
+                    <button
+                      :if={@can_continue}
+                      class="btn btn-outline rounded-full px-6"
+                      phx-click="continue"
+                      disabled={@action_loading}
+                    >
+                      {gettext("Continue from Here")}
+                    </button>
+                    <button
+                      class="btn btn-ghost rounded-full px-6"
+                      phx-click="ignore"
+                      phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
+                      disabled={@action_loading}
+                    >
+                      {gettext("Ignore")}
+                    </button>
+                  </div>
+                  <p class="text-[11px] text-slate-400 mt-2">
+                    {gettext("This branch no longer exists. You can dismiss it with Ignore.")}
+                  </p>
+                <% end %>
+
+                <div :if={@next_review_id} class="mt-3 pt-3 border-t border-slate-100 flex justify-end">
+                  <.link
+                    id="simple-next-review"
+                    navigate={~p"/tree/review/#{@next_review_id}"}
+                    class="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-700 transition-colors"
+                  >
+                    {gettext("Next pending review")}
+                    <.icon name="hero-arrow-right" class="size-3.5" />
+                  </.link>
+                </div>
+              </div>
+
+              <div class="mt-6">
+                <%= if @review_data do %>
+                  <EvoDashWeb.ReviewComponents.split_diff_layout
+                    files={@review_data.files}
+                    expanded_files={@expanded_files}
+                    selected_file={@selected_file}
+                    file_context_levels={@file_context_levels}
+                  />
+                <% else %>
+                  <div class="rounded-2xl border border-slate-200 bg-white p-8 text-center">
+                    <p class="text-sm text-slate-400">
+                      {gettext("No diff data available for this review.")}
+                    </p>
+                  </div>
+                <% end %>
+              </div>
+          <% end %>
+        </div>
+
+        <EvoDashWeb.Layouts.simple_corner navigate={~p"/review/#{@task_id}"} />
+      </div>
+    </EvoDashWeb.Layouts.simple>
+    """
+  end
+
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:review}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <%= if @error do %>
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
+
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
+
           <.link navigate={~p"/"} class="btn btn-primary px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
@@ -36,7 +280,6 @@ defmodule EvoDashWeb.ReviewLive do
               </.link>
             <% end %>
           </div>
-
           <!-- Loading state -->
           <%= if @loading do %>
             <div class="flex items-center justify-center py-20">
@@ -62,7 +305,6 @@ defmodule EvoDashWeb.ReviewLive do
                 commit_sha={@commit_sha}
                 status={@review_status}
               />
-
               <EvoDashWeb.ReviewComponents.task_summary
                 usage={@task_usage}
                 agent_count={@agent_count}
@@ -72,7 +314,6 @@ defmodule EvoDashWeb.ReviewLive do
                 started_at={@started_at}
                 finished_at={@finished_at}
               />
-
               <!-- Unified review card: tab bar + content -->
               <div class="review-card">
                 <!-- Tab Bar (sticky header of the card) -->
@@ -85,7 +326,6 @@ defmodule EvoDashWeb.ReviewLive do
                     agents_count={if @archive_metadata, do: length(@archive_metadata), else: 0}
                   />
                 </div>
-
                 <!-- Content area -->
                 <div class="review-card-content">
                   <%= cond do %>
@@ -98,7 +338,6 @@ defmodule EvoDashWeb.ReviewLive do
                             summary_raw={@summary_raw}
                           />
                         <% end %>
-
                         <!-- Diff Stats -->
                         <%= if @review_data do %>
                           <EvoDashWeb.ReviewComponents.diff_stats_bar
@@ -108,7 +347,6 @@ defmodule EvoDashWeb.ReviewLive do
                             commits_count={length(@commits)}
                           />
                         <% end %>
-
                         <!-- Action Buttons -->
                         <EvoDashWeb.ReviewComponents.action_buttons
                           branch_exists={@branch_exists}
@@ -119,23 +357,25 @@ defmodule EvoDashWeb.ReviewLive do
                           is_no_changes={@is_no_changes}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
-                          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary gap-2" download>
-                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext("Export JSON")}
+                          <.link
+                            href={"/tasks/#{@task_id}/export"}
+                            class="btn btn-sm btn-outline btn-primary gap-2"
+                            download
+                          >
+                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext(
+                              "Export JSON"
+                            )}
                           </.link>
                         <% end %>
-                        <EvoDashWeb.ReviewComponents.extract_skills_modal
-                          show={@show_extract_modal}
-                        />
-                      </div>
 
+                        <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
+                      </div>
                     <% @review_tab == :objective -> %>
                       <div class="p-4 sm:p-6 lg:p-8">
                         <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
                       </div>
-
                     <% @review_tab == :commits -> %>
                       <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-
                     <% @review_tab == :files_changed -> %>
                       <%= if @review_data do %>
                         <EvoDashWeb.ReviewComponents.split_diff_layout
@@ -146,11 +386,15 @@ defmodule EvoDashWeb.ReviewLive do
                         />
                       <% else %>
                         <div class="p-8 text-center">
-                          <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
-                          <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                          <.icon
+                            name="hero-document-magnifying-glass"
+                            class="size-10 text-base-content/30 mx-auto mb-3"
+                          />
+                          <p class="text-sm text-base-content/50">
+                            {gettext("No diff data available for this review.")}
+                          </p>
                         </div>
                       <% end %>
-
                     <% @review_tab == :archive -> %>
                       <%= if @archive_metadata not in [nil, []] do %>
                         <div class="p-4 sm:p-6 lg:p-8">
@@ -161,8 +405,13 @@ defmodule EvoDashWeb.ReviewLive do
                         </div>
                       <% else %>
                         <div class="p-8 text-center">
-                          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/30 mx-auto mb-3" />
-                          <p class="text-sm text-base-content/50">{gettext("No archived agent data available for this task.")}</p>
+                          <.icon
+                            name="hero-archive-box-x-mark"
+                            class="size-10 text-base-content/30 mx-auto mb-3"
+                          />
+                          <p class="text-sm text-base-content/50">
+                            {gettext("No archived agent data available for this task.")}
+                          </p>
                         </div>
                       <% end %>
                   <% end %>
@@ -172,7 +421,11 @@ defmodule EvoDashWeb.ReviewLive do
               <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
                 <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
                   <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
-                  <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
+                  <p class="text-sm text-warning">
+                    {gettext(
+                      "Could not load diff data. The branch may have been modified externally."
+                    )}
+                  </p>
                 </div>
               <% end %>
             <% end %>
@@ -184,64 +437,88 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def mount(%{"task_id" => task_id} = params, _session, socket) do
+  def mount(%{"task_id" => _} = params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
 
-    config_status = config_status()
+    {:ok, init_review(socket, params)}
+  end
 
-    socket =
-      socket
-      |> assign(
-        config_status: config_status,
-        task_id: task_id,
-        loading: true,
-        error: nil,
-        action_loading: false,
-        selected_file: nil,
-        expanded_files: %{},
-        file_context_levels: %{},
-        review_tab: :conversation,
-        review_data: nil,
-        title: "",
-        task_type: :unknown,
-        branch_name: nil,
-        commit_sha: nil,
-        agent_summary: nil,
-        review_status: :open,
-        branch_exists: false,
-        can_continue: false,
-        is_no_changes: false,
-        has_pr: false,
-        pr_url: nil,
-        show_extract_modal: false,
-        repo_path: nil,
-        base_sha: nil,
-        objective: nil,
-        inspect_commit_sha: params["commit_sha"],
-        commit_data: nil,
-        commit_header: nil,
-        archive_metadata: nil,
-        task_usage: nil,
-        agent_count: nil,
-        task_status: nil,
-        model_id: nil,
-        summary_raw: false,
-        started_at: nil,
-        finished_at: nil
-      )
-      |> load_task_data(task_id)
+  # Full (re)initialization for a review page. Called from mount and again
+  # from handle_params when live-navigating to another task's review.
+  defp init_review(socket, params) do
+    task_id = params["task_id"]
 
-    {:ok, socket}
+    socket
+    |> assign(
+      config_status: config_status(),
+      task_id: task_id,
+      loading: true,
+      error: nil,
+      action_loading: false,
+      selected_file: nil,
+      expanded_files: %{},
+      file_context_levels: %{},
+      review_tab: :conversation,
+      review_data: nil,
+      title: "",
+      task_type: :unknown,
+      branch_name: nil,
+      commit_sha: nil,
+      agent_summary: nil,
+      review_status: :open,
+      branch_exists: false,
+      can_continue: false,
+      is_no_changes: false,
+      has_pr: false,
+      pr_url: nil,
+      show_extract_modal: false,
+      repo_path: nil,
+      base_sha: nil,
+      objective: nil,
+      inspect_commit_sha: params["commit_sha"],
+      commit_data: nil,
+      commit_header: nil,
+      archive_metadata: nil,
+      task_usage: nil,
+      agent_count: nil,
+      task_status: nil,
+      model_id: nil,
+      summary_raw: false,
+      started_at: nil,
+      finished_at: nil,
+      next_review_id: nil
+    )
+    |> load_task_data(task_id)
+    |> assign_next_review()
+  end
+
+  # Queue navigation: the pending review right after this one in list order.
+  defp assign_next_review(socket) do
+    ids = Enum.map(EvoDashWeb.SimpleLive.Reviews.pending(), & &1.id)
+
+    next =
+      case Enum.find_index(ids, &(&1 == socket.assigns.task_id)) do
+        nil -> nil
+        idx -> Enum.at(ids, idx + 1)
+      end
+
+    assign(socket, :next_review_id, next)
   end
 
   @impl true
   def handle_params(params, _url, socket) do
+    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+
     socket =
-      socket
-      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/review/#{socket.assigns.task_id}")
+      if is_binary(params["task_id"]) and params["task_id"] != socket.assigns.task_id do
+        init_review(socket, params)
+      else
+        socket
+      end
+
+    socket = assign(socket, :current_path, ~p"/review/#{socket.assigns.task_id}")
 
     case {socket.assigns.live_action, params["commit_sha"]} do
       {:commit, commit_sha} when is_binary(commit_sha) ->
@@ -366,14 +643,18 @@ defmodule EvoDashWeb.ReviewLive do
       {:ok, _sha} ->
         TaskRegistry.set_review_status(task_id, :merged)
 
+        msg =
+          if socket.assigns.live_action == :simple do
+            gettext("Changes applied to your project.")
+          else
+            gettext("Changes merged successfully! Branch %{branch} has been deleted.",
+              branch: branch_name
+            )
+          end
+
         {:noreply,
          socket
-         |> put_flash(
-           :success,
-           gettext("Changes merged successfully! Branch %{branch} has been deleted.",
-             branch: branch_name
-           )
-         )
+         |> put_flash(:success, msg)
          |> push_navigate(to: ~p"/")}
 
       {:conflict, details} ->
@@ -401,12 +682,16 @@ defmodule EvoDashWeb.ReviewLive do
       :ok ->
         TaskRegistry.set_review_status(task_id, :rejected)
 
+        msg =
+          if socket.assigns.live_action == :simple do
+            gettext("Changes discarded.")
+          else
+            gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name)
+          end
+
         {:noreply,
          socket
-         |> put_flash(
-           :info,
-           gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name)
-         )
+         |> put_flash(:info, msg)
          |> push_navigate(to: ~p"/")}
 
       {:error, reason} ->
@@ -562,9 +847,15 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
-    socket = load_task_data(socket, socket.assigns.task_id)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+  def handle_info({:task_status, task_id, _status}, socket) do
+    # Only reload for THIS review's task — load_task_data spawns git
+    # subprocesses, so reacting to every task's status churn is expensive.
+    if task_id == socket.assigns.task_id do
+      socket = load_task_data(socket, task_id)
+      {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -637,7 +928,6 @@ defmodule EvoDashWeb.ReviewLive do
           cond do
             branch_name == nil -> :no_changes
             rs != nil -> rs
-            not branch_exists -> :open
             true -> :open
           end
 
@@ -686,9 +976,27 @@ defmodule EvoDashWeb.ReviewLive do
               []
           end
 
+        mini_tree_agents =
+          case Enum.find(EvoDash.AshTrees.list(), &(&1.task_id == task_id)) do
+            nil -> nil
+            ash -> ash.agents
+          end
+
+        change_tree =
+          build_change_tree(
+            socket.assigns.live_action,
+            task.type,
+            repo_path,
+            review_data,
+            commit_sha,
+            review_data && review_data.base_sha
+          )
+
         assign(socket,
           loading: false,
           error: nil,
+          change_tree: change_tree,
+          mini_tree_agents: mini_tree_agents,
           title: title,
           task_type: task.type,
           branch_name: branch_name,
@@ -861,6 +1169,215 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   # Loads commit inspection data (file list) for a specific commit.
+  # ── Mini task tree (static SVG topology) ─────────────────────────────────
+
+  # 横向层距 75；纵向节点边界间距 = 直径(14)的 70%（圆心距 = 直径 + 边界间距 = 23.8）
+  @mt_gap_x 75
+  @mt_gap_y 23.8
+  @mt_pad 24
+
+  # Horizontal S-curve for a parent→child edge (same feel as the main graph).
+  defp mt_curve({x1, y1, x2, y2}) do
+    mx = (x1 + x2) / 2
+    "M #{x1} #{y1} C #{mx} #{y1}, #{mx} #{y2}, #{x2} #{y2}"
+  end
+
+  # Tidy layout: leaves get consecutive y slots, parents centered. Returns
+  # %{nodes: [...], edges: [...], w: w, h: h} for direct SVG rendering.
+  defp mini_tree_layout(agents) do
+    by_parent = Enum.group_by(agents, & &1.parent_id)
+    roots = (by_parent[nil] || []) |> Enum.sort_by(& &1.id)
+
+    {nodes, edges, _next_y, _min_y} =
+      Enum.reduce(roots, {[], [], 0, %{}}, fn root, acc ->
+        mt_place(root, by_parent, 0, acc)
+      end)
+
+    if nodes == [] do
+      %{nodes: [], edges: [], w: @mt_pad * 2, h: @mt_pad * 2}
+    else
+      xs = Enum.map(nodes, & &1.x)
+      ys = Enum.map(nodes, & &1.y)
+      {min_x, max_x} = {Enum.min(xs), Enum.max(xs)}
+      {min_y, max_y} = {Enum.min(ys), Enum.max(ys)}
+
+      nodes =
+        Enum.map(nodes, fn n ->
+          %{n | x: n.x - min_x + @mt_pad, y: n.y - min_y + @mt_pad}
+        end)
+
+      edges =
+        Enum.map(edges, fn {x1, y1, x2, y2} ->
+          {x1 - min_x + @mt_pad, y1 - min_y + @mt_pad, x2 - min_x + @mt_pad, y2 - min_y + @mt_pad}
+        end)
+
+      %{nodes: nodes, edges: edges, w: max_x - min_x + @mt_pad * 2, h: max_y - min_y + @mt_pad * 2}
+    end
+  end
+
+  # min_y: 每个深度已占用的最小可用 y（圆心距下限），保证同层节点不相贴
+  defp mt_place(agent, by_parent, depth, {nodes, edges, next_y, min_y}) do
+    children =
+      (by_parent[agent.id] || [])
+      |> Enum.sort_by(& &1.id)
+
+    {nodes, edges, next_y, min_y} =
+      Enum.reduce(children, {nodes, edges, next_y, min_y}, fn child, acc ->
+        mt_place(child, by_parent, depth + 1, acc)
+      end)
+
+    x = depth * @mt_gap_x
+    floor_y = Map.get(min_y, depth, 0)
+
+    y =
+      case children do
+        [] ->
+          max(next_y + @mt_gap_y, floor_y)
+
+        _ ->
+          ys =
+            children
+            |> Enum.map(fn c -> Enum.find(nodes, &(&1.id == c.id)) end)
+            |> Enum.filter(& &1)
+            |> Enum.map(& &1.y)
+
+          center = if ys == [], do: next_y + @mt_gap_y, else: (Enum.min(ys) + Enum.max(ys)) / 2
+          max(center, floor_y)
+      end
+
+    min_y = Map.put(min_y, depth, y + @mt_gap_y)
+
+    node = %{
+      id: agent.id,
+      x: x,
+      y: y,
+      r: if(depth == 0, do: 9, else: 7),
+      root?: depth == 0,
+      label: agent.objective || ""
+    }
+
+    edges =
+      edges ++
+        Enum.map(children, fn c ->
+          child = Enum.find(nodes, &(&1.id == c.id))
+          {x + node.r, y, child.x - child.r, child.y}
+        end)
+
+    {nodes ++ [node], edges, y, min_y}
+  end
+
+  # ── Change tree (review page mini diagram) ──────────────────────────────
+  # 新项目: 全部文件(全部为新增, 绿); 改造项目: 原状树(删除=红) + 修改后树
+  # (修改=红, 新增=绿). 只有实线连线和圆圈.
+  defp build_change_tree(:simple, task_type, repo_path, review_data, commit_sha, base_sha) do
+    cond do
+      not is_binary(repo_path) or is_nil(commit_sha) ->
+        nil
+
+      # 新项目：显示全部树（全部文件，全部按新增标记）
+      task_type == :genesis ->
+        leaves = full_project_tree(repo_path, commit_sha) |> Enum.take(120)
+        statuses = Map.new(leaves, &{&1, "added"})
+        %{full: paths_to_tree(leaves, statuses)}
+
+      # 改造项目：原状树（删除=红）+ 修改后树（修改=红，新增=绿）
+      true ->
+        statuses = if review_data, do: Map.new(review_data.files, &{&1.path, &1.status}), else: %{}
+
+        old_paths =
+          case is_binary(base_sha) && EvoGit.Adapters.Git.ls_tree_names(repo_path, base_sha) do
+            {:ok, paths} -> MapSet.new(paths)
+            _ -> MapSet.new()
+          end
+
+        new_paths =
+          case EvoGit.Adapters.Git.ls_tree_names(repo_path, commit_sha) do
+            {:ok, paths} -> MapSet.new(paths)
+            _ -> MapSet.new()
+          end
+
+        old_leaves =
+          statuses
+          |> Map.keys()
+          |> Enum.filter(&MapSet.member?(old_paths, &1))
+          |> Enum.sort()
+
+        new_leaves =
+          statuses
+          |> Map.keys()
+          |> Enum.filter(&MapSet.member?(new_paths, &1))
+          |> Enum.sort()
+
+        if old_leaves == [] and new_leaves == [] do
+          nil
+        else
+          %{old: paths_to_tree(old_leaves, statuses), new: paths_to_tree(new_leaves, statuses)}
+        end
+    end
+  end
+
+  defp build_change_tree(_, _, _, _, _, _), do: nil
+
+  # 新项目的完整文件列表
+  defp full_project_tree(repo_path, commit_sha) do
+    case EvoGit.Adapters.Git.ls_tree_names(repo_path, commit_sha) do
+      {:ok, paths} -> paths
+      _ -> []
+    end
+  end
+
+  defp paths_to_tree(paths, statuses) do
+    paths
+    |> Enum.reduce([], fn path, acc -> insert_path(acc, Path.split(path), path, statuses) end)
+    |> sort_nodes()
+  end
+
+  defp insert_path(nodes, [name], full, statuses) do
+    status = Map.get(statuses, full, "modified")
+
+    if Enum.any?(nodes, &(&1.name == name and &1.leaf?)) do
+      nodes
+    else
+      nodes ++ [%{name: name, leaf?: true, status: status, children: []}]
+    end
+  end
+
+  defp insert_path(nodes, [name | rest], full, statuses) do
+    case Enum.find_index(nodes, &(&1.name == name and not &1.leaf?)) do
+      nil ->
+        nodes ++ [%{name: name, leaf?: false, status: nil, children: insert_path([], rest, full, statuses)}]
+
+      idx ->
+        node = Enum.at(nodes, idx)
+        List.replace_at(nodes, idx, %{node | children: insert_path(node.children, rest, full, statuses)})
+    end
+  end
+
+  defp sort_nodes(nodes) do
+    nodes
+    |> Enum.sort_by(fn n -> {n.leaf?, String.downcase(n.name)} end)
+    |> Enum.map(fn n -> %{n | children: sort_nodes(n.children)} end)
+  end
+
+  attr(:nodes, :list, required: true)
+
+  defp change_tree_nodes(assigns) do
+    ~H"""
+    <ul class="change-tree">
+      <%= for node <- @nodes do %>
+        <li>
+          <span class={["ct-dot", node.leaf? && "ct-#{node.status || "dir"}", !node.leaf? && "ct-dir"]}>
+          </span>
+          <span class={["ct-name", node.status == "deleted" && "ct-deleted"]}>{node.name}</span>
+          <%= if node.children != [] do %>
+            <.change_tree_nodes nodes={node.children} />
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+    """
+  end
+
   defp load_commit_inspection(socket, commit_sha) do
     %{repo_path: repo_path, commits: commits} = socket.assigns
 

@@ -66,7 +66,9 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert is_map(decoded)
 
       assert MapSet.new(Map.keys(decoded)) ==
-               MapSet.new(~w(task_id task_type repo_path status started_at finished_at agent_count usage archive_records))
+               MapSet.new(
+                 ~w(task_id task_type repo_path status started_at finished_at agent_count usage archive_records)
+               )
 
       assert decoded["task_id"] == task_id
       assert decoded["task_type"] == "genesis"
