@@ -22,17 +22,8 @@ defmodule EvoDash.DemoSeedRich do
 
     git(repo, ["checkout", "main"])
 
-    write(repo, "src/legacy.py", """
-    \"\"\"Legacy helpers kept for reference (removed by the admin demo).\"\"\"
-
-
-    def old_entry():
-        return "deprecated"
-    """)
-
-    git(repo, ["add", "-A"])
-    commit(repo, "chore: add legacy helper module")
-
+    # legacy.py already exists on main (added by DemoSeed for the demo-4
+    # refactor demo) — demo-3 deletes it again below.
     base_sha = rev_parse(repo, "HEAD")
 
     git(repo, ["checkout", "-b", @branch, "main"])
@@ -322,6 +313,10 @@ defmodule EvoDash.DemoSeedRich do
       agent_count: 14,
       model_id: "demo-model"
     }
+
+    # Leave the repo on main — merge-base(HEAD, branch) is used for the review
+    # diff, and it degenerates when HEAD is the feature branch itself.
+    git(repo, ["checkout", "main"])
 
     EvoGit.Store.put_task(EvoGit.Store, task)
 

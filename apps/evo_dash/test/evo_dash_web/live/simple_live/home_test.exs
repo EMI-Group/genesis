@@ -126,6 +126,18 @@ defmodule EvoDashWeb.SimpleLive.HomeTest do
       refute has_element?(view, "#simple-new-path-input")
     end
 
+    test "review button appears with recent projects and flashes when nothing to review", %{conn: conn} do
+      tmp_dir = make_project_dir()
+      EvoGit.TaskRegistry.add_recent_project(tmp_dir, Path.basename(tmp_dir))
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert has_element?(view, "#simple-review-btn")
+
+      html = render_click(view, "open_review")
+      assert html =~ "No completed task to review for this project."
+    end
+
     test "launch with empty prompt shows an error", %{conn: conn} do
       tmp_dir = make_project_dir()
 
@@ -139,7 +151,7 @@ defmodule EvoDashWeb.SimpleLive.HomeTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       html = render_submit(view, "launch", %{"prompt" => "做一个计算器", "path" => ""})
-      assert html =~ "Please select a project first."
+      assert html =~ "Please enter a development path."
     end
 
     test "launch with a nonexistent path shows directory not found", %{conn: conn} do
@@ -183,7 +195,8 @@ defmodule EvoDashWeb.SimpleLive.HomeTest do
       full_path = Path.join(base, name)
 
       on_exit(fn ->
-        # Cancel the spawned task and clean up filesystem/registry state
+        # Cancel + delete the spawned task; the no-LLM executor's late writes
+        # are rejected by the store for a deleted record.
         for task <- EvoGit.TaskRegistry.list_tasks_by_path(full_path) do
           try do
             EvoGit.TaskRegistry.cancel_task(task.id)
@@ -192,12 +205,14 @@ defmodule EvoDashWeb.SimpleLive.HomeTest do
           catch
             _, _ -> :ok
           end
-        end
 
-        try do
-          EvoGit.TaskRegistry.remove_recent_project(full_path)
-        rescue
-          _ -> :ok
+          try do
+            EvoGit.TaskRegistry.delete_task(task.id)
+          rescue
+            _ -> :ok
+          catch
+            _, _ -> :ok
+          end
         end
 
         File.rm_rf(base)

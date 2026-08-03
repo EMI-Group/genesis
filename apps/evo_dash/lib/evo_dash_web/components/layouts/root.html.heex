@@ -18,8 +18,8 @@
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
-    <link rel="icon" type="image/svg+xml" href={~p"/images/logo.svg"} id="favicon" />
-    <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/logo.svg"} />
+    <link rel="icon" type="image/svg+xml" href={~p"/images/evox-logo.svg"} id="favicon" />
+    <link rel="apple-touch-icon" type="image/svg+xml" href={~p"/images/evox-logo.svg"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
 
@@ -36,7 +36,7 @@
         const updateFavicon = (theme) => {
           const favicon = document.getElementById("favicon");
           if (favicon) {
-            favicon.href = theme === "dark" ? "/images/logo-alt.svg" : "/images/logo.svg";
+            favicon.href = theme === "dark" ? "/images/evox-logo-white.svg" : "/images/evox-logo.svg";
           }
         };
 

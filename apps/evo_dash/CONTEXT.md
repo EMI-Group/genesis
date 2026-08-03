@@ -156,7 +156,7 @@ The backend is a **standalone web server** with NO GUI dependencies (no `:deskto
 |------|---------|
 | `favicon.ico` | Browser tab icon |
 | `robots.txt` | Standard web crawler directives (all commented out) |
-| `images/logo.svg` | Default Phoenix logo SVG (not EvoGit-branded) |
+| `images/evox-logo.svg` / `evox-logo-white.svg` | EVOX brand wordmark (light/dark variants) |
 
 ## Internationalization (i18n)
 

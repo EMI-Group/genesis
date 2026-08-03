@@ -6,7 +6,9 @@ defmodule EvoDashWeb.NodeAwareTest do
   #
   # This avoids booting a real LiveView or remote node — we only test the
   # pure transition-detection logic in the hook.
-  use ExUnit.Case, async: true
+  # async: false — one describe block reads TaskRegistry.list_tasks/0 from the
+# shared store, which tasks_live_test swaps for an isolated one mid-run.
+use ExUnit.Case, async: false
 
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoGit.TaskInfo

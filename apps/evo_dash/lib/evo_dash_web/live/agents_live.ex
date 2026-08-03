@@ -19,6 +19,7 @@ defmodule EvoDashWeb.AgentsLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "ash_trees")
     end
 
     # current_node is set to node() by the NodeAware on_mount hook (runs before
@@ -42,7 +43,7 @@ defmodule EvoDashWeb.AgentsLive do
         send_message_text: "",
         agents: agents,
         id_to_display: id_to_display,
-        repo_trees: build_repo_trees(agents),
+        repo_trees: nil,
         config_status: config_status,
         previous_agent_ids: MapSet.new(agents, & &1.id),
         previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
@@ -50,13 +51,19 @@ defmodule EvoDashWeb.AgentsLive do
         changed_status_ids: MapSet.new(),
         previous_node: current_node,
         simple_mode: false,
+        fs_scans: %{},
+        show_file_tree: true,
+        pending_review_count: length(EvoDashWeb.SimpleLive.Reviews.pending()),
+        ash_trees: EvoDash.AshTrees.list(),
         demo_mode: false,
         last_graph_payload: nil,
         graph_tasks: [],
         selected_task_id: nil
       )
 
-    {:ok, refresh_graph_tasks(socket)}
+    {trees, socket} = build_repo_trees(socket, agents)
+
+    {:ok, socket |> assign(:repo_trees, trees) |> refresh_graph_tasks()}
   end
 
   @impl true
@@ -80,11 +87,13 @@ defmodule EvoDashWeb.AgentsLive do
         agents = load_agents(current_node)
         id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
 
+        {trees, socket} = build_repo_trees(socket, agents)
+
         socket
         |> assign(
           agents: agents,
           id_to_display: id_to_display,
-          repo_trees: build_repo_trees(agents),
+          repo_trees: trees,
           config_status: node_config_status(current_node),
           previous_agent_ids: MapSet.new(agents, & &1.id),
           previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
@@ -152,12 +161,14 @@ defmodule EvoDashWeb.AgentsLive do
         socket.assigns.current_node
       )
 
+    {trees, socket} = build_repo_trees(socket, agents)
+
     {:noreply,
      socket
      |> assign(
        agents: agents,
        id_to_display: id_to_display,
-       repo_trees: build_repo_trees(agents),
+       repo_trees: trees,
        previous_agent_ids: current_ids,
        previous_statuses: current_statuses,
        new_agent_ids: new_agent_ids,
@@ -178,7 +189,10 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   def handle_info({:tasks_updated}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
+    {:noreply, socket} = EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
+
+    {:noreply,
+     assign(socket, :pending_review_count, length(EvoDashWeb.SimpleLive.Reviews.pending()))}
   end
 
   @impl true
@@ -212,12 +226,14 @@ defmodule EvoDashWeb.AgentsLive do
 
       Process.send_after(self(), :remote_poll, 3_000)
 
+      {trees, socket} = build_repo_trees(socket, agents)
+
       {:noreply,
        socket
        |> assign(
          agents: agents,
          id_to_display: id_to_display,
-         repo_trees: build_repo_trees(agents),
+         repo_trees: trees,
          previous_agent_ids: current_ids,
          previous_statuses: current_statuses,
          new_agent_ids: new_agent_ids,
@@ -269,12 +285,14 @@ defmodule EvoDashWeb.AgentsLive do
           socket.assigns.current_node
         )
 
+      {trees, socket} = build_repo_trees(socket, agents)
+
       {:noreply,
        socket
        |> assign(
          agents: agents,
          id_to_display: Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end),
-         repo_trees: build_repo_trees(agents),
+         repo_trees: trees,
          previous_agent_ids: current_ids,
          previous_statuses: current_statuses,
          new_agent_ids: MapSet.new(),
@@ -355,12 +373,13 @@ defmodule EvoDashWeb.AgentsLive do
         end
 
       # Rebuild repo_trees only if context_node or repo_root changed
-      repo_trees =
+      socket =
         if Keyword.has_key?(changed_fields, :context_node) or
              Keyword.has_key?(changed_fields, :repo_root) do
-          build_repo_trees(agents)
+          {trees, socket} = build_repo_trees(socket, agents)
+          assign(socket, :repo_trees, trees)
         else
-          socket.assigns.repo_trees
+          socket
         end
 
       {:noreply,
@@ -368,7 +387,6 @@ defmodule EvoDashWeb.AgentsLive do
        |> assign(
          agents: agents,
          id_to_display: id_to_display,
-         repo_trees: repo_trees,
          previous_statuses: previous_statuses,
          changed_status_ids: changed_status_ids
        )
@@ -377,6 +395,11 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  # Ash store updated by the background archiver — re-sync tabs.
+  def handle_info({:ash_updated}, socket) do
+    {:noreply, sync_graph(socket)}
+  end
+
   def handle_info({:agent_removed, agent_id}, socket) do
     agents = socket.assigns.agents
     removed_agent = Enum.find(agents, fn a -> a.id == agent_id end)
@@ -412,14 +435,14 @@ defmodule EvoDashWeb.AgentsLive do
           socket.assigns.selected_agent_id
         end
 
-      repo_trees = build_repo_trees(agents)
+      {trees, socket} = build_repo_trees(socket, agents)
 
       {:noreply,
        socket
        |> assign(
          agents: agents,
          id_to_display: id_to_display,
-         repo_trees: repo_trees,
+         repo_trees: trees,
          previous_agent_ids: previous_agent_ids,
          new_agent_ids: new_agent_ids,
          previous_statuses: previous_statuses,
@@ -465,7 +488,35 @@ defmodule EvoDashWeb.AgentsLive do
         socket
       end
 
-    {:noreply, push_event(socket, "agents:select", %{id: agent_id})}
+    {:noreply,
+     socket
+     |> push_event("agents:select", %{id: agent_id})
+     |> push_event("file_tree:scroll", %{id: agent_id})}
+  end
+
+  # Toggles the file-tree panel on the pro agents page.
+  @impl true
+  def handle_event("toggle_file_tree", _params, socket) do
+    {:noreply, assign(socket, :show_file_tree, not socket.assigns.show_file_tree)}
+  end
+
+  # Explicitly closes an ash (finished-task) tree tab — the only way an ash
+  # tree is removed; they never disappear on their own.
+  @impl true
+  def handle_event("dismiss_tree", %{"task_id" => task_id}, socket) do
+    EvoDash.AshTrees.dismiss(task_id)
+
+    socket =
+      socket
+      |> assign(:ash_trees, EvoDash.AshTrees.list())
+      |> assign(:last_graph_payload, nil)
+
+    socket =
+      if socket.assigns[:selected_task_id] == task_id,
+        do: assign(socket, :selected_task_id, nil),
+        else: socket
+
+    {:noreply, sync_graph(socket)}
   end
 
   # Switches the evolution graph to another task's tree (one tree per view).
@@ -635,11 +686,13 @@ defmodule EvoDashWeb.AgentsLive do
 
     agents = reload_selected_agent_history(agents, socket.assigns.selected_agent_id, current_node)
 
+    {trees, socket} = build_repo_trees(socket, agents)
+
     socket
     |> assign(
       agents: agents,
       id_to_display: id_to_display,
-      repo_trees: build_repo_trees(agents),
+      repo_trees: trees,
       previous_agent_ids: current_ids,
       previous_statuses: current_statuses,
       new_agent_ids: MapSet.new(),
@@ -733,12 +786,12 @@ defmodule EvoDashWeb.AgentsLive do
 
     previous_agent_ids = MapSet.put(socket.assigns.previous_agent_ids, agent_id)
     new_agent_ids = MapSet.put(socket.assigns.new_agent_ids, agent_id)
-    repo_trees = build_repo_trees(agents)
+    {trees, socket} = build_repo_trees(socket, agents)
 
     assign(socket,
       agents: agents,
       id_to_display: id_to_display,
-      repo_trees: repo_trees,
+      repo_trees: trees,
       previous_agent_ids: previous_agent_ids,
       new_agent_ids: new_agent_ids
     )
@@ -761,17 +814,44 @@ defmodule EvoDashWeb.AgentsLive do
     |> Enum.sort_by(fn {id, _} -> id end)
   end
 
-  defp build_repo_trees(agents) do
-    agents
-    |> Enum.group_by(&grouping_key/1)
-    |> Enum.map(fn {key, repo_agents} ->
-      display_name = repo_display_name(key)
-      tree = build_path_tree(repo_agents)
-      # Rename the "." root node to the repo display name so each repo has a distinct root
-      tree = rename_root(tree, display_name)
-      {display_name, tree}
-    end)
-    |> Enum.sort_by(fn {name, _} -> name end)
+  # Builds repo trees for the file-tree panel. When a repo root is a readable
+  # local directory, the tree is scanned from disk (1:1 with the real file
+  # tree, empty directories included) and agents are overlaid onto their
+  # context_path nodes; otherwise it falls back to the agent-driven tree.
+  # Scans are cached per repo root in @fs_scans.
+  defp build_repo_trees(socket, agents) do
+    groups = Enum.group_by(agents, &grouping_key/1)
+
+    {trees, scans} =
+      Enum.map_reduce(groups, socket.assigns[:fs_scans] || %{}, fn {key, repo_agents}, scans ->
+        repo_root = if is_binary(key) and File.dir?(key), do: key, else: nil
+
+        {scanned, scans} =
+          cond do
+            is_nil(repo_root) ->
+              {nil, scans}
+
+            Map.has_key?(scans, repo_root) ->
+              {Map.fetch!(scans, repo_root), scans}
+
+            true ->
+              scanned = EvoDashWeb.AgentsLive.FileTree.scan(repo_root)
+              {scanned, Map.put(scans, repo_root, scanned)}
+          end
+
+        display_name = repo_display_name(key)
+
+        tree =
+          scanned
+          |> EvoDashWeb.AgentsLive.FileTree.build_tree(repo_agents)
+          |> rename_root(display_name)
+
+        {{display_name, tree}, scans}
+      end)
+
+    trees = Enum.sort_by(trees, fn {name, _} -> name end)
+
+    {trees, assign(socket, :fs_scans, scans)}
   end
 
   defp grouping_key(agent) do
@@ -821,52 +901,6 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   defp shorten_sha(other), do: other
-
-  defp build_path_tree(agents) do
-    tree =
-      Enum.reduce(agents, %{}, fn agent, acc ->
-        path = agent.context_path || "./"
-        path = if path == "/", do: "./", else: path
-
-        segments =
-          path
-          |> Path.split()
-          |> case do
-            ["." | rest] -> ["." | rest]
-            other -> ["." | other]
-          end
-
-        insert_into_tree(acc, segments, [], agent)
-      end)
-
-    sort_tree(tree)
-  end
-
-  defp insert_into_tree(tree, [], _acc_segments, _agent), do: tree
-
-  defp insert_into_tree(tree, [segment | rest], acc_segments, agent) do
-    current_segments = acc_segments ++ [segment]
-    current_path = Path.join(current_segments)
-
-    node = Map.get(tree, segment, %{name: segment, path: current_path, agents: [], children: %{}})
-
-    if rest == [] do
-      node = %{node | agents: [agent | node.agents]}
-      Map.put(tree, segment, node)
-    else
-      node = %{node | children: insert_into_tree(node.children, rest, current_segments, agent)}
-      Map.put(tree, segment, node)
-    end
-  end
-
-  defp sort_tree(tree) do
-    tree
-    |> Map.values()
-    |> Enum.sort_by(& &1.name)
-    |> Enum.map(fn node ->
-      %{node | children: sort_tree(node.children), agents: Enum.sort_by(node.agents, & &1.id)}
-    end)
-  end
 
   # Loads all agents for the given node. Reads scheduler state via
   # `EvoDash.NodeContext.list_agents/1`, which returns summary maps. On the
@@ -1054,6 +1088,48 @@ defmodule EvoDashWeb.AgentsLive do
     end)
   end
 
+  # Server-side translated legend labels for the EvolutionGraph hook
+  # (rendered as data-legend JSON on the graph container).
+  def legend_json do
+    Jason.encode!(%{
+      titles: %{nodes: gettext("Nodes"), edges: gettext("Edges")},
+      nodes: [
+        ["pending", gettext("Pending")],
+        ["blocked", gettext("Blocked")],
+        ["running", gettext("Running")],
+        ["waiting", gettext("Waiting for subtasks")],
+        ["ready", gettext("Subtasks ready")],
+        ["completed", gettext("Completed")],
+        ["failed", gettext("Failed")]
+      ],
+      edges: [
+        ["st-running", gettext("Child running")],
+        ["st-waiting", gettext("Child waiting")],
+        ["st-ready", gettext("Child resuming")],
+        ["st-pending", gettext("Child queued / blocked")],
+        ["converge", gettext("Result converging")]
+      ]
+    })
+  end
+
+  defp ash_selected?(socket) do
+    Enum.any?(socket.assigns[:ash_trees] || [], &(&1.task_id == socket.assigns[:selected_task_id]))
+  end
+
+  # Agent list feeding the graph: demo set in demo mode, the archived ash
+  # snapshot when a finished task's tab is selected, live agents otherwise.
+  # Takes the assigns map (works from both socket.assigns and templates).
+  defp graph_source(assigns) do
+    if assigns[:demo_mode] do
+      demo_agents()
+    else
+      case Enum.find(assigns[:ash_trees] || [], &(&1.task_id == assigns[:selected_task_id])) do
+        nil -> assigns.agents
+        ash -> ash.agents
+      end
+    end
+  end
+
   # Data source for the graph: ?demo=1 replaces the real agent list with a
   # built-in two-tree demo set, so the demo exercises the REAL code path
   # (tabs, tree switching, payload filtering) instead of a client stub.
@@ -1207,8 +1283,66 @@ defmodule EvoDashWeb.AgentsLive do
         depth: 1,
         objective: "报表输出",
         agent_module: EvoGit.Agents.Executor
+      },
+      # Tree C — task #3 超多子节点布局测试（1 父 10 子 + 孙）
+      %{
+        id: 30,
+        parent_id: nil,
+        task_id: "demo-3",
+        task_number: 3,
+        task_local_id: "3",
+        status: :waiting,
+        depth: 0,
+        objective: "扇出压力测试",
+        agent_module: EvoGit.Agents.Manager
       }
-    ]
+    ] ++
+      (for i <- 1..10 do
+        status =
+          cond do
+            i <= 3 -> :completed
+            i <= 5 -> :running
+            i <= 7 -> :ready
+            i <= 9 -> :pending
+            true -> :blocked
+          end
+
+        %{
+          id: 30 + i,
+          parent_id: 30,
+          task_id: "demo-3",
+          task_number: 3,
+          task_local_id: "3.#{i}",
+          status: status,
+          depth: 1,
+          objective: "分支 #{i}",
+          agent_module: EvoGit.Agents.Executor
+        }
+      end) ++
+      [
+        %{
+          id: 50,
+          parent_id: 34,
+          task_id: "demo-3",
+          task_number: 3,
+          task_local_id: "3.4.1",
+          status: :running,
+          depth: 2,
+          objective: "孙节点 4.1",
+          agent_module: EvoGit.Agents.Executor
+        },
+        %{
+          id: 51,
+          parent_id: 34,
+          task_id: "demo-3",
+          task_number: 3,
+          task_local_id: "3.4.2",
+          status: :pending,
+          depth: 2,
+          objective: "孙节点 4.2",
+          agent_module: EvoGit.Agents.Executor
+        }
+      ]
   end
 
   defp graph_label(a) do
@@ -1267,8 +1401,23 @@ defmodule EvoDashWeb.AgentsLive do
   # Recomputes the tab list and makes sure `selected_task_id` still points at
   # an existing tree (auto-picks the first — running tasks sort first).
   defp refresh_graph_tasks(socket) do
-    tasks = graph_tasks(demo_source(socket.assigns[:demo_mode] || false, socket.assigns.agents))
+    live_tasks = graph_tasks(demo_source(socket.assigns[:demo_mode] || false, socket.assigns.agents))
+    live_ids = MapSet.new(live_tasks, & &1.task_id)
+
+    # Ash trees (finished tasks kept for progress review) get tabs at the end;
+    # drop ash entries whose task became live again. The store is re-read each
+    # refresh so archives written while this page was closed still appear.
+    ash = EvoDash.AshTrees.list()
+
+    ash_tabs =
+      ash
+      |> Enum.filter(fn a -> not MapSet.member?(live_ids, a.task_id) end)
+      |> Enum.map(fn a -> Map.put(a, :ash?, true) end)
+
+    tasks = live_tasks ++ ash_tabs
     selected = socket.assigns[:selected_task_id]
+
+    socket = assign(socket, :ash_trees, ash)
 
     if selected && Enum.any?(tasks, &(&1.task_id == selected)) do
       assign(socket, :graph_tasks, tasks)
@@ -1290,16 +1439,20 @@ defmodule EvoDashWeb.AgentsLive do
     if connected?(socket) do
       payload =
         graph_payload(
-          demo_source(socket.assigns[:demo_mode] || false, socket.assigns.agents),
+          graph_source(socket.assigns),
           socket.assigns.selected_task_id
         )
 
-      if payload == socket.assigns[:last_graph_payload] do
+      ash? = ash_selected?(socket)
+
+      if payload == socket.assigns[:last_graph_payload] and
+           ash? == socket.assigns[:last_graph_ash] do
         socket
       else
         socket
         |> assign(:last_graph_payload, payload)
-        |> push_event("agents:sync", %{nodes: payload})
+        |> assign(:last_graph_ash, ash?)
+        |> push_event("agents:sync", %{nodes: payload, ash: ash?})
       end
     else
       socket

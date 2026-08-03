@@ -1640,3 +1640,97 @@ body:has(.simple-ui)::after {
 [data-simple-theme="terminal"] .brand-logo-light { display: none; }
 [data-simple-theme="night"] .brand-logo-dark,
 [data-simple-theme="terminal"] .brand-logo-dark { display: block; }
+
+/* 文件树面板：pro /agents 三列布局（文件树 | 演化图 | 详情） */
+@media (min-width: 1280px) {
+  .agents-page-layout.with-file-tree {
+    grid-template-columns: 18rem 1fr 1fr;
+  }
+  .agents-file-col {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+/* 未选中智能体时收起详情列：图区占满 */
+@media (min-width: 1280px) {
+  .agents-page-layout.no-detail {
+    grid-template-columns: 1fr;
+  }
+  .agents-page-layout.with-file-tree.no-detail {
+    grid-template-columns: 18rem 1fr;
+  }
+}
+
+
+/* 极简页 flash 下移，避免遮住右上角主题切换器 */
+.simple-ui #flash-group {
+  top: 3.5rem !important;
+}
+
+/* ---- 审阅页迷你树状图：实线连线 + 圆圈，修改红/新增绿/删除红删除线 ---- */
+.change-tree,
+.change-tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 14px;
+  border-left: 1px solid #cbd5e1;
+}
+.change-tree li {
+  position: relative;
+  padding: 1px 0 1px 10px;
+  line-height: 1.4;
+}
+.change-tree li::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 0.7em;
+  width: 8px;
+  border-top: 1px solid #cbd5e1;
+}
+.change-tree .ct-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: #94a3b8;
+}
+.change-tree .ct-dot.ct-added { background: #16a34a; }
+.change-tree .ct-dot.ct-modified { background: #C8383C; }
+.change-tree .ct-dot.ct-deleted { background: #C8383C; }
+.change-tree .ct-dot.ct-dir { background: #94a3b8; }
+.change-tree .ct-name {
+  font-size: 12px;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+}
+.change-tree .ct-name.ct-deleted {
+  text-decoration: line-through;
+  color: #94a3b8;
+}
+
+/* 审阅页迷你任务树：纯静态 SVG 曲线 + 圆圈，直接放在背景上（无框）
+   认知负荷优化：大间距、加粗连线、根节点品牌红作信息锚点 */
+.review-mini-tree {
+  overflow: auto;
+  max-height: 260px;
+  padding: 4px 0;
+}
+.review-mini-tree .mt-edge {
+  stroke: #94a3b8;
+  stroke-width: 2;
+  fill: none;
+}
+.review-mini-tree .mt-node {
+  fill: #cbd5e1;
+  stroke: #64748b;
+  stroke-width: 1.5;
+}
+.review-mini-tree .mt-root {
+  fill: #cbd5e1;
+  stroke: #64748b;
+  stroke-width: 1.5;
+}

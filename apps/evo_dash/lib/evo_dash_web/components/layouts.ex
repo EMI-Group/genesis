@@ -80,12 +80,12 @@ defmodule EvoDashWeb.Layouts do
           >
             <%!-- zh_CN: Genesis → "启元" --%>
             <img
-              src={~p"/images/evox-logo.png"}
+              src={~p"/images/evox-logo.svg"}
               class="h-6 w-auto block dark:hidden shrink-0"
               alt={gettext("Genesis")}
             /> <%!-- zh_CN: Genesis → "启元" --%>
             <img
-              src={~p"/images/evox-logo-white.png"}
+              src={~p"/images/evox-logo-white.svg"}
               class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("Genesis")}
             />
@@ -257,8 +257,17 @@ defmodule EvoDashWeb.Layouts do
 
   def simple(assigns) do
     ~H"""
-    <div class="simple-ui relative min-h-screen flex flex-col bg-white text-slate-900">
-      <.simple_theme_selector />
+    <div class="simple-ui relative h-screen overflow-y-auto flex flex-col bg-white text-slate-900">
+      <div class="fixed top-3 right-4 z-50 flex items-center gap-3">
+        <.link
+          id="nav-tree"
+          navigate={~p"/tree"}
+          class="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+        >
+          {gettext("Agent tree")}
+        </.link>
+        <.simple_theme_selector />
+      </div>
       {render_slot(@inner_block)} <.flash_group flash={@flash} />
     </div>
     """
@@ -272,7 +281,7 @@ defmodule EvoDashWeb.Layouts do
   """
   def simple_theme_selector(assigns) do
     ~H"""
-    <details id="simple-theme-selector" class="dropdown dropdown-end fixed top-3 right-4 z-50">
+    <details id="simple-theme-selector" class="dropdown dropdown-end">
       <summary
         class="btn btn-sm btn-ghost btn-circle rounded-full"
         title={gettext("Art style")}
@@ -314,6 +323,25 @@ defmodule EvoDashWeb.Layouts do
   attr(:navigate, :string, default: "/dashboard")
 
   def pro_corner(assigns) do
+    ~H"""
+    <.link
+      id="pro-corner"
+      navigate={@navigate}
+      class="fixed bottom-4 right-4 z-50 text-xs text-slate-400 hover:text-slate-600 transition-colors"
+    >
+      {gettext("Pro")}
+    </.link>
+    """
+  end
+
+  @doc """
+  Fixed bottom-right Pro entry for simple-mode pages. (The 任务树 navigation
+  link lives in the top-right group next to the theme selector — navigation
+  and mode-switch are intentionally separate corners.)
+  """
+  attr(:navigate, :string, default: "/dashboard")
+
+  def simple_corner(assigns) do
     ~H"""
     <.link
       id="pro-corner"

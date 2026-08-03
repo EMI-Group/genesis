@@ -1,8 +1,8 @@
 <%= if @simple_mode do %>
   <%!-- Simple mode (/tree): fullscreen agent tree, no sidebar -- step 3 of the
-       minimal flow. Unified dark canvas, no white bar: a thin light-gray top
-       divider carries "New task" and "Review" links, task tabs sit inline;
-       the pro entry is a small fixed bottom-right corner. --%>
+       minimal flow. Unified dark canvas: thin top bar with "New task" link,
+       pending-review entry, task tabs (ash trees get a close ×); pro entry is
+       a small fixed bottom-right corner. --%>
   <EvoDashWeb.Layouts.simple flash={@flash}>
     <div class="simple-canvas h-screen flex flex-col">
       <div class="simple-topbar flex items-center gap-4 px-4 h-9 shrink-0">
@@ -14,25 +14,35 @@
           {gettext("New task")}
         </.link>
 
-        <%= if @selected_task_id do %>
+        <%= if @pending_review_count > 0 do %>
           <.link
-            id="simple-review-link"
-            navigate={~p"/tree/review/#{@selected_task_id}"}
-            class="simple-link text-xs shrink-0"
+            id="tree-review-entry"
+            navigate={~p"/tree/review"}
+            class="simple-link text-xs shrink-0 font-semibold"
           >
-            {gettext("Review")}
+            {ngettext("%{count} pending review →", "%{count} pending reviews →", @pending_review_count,
+              count: @pending_review_count)}
           </.link>
         <% end %>
 
-        <%= if length(@graph_tasks) > 1 do %>
+        <%= if length(@graph_tasks) > 1 or (length(@graph_tasks) == 1 and hd(@graph_tasks)[:ash?]) do %>
           <div class="evo-tabbar flex items-center gap-1 px-2 overflow-x-auto min-w-0 flex-1 border-b-0">
             <%= for t <- @graph_tasks do %>
               <button
                 phx-click="select_tree"
                 phx-value-task_id={t.task_id}
-                class={["evo-tab", t.task_id == @selected_task_id && "evo-tab-active"]}
+                class={[
+                  "evo-tab",
+                  t.task_id == @selected_task_id && "evo-tab-active",
+                  t[:ash?] && "evo-tab-ash"
+                ]}
               >
-                #{t.task_number} · {t.label} <span class="ml-1 opacity-50">({t.size})</span>
+                #{t.task_number} · {t.label} <span class="ml-1 opacity-50">({t.size})</span><%= if t[:ash?] do %><span
+                  phx-click="dismiss_tree"
+                  phx-value-task_id={t.task_id}
+                  class="evo-ash-x"
+                  title={gettext("Close")}
+                >×</span><% end %>
               </button>
             <% end %>
           </div>
@@ -40,7 +50,7 @@
       </div>
 
       <div class="flex-1 min-h-0">
-        <%= if @agents == [] and not @demo_mode do %>
+        <%= if @agents == [] and @ash_trees == [] and not @demo_mode do %>
           <div class="h-full flex flex-col items-center justify-center simple-link">
             <.icon name="hero-server" class="size-16 mb-4 opacity-40" />
             <p class="text-base">{gettext("No agents currently registered")}</p>
@@ -54,9 +64,10 @@
             id="evolution-graph"
             phx-hook="EvolutionGraph"
             phx-update="ignore"
-            data-legend="collapsed"
+            data-interactive="false"
+            data-legend={legend_json()}
             data-agents={
-              Jason.encode!(graph_payload(demo_source(@demo_mode, @agents), @selected_task_id))
+              Jason.encode!(graph_payload(graph_source(assigns), @selected_task_id))
             }
             class="h-full"
           >
@@ -84,14 +95,61 @@
     pending_tasks={@pending_tasks}
   >
     <!-- Fixed viewport layout: no page-level scroll on xl+, panels scroll independently -->
-    <div class="agents-page-layout animate-fade-in-up animation-delay-100">
+    <div class={[
+      "agents-page-layout animate-fade-in-up animation-delay-100",
+      @show_file_tree && "with-file-tree",
+      is_nil(@selected_agent_id) && "no-detail"
+    ]}>
+      <!-- File-tree Column: real directories from disk + agents overlaid -->
+      <%= if @show_file_tree do %>
+        <div class="agents-file-col card bg-base-100 shadow-sm border border-base-200 rounded-2xl overflow-hidden flex flex-col">
+          <div class="flex items-center justify-between px-3 py-2 border-b border-base-200 shrink-0">
+            <h3 class="text-sm font-bold">{gettext("File Tree")}</h3>
+            <button
+              id="file-tree-close"
+              phx-click="toggle_file_tree"
+              class="btn btn-ghost btn-xs btn-circle"
+              title={gettext("Hide file tree")}
+            >
+              <.icon name="hero-x-mark" class="size-4" />
+            </button>
+          </div>
+          <div id="file-tree-panel" phx-hook="ScrollIntoView" class="flex-1 min-h-0 overflow-y-auto p-3">
+            <%= if @repo_trees == [] do %>
+              <p class="text-sm text-base-content/50 text-center py-8">
+                {gettext("No agents currently registered")}
+              </p>
+            <% else %>
+              <%= for {_repo_name, tree} <- @repo_trees do %>
+                <EvoDashWeb.AgentsComponents.path_tree
+                  nodes={tree}
+                  selected_id={@selected_agent_id}
+                  new_agent_ids={@new_agent_ids}
+                  changed_status_ids={@changed_status_ids}
+                  compact={true}
+                />
+              <% end %>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
       <!-- Left Column: Task Evolution Graph -->
       <div class="agents-left-col">
         <div
-          class="agents-tree-panel card shadow-sm border border-base-200 rounded-2xl overflow-hidden"
+          class="agents-tree-panel relative card shadow-sm border border-base-200 rounded-2xl overflow-hidden"
           style="background:#101010"
         >
-          <%= if @agents == [] and not @demo_mode do %>
+          <%= if not @show_file_tree do %>
+            <button
+              id="file-tree-open"
+              phx-click="toggle_file_tree"
+              class="btn btn-ghost btn-xs absolute top-2 right-2 z-20 gap-1"
+              title={gettext("Show file tree")}
+            >
+              <.icon name="hero-folder" class="size-4" /> {gettext("File Tree")}
+            </button>
+          <% end %>
+          <%= if @agents == [] and @ash_trees == [] and not @demo_mode do %>
             <div class="text-center py-16 text-base-content/50">
               <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
               <p class="text-lg">{gettext("No agents currently registered")}</p>
@@ -102,16 +160,25 @@
             </div>
           <% else %>
             <div class="flex flex-col h-full">
-              <%= if length(@graph_tasks) > 1 do %>
+              <%= if length(@graph_tasks) > 1 or (length(@graph_tasks) == 1 and hd(@graph_tasks)[:ash?]) do %>
                 <!-- Tree switcher: one task = one tree; the canvas shows ONE tree at a time -->
                 <div class="evo-tabbar flex items-center gap-1 px-3 pt-2 overflow-x-auto shrink-0">
                   <%= for t <- @graph_tasks do %>
                     <button
                       phx-click="select_tree"
                       phx-value-task_id={t.task_id}
-                      class={["evo-tab", t.task_id == @selected_task_id && "evo-tab-active"]}
+                      class={[
+                        "evo-tab",
+                        t.task_id == @selected_task_id && "evo-tab-active",
+                        t[:ash?] && "evo-tab-ash"
+                      ]}
                     >
-                      #{t.task_number} · {t.label} <span class="ml-1 opacity-50">({t.size})</span>
+                      #{t.task_number} · {t.label} <span class="ml-1 opacity-50">({t.size})</span><%= if t[:ash?] do %><span
+                        phx-click="dismiss_tree"
+                        phx-value-task_id={t.task_id}
+                        class="evo-ash-x"
+                        title={gettext("Close")}
+                      >×</span><% end %>
                     </button>
                   <% end %>
                 </div>
@@ -121,9 +188,10 @@
                 id="evolution-graph"
                 phx-hook="EvolutionGraph"
                 phx-update="ignore"
+                data-legend={legend_json()}
                 data-agents={
                   Jason.encode!(
-                    graph_payload(demo_source(@demo_mode, @agents), @selected_task_id)
+                    graph_payload(graph_source(assigns), @selected_task_id)
                   )
                 }
                 class="flex-1 min-h-0"
@@ -133,13 +201,13 @@
           <% end %>
         </div>
       </div>
-      <!-- Right Column: Agent Details Panel — full vertical space -->
+      <!-- Right Column: Agent Details Panel — only when an agent is selected -->
+      <%= if @selected_agent_id do %>
       <div class="agents-detail-col">
         <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
           <div class="card-body p-4">
-            <%= if @selected_agent_id do %>
-              <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
-              <%= if agent do %>
+            <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
+            <%= if agent do %>
                 <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
                   <div class="flex items-center justify-between mb-2">
                     <div class="flex items-center gap-3">
@@ -718,18 +786,10 @@
               <% else %>
                 <p class="text-base-content/50">{gettext("Agent not found")}</p>
               <% end %>
-            <% else %>
-              <div class="text-center py-16 text-base-content/50">
-                <.icon
-                  name="hero-finger-pointing"
-                  class="size-20 mx-auto mb-4 opacity-40 animate-float"
-                />
-                <p class="text-lg">{gettext("Select an agent to view details")}</p>
-              </div>
-            <% end %>
           </div>
         </div>
       </div>
+      <% end %>
     </div>
     <!-- Full Message Modal -->
     <%= if @selected_history_entry do %>

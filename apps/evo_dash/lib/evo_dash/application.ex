@@ -15,6 +15,7 @@ defmodule EvoDash.Application do
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
+      EvoDash.AshTrees,
       EvoDashWeb.Endpoint
     ]
 

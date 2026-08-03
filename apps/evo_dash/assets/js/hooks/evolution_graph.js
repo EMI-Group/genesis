@@ -24,27 +24,28 @@ const STATUS_CN = {
 };
 
 const NODE_LEGEND = [
-  ['pending',   '待执行 · 绿点呼吸（等 worktree）'],
-  ['blocked',   '阻塞 · 慢速暗呼吸（等 LLM 槽位）'],
-  ['running',   '执行中 · 白实芯 + 白晕呼吸'],
-  ['waiting',   '等待子任务 · 绿粗环 + 绿晕呼吸'],
-  ['ready',     '子任务齐 · 白环脉冲，即将恢复'],
-  ['completed', '已完成 · 灰环静止'],
-  ['failed',    '失败 · 闪烁后重新排队'],
+  ['pending',   '待执行'],
+  ['blocked',   '阻塞'],
+  ['running',   '执行中'],
+  ['waiting',   '等待子任务'],
+  ['ready',     '子任务齐'],
+  ['completed', '已完成'],
+  ['failed',    '失败'],
 ];
 const EDGE_LEGEND = [
-  ['st-running', '白线流动 · 能量下发（子执行中）'],
-  ['st-waiting', '绿色实线 · 子树活跃（子等待中）'],
-  ['st-ready',   '亮绿实线 · 子即将恢复'],
-  ['st-pending', '灰虚线 · 子排队 / 阻塞'],
-  ['converge',   '绿光回流 · 结果收敛到母节点'],
+  ['st-running', '子执行中'],
+  ['st-waiting', '子等待中'],
+  ['st-ready',   '子即将恢复'],
+  ['st-pending', '子排队 / 阻塞'],
+  ['converge',   '结果收敛'],
 ];
 
 const EvolutionGraph = {
   mounted() {
     // ?demo=1 时服务端会下发演示数据（走真实代码路径），这里仅用于抑制
     // 节点点选事件（演示数据没有对应的详情面板）
-    this.demo = new URLSearchParams(window.location.search).get('demo') === '1';
+    this.demo = new URLSearchParams(window.location.search).get('demo') === '1' ||
+      this.el.dataset.interactive === 'false';
     this.nodes = new Map();   // id -> node
     this.prevStatuses = new Map();
     this.selectedId = null;
@@ -54,8 +55,14 @@ const EvolutionGraph = {
     this.bindView();
     this.bindPointer();
 
-    this.handleEvent('agents:sync', ({ nodes }) => this.sync(nodes || []));
-    this.handleEvent('agents:select', ({ id }) => this.markSelected(String(id)));
+    this.handleEvent('agents:sync', ({ nodes, ash }) => {
+      this.sync(nodes || []);
+      this.el.classList.toggle('evo-ash', !!ash);
+    });
+    this.handleEvent('agents:select', ({ id }) => {
+      this.markSelected(String(id));
+      this.centerOnNode(String(id));
+    });
     this.handleEvent('agents:deselect', () => this.markSelected(null));
 
     try {
@@ -81,14 +88,7 @@ const EvolutionGraph = {
         <div class="evo-counter"></div>
       </div>
       <div class="evo-hud evo-br"><div class="evo-event"></div></div>
-      <div class="evo-legend">
-        <h4 class="evo-legend-toggle">图例 ▾</h4>
-        <div class="evo-legend-body">
-          <div class="evo-sec evo-legend-nodes"></div>
-          <div class="evo-sec evo-legend-edges"></div>
-          <div class="evo-cap">悬浮查看状态 · 点击选中节点 · 滚轮缩放 · 拖拽平移 · 双击复位</div>
-        </div>
-      </div>
+      <div class="evo-legend-h evo-legend-bottom"></div>
       <div class="evo-tip"></div>
       <div class="evo-empty" style="display:none">
         <div class="evo-empty-t">暂无 Agent</div>
@@ -104,33 +104,40 @@ const EvolutionGraph = {
     this.tipEl = this.el.querySelector('.evo-tip');
     this.emptyEl = this.el.querySelector('.evo-empty');
     this.viewport.style.transition = 'transform .9s cubic-bezier(.22,1,.36,1)';
+    // Server-rendered translations (data-legend JSON) override the defaults.
+    try {
+      if (this.el.dataset.legend) this._legendI18n = JSON.parse(this.el.dataset.legend);
+    } catch (e) { this._legendI18n = null; }
     this.buildLegend();
-    const toggle = this.el.querySelector('.evo-legend-toggle');
-    const body = this.el.querySelector('.evo-legend-body');
-    // data-legend="collapsed" (simple /tree mode): legend starts hidden on the
-    // left, only the small "图例 ▸" affordance hints it can expand.
-    if (this.el.dataset.legend === 'collapsed') {
-      body.style.display = 'none';
-      toggle.textContent = '图例 ▸';
-    }
-    toggle.onclick = () => {
-      const open = body.style.display !== 'none';
-      body.style.display = open ? 'none' : '';
-      toggle.textContent = open ? '图例 ▸' : '图例 ▾';
-    };
   },
 
   buildLegend() {
-    this.el.querySelector('.evo-legend-nodes').innerHTML =
-      '<div class="evo-sec-t">节点 = agent 状态</div>' + NODE_LEGEND.map(([s, t]) => `
-        <div class="evo-row"><svg width="34" height="30"><g class="node ${s}" transform="translate(16,15)">
-          <circle class="halo" r="16"/><circle class="pulse" r="11"/><circle class="ring" r="11"/><circle class="dot" r="3.3"/>
-        </g></svg><span>${t}</span></div>`).join('');
-    this.el.querySelector('.evo-legend-edges').innerHTML =
-      '<div class="evo-sec-t">连线 = 母→子状态联系</div>' + EDGE_LEGEND.map(([s, t]) => `
-        <div class="evo-row"><svg width="34" height="14">
-          <path class="edge ${s}" d="M 2 7 C 11 2, 23 12, 32 7" fill="none"/>
-        </svg><span>${t}</span></div>`).join('');
+    // 横向图例（底部居中条）。分区标题只和该区第一项绑定（标题永不落单），
+    // 其余项在窄容器里自由折行，保证任何宽度下都不超出框架。
+    const i18n = this._legendI18n || {};
+    const nodeLegend = i18n.nodes || NODE_LEGEND;
+    const edgeLegend = i18n.edges || EDGE_LEGEND;
+    const titles = i18n.titles || { nodes: '节点', edges: '连线' };
+    const nodeRow = ([s, t]) => `
+      <div class="evo-row"><svg width="20" height="20"><g class="node ${s}" transform="translate(10,10)">
+        <circle class="halo" r="10"/><circle class="pulse" r="7"/><circle class="ring" r="7"/><circle class="dot" r="2.2"/>
+      </g></svg><span>${t}</span></div>`;
+    const edgeRow = ([s, t]) => `
+      <div class="evo-row"><svg width="26" height="12">
+        <path class="edge ${s}" d="M 2 6 C 9 2, 17 10, 24 6" fill="none"/>
+      </svg><span>${t}</span></div>`;
+
+    const nodeItems = nodeLegend.map(nodeRow);
+    const edgeItems = edgeLegend.map(edgeRow);
+
+    const group = (title, items) =>
+      `<div class="evo-legend-group">` +
+      `<div class="evo-sec-head"><span class="evo-sec-t">${title}</span>${items[0]}</div>` +
+      items.slice(1).join('') +
+      `</div>`;
+
+    this.el.querySelector('.evo-legend-bottom').innerHTML =
+      group(titles.nodes, nodeItems) + group(titles.edges, edgeItems);
   },
 
   // ---------- 数据同步（diff by id）----------
@@ -217,68 +224,28 @@ const EvolutionGraph = {
   },
 
   layout() {
-    const levels = [];
-    const visit = (n, d) => {
-      (levels[d] ||= []).push(n);
-      n.children.forEach(c => visit(c, d + 1));
+    // Classic tidy tree layout: leaves take consecutive y slots, parents are
+    // centered over their children. By construction nodes never overlap and
+    // parent→child edges never cross — robust for parents with many children.
+    let nextY = 0;
+    const place = (n, d) => {
+      n.tx = d * DEPTH_GAP;
+      n.depth = d;
+      if (!n.children.length) {
+        n.ty = nextY;
+        nextY += SIB_GAP;
+      } else {
+        n.children.forEach(c => place(c, d + 1));
+        const first = n.children[0], last = n.children[n.children.length - 1];
+        n.ty = (first.ty + last.ty) / 2;
+      }
     };
-    this.roots().forEach(r => visit(r, r.depth || 0));
-    // 多根并放：把每个根视作 depth 层的锁定节点处理（其 x 固定为 depth*GAP）
-    const locked = n => n.children.length > 0 || !n.parentId;
 
-    for (let d = 0; d < levels.length; d++) {
-      const level = levels[d];
-      if (!level) continue;
-      for (const n of level) {
-        n.tx = d * DEPTH_GAP;
-        n.depth = d;
-        if (locked(n)) { n._p = n.ty || 0; continue; }
-        const sib = n.parentId && this.nodes.has(n.parentId) ? this.nodes.get(n.parentId).children : this.roots().filter(x => !x.children.length);
-        const i = Math.max(sib.indexOf(n), 0);
-        const anchor = n.parentId && this.nodes.has(n.parentId) ? this.nodes.get(n.parentId).ty : 0;
-        n._p = anchor + (i - (sib.length - 1) / 2) * SIB_GAP;
-      }
-      for (let iter = 0; iter < 50; iter++) {
-        let worst = 0;
-        for (let i = 0; i < level.length - 1; i++) {
-          const a = level[i], b = level[i + 1];
-          const ov = a._p + SIB_GAP - b._p;
-          if (ov > 0.01) {
-            worst = Math.max(worst, ov);
-            const la = locked(a), lb = locked(b);
-            if (la && lb) continue;
-            if (la) b._p += ov;
-            else if (lb) a._p -= ov;
-            else { a._p -= ov / 2; b._p += ov / 2; }
-          }
-        }
-        if (worst < 0.01) break;
-      }
-      this.repair(level, locked);
-      for (const n of level) if (!locked(n)) n.ty = n._p;
-    }
-  },
-
-  // 修复：两个锁定节点之间的自由节点段空间不足时，在锚点间均匀压缩分布
-  repair(level, locked) {
-    const MIN_GAP = 2 * R + 4;
-    let i = 0;
-    while (i < level.length) {
-      if (locked(level[i])) { i++; continue; }
-      let j = i;
-      while (j < level.length && !locked(level[j])) j++;
-      const L = i > 0 && locked(level[i - 1]) ? level[i - 1] : null;
-      const Rk = j < level.length && locked(level[j]) ? level[j] : null;
-      if (L && Rk) {
-        const seg = level.slice(i, j);
-        const lo = L._p, hi = Rk._p;
-        if (hi - lo < (seg.length + 1) * SIB_GAP) {
-          const gap = Math.max(MIN_GAP, (hi - lo) / (seg.length + 1));
-          seg.forEach((n, k) => { n._p = lo + gap * (k + 1); });
-        }
-      }
-      i = j;
-    }
+    const roots = this.roots();
+    roots.forEach(r => {
+      place(r, r.depth || 0);
+      nextY += SIB_GAP; // extra gap between independent trees
+    });
   },
 
   // ---------- 渲染 ----------
@@ -439,6 +406,17 @@ const EvolutionGraph = {
         n.el.classList.toggle('selected', n.id === id);
       }
     }
+  },
+
+  // Centers the viewport on a node (file-tree → graph linking).
+  centerOnNode(id) {
+    const n = this.nodes.get(id);
+    if (!n) return;
+    const box = this.svg.getBoundingClientRect();
+    this.view.manual = true;
+    this.view.x = box.width / 2 - n.tx * this.view.k;
+    this.view.y = box.height / 2 - n.ty * this.view.k;
+    this.applyView();
   },
 
   // ---------- 悬浮 + 点击 ----------

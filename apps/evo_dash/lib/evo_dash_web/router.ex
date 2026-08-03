@@ -24,6 +24,7 @@ defmodule EvoDashWeb.Router do
     live("/tasks", DashboardLive, :tasks)
     live("/welcome", WelcomeLive, :index)
     live("/tree", AgentsLive, :simple)
+    live("/tree/review", SimpleLive.Reviews, :index)
     live("/tree/review/:task_id", ReviewLive, :simple)
     live("/agents", AgentsLive, :index)
     live("/settings", SettingsLive, :index)

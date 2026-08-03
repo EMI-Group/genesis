@@ -1968,7 +1968,7 @@ msgstr "第 %{attempt} 次重试"
 #: lib/evo_dash_web/components/task_card_components.ex:138
 #, elixir-autogen, elixir-format
 msgid "Review"
-msgstr "审查"
+msgstr "审阅"
 
 #: lib/evo_dash_web/live/review_live.ex:599 lib/evo_dash_web/live/review_live.ex:625
 #, elixir-autogen, elixir-format
@@ -3674,3 +3674,104 @@ msgstr "最近："
 
 msgid "Original software (refactor reference)"
 msgstr "原软件（重构参考）"
+
+msgid "No completed task to review for this project."
+msgstr "该项目还没有可审阅的已完成任务。"
+msgid "No LLM configured yet."
+msgstr "尚未配置模型。"
+
+msgid "Set up your model first"
+msgstr "先去设置模型"
+
+msgid "No LLM configured yet. Please set up your model first."
+msgstr "尚未配置模型，请先完成模型设置。"
+
+msgid "Enter your development requirements, e.g. build a web calendar with month view"
+msgstr "请输入开发需求，例如：做一个支持月视图的网页日历"
+
+msgid "Enter an existing directory to open it, or a new name — the folder is created under ~/GenesisProjects automatically."
+msgstr "输入已存在的目录直接打开；输入新名字会自动在 ~/GenesisProjects 下创建文件夹。"
+
+msgid "The original directory must already exist. It will only be modified if you leave the new path empty."
+msgstr "原软件目录必须已存在；只有在新路径留空时才会修改它。"
+
+msgid "Leave empty: refactor in place (modifies the original directory). Fill in: generate into a new directory (original stays read-only)."
+msgstr "留空：在原项目中重构（会修改原目录）；填写：生成到新目录（原目录只读）。"
+
+msgid "Please enter a development path."
+msgstr "请输入开发路径。"
+
+msgid "Pending Reviews"
+msgstr "待审阅"
+
+msgid "No pending reviews."
+msgstr "暂无待审阅的任务。"
+
+msgid "Unknown project"
+msgstr "未知项目"
+
+msgid "Apply these changes"
+msgstr "采用这些修改"
+
+msgid "Discard these changes"
+msgstr "放弃这些修改"
+
+msgid "More actions"
+msgstr "更多操作"
+
+msgid "Apply merges the changes into your project; discard removes them permanently."
+msgstr "「采用」会把修改合并进你的项目；「放弃」会永久删除这些修改。"
+
+msgid "Changes applied to your project."
+msgstr "修改已应用到你的项目。"
+
+msgid "Changes discarded."
+msgstr "已放弃这些修改。"
+
+msgid "Nodes"
+msgstr "节点"
+
+msgid "Edges"
+msgstr "连线"
+
+msgid "Waiting for subtasks"
+msgstr "等待子任务"
+
+msgid "Subtasks ready"
+msgstr "子任务齐"
+
+msgid "Child running"
+msgstr "子执行中"
+
+msgid "Child waiting"
+msgstr "子等待中"
+
+msgid "Child resuming"
+msgstr "子即将恢复"
+
+msgid "Child queued / blocked"
+msgstr "子排队 / 阻塞"
+
+msgid "Result converging"
+msgstr "结果收敛"
+
+msgid "Review %{count} result →"
+msgid_plural "Review %{count} results →"
+msgstr[0] "审阅 %{count} 个结果 →"
+msgstr[1] "审阅 %{count} 个结果 →"
+
+msgid "%{count} pending review →"
+msgid_plural "%{count} pending reviews →"
+msgstr[0] "%{count} 个任务待审阅 →"
+msgstr[1] "%{count} 个任务待审阅 →"
+
+msgid "%{count} agent"
+msgid_plural "%{count} agents"
+msgstr[0] "%{count} 个智能体"
+msgstr[1] "%{count} 个智能体"
+
+msgid "Agent tree"
+msgstr "任务树"
+
+msgid "Next pending review"
+msgstr "下一个待审"

@@ -240,7 +240,7 @@ defmodule EvoDashWeb.WelcomeLive do
           </div>
         </div>
       </div>
-      <EvoDashWeb.Layouts.pro_corner />
+      <EvoDashWeb.Layouts.simple_corner />
     </EvoDashWeb.Layouts.simple>
     """
   end
@@ -270,6 +270,11 @@ defmodule EvoDashWeb.WelcomeLive do
       )
 
     {:ok, socket}
+  end
+
+  @impl true
+  def handle_info(:advance_to_home, socket) do
+    {:noreply, redirect(socket, to: "/welcome/complete")}
   end
 
   @impl true
@@ -582,6 +587,10 @@ defmodule EvoDashWeb.WelcomeLive do
           |> assign(:model_profiles, model_profiles)
           |> assign(:has_model?, model_profiles != [])
           |> put_flash(:info, success_msg)
+
+        # Auto-advance to the home page shortly after a successful save —
+        # no extra click needed.
+        Process.send_after(self(), :advance_to_home, 1200)
 
         {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
 

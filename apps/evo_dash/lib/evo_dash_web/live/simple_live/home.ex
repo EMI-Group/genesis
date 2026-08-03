@@ -31,12 +31,12 @@ defmodule EvoDashWeb.SimpleLive.Home do
       <%!-- Brand: top-left corner --%>
       <div class="absolute top-5 left-6 flex items-center gap-3 select-none">
         <img
-          src={~p"/images/evox-logo.png"}
+          src={~p"/images/evox-logo.svg"}
           class="brand-logo-light h-7 w-auto"
           alt={gettext("Genesis")}
         />
         <img
-          src={~p"/images/evox-logo-white.png"}
+          src={~p"/images/evox-logo-white.svg"}
           class="brand-logo-dark h-7 w-auto hidden"
           alt={gettext("Genesis")}
         />
@@ -48,6 +48,19 @@ defmodule EvoDashWeb.SimpleLive.Home do
 
       <div class="flex-1 flex flex-col items-center justify-center px-4 pb-24">
         <div class="w-full max-w-2xl flex flex-col items-center">
+          <%!-- No-model banner: warn before the user invests in writing a prompt --%>
+          <%= if @no_model? do %>
+            <div class="w-full mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-amber-600 shrink-0" />
+              <p class="text-sm text-amber-800">
+                {gettext("No LLM configured yet.")}
+                <.link navigate={~p"/welcome"} class="underline font-medium">
+                  {gettext("Set up your model first")}
+                </.link>
+              </p>
+            </div>
+          <% end %>
+
           <%!-- Mode tabs (centered above the input box) --%>
           <div
             id="mode-tabs"
@@ -91,7 +104,7 @@ defmodule EvoDashWeb.SimpleLive.Home do
                 name="prompt"
                 rows="3"
                 phx-hook="AutoGrowTextarea"
-                placeholder={gettext("Enter your development requirements")}
+                placeholder={gettext("Enter your development requirements, e.g. build a web calendar with month view")}
               >{@prompt}</textarea>
             </div>
 
@@ -115,6 +128,17 @@ defmodule EvoDashWeb.SimpleLive.Home do
                     }
                     class="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
                   />
+                  <p class="text-[11px] text-slate-400 mt-1 px-0.5">
+                    {if @mode == "new",
+                      do:
+                        gettext(
+                          "Enter an existing directory to open it, or a new name — the folder is created under ~/GenesisProjects automatically."
+                        ),
+                      else:
+                        gettext(
+                          "The original directory must already exist. It will only be modified if you leave the new path empty."
+                        )}
+                  </p>
                   <%= if @path_suggestions != [] do %>
                     <div class="absolute left-0 right-0 top-full mt-1 z-10 rounded-xl border border-slate-200 bg-white shadow-lg max-h-48 overflow-y-auto">
                       <button
@@ -147,6 +171,11 @@ defmodule EvoDashWeb.SimpleLive.Home do
                       }
                       class="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
                     />
+                    <p class="text-[11px] text-slate-400 mt-1 px-0.5">
+                      {gettext(
+                        "Leave empty: refactor in place (modifies the original directory). Fill in: generate into a new directory (original stays read-only)."
+                      )}
+                    </p>
                     <%= if @new_path_suggestions != [] do %>
                       <div class="absolute left-0 right-0 top-full mt-1 z-10 rounded-xl border border-slate-200 bg-white shadow-lg max-h-48 overflow-y-auto">
                         <button
@@ -163,7 +192,7 @@ defmodule EvoDashWeb.SimpleLive.Home do
                   </div>
                 <% end %>
 
-                <%!-- Recent projects: one-click fill --%>
+                <%!-- Recent projects: one-click fill + standalone review entry --%>
                 <%= if @recent_projects != [] do %>
                   <div class="flex items-center gap-1.5 flex-wrap px-0.5">
                     <span class="text-[11px] text-slate-400">{gettext("Recent:")}</span>
@@ -175,6 +204,15 @@ defmodule EvoDashWeb.SimpleLive.Home do
                       class="text-[11px] text-slate-500 hover:text-slate-800 underline decoration-slate-300 hover:decoration-slate-500 transition-colors"
                     >
                       {project.name || Path.basename(project.path)}
+                    </button>
+                    <button
+                      type="button"
+                      id="simple-review-btn"
+                      phx-click="open_review"
+                      class="ml-auto text-[11px] font-medium text-slate-500 hover:text-slate-800 transition-colors"
+                    >
+                      {ngettext("Review %{count} result →", "Review %{count} results →", @pending_review_count,
+                        count: @pending_review_count)}
                     </button>
                   </div>
                 <% end %>
@@ -198,7 +236,7 @@ defmodule EvoDashWeb.SimpleLive.Home do
         </div>
       </div>
 
-      <Layouts.pro_corner />
+      <Layouts.simple_corner />
     </Layouts.simple>
     """
   end
@@ -220,12 +258,14 @@ defmodule EvoDashWeb.SimpleLive.Home do
       # First open: collect the LLM API info before anything else.
       {:ok, push_navigate(socket, to: "/welcome")}
     else
-      {_profiles, selected_model_id} = Project.load_model_profiles()
+      {profiles, selected_model_id} = Project.load_model_profiles()
       recent_projects = TaskRegistry.list_recent_projects()
 
       socket =
         assign(socket,
           selected_model_id: selected_model_id,
+          no_model?: profiles == [],
+          pending_review_count: length(pending_reviews()),
           recent_projects: recent_projects,
           mode: "new",
           prompt: "",
@@ -233,7 +273,9 @@ defmodule EvoDashWeb.SimpleLive.Home do
           path_input: "",
           new_path_input: "",
           path_suggestions: [],
-          new_path_suggestions: []
+          new_path_suggestions: [],
+          resume_from: nil,
+          starting_commit: nil
         )
 
       {:ok, socket}
@@ -246,6 +288,21 @@ defmodule EvoDashWeb.SimpleLive.Home do
       case params["project"] do
         path when is_binary(path) ->
           if File.dir?(path), do: assign(socket, :path_input, Path.expand(path)), else: socket
+
+        _ ->
+          socket
+      end
+
+    # "从此处继续"（简洁审阅页）带来的续跑上下文：切到重构模式并记住
+    # starting_commit / resume_from，启动原地重构时透传给任务。
+    socket =
+      case params["resume_from"] do
+        branch when is_binary(branch) and branch != "" ->
+          assign(socket,
+            mode: "refactor",
+            resume_from: branch,
+            starting_commit: params["starting_commit"]
+          )
 
         _ ->
           socket
@@ -269,11 +326,10 @@ defmodule EvoDashWeb.SimpleLive.Home do
   end
 
   def handle_event("suggest_path", %{"path" => value}, socket) do
-    {:noreply,
-     assign(socket,
-       path_input: value || "",
-       path_suggestions: Project.path_suggestions(value || "")
-     )}
+    value = value || ""
+    # Bare names are auto-created, not opened — path completion would mislead.
+    suggestions = if bare_name?(value) and value != "", do: [], else: Project.path_suggestions(value)
+    {:noreply, assign(socket, path_input: value, path_suggestions: suggestions)}
   end
 
   def handle_event("suggest_new_path", %{"new_path" => value}, socket) do
@@ -292,6 +348,16 @@ defmodule EvoDashWeb.SimpleLive.Home do
     {:noreply, assign(socket, new_path_input: path, new_path_suggestions: [])}
   end
 
+  # Standalone review entry: opens the list of all pending reviews so the
+  # user can pick any of them (not just the most recent one).
+  def handle_event("open_review", _params, socket) do
+    if pending_reviews() == [] do
+      {:noreply, put_flash(socket, :error, gettext("No completed task to review for this project."))}
+    else
+      {:noreply, push_navigate(socket, to: ~p"/tree/review")}
+    end
+  end
+
   def handle_event("launch", %{"prompt" => prompt} = params, socket) do
     prompt = String.trim(prompt || "")
     path_input = String.trim(params["path"] || socket.assigns.path_input)
@@ -300,6 +366,14 @@ defmodule EvoDashWeb.SimpleLive.Home do
     socket = assign(socket, path_input: path_input, new_path_input: new_path_input)
 
     cond do
+      socket.assigns.no_model? ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("No LLM configured yet. Please set up your model first.")
+         )}
+
       prompt == "" ->
         {:noreply, put_flash(socket, :error, gettext("Please describe what you want to do."))}
 
@@ -316,7 +390,7 @@ defmodule EvoDashWeb.SimpleLive.Home do
   # 开发新软件: open an existing path, or auto-create a bare name.
   defp launch_new(socket, path_input, prompt) do
     if path_input == "" do
-      {:noreply, put_flash(socket, :error, gettext("Please select a project first."))}
+      {:noreply, put_flash(socket, :error, gettext("Please enter a development path."))}
     else
       case resolve_project(socket, path_input, allow_create: true) do
         {:ok, path} ->
@@ -335,7 +409,7 @@ defmodule EvoDashWeb.SimpleLive.Home do
   defp launch_refactor(socket, orig_input, new_input, prompt) do
     cond do
       orig_input == "" ->
-        {:noreply, put_flash(socket, :error, gettext("Please select a project first."))}
+        {:noreply, put_flash(socket, :error, gettext("Please enter a development path."))}
 
       true ->
         case resolve_project(socket, orig_input, allow_create: false) do
@@ -345,6 +419,18 @@ defmodule EvoDashWeb.SimpleLive.Home do
           {:ok, orig_path} ->
             if String.trim(new_input) == "" do
               opts = [path: orig_path, mode: "simple", objective: prompt]
+
+              opts =
+                case {socket.assigns.resume_from, socket.assigns.starting_commit} do
+                  {nil, nil} ->
+                    opts
+
+                  {branch, commit} ->
+                    opts
+                    |> Keyword.put(:starting_commit, commit)
+                    |> Keyword.put(:resume_from, branch)
+                end
+
               opts = with_model(opts, socket)
               start_and_redirect(socket, orig_path, prompt, evolve: opts)
             else
@@ -410,6 +496,9 @@ defmodule EvoDashWeb.SimpleLive.Home do
     end
   end
 
+  # Completed, branch-backed tasks still awaiting review.
+  defp pending_reviews, do: EvoDashWeb.SimpleLive.Reviews.pending()
+
   # ── Private: path resolution ─────────────────────────────────────────────
 
   # Opens an existing directory; when allow_create is set, a bare project
@@ -422,7 +511,7 @@ defmodule EvoDashWeb.SimpleLive.Home do
 
     cond do
       value == "" ->
-        {:error, gettext("Please select a project first.")}
+        {:error, gettext("Please enter a development path.")}
 
       File.dir?(expanded) ->
         {:ok, expanded}

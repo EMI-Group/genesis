@@ -162,21 +162,6 @@
 .evo-graph-root .spark.green { fill: var(--brand); filter: drop-shadow(0 0 5px var(--brand)) drop-shadow(0 0 12px color-mix(in oklab, var(--brand) 70%, transparent)); }
 
 /* ---- 图例面板（跟随 --evo-* 变量换色） ---- */
-.evo-graph-root .evo-legend {
-  position: absolute; left: 22px; bottom: 16px; z-index: 10;
-  background: color-mix(in oklab, var(--bg) 88%, transparent);
-  border: 1px solid color-mix(in oklab, var(--hud) 15%, transparent);
-  border-radius: 8px; padding: 10px 14px; backdrop-filter: blur(6px);
-  font-size: 10px; letter-spacing: .05em;
-  color: color-mix(in oklab, var(--hud) 55%, transparent);
-  max-height: 46%; overflow-y: auto;
-}
-.evo-graph-root .evo-legend h4 { font-size: 10px; color: color-mix(in oklab, var(--hud) 85%, transparent); letter-spacing: .25em; cursor: pointer; margin: 0; }
-.evo-graph-root .evo-legend .evo-sec { margin-top: 12px; }
-.evo-graph-root .evo-legend .evo-sec-t { color: color-mix(in oklab, var(--hud) 80%, transparent); margin-bottom: 4px; }
-.evo-graph-root .evo-legend .evo-row { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
-.evo-graph-root .evo-legend .evo-row svg { flex: none; overflow: visible; }
-.evo-graph-root .evo-legend .evo-cap { opacity: .35; margin-top: 12px; font-size: 9px; }
 
 /* ---- 悬浮提示 ---- */
 .evo-graph-root .evo-tip {
@@ -216,3 +201,66 @@
   background: color-mix(in oklab, var(--evo-hud, rgb(255, 255, 255)) 10%, transparent);
   border-bottom-color: var(--evo-brand, rgb(19, 228, 37));
 }
+
+/* ---- 横向图例（底部居中条；分区为不可拆分组，标题永不与内容折行分离） ---- */
+.evo-graph-root .evo-legend-h {
+  position: absolute; z-index: 10;
+  left: 2%; right: 2%;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 4px 14px;
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--hud) 15%, transparent);
+  border-radius: 8px; padding: 6px 14px; backdrop-filter: blur(6px);
+  font-size: 10px; letter-spacing: .05em;
+  color: color-mix(in oklab, var(--hud) 55%, transparent);
+}
+.evo-graph-root .evo-legend-bottom { bottom: 16px; }
+.evo-graph-root .evo-legend-h .evo-sec-t {
+  color: color-mix(in oklab, var(--hud) 80%, transparent);
+  letter-spacing: .15em;
+}
+.evo-graph-root .evo-legend-group {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 4px 14px; min-width: 0;
+}
+.evo-graph-root .evo-legend-group .evo-sec-head {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.evo-graph-root .evo-legend-h .evo-row { display: flex; align-items: center; gap: 5px; }
+.evo-graph-root .evo-legend-h .evo-row svg { flex: none; overflow: visible; }
+
+/* ---- 灰烬树：已完成任务残留的低亮度快照，手动关闭前不消失 ---- */
+.evo-graph-root.evo-ash .evo-viewport {
+  opacity: 0.35;
+  filter: grayscale(0.55);
+}
+.evo-graph-root.evo-ash::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 4; pointer-events: none;
+  background: color-mix(in oklab, var(--bg) 30%, transparent);
+}
+
+/* 灰烬 tab：低亮度 + 关闭按钮 */
+.evo-tabbar .evo-tab.evo-tab-ash {
+  opacity: 0.55;
+  font-style: italic;
+}
+.evo-tabbar .evo-tab .evo-ash-x {
+  margin-left: 6px;
+  padding: 0 3px;
+  border-radius: 4px;
+  opacity: 0.6;
+  font-style: normal;
+  cursor: pointer;
+}
+.evo-tabbar .evo-tab .evo-ash-x:hover {
+  opacity: 1;
+  background: color-mix(in oklab, var(--evo-hud, rgb(255,255,255)) 15%, transparent);
+}
+
+/* ---- 灰烬节点：完成后的静态标记（专属 ash 状态，不再保留运行态样式） ---- */
+.evo-graph-root .node.st-ash .ring { stroke: color-mix(in oklab, var(--node-default) 70%, transparent); }
+.evo-graph-root .node.st-ash .dot { fill: none; opacity: 0; transform: scale(0); animation: none; }
+.evo-graph-root .node.st-ash .pulse { display: none; }
+.evo-graph-root .node.st-ash .halo { display: none; }
+.evo-graph-root .edge.st-ash { stroke-dasharray: none; opacity: .35; animation: none; filter: none; }

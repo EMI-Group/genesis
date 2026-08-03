@@ -489,11 +489,22 @@ const AutoGrowTextarea = {
   }
 };
 
+// ScrollIntoView hook: scrolls an element inside the panel into view on a
+// server "file_tree:scroll" event (graph node → file tree card linking).
+const ScrollIntoView = {
+  mounted() {
+    this.handleEvent("file_tree:scroll", ({id}) => {
+      const el = document.getElementById(`agent-card-${id}`);
+      if (el) el.scrollIntoView({behavior: "smooth", block: "nearest"});
+    });
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph, NodeSwitchFade, AutoGrowTextarea},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph, NodeSwitchFade, AutoGrowTextarea, ScrollIntoView},
 })
 
 // Show progress bar on live navigation and form submits
