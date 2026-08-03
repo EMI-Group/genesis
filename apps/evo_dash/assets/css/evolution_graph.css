@@ -1,0 +1,282 @@
+/* 任务演化图（/agents EvolutionGraph hook）
+   移植自 evogit-tree-lr.html，全部限定在 .evo-graph-root 作用域内。
+   视觉规范：深色舞台 + 品牌绿；状态机对齐 AgentScheduler。
+   配色全部走 --evo-* 变量（默认深色绿），艺术风格可按需整体换色。 */
+
+.evo-graph-root {
+  --bg: var(--evo-bg, rgb(16, 16, 16));
+  --brand: var(--evo-brand, rgb(19, 228, 37));
+  --path: var(--evo-path, rgb(255, 255, 255));
+  --link: var(--evo-link, rgb(217, 217, 217));
+  --node-default: var(--evo-node, rgb(153, 153, 153));
+  --hud: var(--evo-hud, rgb(255, 255, 255));
+  --lbl: var(--evo-lbl, rgba(255, 255, 255, .45));
+  --lbl-strong: var(--evo-lbl-strong, rgba(255, 255, 255, .95));
+  --lbl-dim: var(--evo-lbl-dim, rgba(255, 255, 255, .3));
+
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  background: var(--bg);
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+  color: var(--hud);
+  user-select: none;
+}
+
+.evo-graph-root .evo-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.evo-graph-root .evo-canvas.dragging { cursor: grabbing; }
+
+/* ---- 极简 HUD ---- */
+.evo-graph-root .evo-hud { position: absolute; z-index: 10; pointer-events: none; }
+.evo-graph-root .evo-tl { top: 18px; left: 22px; }
+.evo-graph-root .evo-br { bottom: 16px; right: 22px; }
+.evo-graph-root .evo-brand-t { font-size: 13px; font-weight: 700; letter-spacing: .35em; opacity: .9; }
+.evo-graph-root .evo-brand-sub { font-size: 9px; letter-spacing: .28em; opacity: .35; margin-top: 5px; }
+.evo-graph-root .evo-counter { font-size: 10px; letter-spacing: .12em; opacity: .5; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.evo-graph-root .evo-counter b { color: var(--brand); font-weight: 600; }
+.evo-graph-root .evo-event { font-size: 10px; letter-spacing: .08em; opacity: 0; transition: opacity .5s; max-width: 40vw; text-align: right; }
+.evo-graph-root .evo-event.show { opacity: .55; }
+
+/* ---- 空状态 ---- */
+.evo-graph-root .evo-empty {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; pointer-events: none;
+}
+.evo-graph-root .evo-empty-t { font-size: 13px; letter-spacing: .2em; opacity: .6; }
+.evo-graph-root .evo-empty-s { font-size: 10px; letter-spacing: .1em; opacity: .3; }
+
+/* ---- 状态颜色（全局） ---- */
+.evo-graph-root .st-running { color: var(--path); }
+.evo-graph-root .st-waiting, .evo-graph-root .st-ready { color: var(--brand); }
+.evo-graph-root .st-pending { color: color-mix(in oklab, var(--hud) 75%, transparent); }
+.evo-graph-root .st-blocked { color: color-mix(in oklab, var(--hud) 50%, transparent); }
+.evo-graph-root .st-completed { color: color-mix(in oklab, var(--hud) 55%, transparent); }
+.evo-graph-root .st-failed { color: #f66; }
+
+/* ================= 连线：随子节点状态变化 ================= */
+.evo-graph-root .edge {
+  fill: none; stroke: color-mix(in oklab, var(--link) 60%, transparent); stroke-width: 1.5;
+  transition: stroke .8s, opacity .8s, d .9s cubic-bezier(.22, 1, .36, 1);
+}
+.evo-graph-root .edge.st-pending { stroke: color-mix(in oklab, var(--link) 35%, transparent); stroke-dasharray: 3 6; }
+.evo-graph-root .edge.st-blocked { stroke: color-mix(in oklab, var(--link) 20%, transparent); stroke-dasharray: 3 8; }
+.evo-graph-root .edge.st-running {
+  stroke: color-mix(in oklab, var(--path) 95%, transparent); stroke-dasharray: 7 9;
+  animation: evo-flow .9s linear infinite;
+  filter: drop-shadow(0 0 4px color-mix(in oklab, var(--path) 75%, transparent));
+}
+.evo-graph-root .edge.st-waiting { stroke: color-mix(in oklab, var(--brand) 55%, transparent); }
+.evo-graph-root .edge.st-ready {
+  stroke: color-mix(in oklab, var(--brand) 95%, transparent);
+  filter: drop-shadow(0 0 4px color-mix(in oklab, var(--brand) 80%, transparent));
+}
+.evo-graph-root .edge.st-failed { animation: evo-edge-flicker .6s linear 2; }
+.evo-graph-root .edge.converge {
+  stroke: color-mix(in oklab, var(--brand) 95%, transparent); stroke-dasharray: 7 9;
+  animation: evo-flow-rev .7s linear infinite;
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--brand) 80%, transparent));
+}
+@keyframes evo-flow { to { stroke-dashoffset: -16; } }
+@keyframes evo-flow-rev { to { stroke-dashoffset: 16; } }
+@keyframes evo-edge-flicker { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+
+/* ================= 节点：双圈 + 分状态动效 ================= */
+.evo-graph-root .node { transition: transform .9s cubic-bezier(.22, 1, .36, 1), opacity .6s; cursor: pointer; }
+.evo-graph-root .node .ring {
+  fill: var(--bg); stroke: var(--node-default); stroke-width: 2;
+  transition: all .3s ease-out;
+}
+.evo-graph-root .node .dot {
+  fill: var(--brand); opacity: 0; transform: scale(0);
+  transform-box: fill-box; transform-origin: center;
+  filter: drop-shadow(0 0 3px color-mix(in oklab, var(--brand) 60%, transparent));
+  transition: all .3s ease-out;
+}
+.evo-graph-root .node .halo { opacity: 0; filter: blur(6px); transform-box: fill-box; transform-origin: center; }
+.evo-graph-root .node .pulse { fill: none; stroke: var(--path); stroke-width: 1.5; opacity: 0; transform-box: fill-box; transform-origin: center; }
+.evo-graph-root .node .ag { font-size: 9px; letter-spacing: .1em; fill: var(--lbl-strong); opacity: 0; transition: opacity .5s; pointer-events: none; }
+.evo-graph-root .node .lbl { font-size: 10px; text-anchor: middle; fill: var(--lbl); transition: fill .5s; pointer-events: none; }
+
+.evo-graph-root .node .hoverring {
+  fill: none; stroke: color-mix(in oklab, var(--path) 75%, transparent); stroke-width: 1.2; opacity: 0;
+  transform-box: fill-box; transform-origin: center; transform: scale(.65);
+  transition: opacity .2s, transform .3s cubic-bezier(.34, 1.56, .64, 1);
+}
+.evo-graph-root .node.hover .hoverring { opacity: 1; transform: scale(1); }
+.evo-graph-root .node.hover .lbl { fill: var(--lbl-strong); }
+.evo-graph-root .node.hover .ring { filter: drop-shadow(0 0 6px color-mix(in oklab, var(--path) 55%, transparent)); }
+
+.evo-graph-root .node .selring {
+  fill: none; stroke: var(--brand); stroke-width: 1.5; stroke-dasharray: 4 5;
+  opacity: 0; transform-box: fill-box; transform-origin: center;
+}
+.evo-graph-root .node.selected .selring { opacity: .95; animation: evo-spin 12s linear infinite; }
+@keyframes evo-spin { to { transform: rotate(360deg); } }
+
+.evo-graph-root .node.pending .dot { opacity: 1; transform: scale(1); animation: evo-dot-breathe 2.4s ease-in-out infinite; }
+.evo-graph-root .node.blocked .ring { opacity: .55; }
+.evo-graph-root .node.blocked .dot { opacity: .8; transform: scale(1); animation: evo-dot-breathe 4.8s ease-in-out infinite; }
+
+.evo-graph-root .node.running .ring {
+  fill: var(--path); stroke: var(--path);
+  filter: drop-shadow(0 0 5px color-mix(in oklab, var(--path) 90%, transparent));
+}
+.evo-graph-root .node.running .halo { fill: var(--path); animation: evo-halo-white 2.6s ease-in-out infinite; }
+.evo-graph-root .node.running .pulse { animation: evo-ripple 2.2s ease-out infinite; }
+.evo-graph-root .node.running .ag { opacity: .8; }
+.evo-graph-root .node.running .lbl { fill: var(--lbl-strong); }
+
+.evo-graph-root .node.waiting .ring {
+  stroke: var(--brand); stroke-width: 4;
+  filter: drop-shadow(0 0 6px var(--brand));
+}
+.evo-graph-root .node.waiting .halo { fill: var(--brand); animation: evo-halo-green 3.4s ease-in-out infinite; }
+
+.evo-graph-root .node.ready .ring {
+  fill: var(--path); stroke: var(--path);
+  filter: drop-shadow(0 0 8px color-mix(in oklab, var(--path) 95%, transparent));
+  animation: evo-ready-pulse .7s ease-in-out 2;
+}
+.evo-graph-root .node.ready .pulse { animation: evo-ripple .8s ease-out 2; }
+
+.evo-graph-root .node.root .ring {
+  stroke: color-mix(in oklab, var(--brand) 50%, transparent); stroke-width: 3;
+  filter: drop-shadow(0 0 4px color-mix(in oklab, var(--brand) 50%, transparent));
+}
+.evo-graph-root .node.root.waiting .ring { stroke: var(--brand); }
+
+.evo-graph-root .node.completed .lbl { fill: var(--lbl-dim); }
+.evo-graph-root .node.failed .ring { animation: evo-node-flicker .6s linear 2; }
+
+@keyframes evo-dot-breathe { 0%, 100% { transform: scale(.72); opacity: .5; } 50% { transform: scale(1.18); opacity: 1; } }
+@keyframes evo-halo-white { 0%, 100% { opacity: .16; } 50% { opacity: .48; } }
+@keyframes evo-halo-green { 0%, 100% { opacity: .10; } 50% { opacity: .38; } }
+@keyframes evo-ready-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@keyframes evo-ripple { 0% { transform: scale(1); opacity: .5; } 100% { transform: scale(2.4); opacity: 0; } }
+@keyframes evo-node-flicker { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+
+.evo-graph-root .spark { fill: var(--path); filter: drop-shadow(0 0 5px var(--path)) drop-shadow(0 0 12px color-mix(in oklab, var(--path) 70%, transparent)); }
+.evo-graph-root .spark.green { fill: var(--brand); filter: drop-shadow(0 0 5px var(--brand)) drop-shadow(0 0 12px color-mix(in oklab, var(--brand) 70%, transparent)); }
+
+/* ---- 图例面板（跟随 --evo-* 变量换色） ---- */
+
+/* ---- 悬浮提示 ---- */
+.evo-graph-root .evo-tip {
+  position: fixed; z-index: 30; pointer-events: none;
+  background: color-mix(in oklab, var(--bg) 92%, transparent);
+  border: 1px solid color-mix(in oklab, var(--hud) 15%, transparent);
+  border-radius: 6px; padding: 6px 10px;
+  font-size: 10px; letter-spacing: .05em;
+  color: color-mix(in oklab, var(--hud) 85%, transparent);
+  opacity: 0; transition: opacity .15s; white-space: nowrap;
+}
+.evo-graph-root .evo-tip b { color: var(--lbl-strong); }
+
+/* ---- 树切换标签栏（在 hook 容器外，跟随 --evo-* 变量换色） ---- */
+.evo-tabbar {
+  border-bottom: 1px solid color-mix(in oklab, var(--evo-hud, rgb(255, 255, 255)) 12%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+}
+.evo-tabbar .evo-tab {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: color-mix(in oklab, var(--evo-hud, rgb(255, 255, 255)) 40%, transparent);
+  transition: color 0.2s, background 0.2s;
+}
+.evo-tabbar .evo-tab:hover {
+  color: color-mix(in oklab, var(--evo-hud, rgb(255, 255, 255)) 75%, transparent);
+}
+.evo-tabbar .evo-tab.evo-tab-active {
+  color: var(--evo-hud, rgb(255, 255, 255));
+  background: color-mix(in oklab, var(--evo-hud, rgb(255, 255, 255)) 10%, transparent);
+  border-bottom-color: var(--evo-brand, rgb(19, 228, 37));
+}
+
+/* ---- 横向图例（底部居中条；分区为不可拆分组，标题永不与内容折行分离） ---- */
+.evo-graph-root .evo-legend-h {
+  position: absolute; z-index: 10;
+  left: 2%; right: 2%;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 4px 14px;
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--hud) 15%, transparent);
+  border-radius: 8px; padding: 6px 14px; backdrop-filter: blur(6px);
+  font-size: 10px; letter-spacing: .05em;
+  color: color-mix(in oklab, var(--hud) 55%, transparent);
+}
+.evo-graph-root .evo-legend-bottom { bottom: 16px; }
+.evo-graph-root .evo-legend-h .evo-sec-t {
+  color: color-mix(in oklab, var(--hud) 80%, transparent);
+  letter-spacing: .15em;
+}
+.evo-graph-root .evo-legend-group {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: 4px 14px; min-width: 0;
+}
+.evo-graph-root .evo-legend-group .evo-sec-head {
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.evo-graph-root .evo-legend-h .evo-row { display: flex; align-items: center; gap: 5px; }
+.evo-graph-root .evo-legend-h .evo-row svg { flex: none; overflow: visible; }
+
+/* ---- 灰烬树：已完成任务残留的低亮度快照，手动关闭前不消失 ---- */
+.evo-graph-root.evo-ash .evo-viewport {
+  opacity: 0.35;
+  filter: grayscale(0.55);
+}
+.evo-graph-root.evo-ash::before {
+  content: "";
+  position: absolute; inset: 0; z-index: 4; pointer-events: none;
+  background: color-mix(in oklab, var(--bg) 30%, transparent);
+}
+
+/* 灰烬 tab：低亮度 + 关闭按钮 */
+.evo-tabbar .evo-tab.evo-tab-ash {
+  opacity: 0.55;
+  font-style: italic;
+}
+.evo-tabbar .evo-tab .evo-ash-x {
+  margin-left: 6px;
+  padding: 0 3px;
+  border-radius: 4px;
+  opacity: 0.6;
+  font-style: normal;
+  cursor: pointer;
+}
+.evo-tabbar .evo-tab .evo-ash-x:hover {
+  opacity: 1;
+  background: color-mix(in oklab, var(--evo-hud, rgb(255,255,255)) 15%, transparent);
+}
+
+/* ---- 灰烬节点：完成后的静态标记（专属 ash 状态，不再保留运行态样式） ---- */
+.evo-graph-root .node.st-ash .ring { stroke: color-mix(in oklab, var(--node-default) 70%, transparent); }
+.evo-graph-root .node.st-ash .dot { fill: none; opacity: 0; transform: scale(0); animation: none; }
+.evo-graph-root .node.st-ash .pulse { display: none; }
+.evo-graph-root .node.st-ash .halo { display: none; }
+.evo-graph-root .edge.st-ash { stroke-dasharray: none; opacity: .35; animation: none; filter: none; }
+
+
+/* ---- 标签栏横向滚动条做细：默认滚动条会挤压 36px 顶栏 ---- */
+.evo-tabbar { scrollbar-width: thin; }
+.evo-tabbar::-webkit-scrollbar { height: 4px; }
+.evo-tabbar::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--evo-hud, rgb(255,255,255)) 25%, transparent);
+  border-radius: 2px;
+}
+.evo-tabbar::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- 简洁模式：图例右端让开右下角「专业版」入口 ---- */
+.simple-canvas .evo-legend-h { right: max(96px, 2%); }
+
+/* ---- 简洁模式：右下角事件 toast 上移，避开「专业版」入口与图例 ---- */
+.simple-canvas .evo-br { bottom: 64px; }

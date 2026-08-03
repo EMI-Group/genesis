@@ -1264,3 +1264,473 @@ button, a, input, textarea, select, summary,
     transparent 100%
   );
 }
+
+/* === Project tabs（浏览器式项目标签条） === */
+
+.project-tab {
+  @apply flex items-center gap-1.5 px-4 pt-2 pb-1.5 text-sm font-medium whitespace-nowrap transition-colors border border-transparent shrink-0;
+  border-radius: 10px 10px 0 0;
+  clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 100%, 0 100%);
+  margin-bottom: -1px;
+}
+
+.project-tab-active {
+  @apply bg-base-100 text-base-content border-base-content/25 relative z-10 shadow-sm;
+}
+
+.project-tab-idle {
+  @apply bg-base-200/70 text-base-content/55 hover:bg-base-200 hover:text-base-content;
+}
+
+.project-tab-action {
+  @apply p-2 mb-0.5 rounded-lg text-base-content/40 hover:text-base-content hover:bg-base-200 transition-colors shrink-0;
+}
+
+.project-tab-panel {
+  @apply flex items-center gap-2 px-4 py-2.5 bg-base-100 border border-base-content/25 rounded-xl shadow-sm;
+}
+
+/* 任务演化图（/agents EvolutionGraph hook），自带 .evo-graph-root 作用域 */
+@import "./evolution_graph.css";
+
+/* 艺术风格体系（data-art）：构成主义 / 瑞士国际主义 */
+@import "./art_styles.css";
+/* ==========================================================================
+   极简模式（.simple-ui）：固定浅色，隔离 data-art 艺术风格
+   用于新的默认三步流程：/welcome（API 设置）→ /（任务输入）→ /tree（全屏智能体树）
+   ========================================================================== */
+
+.simple-ui {
+  /* 固定浅色 DaisyUI 变量，压住 :root[data-art="x"] 的任何覆盖 */
+  --color-base-100: #ffffff;
+  --color-base-200: #f8fafc;
+  --color-base-300: #e2e8f0;
+  --color-base-content: #0f172a;
+  --color-primary: #0f172a;
+  --color-primary-content: #ffffff;
+  --color-secondary: #475569;
+  --color-secondary-content: #ffffff;
+  --color-accent: #475569;
+  --color-accent-content: #ffffff;
+  --color-neutral: #1e293b;
+  --color-neutral-content: #ffffff;
+  --color-info: #2563eb;
+  --color-info-content: #ffffff;
+  --color-success: #16a34a;
+  --color-success-content: #ffffff;
+  --color-warning: #d97706;
+  --color-warning-content: #ffffff;
+  --color-error: #dc2626;
+  --color-error-content: #ffffff;
+  --radius-selector: 0.5rem;
+  --radius-field: 0.75rem;
+  --radius-box: 1rem;
+
+  background: #ffffff;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  /* 白天：浅色树画布 + 加重饱和度的树配色 */
+  --sc-canvas: #f8fafc;
+  --sc-line: #e2e8f0;
+  --sc-fg: #0f172a;
+  --sc-fg-dim: #64748b;
+
+  --evo-bg: #f8fafc;
+  --evo-brand: #373435;
+  --evo-path: #C8383C;
+  --evo-link: oklch(55% 0.02 260);
+  --evo-node: oklch(45% 0.02 260);
+  --evo-hud: oklch(20% 0.01 260);
+  --evo-lbl: oklch(45% 0.02 260 / 0.7);
+  --evo-lbl-strong: oklch(15% 0.02 260);
+  --evo-lbl-dim: oklch(55% 0.02 260 / 0.55);
+}
+
+/* 终端风格的 CRT 扫描线挂在 body::after 上，极简页必须屏蔽 */
+body:has(.simple-ui)::after {
+  display: none !important;
+  content: none !important;
+}
+
+/* 极简页内消灭艺术风格可能引入的装饰（硬投影/斜切/纹理） */
+.simple-ui :where(.card, .btn, .dropdown-content, .modal-box, .input, .select, .textarea) {
+  box-shadow: none;
+  transform: none;
+  clip-path: none;
+}
+
+/* 首页大输入框：谷歌/夸克式搜索框。
+   参照 ChatGPT/Gemini/Perplexity 的 composer 做法：默认单行紧凑高度、文字垂直居中，
+   内容增多时框体自适应增高（CSS field-sizing，社区 2026 年已 Baseline），封顶后内部滚动。 */
+.simple-search-box {
+  display: flex;
+  align-items: center;
+  border: 1px solid #e2e8f0;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.08);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.simple-search-box:hover,
+.simple-search-box:focus-within {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
+}
+.simple-search-box textarea {
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  width: 100%;
+  color: #0f172a;
+  line-height: 1.5rem;
+  padding: 0;
+  field-sizing: content; /* Chrome/Edge 123+, Safari 26.2+, Firefox 152+；旧浏览器由 AutoGrowTextarea hook 兜底 */
+  min-height: 4.5rem;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.simple-search-box textarea:focus {
+  outline: none;
+  box-shadow: none;
+}
+.simple-search-box textarea::placeholder {
+  color: #94a3b8;
+}
+
+/* ==========================================================================
+   极简版主题（data-simple-theme）：day（默认）/ night / ink / terminal
+   只作用于 .simple-ui 作用域；切换器在 Layouts.simple_theme_selector。
+   树页深色画布/顶栏通过 --sc-* 变量统一：
+   ========================================================================== */
+
+.simple-canvas { background: var(--sc-canvas, #f8fafc); }
+.simple-topbar { border-bottom: 1px solid var(--sc-line, #e2e8f0); }
+.simple-link { color: var(--sc-fg-dim, #64748b); transition: color 0.15s ease; }
+.simple-link:hover { color: var(--sc-fg, #0f172a); }
+
+/* 切换器选中态 */
+.simple-theme-check { visibility: hidden; }
+.simple-theme-active .simple-theme-check { visibility: visible; }
+.simple-theme-active { background: color-mix(in oklab, currentColor 8%, transparent); }
+
+/* ============================ 黑夜 night ================================= */
+
+[data-simple-theme="night"] .simple-ui {
+  --color-base-100: #0f172a;
+  --color-base-200: #1e293b;
+  --color-base-300: #334155;
+  --color-base-content: #e2e8f0;
+  --color-primary: #e2e8f0;
+  --color-primary-content: #0f172a;
+  --color-secondary: #94a3b8;
+  --color-secondary-content: #0f172a;
+  --color-accent: #94a3b8;
+  --color-accent-content: #0f172a;
+  --color-neutral: #1e293b;
+  --color-neutral-content: #e2e8f0;
+  --color-info: #60a5fa;
+  --color-info-content: #0f172a;
+  --color-success: #4ade80;
+  --color-success-content: #0f172a;
+  --color-warning: #fbbf24;
+  --color-warning-content: #0f172a;
+  --color-error: #f87171;
+  --color-error-content: #0f172a;
+
+  background: #0b1120;
+  color: #e2e8f0;
+
+  --sc-canvas: #0b1120;
+  --sc-line: rgba(255, 255, 255, 0.08);
+  --sc-fg: #f1f5f9;
+  --sc-fg-dim: #64748b;
+
+  /* 树：与白天同套品牌红，深底上用更亮的红 */
+  --evo-bg: #0b1120;
+  --evo-brand: #C8383C;
+  --evo-path: #E64A4E;
+  --evo-link: oklch(60% 0.02 260);
+  --evo-node: oklch(55% 0.02 260);
+  --evo-hud: #e2e8f0;
+  --evo-lbl: rgba(226, 232, 240, 0.5);
+  --evo-lbl-strong: rgba(241, 245, 249, 0.95);
+  --evo-lbl-dim: rgba(148, 163, 184, 0.45);
+}
+[data-simple-theme="night"] .simple-ui :where(.bg-white) { background-color: #0f172a !important; }
+[data-simple-theme="night"] .simple-ui :where(.bg-slate-100) { background-color: #1e293b !important; }
+[data-simple-theme="night"] .simple-ui :where(.bg-slate-50) { background-color: #111c30 !important; }
+[data-simple-theme="night"] .simple-ui :where(.text-slate-900) { color: #f1f5f9 !important; }
+[data-simple-theme="night"] .simple-ui :where(.text-slate-700) { color: #e2e8f0 !important; }
+[data-simple-theme="night"] .simple-ui :where(.text-slate-600) { color: #cbd5e1 !important; }
+[data-simple-theme="night"] .simple-ui :where(.text-slate-500) { color: #94a3b8 !important; }
+[data-simple-theme="night"] .simple-ui :where(.text-slate-400) { color: #64748b !important; }
+[data-simple-theme="night"] .simple-ui :where(.border-slate-200) { border-color: #1e293b !important; }
+[data-simple-theme="night"] .simple-ui :where(.border-slate-100) { border-color: #16202f !important; }
+[data-simple-theme="night"] .simple-ui :where(.border-slate-300) { border-color: #334155 !important; }
+[data-simple-theme="night"] .simple-ui .simple-search-box {
+  background: #0f172a;
+  border-color: #1e293b;
+  box-shadow: none;
+}
+[data-simple-theme="night"] .simple-ui .simple-search-box:hover,
+[data-simple-theme="night"] .simple-ui .simple-search-box:focus-within {
+  border-color: #334155;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+[data-simple-theme="night"] .simple-ui .simple-search-box textarea { color: #f1f5f9; }
+[data-simple-theme="night"] .simple-ui :where(.bg-slate-900) { background-color: #f1f5f9 !important; }
+[data-simple-theme="night"] .simple-ui :where(.bg-slate-900.text-white) { color: #0f172a !important; }
+[data-simple-theme="night"] .simple-ui :where(.hover\:bg-slate-700):hover { background-color: #cbd5e1 !important; }
+
+/* ============================ 水墨 ink ================================== */
+
+[data-simple-theme="ink"] .simple-ui {
+  --color-base-100: oklch(96% 0.018 95);
+  --color-base-200: oklch(90% 0.025 95);
+  --color-base-300: oklch(84% 0.03 95);
+  --color-base-content: oklch(25% 0.02 60);
+  --color-primary: oklch(25% 0.02 60);
+  --color-primary-content: oklch(94% 0.02 95);
+  --color-secondary: oklch(45% 0.16 30);
+  --color-secondary-content: oklch(94% 0.02 95);
+  --color-accent: oklch(45% 0.16 30);
+  --color-accent-content: oklch(94% 0.02 95);
+  --color-neutral: oklch(35% 0.02 60);
+  --color-neutral-content: oklch(94% 0.02 95);
+  --color-info: oklch(25% 0.02 60);
+  --color-info-content: oklch(94% 0.02 95);
+  --color-success: oklch(35% 0.08 150);
+  --color-success-content: oklch(94% 0.02 95);
+  --color-warning: oklch(55% 0.12 75);
+  --color-warning-content: oklch(25% 0.02 60);
+  --color-error: oklch(45% 0.16 30);
+  --color-error-content: oklch(94% 0.02 95);
+
+  background: oklch(94% 0.02 95);
+  color: oklch(25% 0.02 60);
+  font-family: STKaiti, KaiTi, SimSun, "Songti SC", "Noto Serif SC", serif;
+
+  --ink-black: oklch(25% 0.02 60);
+  --ink-red: oklch(45% 0.16 30);
+  --ink-line: oklch(45% 0.02 60 / 0.45);
+
+  --sc-canvas: oklch(94% 0.02 95);
+  --sc-line: oklch(45% 0.02 60 / 0.35);
+  --sc-fg: oklch(20% 0.02 60);
+  --sc-fg-dim: oklch(45% 0.02 60 / 0.7);
+
+  --evo-bg: oklch(94% 0.02 95);
+  --evo-brand: oklch(45% 0.16 30);
+  --evo-path: oklch(25% 0.02 60);
+  --evo-link: oklch(40% 0.02 60);
+  --evo-node: oklch(55% 0.02 60);
+  --evo-hud: oklch(25% 0.02 60);
+  --evo-lbl: oklch(40% 0.02 60 / 0.75);
+  --evo-lbl-strong: oklch(20% 0.02 60);
+  --evo-lbl-dim: oklch(50% 0.02 60 / 0.5);
+}
+[data-simple-theme="ink"] .simple-ui :where(.bg-white) { background: oklch(96% 0.018 95) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.bg-slate-100) { background: oklch(91% 0.02 95) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.bg-slate-50) { background: oklch(94.5% 0.02 95) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.text-slate-900),
+[data-simple-theme="ink"] .simple-ui :where(.text-slate-700) { color: var(--ink-black) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.text-slate-600),
+[data-simple-theme="ink"] .simple-ui :where(.text-slate-500) { color: oklch(40% 0.02 60) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.text-slate-400) { color: oklch(50% 0.02 60 / 0.7) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.border-slate-200),
+[data-simple-theme="ink"] .simple-ui :where(.border-slate-100),
+[data-simple-theme="ink"] .simple-ui :where(.border-slate-300) { border-color: var(--ink-line) !important; }
+[data-simple-theme="ink"] .simple-ui .simple-search-box {
+  background: oklch(96% 0.018 95);
+  border-color: var(--ink-line);
+  border-radius: 4px;
+  box-shadow: none;
+}
+[data-simple-theme="ink"] .simple-ui .simple-search-box textarea { color: var(--ink-black); }
+[data-simple-theme="ink"] .simple-ui :where(.bg-slate-900) { background: var(--ink-black) !important; }
+[data-simple-theme="ink"] .simple-ui :where(.bg-slate-900):hover { background: var(--ink-red) !important; }
+
+/* ============================ 终端 terminal ============================= */
+
+[data-simple-theme="terminal"] .simple-ui {
+  --color-base-100: oklch(12% 0.03 145);
+  --color-base-200: oklch(16% 0.04 145);
+  --color-base-300: oklch(20% 0.05 145);
+  --color-base-content: oklch(85% 0.25 145);
+  --color-primary: oklch(85% 0.28 145);
+  --color-primary-content: oklch(8% 0.02 145);
+  --color-secondary: oklch(55% 0.15 145);
+  --color-secondary-content: oklch(8% 0.02 145);
+  --color-accent: oklch(85% 0.28 145);
+  --color-accent-content: oklch(8% 0.02 145);
+  --color-neutral: oklch(18% 0.04 145);
+  --color-neutral-content: oklch(85% 0.25 145);
+  --color-info: oklch(85% 0.28 145);
+  --color-info-content: oklch(8% 0.02 145);
+  --color-success: oklch(85% 0.28 145);
+  --color-success-content: oklch(8% 0.02 145);
+  --color-warning: oklch(80% 0.2 90);
+  --color-warning-content: oklch(8% 0.02 145);
+  --color-error: oklch(60% 0.22 25);
+  --color-error-content: oklch(8% 0.02 145);
+
+  background: oklch(10% 0.02 145);
+  color: oklch(85% 0.25 145);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+
+  --term-green: oklch(85% 0.28 145);
+  --term-dim: oklch(55% 0.15 145);
+
+  --sc-canvas: oklch(9% 0.02 145);
+  --sc-line: oklch(85% 0.28 145 / 0.3);
+  --sc-fg: var(--term-green);
+  --sc-fg-dim: var(--term-dim);
+
+  --evo-bg: oklch(9% 0.02 145);
+  --evo-brand: var(--term-green);
+  --evo-path: oklch(92% 0.22 145);
+  --evo-link: oklch(65% 0.18 145);
+  --evo-node: oklch(45% 0.12 145);
+  --evo-hud: oklch(85% 0.25 145);
+  --evo-lbl: oklch(75% 0.18 145 / 0.6);
+  --evo-lbl-strong: oklch(95% 0.25 145);
+  --evo-lbl-dim: oklch(55% 0.12 145 / 0.5);
+}
+[data-simple-theme="terminal"] .simple-ui::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.16) 0 1px,
+    transparent 1px 3px
+  );
+  opacity: 0.55;
+}
+[data-simple-theme="terminal"] .simple-ui :where(.bg-white) { background: oklch(12% 0.03 145) !important; }
+[data-simple-theme="terminal"] .simple-ui :where(.bg-slate-100) { background: oklch(16% 0.04 145) !important; }
+[data-simple-theme="terminal"] .simple-ui :where(.bg-slate-50) { background: oklch(14% 0.035 145) !important; }
+[data-simple-theme="terminal"] .simple-ui :where(.text-slate-900),
+[data-simple-theme="terminal"] .simple-ui :where(.text-slate-700),
+[data-simple-theme="terminal"] .simple-ui :where(.text-slate-600) { color: var(--term-green) !important; }
+[data-simple-theme="terminal"] .simple-ui :where(.text-slate-500),
+[data-simple-theme="terminal"] .simple-ui :where(.text-slate-400) { color: var(--term-dim) !important; }
+[data-simple-theme="terminal"] .simple-ui :where(.border-slate-200),
+[data-simple-theme="terminal"] .simple-ui :where(.border-slate-100),
+[data-simple-theme="terminal"] .simple-ui :where(.border-slate-300) { border-color: var(--term-green) !important; }
+[data-simple-theme="terminal"] .simple-ui .simple-search-box {
+  background: oklch(8% 0.02 145);
+  border-color: var(--term-green);
+  border-radius: 0;
+  box-shadow: none;
+}
+[data-simple-theme="terminal"] .simple-ui .simple-search-box textarea { color: var(--term-green); }
+[data-simple-theme="terminal"] .simple-ui :where(.bg-slate-900) { background: var(--term-green) !important; }
+[data-simple-theme="terminal"] .simple-ui :where(.bg-slate-900.text-white) { color: oklch(8% 0.02 145) !important; }
+[data-simple-theme="terminal"] .simple-ui ::placeholder { color: var(--term-dim) !important; }
+
+/* 极简页左上角品牌：暗色主题下切换反白 logo */
+.brand-logo-dark { display: none; }
+[data-simple-theme="night"] .brand-logo-light,
+[data-simple-theme="terminal"] .brand-logo-light { display: none; }
+[data-simple-theme="night"] .brand-logo-dark,
+[data-simple-theme="terminal"] .brand-logo-dark { display: block; }
+
+/* 文件树面板：pro /agents 三列布局（文件树 | 演化图 | 详情） */
+@media (min-width: 1280px) {
+  .agents-page-layout.with-file-tree {
+    grid-template-columns: 18rem 1fr 1fr;
+  }
+  .agents-file-col {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+/* 未选中智能体时收起详情列：图区占满 */
+@media (min-width: 1280px) {
+  .agents-page-layout.no-detail {
+    grid-template-columns: 1fr;
+  }
+  .agents-page-layout.with-file-tree.no-detail {
+    grid-template-columns: 18rem 1fr;
+  }
+}
+
+
+/* 极简页 flash 下移，避免遮住右上角主题切换器 */
+.simple-ui #flash-group {
+  top: 3.5rem !important;
+}
+
+/* ---- 审阅页迷你树状图：实线连线 + 圆圈，修改红/新增绿/删除红删除线 ---- */
+.change-tree,
+.change-tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 14px;
+  border-left: 1px solid #cbd5e1;
+}
+.change-tree li {
+  position: relative;
+  padding: 1px 0 1px 10px;
+  line-height: 1.4;
+}
+.change-tree li::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 0.7em;
+  width: 8px;
+  border-top: 1px solid #cbd5e1;
+}
+.change-tree .ct-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: #94a3b8;
+}
+.change-tree .ct-dot.ct-added { background: #16a34a; }
+.change-tree .ct-dot.ct-modified { background: #C8383C; }
+.change-tree .ct-dot.ct-deleted { background: #C8383C; }
+.change-tree .ct-dot.ct-dir { background: #94a3b8; }
+.change-tree .ct-name {
+  font-size: 12px;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Microsoft YaHei", monospace;
+}
+.change-tree .ct-name.ct-deleted {
+  text-decoration: line-through;
+  color: #94a3b8;
+}
+
+/* 审阅页迷你任务树：纯静态 SVG 曲线 + 圆圈，直接放在背景上（无框）
+   认知负荷优化：大间距、加粗连线、根节点品牌红作信息锚点 */
+.review-mini-tree {
+  overflow: auto;
+  max-height: 260px;
+  padding: 4px 0;
+}
+.review-mini-tree .mt-edge {
+  stroke: #94a3b8;
+  stroke-width: 2;
+  fill: none;
+}
+.review-mini-tree .mt-node {
+  fill: #cbd5e1;
+  stroke: #64748b;
+  stroke-width: 1.5;
+}
+.review-mini-tree .mt-root {
+  fill: #cbd5e1;
+  stroke: #64748b;
+  stroke-width: 1.5;
+}

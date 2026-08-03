@@ -25,6 +25,7 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
+import EvolutionGraph from "./hooks/evolution_graph.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 
 // Compute the longest common prefix among an array of strings
@@ -469,11 +470,41 @@ const DialogModal = {
   }
 };
 
+// AutoGrowTextarea hook: fallback for browsers without CSS `field-sizing: content`
+// (Chrome/Edge 123+, Safari 26.2+, Firefox 152+ handle it natively — the hook no-ops there).
+const AutoGrowTextarea = {
+  mounted() {
+    this._native = window.CSS && CSS.supports && CSS.supports("field-sizing", "content");
+    this._grow = () => {
+      if (this._native) return;
+      const el = this.el;
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight, 192) + "px"; // 12rem cap, mirrors the CSS
+    };
+    this.el.addEventListener("input", this._grow);
+    this._grow();
+  },
+  updated() {
+    this._grow();
+  }
+};
+
+// ScrollIntoView hook: scrolls an element inside the panel into view on a
+// server "file_tree:scroll" event (graph node → file tree card linking).
+const ScrollIntoView = {
+  mounted() {
+    this.handleEvent("file_tree:scroll", ({id}) => {
+      const el = document.getElementById(`agent-card-${id}`);
+      if (el) el.scrollIntoView({behavior: "smooth", block: "nearest"});
+    });
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, EvolutionGraph, NodeSwitchFade, AutoGrowTextarea, ScrollIntoView},
 })
 
 // Show progress bar on live navigation and form submits
