@@ -38,6 +38,17 @@ permissions:
 #   build-linux-arm64   ubuntu-22.04-arm  deb, rpm
 #   build-macos-arm64   macos-14          dmg, app
 #   build-windows-x64   windows-2022      msi, exe (NSIS)
+#
+# Artifact naming convention (canonical, underscores only — no dashes):
+#   genesis_{type}_{version}_{platform}_{arch}.{format}
+#   type:     desktop | remote
+#   version:  release tag without the leading "v" (e.g. 0.8.6)
+#   platform: linux | windows | darwin
+#   arch:     x64 | arm64
+#   format:   tar.gz | deb | rpm | AppImage | dmg | app | msi | exe
+#
+# Every uploaded artifact (Tauri installers, portable tarball, and the
+# genesis_remote daemon tarball) is renamed to this scheme before upload.
 
 jobs:
   # ── Linux x86_64 ────────────────────────────────────────────────────────
@@ -47,6 +58,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Derive release version
+        run: |
+          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
 
       - name: Install Linux system dependencies
         run: |
@@ -128,9 +144,9 @@ jobs:
 
       - name: Create genesis_remote tarball
         run: |
-          tar -czf /tmp/genesis_remote_linux_x64.tar.gz -C _build/prod/rel genesis_remote
+          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_linux_x64.tar.gz" -C _build/prod/rel genesis_remote
           echo "Remote tarball created:"
-          ls -la /tmp/genesis_remote_linux_x64.tar.gz
+          ls -la "/tmp/genesis_remote_${GENESIS_VERSION}_linux_x64.tar.gz"
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -161,23 +177,32 @@ jobs:
           cd desktop/src-tauri
           cargo tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm,appimage
 
+      - name: Rename desktop installers
+        run: |
+          BUNDLE_DIR="desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle"
+          mv "${BUNDLE_DIR}/deb/"*.deb "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.deb"
+          mv "${BUNDLE_DIR}/rpm/"*.rpm "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.rpm"
+          mv "${BUNDLE_DIR}/appimage/"*.AppImage "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.AppImage"
+          echo "Renamed installers:"
+          ls -la /tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.*
+
       - name: Create portable tarball
         run: |
           cd desktop/src-tauri/target/x86_64-unknown-linux-gnu/release
-          tar -czf /tmp/genesis_desktop_linux_x64.tar.gz genesis-desktop
+          tar -czf "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.tar.gz" genesis-desktop
           echo "Tarball created:"
-          ls -la /tmp/genesis_desktop_linux_x64.tar.gz
+          ls -la "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.tar.gz"
 
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
-            desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
-            desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm
-            desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
-            /tmp/genesis_desktop_linux_x64.tar.gz
-            /tmp/genesis_remote_linux_x64.tar.gz
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.deb
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.rpm
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.AppImage
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.tar.gz
+            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_linux_x64.tar.gz
 
   # ── Linux ARM64 ────────────────────────────────────────────────────────
   build-linux-arm64:
@@ -186,6 +211,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Derive release version
+        run: |
+          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
 
       # GitHub-hosted ARM runners report an ImageOS value that setup-beam does
       # not recognise.  Override it to the base value before setup-beam runs.
@@ -270,7 +300,7 @@ jobs:
 
       - name: Create genesis_remote tarball
         run: |
-          tar -czf /tmp/genesis_remote_linux_arm64.tar.gz -C _build/prod/rel genesis_remote
+          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_linux_arm64.tar.gz" -C _build/prod/rel genesis_remote
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -301,14 +331,22 @@ jobs:
           cd desktop/src-tauri
           cargo tauri build --target aarch64-unknown-linux-gnu --bundles deb,rpm
 
+      - name: Rename desktop installers
+        run: |
+          BUNDLE_DIR="desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle"
+          mv "${BUNDLE_DIR}/deb/"*.deb "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_arm64.deb"
+          mv "${BUNDLE_DIR}/rpm/"*.rpm "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_arm64.rpm"
+          echo "Renamed installers:"
+          ls -la /tmp/genesis_desktop_${GENESIS_VERSION}_linux_arm64.*
+
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
-            desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
-            desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
-            /tmp/genesis_remote_linux_arm64.tar.gz
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_arm64.deb
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_arm64.rpm
+            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_linux_arm64.tar.gz
 
   # ── macOS ARM64 ────────────────────────────────────────────────────────
   build-macos-arm64:
@@ -317,6 +355,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Derive release version
+        run: |
+          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -378,7 +421,7 @@ jobs:
 
       - name: Create genesis_remote tarball
         run: |
-          tar -czf /tmp/genesis_remote_darwin_arm64.tar.gz -C _build/prod/rel genesis_remote
+          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_darwin_arm64.tar.gz" -C _build/prod/rel genesis_remote
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -409,14 +452,22 @@ jobs:
           cd desktop/src-tauri
           cargo tauri build --target aarch64-apple-darwin
 
+      - name: Rename desktop installers
+        run: |
+          BUNDLE_DIR="desktop/src-tauri/target/aarch64-apple-darwin/release/bundle"
+          mv "${BUNDLE_DIR}/dmg/"*.dmg "/tmp/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.dmg"
+          mv "${BUNDLE_DIR}/macos/"*.app "/tmp/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.app"
+          echo "Renamed installers:"
+          ls -la /tmp/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.*
+
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
-            desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-            desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
-            /tmp/genesis_remote_darwin_arm64.tar.gz
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_darwin_arm64.dmg
+            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_darwin_arm64.app
+            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_darwin_arm64.tar.gz
 
   # ── Windows x86_64 ─────────────────────────────────────────────────────
   build-windows-x64:
@@ -428,6 +479,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Derive release version
+        run: |
+          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -518,7 +574,7 @@ jobs:
 
       - name: Create genesis_remote tarball
         run: |
-          tar -czf /tmp/genesis_remote_windows_x64.tar.gz -C _build/prod/rel genesis_remote
+          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_windows_x64.tar.gz" -C _build/prod/rel genesis_remote
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -549,11 +605,19 @@ jobs:
           cd desktop/src-tauri
           cargo tauri build --target x86_64-pc-windows-msvc
 
+      - name: Rename desktop installers
+        run: |
+          BUNDLE_DIR="desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
+          mv "${BUNDLE_DIR}/msi/"*.msi "${BUNDLE_DIR}/msi/genesis_desktop_${GENESIS_VERSION}_windows_x64.msi"
+          mv "${BUNDLE_DIR}/nsis/"*.exe "${BUNDLE_DIR}/nsis/genesis_desktop_${GENESIS_VERSION}_windows_x64.exe"
+          echo "Renamed installers:"
+          ls -la "${BUNDLE_DIR}/msi/genesis_desktop_${GENESIS_VERSION}_windows_x64.msi" "${BUNDLE_DIR}/nsis/genesis_desktop_${GENESIS_VERSION}_windows_x64.exe"
+
       - name: Upload to GitHub release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
           files: |
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            /tmp/genesis_remote_windows_x64.tar.gz
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/genesis_desktop_${{ env.GENESIS_VERSION }}_windows_x64.msi
+            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/genesis_desktop_${{ env.GENESIS_VERSION }}_windows_x64.exe
+            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_windows_x64.tar.gz
