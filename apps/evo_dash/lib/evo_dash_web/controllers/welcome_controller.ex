@@ -6,7 +6,12 @@ defmodule EvoDashWeb.WelcomeController do
       EvoGit.Config.VersionState.complete_onboarding()
     end
 
+    # Preserve the query string (e.g. ?art=constructivism style previews)
+    # across the onboarding redirect.
+    target = if conn.query_string == "", do: "/", else: "/?" <> conn.query_string
+
     conn
-    |> redirect(to: "/")
+    |> put_session(:onboarding_completed, true)
+    |> redirect(to: target)
   end
 end

@@ -15,6 +15,9 @@ defmodule EvoDashWeb.PageControllerTest do
     File.mkdir_p!(tmp_config)
     original = System.get_env("XDG_CONFIG_HOME")
     System.put_env("XDG_CONFIG_HOME", tmp_config)
+    # Windows: EvoGit.Config.config_dir/0 honours APPDATA instead of XDG.
+    original_appdata = System.get_env("APPDATA")
+    System.put_env("APPDATA", tmp_config)
 
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do
       EvoGit.Config.VersionState.complete_onboarding()
@@ -25,6 +28,12 @@ defmodule EvoDashWeb.PageControllerTest do
         System.put_env("XDG_CONFIG_HOME", original)
       else
         System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      if original_appdata do
+        System.put_env("APPDATA", original_appdata)
+      else
+        System.delete_env("APPDATA")
       end
 
       File.rm_rf!(tmp_config)

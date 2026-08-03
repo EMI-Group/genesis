@@ -15,146 +15,122 @@ defmodule EvoDashWeb.WelcomeLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app
-      flash={@flash}
-      current_page={:welcome}
-      simple_nav={false}
-      current_node_id={@current_node_id}
-      current_node_name={@current_node_name}
-      running_tasks={@running_tasks}
-      pending_tasks={@pending_tasks}
-    >
-      <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
-          <!-- Header (non-scrolling) -->
-          <div class="flex items-center gap-3 mb-3 shrink-0">
-            <div class="text-3xl shrink-0">
-              {if @has_model?, do: "✨", else: "🚀"}
-            </div>
-            <div class="min-w-0">
-              <h2 class="text-xl font-bold leading-tight">
-                {if @has_model?,
-                  do: gettext("You're All Set!"),
-                  else: gettext("Welcome to Genesis")}
-              </h2>
-              <p class="text-sm text-base-content/60 leading-snug">
-                {if @has_model?,
-                  do: gettext(
+    <EvoDashWeb.Layouts.simple flash={@flash}>
+      <div class="flex-1 flex flex-col items-center px-4 py-10 sm:py-16">
+        <div class="w-full max-w-xl flex flex-col">
+          <!-- Header -->
+          <div class="text-center mb-8">
+            <h2 class="text-2xl font-bold tracking-tight text-slate-900">
+              {if @has_model?,
+                do: gettext("You're All Set!"),
+                else: gettext("Set up your LLM")}
+            </h2>
+
+            <p class="text-sm text-slate-500 mt-2">
+              {if @has_model?,
+                do:
+                  gettext(
                     "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
                   ),
-                  else: gettext(
-                    "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
+                else:
+                  gettext(
+                    "Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere."
                   )}
-              </p>
-            </div>
+            </p>
           </div>
 
           <%= if @has_model? do %>
             <!-- All-set state: ready to go -->
             <div class="flex flex-col items-center gap-6">
-              <div class="bg-success/10 border border-success/20 rounded-xl p-6 flex items-center gap-3 w-full">
-                <.icon name="hero-check-circle" class="size-8 text-success shrink-0" />
-                <div class="text-left">
-                  <p class="font-bold text-success">
-                    {gettext("Ready to build!")}
-                  </p>
-                  <p class="text-sm text-base-content/60 mt-1">
-                    {gettext("Your LLM is configured. You can manage it anytime in Settings.")}
-                  </p>
-                </div>
+              <div class="flex items-center gap-3 text-slate-700">
+                <.icon name="hero-check-circle" class="size-6 text-green-600 shrink-0" />
+                <p class="text-sm">
+                  {gettext("Your LLM is configured. You can manage it anytime in Settings.")}
+                </p>
               </div>
 
-              <div class="flex items-center gap-3 w-full justify-center">
-                <button phx-click="get_started" class="btn btn-primary rounded-xl px-8">
-                  {gettext("Go to Dashboard")}
+              <div class="flex items-center gap-4">
+                <button
+                  id="welcome-get-started"
+                  phx-click="get_started"
+                  class="btn btn-primary rounded-full px-8"
+                >
+                  {gettext("Get started")}
                 </button>
-                <a href={~p"/settings"} class="btn btn-ghost rounded-xl">
+
+                <a
+                  href={~p"/settings"}
+                  class="text-sm text-slate-400 hover:text-slate-600 transition-colors"
+                >
                   {gettext("Open Settings")}
                 </a>
               </div>
             </div>
           <% else %>
-            <!-- Setup state: flat model grid + API key -->
-            <div class="shrink-0 mb-4">
-              <h3 class="text-lg font-bold mb-1">
-                {gettext("Add your first LLM")}
-              </h3>
-              <p class="text-sm text-base-content/60">
-                {gettext("Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere.")}
-              </p>
-            </div>
-
-            <!-- Search box (visible in both desktop and web modes) -->
-            <div class="shrink-0 mb-4">
-              <div class="relative">
-                <.icon
-                  name="hero-magnifying-glass"
-                  class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+            <!-- Setup state: search + model list + API key -->
+            <div class="relative mb-4">
+              <.icon
+                name="hero-magnifying-glass"
+                class="size-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+              />
+              <form id="welcome-search" class="contents" phx-submit="noop">
+                <input
+                  type="text"
+                  phx-change="search_models"
+                  phx-debounce="150"
+                  name="search_query"
+                  value={@search_query}
+                  placeholder={gettext("Search models or providers…")}
+                  class="w-full rounded-full border border-slate-200 bg-white pl-10 pr-9 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-400"
                 />
-                <form id="welcome-search" class="contents" phx-submit="noop">
-                  <input
-                    type="text"
-                    phx-change="search_models"
-                    phx-debounce="150"
-                    name="search_query"
-                    value={@search_query}
-                    placeholder={gettext("Search models or providers…")}
-                    class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all duration-200"
-                  />
-                </form>
-                <%= if @search_query != "" do %>
-                  <button
-                    type="button"
-                    phx-click="search_models"
-                    phx-value-search_query=""
-                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
-                  >
-                    <.icon name="hero-x-mark" class="size-4" />
-                  </button>
-                <% end %>
-              </div>
+              </form>
+
+              <%= if @search_query != "" do %>
+                <button
+                  type="button"
+                  phx-click="search_models"
+                  phx-value-search_query=""
+                  class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  <.icon name="hero-x-mark" class="size-4" />
+                </button>
+              <% end %>
             </div>
-
-            <!-- Model list: scrolls internally on large screens, page-scrolls on small screens -->
-            <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
-              <%!-- The "Choose a model:" heading is rendered inside the scroll region
-                   so it scrolls away when there are many models. --%>
-              <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
-                {gettext("Choose a model:")}
-              </p>
-
+            <!-- Model list -->
+            <div class="max-h-[46vh] overflow-y-auto pr-1">
               <%= if filtered_groups(@grouped_models, @search_query) == [] do %>
-                <!-- Zero search results -->
                 <div class="py-10 text-center">
-                  <.icon name="hero-magnifying-glass" class="size-8 text-base-content/30 mx-auto mb-2" />
-                  <p class="text-sm text-base-content/50">
+                  <.icon name="hero-magnifying-glass" class="size-8 text-slate-300 mx-auto mb-2" />
+                  <p class="text-sm text-slate-400">
                     {gettext("No models match your search.")}
                   </p>
                 </div>
               <% else %>
-                <!-- Models grouped by provider (alphabetical) -->
                 <%= for group <- filtered_groups(@grouped_models, @search_query) do %>
-                  <div class="mb-5">
-                    <%!-- zh: provider names — see t_provider/1 for Chinese references --%>
-                    <p class="text-sm font-bold text-base-content/70 mb-2.5">
+                  <div class="mb-4">
+                    <p class="text-xs font-semibold text-slate-500 mb-1.5 px-1">
                       {t_provider(group.provider_display_name)}
                     </p>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                       <%= for entry <- group.models do %>
-                        <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
+                        <% selected =
+                          @selected_entry && @selected_entry.model_string == entry.model_string %>
                         <button
                           phx-click="select_welcome_model"
                           phx-value-model_string={entry.model_string}
                           class={[
-                            "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
-                            selected && "btn-primary shadow-md",
-                            !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                            "rounded-xl border px-3 py-2 text-left transition-colors",
+                            selected && "border-slate-900 bg-slate-900 text-white",
+                            !selected &&
+                              "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
                           ]}
                         >
-                          <span class="font-semibold text-sm">{entry.model_display_name}</span>
+                          <span class="block text-sm font-medium">{entry.model_display_name}</span>
                           <span class={[
-                            "text-[11px] leading-tight",
-                            selected && "text-primary-content/80",
-                            !selected && "text-base-content/50"
+                            "block text-[11px] leading-tight",
+                            selected && "text-slate-300",
+                            !selected && "text-slate-400"
                           ]}>
                             {t_provider(entry.provider_display_name)}{variant_suffix(entry)}
                           </span>
@@ -165,121 +141,107 @@ defmodule EvoDashWeb.WelcomeLive do
                 <% end %>
               <% end %>
 
-              <!-- End-of-list guidance -->
-              <div class="mt-4 mb-2 bg-base-200/50 rounded-xl p-4 text-center">
-                <p class="text-xs text-base-content/50 leading-relaxed">
-                  {gettext(
-                    "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
-                  )}
-                  <a href={~p"/settings"} class="link link-primary font-semibold">
-                    {gettext("Settings page")}
-                  </a>
-                  .
-                </p>
-              </div>
+              <p class="text-[11px] text-slate-400 leading-relaxed px-1 mt-2">
+                {gettext(
+                  "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
+                )}
+                <a href={~p"/settings"} class="underline">
+                  {gettext("Settings page")}
+                </a>
+                .
+              </p>
             </div>
-
-            <!-- Selected model: API key + save (pinned at bottom on large screens) -->
-            <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-200">
+            <!-- Selected model: API key + save -->
+            <div class="mt-4 pt-4 border-t border-slate-100">
               <%= if @selected_entry do %>
-                <div class="bg-base-50 rounded-xl border border-base-200 p-5">
-                  <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
-                  <% can_save = @api_key_input != "" or key_is_set %>
+                <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %> <% can_save =
+                  @api_key_input != "" or key_is_set %>
+                <form phx-submit="save_welcome_setup" id="welcome-save-form">
+                  <input type="hidden" name="credential_key" value={@selected_entry.credential_key} />
+                  <input type="hidden" name="model_string" value={@selected_entry.model_string} />
+                  <input
+                    type="hidden"
+                    name="provider_id"
+                    value={Atom.to_string(@selected_entry.provider_id)}
+                  />
+                  <input
+                    type="hidden"
+                    name="variant_id"
+                    value={
+                      if(@selected_entry.variant_id,
+                        do: Atom.to_string(@selected_entry.variant_id),
+                        else: ""
+                      )
+                    }
+                  />
+                  <label class="flex items-center gap-2 mb-1.5 text-sm font-medium text-slate-700">
+                    <.icon name="hero-key" class="size-4 text-slate-400" />
+                    <span>{@selected_entry.credential_key}</span>
+                    <%= if key_is_set do %>
+                      <span class="text-green-600 text-xs font-bold">✓ {gettext("Set")}</span>
+                    <% end %>
+                  </label>
 
-                  <div class="flex items-center gap-2 mb-4">
-                    <.icon name="hero-key" class="size-4 text-primary" />
-                    <span class="text-sm font-semibold">
-                      {gettext("Enter your API key")}
-                    </span>
-                  </div>
-
-                  <!-- Merged save: API key + model profile in ONE action -->
-                  <form phx-submit="save_welcome_setup">
-                    <input type="hidden" name="credential_key" value={@selected_entry.credential_key} />
-                    <input type="hidden" name="model_string" value={@selected_entry.model_string} />
-                    <input
-                      type="hidden"
-                      name="provider_id"
-                      value={Atom.to_string(@selected_entry.provider_id)}
-                    />
-                    <input
-                      type="hidden"
-                      name="variant_id"
-                      value={if(@selected_entry.variant_id, do: Atom.to_string(@selected_entry.variant_id), else: "")}
-                    />
-                    <label class="label">
-                      <span class="label-text font-semibold text-sm">
-                        {@selected_entry.credential_key}
-                      </span>
-                      <%= if key_is_set do %>
-                        <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
-                      <% end %>
-                    </label>
-                    <input
-                      type="password"
-                      name="api_key"
-                      phx-change="api_key_changed"
-                      value={@api_key_input}
-                      placeholder={
-                        if key_is_set,
-                          do: gettext("API key is already set"),
-                          else: gettext("Enter your API key")
-                      }
-                      class={[
-                        "input input-bordered w-full rounded-xl shadow-sm bg-base-100",
-                        key_is_set && "input-success"
-                      ]}
-                    />
-                    <p class="text-[11px] text-base-content/70 mt-1.5">
-                      {gettext("Enter your API key for %{provider}.",
-                        provider: t_provider(@selected_entry.provider_display_name)
-                      )}
-                    </p>
-
-                    <!-- Single button: saves API key (if entered) AND model profile -->
-                    <button
-                      type="submit"
-                      disabled={!can_save}
-                      class={[
-                        "btn btn-primary btn-sm rounded-xl w-full mt-4",
-                        !can_save && "btn-disabled opacity-50 cursor-not-allowed"
-                      ]}
-                    >
-                      {gettext("Save & Use this model")}
-                      <span class="text-primary-content/80 font-normal ml-1">
-                        {@selected_entry.model_display_name}
-                      </span>
-                    </button>
-                  </form>
-                </div>
-              <% else %>
-                <!-- Placeholder when no model is selected -->
-                <div class="bg-base-200/30 rounded-xl border border-dashed border-base-300 p-5 text-center">
-                  <.icon name="hero-cursor-arrow-rays" class="size-5 text-base-content/30 mx-auto mb-1" />
-                  <p class="text-xs text-base-content/40">
-                    {gettext("Select a model above to enter your API key.")}
+                  <input
+                    type="password"
+                    name="api_key"
+                    phx-change="api_key_changed"
+                    value={@api_key_input}
+                    placeholder={
+                      if key_is_set,
+                        do: gettext("API key is already set"),
+                        else: gettext("Enter your API key")
+                    }
+                    class={[
+                      "w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none",
+                      if(key_is_set,
+                        do: "border-green-500 focus:border-green-600",
+                        else: "border-slate-200 focus:border-slate-400"
+                      )
+                    ]}
+                  />
+                  <p class="text-[11px] text-slate-400 mt-1.5">
+                    {gettext("Enter your API key for %{provider}.",
+                      provider: t_provider(@selected_entry.provider_display_name)
+                    )}
                   </p>
-                </div>
+
+                  <button
+                    type="submit"
+                    disabled={!can_save}
+                    class={[
+                      "btn btn-primary rounded-full w-full mt-3",
+                      !can_save && "btn-disabled opacity-50 cursor-not-allowed"
+                    ]}
+                  >
+                    {gettext("Save & Use this model")}
+                  </button>
+                </form>
+              <% else %>
+                <p class="text-xs text-slate-400 text-center py-2">
+                  {gettext("Select a model above to enter your API key.")}
+                </p>
               <% end %>
             </div>
           <% end %>
-
-          <!-- Skip link -->
-          <div class="flex justify-center mt-6 shrink-0">
+          <!-- Skip link + version -->
+          <div class="flex items-center justify-between mt-8">
             <button
+              id="welcome-skip"
               phx-click="skip"
-              class="text-sm text-base-content/50 hover:text-base-content/70 transition-colors"
+              class="text-xs text-slate-400 hover:text-slate-600 transition-colors"
             >
               {gettext("Skip")}
             </button>
-          </div>
 
-        <!-- Version footer -->
-        <div class="mt-6 text-xs text-base-content/40 shrink-0">
-          {gettext("Genesis %{version}", version: @current_version)}
+            <span class="text-xs text-slate-300">
+              {gettext("Genesis %{version}", version: @current_version)}
+            </span>
+          </div>
         </div>
       </div>
-    </EvoDashWeb.Layouts.app>
+      <EvoDashWeb.Layouts.simple_corner />
+    </EvoDashWeb.Layouts.simple>
     """
   end
 
@@ -308,6 +270,11 @@ defmodule EvoDashWeb.WelcomeLive do
       )
 
     {:ok, socket}
+  end
+
+  @impl true
+  def handle_info(:advance_to_home, socket) do
+    {:noreply, redirect(socket, to: "/welcome/complete")}
   end
 
   @impl true
@@ -619,6 +586,10 @@ defmodule EvoDashWeb.WelcomeLive do
           |> assign(:model_profiles, model_profiles)
           |> assign(:has_model?, model_profiles != [])
           |> put_flash(:info, success_msg)
+
+        # Auto-advance to the home page shortly after a successful save —
+        # no extra click needed.
+        Process.send_after(self(), :advance_to_home, 1200)
 
         {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
 
