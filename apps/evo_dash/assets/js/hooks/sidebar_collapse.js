@@ -144,9 +144,11 @@ const SidebarCollapse = {
     } else {
       sidebar.classList.remove('w-16');
       sidebar.classList.add('w-60');
-      // Restore overflow clipping when sidebar is full width
-      sidebar.classList.add('overflow-hidden');
-      sidebar.classList.remove('overflow-visible');
+      // Keep overflow-visible so dropdown menus (SSH node selector w-72,
+      // language, theme) are never clipped at the expanded sidebar's w-60
+      // edge — same as the collapsed branch.
+      sidebar.classList.add('overflow-visible');
+      sidebar.classList.remove('overflow-hidden');
       // Show all sidebar-labels
       sidebar.querySelectorAll('.sidebar-label').forEach(el => el.classList.remove('hidden'));
       // Hide collapsed-only elements

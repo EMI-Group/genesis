@@ -31,6 +31,11 @@ Mix does NOT automatically use per-release overlay directories (`rel/genesis/`, 
 
 These directories exist as documentation of the intended per-release configuration. They are NOT automatically applied by Mix. To wire them up, custom release `:steps` would need to be added to the release definitions in `mix.exs`.
 
+## Known Issues / Notes for Agents
+
+- **No log configuration exists in `rel/`**: none of the env.sh/env.bat/vm.args templates redirect stdout/stderr or set `LOG_*` / `RELEASE_LOG_*` / `ERL_*` log env vars. Desktop log-file redirection is configured OUTSIDE this directory in `../config/runtime.exs` (desktop mode detection via `:desktop_release` flag or `EVOGIT_DESKTOP=1`; Logger `:default_handler` → file at `EvoGit.Platform.data_dir()/logs/backend.log` — `~/.local/share/genesis/logs/` on Linux, `~/Library/Application Support/genesis/logs/` on macOS, `%APPDATA%/genesis/logs/` on Windows; 10 MB × 5 rotated files). `rel/genesis_remote/` has no log config — the remote daemon logs to stdout (captured by systemd-run/launchd).
+- There is no `rel/genesis_desktop/` overlay directory — the desktop release uses the top-level EEx templates.
+
 ## Constraints
 
 - These are EEx templates — `@release.name` (atom) and other release variables are available.

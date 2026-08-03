@@ -26,7 +26,7 @@ defmodule EvoGit.Sandbox.Linux do
         false
 
       true ->
-        case EvoGit.Defaults.sandbox() do
+        case EvoGit.Config.resolve([:sandbox, :mode]) do
           :enabled -> true
           :disabled -> false
           :auto -> Platform.systemd_available?()

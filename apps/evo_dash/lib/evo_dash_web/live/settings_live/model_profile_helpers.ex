@@ -138,6 +138,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
         # Parse extra JSON config
         extra_raw = String.trim(params["extra"] || "")
+        extra_present? = extra_raw != ""
 
         spec_result =
           if extra_raw == "" do
@@ -175,10 +176,23 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
           end
 
         case {spec_result, provider_options_result} do
-          {{:ok, spec}, {:ok, provider_options}} ->
+          {{:ok, final_spec}, {:ok, provider_options}} ->
+            # Determine the final :model value. When there are no genuine
+            # overrides (no base_url, no extra JSON) store the compact STRING
+            # form `"provider:model_id"` (or just `model_id` for an empty
+            # provider). Otherwise keep the ReqLLM-native map spec (`final_spec`
+            # carries :extra when present). provider_options is a profile-level
+            # field (sibling of temperature) and never forces the map form.
+            model_value =
+              if base_url == "" and not extra_present? do
+                if provider_str == "", do: model_id, else: "#{provider_str}:#{model_id}"
+              else
+                final_spec
+              end
+
             profile =
               %{id: id}
-              |> Map.put(:model, spec)
+              |> Map.put(:model, model_value)
               |> maybe_put_int(:concurrency, params["concurrency"], 3)
               |> maybe_put_float(:temperature, params["temperature"])
               |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])

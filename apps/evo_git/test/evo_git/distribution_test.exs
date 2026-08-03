@@ -62,10 +62,19 @@ defmodule EvoGit.DistributionTest do
       end
     end
 
+    test "accepts a target map with dist_port and nil cookie" do
+      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: nil})
+      assert result == :ok or match?({:error, _}, result)
+
+      if node() != :nonode@nohost and result == :ok do
+        :net_kernel.stop()
+      end
+    end
+
     test "accepts a target map with dist_port and cookie" do
       # Just verify the function doesn't crash on a valid target map.
       # In test env, distribution is likely not started; if it starts, great.
-      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: "genesis_remote_cookie"})
+      result = Distribution.enable_for_remote(%{dist_port: 9000, cookie: "test_cookie"})
       assert result == :ok or match?({:error, _}, result)
 
       # If this test actually started distribution, stop it so it doesn't
@@ -93,33 +102,44 @@ defmodule EvoGit.DistributionTest do
 
   describe "set_cookie/1" do
     @tag :distributed_only
-    test "defaults to genesis_remote_cookie" do
-      # set_cookie calls Node.set_cookie/1 which requires a distributed node.
-      # In the standard test environment node() is :nonode@nohost, so we
-      # can only verify this in a distributed context.
+    test "does not set cookie when config has no cookie key (nil)" do
       if Distribution.distributed?() do
+        # Save current cookie to restore after
+        original = Node.get_cookie()
+        # Set a known cookie first so we can detect no-change
+        Node.set_cookie(:known_before_test)
+
+        # Call with empty config — should skip Node.set_cookie
         Distribution.set_cookie(%{})
-        assert Node.get_cookie() == :genesis_remote_cookie
+        # Cookie should still be :known_before_test (unchanged)
+        assert Node.get_cookie() == :known_before_test
+
+        # Restore
+        Node.set_cookie(original)
       end
     end
 
     @tag :distributed_only
     test "uses the provided cookie when specified in config" do
       if Distribution.distributed?() do
+        original = Node.get_cookie()
         Distribution.set_cookie(%{cookie: "custom_test_cookie"})
         assert Node.get_cookie() == :custom_test_cookie
+        Node.set_cookie(original)
       end
     end
   end
 
-  describe "default cookie value in set_cookie/1" do
-    test "extracts cookie from node_config with genesis_remote_cookie as default" do
-      # Verify the default is genesis_remote_cookie by checking that
-      # Map.get/3 with an explicit :cookie key returns the provided value.
-      # The node_config map's :cookie key defaults to "genesis_remote_cookie"
-      # in set_cookie/1.
-      default_cookie = "genesis_remote_cookie"
-      assert Map.get(%{cookie: "custom"}, :cookie, default_cookie) == "custom"
+  describe "nil cookie handling in set_cookie/1" do
+    test "Map.get with no default returns nil when key is missing" do
+      # Verify that Map.get/2 returns nil when the key is missing.
+      # Use a dynamic map to prevent the type checker from narrowing to empty_map().
+      map = Map.new([{:other_key, "value"}])
+      assert is_nil(Map.get(map, :cookie))
+    end
+
+    test "Map.get returns the cookie value when present" do
+      assert Map.get(%{cookie: "custom"}, :cookie) == "custom"
     end
   end
 

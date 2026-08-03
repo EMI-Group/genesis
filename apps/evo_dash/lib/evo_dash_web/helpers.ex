@@ -1,8 +1,7 @@
 defmodule EvoDashWeb.Helpers do
   @moduledoc """
   Shared helper functions and components consolidating duplicated code
-  from across the dashboard (AgentsLive, AgentsComponents, DashboardComponents,
-  DashboardLive).
+  from across the dashboard (AgentsLive, AgentsComponents, DashboardLive).
 
   This module is imported via `use EvoDashWeb, :html` and `use EvoDashWeb, :live_view`.
   """

@@ -37,7 +37,7 @@ defmodule EvoGit.Agent.TruncationFeedback do
       """
       ---
       ⚠️ **Output Truncated** (#{format_truncation_reason(truncation_info)})
-      Original size: #{format_byte_size(truncation_info.original_size)} → Truncated to: #{format_byte_size(truncation_info.truncated_size)}
+      Original size: #{EvoGit.Agent.OutputSanitizer.format_bytes(truncation_info.original_size)} → Truncated to: #{EvoGit.Agent.OutputSanitizer.format_bytes(truncation_info.truncated_size)}
 
       **Suggestion:** #{suggestion}
       """
@@ -91,12 +91,4 @@ defmodule EvoGit.Agent.TruncationFeedback do
 
   def format_truncation_reason(%{reason: :invalid_utf8}),
     do: "invalid UTF-8 data was repaired/truncated"
-
-  def format_byte_size(bytes) do
-    cond do
-      bytes >= 1024 * 1024 -> "#{Float.round(bytes / (1024 * 1024), 1)} MB"
-      bytes >= 1024 -> "#{Float.round(bytes / 1024, 1)} KB"
-      true -> "#{bytes} bytes"
-    end
-  end
 end

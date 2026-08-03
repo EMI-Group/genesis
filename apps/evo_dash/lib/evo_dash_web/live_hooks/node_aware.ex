@@ -50,17 +50,20 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   Node-aware: when `@current_node` is the local BEAM node, tasks are read from
   the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
-  via `EvoDash.NodeContext.list_tasks/1` (RPC). The filtering logic is identical
-  either way — only the source of `all_tasks` changes.
+  via `EvoDash.NodeContext.list_tasks_summary/1` (RPC). The filtering logic is
+  identical either way — only the source of `all_tasks` changes.
+
+  Uses lightweight summary queries that omit heavy JSON fields (logs, usage,
+  archive_metadata) unnecessary for the sidebar display.
   """
   def load_running_and_pending_tasks(socket) do
     current_node = socket.assigns[:current_node] || node()
 
     all_tasks =
       if current_node == node() do
-        TaskRegistry.list_tasks()
+        TaskRegistry.list_tasks_summary()
       else
-        EvoDash.NodeContext.list_tasks(current_node)
+        EvoDash.NodeContext.list_tasks_summary(current_node)
       end
 
     running_tasks =

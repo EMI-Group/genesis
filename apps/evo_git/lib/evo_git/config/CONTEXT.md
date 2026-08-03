@@ -46,9 +46,6 @@ Tracks the last-seen Genesis version in `version_state.toml` (in the config dir)
 | `upgraded?/0` | Returns `true` if recorded version differs from current version |
 | `record_current_version/0` | Convenience — persists `current_version/0`. Call after showing update log. |
 
-### `EvoGit.Defaults` (backward-compatibility shim)
-Delegates all calls to `EvoGit.Config.resolve/1`. Functions: `max_concurrency`, `max_tool_concurrency`, `max_retries`, `agent_max_retries`, `max_agent_depth`, `llm_model`, `github_username`, `compression_threshold_tokens`, `sandbox`.
-
 ### `EvoGit.Platform` (cross-platform utilities)
 | Function | Description |
 |----------|-------------|
@@ -143,7 +140,7 @@ Keys are loaded into ReqLLM's in-process key store on load. Only one key needed 
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - Config directory follows XDG conventions via `EvoGit.Platform.os()`.
 - All file reads use `case File.read/1` (non-crashing) with explicit error handling via `with`/`case`, not `try/rescue`.
-- `EvoGit.Defaults` is a backward-compatibility shim that delegates all calls to this module.
+- All config access should go through `EvoGit.Config.resolve/1` directly.
 - Model format: either a `"provider:model"` string (preferred, resolves through LLMDB for cost tracking) OR a map spec `%{provider: atom, id: string, base_url: string, extra: %{...}}` (ReqLLM-native). Map model specs are normalized at **resolve time** (`normalize_model_map/1` in `atomize_enum_values/1`): simple models (only `:provider`+`:id`) become `"provider:id"` strings, models with override keys (`:base_url`, `:extra`, etc.) stay as atomized maps — both are LLMDB-compatible formats that ReqLLM natively resolves. String model specs pass through as-is (no parsing). The `[[llm.models]]` data layer supports multiple endpoints per provider+model via per-profile `base_url`. The provider atom determines which API key env var is used.
 - `config_status/0` checks: LLM model presence, at least one API key. GitHub username is **optional** — a missing username does NOT appear in `:missing`/`:warnings` or make `:ok?` false.
 - **Crash resilience (untrusted user config boundary)**: The `resolve/0` → `config_status()` pipeline MUST NEVER raise on any user-provided config content, including valid TOML with wrong value types (e.g. `llm = "string"` instead of a `[llm]` table). `deep_merge/2` discards type-mismatched user values (keeping the default map). `migrate_llm_models/1`, `atomize_enum_values/1`, `Schema.model_profiles/1`, and `Schema.validate/1` all guard against non-map structures. `Schema.validate/1` uses `safe_get_in` (not `get_in`) to avoid Access-behaviour crashes on non-map intermediate values. Bad config produces `validation_errors` but does not crash the caller — the user must always be able to boot the app and access the settings page.

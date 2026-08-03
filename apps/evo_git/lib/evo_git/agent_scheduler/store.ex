@@ -2,10 +2,12 @@ defmodule EvoGit.AgentScheduler.Store do
   @moduledoc """
   Shared ETS helpers for the AgentScheduler.
 
-  Centralizes read/write/delete operations on the two scheduler-owned ETS
-  tables (`:evogit_agent_state` and `:evogit_sched_meta`). Every write/delete
-  broadcasts enriched PubSub delta events so the dashboard can apply incremental
-  updates, plus a throttled `:agents_updated` fallback for backward compat.
+  Centralizes read/write/delete operations on the three scheduler-owned ETS
+  tables (`:evogit_agent_state`, `:evogit_sched_meta`, and the task archive
+  table `:evogit_archive_records`). Every write/delete on the agent-state and
+  sched-meta tables broadcasts enriched PubSub delta events so the dashboard
+  can apply incremental updates, plus a throttled `:agents_updated` fallback
+  for backward compat. Archive-table operations are PubSub-free.
   """
 
   alias EvoGit.AgentScheduler.AgentState
@@ -16,6 +18,7 @@ defmodule EvoGit.AgentScheduler.Store do
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
+  @archive_table :evogit_archive_records
 
   # ---------------------------------------------------------------------------
   # Scheduler Metadata Table
@@ -190,6 +193,60 @@ defmodule EvoGit.AgentScheduler.Store do
 
       :error ->
         []
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Archive Records Table
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Writes an archive record for the given task/agent pair.
+
+  The `:evogit_archive_records` table is a `:set` keyed by `{task_id, agent_id}`,
+  so re-writing the same pair (e.g., a crash-retry that completes twice) is an
+  idempotent overwrite — at most ONE record per agent per task.
+  """
+  @spec put_archive_record(binary(), pos_integer(), map()) :: :ok | true
+  def put_archive_record(task_id, agent_id, record) when is_map(record) do
+    case :ets.whereis(@archive_table) do
+      :undefined -> :ok
+      _tid -> :ets.insert(@archive_table, {{task_id, agent_id}, record})
+    end
+  end
+
+  @doc """
+  Collects all archive records for the given task ID.
+
+  Returns the records (without key tuples) in unspecified order, or `[]` when
+  the table is missing.
+  """
+  @spec collect_archive_records(binary()) :: [map()]
+  def collect_archive_records(task_id) do
+    case :ets.whereis(@archive_table) do
+      :undefined ->
+        []
+
+      _tid ->
+        :ets.match(@archive_table, {{task_id, :_}, :"$1"})
+        |> List.flatten()
+    end
+  end
+
+  @doc """
+  Clears all archive records for the given task ID.
+
+  Returns `:ok` in both branches (also when the table is missing).
+  """
+  @spec clear_archive_records(binary()) :: :ok
+  def clear_archive_records(task_id) do
+    case :ets.whereis(@archive_table) do
+      :undefined ->
+        :ok
+
+      _tid ->
+        :ets.match_delete(@archive_table, {{task_id, :_}, :_})
+        :ok
     end
   end
 

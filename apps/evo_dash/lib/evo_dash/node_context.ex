@@ -340,6 +340,18 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Lists all tasks on the given node as lightweight summary maps.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks_summary/1`. Returns `[]` if the
+  remote call fails. The summary maps omit heavy JSON fields (logs, usage,
+  archive_metadata) and are suitable for sidebar/list displays.
+  """
+  @spec list_tasks_summary(node()) :: [map()]
+  def list_tasks_summary(node) do
+    EvoGit.RemoteNode.list_tasks_summary(node)
+  end
+
+  @doc """
   Returns a paginated slice of tasks on the given node.
 
   Delegates to `EvoGit.RemoteNode.list_tasks_paginated/2`. Returns `{[], 0}`

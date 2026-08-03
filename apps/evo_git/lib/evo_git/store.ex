@@ -42,7 +42,7 @@ defmodule EvoGit.Store do
 
   require Logger
 
-  alias EvoGit.Store.Codec
+  alias EvoGit.Store.{Codec, Quarantine, Queries, Schema}
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -215,6 +215,23 @@ defmodule EvoGit.Store do
     GenServer.call(store, :select_cleanup_info)
   end
 
+  @doc """
+  Returns lightweight task summaries for all tasks — only columns needed for
+  the dashboard sidebar listing. No heavy JSON fields (logs, usage, opts,
+  archive_metadata) are decoded. Returns a list of plain maps with an :opts key
+  (decoded keyword list containing :objective and :prompt).
+  """
+  def select_tasks_summary(store \\ __MODULE__) do
+    GenServer.call(store, :select_tasks_summary)
+  end
+
+  @doc """
+  Same as select_tasks_summary/1 but filtered to a specific project_path.
+  """
+  def select_tasks_summary_by_path(store \\ __MODULE__, project_path) do
+    GenServer.call(store, {:select_tasks_summary_by_path, project_path})
+  end
+
   ## Public API — Projects
 
   @doc "Inserts or replaces a project. Validates that path is present."
@@ -314,8 +331,8 @@ defmodule EvoGit.Store do
 
     case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
       {:ok, conn} ->
-        create_tables(conn)
-        migrate_schema(conn)
+        Schema.create_tables(conn)
+        Schema.migrate_schema(conn)
 
         # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
@@ -391,7 +408,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, task_select_sql() <> " WHERE id = ?1", [task_id]) do
+      case XqliteNIF.query(state.conn, Queries.task_select_sql() <> " WHERE id = ?1", [task_id]) do
         {:ok, %{rows: [row | _]}} -> Codec.decode_task(row)
         {:ok, %{rows: []}} -> nil
       end
@@ -417,7 +434,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call(:select_all_tasks, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, task_select_sql(), []) do
+      case XqliteNIF.query(state.conn, Queries.task_select_sql(), []) do
         {:ok, %{rows: rows}} -> Enum.map(rows, &Codec.decode_task/1)
       end
 
@@ -433,18 +450,16 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:safe_select_paginated_tasks, opts}, _from, state) do
     filters = Keyword.get(opts, :filters, [])
-    {where_clause, where_params} = build_where(filters)
-    limit = clamp_limit(Keyword.get(opts, :limit))
-    offset = clamp_offset(Keyword.get(opts, :offset))
+    {where_clause, where_params} = Queries.build_where(filters)
+    limit = Queries.clamp_limit(Keyword.get(opts, :limit))
+    offset = Queries.clamp_offset(Keyword.get(opts, :offset))
 
     limit_idx = length(where_params) + 1
     offset_idx = length(where_params) + 2
 
     select_sql =
-      task_select_sql() <>
-        where_clause <>
-        " ORDER BY started_at DESC LIMIT ?" <>
-        Integer.to_string(limit_idx) <>
+      Queries.task_select_sql() <> where_clause <>
+        " ORDER BY started_at DESC LIMIT ?" <> Integer.to_string(limit_idx) <>
         " OFFSET ?" <> Integer.to_string(offset_idx)
 
     select_params = where_params ++ [limit, offset]
@@ -456,7 +471,7 @@ defmodule EvoGit.Store do
       end
 
     # Reuse the SAME quarantine-safe decode boundary as safe_decode_rows.
-    tasks = safe_decode_rows(state.conn, "tasks", rows, &Codec.decode_task/1)
+    tasks = Quarantine.safe_decode_rows(state.conn, "tasks", rows, &Codec.decode_task/1)
 
     # COUNT with the SAME WHERE clause so total_count reflects filtered results.
     count_sql = "SELECT COUNT(*) FROM tasks" <> where_clause
@@ -539,7 +554,7 @@ defmodule EvoGit.Store do
   # Lightweight write: updates only the specified columns for a task.
   @impl true
   def handle_call({:update_task_columns, task_id, columns}, _from, state) do
-    {set_clauses, values} = build_update_set(columns, 1)
+    {set_clauses, values} = Queries.build_update_set(columns, 1)
 
     {:ok, _} =
       XqliteNIF.execute(
@@ -577,6 +592,61 @@ defmodule EvoGit.Store do
     {:reply, reply, state}
   end
 
+  # Lightweight query: reads only id, status, review_status, result, started_at,
+  # finished_at, type, project_path, opts. No heavy JSON fields (logs, usage,
+  # archive_metadata) are decoded.
+  @impl true
+  def handle_call(:select_tasks_summary, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts FROM tasks", []) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path, opts] ->
+            %{
+              id: id,
+              status: Codec.decode_atom(status),
+              review_status: Codec.decode_atom(review_status),
+              result: Codec.decode_result(result),
+              started_at: Codec.decode_datetime(started_at),
+              finished_at: Codec.decode_datetime(finished_at),
+              type: Codec.decode_atom(type),
+              project_path: project_path,
+              opts: Codec.decode_opts(opts)
+            }
+          end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
+  @impl true
+  def handle_call({:select_tasks_summary_by_path, project_path}, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts FROM tasks WHERE project_path = ?1", [project_path]) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path, opts] ->
+            %{
+              id: id,
+              status: Codec.decode_atom(status),
+              review_status: Codec.decode_atom(review_status),
+              result: Codec.decode_result(result),
+              started_at: Codec.decode_datetime(started_at),
+              finished_at: Codec.decode_datetime(finished_at),
+              type: Codec.decode_atom(type),
+              project_path: project_path,
+              opts: Codec.decode_opts(opts)
+            }
+          end)
+
+        _ ->
+          []
+      end
+
+    {:reply, reply, state}
+  end
+
   ## GenServer — Project handlers
 
   @impl true
@@ -605,7 +675,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_project, path}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, project_select_sql() <> " WHERE path = ?1", [path]) do
+      case XqliteNIF.query(state.conn, Queries.project_select_sql() <> " WHERE path = ?1", [path]) do
         {:ok, %{rows: [row | _]}} -> Codec.decode_project(row)
         {:ok, %{rows: []}} -> nil
       end
@@ -622,7 +692,7 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call(:select_all_projects, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, project_select_sql(), []) do
+      case XqliteNIF.query(state.conn, Queries.project_select_sql(), []) do
         {:ok, %{rows: rows}} -> Enum.map(rows, &Codec.decode_project/1)
       end
 
@@ -645,7 +715,7 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call(:safe_select_all_tasks, _from, state) do
-    columns = table_columns("tasks")
+    columns = Quarantine.table_columns("tasks")
     col_list = Enum.join(columns, ", ")
 
     rows =
@@ -673,7 +743,7 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call(:safe_select_all_projects, _from, state) do
-    columns = table_columns("projects")
+    columns = Quarantine.table_columns("projects")
     col_list = Enum.join(columns, ", ")
 
     rows =
@@ -688,304 +758,19 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call(:integrity_check, _from, state) do
-    reply = do_integrity_check(state.conn)
+    reply = Quarantine.do_integrity_check(state.conn)
     {:reply, reply, state}
   end
 
   @impl true
   def handle_call(:recover_quarantine, _from, state) do
-    reply = do_recover_quarantine(state.conn)
+    reply = Quarantine.do_recover_quarantine(state.conn)
     {:reply, reply, state}
   end
 
   ## GenServer — Periodic memory cleanup
 
-  ## Private — Schema creation
-
-  defp create_tables(conn) do
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        """
-        CREATE TABLE IF NOT EXISTS tasks (
-          id TEXT PRIMARY KEY,
-          type TEXT,
-          status TEXT NOT NULL,
-          opts TEXT,
-          started_at TEXT,
-          finished_at TEXT,
-          logs TEXT,
-          result TEXT,
-          review_status TEXT,
-          usage TEXT,
-          agent_count INTEGER,
-          base_sha TEXT,
-          commit_sha TEXT,
-          archive_metadata TEXT,
-          lease_expires_at INTEGER,
-          model_id TEXT,
-          project_path TEXT,
-          branch_name TEXT
-        )
-        """,
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        """
-        CREATE TABLE IF NOT EXISTS projects (
-          path TEXT PRIMARY KEY,
-          name TEXT,
-          last_opened_at TEXT
-        )
-        """,
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE TABLE IF NOT EXISTS tasks_quarantine (id TEXT PRIMARY KEY, data TEXT)",
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE TABLE IF NOT EXISTS projects_quarantine (id TEXT PRIMARY KEY, data TEXT)",
-        []
-      )
-
-    # Indexes for common query patterns (idempotent — IF NOT EXISTS).
-    {:ok, _} =
-      XqliteNIF.execute(conn, "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)", [])
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_tasks_finished_at ON tasks(finished_at)",
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_tasks_lease_expires_at ON tasks(lease_expires_at)",
-        []
-      )
-
-    {:ok, _} =
-      XqliteNIF.execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_tasks_project_path ON tasks(project_path)",
-        []
-      )
-
-    :ok
-  end
-
-  ## Private — Schema migration
-
-  # Idempotent schema migration: adds the `lease_expires_at` column to the tasks
-  # table if it doesn't already exist (handles databases created before the
-  # column was introduced). Safe to run on every init, including fresh DBs where
-  # CREATE TABLE already includes the column.
-  defp migrate_schema(conn) do
-    columns = existing_columns(conn, "tasks")
-
-    if "lease_expires_at" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN lease_expires_at INTEGER", [])
-    end
-
-    if "model_id" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN model_id TEXT", [])
-    end
-
-    if "project_path" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN project_path TEXT", [])
-
-      # Backfill is now done manually via mix migrate_backfill_task_columns.
-    end
-
-    if "branch_name" not in columns do
-      {:ok, _} =
-        XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN branch_name TEXT", [])
-
-      # Backfill is now done manually via mix migrate_backfill_task_columns.
-    end
-
-    if "pid" in columns do
-      # SQLite 3.35.0+ supports DROP COLUMN. Older versions don't — if this
-      # fails, the column is simply left unused and ignored by the codec
-      # (which no longer references it), so it's harmless.
-      # Justified try/rescue: (1) Do we expect this error? Yes — older SQLite
-      # versions or locked tables may reject ALTER TABLE DROP COLUMN. (2) Is
-      # try/rescue cleanest? Yes — there is no non-crashing variant for ALTER
-      # TABLE; the failure is benign (unused column persists).
-      try do
-        {:ok, _} = XqliteNIF.execute(conn, "ALTER TABLE tasks DROP COLUMN pid", [])
-      rescue
-        e ->
-          Logger.warning(
-            "Store: could not drop legacy 'pid' column (harmless, codec ignores it): " <>
-              Exception.message(e)
-          )
-      end
-    end
-
-    :ok
-  end
-
-  @doc """
-  Backfills the `project_path` column for existing rows by extracting `:path` from
-  the opts JSON. Rows where `project_path` is already set are skipped. Called by
-  the `mix migrate_backfill_task_columns` task.
-
-  Returns `:ok`.
-  """
-  def backfill_project_path(conn) do
-    {:ok, %{rows: rows}} =
-      XqliteNIF.query(
-        conn,
-        "SELECT id, opts FROM tasks WHERE project_path IS NULL AND opts IS NOT NULL",
-        []
-      )
-
-    count =
-      Enum.reduce(rows, 0, fn [id, opts_json], acc ->
-        path =
-          case Codec.decode_opts(opts_json) do
-            opts when is_list(opts) -> Keyword.get(opts, :path)
-            _ -> nil
-          end
-
-        if is_binary(path) do
-          {:ok, _} =
-            XqliteNIF.execute(conn, "UPDATE tasks SET project_path = ?1 WHERE id = ?2", [
-              path,
-              id
-            ])
-
-          acc + 1
-        else
-          acc
-        end
-      end)
-
-    if count > 0 do
-      Logger.info("Store: backfilled project_path for #{count} existing tasks")
-    end
-
-    :ok
-  end
-
-  @doc """
-  Backfills the `branch_name` column for existing rows by extracting `:branch_name`
-  from the result JSON. Rows where `branch_name` is already set are skipped. Called
-  by the `mix migrate_backfill_task_columns` task.
-
-  Returns `:ok`.
-  """
-  def backfill_branch_name(conn) do
-    {:ok, %{rows: rows}} =
-      XqliteNIF.query(
-        conn,
-        "SELECT id, result FROM tasks WHERE branch_name IS NULL AND result IS NOT NULL",
-        []
-      )
-
-    count =
-      Enum.reduce(rows, 0, fn [id, result_json], acc ->
-        branch =
-          case Codec.decode_result(result_json) do
-            {:ok, data} when is_map(data) -> Map.get(data, :branch_name)
-            _ -> nil
-          end
-
-        if is_binary(branch) do
-          {:ok, _} =
-            XqliteNIF.execute(conn, "UPDATE tasks SET branch_name = ?1 WHERE id = ?2", [
-              branch,
-              id
-            ])
-
-          acc + 1
-        else
-          acc
-        end
-      end)
-
-    if count > 0 do
-      Logger.info("Store: backfilled branch_name for #{count} existing tasks")
-    end
-
-    :ok
-  end
-
-  defp existing_columns(conn, table) do
-    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "PRAGMA table_info(#{table})", [])
-    # PRAGMA table_info returns rows of [cid, name, type, notnull, dflt_value, pk]
-    Enum.map(rows, fn [_cid, name | _] -> name end)
-  end
-
-  ## Private — SQL builders
-
-  defp task_select_sql do
-    "SELECT #{Enum.join(Codec.task_columns(), ", ")} FROM tasks"
-  end
-
-  defp project_select_sql do
-    "SELECT #{Enum.join(Codec.project_columns(), ", ")} FROM projects"
-  end
-
-  defp table_columns("tasks"), do: Codec.task_columns()
-  defp table_columns("projects"), do: Codec.project_columns()
-
-  defp pk_column("tasks"), do: "id"
-  defp pk_column("projects"), do: "path"
-
-  # Builds the SET clause and value list for a targeted UPDATE from a keyword
-  # list of column names to values. Each value is encoded through the
-  # appropriate Codec.encode_* function based on column semantics:
-  # atoms, datetimes, lists/maps get encoded; scalars pass through as-is.
-  defp build_update_set(columns, start_idx) do
-    {clauses, values, _idx} =
-      Enum.reduce(columns, {[], [], start_idx}, fn {col, value}, {clauses, values, idx} ->
-        encoded = encode_column_value(col, value)
-        clause = "#{col} = ?#{idx}"
-        {[clause | clauses], [encoded | values], idx + 1}
-      end)
-
-    {Enum.join(Enum.reverse(clauses), ", "), Enum.reverse(values)}
-  end
-
-  # Encodes a column value for an UPDATE SET clause. Uses the same Codec
-  # functions as encode_task for consistency.
-  defp encode_column_value(_col, nil), do: nil
-
-  defp encode_column_value(:status, value), do: Codec.encode_atom(value)
-  defp encode_column_value(:type, value), do: Codec.encode_atom(value)
-  defp encode_column_value(:review_status, value), do: Codec.encode_atom(value)
-  defp encode_column_value(:started_at, value), do: Codec.encode_datetime(value)
-  defp encode_column_value(:finished_at, value), do: Codec.encode_datetime(value)
-  defp encode_column_value(:logs, value), do: Codec.encode_logs(value)
-  defp encode_column_value(:result, value), do: Codec.encode_result(value)
-  defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
-  defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
-  defp encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
-  defp encode_column_value(:project_path, value), do: value
-  defp encode_column_value(:branch_name, value), do: value
-  defp encode_column_value(:agent_count, value), do: value
-  defp encode_column_value(:lease_expires_at, value), do: value
-  defp encode_column_value(:model_id, value), do: value
-  defp encode_column_value(:base_sha, value), do: value
-  defp encode_column_value(:commit_sha, value), do: value
-  defp encode_column_value(_col, value), do: value
+  ## Private — Helpers
 
   # Reads only the status column for a task id. Returns the decoded atom status
   # or nil if the row doesn't exist. Uses the same XqliteNIF.query pattern as
@@ -1054,348 +839,4 @@ defmodule EvoGit.Store do
     count
   end
 
-  ## Private — Pagination clamping helpers
-
-  # Ensures limit is a positive integer (default 50). Non-integer or
-  # non-positive values fall back to the default.
-  defp clamp_limit(nil), do: 50
-  defp clamp_limit(n) when is_integer(n) and n > 0, do: n
-  defp clamp_limit(_), do: 50
-
-  # Ensures offset is a non-negative integer (default 0). Non-integer or
-  # negative values fall back to 0.
-  defp clamp_offset(nil), do: 0
-  defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
-  defp clamp_offset(_), do: 0
-
-  ## Private — WHERE clause builder for filtered pagination
-
-  # Builds a SQL WHERE clause (with leading space) and an ordered param list
-  # from the filters keyword list. Returns `{"", []}` when no filters apply.
-  #
-  # Filters:
-  #   - :status         — atom/string status or "all" (default "all")
-  #   - :project_path   — path string or "all" (default "all"); matches the
-  #                       `path` key embedded in the JSON opts column
-  #   - :review_status  — "all", "pending", "merged", "rejected", "continued"
-  #   - :search         — non-empty search string; matches id or opts JSON text
-  #
-  # Placeholders use incremental ?N indexing so LIMIT/OFFSET can append their
-  # own placeholders after the WHERE params.
-  defp build_where(filters) do
-    # status filter
-    {clauses, params, idx} =
-      case Keyword.get(filters, :status, "all") do
-        "all" ->
-          {[], [], 1}
-
-        status ->
-          {["status = ?1"], [status], 2}
-      end
-
-    # project_path filter — matches the denormalized project_path column
-    {clauses, params, idx} =
-      case Keyword.get(filters, :project_path, "all") do
-        "all" ->
-          {clauses, params, idx}
-
-        path ->
-          {clauses ++ ["project_path = ?" <> Integer.to_string(idx)], params ++ [path], idx + 1}
-      end
-
-    # review_status filter ("pending" is a composite of completed + null review + branch)
-    {clauses, params, idx} =
-      case Keyword.get(filters, :review_status, "all") do
-        "all" ->
-          {clauses, params, idx}
-
-        "pending" ->
-          # Completed tasks with no review status whose result contains a
-          # branch_name (meaning they're awaiting review).
-          c1 = "status = ?" <> Integer.to_string(idx)
-          c2 = "review_status IS NULL"
-          c3 = "branch_name IS NOT NULL"
-
-          {clauses ++ [c1, c2, c3], params ++ ["completed"], idx + 1}
-
-        rs ->
-          {clauses ++ ["review_status = ?" <> Integer.to_string(idx)], params ++ [rs], idx + 1}
-      end
-
-    # search filter — matches id, raw opts JSON text, or project_path
-    {clauses, params, _idx} =
-      case Keyword.get(filters, :search) do
-        nil ->
-          {clauses, params, idx}
-
-        "" ->
-          {clauses, params, idx}
-
-        search ->
-          pat = "%#{escape_like(search)}%"
-          c1 = "id LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"
-          c2 = "opts LIKE ?" <> Integer.to_string(idx + 1) <> " ESCAPE '\\'"
-          c3 = "project_path LIKE ?" <> Integer.to_string(idx + 2) <> " ESCAPE '\\'"
-          {clauses ++ ["(#{c1} OR #{c2} OR #{c3})"], params ++ [pat, pat, pat], idx + 3}
-      end
-
-    case clauses do
-      [] -> {"", []}
-      _ -> {" WHERE " <> Enum.join(clauses, " AND "), params}
-    end
-  end
-
-  # Escapes the SQL LIKE-special characters (`%`, `_`, `\`) by prefixing them
-  # with a backslash. Used together with `ESCAPE '\'` on LIKE clauses so that
-  # user-supplied values (e.g. project paths containing underscores) are matched
-  # literally instead of being interpreted as wildcards.
-  defp escape_like(value) do
-    value
-    |> String.replace("\\", "\\\\")
-    |> String.replace("%", "\\%")
-    |> String.replace("_", "\\_")
-  end
-
-  ## Private — Safe select (quarantine bad rows)
-
-  # Runs the per-row decode+quarantine loop over an already-fetched list of
-  # rows. Shared by the paginated task select handler and scan_and_repair.
-  # Quarantines rows that fail decode rather than crashing — the same justified
-  # try/rescue recovery boundary.
-  defp safe_decode_rows(conn, table, rows, decoder) do
-    columns = table_columns(table)
-    pk = pk_column(table)
-
-    Enum.flat_map(rows, fn row ->
-      id = hd(row)
-
-      # Justified try/rescue — quarantine/data-recovery boundary.
-      # (1) Do we expect this? Yes — DB rows may contain corrupt or legacy
-      # data that fails to decode. (2) Cleanest approach? The decoder raises
-      # by design (Codec decode philosophy); quarantine is the deliberate
-      # recovery boundary that moves bad rows aside rather than crashing the
-      # entire select.
-      try do
-        [decoder.(row)]
-      rescue
-        e ->
-          quarantine_row(conn, table, id, pk, columns, row)
-
-          Logger.warning(
-            "Store: skipping undecodable row in #{table} " <>
-              "(id: #{inspect(id)}): #{Exception.message(e)}"
-          )
-
-          []
-      end
-    end)
-  end
-
-  ## Private — Integrity check
-
-  defp do_integrity_check(conn) do
-    # Justified try/rescue — diagnostic/recovery routine.
-    # (1) Do we expect an error here? Possibly — unexpected SQLite-level
-    # failures during the diagnostic scan itself. (2) Cleanest approach?
-    # integrity_check is a recovery routine called during GenServer init (from
-    # TaskRegistry.init/1). It must return {:error, _} rather than crashing,
-    # because a crash here would prevent TaskRegistry from starting at all.
-    try do
-      case XqliteNIF.query(conn, "PRAGMA integrity_check", []) do
-        {:ok, %{rows: [["ok"]]}} ->
-          :ok
-
-        {:ok, %{rows: rows}} ->
-          reason = inspect(rows)
-          Logger.error("SQLite integrity_check reports problems: #{reason}")
-          {:error, reason}
-
-        {:error, reason} ->
-          Logger.error("SQLite integrity_check query failed: #{inspect(reason)}")
-          {:error, reason}
-      end
-      |> then(fn pragma_result ->
-        case pragma_result do
-          :ok ->
-            corrupt =
-              scan_and_repair(conn, "tasks", &Codec.decode_task/1) +
-                scan_and_repair(conn, "projects", &Codec.decode_project/1)
-
-            if corrupt > 0, do: {:repaired, corrupt}, else: :ok
-
-          other ->
-            other
-        end
-      end)
-    rescue
-      error ->
-        Logger.error("integrity_check failed: #{inspect(error)}")
-        {:error, error}
-    end
-  end
-
-  ## Private — Quarantine recovery
-
-  defp do_recover_quarantine(conn) do
-    tasks_recovered =
-      recover_table_quarantine(conn, "tasks", Codec.task_columns(), &Codec.decode_task/1)
-
-    projects_recovered =
-      recover_table_quarantine(conn, "projects", Codec.project_columns(), &Codec.decode_project/1)
-
-    total = tasks_recovered + projects_recovered
-
-    if total > 0 do
-      Logger.info(
-        "Store: recovered #{total} rows from quarantine (#{tasks_recovered} tasks, #{projects_recovered} projects)"
-      )
-    end
-
-    {:ok, total}
-  end
-
-  # Reads rows from a quarantine table, attempts to decode each via `decoder`,
-  # and moves successfully decoded rows back into the live `table`. Rows that
-  # still fail to decode are left in quarantine.
-  defp recover_table_quarantine(conn, table, columns, decoder) do
-    quarantine_table = "#{table}_quarantine"
-
-    case XqliteNIF.query(conn, "SELECT id, data FROM #{quarantine_table}", []) do
-      {:ok, %{rows: rows}} ->
-        Enum.reduce(rows, 0, fn [id, data], acc ->
-          case Jason.decode(data) do
-            {:ok, map} when is_map(map) ->
-              # Reconstruct the row list in column order from the JSON map.
-              row = Enum.map(columns, &Map.get(map, &1))
-
-              # Justified try/rescue — data-recovery boundary. The decoder raises
-              # by design on bad data; rows that still fail to decode must stay
-              # in quarantine rather than crashing the entire recovery sweep.
-              try do
-                decoder.(row)
-
-                col_names = Enum.join(columns, ", ")
-
-                placeholders =
-                  columns
-                  |> Enum.with_index(1)
-                  |> Enum.map(fn {_, i} -> "?#{i}" end)
-                  |> Enum.join(", ")
-
-                {:ok, _} =
-                  XqliteNIF.execute(
-                    conn,
-                    "INSERT OR REPLACE INTO #{table} (#{col_names}) VALUES (#{placeholders})",
-                    row
-                  )
-
-                {:ok, _} =
-                  XqliteNIF.execute(
-                    conn,
-                    "DELETE FROM #{quarantine_table} WHERE id = ?1",
-                    [id]
-                  )
-
-                Logger.info(
-                  "Store: recovered row from #{quarantine_table} " <>
-                    "(id=#{inspect(id)}) → #{table}"
-                )
-
-                acc + 1
-              rescue
-                e ->
-                  Logger.warning(
-                    "Store: row in #{quarantine_table} (id=#{inspect(id)}) still fails decode, " <>
-                      "leaving in quarantine: #{Exception.message(e)}"
-                  )
-
-                  acc
-              end
-
-            {:error, _} ->
-              Logger.warning(
-                "Store: failed to parse JSON data in #{quarantine_table} " <>
-                  "(id=#{inspect(id)}), leaving in quarantine"
-              )
-
-              acc
-
-            _ ->
-              acc
-          end
-        end)
-
-      _ ->
-        0
-    end
-  end
-
-  defp scan_and_repair(conn, table, decoder) do
-    columns = table_columns(table)
-    col_list = Enum.join(columns, ", ")
-    pk = pk_column(table)
-
-    case XqliteNIF.query(conn, "SELECT #{col_list} FROM #{table}", []) do
-      {:ok, %{rows: rows}} ->
-        Enum.reduce(rows, 0, fn row, acc ->
-          id = hd(row)
-
-          # Justified try/rescue — quarantine/data-recovery boundary (same as
-          # safe_decode_rows). The decoder raises by design; quarantine is
-          # the deliberate recovery boundary.
-          try do
-            decoder.(row)
-            acc
-          rescue
-            _ ->
-              quarantine_row(conn, table, id, pk, columns, row)
-              acc + 1
-          end
-        end)
-
-      _ ->
-        0
-    end
-  end
-
-  # Moves an undecodable row into the quarantine table (INSERT raw data as JSON
-  # then DELETE from the live table). If the quarantine INSERT itself fails, we
-  # log an error and LEAVE THE ROW IN PLACE — never silently destroy data.
-  defp quarantine_row(conn, table, id, pk, columns, row) do
-    quarantine_table = "#{table}_quarantine"
-
-    json_data =
-      case columns |> Enum.zip(row) |> Map.new() |> Jason.encode() do
-        {:ok, json} -> json
-        {:error, _} -> nil
-      end
-
-    # Justified try/rescue — data-recovery boundary. Must never destroy data;
-    # if the quarantine INSERT or DELETE fails, we log and leave the row in
-    # place rather than crashing and potentially losing the row entirely.
-    try do
-      {:ok, _} =
-        XqliteNIF.execute(
-          conn,
-          "INSERT OR REPLACE INTO #{quarantine_table} (id, data) VALUES (?1, ?2)",
-          [id, json_data]
-        )
-
-      {:ok, _} =
-        XqliteNIF.execute(conn, "DELETE FROM #{table} WHERE #{pk} = ?1", [id])
-
-      Logger.warning([
-        "Store: quarantined undecodable row ",
-        "(table=#{table}, id=#{inspect(id)}) → #{quarantine_table}. ",
-        "Raw data preserved for recovery."
-      ])
-    rescue
-      e ->
-        Logger.error([
-          "Store: failed to quarantine undecodable row ",
-          "(table=#{table}, id=#{inspect(id)}): #{Exception.message(e)}. ",
-          "Leaving row in place — data NOT destroyed."
-        ])
-    end
-  end
 end

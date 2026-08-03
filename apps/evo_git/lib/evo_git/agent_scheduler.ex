@@ -124,7 +124,7 @@ defmodule EvoGit.AgentScheduler do
   Returns nil if not in a scheduled agent.
   """
   def current_repo_root do
-    Process.get(:evogit_repo_root)
+    Process.get(:genesis_repo_root)
   end
 
   @doc """
@@ -389,7 +389,6 @@ defmodule EvoGit.AgentScheduler do
     } = config
 
     %{
-      max_concurrency: max_concurrency,
       max_tool_concurrency: max_tool_concurrency,
       agent_max_retries: agent_max_retries,
       max_agent_depth: max_depth,
@@ -408,15 +407,7 @@ defmodule EvoGit.AgentScheduler do
       case raw_model_profiles do
         [] ->
           # Legacy path: build a single "default" profile from flat config
-          legacy_model = config[:llm] |> Map.get(:model)
-
-          [
-            %{
-              id: "default",
-              model: legacy_model,
-              concurrency: max_concurrency
-            }
-          ]
+          [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
 
         profiles ->
           profiles
@@ -528,6 +519,11 @@ defmodule EvoGit.AgentScheduler do
 
     task_id =
       spec.opts[:task_id] || :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
+    # Defensive per-task archive reset: any leftover records from a previous run
+    # sharing this task_id (e.g., a crash before the task completed) must not leak
+    # into this run's collected archive.
+    Lifecycle.clear_archive_records(task_id)
 
     repo_root = Dispatch.resolve_agent_repo_root(spec, state)
     task_number = Dispatch.next_task_number(repo_root)

@@ -198,19 +198,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     model_profiles =
       case raw_model_profiles do
         [] ->
-          legacy_model =
-            case Map.get(config, :llm) do
-              llm when is_map(llm) -> Map.get(llm, :model)
-              _ -> nil
-            end
-
-          [
-            %{
-              id: "default",
-              model: legacy_model,
-              concurrency: Map.get(scheduler, :max_concurrency, 3)
-            }
-          ]
+          [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
 
         profiles ->
           profiles
@@ -320,6 +308,27 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec get_unique_paths() :: [String.t()]
   def get_unique_paths do
     EvoGit.TaskRegistry.get_unique_paths()
+  end
+
+  @doc """
+  Returns lightweight task summaries for all tasks.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_summary/0`. Returns a list of
+  plain maps with only the columns needed for the dashboard sidebar.
+  """
+  @spec list_tasks_summary() :: [map()]
+  def list_tasks_summary do
+    EvoGit.TaskRegistry.list_tasks_summary()
+  end
+
+  @doc """
+  Returns lightweight task summaries filtered to a specific project_path.
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_summary_by_path/1`.
+  """
+  @spec list_tasks_summary_by_path(String.t()) :: [map()]
+  def list_tasks_summary_by_path(path) do
+    EvoGit.TaskRegistry.list_tasks_summary_by_path(path)
   end
 
   @doc """

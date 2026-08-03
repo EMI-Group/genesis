@@ -283,30 +283,9 @@ defmodule EvoGit.Config do
           flat_model = Map.get(llm, :model)
 
           if flat_model == nil or flat_model == "" do
-            # No model configured at all — keep empty list
             []
           else
-            # Build default profile from flat fields.
-            # Concurrency comes from scheduler.max_concurrency (the old global limit).
-            raw_scheduler = Map.get(config, :scheduler, %{})
-            scheduler = if is_map(raw_scheduler), do: raw_scheduler, else: %{}
-            concurrency = Map.get(scheduler, :max_concurrency, 3)
-
-            profile =
-              %{
-                id: "default",
-                model: flat_model,
-                concurrency: concurrency
-              }
-              |> maybe_put_gen_param(:temperature, Map.get(llm, :temperature))
-              |> maybe_put_gen_param(:max_tokens, Map.get(llm, :max_tokens))
-              |> maybe_put_gen_param(:reasoning_effort, Map.get(llm, :reasoning_effort))
-              |> maybe_put_gen_param(:top_p, Map.get(llm, :top_p))
-              |> maybe_put_gen_param(:top_k, Map.get(llm, :top_k))
-              |> maybe_put_gen_param(:frequency_penalty, Map.get(llm, :frequency_penalty))
-              |> maybe_put_gen_param(:presence_penalty, Map.get(llm, :presence_penalty))
-
-            [profile]
+            [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
           end
       end
 
@@ -330,9 +309,6 @@ defmodule EvoGit.Config do
 
     put_in(config, [:llm], Map.put(llm, :models, models))
   end
-
-  defp maybe_put_gen_param(map, _key, nil), do: map
-  defp maybe_put_gen_param(map, key, value), do: Map.put(map, key, value)
 
   # Atomizes the string keys of a model profile map.
   # atomize_keys recurses into map values but NOT list elements, so profiles
@@ -448,29 +424,16 @@ defmodule EvoGit.Config do
   @doc """
   Reads and returns the parsed user config TOML file.
 
-  Checks the primary ("genesis") config path first. If `config.toml` is not
-  found there, falls back to the legacy ("evogit") config directory for
-  backwards compatibility with existing users.
-
-  Returns `%{}` if the file is not found or cannot be parsed in either location.
+  Returns `%{}` if the file is not found or cannot be parsed.
   """
   @spec user_config() :: map()
   def user_config do
     path = config_path()
-    read_opts = [description: "config"]
 
-    cond do
-      File.exists?(path) ->
-        read_toml_file(path, %{}, read_opts)
-
-      true ->
-        legacy_path = Path.join(legacy_config_dir(), @config_filename)
-
-        if File.exists?(legacy_path) do
-          read_toml_file(legacy_path, %{}, read_opts)
-        else
-          %{}
-        end
+    if File.exists?(path) do
+      read_toml_file(path, %{}, description: "config")
+    else
+      %{}
     end
   end
 
@@ -710,26 +673,16 @@ defmodule EvoGit.Config do
   @doc """
   Reads and returns the parsed credentials TOML file.
 
-  Checks the primary ("genesis") credentials path first. If `credentials.toml`
-  is not found there, falls back to the legacy ("evogit") config directory for
-  backwards compatibility with existing users.
-
-  Returns `%{}` if the file is not found or cannot be parsed in either location.
+  Returns `%{}` if the file is not found or cannot be parsed.
   """
   @spec credentials() :: map()
   def credentials do
     path = credentials_path()
-    legacy_path = Path.join(legacy_config_dir(), @credentials_filename)
 
-    cond do
-      File.exists?(path) ->
-        read_credentials_file(path)
-
-      File.exists?(legacy_path) ->
-        read_credentials_file(legacy_path)
-
-      true ->
-        %{}
+    if File.exists?(path) do
+      read_credentials_file(path)
+    else
+      %{}
     end
   end
 
@@ -751,9 +704,9 @@ defmodule EvoGit.Config do
   @doc """
   Derives a ReqLLM atom key from a credential key name.
 
-  Strips the `_API_KEY` or `_api_key` suffix (handles both legacy uppercase
-  and new lowercase formats), downcases, and appends `_api_key`.
-  Returns `nil` if the credential key does not end with a recognized suffix.
+  Strips the `_API_KEY` or `_api_key` suffix, downcases, and appends
+  `_api_key`. Returns `nil` if the credential key does not end with a
+  recognized suffix.
   """
   def credential_key_to_reqllm_key(credential_key) when is_binary(credential_key) do
     # Derive from credential key name: strip _API_KEY or _api_key suffix, downcase,
@@ -861,30 +814,6 @@ defmodule EvoGit.Config do
         appdata = System.get_env("APPDATA")
         base = if appdata && appdata != "", do: appdata, else: System.user_home!()
         Path.join(base, "genesis")
-    end
-  end
-
-  @doc """
-  Returns the legacy config directory path (using the old "evogit" segment).
-
-  Used as a fallback when the new "genesis" config directory does not contain a
-  `config.toml`, preserving backwards compatibility for existing users.
-  """
-  @spec legacy_config_dir() :: String.t()
-  def legacy_config_dir do
-    case EvoGit.Platform.os() do
-      os when os in [:linux, :unknown] ->
-        xdg = System.get_env("XDG_CONFIG_HOME")
-        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".config")
-        Path.join(base, "evogit")
-
-      :macos ->
-        Path.join([System.user_home!(), "Library", "Application Support", "evogit"])
-
-      :windows ->
-        appdata = System.get_env("APPDATA")
-        base = if appdata && appdata != "", do: appdata, else: System.user_home!()
-        Path.join(base, "evogit")
     end
   end
 

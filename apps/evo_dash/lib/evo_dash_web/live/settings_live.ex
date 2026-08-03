@@ -1632,7 +1632,7 @@ defmodule EvoDashWeb.SettingsLive do
   # Helpers: Config persistence
   # ───────────────────────────────────────────────────────────────────────────
 
-  defp persist_file_config(file_config, socket, success_msg) do
+  def persist_file_config(file_config, socket, success_msg) do
     # Always update in-memory state so the UI reflects the change immediately
     socket = assign(socket, :file_config, file_config)
     node = socket.assigns.current_node
@@ -1723,7 +1723,7 @@ defmodule EvoDashWeb.SettingsLive do
   # Only the keys present in the scheduler config are populated; the rest fall
   # back to schema defaults when rendered. This is best-effort display data for
   # the remote config view.
-  defp remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
+  def remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
     scheduler =
       %{}
       |> maybe_put(:max_concurrency, remote_cfg[:max_concurrency])
@@ -1751,7 +1751,7 @@ defmodule EvoDashWeb.SettingsLive do
     |> Map.put(:llm, llm)
   end
 
-  defp remote_config_to_file_config(_), do: %{}
+  def remote_config_to_file_config(_), do: %{}
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)

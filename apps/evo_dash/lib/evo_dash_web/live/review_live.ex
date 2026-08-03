@@ -437,7 +437,7 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def mount(%{"task_id" => task_id} = params, _session, socket) do
+  def mount(%{"task_id" => _} = params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end

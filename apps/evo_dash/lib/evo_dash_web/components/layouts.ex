@@ -70,8 +70,11 @@ defmodule EvoDashWeb.Layouts do
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible"
+        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
+        <%!-- overflow-visible! is pinned with !important: the SidebarCollapse
+          hook re-applies overflow-hidden on expand, which clips the SSH
+          node-selector dropdown (288px) at the 240px sidebar edge. --%>
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
           <.link

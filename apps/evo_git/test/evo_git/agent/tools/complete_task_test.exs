@@ -446,12 +446,13 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         :ets.new(:evogit_agent_state, [:set, :public, :named_table])
       end
 
-      # Create the archive records ETS table (duplicate_bag for multiple records per task)
+      # Create the archive records ETS table (a :set keyed by {task_id, agent_id} —
+      # at most ONE record per agent per task, so crash-retry double-writes overwrite)
       if :ets.whereis(:evogit_archive_records) != :undefined do
         :ets.delete(:evogit_archive_records)
       end
 
-      :ets.new(:evogit_archive_records, [:named_table, :public, :duplicate_bag])
+      :ets.new(:evogit_archive_records, [:named_table, :public, :set])
 
       on_exit(fn ->
         File.rm_rf!(tmp_dir)
@@ -488,11 +489,11 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert {:ok, ^base_commit} = Git.rev_parse(tmp_dir, ref_start)
       assert {:ok, ^final_commit} = Git.rev_parse(tmp_dir, ref_final)
 
-      # Verify the archive record was written to ETS
-      records = :ets.lookup(:evogit_archive_records, "1")
+      # Verify the archive record was written to ETS (keyed by {task_id, agent_id})
+      records = :ets.lookup(:evogit_archive_records, {"1", "agent_arc1"})
       assert length(records) == 1
 
-      {_task_id, record} = hd(records)
+      {{"1", "agent_arc1"}, record} = hd(records)
       assert record.agent_id == "agent_arc1"
       assert record.base_commit == base_commit
       assert record.final_commit == final_commit
@@ -528,7 +529,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_final)
 
       # No archive records should be written
-      assert :ets.lookup(:evogit_archive_records, "2") == []
+      assert :ets.lookup(:evogit_archive_records, {"2", "agent_arc2"}) == []
 
       :ets.delete(:evogit_sched_meta, "agent_arc2")
       :ets.delete(:evogit_agent_state, "agent_arc2")
@@ -576,9 +577,9 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       refute Map.has_key?(metadata["usage"], "input_cost")
 
       # Verify the archive record has the richer usage format
-      records = :ets.lookup(:evogit_archive_records, "3")
+      records = :ets.lookup(:evogit_archive_records, {"3", "agent_arc3"})
       assert length(records) == 1
-      {_task_id, arc_record} = hd(records)
+      {{"3", "agent_arc3"}, arc_record} = hd(records)
       arc_usage = arc_record.usage
       assert arc_usage != nil
       assert arc_usage.input_tokens == 100
@@ -593,7 +594,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
 
       :ets.delete(:evogit_sched_meta, "agent_arc3")
       :ets.delete(:evogit_agent_state, "agent_arc3")
-      :ets.delete(:evogit_archive_records, "3")
+      :ets.delete(:evogit_archive_records, {"3", "agent_arc3"})
       Process.delete(:repo_path)
     end
 
@@ -624,10 +625,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         foreign_repos: [EvoGit.Core.ForeignRepo.new("ext", "/path/to/ext")]
       )
 
-      records = :ets.lookup(:evogit_archive_records, "4")
+      records = :ets.lookup(:evogit_archive_records, {"4", "agent_arc4"})
       assert length(records) == 1
 
-      {_task_id, record} = hd(records)
+      {{"4", "agent_arc4"}, record} = hd(records)
 
       # Verify all required keys are present
       assert Map.has_key?(record, :agent_id)
@@ -693,6 +694,99 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       :ets.delete(:evogit_agent_state, "agent_arc4")
       Process.delete(:repo_path)
       Process.delete(:evogit_started_at)
+    end
+
+    test "writes a single archive record when the same agent completes twice (crash-retry idempotency)",
+         %{
+           tmp_dir: tmp_dir,
+           base_commit: base_commit,
+           final_commit: final_commit
+         } do
+      Process.put(:repo_path, tmp_dir)
+
+      :ets.insert(:evogit_sched_meta, {"agent_arc5", %{task_id: "5", task_number: 5}})
+      :ets.insert(:evogit_agent_state, {"agent_arc5", %{task_local_id: 5}})
+
+      # Simulate a crash-retry double-completion: the same agent completes twice
+      # with the same task_id. The :set table keyed by {task_id, agent_id} makes
+      # the second insert an idempotent overwrite — at most ONE record.
+      CompleteTask.complete("agent_arc5", "First", final_commit,
+        base_commit: base_commit,
+        archive: true
+      )
+
+      CompleteTask.complete("agent_arc5", "Second", final_commit,
+        base_commit: base_commit,
+        archive: true
+      )
+
+      records = :ets.lookup(:evogit_archive_records, {"5", "agent_arc5"})
+      assert length(records) == 1
+
+      {{"5", "agent_arc5"}, record} = hd(records)
+      assert record.agent_id == "agent_arc5"
+
+      :ets.delete(:evogit_sched_meta, "agent_arc5")
+      :ets.delete(:evogit_agent_state, "agent_arc5")
+      Process.delete(:repo_path)
+    end
+
+    test "two runs sharing a task_id produce archives with only their own records (no stale leak)",
+         %{
+           tmp_dir: tmp_dir,
+           base_commit: base_commit,
+           final_commit: final_commit
+         } do
+      Process.put(:repo_path, tmp_dir)
+
+      # Run 1: two agents sharing the same task_id
+      :ets.insert(:evogit_sched_meta, {"run1_a1", %{task_id: "shared", task_number: 10}})
+      :ets.insert(:evogit_agent_state, {"run1_a1", %{task_local_id: 1}})
+      :ets.insert(:evogit_sched_meta, {"run1_a2", %{task_id: "shared", task_number: 10}})
+      :ets.insert(:evogit_agent_state, {"run1_a2", %{task_local_id: 2}})
+
+      CompleteTask.complete("run1_a1", "Run1 A1", final_commit,
+        base_commit: base_commit,
+        archive: true
+      )
+
+      CompleteTask.complete("run1_a2", "Run1 A2", final_commit,
+        base_commit: base_commit,
+        archive: true
+      )
+
+      records1 = EvoGit.AgentScheduler.Lifecycle.collect_archive_records("shared")
+      assert length(records1) == 2
+
+      agent_ids = records1 |> Enum.map(& &1.agent_id) |> MapSet.new()
+      assert MapSet.equal?(agent_ids, MapSet.new(["run1_a1", "run1_a2"]))
+
+      # Consumption clears the collection for this task only.
+      assert :ok = EvoGit.AgentScheduler.Lifecycle.clear_archive_records("shared")
+      assert EvoGit.AgentScheduler.Lifecycle.collect_archive_records("shared") == []
+
+      # Run 2: a single agent reusing the same task_id — must NOT see run 1's records.
+      :ets.insert(:evogit_sched_meta, {"run2_b1", %{task_id: "shared", task_number: 10}})
+      :ets.insert(:evogit_agent_state, {"run2_b1", %{task_local_id: 3}})
+
+      CompleteTask.complete("run2_b1", "Run2 B1", final_commit,
+        base_commit: base_commit,
+        archive: true
+      )
+
+      records2 = EvoGit.AgentScheduler.Lifecycle.collect_archive_records("shared")
+      assert length(records2) == 1
+      assert hd(records2).agent_id == "run2_b1"
+
+      # Cleanup
+      :ets.delete(:evogit_sched_meta, "run1_a1")
+      :ets.delete(:evogit_agent_state, "run1_a1")
+      :ets.delete(:evogit_sched_meta, "run1_a2")
+      :ets.delete(:evogit_agent_state, "run1_a2")
+      :ets.delete(:evogit_sched_meta, "run2_b1")
+      :ets.delete(:evogit_agent_state, "run2_b1")
+      :ets.match_delete(:evogit_archive_records, {{"shared", :_}, :_})
+      Process.delete(:repo_path)
     end
   end
 end

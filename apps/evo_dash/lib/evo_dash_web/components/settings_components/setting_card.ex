@@ -240,23 +240,6 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
     end
   end
 
-  def model_display({provider, opts}) when is_atom(provider) and is_list(opts) do
-    id = Keyword.get(opts, :id, "")
-    provider_str = to_string(provider)
-    overrides = Keyword.drop(opts, [:id])
-
-    cond do
-      id != "" and overrides != [] ->
-        "#{provider_str}:#{id} (+overrides)"
-
-      id != "" ->
-        "#{provider_str}:#{id}"
-
-      true ->
-        inspect({provider, opts})
-    end
-  end
-
   def model_display(value), do: to_string(value)
 
   defp default_label(nil), do: gettext("empty")

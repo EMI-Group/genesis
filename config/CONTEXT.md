@@ -14,7 +14,7 @@ None — leaf directory (Elixir config files only).
 | `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors | Compile |
 | `test.exs` | Test overrides — port 4002, server disabled, warning-level logger | Compile |
 | `prod.exs` | Production overrides — static cache manifest, info-level logger | Compile |
-| `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, `PHX_SERVER`, `PHX_IP`; desktop-mode detection via compile-time `:desktop_release` flag (from `genesis_desktop` release in `mix.exs`) OR `EVOGIT_DESKTOP` env var (sets `localhost`/`http`/`check_origin: false` for Tauri WebView). Desktop bind address defaults to loopback (127.0.0.1) for security; `PHX_IP` env var overrides (e.g. `0.0.0.0` for remote access) | Runtime |
+| `runtime.exs` | Secrets & dynamic config — `SECRET_KEY_BASE`, `PHX_HOST`, `PORT`, `PHX_SERVER`, `PHX_IP`; desktop-mode detection via compile-time `:desktop_release` flag (from `genesis_desktop` release in `mix.exs`) OR `EVOGIT_DESKTOP` env var (sets `localhost`/`http`/`check_origin: false` for Tauri WebView). Desktop bind address defaults to loopback (127.0.0.1) for security; `PHX_IP` env var overrides (e.g. `0.0.0.0` for remote access). **Desktop log file**: in desktop mode the default `:logger_std_h` handler is redirected from stdout to `<Platform.data_dir()>/logs/backend.log` (`EvoGit.Platform.data_dir()`: `$XDG_DATA_HOME`/`~/.local/share` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows; app name `genesis`). Rotating: 10 MB × 5 files. Path must be a charlist. Falls back to console if `mkdir_p` fails; path announced via `IO.puts("[desktop] Logging to file: ...")` | Runtime |
 
 ## Constraints
 - **Load order**: `config.exs` imports `{env}.exs` at the bottom — env files override base.
@@ -45,7 +45,7 @@ None — leaf directory (Elixir config files only).
 ### In TOML files (via `EvoGit.Config` at `apps/evo_git/lib/evo_git/config/config.ex`)
 The **3-level configuration system** (resolved at runtime, not via Elixir `Config`):
 1. **Application defaults** — Hardcoded in `EvoGit.Config.defaults/0`: scheduler settings, empty `llm`/`user` maps, sandbox `:auto`, evolution parameters, truncation limits. **No default model or username is provided.**
-2. **User config** — `~/.config/evogit/config.toml` (XDG-compliant, cross-platform):
+2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant, cross-platform):
    - `[llm]` → `model = "provider:model"` (e.g. `"anthropic:claude-sonnet-4-20250514"`), `compression_threshold_tokens`
    - `[scheduler]` → `max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_agent_depth`, `max_retries`
    - `[user]` → `github_username`
@@ -55,14 +55,14 @@ The **3-level configuration system** (resolved at runtime, not via Elixir `Confi
 3. **Runtime overrides** — CLI flags and dashboard settings, stored in `AgentScheduler` GenServer state
 
 ### Credentials (API keys)
-- Stored in `~/.config/evogit/credentials.toml` (separate from config for security)
+- Stored in `~/.config/genesis/credentials.toml` (separate from config for security)
 - Format: `PROVIDER_API_KEY = "key-value"` (e.g. `ANTHROPIC_API_KEY = "sk-ant-..."`)
 - On load, `EvoGit.Config.credentials/0` reads the file and sets each key-value as an environment variable via `System.put_env/2`
 - Supported providers: Google, Anthropic, OpenAI, ZAI, DeepSeek, Groq, Tavily
 - The provider is determined from the `[llm] model` format `"provider:model"`
 
 ### Per-project config
-- `EvoGit.ProjectConfig` reads `evogit.toml` from the repo root (not from `~/.config/evogit/`)
+- `EvoGit.ProjectConfig` reads `genesis.toml` from the repo root (not from `~/.config/genesis/`)
 - Supports `worktree.script` and `foreign_repos` sections
 
 ## Key Configuration Categories
