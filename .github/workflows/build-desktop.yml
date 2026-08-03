@@ -42,7 +42,7 @@ permissions:
 # Artifact naming convention (canonical, underscores only — no dashes):
 #   genesis_{type}_{version}_{platform}_{arch}.{format}
 #   type:     desktop | remote
-#   version:  release tag without the leading "v" (e.g. 0.8.6)
+#   version:  release tag including the leading "v" (e.g. v0.8.6)
 #   platform: linux | windows | darwin
 #   arch:     x64 | arm64
 #   format:   tar.gz | deb | rpm | AppImage | dmg | app | msi | exe
@@ -62,7 +62,7 @@ jobs:
       - name: Derive release version
         run: |
           GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
+          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
 
       - name: Install Linux system dependencies
         run: |
@@ -215,7 +215,7 @@ jobs:
       - name: Derive release version
         run: |
           GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
+          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
 
       # GitHub-hosted ARM runners report an ImageOS value that setup-beam does
       # not recognise.  Override it to the base value before setup-beam runs.
@@ -359,7 +359,7 @@ jobs:
       - name: Derive release version
         run: |
           GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
+          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
@@ -483,7 +483,7 @@ jobs:
       - name: Derive release version
         run: |
           GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=${GENESIS_TAG#v}" >> "$GITHUB_ENV"
+          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
 
       - name: Set up Elixir
         uses: erlef/setup-beam@v1
