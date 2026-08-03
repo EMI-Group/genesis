@@ -5,7 +5,8 @@ defmodule Mix.Tasks.Gettext.ExtractSchemaDescriptions do
 
   @requirements ["app.config"]
 
-  @pot_file Path.join([__DIR__, "..", "..", "..", "priv", "gettext", "default.pot"]) |> Path.expand()
+  @pot_file Path.join([__DIR__, "..", "..", "..", "priv", "gettext", "default.pot"])
+            |> Path.expand()
   @schema_source "lib/evo_git/config/schema.ex"
 
   @impl Mix.Task

@@ -43,14 +43,32 @@ config :evo_dash, EvoDashWeb.Endpoint,
 # different ports.
 
 # Watch static and templates for browser reloading.
-config :evo_dash, EvoDashWeb.Endpoint,
-  live_reload: [
-    web_console_logger: true,
-    patterns: [
+# NOTE (Windows): live_reload's file watcher (file_system's inotifywait.exe,
+# a .NET FileSystemWatcher with a fixed 8KB buffer) crashes with
+# InternalBufferOverflowException under heavy _build/ asset churn and takes
+# the whole dev server down. Keep patterns empty on Windows; browser refresh
+# becomes manual, but code_reloader + esbuild/tailwind watchers still work.
+live_reload_patterns =
+  if :os.type() == {:win32, :nt},
+    do: [],
+    else: [
       ~r"priv/static/(?!uploads/).*(js|css|png|jpeg|jpg|gif|svg)$",
       ~r"lib/evo_dash_web/(?:controllers|live|components|router)/?.*\.(ex|heex)$"
     ]
+
+config :evo_dash, EvoDashWeb.Endpoint,
+  live_reload: [
+    web_console_logger: true,
+    patterns: live_reload_patterns
   ]
+
+# Same Windows issue: phoenix_live_reload's FileSystem monitor always starts
+# and watches :dirs recursively (default [""] = the whole umbrella root,
+# including _build/ and deps/, which overflows the watcher buffer). Restrict
+# it to the small static-assets dir so it survives on Windows.
+if :os.type() == {:win32, :nt} do
+  config :phoenix_live_reload, :dirs, ["apps/evo_dash/priv/static"]
+end
 
 # Enable dev routes for dashboard and mailbox
 config :evo_dash, dev_routes: true
