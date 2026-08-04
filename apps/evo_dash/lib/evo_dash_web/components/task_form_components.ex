@@ -52,89 +52,96 @@ defmodule EvoDashWeb.TaskFormComponents do
         "relative flex-1 flex flex-col min-h-0 transition-opacity",
         @disabled && "opacity-40 pointer-events-none select-none"
       ]}>
-        <!-- Zone 2 — the input box (Google Docs "pageless" centered column) -->
-        <div class="mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0">
-          <textarea
-            name="prompt"
-            id="prompt"
-            phx-update="ignore"
-            class="w-full flex-1 min-h-[200px] p-6 text-base leading-relaxed bg-transparent border-0 border-b border-base-200 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors focus:border-base-300"
-            placeholder={
-              cond do
-                @mode == "genesis_existing" ->
-                  gettext("Optional — leave empty and click Launch to initialize an existing codebase")
+        <!-- Adaptive input layout: CSS morphs between compact (Layout A)
+             and expanded (Layout B) based on data-layout attribute,
+             which is set by the AdaptiveInput JS hook based on content height. -->
+        <div class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0" data-layout="compact" id="input-layout">
+          <div class="input-card">
+            <textarea
+              name="prompt"
+              id="prompt"
+              phx-update="ignore"
+              phx-hook="AdaptiveInput"
+              class="input-prompt w-full min-h-[120px] p-4 text-base leading-relaxed bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors"
+              placeholder={
+                cond do
+                  @mode == "genesis_existing" ->
+                    gettext("Optional — leave empty and click Launch to initialize an existing codebase")
 
-                String.starts_with?(@mode, "evolve") ->
-                  gettext("Describe what you want to change or improve...")
+                  String.starts_with?(@mode, "evolve") ->
+                    gettext("Describe what you want to change or improve...")
 
-                true ->
-                  gettext("Describe the codebase you want to create...")
-              end
-            }
-          ><%= @prompt %></textarea>
-        </div>
+                  true ->
+                    gettext("Describe the codebase you want to create...")
+                end
+              }
+            ><%= @prompt %></textarea>
+          </div>
 
-        <!-- Welcome hint overlay when disabled (no project active) -->
-        <%= if @disabled do %>
-          <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-            <div class="text-center">
-              <div class="animate-float">
-                <.icon name="hero-sparkles" class="size-12 mx-auto mb-2 text-base-content/40" />
+          <!-- Welcome hint overlay when disabled (no project active) -->
+          <%= if @disabled do %>
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+              <div class="text-center">
+                <div class="animate-float">
+                  <.icon name="hero-sparkles" class="size-12 mx-auto mb-2 text-base-content/40" />
+                </div>
+                <p class="text-base font-medium text-base-content/50">
+                  {gettext("Open a project to get started")}
+                </p>
+                <p class="text-sm text-base-content/35 mt-0.5">
+                  {gettext("Select or create a project to get started")}
+                </p>
               </div>
-              <p class="text-base font-medium text-base-content/50">
-                {gettext("Open a project to get started")}
-              </p>
-              <p class="text-sm text-base-content/35 mt-0.5">
-                {gettext("Select or create a project to get started")}
-              </p>
+            </div>
+          <% end %>
+
+          <!-- Controls panel: CSS repositions based on data-layout.
+               In compact mode: appears as the last line of the card.
+               In expanded mode: detaches as a floating bottom panel. -->
+          <div class="input-controls">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-2xl bg-base-100/95 border border-base-200 shadow-lg backdrop-blur-sm">
+              <!-- Mode switch -->
+              <select
+                name="mode"
+                phx-change="task_change"
+                class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[8.5rem]"
+                title={mode_description(@mode)}
+              >
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                  {gettext("Initialize Existing")}
+                </option>
+                <option value="genesis_new" selected={@mode == "genesis_new"}>
+                  {gettext("Create New")}
+                </option>
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
+                </option>
+              </select>
+
+              <div class="w-px h-7 bg-base-200"></div>
+
+              <!-- Launch Task button — the focal point -->
+              <button type="submit" class="btn btn-primary gap-2 px-5" disabled={@disabled}>
+                <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}
+              </button>
+
+              <!-- Model switch -->
+              <%= if @model_profiles != [] do %>
+                <div class="w-px h-7 bg-base-200"></div>
+                <select
+                  name="model_id"
+                  phx-change="select_model"
+                  class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem]"
+                >
+                  <%= for profile <- @model_profiles do %>
+                    <option value={profile.id} selected={@selected_model_id == profile.id}>
+                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
+                    </option>
+                  <% end %>
+                </select>
+              <% end %>
             </div>
           </div>
-        <% end %>
-      </div>
-
-      <!-- Zone 3 — Floating bottom launcher panel (pinned bottom-center) -->
-      <div class="shrink-0 flex justify-center pt-3">
-        <div class="flex items-center gap-2 px-3 py-2 rounded-2xl bg-base-100/95 border border-base-200 shadow-lg backdrop-blur-sm">
-          <!-- Mode switch -->
-          <select
-            name="mode"
-            phx-change="task_change"
-            class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[8.5rem]"
-            title={mode_description(@mode)}
-          >
-            <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-              {gettext("Initialize Existing")}
-            </option>
-            <option value="genesis_new" selected={@mode == "genesis_new"}>
-              {gettext("Create New")}
-            </option>
-            <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-              <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
-            </option>
-          </select>
-
-          <div class="w-px h-7 bg-base-200"></div>
-
-          <!-- Launch Task button — the focal point -->
-          <button type="submit" class="btn btn-primary gap-2 px-5" disabled={@disabled}>
-            <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}
-          </button>
-
-          <!-- Model switch -->
-          <%= if @model_profiles != [] do %>
-            <div class="w-px h-7 bg-base-200"></div>
-            <select
-              name="model_id"
-              phx-change="select_model"
-              class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem]"
-            >
-              <%= for profile <- @model_profiles do %>
-                <option value={profile.id} selected={@selected_model_id == profile.id}>
-                  {profile.id <> " (" <> profile_model_label(profile) <> ")"}
-                </option>
-              <% end %>
-            </select>
-          <% end %>
         </div>
       </div>
     </.form>

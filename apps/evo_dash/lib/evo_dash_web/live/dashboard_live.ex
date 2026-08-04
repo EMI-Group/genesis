@@ -9,6 +9,7 @@ defmodule EvoDashWeb.DashboardLive do
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow}
+  alias EvoDashWeb.ThemeColor
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
@@ -62,6 +63,7 @@ defmodule EvoDashWeb.DashboardLive do
           data-project={@active_project_path}
           data-task-mode={@task_mode}
           class="flex flex-col min-h-full"
+          style={"--project-accent: #{ThemeColor.accent_color(@active_project && @active_project.name)}"}
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
@@ -196,6 +198,8 @@ defmodule EvoDashWeb.DashboardLive do
                   new_repo_path={@new_repo_path}
                   new_repo_description={@new_repo_description}
                   disabled={is_nil(@active_project)}
+                  address_bar_editing={@address_bar_editing}
+                  show_configure_dropdown={@show_configure_dropdown}
                 />
 
                 <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
@@ -301,10 +305,12 @@ defmodule EvoDashWeb.DashboardLive do
   attr(:new_repo_path, :string, default: "")
   attr(:new_repo_description, :string, default: "")
   attr(:disabled, :boolean, default: false)
+  attr(:address_bar_editing, :boolean, default: false)
+  attr(:show_configure_dropdown, :boolean, default: false)
 
   def top_bar(assigns) do
     ~H"""
-    <div class="shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-2 bg-base-100 border-b border-base-200 px-3 py-2">
+    <div class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-2 px-3 py-2">
       <!-- LEFT: address-bar-style project control -->
       <div class="flex-1 min-w-0">
         <EvoDashWeb.ProjectComponents.project_selector
@@ -315,17 +321,34 @@ defmodule EvoDashWeb.DashboardLive do
           path_suggestions={@path_suggestions}
           tauri_detected={@tauri_detected}
           platform={@platform}
+          address_bar_editing={@address_bar_editing}
         />
       </div>
 
-      <!-- RIGHT: Configure dropdown — all sections visible, no tabs -->
-      <details class="dropdown dropdown-end shrink-0">
-        <summary class="btn btn-sm btn-ghost gap-1" title={gettext("Configure")}>
+      <!-- RIGHT: Configure dropdown — server-managed open state -->
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          class="btn btn-sm btn-ghost gap-1"
+          title={gettext("Configure")}
+          phx-click="toggle_configure_dropdown"
+        >
           <.icon name="hero-adjustments-horizontal" class="size-4" />
           <span class="hidden sm:inline">{gettext("Configure")}</span>
-        </summary>
+        </button>
 
-        <div class="dropdown-content z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden">
+        <%= if @show_configure_dropdown do %>
+          <!-- Full-screen invisible click-catcher overlay -->
+          <div class="fixed inset-0 z-40" phx-click="close_configure_dropdown"></div>
+        <% end %>
+
+        <!-- Dropdown content — always in DOM, hidden when closed.
+             Using class-based toggling (not conditional render) so content
+             stays in the DOM and phx events inside still work reliably. -->
+        <div class={[
+          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
+          !@show_configure_dropdown && "hidden"
+        ]}>
           <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
             <!-- Section 1: Task Options -->
             <div>
@@ -367,7 +390,7 @@ defmodule EvoDashWeb.DashboardLive do
             <% end %>
           </div>
         </div>
-      </details>
+      </div>
     </div>
     """
   end
@@ -432,6 +455,8 @@ defmodule EvoDashWeb.DashboardLive do
           new_repo_id: "",
           new_repo_path: "",
           new_repo_description: "",
+          address_bar_editing: false,
+          show_configure_dropdown: false,
           tasks: [],
           model_profiles: model_profiles,
           selected_model_id: selected_model_id,
@@ -611,7 +636,27 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("toggle_address_bar", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:address_bar_editing, !socket.assigns.address_bar_editing)
+     |> assign(:show_open_project_form, false)
+     |> assign(:show_new_project_form, false)}
+  end
+
+  @impl true
+  def handle_event("toggle_configure_dropdown", _params, socket) do
+    {:noreply, assign(socket, :show_configure_dropdown, !socket.assigns.show_configure_dropdown)}
+  end
+
+  @impl true
+  def handle_event("close_configure_dropdown", _params, socket) do
+    {:noreply, assign(socket, :show_configure_dropdown, false)}
+  end
+
+  @impl true
   def handle_event("toggle_new_project_form", params, socket) do
+    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.toggle_new_project_form(socket, params)
   end
 
@@ -627,16 +672,19 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("create_project", params, socket) do
+    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.create_project(socket, params)
   end
 
   @impl true
   def handle_event("open_project", params, socket) do
+    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.open_project(socket, params)
   end
 
   @impl true
   def handle_event("select_project", params, socket) do
+    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.select_project(socket, params)
   end
 

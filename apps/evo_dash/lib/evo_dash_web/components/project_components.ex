@@ -25,37 +25,118 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
+  attr(:address_bar_editing, :boolean, default: false)
 
   def project_selector(assigns) do
     ~H"""
     <div>
-      <!-- Address-bar-style project control -->
-      <!-- When no form is open: clickable display of current project (or placeholder) -->
-      <%= if !@show_open_form and !@show_new_project_form do %>
-        <button
-          type="button"
-          phx-click="toggle_open_project_form"
-          class="flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors text-left"
-        >
-          <%= if @active_project do %>
-            <.icon name="hero-folder" class="size-4 text-primary shrink-0" />
-            <span class="text-sm font-bold text-base-content truncate leading-tight">
-              {@active_project.name}
-            </span>
-            <span class="text-xs text-base-content/50 font-mono truncate hidden md:inline">
-              {@active_project.path}
-            </span>
-          <% else %>
-            <.icon name="hero-folder-open" class="size-4 text-base-content/40 shrink-0" />
-            <span class="text-sm text-base-content/50 truncate">
-              {gettext("Open a project...")}
-            </span>
-          <% end %>
-          <.icon name="hero-chevron-down" class="size-3.5 text-base-content/40 shrink-0 ml-auto" />
-        </button>
-      <% end %>
+      <!-- Browser-style address bar -->
+      <div class="dashboard-address-bar">
+        <%= if @address_bar_editing do %>
+          <!-- EDIT MODE: path input + dropdown of recent projects -->
+          <div class="address-bar-edit">
+            <!-- Inline Open Project Form -->
+            <div class="animate-slide-down">
+              <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-2">
+                <div class="flex-1 flex items-center gap-2">
+                  <%= if @tauri_detected do %>
+                    <button
+                      type="button"
+                      id="project-path-browse-button"
+                      class="btn btn-sm btn-warning gap-1 shrink-0"
+                      phx-click="pick_directory"
+                      phx-hook="DirectoryPicker"
+                      data-picker-id="project"
+                    >
+                      <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
+                    </button>
+                  <% end %>
+                  <div class="picker-container flex-1">
+                    <input
+                      type="text"
+                      name="path"
+                      class="input input-bordered input-sm w-full pr-8 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                      placeholder={platform_placeholder(@platform)}
+                      autofocus
+                      phx-hook="PathAutocomplete"
+                      phx-change="path_input"
+                      phx-debounce="150"
+                      id="project-path-input"
+                      list="path-suggestions"
+                    />
+                    <datalist id="path-suggestions">
+                      <%= for suggestion <- @path_suggestions do %>
+                        <option value={suggestion}></option>
+                      <% end %>
+                    </datalist>
+                  </div>
+                  <button type="button" class="btn btn-ghost btn-sm btn-circle shrink-0" phx-click="toggle_address_bar">
+                    <.icon name="hero-x-mark" class="size-4" />
+                  </button>
+                </div>
 
-      <!-- Inline Open Project Form (address bar expanded) -->
+                <button type="submit" class="btn btn-primary btn-sm gap-1 self-start">
+                  <.icon name="hero-check" class="size-4" /> {gettext("Open")}
+                </button>
+              </.form>
+            </div>
+          </div>
+
+          <!-- Dropdown: recent projects + new project -->
+          <div class="address-bar-dropdown">
+            <%= if @recent_projects != [] do %>
+              <div class="flex flex-wrap gap-1.5 items-center pt-1">
+                <span class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40">
+                  {gettext("Recent")}
+                </span>
+                <%= for project <- Enum.take(@recent_projects, 8) do %>
+                  <button
+                    type="button"
+                    phx-click="select_project"
+                    phx-value-path={project.path}
+                    class="btn btn-xs btn-ghost font-medium normal-case text-base-content/70 hover:bg-base-200"
+                  >
+                    {project.name}
+                  </button>
+                <% end %>
+              </div>
+            <% end %>
+            <!-- New project option in the dropdown -->
+            <button
+              type="button"
+              phx-click="toggle_new_project_form"
+              class="btn btn-xs btn-outline btn-primary font-medium normal-case gap-1 mt-1"
+            >
+              <.icon name="hero-plus" class="size-3" /> {gettext("New Project")}
+            </button>
+          </div>
+        <% else %>
+          <!-- DISPLAY MODE: read-only path display, click to edit -->
+          <button
+            type="button"
+            phx-click="toggle_address_bar"
+            class="address-bar-display flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors text-left"
+          >
+            <%= if @active_project do %>
+              <.icon name="hero-folder" class="size-4 text-primary shrink-0" />
+              <span class="text-sm font-bold text-base-content truncate leading-tight">
+                {@active_project.name}
+              </span>
+              <span class="text-xs text-base-content/50 font-mono truncate hidden md:inline">
+                {@active_project.path}
+              </span>
+            <% else %>
+              <.icon name="hero-folder-open" class="size-4 text-base-content/40 shrink-0" />
+              <span class="text-sm text-base-content/50 truncate">
+                {gettext("Open a project...")}
+              </span>
+            <% end %>
+            <.icon name="hero-chevron-down" class="size-3.5 text-base-content/40 shrink-0 ml-auto" />
+          </button>
+        <% end %>
+      </div>
+
+      <!-- Inline Open Project Form (legacy toggle path, shown when show_open_form is true) -->
       <%= if @show_open_form do %>
         <div class="animate-slide-down">
           <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-2">
