@@ -80,21 +80,21 @@ defmodule EvoDashWeb.Layouts do
         class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
         <!-- Branding -->
-        <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
+        <div class="flex items-center h-14 px-4 shrink-0">
           <.link
             navigate={with_node_param(~p"/", @current_node_id)}
-            class="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
+            class="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0"
           >
             <%!-- zh_CN: Genesis → "启元" --%>
             <img
               src={~p"/images/logo.svg"}
-              class="h-7 w-auto block dark:hidden shrink-0"
+              class="h-6 w-auto block dark:hidden shrink-0"
               alt={gettext("Genesis")}
             />
             <%!-- zh_CN: Genesis → "启元" --%>
             <img
               src={~p"/images/logo-alt.svg"}
-              class="h-7 w-auto hidden dark:block shrink-0"
+              class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("Genesis")}
             />
             <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent truncate sidebar-label">
@@ -102,16 +102,6 @@ defmodule EvoDashWeb.Layouts do
               {gettext("Genesis")}
             </span>
           </.link>
-        </div>
-
-        <!-- Node Selector -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-800 shrink-0">
-          <.live_component
-            module={EvoDashWeb.NodeSelectorComponent}
-            id="node-selector"
-            current_node_id={@current_node_id}
-            current_node_name={@current_node_name}
-          />
         </div>
 
         <!-- Navigation Links -->
@@ -144,7 +134,7 @@ defmodule EvoDashWeb.Layouts do
           >{gettext("System")}</.sidebar_nav_link>
 
           <!-- Task Indicators Section -->
-          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4 border-t border-slate-200 dark:border-slate-800">
+          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
             <div class="px-3 mb-3 mt-1">
               <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
                 {gettext("Active Tasks")}
@@ -187,6 +177,17 @@ defmodule EvoDashWeb.Layouts do
             </div>
           </div>
         </nav>
+
+        <!-- Node Selector (moved to bottom — dropdown opens upward) -->
+        <div class="px-3 py-2 shrink-0">
+          <.live_component
+            module={EvoDashWeb.NodeSelectorComponent}
+            id="node-selector"
+            current_node_id={@current_node_id}
+            current_node_name={@current_node_name}
+            drop_up={true}
+          />
+        </div>
 
         <!-- Bottom section: Language + Theme + Collapse -->
         <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
