@@ -16,11 +16,13 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   import Phoenix.Component
 
+  attr(:drop_up, :boolean, default: false)
+
   @impl true
   def render(assigns) do
     ~H"""
     <div id={@id}>
-      <details class="dropdown dropdown-start" id={"#{@id}-details"}>
+      <details class={["dropdown dropdown-start", @drop_up && "dropdown-top"]} id={"#{@id}-details"}>
       <summary
         class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
         title={gettext("Switch node")}
@@ -30,7 +32,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
           {@current_node_name}
         </span>
       </summary>
-      <div class="dropdown-content mt-2 z-50 w-72 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2">
+      <div class={["dropdown-content z-50 w-72 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2", (@drop_up && "mb-2") || "mt-2"]}>
         <div class="flex flex-col gap-0.5">
           <button
             class={[
