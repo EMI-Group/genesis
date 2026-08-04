@@ -1264,3 +1264,278 @@ button, a, input, textarea, select, summary,
     transparent 100%
   );
 }
+
+/* ============================================================
+   Dashboard UI Redesign — Floating Top Bar, Address Bar,
+   Adaptive Input Layout
+   ------------------------------------------------------------
+   The --project-accent custom property is a hex color string
+   set via inline style on a container element by the server:
+     style="--project-accent: #4f46e5"
+   All accent usage falls back to the DaisyUI primary color.
+   ============================================================ */
+
+/* --- Project accent fallback (used when not set inline) --- */
+:root {
+  --project-accent: var(--color-primary);
+}
+
+/* === Floating Top Bar === */
+/* A floating, glassmorphic panel that sticks to the top of the viewport.
+   The accent appears as a subtle gradient glow at the top edge. */
+.dashboard-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  margin: 0.5rem;
+  border-radius: 1rem;
+  border: 1px solid oklch(var(--b3));
+  background: oklch(var(--b1) / 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 4px 24px -6px oklch(0% 0 0 / 0.2);
+  overflow: hidden;
+}
+
+/* Accent top-edge glow — a thin gradient line at the very top of the bar */
+.dashboard-topbar::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--project-accent) 20%,
+    var(--project-accent) 80%,
+    transparent 100%
+  );
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* Ensure topbar children sit above the ::before accent line */
+.dashboard-topbar > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* === Browser Address Bar === */
+/* Container styled like a browser address bar: pill-shaped, distinct bg */
+.dashboard-address-bar {
+  position: relative;
+  border-radius: 9999px;
+  background: oklch(var(--b2) / 0.7);
+  border: 1px solid oklch(var(--b3));
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.dashboard-address-bar:focus-within {
+  border-color: color-mix(in oklch, var(--project-accent) 50%, transparent);
+  background: oklch(var(--b1) / 0.9);
+}
+
+/* Read-only display mode — looks like static text, not an input */
+.address-bar-display {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  cursor: text;
+  color: oklch(var(--bc));
+  user-select: text;
+}
+
+/* Editing mode — visible input field */
+.address-bar-edit {
+  display: none;
+}
+
+.dashboard-address-bar.editing .address-bar-display {
+  display: none;
+}
+
+.dashboard-address-bar.editing .address-bar-edit {
+  display: flex;
+}
+
+/* The dropdown of recent paths — hidden by default, revealed on .editing */
+.address-bar-dropdown {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  min-width: max-content;
+  border-radius: 0.75rem;
+  background: oklch(var(--b1) / 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid oklch(var(--b3));
+  box-shadow: 0 8px 24px -4px oklch(0% 0 0 / 0.25);
+  padding: 0.375rem;
+  z-index: 40;
+
+  /* Hidden state */
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Shown state — parent has .editing class */
+.dashboard-address-bar.editing .address-bar-dropdown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Dropdown items */
+.address-bar-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  color: oklch(var(--bc));
+  transition: background 0.15s ease;
+}
+
+.address-bar-dropdown-item:hover {
+  background: oklch(var(--project-accent) / 0.12);
+}
+
+/* === Adaptive Input Layout === */
+/* The container for the entire input area (textarea + controls).
+   The JS hook (AdaptiveInput) sets data-layout to "compact" or "expanded". */
+.input-layout {
+  display: flex;
+  flex-direction: column;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- The card/panel containing the textarea --- */
+.input-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 1rem;
+  background: oklch(var(--b1) / 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid oklch(var(--b3));
+  box-shadow: 0 4px 16px -4px oklch(0% 0 0 / 0.15);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Compact mode: centered, floating, modest size */
+.input-layout[data-layout="compact"] .input-card {
+  max-width: 48rem;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  /* Subtle accent border in compact mode */
+  border-color: color-mix(in oklch, var(--project-accent) 25%, oklch(var(--b3)));
+}
+
+/* Subtle accent top-edge gradient on the input card (compact mode) */
+.input-layout[data-layout="compact"] .input-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1rem 1rem 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--project-accent) 30%,
+    var(--project-accent) 70%,
+    transparent 100%
+  );
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Expanded mode: taller, fills more space */
+.input-layout[data-layout="expanded"] .input-card {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* --- The textarea prompt --- */
+.input-prompt {
+  width: 100%;
+  resize: none;
+  border: none;
+  background: transparent;
+  color: oklch(var(--bc));
+  padding: 1rem 1.25rem;
+  outline: none;
+  line-height: 1.6;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.input-prompt::placeholder {
+  color: oklch(var(--bc) / 0.4);
+}
+
+.input-prompt:focus {
+  outline: none;
+}
+
+/* Compact mode: starts ~3 lines, auto-grows up to ~8 lines */
+.input-layout[data-layout="compact"] .input-prompt {
+  min-height: calc(1.6em * 3);
+  max-height: calc(1.6em * 8);
+  overflow-y: auto;
+}
+
+/* Expanded mode: much taller, fills available space */
+.input-layout[data-layout="expanded"] .input-prompt {
+  flex: 1 1 auto;
+  min-height: calc(1.6em * 10);
+  max-height: none;
+  overflow-y: auto;
+}
+
+/* --- The controls panel (mode / launch / model) --- */
+.input-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Layout A (compact): controls are inline, inside the card, below textarea */
+.input-layout[data-layout="compact"] .input-controls {
+  position: relative;
+  border-top: 1px solid oklch(var(--b3));
+}
+
+/* Layout B (expanded): controls detach, become a floating bottom panel */
+.input-layout[data-layout="expanded"] .input-controls {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 35;
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  border-radius: 1rem;
+  background: oklch(var(--b1) / 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in oklch, var(--project-accent) 20%, oklch(var(--b3)));
+  box-shadow: 0 8px 24px -4px oklch(0% 0 0 / 0.25);
+  border-top: none;
+}
+
+/* RTL: flip the floating controls transform */
+[dir="rtl"] .input-layout[data-layout="expanded"] .input-controls {
+  transform: translateX(50%);
+}
