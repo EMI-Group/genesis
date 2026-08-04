@@ -31,81 +31,53 @@ defmodule EvoDashWeb.ProjectComponents do
     <div>
       <!-- Active project header / empty state -->
       <%= if @active_project do %>
-        <div>
-          <div class="flex items-center justify-between gap-3 py-2 px-1">
-            <div class="min-w-0 flex items-center gap-2.5">
-              <div class="bg-primary/10 text-primary p-2 rounded-lg shrink-0">
-                <.icon name="hero-folder" class="size-4" />
-              </div>
-              <div class="min-w-0">
-                <h2 class="text-base font-bold text-base-content truncate leading-tight">
-                  {@active_project.name}
-                </h2>
-                <p class="text-xs text-base-content/50 font-mono truncate">
-                  {@active_project.path}
-                </p>
-              </div>
-            </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_open_project_form">
-                <.icon name="hero-arrow-path" class="size-4" />
-                <span class="hidden sm:inline">{gettext("Change")}</span>
-              </button>
-              <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
-                <.icon name="hero-plus" class="size-4" />
-                <span class="hidden sm:inline">{gettext("New")}</span>
-              </button>
+        <!-- Slim flush row (not a padded card) -->
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0 flex items-center gap-2">
+            <.icon name="hero-folder" class="size-4 text-primary shrink-0" />
+            <div class="min-w-0">
+              <span class="text-sm font-bold text-base-content truncate leading-tight">
+                {@active_project.name}
+              </span>
+              <span class="text-xs text-base-content/50 font-mono truncate ml-2 hidden md:inline">
+                {@active_project.path}
+              </span>
             </div>
           </div>
-
-          <!-- Recent projects quick-select pills (inline below the bar) -->
-          <%= if @recent_projects != [] and !@show_open_form and !@show_new_project_form do %>
-            <div class="px-1 pb-2.5 pt-0">
-              <div class="flex flex-wrap items-center gap-1.5 pt-2">
-                <span class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mr-1">
-                  {gettext("Recent")}
-                </span>
-                <%= for project <- Enum.take(@recent_projects, 6) do %>
-                  <button
-                    type="button"
-                    phx-click="select_project"
-                    phx-value-path={project.path}
-                    class="btn btn-xs btn-ghost font-medium normal-case text-base-content/60 hover:bg-base-200 gap-1"
-                  >
-                    <.icon name="hero-clock" class="size-3 opacity-50" />
-                    {project.name}
-                  </button>
-                <% end %>
-              </div>
-            </div>
-          <% end %>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_open_project_form">
+              <.icon name="hero-arrow-path" class="size-4" />
+              <span class="hidden sm:inline">{gettext("Change")}</span>
+            </button>
+            <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_new_project_form">
+              <.icon name="hero-plus" class="size-4" />
+              <span class="hidden sm:inline">{gettext("New")}</span>
+            </button>
+          </div>
         </div>
       <% else %>
-        <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm py-3 px-4">
-          <div class="flex items-center justify-between gap-3 flex-wrap">
-            <div class="flex items-center gap-2.5">
-              <div class="animate-float">
-                <.icon name="hero-folder-open" class="size-5 text-base-content/40" />
-              </div>
-              <div>
-                <h2 class="text-base font-semibold text-base-content/70">
-                  {gettext("No project selected")}
-                </h2>
-                <p class="text-xs text-base-content/40">
-                  {gettext("Open a project to get started")}
-                </p>
-              </div>
+        <!-- Empty state — slim flush row -->
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0 flex items-center gap-2">
+            <.icon name="hero-folder-open" class="size-4 text-base-content/40 shrink-0" />
+            <div class="min-w-0">
+              <span class="text-sm font-semibold text-base-content/70 truncate">
+                {gettext("No project selected")}
+              </span>
+              <span class="text-xs text-base-content/40 ml-2 hidden md:inline">
+                {gettext("Open a project to get started")}
+              </span>
             </div>
-            <div class="flex gap-2">
-              <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
-                <.icon name="hero-folder-open" class="size-4" />
-                {gettext("Open Project")}
-              </button>
-              <button class="btn btn-sm btn-outline btn-primary gap-1" phx-click="toggle_new_project_form">
-                <.icon name="hero-plus-circle" class="size-4" />
-                {gettext("New")}
-              </button>
-            </div>
+          </div>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
+              <.icon name="hero-folder-open" class="size-4" />
+              <span class="hidden sm:inline">{gettext("Open Project")}</span>
+            </button>
+            <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_new_project_form">
+              <.icon name="hero-plus" class="size-4" />
+              <span class="hidden sm:inline">{gettext("New")}</span>
+            </button>
           </div>
         </div>
       <% end %>
@@ -252,31 +224,29 @@ defmodule EvoDashWeb.ProjectComponents do
 
   def project_settings_panel(assigns) do
     ~H"""
-    <div class="group rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden">
-      <div
-        class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2"
-        phx-click="toggle_project_settings"
-        phx-value-project={@active_project}
-      >
-        <.icon name="hero-cog-6-tooth" class="size-4 text-base-content/60" />
-        <span class="text-sm font-semibold flex-1">{gettext("Project Settings")}</span>
-        <!-- Config status indicator -->
-        <%= if @project_config do %>
-          <span class="badge badge-success badge-xs gap-0.5">
-            <.icon name="hero-check-circle" class="size-3" /> {gettext("genesis.toml")}
-          </span>
-        <% else %>
-          <span class="badge badge-ghost badge-xs gap-0.5">
-            <.icon name="hero-document-text" class="size-3" /> {gettext("Defaults")}
-          </span>
-        <% end %>
-        <.icon
-          name="hero-chevron-down"
-          class={"size-4 text-base-content/40 transition-transform " <> if(@show, do: "rotate-180", else: "")}
-        />
-      </div>
+    <%= if @show do %>
+      <div class="rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden">
+        <div
+          class="p-3.5 cursor-pointer hover:bg-base-200/30 transition-colors flex items-center gap-2"
+          phx-click="toggle_project_settings"
+          phx-value-project={@active_project}
+        >
+          <.icon name="hero-cog-6-tooth" class="size-4 text-base-content/60" />
+          <span class="text-sm font-semibold flex-1">{gettext("Project Settings")}</span>
+          <!-- Config status indicator -->
+          <%= if @project_config do %>
+            <span class="badge badge-success badge-xs gap-0.5">
+              <.icon name="hero-check-circle" class="size-3" /> {gettext("genesis.toml")}
+            </span>
+          <% else %>
+            <span class="badge badge-ghost badge-xs gap-0.5">
+              <.icon name="hero-document-text" class="size-3" /> {gettext("Defaults")}
+            </span>
+          <% end %>
+          <.icon name="hero-chevron-up" class="size-4 text-base-content/40" />
+        </div>
 
-      <div :if={@show} class="p-4 pt-2 space-y-4 border-t border-base-200">
+        <div class="p-4 pt-2 space-y-4 border-t border-base-200">
         <!-- Config status -->
         <p class="text-sm">
           <%= if @project_config do %>
@@ -464,6 +434,7 @@ defmodule EvoDashWeb.ProjectComponents do
         </div>
       </div>
     </div>
+    <% end %>
     """
   end
 
