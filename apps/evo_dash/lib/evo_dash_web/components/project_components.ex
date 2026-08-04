@@ -2,10 +2,10 @@ defmodule EvoDashWeb.ProjectComponents do
   @moduledoc """
   Project selection and settings components for the dashboard.
 
-  `project_selector/1` renders as a slim, full-width **top bar** — a compact
-  horizontal layout (folder icon + name/path + Change/New buttons) suitable
-  for the top of the single-column dashboard. The inline Open/New project
-  forms expand below the bar when toggled.
+  `project_selector/1` renders an **address-bar-style project control** (like
+  Finder/GNOME Files or a browser address bar): a clickable display of the
+  current project path that expands inline to reveal a path input, recent
+  projects, and a new-project option. Sits inside the immersive sticky header.
 
   `project_settings_panel/1` (genesis.toml status, worktree script, dev
   commands, foreign repos) is a collapsible accordion that works at any
@@ -29,82 +29,35 @@ defmodule EvoDashWeb.ProjectComponents do
   def project_selector(assigns) do
     ~H"""
     <div>
-      <!-- Active project header / empty state -->
-      <%= if @active_project do %>
-        <!-- Slim flush row (not a padded card) -->
-        <div class="flex items-center justify-between gap-3">
-          <div class="min-w-0 flex items-center gap-2">
+      <!-- Address-bar-style project control -->
+      <!-- When no form is open: clickable display of current project (or placeholder) -->
+      <%= if !@show_open_form and !@show_new_project_form do %>
+        <button
+          type="button"
+          phx-click="toggle_open_project_form"
+          class="flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors text-left"
+        >
+          <%= if @active_project do %>
             <.icon name="hero-folder" class="size-4 text-primary shrink-0" />
-            <div class="min-w-0">
-              <span class="text-sm font-bold text-base-content truncate leading-tight">
-                {@active_project.name}
-              </span>
-              <span class="text-xs text-base-content/50 font-mono truncate ml-2 hidden md:inline">
-                {@active_project.path}
-              </span>
-            </div>
-          </div>
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_open_project_form">
-              <.icon name="hero-arrow-path" class="size-4" />
-              <span class="hidden sm:inline">{gettext("Change")}</span>
-            </button>
-            <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_new_project_form">
-              <.icon name="hero-plus" class="size-4" />
-              <span class="hidden sm:inline">{gettext("New")}</span>
-            </button>
-          </div>
-        </div>
-      <% else %>
-        <!-- Empty state — slim flush row -->
-        <div class="flex items-center justify-between gap-3">
-          <div class="min-w-0 flex items-center gap-2">
+            <span class="text-sm font-bold text-base-content truncate leading-tight">
+              {@active_project.name}
+            </span>
+            <span class="text-xs text-base-content/50 font-mono truncate hidden md:inline">
+              {@active_project.path}
+            </span>
+          <% else %>
             <.icon name="hero-folder-open" class="size-4 text-base-content/40 shrink-0" />
-            <div class="min-w-0">
-              <span class="text-sm font-semibold text-base-content/70 truncate">
-                {gettext("No project selected")}
-              </span>
-              <span class="text-xs text-base-content/40 ml-2 hidden md:inline">
-                {gettext("Open a project to get started")}
-              </span>
-            </div>
-          </div>
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button class="btn btn-sm btn-primary gap-1" phx-click="toggle_open_project_form">
-              <.icon name="hero-folder-open" class="size-4" />
-              <span class="hidden sm:inline">{gettext("Open Project")}</span>
-            </button>
-            <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_new_project_form">
-              <.icon name="hero-plus" class="size-4" />
-              <span class="hidden sm:inline">{gettext("New")}</span>
-            </button>
-          </div>
-        </div>
+            <span class="text-sm text-base-content/50 truncate">
+              {gettext("Open a project...")}
+            </span>
+          <% end %>
+          <.icon name="hero-chevron-down" class="size-3.5 text-base-content/40 shrink-0 ml-auto" />
+        </button>
       <% end %>
 
-      <!-- Inline Open Project Form -->
+      <!-- Inline Open Project Form (address bar expanded) -->
       <%= if @show_open_form do %>
-        <div class="mt-2 p-3 rounded-xl border border-base-200 bg-base-100 shadow-sm animate-slide-down">
-          <!-- Recent projects quick-select -->
-          <%= if @recent_projects != [] do %>
-            <div class="mb-3">
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-1.5">
-                {gettext("Recent Projects")}
-              </p>
-              <div class="flex flex-wrap gap-1.5">
-                <%= for project <- Enum.take(@recent_projects, 8) do %>
-                  <button
-                    type="button"
-                    phx-click="select_project"
-                    phx-value-path={project.path}
-                    class="btn btn-xs btn-ghost font-medium normal-case text-base-content/70 hover:bg-base-200"
-                  >
-                    {project.name}
-                  </button>
-                <% end %>
-              </div>
-            </div>
-          <% end %>
+        <div class="animate-slide-down">
           <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-2">
             <div class="flex-1 flex items-center gap-2">
               <%= if @tauri_detected do %>
@@ -138,22 +91,57 @@ defmodule EvoDashWeb.ProjectComponents do
                   <% end %>
                 </datalist>
               </div>
-            </div>
-            <div class="flex gap-2">
-              <button type="submit" class="btn btn-primary btn-sm flex-1 gap-1">
-                <.icon name="hero-check" class="size-4" /> {gettext("Open")}
-              </button>
-              <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_open_project_form">
-                {gettext("Cancel")}
+              <button type="button" class="btn btn-ghost btn-sm btn-circle shrink-0" phx-click="toggle_open_project_form">
+                <.icon name="hero-x-mark" class="size-4" />
               </button>
             </div>
+
+            <!-- Recent projects quick-select -->
+            <%= if @recent_projects != [] do %>
+              <div class="flex flex-wrap gap-1.5 items-center">
+                <span class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40">
+                  {gettext("Recent")}
+                </span>
+                <%= for project <- Enum.take(@recent_projects, 8) do %>
+                  <button
+                    type="button"
+                    phx-click="select_project"
+                    phx-value-path={project.path}
+                    class="btn btn-xs btn-ghost font-medium normal-case text-base-content/70 hover:bg-base-200"
+                  >
+                    {project.name}
+                  </button>
+                <% end %>
+                <!-- New project entry integrated into this area -->
+                <button
+                  type="button"
+                  phx-click="toggle_new_project_form"
+                  class="btn btn-xs btn-outline btn-primary font-medium normal-case gap-1"
+                >
+                  <.icon name="hero-plus" class="size-3" /> {gettext("New Project")}
+                </button>
+              </div>
+            <% else %>
+              <!-- New project entry when no recent projects exist -->
+              <button
+                type="button"
+                phx-click="toggle_new_project_form"
+                class="btn btn-xs btn-outline btn-primary font-medium normal-case gap-1 self-start"
+              >
+                <.icon name="hero-plus" class="size-3" /> {gettext("New Project")}
+              </button>
+            <% end %>
+
+            <button type="submit" class="btn btn-primary btn-sm gap-1 self-start">
+              <.icon name="hero-check" class="size-4" /> {gettext("Open")}
+            </button>
           </.form>
         </div>
       <% end %>
 
       <!-- Inline New Project Form -->
       <%= if @show_new_project_form do %>
-        <div class="mt-2 p-3 rounded-xl border border-base-200 bg-base-100 shadow-sm animate-slide-down">
+        <div class="p-3 rounded-xl border border-base-200 bg-base-100 shadow-sm animate-slide-down">
           <.form for={%{}} phx-submit="create_project" class="flex flex-col gap-2">
             <!-- Location (parent directory) -->
             <div>

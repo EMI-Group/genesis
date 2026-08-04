@@ -169,7 +169,7 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-              <div class="flex-1 flex flex-col min-h-0 gap-3 pt-1">
+              <div class="flex-1 flex flex-col min-h-0 gap-3">
                 <.top_bar
                   active_project={@active_project}
                   active_project_path={@active_project_path}
@@ -179,7 +179,6 @@ defmodule EvoDashWeb.DashboardLive do
                   path_suggestions={@path_suggestions}
                   tauri_detected={@tauri_detected}
                   platform={@platform}
-                  config_tab={@config_tab}
                   show_project_settings={@show_project_settings}
                   task_mode={@task_mode}
                   task_node_path={@task_node_path}
@@ -269,14 +268,12 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   # ---------------------------------------------------------------------------
-  # top_bar/1 — Project page top bar with a single config dropdown.
+  # top_bar/1 — Immersive sticky app header with address-bar project control.
   #
-  # LEFT: project selector (name/path + Change/New).
-  # RIGHT: a single "Configure" dropdown with two tabs — "Task Options"
-  # (build system, starting node/commit/resume, archive) and "Project
-  # Settings" (genesis.toml status, worktree script, dev commands, foreign
-  # repos). The dropdown sits as a layered header (shadow-sm + bg) over the
-  # prompt textarea ("paper") below.
+  # LEFT: address-bar-style project control (click to open/reveal path input
+  # + recent projects + new-project option).
+  # RIGHT: a single "Configure" dropdown showing BOTH sections at once —
+  # "Task Options" and "Project Settings" — with no tab bar.
   # ---------------------------------------------------------------------------
 
   attr(:active_project, :map, default: nil)
@@ -287,7 +284,6 @@ defmodule EvoDashWeb.DashboardLive do
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
-  attr(:config_tab, :string, default: "task_options")
   attr(:show_project_settings, :boolean, default: false)
   attr(:task_mode, :string, default: "genesis_new")
   attr(:task_node_path, :string, default: "")
@@ -308,8 +304,8 @@ defmodule EvoDashWeb.DashboardLive do
 
   def top_bar(assigns) do
     ~H"""
-    <div class="shrink-0 flex items-start justify-between gap-2 flex-wrap bg-base-100/80 border border-base-200 border-b-base-300 shadow-sm rounded-lg px-3 py-2">
-      <!-- LEFT: project selector (name/path + Change/New) -->
+    <div class="shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-2 bg-base-100 border-b border-base-200 px-3 py-2">
+      <!-- LEFT: address-bar-style project control -->
       <div class="flex-1 min-w-0">
         <EvoDashWeb.ProjectComponents.project_selector
           active_project={@active_project}
@@ -322,42 +318,20 @@ defmodule EvoDashWeb.DashboardLive do
         />
       </div>
 
-      <!-- RIGHT: single config dropdown with two tabs -->
-      <details class="dropdown dropdown-end shrink-0 pt-1">
+      <!-- RIGHT: Configure dropdown — all sections visible, no tabs -->
+      <details class="dropdown dropdown-end shrink-0">
         <summary class="btn btn-sm btn-ghost gap-1" title={gettext("Configure")}>
           <.icon name="hero-adjustments-horizontal" class="size-4" />
           <span class="hidden sm:inline">{gettext("Configure")}</span>
         </summary>
 
         <div class="dropdown-content z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden">
-          <!-- Tab bar -->
-          <div role="tablist" class="tabs tabs-boxed bg-base-200/50 m-2 mb-0">
-            <button
-              role="tab"
-              class={["tab tab-sm flex-1", @config_tab == "task_options" && "tab-active"]}
-              phx-click="select_config_tab"
-              phx-value-tab="task_options"
-            >
-              {gettext("Task Options")}
-            </button>
-            <button
-              role="tab"
-              class={[
-                "tab tab-sm flex-1",
-                @config_tab == "project_settings" && "tab-active",
-                is_nil(@active_project) && "tab-disabled"
-              ]}
-              disabled={is_nil(@active_project)}
-              phx-click="select_config_tab"
-              phx-value-tab="project_settings"
-            >
-              {gettext("Project Settings")}
-            </button>
-          </div>
-
-          <div class="p-3 max-h-[60vh] overflow-y-auto">
-            <%!-- Tab 1: Task Options --%>
-            <div :if={@config_tab == "task_options"}>
+          <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
+            <!-- Section 1: Task Options -->
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                {gettext("Task Options")}
+              </p>
               <EvoDashWeb.TaskFormComponents.task_options_tab
                 mode={@task_mode}
                 node_path={@task_node_path}
@@ -370,22 +344,27 @@ defmodule EvoDashWeb.DashboardLive do
               />
             </div>
 
-            <%!-- Tab 2: Project Settings (only when a project is active) --%>
-            <div :if={@config_tab == "project_settings" and @active_project != nil}>
-              <EvoDashWeb.ProjectComponents.project_settings_tab
-                active_project={@active_project_path}
-                project_config={@project_config}
-                worktree_script={@worktree_script}
-                commands={@commands}
-                foreign_repos={@foreign_repos}
-                show_add_foreign_repo={@show_add_foreign_repo_form}
-                new_repo_id={@new_repo_id}
-                new_repo_path={@new_repo_path}
-                new_repo_description={@new_repo_description}
-                tauri_detected={@tauri_detected}
-                platform={@platform}
-              />
-            </div>
+            <!-- Section 2: Project Settings (only when a project is active) -->
+            <%= if @active_project != nil do %>
+              <div class="mt-4 pt-4 border-t border-base-200">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                  {gettext("Project Settings")}
+                </p>
+                <EvoDashWeb.ProjectComponents.project_settings_tab
+                  active_project={@active_project_path}
+                  project_config={@project_config}
+                  worktree_script={@worktree_script}
+                  commands={@commands}
+                  foreign_repos={@foreign_repos}
+                  show_add_foreign_repo={@show_add_foreign_repo_form}
+                  new_repo_id={@new_repo_id}
+                  new_repo_path={@new_repo_path}
+                  new_repo_description={@new_repo_description}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
+                />
+              </div>
+            <% end %>
           </div>
         </div>
       </details>

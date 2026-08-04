@@ -52,25 +52,27 @@ defmodule EvoDashWeb.TaskFormComponents do
         "relative flex-1 flex flex-col min-h-0 transition-opacity",
         @disabled && "opacity-40 pointer-events-none select-none"
       ]}>
-        <!-- Zone 2 — the input box (fills all remaining vertical space) -->
-        <textarea
-          name="prompt"
-          id="prompt"
-          phx-update="ignore"
-          class="w-full flex-1 min-h-[200px] p-6 text-base leading-relaxed bg-transparent border-0 border-b border-base-200 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors focus:border-base-300"
-          placeholder={
-            cond do
-              @mode == "genesis_existing" ->
-                gettext("Optional — leave empty and click Launch to initialize an existing codebase")
+        <!-- Zone 2 — the input box (Google Docs "pageless" centered column) -->
+        <div class="mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0">
+          <textarea
+            name="prompt"
+            id="prompt"
+            phx-update="ignore"
+            class="w-full flex-1 min-h-[200px] p-6 text-base leading-relaxed bg-transparent border-0 border-b border-base-200 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors focus:border-base-300"
+            placeholder={
+              cond do
+                @mode == "genesis_existing" ->
+                  gettext("Optional — leave empty and click Launch to initialize an existing codebase")
 
-              String.starts_with?(@mode, "evolve") ->
-                gettext("Describe what you want to change or improve...")
+                String.starts_with?(@mode, "evolve") ->
+                  gettext("Describe what you want to change or improve...")
 
-              true ->
-                gettext("Describe the codebase you want to create...")
-            end
-          }
-        ><%= @prompt %></textarea>
+                true ->
+                  gettext("Describe the codebase you want to create...")
+              end
+            }
+          ><%= @prompt %></textarea>
+        </div>
 
         <!-- Welcome hint overlay when disabled (no project active) -->
         <%= if @disabled do %>

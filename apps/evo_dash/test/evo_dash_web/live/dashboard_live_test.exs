@@ -74,20 +74,17 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Task form is always visible
       assert html =~ "Launch Task"
-      # Project selector shows "No project selected"
-      assert html =~ "No project selected"
-      # Open Project button exists
-      assert html =~ "Open Project"
+      # Address-bar project control shows the placeholder when no project is active
+      assert html =~ "Open a project..."
     end
 
     test "project settings panel is present but collapsed when no project", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      # The settings panel header is always present
-      assert html =~ "Project Settings"
-      # When collapsed (no project), the details element does not have the open attribute
-      # but the content is still rendered in the HTML. We can check that project-specific
-      # content like "genesis.toml found" is NOT shown (it requires @project_config to be truthy)
+      # The Configure dropdown is always present
+      assert html =~ "Configure"
+      # Project-specific content like "genesis.toml found" is NOT shown
+      # (it requires @project_config to be truthy)
       refute html =~ "genesis.toml found"
     end
 
