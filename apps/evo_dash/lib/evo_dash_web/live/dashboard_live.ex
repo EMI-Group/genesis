@@ -65,7 +65,11 @@ defmodule EvoDashWeb.DashboardLive do
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
-          <div id="browser-notifications" phx-hook="BrowserNotifications" class="flex-1 flex flex-col min-h-0">
+          <div
+            id="browser-notifications"
+            phx-hook="BrowserNotifications"
+            class="flex-1 flex flex-col min-h-0"
+          >
             <%= if @remote? do %>
               <!-- Remote node view: show the remote node's active agents.
                    The local task list and project management are LOCAL
@@ -131,7 +135,10 @@ defmodule EvoDashWeb.DashboardLive do
                           ]}>
                             {case Map.get(agent, :status) do
                               s when is_atom(s) ->
-                                Gettext.gettext(EvoDashWeb.Gettext, String.capitalize(Atom.to_string(s)))
+                                Gettext.gettext(
+                                  EvoDashWeb.Gettext,
+                                  String.capitalize(Atom.to_string(s))
+                                )
 
                               _ ->
                                 gettext("Unknown")
@@ -150,7 +157,8 @@ defmodule EvoDashWeb.DashboardLive do
                             <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
                           <% end %>
                           <% usage = Map.get(agent, :usage) || %{} %>
-                          <% total = Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
+                          <% total =
+                            Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
                           <%= if total > 0 do %>
                             <span>{gettext("Tokens")}: {total}</span>
                           <% end %>
@@ -161,126 +169,75 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-            <div class="flex-1 flex flex-col min-h-0 gap-3 pt-1">
-              <div class="shrink-0 flex items-start justify-between gap-2 flex-wrap">
-                <div class="flex-1 min-w-0">
-                  <EvoDashWeb.ProjectComponents.project_selector
-                    active_project={@active_project}
-                    recent_projects={@recent_projects}
-                    show_open_form={@show_open_project_form}
-                    show_new_project_form={@show_new_project_form}
-                    path_suggestions={@path_suggestions}
-                    tauri_detected={@tauri_detected}
-                    platform={@platform}
-                  />
-                </div>
+              <div class="flex-1 flex flex-col min-h-0 gap-3 pt-1">
+                <.top_bar
+                  active_project={@active_project}
+                  active_project_path={@active_project_path}
+                  recent_projects={@recent_projects}
+                  show_open_form={@show_open_project_form}
+                  show_new_project_form={@show_new_project_form}
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
+                  config_tab={@config_tab}
+                  show_project_settings={@show_project_settings}
+                  task_mode={@task_mode}
+                  task_node_path={@task_node_path}
+                  task_starting_commit={@task_starting_commit}
+                  task_resume_from={@task_resume_from}
+                  task_archive={@task_archive}
+                  build_systems={@build_systems}
+                  task_build_system={@task_build_system}
+                  project_config={@project_config}
+                  worktree_script={@worktree_script}
+                  commands={@commands}
+                  foreign_repos={@foreign_repos}
+                  show_add_foreign_repo_form={@show_add_foreign_repo_form}
+                  new_repo_id={@new_repo_id}
+                  new_repo_path={@new_repo_path}
+                  new_repo_description={@new_repo_description}
+                  disabled={is_nil(@active_project)}
+                />
 
-                <div class="flex items-center gap-1.5 shrink-0 pt-1">
-                  <%= if String.starts_with?(@task_mode, "genesis") do %>
-                    <.build_system_select build_systems={@build_systems} selected={@task_build_system} />
-                  <% end %>
+                <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
+                <EvoDashWeb.TaskFormComponents.task_form
+                  prompt={@task_prompt}
+                  mode={@task_mode}
+                  mode_info={@task_mode_info}
+                  node_path={@task_node_path}
+                  starting_commit={@task_starting_commit}
+                  resume_from={@task_resume_from}
+                  show_advanced={@show_advanced}
+                  disabled={is_nil(@active_project)}
+                  archive={@task_archive}
+                  model_profiles={@model_profiles}
+                  selected_model_id={@selected_model_id}
+                  build_systems={@build_systems}
+                  selected_build_system={@task_build_system}
+                />
 
-                  <label class="flex items-center gap-1.5 cursor-pointer py-0 px-1" title={gettext("Archive agent details")}>
-                    <input
-                      type="checkbox"
-                      name="archive"
-                      value="true"
-                      form="task-form"
-                      class="toggle toggle-xs toggle-primary"
-                      checked={@task_archive}
-                    />
-                    <span class="text-xs text-base-content/60 hidden md:inline">{gettext("Archive")}</span>
-                  </label>
+                <!-- Full Result Modal -->
+                <%= if @selected_result do %>
+                  <EvoDashWeb.Helpers.modal on_close="close_result_modal">
+                    <:title>
+                      <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                      {gettext("Task Result")}
+                    </:title>
+                    {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
+                  </EvoDashWeb.Helpers.modal>
+                <% end %>
 
-                  <%= if @active_project do %>
-                    <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_project_settings">
-                      <.icon name="hero-cog-6-tooth" class="size-4" />
-                      <span class="hidden lg:inline">{gettext("Settings")}</span>
-                    </button>
-                  <% end %>
-
-                  <%= if String.starts_with?(@task_mode, "evolve") do %>
-                    <button class="btn btn-sm btn-ghost gap-1" phx-click="toggle_advanced">
-                      <.icon name="hero-adjustments-horizontal" class="size-4" />
-                      <span class="hidden lg:inline">{gettext("Advanced")}</span>
-                    </button>
-                  <% end %>
-                </div>
+                <!-- Full Options Modal -->
+                <%= if @selected_options do %>
+                  <EvoDashWeb.Helpers.modal on_close="close_options_modal">
+                    <:title>
+                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+                      {gettext("Full Objective")}
+                    </:title>
+                    <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+                  </EvoDashWeb.Helpers.modal>
+                <% end %>
               </div>
-
-              <!-- Inline collapsible: Project Settings (only when toggled on) -->
-              <%= if @active_project != nil and @show_project_settings do %>
-                <div class="shrink-0 animate-slide-down">
-                  <EvoDashWeb.ProjectComponents.project_settings_panel
-                    active_project={@active_project_path}
-                    show={true}
-                    project_config={@project_config}
-                    worktree_script={@worktree_script}
-                    commands={@commands}
-                    foreign_repos={@foreign_repos}
-                    show_add_foreign_repo={@show_add_foreign_repo_form}
-                    new_repo_id={@new_repo_id}
-                    new_repo_path={@new_repo_path}
-                    new_repo_description={@new_repo_description}
-                    tauri_detected={@tauri_detected}
-                    platform={@platform}
-                  />
-                </div>
-              <% end %>
-
-              <!-- Inline collapsible: Advanced Options (evolve modes, only when toggled on) -->
-              <%= if @show_advanced and String.starts_with?(@task_mode, "evolve") do %>
-                <div class="shrink-0 animate-slide-down">
-                  <EvoDashWeb.TaskFormComponents.advanced_options
-                    show_advanced={true}
-                    node_path={@task_node_path}
-                    starting_commit={@task_starting_commit}
-                    resume_from={@task_resume_from}
-                    mode={@task_mode}
-                    disabled={is_nil(@active_project)}
-                  />
-                </div>
-              <% end %>
-
-              <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
-              <EvoDashWeb.TaskFormComponents.task_form
-                prompt={@task_prompt}
-                mode={@task_mode}
-                mode_info={@task_mode_info}
-                node_path={@task_node_path}
-                starting_commit={@task_starting_commit}
-                resume_from={@task_resume_from}
-                show_advanced={@show_advanced}
-                disabled={is_nil(@active_project)}
-                archive={@task_archive}
-                model_profiles={@model_profiles}
-                selected_model_id={@selected_model_id}
-                build_systems={@build_systems}
-                selected_build_system={@task_build_system}
-              />
-
-              <!-- Full Result Modal -->
-              <%= if @selected_result do %>
-                <EvoDashWeb.Helpers.modal on_close="close_result_modal">
-                  <:title>
-                    <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                    {gettext("Task Result")}
-                  </:title>
-                  {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
-                </EvoDashWeb.Helpers.modal>
-              <% end %>
-
-              <!-- Full Options Modal -->
-              <%= if @selected_options do %>
-                <EvoDashWeb.Helpers.modal on_close="close_options_modal">
-                  <:title>
-                    <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-                    {gettext("Full Objective")}
-                  </:title>
-                  <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-                </EvoDashWeb.Helpers.modal>
-              <% end %>
-            </div>
             <% end %>
             <%!-- end of @remote? else branch --%>
           </div>
@@ -308,6 +265,131 @@ defmodule EvoDashWeb.DashboardLive do
         </option>
       <% end %>
     </select>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # top_bar/1 — Project page top bar with a single config dropdown.
+  #
+  # LEFT: project selector (name/path + Change/New).
+  # RIGHT: a single "Configure" dropdown with two tabs — "Task Options"
+  # (build system, starting node/commit/resume, archive) and "Project
+  # Settings" (genesis.toml status, worktree script, dev commands, foreign
+  # repos). The dropdown sits as a layered header (shadow-sm + bg) over the
+  # prompt textarea ("paper") below.
+  # ---------------------------------------------------------------------------
+
+  attr(:active_project, :map, default: nil)
+  attr(:active_project_path, :string, default: nil)
+  attr(:recent_projects, :list, default: [])
+  attr(:show_open_form, :boolean, default: false)
+  attr(:show_new_project_form, :boolean, default: false)
+  attr(:path_suggestions, :list, default: [])
+  attr(:tauri_detected, :boolean, default: false)
+  attr(:platform, :string, default: "linux")
+  attr(:config_tab, :string, default: "task_options")
+  attr(:show_project_settings, :boolean, default: false)
+  attr(:task_mode, :string, default: "genesis_new")
+  attr(:task_node_path, :string, default: "")
+  attr(:task_starting_commit, :string, default: "")
+  attr(:task_resume_from, :string, default: "")
+  attr(:task_archive, :boolean, default: false)
+  attr(:build_systems, :list, default: [])
+  attr(:task_build_system, :string, default: nil)
+  attr(:project_config, :map, default: nil)
+  attr(:worktree_script, :string, default: nil)
+  attr(:commands, :map, default: %{})
+  attr(:foreign_repos, :list, default: [])
+  attr(:show_add_foreign_repo_form, :boolean, default: false)
+  attr(:new_repo_id, :string, default: "")
+  attr(:new_repo_path, :string, default: "")
+  attr(:new_repo_description, :string, default: "")
+  attr(:disabled, :boolean, default: false)
+
+  def top_bar(assigns) do
+    ~H"""
+    <div class="shrink-0 flex items-start justify-between gap-2 flex-wrap bg-base-100/80 border border-base-200 border-b-base-300 shadow-sm rounded-lg px-3 py-2">
+      <!-- LEFT: project selector (name/path + Change/New) -->
+      <div class="flex-1 min-w-0">
+        <EvoDashWeb.ProjectComponents.project_selector
+          active_project={@active_project}
+          recent_projects={@recent_projects}
+          show_open_form={@show_open_form}
+          show_new_project_form={@show_new_project_form}
+          path_suggestions={@path_suggestions}
+          tauri_detected={@tauri_detected}
+          platform={@platform}
+        />
+      </div>
+
+      <!-- RIGHT: single config dropdown with two tabs -->
+      <details class="dropdown dropdown-end shrink-0 pt-1">
+        <summary class="btn btn-sm btn-ghost gap-1" title={gettext("Configure")}>
+          <.icon name="hero-adjustments-horizontal" class="size-4" />
+          <span class="hidden sm:inline">{gettext("Configure")}</span>
+        </summary>
+
+        <div class="dropdown-content z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden">
+          <!-- Tab bar -->
+          <div role="tablist" class="tabs tabs-boxed bg-base-200/50 m-2 mb-0">
+            <button
+              role="tab"
+              class={["tab tab-sm flex-1", @config_tab == "task_options" && "tab-active"]}
+              phx-click="select_config_tab"
+              phx-value-tab="task_options"
+            >
+              {gettext("Task Options")}
+            </button>
+            <button
+              role="tab"
+              class={[
+                "tab tab-sm flex-1",
+                @config_tab == "project_settings" && "tab-active",
+                is_nil(@active_project) && "tab-disabled"
+              ]}
+              disabled={is_nil(@active_project)}
+              phx-click="select_config_tab"
+              phx-value-tab="project_settings"
+            >
+              {gettext("Project Settings")}
+            </button>
+          </div>
+
+          <div class="p-3 max-h-[60vh] overflow-y-auto">
+            <%!-- Tab 1: Task Options --%>
+            <div :if={@config_tab == "task_options"}>
+              <EvoDashWeb.TaskFormComponents.task_options_tab
+                mode={@task_mode}
+                node_path={@task_node_path}
+                starting_commit={@task_starting_commit}
+                resume_from={@task_resume_from}
+                archive={@task_archive}
+                build_systems={@build_systems}
+                selected_build_system={@task_build_system}
+                disabled={@disabled}
+              />
+            </div>
+
+            <%!-- Tab 2: Project Settings (only when a project is active) --%>
+            <div :if={@config_tab == "project_settings" and @active_project != nil}>
+              <EvoDashWeb.ProjectComponents.project_settings_tab
+                active_project={@active_project_path}
+                project_config={@project_config}
+                worktree_script={@worktree_script}
+                commands={@commands}
+                foreign_repos={@foreign_repos}
+                show_add_foreign_repo={@show_add_foreign_repo_form}
+                new_repo_id={@new_repo_id}
+                new_repo_path={@new_repo_path}
+                new_repo_description={@new_repo_description}
+                tauri_detected={@tauri_detected}
+                platform={@platform}
+              />
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
     """
   end
 
@@ -392,6 +474,7 @@ defmodule EvoDashWeb.DashboardLive do
           task_resume_from: "",
           task_build_system: nil,
           config_status: config_status,
+          config_tab: "task_options",
           remote?: false,
           remote_agents: []
         )
@@ -556,6 +639,11 @@ defmodule EvoDashWeb.DashboardLive do
   @impl true
   def handle_event("toggle_advanced", _params, socket) do
     {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
+  end
+
+  @impl true
+  def handle_event("select_config_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, :config_tab, tab)}
   end
 
   @impl true
@@ -875,9 +963,17 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("toggle_project_settings", _params, socket) do
+    new_show = !socket.assigns.show_project_settings
+
     {:noreply,
      socket
-     |> assign(:show_project_settings, !socket.assigns.show_project_settings)
+     |> assign(:show_project_settings, new_show)
+     # When expanding, switch the config dropdown to the Project Settings tab
+     # so its content is visible. (Backwards-compatible entry point for tests
+     # and any external callers of the toggle_project_settings event.)
+     |> then(fn s ->
+       if new_show, do: assign(s, :config_tab, "project_settings"), else: s
+     end)
      |> StatePersistence.maybe_persist_state()}
   end
 

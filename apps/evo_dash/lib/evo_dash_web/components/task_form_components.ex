@@ -140,8 +140,140 @@ defmodule EvoDashWeb.TaskFormComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # advanced_options/1 — Extracted Advanced Options panel (evolve modes)
+  # task_options_tab/1 — "Task Options" tab content for the config dropdown.
   #
+  # Consolidates the former separate top-bar controls (Build System select,
+  # Archive toggle) and the Advanced Options panel (Starting Node, Starting
+  # Commit, Resume from) into a single tab. All form-associated inputs carry
+  # form="task-form" since they live OUTSIDE the task_form's <.form> element.
+  #
+  # Mode-specific behaviour:
+  #   * Build System + Archive — shown for all modes.
+  #   * Starting Node / Starting Commit / Resume from — evolve modes only.
+  # ---------------------------------------------------------------------------
+
+  attr(:mode, :string, default: "genesis_new")
+  attr(:node_path, :string, default: "")
+  attr(:starting_commit, :string, default: "")
+  attr(:resume_from, :string, default: "")
+  attr(:archive, :boolean, default: false)
+  attr(:build_systems, :list, default: [])
+  attr(:selected_build_system, :string, default: nil)
+  attr(:disabled, :boolean, default: false)
+
+  def task_options_tab(assigns) do
+    ~H"""
+    <div class={[
+      "space-y-4 transition-opacity",
+      @disabled && "opacity-40 pointer-events-none select-none"
+    ]}>
+      <%!-- Build System (genesis modes only) --%>
+      <%= if String.starts_with?(@mode, "genesis") do %>
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-medium text-sm">{gettext("Build System")}</span>
+          </label>
+          <select
+            name="build_system"
+            form="task-form"
+            class="select select-bordered select-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20"
+          >
+            <option value="">{gettext("No build system")}</option>
+            <%= for bs <- @build_systems do %>
+              <option value={to_string(bs.id)} selected={@selected_build_system == to_string(bs.id)}>
+                {bs.name}
+              </option>
+            <% end %>
+          </select>
+        </div>
+      <% end %>
+
+      <%!-- Evolve-specific advanced options --%>
+      <%= if String.starts_with?(@mode, "evolve") do %>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-medium text-sm">{gettext("Starting Node")}
+              <.tip text={
+                gettext(
+                  "The subdirectory within the project to start evolution from. Use './' for root."
+                )
+              } /></span>
+            </label>
+            <input
+              type="text"
+              name="node_path"
+              form="task-form"
+              value={@node_path}
+              class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+              placeholder={gettext("e.g., ./src/components")}
+            />
+          </div>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-medium text-sm">{gettext("Starting Commit")}
+              <.tip text={
+                gettext("A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD.")
+              } /></span>
+            </label>
+            <input
+              type="text"
+              name="starting_commit"
+              form="task-form"
+              value={@starting_commit}
+              class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+              placeholder={gettext("e.g., abc1234 or HEAD")}
+            />
+          </div>
+        </div>
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-medium text-sm">{gettext("Resume from")}
+            <.tip text={
+              gettext(
+                "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
+              )
+            } /></span>
+          </label>
+          <input
+            type="text"
+            name="resume_from"
+            form="task-form"
+            value={@resume_from}
+            class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+            placeholder="a1b2c3d4"
+          />
+        </div>
+      <% end %>
+
+      <%!-- Archive toggle (all modes) --%>
+      <label
+        class="flex items-center gap-3 cursor-pointer bg-base-200/40 rounded-lg p-2.5 border border-base-200"
+        title={gettext("Archive agent details")}
+      >
+        <input
+          type="checkbox"
+          name="archive"
+          value="true"
+          form="task-form"
+          class="toggle toggle-sm toggle-primary"
+          checked={@archive}
+        />
+        <div class="flex-1">
+          <span class="text-sm font-medium block">{gettext("Archive agent detail")}</span>
+          <span class="text-xs text-base-content/50">
+            {gettext("Collect per-agent metadata for review")}
+          </span>
+        </div>
+      </label>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # advanced_options/1 — (legacy) Extracted Advanced Options panel (evolve modes)
+  #
+  # Kept for backwards compatibility. The content now lives in task_options_tab/1.
   # Rendered OUTSIDE the task_form's <.form> element in dashboard_live.ex,
   # so each input MUST carry form="task-form" to associate with the form.
   # ---------------------------------------------------------------------------
@@ -168,15 +300,13 @@ defmodule EvoDashWeb.TaskFormComponents do
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="form-control">
               <label class="label pb-1">
-                <span class="label-text font-medium text-sm">{gettext(
-                  "Starting Node"
-                )}
-                  <%!-- zh_CN: evolution → "演进" --%>
-                  <.tip text={
-                    gettext(
-                      "The subdirectory within the project to start evolution from. Use './' for root."
-                    )
-                  } /></span>
+                <span class="label-text font-medium text-sm">{gettext("Starting Node")}
+                <%!-- zh_CN: evolution → "演进" --%>
+                <.tip text={
+                  gettext(
+                    "The subdirectory within the project to start evolution from. Use './' for root."
+                  )
+                } /></span>
               </label>
               <input
                 type="text"
@@ -192,12 +322,12 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <span class="label-text font-medium text-sm"><%!-- zh_CN: Commit → "提交" --%>{gettext(
                   "Starting Commit"
                 )}
-                  <%!-- zh_CN: commit → "提交", branch → "分支" --%>
-                  <.tip text={
-                    gettext(
-                      "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
-                    )
-                  } /></span>
+                <%!-- zh_CN: commit → "提交", branch → "分支" --%>
+                <.tip text={
+                  gettext(
+                    "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
+                  )
+                } /></span>
               </label>
               <input
                 type="text"
