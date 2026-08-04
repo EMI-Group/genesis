@@ -1511,10 +1511,24 @@ button, a, input, textarea, select, summary,
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Layout A (compact): controls are inline, inside the card, below textarea */
+/* Layout A (compact): controls are inline, visually the bottom of the card.
+   Since .input-controls is a DOM sibling of .input-card (not a child), we
+   give it the same card background + bottom border-radius so it reads as the
+   lower portion of the floating card. */
 .input-layout[data-layout="compact"] .input-controls {
   position: relative;
+  max-width: 48rem;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+  border-radius: 0 0 1rem 1rem;
+  border: 1px solid color-mix(in oklch, var(--project-accent) 25%, oklch(var(--b3)));
   border-top: 1px solid oklch(var(--b3));
+  background: oklch(var(--b1) / 0.8);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px -4px oklch(0% 0 0 / 0.15);
+  margin-top: -1px; /* overlap the card's bottom border for seamless join */
 }
 
 /* Layout B (expanded): controls detach, become a floating bottom panel */
