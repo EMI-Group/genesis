@@ -31,7 +31,7 @@ defmodule EvoDashWeb.ProjectComponents do
     ~H"""
     <div>
       <!-- Browser-style address bar -->
-      <div class="dashboard-address-bar">
+      <div class={["dashboard-address-bar", @address_bar_editing && "editing"]}>
         <%= if @address_bar_editing do %>
           <!-- EDIT MODE: path input + dropdown of recent projects -->
           <div class="address-bar-edit">
