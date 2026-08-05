@@ -725,6 +725,14 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("task_prompt_change", %{"prompt" => prompt}, socket) do
+    {:noreply,
+     socket
+     |> assign(:task_prompt, prompt)
+     |> StatePersistence.maybe_persist_state()}
+  end
+
+  @impl true
   def handle_event("tauri_detected", %{"tauri" => tauri}, socket) do
     {:noreply, assign(socket, :tauri_detected, tauri)}
   end
@@ -898,7 +906,12 @@ defmodule EvoDashWeb.DashboardLive do
            )
            |> Assigns.assign_running_and_pending_tasks(all_tasks)
            |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+           # The textarea keeps its text (`phx-update="ignore"`), so @task_prompt
+           # must mirror the visible content or the server-side layout computation
+           # (from prompt length) desyncs. Side effect: the draft prompt now
+           # survives reloads via localStorage — intentional improvement.
            |> Assigns.assign_form_defaults()
+           |> assign(:task_prompt, prompt)
            |> StatePersistence.maybe_persist_state()}
 
         {:error, reason} ->

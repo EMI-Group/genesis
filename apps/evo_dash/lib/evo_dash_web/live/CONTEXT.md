@@ -5,7 +5,7 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 
 ## Routing Table
 - `components/` → LiveComponents (`use EvoDashWeb, :live_component`) — `NodeSelectorComponent` for the SSH Remote Development node selector
-- `dashboard_live/` → Support modules extracted from `DashboardLive`: `StatePersistence`, `Project`, `Assigns`
+- `dashboard_live/` → Support modules extracted from `DashboardLive`: `StatePersistence`, `Project`, `Assigns`. Note: `dashboard_live.ex` is ~1390 lines and growing — a future split of more event handlers into this support directory may be warranted (the recent prompt-sync change was only ~7 lines).
 - `settings_live/` → Support modules extracted from `SettingsLive`: `ModelProfileHelpers` (pure data-transformation for `[[llm.models]]` CRUD), `ConfigIO` (config loading, runtime updates, atom whitelists)
 - `system_live/` → Support modules extracted from `SystemLive`: `Content` (static guides/references), `Status` (health-check status helpers)
 
@@ -46,6 +46,7 @@ These patterns are used consistently across the LiveViews. Follow them when addi
 - **Event naming:** Events use `phx-click` (buttons) and `phx-submit` (forms). Values passed via `phx-value-<key>="<value>"` (received in the handler's params map as string keys). IDs that are integers arrive as strings — `String.to_integer/1` is used to convert (e.g. `select_agent` → `%{"id" => id}`).
 - **`ModalHelpers` (`live/modal_helpers.ex`):** A `__using__` macro injecting shared modal event handlers (`view_full_result/2`, `close_result_modal/1`, etc.) into a host LiveView. `DashboardLive`/`TasksLive` `use EvoDashWeb.ModalHelpers`.
 - **LiveComponent event routing:** Inside a `use EvoDashWeb, :live_component`, events use `JS.push("event", target: @myself, value: %{...})` (targets the component itself) or plain `phx-click` (targets the parent LiveView). See `NodeSelectorComponent` (`select_node` targets `@myself`, then `send(self(), {:node_selected, id})` to the parent).
+- **Server-driven task-form layout:** The task form's layout (compact vs expanded) is computed server-side from prompt length via `TaskFormComponents.layout_for/1` (threshold 300 chars / 8 lines). `DashboardLive` keeps `@task_prompt` in sync with the never-cleared textarea (`phx-update="ignore"`) through the `task_prompt_change` event (`%{"prompt" => prompt}`, debounced 200ms). After `task_submit`, the submitted prompt is re-assigned post-`assign_form_defaults` so the layout matches the visible textarea content (and the draft survives reloads via localStorage — intentional).
 
 ## Constraints
 - Each LiveView uses either an inline `render/1` or a companion `.html.heex` template — not both. (Three render inline; `AgentsLive` uses a separate template.)
