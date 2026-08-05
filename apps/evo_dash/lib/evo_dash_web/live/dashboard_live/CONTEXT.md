@@ -16,7 +16,7 @@ None — leaf directory (four module files: `state_persistence.ex`, `project.ex`
 |--------|---------|
 | `StatePersistence` | Session persistence helpers (serialize/restore LiveView state to browser localStorage) |
 | `Project` | Project-related pure functions (mode detection, path suggestions, config loading, model profiles) |
-| `ProjectFlow` | Event handler implementations for project creation/opening (create_project, open_project, select_project, toggle_open_project_form, toggle_new_project_form) — extracted from DashboardLive (commit `b86ae86e`) |
+| `ProjectFlow` | Event handler implementations for project creation/opening (create_project, open_project, select_project) — extracted from DashboardLive (commit `b86ae86e`). The old `toggle_open_project_form`/`toggle_new_project_form` handlers were removed when the address bar was replaced by the command palette. |
 | `Assigns` | Assign-building helpers (task categorization, form defaults) |
 
 ## Notes
