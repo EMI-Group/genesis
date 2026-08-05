@@ -1416,15 +1416,22 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Adaptive Input Layout === */
-/* The container for the entire input area (textarea + controls).
-   The JS hook (AdaptiveInput) sets data-layout to "compact" or "expanded". */
+/* Single-card, two-layout objective editor.
+   data-layout is SERVER-DRIVEN (EvoDashWeb.TaskFormComponents.layout_for/1):
+     "compact"  → Layout A: unified objective box — the controls row is the
+                  card's last line; Launch button bottom-right.
+     "expanded" → Layout B: large objective area with an in-flow launch panel
+                  below the textarea; Launch button in the middle.
+   The AdaptiveInput JS hook (assets/js/hooks/adaptive_input.js) is autogrow-
+   ONLY — it no longer toggles data-layout and no longer positions anything
+   (the --input-layout-center / position: fixed logic is gone). */
 .input-layout {
   display: flex;
   flex-direction: column;
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- The card/panel containing the textarea --- */
+/* --- The single card containing BOTH the textarea and the controls row --- */
 .input-card {
   position: relative;
   display: flex;
@@ -1438,18 +1445,17 @@ button, a, input, textarea, select, summary,
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Compact mode: centered, floating, modest size */
+/* Layout A (compact): centered, floating, modest size */
 .input-layout[data-layout="compact"] .input-card {
   max-width: 48rem;
   margin-left: auto;
   margin-right: auto;
   /* Vertical centering (ChatGPT landing style): auto margins center the card
      in the flex column. Auto margins collapse to 0 when the content overflows,
-     so a tall card stays reachable from the top (justify-content: center
-     would clip overflowing content). The matching `margin-bottom: auto` on
-     .input-controls (not here!) splits the free space so the card + inline
-     controls stay joined and are centered as one unit. */
+     so a tall card stays reachable from the top. The controls row is INSIDE
+     the card now, so both auto margins live here. */
   margin-top: auto;
+  margin-bottom: auto;
   width: 100%;
   /* Subtle accent border in compact mode */
   border-color: color-mix(in oklch, var(--project-accent) 25%, oklch(var(--b3)));
@@ -1475,7 +1481,7 @@ button, a, input, textarea, select, summary,
   pointer-events: none;
 }
 
-/* Expanded mode: taller, fills more space */
+/* Layout B (expanded): taller, fills more space */
 .input-layout[data-layout="expanded"] .input-card {
   flex: 1 1 auto;
   min-height: 0;
@@ -1502,14 +1508,14 @@ button, a, input, textarea, select, summary,
   outline: none;
 }
 
-/* Compact mode: starts ~3 lines, auto-grows up to ~8 lines */
+/* Layout A (compact): starts ~3 lines, auto-grows up to ~8 lines */
 .input-layout[data-layout="compact"] .input-prompt {
   min-height: calc(1.6em * 3);
   max-height: calc(1.6em * 8);
   overflow-y: auto;
 }
 
-/* Expanded mode: much taller, fills available space */
+/* Layout B (expanded): much taller, fills available space */
 .input-layout[data-layout="expanded"] .input-prompt {
   flex: 1 1 auto;
   min-height: calc(1.6em * 10);
@@ -1517,61 +1523,20 @@ button, a, input, textarea, select, summary,
   overflow-y: auto;
 }
 
-/* --- The controls panel (mode / launch / model) --- */
+/* --- The controls row (mode / launch / model) ---
+   Now the LAST element INSIDE .input-card (in normal document flow — never
+   position: fixed; no --input-layout-center, no [dir="rtl"] transform).
+   justify-content: space-between spreads the row across the card width; the
+   server-side Tailwind order-* classes (applied in task_form_components.ex)
+   reorder the controls per layout:
+     Layout A: mode (order-1) | model (order-2) | Launch (order-3, far right)
+     Layout B: mode (order-1) | Launch (order-2, middle) | model (order-3) */
 .input-controls {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.625rem 1rem;
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Layout A (compact): controls are inline, visually the bottom of the card.
-   Since .input-controls is a DOM sibling of .input-card (not a child), we
-   give it the same card background + bottom border-radius so it reads as the
-   lower portion of the floating card. */
-.input-layout[data-layout="compact"] .input-controls {
-  position: relative;
-  max-width: 48rem;
-  margin-left: auto;
-  margin-right: auto;
-  /* Pairs with the card's margin-top: auto — the two auto margins split the
-     free space so the card + inline controls are centered as one unit. */
-  margin-bottom: auto;
-  width: 100%;
-  border-radius: 0 0 1rem 1rem;
-  border: 1px solid color-mix(in oklch, var(--project-accent) 25%, oklch(var(--b3)));
   border-top: 1px solid oklch(var(--b3));
-  background: oklch(var(--b1) / 0.8);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 4px 16px -4px oklch(0% 0 0 / 0.15);
-  margin-top: -1px; /* overlap the card's bottom border for seamless join */
-}
-
-/* Layout B (expanded): controls detach, become a floating bottom panel.
-   left uses --input-layout-center (set by the AdaptiveInput hook from the
-   .input-layout element's measured center) so the fixed-position panel
-   centers on the CONTENT COLUMN (offset by the sidebar), not the viewport.
-   Falls back to 50% when the hook hasn't measured (or can't). */
-.input-layout[data-layout="expanded"] .input-controls {
-  position: fixed;
-  bottom: 1rem;
-  left: var(--input-layout-center, 50%);
-  transform: translateX(-50%);
-  z-index: 35;
-  width: max-content;
-  max-width: calc(100vw - 2rem);
-  border-radius: 1rem;
-  background: oklch(var(--b1) / 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid color-mix(in oklch, var(--project-accent) 20%, oklch(var(--b3)));
-  box-shadow: 0 8px 24px -4px oklch(0% 0 0 / 0.25);
-  border-top: none;
-}
-
-/* RTL: flip the floating controls transform */
-[dir="rtl"] .input-layout[data-layout="expanded"] .input-controls {
-  transform: translateX(50%);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
