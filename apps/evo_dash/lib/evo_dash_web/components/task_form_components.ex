@@ -44,12 +44,14 @@ defmodule EvoDashWeb.TaskFormComponents do
   defp line_count(prompt), do: prompt |> String.split("\n") |> length()
 
   # ---------------------------------------------------------------------------
-  # task_form/1 — Minimalist prompt editor (textarea + floating bottom launcher)
+  # task_form/1 — Single-card objective editor (textarea + in-flow controls row)
   #
-  # The <.form id="task-form"> wraps BOTH the textarea (Zone 2) and the bottom
-  # launcher panel (Zone 3). The top-bar controls (Build System select, Archive
-  # checkbox, Advanced Options inputs) are rendered OUTSIDE this form element in
-  # the dashboard, so they MUST carry form="task-form" to associate with it.
+  # The <.form id="task-form"> wraps the whole card: the textarea AND the
+  # controls row (mode / Launch / model) as the card's last element. The
+  # compact/expanded layout is server-driven via layout_for/1 (data-layout).
+  # The top-bar controls (Build System select, Archive checkbox, Advanced
+  # Options inputs) are rendered OUTSIDE this form element in the dashboard,
+  # so they MUST carry form="task-form" to associate with it.
   # ---------------------------------------------------------------------------
 
   attr(:prompt, :string, default: "")
