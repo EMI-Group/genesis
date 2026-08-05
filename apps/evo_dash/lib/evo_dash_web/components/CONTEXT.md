@@ -61,6 +61,21 @@ The `flash/1` component in `CoreComponents` supports three kinds:
 - **The ONLY justified `try/rescue`** in this subtree is `highlight_code_block/2` in `diff_viewer.ex`, which wraps `Lumis.highlight!/2` for syntax highlighting (called once for the full file in file-level mode, or per code block in hunk-level fallback). It is justified because: (1) the non-bang `Lumis.highlight/2` also raises internally (does not return `{:error, _}`), so `case`/`with` cannot replace it; (2) falling back to raw un-highlighted code is the correct graceful degradation for a single file/hunk failure. This rescue **must** carry the inline justification comment — do not remove it.
 - If any new `try/rescue` is introduced, it MUST include a clear inline comment explaining why it is justified.
 
+## Design Notes
+
+### Task Form — Single-Card Two-Layout Design (`task_form_components.ex`)
+
+The dashboard launch panel is ONE card (`.input-card`) containing the objective textarea AND the controls row (`.input-controls`) as its last element — in normal document flow, never `position: fixed`. The layout is **server-driven**: `EvoDashWeb.TaskFormComponents.layout_for/1` computes `data-layout` on `.input-layout` from the `@prompt` attr — the LiveView passes NO new attr and does NOT set `data-layout`.
+
+- **Threshold**: `@short_objective_threshold 300` — `:expanded` when `String.length(prompt) > 300` graphemes OR the prompt has > 8 explicit lines (`line_count/1`, newline-split); otherwise `:compact`. Non-binary input → `:compact`. Public API: `layout_for/1` (pure, unit-tested).
+- **Layout A — `data-layout="compact"`**: unified objective box; controls row is the card's last line, visual order **mode | model | Launch** (Launch bottom-right via CSS `justify-content: space-between`).
+- **Layout B — `data-layout="expanded"`**: large objective area (textarea fills); in-flow launch panel below, visual order **mode | Launch | model** (Launch in the middle).
+- **Same DOM order, CSS reorder**: both layouts render the controls in DOM order mode | Launch | model; the per-layout visual order is achieved with Tailwind `order-1`/`order-2`/`order-3` classes (mode always `order-1`; Launch `order-3` compact / `order-2` expanded; model `order-2` compact / `order-3` expanded) — asserted via Floki class checks in the component test.
+- **`task_prompt_change` event contract**: the textarea carries `phx-change="task_prompt_change"` (payload `%{"prompt" => prompt}`) + `phx-debounce="200"` so the server learns the prompt length while typing and re-renders `data-layout`. `EvoDashWeb.DashboardLive` must implement `handle_event("task_prompt_change", %{"prompt" => prompt}, socket)` (stores the prompt in `@task_prompt`). Because `phx-update="ignore"` is on the textarea, the re-render never clobbers the user's typing.
+- **AdaptiveInput JS hook is autogrow-only**: it measures the textarea's content height and sets its height — it NO LONGER toggles `data-layout` and NO LONGER positions any floating panel (the old `--input-layout-center` / `position: fixed` logic was removed; the CSS floating rules and the `[dir="rtl"]` transform rule are gone).
+- **CSS**: `.input-layout` / `.input-card` / `.input-prompt` / `.input-controls` class names are unchanged (the hook's `closest(".input-layout")` and the CSS selectors keep working). `.input-controls` now only provides the in-flow row (flex, `space-between`, `border-top`). See `assets/css/app.css` "Adaptive Input Layout" section (sibling node — CSS lives in `./assets/`).
+- Existing tests assert `html =~ "Launch Task"` — the button text, `type="submit"`, `disabled={@disabled}`, rocket icon, gettext labels, mode options, and the disabled welcome overlay are all preserved. No new translatable strings were added.
+
 ## Known Issues
 
 ### Sidebar expanded state must stay `overflow-visible` — SSH node-selector dropdown clipping
