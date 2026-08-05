@@ -1,11 +1,20 @@
 defmodule EvoDashWeb.TaskFormComponents do
   @moduledoc """
-  Task form component for the dashboard — a minimalist three-zone
-  "pageless editor" layout.
+  Task form component for the dashboard — a single-card, two-layout
+  "pageless editor".
 
-  Layout (top → bottom):
-    * Zone 2 — the prompt textarea (fills all available vertical space).
-    * Zone 3 — a floating bottom launcher panel (mode / launch / model).
+  One card contains the objective textarea AND the controls row (mode select,
+  Launch button, model select) as its last element. The layout is
+  server-driven via `layout_for/1`:
+
+    * Layout A (`data-layout="compact"`) — unified objective box: the controls
+      row is the card's last line, Launch button bottom-right
+      (mode | model | Launch).
+    * Layout B (`data-layout="expanded"`) — large objective area with an
+      in-flow launch panel below (mode | Launch | model).
+
+  The AdaptiveInput JS hook only autogrows the textarea; the compact/expanded
+  decision lives in `layout_for/1` (@short_objective_threshold / line count).
 
   The top bar (Zone 1) and the collapsible Project Settings / Advanced Options
   panels live OUTSIDE this component in the dashboard layout.
@@ -17,13 +26,32 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   defdelegate model_display(value), to: EvoDashWeb.SettingsComponents.SettingCard
 
+  @short_objective_threshold 300
+
+  @doc """
+  Layout decision for the task form: `:compact` (Layout A — unified box) vs
+  `:expanded` (Layout B — split). Threshold: objective length > 300 graphemes
+  OR > 8 explicit lines.
+  """
+  def layout_for(prompt) when is_binary(prompt) do
+    if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 8,
+      do: :expanded,
+      else: :compact
+  end
+
+  def layout_for(_), do: :compact
+
+  defp line_count(prompt), do: prompt |> String.split("\n") |> length()
+
   # ---------------------------------------------------------------------------
-  # task_form/1 — Minimalist prompt editor (textarea + floating bottom launcher)
+  # task_form/1 — Single-card objective editor (textarea + in-flow controls row)
   #
-  # The <.form id="task-form"> wraps BOTH the textarea (Zone 2) and the bottom
-  # launcher panel (Zone 3). The top-bar controls (Build System select, Archive
-  # checkbox, Advanced Options inputs) are rendered OUTSIDE this form element in
-  # the dashboard, so they MUST carry form="task-form" to associate with it.
+  # The <.form id="task-form"> wraps the whole card: the textarea AND the
+  # controls row (mode / Launch / model) as the card's last element. The
+  # compact/expanded layout is server-driven via layout_for/1 (data-layout).
+  # The top-bar controls (Build System select, Archive checkbox, Advanced
+  # Options inputs) are rendered OUTSIDE this form element in the dashboard,
+  # so they MUST carry form="task-form" to associate with it.
   # ---------------------------------------------------------------------------
 
   attr(:prompt, :string, default: "")
@@ -52,16 +80,28 @@ defmodule EvoDashWeb.TaskFormComponents do
         "relative flex-1 flex flex-col min-h-0 transition-opacity",
         @disabled && "opacity-40 pointer-events-none select-none"
       ]}>
-        <!-- Adaptive input layout: CSS morphs between compact (Layout A)
-             and expanded (Layout B) based on data-layout attribute,
-             which is set by the AdaptiveInput JS hook based on content height. -->
-        <div class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0" data-layout="compact" id="input-layout">
+        <% layout = layout_for(@prompt) %>
+        <!-- Single-card, two-layout objective editor.
+             data-layout is SERVER-DRIVED via layout_for/1 (threshold:
+             @short_objective_threshold chars or 8+ lines):
+               "compact"  → Layout A — unified box: controls row is the card's
+                            last line (mode | model | Launch, launch bottom-right).
+               "expanded" → Layout B — large objective area with an in-flow
+                            launch panel below (mode | Launch | model).
+             The AdaptiveInput JS hook only autogrows the textarea now. -->
+        <div
+          class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
+          data-layout={layout}
+          id="input-layout"
+        >
           <div class="input-card">
             <textarea
               name="prompt"
               id="prompt"
               phx-update="ignore"
               phx-hook="AdaptiveInput"
+              phx-change="task_prompt_change"
+              phx-debounce="200"
               class="input-prompt w-full min-h-[120px] p-4 text-base leading-relaxed bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors"
               placeholder={
                 cond do
@@ -76,6 +116,63 @@ defmodule EvoDashWeb.TaskFormComponents do
                 end
               }
             ><%= @prompt %></textarea>
+
+            <!-- Controls row — the card's LAST element, in normal document flow
+                 (never position: fixed). DOM order is mode | Launch | model;
+                 Tailwind order-* classes reorder per layout:
+                   Layout A: mode (order-1) | model (order-2) | Launch (order-3,
+                             far right via the CSS justify-content: space-between)
+                   Layout B: mode (order-1) | Launch (order-2, middle) | model (order-3) -->
+            <div class="input-controls">
+              <!-- Mode switch -->
+              <select
+                name="mode"
+                phx-change="task_change"
+                class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[8.5rem] order-1"
+                title={mode_description(@mode)}
+              >
+                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                  {gettext("Initialize Existing")}
+                </option>
+                <option value="genesis_new" selected={@mode == "genesis_new"}>
+                  {gettext("Create New")}
+                </option>
+                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
+                </option>
+              </select>
+
+              <!-- Launch Task button — the focal point.
+                   Layout A: order-3 (bottom-right). Layout B: order-2 (middle). -->
+              <button
+                type="submit"
+                class={[
+                  "btn btn-primary gap-2 px-5",
+                  if(layout == :compact, do: "order-3", else: "order-2")
+                ]}
+                disabled={@disabled}
+              >
+                <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}
+              </button>
+
+              <!-- Model switch -->
+              <%= if @model_profiles != [] do %>
+                <select
+                  name="model_id"
+                  phx-change="select_model"
+                  class={[
+                    "select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem]",
+                    if(layout == :compact, do: "order-2", else: "order-3")
+                  ]}
+                >
+                  <%= for profile <- @model_profiles do %>
+                    <option value={profile.id} selected={@selected_model_id == profile.id}>
+                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
+                    </option>
+                  <% end %>
+                </select>
+              <% end %>
+            </div>
           </div>
 
           <!-- Welcome hint overlay when disabled (no project active) -->
@@ -94,54 +191,6 @@ defmodule EvoDashWeb.TaskFormComponents do
               </div>
             </div>
           <% end %>
-
-          <!-- Controls panel: CSS repositions based on data-layout.
-               In compact mode: appears as the last line of the card.
-               In expanded mode: detaches as a floating bottom panel. -->
-          <div class="input-controls">
-            <div class="flex items-center gap-2 px-3 py-2 rounded-2xl bg-base-100/95 border border-base-200 shadow-lg backdrop-blur-sm">
-              <!-- Mode switch -->
-              <select
-                name="mode"
-                phx-change="task_change"
-                class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[8.5rem]"
-                title={mode_description(@mode)}
-              >
-                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                  {gettext("Initialize Existing")}
-                </option>
-                <option value="genesis_new" selected={@mode == "genesis_new"}>
-                  {gettext("Create New")}
-                </option>
-                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
-                </option>
-              </select>
-
-              <div class="w-px h-7 bg-base-200"></div>
-
-              <!-- Launch Task button — the focal point -->
-              <button type="submit" class="btn btn-primary gap-2 px-5" disabled={@disabled}>
-                <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}
-              </button>
-
-              <!-- Model switch -->
-              <%= if @model_profiles != [] do %>
-                <div class="w-px h-7 bg-base-200"></div>
-                <select
-                  name="model_id"
-                  phx-change="select_model"
-                  class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem]"
-                >
-                  <%= for profile <- @model_profiles do %>
-                    <option value={profile.id} selected={@selected_model_id == profile.id}>
-                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
-                    </option>
-                  <% end %>
-                </select>
-              <% end %>
-            </div>
-          </div>
         </div>
       </div>
     </.form>
