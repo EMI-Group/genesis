@@ -72,7 +72,7 @@ defmodule EvoGit.Sandbox.Linux do
       wrapped_cmd = inner_cmd <> " < /dev/null"
       sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
       # args/4 won't detect git on "bash", so append git env manually
-      sandbox_args = maybe_append_git_env(sandbox_args, is_git)
+      sandbox_args = maybe_append_git_env(sandbox_args, is_git, cwd)
       result = System.cmd("systemd-run", sandbox_args, stderr_to_stdout: true)
       EvoGit.SandboxProcessRegistry.unregister(unit)
       result
@@ -85,7 +85,7 @@ defmodule EvoGit.Sandbox.Linux do
         System.cmd("bash", ["-c", wrapped_cmd],
           cd: cwd,
           stderr_to_stdout: true,
-          env: EvoGit.GitEnv.git_env_list()
+          env: EvoGit.GitEnv.git_env_list(cwd)
         )
       else
         System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
@@ -188,7 +188,7 @@ defmodule EvoGit.Sandbox.Linux do
         {"TMPDIR", EvoGit.Sandbox.resolve_tmpdir()}
       ] ++
         if EvoGit.GitEnv.git_command?(executable),
-          do: EvoGit.GitEnv.git_env_list(),
+          do: EvoGit.GitEnv.git_env_list(cwd),
           else: []
 
     env_args =
@@ -407,7 +407,7 @@ defmodule EvoGit.Sandbox.Linux do
       sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
 
       # Append git env vars for the inner command (args/4 won't detect git on "bash")
-      sandbox_args = maybe_append_git_env(sandbox_args, is_git)
+      sandbox_args = maybe_append_git_env(sandbox_args, is_git, cwd)
 
       task =
         Task.async(fn ->
@@ -429,7 +429,7 @@ defmodule EvoGit.Sandbox.Linux do
       end
     else
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
-      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
+      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
       task =
         Task.async(fn ->
@@ -453,13 +453,15 @@ defmodule EvoGit.Sandbox.Linux do
   end
 
   # Appends --setenv args for git env vars when the original executable is git.
-  defp maybe_append_git_env(sandbox_args, true) do
+  # The identity is resolved for `cwd` (the working directory the git command
+  # runs in) so repo-local `git config` is honored inside the sandbox.
+  defp maybe_append_git_env(sandbox_args, true, cwd) do
     git_env_args =
-      EvoGit.GitEnv.git_env_list()
+      EvoGit.GitEnv.git_env_list(cwd)
       |> Enum.flat_map(fn {k, v} -> ["--setenv=#{k}=#{v}"] end)
 
     sandbox_args ++ git_env_args
   end
 
-  defp maybe_append_git_env(sandbox_args, false), do: sandbox_args
+  defp maybe_append_git_env(sandbox_args, false, _cwd), do: sandbox_args
 end
