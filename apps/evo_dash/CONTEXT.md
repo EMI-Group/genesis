@@ -108,10 +108,13 @@ When a task is started with the **archive** option enabled (checkbox in the task
 ### UI Components (`./lib/evo_dash_web/components/`)
 
 - `CoreComponents` — Phoenix 1.8 base components
-- `DashboardComponents` — Task form, scheduler settings, project tabs, task cards (with "Review" button for completed tasks with branches)
+- `ProjectComponents` — Address-bar-style project selector (`project_selector/1`: display-mode button + edit-mode path input with `PathAutocomplete` hook + recent-projects dropdown), legacy open/new project forms, project settings panel + dropdown tab (`project_settings_panel/1`, `project_settings_tab/1`, shared `project_settings_body/1` with genesis.toml status, worktree script, dev commands, foreign repos)
+- `TaskFormComponents` — Minimalist three-zone prompt editor (`task_form/1`: `.input-layout` container with `data-layout` attribute, prompt textarea with `phx-hook="AdaptiveInput"` + `phx-update="ignore"`, floating `.input-controls` launcher with mode select / Launch Task / model select), `task_options_tab/1` (Configure-dropdown Task Options: build system, starting node/commit, resume-from, archive toggle — all inputs carry `form="task-form"`), legacy `advanced_options/1`
+- `TaskCardComponents` — Task cards with accent bar, timestamps, expandable details, result/options rendering (`render_result_full/1`)
+- `ArchiveComponents` — Per-agent archive records, nested agent hierarchy tree
 - `ReviewComponents` — Review page components: review header + task summary/usage strip (tokens, cost, cache hit rate, agent count), commit list (GitHub-style with SHA badges, messages, author, relative time), diff stats bar, file list, diff viewer (Lumis syntax highlighting), action buttons (merge/reject/continue/create PR)
 - `AgentsComponents` — Recursive path tree with connector lines and status coloring
-- `Layouts` — App layout with navbar, theme toggle, flash group. The `<main>` content element carries `phx-hook="NodeSwitchFade"` + `data-node-id={@current_node_id || "local"}`; the `NodeSwitchFade` JS hook (`assets/js/hooks/node_switch_fade.js`) detects changes to `data-node-id` on morphdom updates and plays a subtle 0.25s opacity fade animation (CSS `.node-switch-fade` keyframes in `app.css`) when a node switch occurs, giving visual feedback during local↔remote transitions.
+- `Layouts` — App layout with sidebar, theme toggle, flash group. The `<main>` content element carries `phx-hook="NodeSwitchFade"` + `data-node-id={@current_node_id || "local"}`; the `NodeSwitchFade` JS hook (`assets/js/hooks/node_switch_fade.js`) detects changes to `data-node-id` on morphdom updates and plays a subtle 0.25s opacity fade animation (CSS `.node-switch-fade` keyframes in `app.css`) when a node switch occurs, giving visual feedback during local↔remote transitions.
 
 ## Constraints
 
