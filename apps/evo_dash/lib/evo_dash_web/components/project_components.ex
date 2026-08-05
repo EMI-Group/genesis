@@ -61,6 +61,8 @@ defmodule EvoDashWeb.ProjectComponents do
                       phx-hook="PathAutocomplete"
                       phx-change="path_input"
                       phx-debounce="150"
+                      phx-keydown="toggle_address_bar"
+                      phx-key="Escape"
                       id="project-path-input"
                       list="path-suggestions"
                     />
@@ -144,11 +146,11 @@ defmodule EvoDashWeb.ProjectComponents do
               <%= if @tauri_detected do %>
                 <button
                   type="button"
-                  id="project-path-browse-button"
+                  id="project-path-browse-button-legacy"
                   class="btn btn-sm btn-warning gap-1 shrink-0"
                   phx-click="pick_directory"
                   phx-hook="DirectoryPicker"
-                  data-picker-id="project"
+                  data-picker-id="project-legacy"
                 >
                   <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
                 </button>
@@ -163,10 +165,10 @@ defmodule EvoDashWeb.ProjectComponents do
                   phx-hook="PathAutocomplete"
                   phx-change="path_input"
                   phx-debounce="150"
-                  id="project-path-input"
-                  list="path-suggestions"
+                  id="project-path-input-legacy"
+                  list="path-suggestions-legacy"
                 />
-                <datalist id="path-suggestions">
+                <datalist id="path-suggestions-legacy">
                   <%= for suggestion <- @path_suggestions do %>
                     <option value={suggestion}></option>
                   <% end %>

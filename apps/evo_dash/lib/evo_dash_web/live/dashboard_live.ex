@@ -637,11 +637,29 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("toggle_address_bar", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:address_bar_editing, !socket.assigns.address_bar_editing)
-     |> assign(:show_open_project_form, false)
-     |> assign(:show_new_project_form, false)}
+    editing = !socket.assigns.address_bar_editing
+
+    socket =
+      socket
+      |> assign(:address_bar_editing, editing)
+      |> assign(:show_open_project_form, false)
+      |> assign(:show_new_project_form, false)
+
+    # When entering edit mode, seed the typing candidates with recent projects
+    # so they are immediately available in the datalist before the first
+    # phx-change fires (the dropdown of recent projects is shown while editing).
+    socket =
+      if editing do
+        assign(
+          socket,
+          :path_suggestions,
+          Project.path_suggestions("", socket.assigns.recent_projects)
+        )
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -1093,7 +1111,7 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("path_input", %{"path" => value}, socket) do
-    suggestions = Project.path_suggestions(value)
+    suggestions = Project.path_suggestions(value, socket.assigns.recent_projects)
     {:noreply, assign(socket, :path_suggestions, suggestions)}
   end
 
