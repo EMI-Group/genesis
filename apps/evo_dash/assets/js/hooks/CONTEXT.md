@@ -16,10 +16,13 @@ All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
+import NodeSwitchFade from "./hooks/node_switch_fade.js"
+import AdaptiveInput from "./hooks/adaptive_input.js"
 // ...
 hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
         DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash,
-        ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse}
+        ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse,
+        NodeSwitchFade, AdaptiveInput}
 ```
 
 ### Where each hook is defined
@@ -27,6 +30,8 @@ hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
 | Hook | Defined in | Attached to (HEEx) |
 |------|-----------|--------------------|
 | `SidebarCollapse` | `./sidebar_collapse.js` (own file, ES module default export) | `layouts.ex` `<aside id="sidebar" phx-hook="SidebarCollapse">` |
+| `AdaptiveInput` | `./adaptive_input.js` (own file, ES module default export, 56 lines) | `task_form_components.ex` prompt `<textarea phx-hook="AdaptiveInput">` (class `.input-prompt`) — measures content height and toggles `data-layout` ("compact"/"expanded") on the closest `.input-layout` ancestor; the CSS morphs the layout between inline controls and a floating bottom panel. NOTE: it does NOT resize the textarea itself (no height = scrollHeight) — growth is a CSS two-state morph keyed on the attribute |
+| `NodeSwitchFade` | `./node_switch_fade.js` (own file, ES module default export) | `layouts.ex` `<main id="main-content" phx-hook="NodeSwitchFade" data-node-id=...>` — plays a 0.25s opacity fade when `data-node-id` changes |
 | `PathAutocomplete` | `../app.js` (inline, line ~43) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) |
 | `DirectoryPicker` | `../app.js` (inline, line ~107) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) |
 | `StatePersistence` | `../app.js` (inline, line ~170) | `dashboard_live.ex` dashboard root (`phx-hook="StatePersistence"`) |
