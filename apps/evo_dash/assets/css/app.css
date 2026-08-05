@@ -1281,8 +1281,7 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Floating Top Bar === */
-/* A floating, glassmorphic panel that sticks to the top of the viewport.
-   The accent appears as a subtle gradient glow at the top edge. */
+/* A floating, glassmorphic panel that sticks to the top of the viewport. */
 .dashboard-topbar {
   position: sticky;
   top: 0;
@@ -1297,37 +1296,7 @@ button, a, input, textarea, select, summary,
   box-shadow: 0 4px 24px -6px oklch(0% 0 0 / 0.2);
   /* NOTE: no `overflow: hidden` here on purpose. The Configure dropdown
      and the command palette overlay are positioned outside the bar and
-     must be allowed to escape it. The ::before accent line clips
-     itself via `border-radius: inherit`, so nothing needs parent clipping. */
-}
-
-/* Accent top-edge glow — a thin gradient line at the very top of the bar.
-   border-radius: inherit makes the line follow the bar's rounded corners on
-   its own, since the bar no longer clips its descendants (overflow: visible
-   is required for the dropdowns to escape the bar). */
-.dashboard-topbar::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  border-radius: inherit;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--project-accent) 20%,
-    var(--project-accent) 80%,
-    transparent 100%
-  );
-  opacity: 0.6;
-  pointer-events: none;
-}
-
-/* Ensure topbar children sit above the ::before accent line */
-.dashboard-topbar > * {
-  position: relative;
-  z-index: 1;
+     must be allowed to escape it. */
 }
 
 /* === Command Palette (Project Omnibox) === */
@@ -1480,14 +1449,18 @@ button, a, input, textarea, select, summary,
   width: 100%;
   /* Subtle accent border in compact mode */
   border-color: color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
-  /* Compact ring + glow backlight: the base card shadow is repeated here so
-     compact keeps the card's normal elevation, then a full 2px accent ring
-     and a soft glow backlight draw the eye to the input box. Expanded layout
-     intentionally has no ring/glow (see the .input-card base rule). */
+  /* Layered background glow: the base card shadow is repeated here so
+     compact keeps the card's normal elevation, then a FAINT 2px accent ring
+     (a subtle hint at low alpha, not a prominent ring) and a two-layer glow —
+     a mid glow with negative spread plus a wide, very-low-alpha bloom that
+     extends beyond the card — so the accent reads as depth BEHIND the card
+     rather than a ring hugging it. Expanded layout intentionally has no
+     ring/glow (see the .input-card base rule). */
   box-shadow:
     0 4px 16px -4px oklch(0% 0 0 / 0.15),
-    0 0 0 2px color-mix(in oklch, var(--project-accent) 60%, transparent),
-    0 0 60px -12px color-mix(in oklch, var(--project-accent) 35%, transparent);
+    0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
+    0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
+    0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
 }
 
 /* Subtle accent top-edge gradient on the input card (compact mode) */
@@ -1569,4 +1542,30 @@ button, a, input, textarea, select, summary,
   padding: 0.625rem 1rem;
   border-top: 1px solid var(--color-base-300);
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- Launch Task button: colored hover ring keyed on the selected mode ---
+   The Launch button carries a server-side data-mode attribute with values
+   genesis_new | genesis_existing | evolve_simple. Each mode gets its own
+   accent ring (plus a soft outer glow) on hover, framing the daisyUI
+   btn-primary hover state — btn-primary sets no box-shadow, so the ring is
+   additive and the hover bg still shows. Colors are literal oklch values
+   mixed via color-mix so they read on BOTH custom DaisyUI themes (dark +
+   light); never nest oklch(var(--x) / a) (Known Issue (i)). */
+.input-controls button[data-mode="genesis_new"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 255) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 255) 50%, transparent);
+}
+
+.input-controls button[data-mode="genesis_existing"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.72 0.15 162) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.72 0.15 162) 50%, transparent);
+}
+
+.input-controls button[data-mode="evolve_simple"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.8 0.16 80) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.8 0.16 80) 50%, transparent);
 }

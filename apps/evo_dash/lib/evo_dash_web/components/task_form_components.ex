@@ -26,15 +26,15 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   defdelegate model_display(value), to: EvoDashWeb.SettingsComponents.SettingCard
 
-  @short_objective_threshold 300
+  @short_objective_threshold 600
 
   @doc """
   Layout decision for the task form: `:compact` (Layout A — unified box) vs
-  `:expanded` (Layout B — split). Threshold: objective length > 300 graphemes
-  OR > 8 explicit lines.
+  `:expanded` (Layout B — split). Threshold: objective length > 600 graphemes
+  OR > 16 explicit lines.
   """
   def layout_for(prompt) when is_binary(prompt) do
-    if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 8,
+    if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 16,
       do: :expanded,
       else: :compact
   end
@@ -83,7 +83,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         <% layout = layout_for(@prompt) %>
         <!-- Single-card, two-layout objective editor.
              data-layout is SERVER-DRIVED via layout_for/1 (threshold:
-             @short_objective_threshold chars or 8+ lines):
+             @short_objective_threshold chars or 16+ lines):
                "compact"  → Layout A — unified box: controls row is the card's
                             last line (mode | model | Launch, launch centered).
                "expanded" → Layout B — large objective area with an in-flow
@@ -147,10 +147,12 @@ defmodule EvoDashWeb.TaskFormComponents do
 
               <!-- Launch Task button — the focal point, centered in BOTH
                    layouts (order-2 + mx-auto; works with or without the
-                   model select). -->
+                   model select). data-mode drives the per-mode hover ring
+                   color (CSS in assets/css/app.css). -->
               <button
                 type="submit"
                 class={["btn btn-primary gap-2 px-5 order-2 mx-auto"]}
+                data-mode={@mode}
                 disabled={@disabled}
               >
                 <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}

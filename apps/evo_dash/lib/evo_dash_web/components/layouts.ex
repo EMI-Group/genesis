@@ -67,12 +67,14 @@ defmodule EvoDashWeb.Layouts do
         in the EXPANDED state on every mount/update, which clips the SSH
         node-selector dropdown (w-72 = 288px) at the expanded sidebar's edge
         (w-60 = 240px) — the main body then appears to cover the SSH switch.
-        The !important modifier pins overflow to visible so dropdown menus
-        (node selector, language, theme) are never clipped. The sidebar is a
-        z-50 stacking context above the main content (z-0), so overflowing
-        menus paint above the main body. If the hook is fixed at the source
-        (stop toggling overflow-hidden on expand), revert this to plain
-        `overflow-visible`. -->
+        (The node selector now lives in the sidebar's bottom bar, leftmost,
+        with its dropdown opening upward — the w-72 vs w-60 clipping concern
+        is unchanged.) The !important modifier pins overflow to visible so
+        dropdown menus (node selector, language, theme) are never clipped.
+        The sidebar is a z-50 stacking context above the main content (z-0),
+        so overflowing menus paint above the main body. If the hook is fixed
+        at the source (stop toggling overflow-hidden on expand), revert this
+        to plain `overflow-visible`. -->
       <aside
         id="sidebar"
         data-sidebar-collapsed="false"
@@ -178,31 +180,30 @@ defmodule EvoDashWeb.Layouts do
           </div>
         </nav>
 
-        <!-- Node Selector (moved to bottom — dropdown opens upward) -->
-        <div class="px-3 py-2 shrink-0">
-          <.live_component
-            module={EvoDashWeb.NodeSelectorComponent}
-            id="node-selector"
-            current_node_id={@current_node_id}
-            current_node_name={@current_node_name}
-            drop_up={true}
-          />
-        </div>
-
-        <!-- Bottom section: Language + Theme + Collapse -->
+        <!-- Bottom section: Node selector + Language + Theme + Collapse -->
         <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
           <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
             <div data-sidebar-bottom-group class="flex items-center gap-1">
+              <!-- Node Selector (remote server switch — dropdown opens upward) -->
+              <.live_component
+                module={EvoDashWeb.NodeSelectorComponent}
+                id="node-selector"
+                current_node_id={@current_node_id}
+                current_node_name={@current_node_name}
+                drop_up={true}
+              />
+            </div>
+            <div data-sidebar-bottom-group class="flex items-center gap-1">
               <.language_selector drop_up={true} />
               <.theme_toggle_compact drop_up={true} />
+              <button
+                id="sidebar-collapse-toggle"
+                class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
+                title={gettext("Collapse sidebar")}
+              >
+                <.icon name="hero-chevron-double-left" class="w-4 h-4" />
+              </button>
             </div>
-            <button
-              id="sidebar-collapse-toggle"
-              class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
-              title={gettext("Collapse sidebar")}
-            >
-              <.icon name="hero-chevron-double-left" class="w-4 h-4" />
-            </button>
           </div>
         </div>
         <% end %>
