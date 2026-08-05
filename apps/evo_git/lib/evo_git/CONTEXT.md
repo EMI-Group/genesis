@@ -44,6 +44,10 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `agent_type/0` | `:read_write` | `:read` or `:read_write` — controls spatial contract validation |
 | `delegation_level/0` | `:high` | `:high` or `:low` — controls turn-budget warning frequency for delegation reminders |
 
+## Known Issues
+
+- **Stale `:finalizing` tasks stick forever after restart** (detailed in `./task_registry/CONTEXT.md` "Restart Recovery & Status Transitions"): `EvoGit.TaskRegistry.init/1` (`task_registry.ex:158-200`) performs NO task-status reconciliation — only `EvoGit.Store.integrity_check/1` (quarantine of corrupt rows, never touches valid statuses). All terminal-status writers key off the in-memory `task_refs` map — `{ref, result}` handler (`task_registry.ex:707-782`), `:DOWN` handler (`:785-843`) — which is EMPTY after restart, so pre-restart tasks can never be resolved by them. Post-restart: `:heartbeat` renews leases only for `:running`/`:pending` (`:858`); the one-shot `:lease_sweep` re-marks only `:running` tasks (`:881-886` — `:finalizing` excluded even in-process); `:periodic_cleanup` deletes only rows with `finished_at != nil` (`:finalizing` never has it); the `{:recheck_task, _}` handler (`:948-967`) WOULD resolve a `:finalizing` task but is never scheduled (dead code — the init comment at `:190-192` mentioning "via reconcile" is stale; no `handle_continue`/reconcile exists). The only exits from a stuck `:finalizing` task: explicit user action — `clear_finished_tasks/0` (`:372-380`, SQL `status NOT IN ('running','pending')` at `store.ex:521` matches `:finalizing`) or `delete_task/1` (`:441-444`). In-process resolution requires the wrapper process to finish (→ `:completed`/`:failed`) or crash (→ `:DOWN` → `:failed` only if no active sched_meta agents) — lease expiry plays NO role.
+
 ## Constraints
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
 - Agents are transient modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.
