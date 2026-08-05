@@ -25,7 +25,7 @@ defmodule EvoGit.GitEnv do
     2. The repository's effective configured identity (`git config user.name` /
        `git config user.email`, no scope flag → repo → global → system, exactly
        what git itself would use).
-    3. The fallback placeholder (`"Genesis Test"` / `"test@genesis.local"`) so
+    3. The fallback placeholder (`"Genesis"` / `"noreply@evogit.ai"`) so
        automated commits never fail when no identity is configured anywhere.
 
   Each key is resolved independently, so e.g. a `GIT_COMMITTER_NAME` env var is
@@ -47,8 +47,8 @@ defmodule EvoGit.GitEnv do
   # Fallback identity used ONLY when neither the inherited environment nor git
   # config provides a value. Kept so automated commits never fail with
   # "Please tell me who you are".
-  @fallback_name "Genesis Test"
-  @fallback_email "test@genesis.local"
+  @fallback_name "Genesis"
+  @fallback_email "noreply@evogit.ai"
 
   @doc """
   Returns the environment map shared by every git invocation.

@@ -130,10 +130,10 @@ defmodule EvoGit.GitEnvTest do
       with_isolated_git_config(fn ->
         env = GitEnv.git_env(tmp_dir)
 
-        assert env["GIT_AUTHOR_NAME"] == "Genesis Test"
-        assert env["GIT_AUTHOR_EMAIL"] == "test@genesis.local"
-        assert env["GIT_COMMITTER_NAME"] == "Genesis Test"
-        assert env["GIT_COMMITTER_EMAIL"] == "test@genesis.local"
+        assert env["GIT_AUTHOR_NAME"] == "Genesis"
+        assert env["GIT_AUTHOR_EMAIL"] == "noreply@evogit.ai"
+        assert env["GIT_COMMITTER_NAME"] == "Genesis"
+        assert env["GIT_COMMITTER_EMAIL"] == "noreply@evogit.ai"
       end)
     end
 

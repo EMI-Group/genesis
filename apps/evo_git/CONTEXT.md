@@ -64,7 +64,7 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 
 1. **Inherited environment** (`System.get_env/1`, non-empty; empty string treated as unset, mirroring git) — never clobbered.
 2. **Repository's effective `git config user.name`/`user.email`** (no scope flag → repo → global → system, exactly what git itself uses).
-3. **Fallback** `"Genesis Test"`/`"test@genesis.local"` only when nothing is configured anywhere, so automated commits never fail with "Please tell me who you are".
+3. **Fallback** `"Genesis"`/`"noreply@evogit.ai"` only when nothing is configured anywhere, so automated commits never fail with "Please tell me who you are". (The CURRENT fallback is `"Genesis"`/`"noreply@evogit.ai"`; the historical hardcoded values before the per-key resolution fix were `"Genesis Test"`/`"test@genesis.local"` — those old values are no longer used.)
 
 **Memoization**: the `git config` lookup runs in the PARENT process via raw `System.cmd` (`EvoGit.Executable.resolve("git")`; config reads don't commit → no recursion through the adapter; missing git binary → `ErlangError` rescued → treated as "no value"). Memoized per repo path in `:persistent_term` (`{GitEnv, :config_identity, repo_path}`; the `nil` key = global/no-repo resolution). Stale-if-config-changed until VM restart is an accepted trade-off (avoids 2 extra process spawns per git invocation); inherited env vars are read fresh at call time, never memoized. Test helper: `GitEnv.clear_config_identity_cache/1` (`@doc false`).
 
