@@ -8,7 +8,7 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
 ## Routing Table
 - `support/` → Shared test support modules (ConnCase for connection based tests)
 - `evo_dash/` → Domain-layer tests (MarkdownRender)
-- `evo_dash_web/` → Web-layer tests (controller tests, error handler tests)
+- `evo_dash_web/` → Web-layer tests (controller tests, error handler tests, component tests under `evo_dash_web/components/`)
 
 ## API Surface
 
@@ -24,6 +24,10 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
 
 ### `evo_dash/`
 - `markdown_render_test.exs` — `EvoDash.MarkdownRenderTest` — Markdown-to-HTML rendering edge cases (nil, empty, headings, code blocks, tables, bold).
+
+### `evo_dash_web/components/`
+- `project_components_test.exs` — `EvoDashWeb.ProjectComponentsTest` — Component-level tests for the command-palette project selector (`project_omnibox/1`): trigger rendering (active project name/path, "Open a project..." placeholder, enlarged `px-4 py-2` trigger + `text-base font-bold text-base-content truncate leading-tight` name span typography), and the client-side wiring — the search input (`input#palette-search-input`) carries `phx-keydown="palette_keydown"` + `phx-change="palette_search"`, the overlay (`.project-palette-overlay`) carries `phx-click-away="close_project_palette"`, and the backdrop (`.project-palette-backdrop`) carries `phx-click="close_project_palette"`. Uses `render_component/2` + Floki helpers (`trigger_class/1`, `attribute/3`, `parse/1`). NOTE: the active_project fixture must include a `:path` key (the component renders `@active_project.path` unconditionally).
+- `task_form_components_test.exs` — `EvoDashWeb.TaskFormComponentsTest` — `layout_for/1` boundary tests (300-char / 8-line thresholds, non-binary fallback) plus rendering smoke tests for the UNIFIED control order: both layouts share identical DOM and visual order — mode (order-1) | Launch (order-2, centered via `mx-auto`) | model (order-3); only the textarea size differs per layout. Also covers the no-model-profiles case (Launch stays centered, no `name="model_id"` select), disabled state, mode select options, and textarea `phx-change`/`AdaptiveInput` bindings.
 
 ### `evo_dash_web/live/`
 - `settings_live_test.exs` — `EvoDashWeb.SettingsLiveTest` — Settings page: search input rendering, search handler (value-key matching, results panel, no-results message, clear-to-category-view), and search-input-within-form regression. Also covers custom model providers (OpenRouter / OpenAI-Compatible): form rendering (model name, base URL, placeholders, warning, hidden quick-select buttons), saving (openrouter: spec pre-fill + openai-compatible map spec pre-fill), and validation errors (empty model name, empty base URL). Also covers whitelist safety regression: unknown category/provider/variant/key-path values safely map to nil/default instead of crashing (with positive cases confirming valid conversions). NOTE: these custom-model tests render the LLM category via `select_category`, which currently crashes due to a pre-existing `:model_spec` gap in `setting_card` (see note below).
