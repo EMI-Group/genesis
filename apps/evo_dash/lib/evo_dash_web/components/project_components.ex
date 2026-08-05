@@ -66,19 +66,19 @@ defmodule EvoDashWeb.ProjectComponents do
       <button
         type="button"
         phx-click="open_project_palette"
-        class="project-palette-trigger flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-3 py-1.5 cursor-pointer transition-colors text-left"
+        class="project-palette-trigger flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-4 py-2 cursor-pointer transition-colors text-left"
       >
         <%= if @active_project do %>
           <.icon name="hero-folder" class="size-4 text-primary shrink-0" />
-          <span class="text-sm font-bold text-base-content truncate leading-tight">
+          <span class="text-base font-bold text-base-content truncate leading-tight">
             {@active_project.name}
           </span>
-          <span class="text-xs text-base-content/50 font-mono truncate hidden md:inline">
+          <span class="text-sm text-base-content/50 font-mono truncate hidden md:inline">
             {@active_project.path}
           </span>
         <% else %>
           <.icon name="hero-folder-open" class="size-4 text-base-content/40 shrink-0" />
-          <span class="text-sm text-base-content/50 truncate">
+          <span class="text-base text-base-content/50 truncate">
             {gettext("Open a project...")}
           </span>
         <% end %>
@@ -90,7 +90,11 @@ defmodule EvoDashWeb.ProjectComponents do
         <div class="project-palette-backdrop" phx-click="close_project_palette"></div>
 
         <!-- Palette overlay -->
-        <div class="project-palette-overlay" phx-keydown="palette_keydown">
+        <div
+          class="project-palette-overlay"
+          phx-keydown="palette_keydown"
+          phx-click-away="close_project_palette"
+        >
           <%= case @palette_mode do %>
             <% :menu -> %>
               <.palette_menu
@@ -139,6 +143,7 @@ defmodule EvoDashWeb.ProjectComponents do
           id="palette-search-input"
           name="palette_search"
           phx-hook="FocusInput"
+          phx-keydown="palette_keydown"
           phx-change="palette_search"
           phx-debounce="100"
           value={@palette_search}
