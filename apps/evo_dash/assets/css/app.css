@@ -1294,10 +1294,17 @@ button, a, input, textarea, select, summary,
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 4px 24px -6px oklch(0% 0 0 / 0.2);
-  overflow: hidden;
+  /* NOTE: no `overflow: hidden` here on purpose. The Configure dropdown and
+     the address-bar recent-paths dropdown are absolutely-positioned children
+     that must be allowed to escape the bar (they render below it); clipping
+     them here made the buttons appear dead. The ::before accent line clips
+     itself via `border-radius: inherit`, so nothing needs parent clipping. */
 }
 
-/* Accent top-edge glow — a thin gradient line at the very top of the bar */
+/* Accent top-edge glow — a thin gradient line at the very top of the bar.
+   border-radius: inherit makes the line follow the bar's rounded corners on
+   its own, since the bar no longer clips its descendants (overflow: visible
+   is required for the dropdowns to escape the bar). */
 .dashboard-topbar::before {
   content: "";
   position: absolute;
@@ -1305,6 +1312,7 @@ button, a, input, textarea, select, summary,
   left: 0;
   right: 0;
   height: 2px;
+  border-radius: inherit;
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -1435,6 +1443,13 @@ button, a, input, textarea, select, summary,
   max-width: 48rem;
   margin-left: auto;
   margin-right: auto;
+  /* Vertical centering (ChatGPT landing style): auto margins center the card
+     in the flex column. Auto margins collapse to 0 when the content overflows,
+     so a tall card stays reachable from the top (justify-content: center
+     would clip overflowing content). The matching `margin-bottom: auto` on
+     .input-controls (not here!) splits the free space so the card + inline
+     controls stay joined and are centered as one unit. */
+  margin-top: auto;
   width: 100%;
   /* Subtle accent border in compact mode */
   border-color: color-mix(in oklch, var(--project-accent) 25%, oklch(var(--b3)));
@@ -1520,6 +1535,9 @@ button, a, input, textarea, select, summary,
   max-width: 48rem;
   margin-left: auto;
   margin-right: auto;
+  /* Pairs with the card's margin-top: auto — the two auto margins split the
+     free space so the card + inline controls are centered as one unit. */
+  margin-bottom: auto;
   width: 100%;
   border-radius: 0 0 1rem 1rem;
   border: 1px solid color-mix(in oklch, var(--project-accent) 25%, oklch(var(--b3)));
@@ -1531,11 +1549,15 @@ button, a, input, textarea, select, summary,
   margin-top: -1px; /* overlap the card's bottom border for seamless join */
 }
 
-/* Layout B (expanded): controls detach, become a floating bottom panel */
+/* Layout B (expanded): controls detach, become a floating bottom panel.
+   left uses --input-layout-center (set by the AdaptiveInput hook from the
+   .input-layout element's measured center) so the fixed-position panel
+   centers on the CONTENT COLUMN (offset by the sidebar), not the viewport.
+   Falls back to 50% when the hook hasn't measured (or can't). */
 .input-layout[data-layout="expanded"] .input-controls {
   position: fixed;
   bottom: 1rem;
-  left: 50%;
+  left: var(--input-layout-center, 50%);
   transform: translateX(-50%);
   z-index: 35;
   width: max-content;
