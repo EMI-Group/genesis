@@ -176,8 +176,10 @@ defmodule EvoDashWeb.DashboardLive do
                   active_project={@active_project}
                   active_project_path={@active_project_path}
                   recent_projects={@recent_projects}
-                  show_open_form={@show_open_project_form}
-                  show_new_project_form={@show_new_project_form}
+                  palette_open={@project_palette_open}
+                  palette_search={@palette_search}
+                  palette_mode={@palette_mode}
+                  palette_selected_index={@palette_selected_index}
                   path_suggestions={@path_suggestions}
                   tauri_detected={@tauri_detected}
                   platform={@platform}
@@ -198,7 +200,6 @@ defmodule EvoDashWeb.DashboardLive do
                   new_repo_path={@new_repo_path}
                   new_repo_description={@new_repo_description}
                   disabled={is_nil(@active_project)}
-                  address_bar_editing={@address_bar_editing}
                   show_configure_dropdown={@show_configure_dropdown}
                 />
 
@@ -272,10 +273,10 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   # ---------------------------------------------------------------------------
-  # top_bar/1 — Immersive sticky app header with address-bar project control.
+  # top_bar/1 — Immersive sticky app header with command palette project control.
   #
-  # LEFT: address-bar-style project control (click to open/reveal path input
-  # + recent projects + new-project option).
+  # LEFT: command palette trigger (click to open centered overlay with search,
+  # recent projects, open-by-path, and create-new-project).
   # RIGHT: a single "Configure" dropdown showing BOTH sections at once —
   # "Task Options" and "Project Settings" — with no tab bar.
   # ---------------------------------------------------------------------------
@@ -283,8 +284,10 @@ defmodule EvoDashWeb.DashboardLive do
   attr(:active_project, :map, default: nil)
   attr(:active_project_path, :string, default: nil)
   attr(:recent_projects, :list, default: [])
-  attr(:show_open_form, :boolean, default: false)
-  attr(:show_new_project_form, :boolean, default: false)
+  attr(:palette_open, :boolean, default: false)
+  attr(:palette_search, :string, default: "")
+  attr(:palette_mode, :atom, default: :menu)
+  attr(:palette_selected_index, :integer, default: 0)
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
@@ -305,23 +308,23 @@ defmodule EvoDashWeb.DashboardLive do
   attr(:new_repo_path, :string, default: "")
   attr(:new_repo_description, :string, default: "")
   attr(:disabled, :boolean, default: false)
-  attr(:address_bar_editing, :boolean, default: false)
   attr(:show_configure_dropdown, :boolean, default: false)
 
   def top_bar(assigns) do
     ~H"""
     <div class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-2 px-3 py-2">
-      <!-- LEFT: address-bar-style project control -->
+      <!-- LEFT: command palette project control -->
       <div class="flex-1 min-w-0">
-        <EvoDashWeb.ProjectComponents.project_selector
+        <EvoDashWeb.ProjectComponents.project_omnibox
           active_project={@active_project}
           recent_projects={@recent_projects}
-          show_open_form={@show_open_form}
-          show_new_project_form={@show_new_project_form}
+          palette_open={@palette_open}
+          palette_search={@palette_search}
+          palette_mode={@palette_mode}
+          palette_selected_index={@palette_selected_index}
           path_suggestions={@path_suggestions}
           tauri_detected={@tauri_detected}
           platform={@platform}
-          address_bar_editing={@address_bar_editing}
         />
       </div>
 
@@ -439,8 +442,10 @@ defmodule EvoDashWeb.DashboardLive do
         assign(socket,
           active_project: nil,
           active_project_path: nil,
-          show_open_project_form: false,
-          show_new_project_form: false,
+          project_palette_open: false,
+          palette_search: "",
+          palette_mode: :menu,
+          palette_selected_index: 0,
           recent_projects: recent_projects,
           path_suggestions: [],
           expanded_task_ids: MapSet.new(),
@@ -455,7 +460,6 @@ defmodule EvoDashWeb.DashboardLive do
           new_repo_id: "",
           new_repo_path: "",
           new_repo_description: "",
-          address_bar_editing: false,
           show_configure_dropdown: false,
           tasks: [],
           model_profiles: model_profiles,
@@ -631,25 +635,57 @@ defmodule EvoDashWeb.DashboardLive do
   # --- Project Management Events ---
 
   @impl true
-  def handle_event("toggle_open_project_form", params, socket) do
-    ProjectFlow.toggle_open_project_form(socket, params)
+  def handle_event("open_project_palette", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:project_palette_open, true)
+     |> assign(:palette_mode, :menu)
+     |> assign(:palette_search, "")
+     |> assign(:palette_selected_index, 0)
+     |> assign(:show_configure_dropdown, false)}
   end
 
   @impl true
-  def handle_event("toggle_address_bar", _params, socket) do
-    editing = !socket.assigns.address_bar_editing
+  def handle_event("close_project_palette", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:project_palette_open, false)
+     |> assign(:palette_mode, :menu)
+     |> assign(:palette_search, "")
+     |> assign(:palette_selected_index, 0)}
+  end
+
+  @impl true
+  def handle_event("palette_search", %{"_target" => ["palette_search"], "palette_search" => value}, socket) do
+    {:noreply,
+     socket
+     |> assign(:palette_search, value)
+     |> assign(:palette_selected_index, 0)}
+  end
+
+  def handle_event("palette_search", %{"value" => value}, socket) do
+    {:noreply,
+     socket
+     |> assign(:palette_search, value)
+     |> assign(:palette_selected_index, 0)}
+  end
+
+  @impl true
+  def handle_event("palette_mode", %{"mode" => mode_str}, socket) do
+    mode =
+      case mode_str do
+        "open_path" -> :open_path
+        "new_project" -> :new_project
+        _ -> :menu
+      end
 
     socket =
       socket
-      |> assign(:address_bar_editing, editing)
-      |> assign(:show_open_project_form, false)
-      |> assign(:show_new_project_form, false)
+      |> assign(:palette_mode, mode)
 
-    # When entering edit mode, seed the typing candidates with recent projects
-    # so they are immediately available in the datalist before the first
-    # phx-change fires (the dropdown of recent projects is shown while editing).
+    # Seed path suggestions when entering open_path mode
     socket =
-      if editing do
+      if mode == :open_path do
         assign(
           socket,
           :path_suggestions,
@@ -659,6 +695,12 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("palette_keydown", %{"key" => key}, socket) do
+    socket = handle_palette_key(socket, key, socket.assigns.palette_mode)
     {:noreply, socket}
   end
 
@@ -673,12 +715,6 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("toggle_new_project_form", params, socket) do
-    socket = assign(socket, :address_bar_editing, false)
-    ProjectFlow.toggle_new_project_form(socket, params)
-  end
-
-  @impl true
   def handle_event("toggle_advanced", _params, socket) do
     {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
   end
@@ -690,19 +726,16 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("create_project", params, socket) do
-    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.create_project(socket, params)
   end
 
   @impl true
   def handle_event("open_project", params, socket) do
-    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.open_project(socket, params)
   end
 
   @impl true
   def handle_event("select_project", params, socket) do
-    socket = assign(socket, :address_bar_editing, false)
     ProjectFlow.select_project(socket, params)
   end
 
@@ -1344,6 +1377,79 @@ defmodule EvoDashWeb.DashboardLive do
     %{task | logs: [], result: nil, usage: nil, archive_metadata: nil}
   end
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Command Palette keyboard navigation helpers
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # In :open_path and :new_project modes, Escape is handled by the client-side
+  # phx-key binding on the input (which sends palette_keydown with key="Escape").
+  # Non-menu modes are no-ops here (the input's own Escape binding closes it
+  # via the palette_keydown → Escape clause below which matches any mode).
+  defp handle_palette_key(socket, "Escape", _mode) do
+    socket
+    |> assign(:project_palette_open, false)
+    |> assign(:palette_mode, :menu)
+    |> assign(:palette_search, "")
+    |> assign(:palette_selected_index, 0)
+  end
+
+  defp handle_palette_key(socket, "ArrowDown", :menu) do
+    max_index = palette_item_count(socket) - 1
+    new_index = min(socket.assigns.palette_selected_index + 1, max_index)
+    assign(socket, :palette_selected_index, max(new_index, 0))
+  end
+
+  defp handle_palette_key(socket, "ArrowUp", :menu) do
+    new_index = socket.assigns.palette_selected_index - 1
+    assign(socket, :palette_selected_index, max(new_index, 0))
+  end
+
+  defp handle_palette_key(socket, "Enter", :menu) do
+    filtered =
+      EvoDashWeb.ProjectComponents.filter_projects(
+        socket.assigns.recent_projects,
+        socket.assigns.palette_search
+      )
+
+    action_base = length(filtered)
+    index = socket.assigns.palette_selected_index
+
+    cond do
+      index < action_base and index < length(filtered) ->
+        # Activate the selected recent project
+        project = Enum.at(filtered, index)
+        ProjectFlow.select_project(socket, %{"path" => project.path})
+
+      index == action_base ->
+        socket
+        |> assign(:palette_mode, :open_path)
+        |> assign(
+          :path_suggestions,
+          Project.path_suggestions("", socket.assigns.recent_projects)
+        )
+
+      index == action_base + 1 ->
+        assign(socket, :palette_mode, :new_project)
+
+      true ->
+        socket
+    end
+  end
+
+  defp handle_palette_key(socket, _key, _mode), do: socket
+
+  # Counts the total number of items in the palette menu list:
+  # filtered recent projects + 2 actions (Open by Path, Create New).
+  defp palette_item_count(socket) do
+    filtered =
+      EvoDashWeb.ProjectComponents.filter_projects(
+        socket.assigns.recent_projects,
+        socket.assigns.palette_search
+      )
+
+    length(filtered) + 2
+  end
+
   defp activate_project(socket, path) do
     name = Path.basename(path)
     is_project_change = socket.assigns[:active_project_path] != path
@@ -1375,8 +1481,10 @@ defmodule EvoDashWeb.DashboardLive do
       notified_task_ids: Assigns.build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
-      show_open_project_form: false,
-      show_new_project_form: false,
+      project_palette_open: false,
+      palette_mode: :menu,
+      palette_search: "",
+      palette_selected_index: 0,
       show_project_settings: false,
       project_config: project_config,
       worktree_script: worktree_script,

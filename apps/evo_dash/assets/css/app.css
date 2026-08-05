@@ -1294,10 +1294,9 @@ button, a, input, textarea, select, summary,
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 4px 24px -6px oklch(0% 0 0 / 0.2);
-  /* NOTE: no `overflow: hidden` here on purpose. The Configure dropdown and
-     the address-bar recent-paths dropdown are absolutely-positioned children
-     that must be allowed to escape the bar (they render below it); clipping
-     them here made the buttons appear dead. The ::before accent line clips
+  /* NOTE: no `overflow: hidden` here on purpose. The Configure dropdown
+     and the command palette overlay are positioned outside the bar and
+     must be allowed to escape it. The ::before accent line clips
      itself via `border-radius: inherit`, so nothing needs parent clipping. */
 }
 
@@ -1330,89 +1329,110 @@ button, a, input, textarea, select, summary,
   z-index: 1;
 }
 
-/* === Browser Address Bar === */
-/* Container styled like a browser address bar: pill-shaped, distinct bg */
-.dashboard-address-bar {
+/* === Command Palette (Project Omnibox) === */
+/* Trigger button styling (collapsed state) */
+.project-palette-trigger {
   position: relative;
   border-radius: 9999px;
-  background: oklch(var(--b2) / 0.7);
   border: 1px solid oklch(var(--b3));
   transition: border-color 0.2s ease, background 0.2s ease;
 }
 
-.dashboard-address-bar:focus-within {
+.project-palette-trigger:hover {
   border-color: color-mix(in oklch, var(--project-accent) 50%, transparent);
-  background: oklch(var(--b1) / 0.9);
 }
 
-/* Read-only display mode — looks like static text, not an input */
-.address-bar-display {
+/* Backdrop — full-screen, semi-transparent, click-to-close */
+.project-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: oklch(0% 0 0 / 0.3);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: palette-fade-in 0.15s ease;
+}
+
+/* Palette overlay — centered modal */
+.project-palette-overlay {
+  position: fixed;
+  top: 15vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  width: calc(100vw - 2rem);
+  max-width: 36rem;
+  max-height: 70vh;
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  cursor: text;
-  color: oklch(var(--bc));
-  user-select: text;
-}
-
-/* Editing mode — visible input field */
-.address-bar-edit {
-  display: none;
-}
-
-.dashboard-address-bar.editing .address-bar-display {
-  display: none;
-}
-
-.dashboard-address-bar.editing .address-bar-edit {
-  display: flex;
-}
-
-/* The dropdown of recent paths — hidden by default, revealed on .editing */
-.address-bar-dropdown {
-  position: absolute;
-  top: calc(100% + 0.25rem);
-  left: 0;
-  right: 0;
-  min-width: max-content;
+  flex-direction: column;
   border-radius: 0.75rem;
-  background: oklch(var(--b1) / 0.95);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: oklch(var(--b1) / 0.98);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid oklch(var(--b3));
-  box-shadow: 0 8px 24px -4px oklch(0% 0 0 / 0.25);
-  padding: 0.375rem;
-  z-index: 40;
-
-  /* Hidden state */
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-4px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 16px 48px -8px oklch(0% 0 0 / 0.3);
+  overflow: hidden;
+  animation: palette-slide-down 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Shown state — parent has .editing class */
-.dashboard-address-bar.editing .address-bar-dropdown {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+/* Scrollable project list */
+.project-palette-list {
+  max-height: 50vh;
 }
 
-/* Dropdown items */
-.address-bar-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.5rem;
-  cursor: pointer;
+/* List items — keyboard-selected state highlighted */
+.project-palette-item {
   color: oklch(var(--bc));
-  transition: background 0.15s ease;
 }
 
-.address-bar-dropdown-item:hover {
+.project-palette-item[data-selected="true"] {
   background: oklch(var(--project-accent) / 0.12);
+}
+
+.project-palette-item:hover {
+  background: oklch(var(--project-accent) / 0.12);
+}
+
+/* Footer */
+.project-palette-footer {
+  background: oklch(var(--b2) / 0.5);
+}
+
+.project-palette-footer kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid oklch(var(--b3));
+  background: oklch(var(--b1));
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  color: oklch(var(--bc) / 0.6);
+}
+
+/* Animations */
+@keyframes palette-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes palette-slide-down {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Responsive: on small screens, reduce top offset */
+@media (max-width: 640px) {
+  .project-palette-overlay {
+    top: 8vh;
+    max-height: 80vh;
+  }
 }
 
 /* === Adaptive Input Layout === */

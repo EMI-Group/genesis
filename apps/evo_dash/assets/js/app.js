@@ -475,11 +475,44 @@ const DialogModal = {
   }
 };
 
+// FocusInput hook: focuses an input element on mount. Used by the command
+// palette search box to auto-focus when the palette opens. Also re-focuses
+// on update if the element is the palette search input (prevents focus loss
+// during LiveView re-renders while typing in the search).
+const FocusInput = {
+  mounted() {
+    this.el.focus();
+  },
+  updated() {
+    // Only keep focus on the search input — not on path inputs or other fields
+    if (this.el.classList.contains("focus-on-update") !== false) {
+      this.el.focus();
+    }
+  }
+};
+
+// PaletteList hook: scrolls the currently [data-selected] item into view
+// whenever the list re-renders (after keyboard navigation).
+const PaletteList = {
+  mounted() {
+    this.scrollToSelected();
+  },
+  updated() {
+    this.scrollToSelected();
+  },
+  scrollToSelected() {
+    const selected = this.el.querySelector('[data-selected="true"]');
+    if (selected) {
+      selected.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList},
 })
 
 // Show progress bar on live navigation and form submits

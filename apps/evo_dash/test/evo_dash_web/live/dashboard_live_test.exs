@@ -118,7 +118,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Task form is always visible
       assert html =~ "Launch Task"
-      # Address-bar project control shows the placeholder when no project is active
+      # Command palette trigger shows the placeholder when no project is active
       assert html =~ "Open a project..."
     end
 
@@ -143,12 +143,12 @@ defmodule EvoDashWeb.DashboardLiveTest do
   end
 
   describe "opening a project" do
-    test "can open project via toggle and form submission", %{conn: conn, tmp_dir: tmp_dir} do
+    test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # Click to show the open project form
-      html = render_click(view, "toggle_open_project_form", %{})
-      assert html =~ "/home/user/my-project"
+      # Open the palette and switch to open-path mode
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       # Submit the form with a path
       view
@@ -168,7 +168,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "detects genesis_new mode for empty directory", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       html =
         view
@@ -182,7 +183,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "shows project info in selector after opening", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       html =
         view
@@ -196,7 +198,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "project settings panel shows config status", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       view
       |> element("form[phx-submit='open_project']")
@@ -213,7 +216,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "project settings shows worktree init script status", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       view
       |> element("form[phx-submit='open_project']")
@@ -230,7 +234,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "project settings shows no foreign repos by default", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       view
       |> element("form[phx-submit='open_project']")
@@ -270,7 +275,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "shows error for non-existent directory", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       html =
         view
@@ -357,7 +363,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       # Open a project so the task form renders
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       view
       |> element("form[phx-submit='open_project']")
@@ -375,7 +382,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       # Open a project
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       view
       |> element("form[phx-submit='open_project']")
@@ -394,7 +402,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       # Open a project
-      render_click(view, "toggle_open_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       view
       |> element("form[phx-submit='open_project']")
@@ -441,29 +450,38 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
   end
 
-  describe "address bar edit mode" do
+  describe "project palette" do
     setup do
       clear_recent_projects()
     end
 
-    test "toggle_address_bar toggles edit mode on and off", %{conn: conn} do
+    test "open_project_palette opens and close_project_palette closes it", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/")
 
-      # Display mode: the path input + datalist are not rendered
+      # Closed: the search input and backdrop are not rendered
       assert html =~ "Open a project..."
-      refute html =~ ~s(id="project-path-input")
+      refute html =~ ~s(id="palette-search-input")
 
-      html = render_click(view, "toggle_address_bar", %{})
-      assert html =~ ~s(id="project-path-input")
-      assert html =~ ~s(<datalist id="path-suggestions">)
-      refute html =~ "Open a project..."
+      html = render_click(view, "open_project_palette", %{})
+      assert html =~ ~s(id="palette-search-input")
+      assert html =~ ~s(phx-click="close_project_palette")
 
-      html = render_click(view, "toggle_address_bar", %{})
-      refute html =~ ~s(id="project-path-input")
+      html = render_click(view, "close_project_palette", %{})
+      refute html =~ ~s(id="palette-search-input")
       assert html =~ "Open a project..."
     end
 
-    test "entering edit mode seeds the datalist with recent project paths", %{
+    test "palette_mode switches to open_path mode showing the path input", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+
+      html = render_click(view, "palette_mode", %{"mode" => "open_path"})
+      assert html =~ ~s(id="project-path-input")
+      assert html =~ ~s(<datalist id="path-suggestions">)
+    end
+
+    test "entering open_path mode seeds the datalist with recent project paths", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
@@ -476,11 +494,42 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/")
 
-      html = render_click(view, "toggle_address_bar", %{})
+      render_click(view, "open_project_palette", %{})
+      html = render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       datalist = path_suggestions_datalist(html)
       assert datalist =~ ~s(<option value="#{recent_a}"></option>)
       assert datalist =~ ~s(<option value="#{recent_b}"></option>)
+    end
+
+    test "palette_menu shows recent projects as clickable items", %{conn: conn, tmp_dir: tmp_dir} do
+      project_a = Path.join(tmp_dir, "my-alpha")
+      File.mkdir_p!(project_a)
+      seed_recent_project(project_a, "my-alpha")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "open_project_palette", %{})
+      assert html =~ "my-alpha"
+      assert html =~ ~s(phx-click="select_project")
+      assert html =~ ~s(phx-value-path="#{project_a}")
+    end
+
+    test "palette_menu shows Create New Project and Open by Path actions", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "open_project_palette", %{})
+      assert html =~ "Open Project by Path"
+      assert html =~ "Create New Project"
+    end
+
+    test "palette_mode switches to new_project mode", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+
+      html = render_click(view, "palette_mode", %{"mode" => "new_project"})
+      assert html =~ ~s(id="new-project-location-input")
     end
   end
 
@@ -500,7 +549,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       seed_recent_project(recent_path, "alpha")
 
       {:ok, view, _html} = live(conn, ~p"/")
-      render_click(view, "toggle_address_bar", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       html = render_change(view, "path_input", %{"path" => recent_path})
 
@@ -527,7 +577,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       seed_recent_project(recent_path, "alpha")
 
       {:ok, view, _html} = live(conn, ~p"/")
-      render_click(view, "toggle_address_bar", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       html = render_change(view, "path_input", %{"path" => recent_path})
 
@@ -550,7 +601,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       html = render_click(view, "select_project", %{"path" => tmp_dir})
 
-      # The address bar shows the selected project basename
+      # The palette trigger shows the selected project basename
       assert html =~ Path.basename(tmp_dir)
     end
 
@@ -571,7 +622,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "creates and activates a new project", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/")
 
-      render_click(view, "toggle_new_project_form", %{})
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "new_project"})
 
       full_path = Path.join(tmp_dir, "my-brand-new-project")
 

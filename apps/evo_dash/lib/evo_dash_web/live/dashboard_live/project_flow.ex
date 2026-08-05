@@ -7,31 +7,11 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
-  import Phoenix.Component, only: [assign: 2, assign: 3]
+  import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3, push_patch: 2]
 
   alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.Project
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Project form toggles
-  # ───────────────────────────────────────────────────────────────────────────
-
-  def toggle_open_project_form(socket, _params) do
-    {:noreply,
-     assign(socket,
-       show_open_project_form: !socket.assigns.show_open_project_form,
-       show_new_project_form: false
-     )}
-  end
-
-  def toggle_new_project_form(socket, _params) do
-    {:noreply,
-     assign(socket,
-       show_new_project_form: !socket.assigns.show_new_project_form,
-       show_open_project_form: false
-     )}
-  end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Project creation
@@ -64,7 +44,8 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
             socket =
               socket
               |> assign(:recent_projects, recent_projects)
-              |> assign(:show_new_project_form, false)
+              |> assign(:project_palette_open, false)
+              |> assign(:palette_mode, :menu)
               |> put_flash(:info, gettext("Project created: %{path}", path: full_path))
 
             {:noreply, push_patch(socket, to: "/?project=#{URI.encode(full_path)}")}
@@ -86,7 +67,8 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
       socket =
         socket
         |> assign(:recent_projects, recent_projects)
-        |> assign(:show_open_project_form, false)
+        |> assign(:project_palette_open, false)
+        |> assign(:palette_mode, :menu)
 
       # Push URL params to persist project across navigation
       {:noreply, push_patch(socket, to: "/?project=#{URI.encode(expanded)}")}
@@ -113,6 +95,8 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
       socket =
         socket
         |> assign(:recent_projects, recent_projects)
+        |> assign(:project_palette_open, false)
+        |> assign(:palette_mode, :menu)
 
       {:noreply, push_patch(socket, to: "/?project=#{URI.encode(expanded)}")}
     else
