@@ -312,7 +312,7 @@ defmodule EvoDashWeb.DashboardLive do
 
   def top_bar(assigns) do
     ~H"""
-    <div class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-2 px-3 py-2">
+    <div class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-3 px-4 py-3">
       <!-- LEFT: command palette project control -->
       <div class="flex-1 min-w-0">
         <EvoDashWeb.ProjectComponents.project_omnibox
@@ -332,7 +332,7 @@ defmodule EvoDashWeb.DashboardLive do
       <div class="relative shrink-0">
         <button
           type="button"
-          class="btn btn-sm btn-ghost gap-1"
+          class="btn btn-md btn-ghost gap-2"
           title={gettext("Configure")}
           phx-click="toggle_configure_dropdown"
         >
@@ -355,7 +355,7 @@ defmodule EvoDashWeb.DashboardLive do
           <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
             <!-- Section 1: Task Options -->
             <div>
-              <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
                 {gettext("Task Options")}
               </p>
               <EvoDashWeb.TaskFormComponents.task_options_tab
@@ -373,7 +373,7 @@ defmodule EvoDashWeb.DashboardLive do
             <!-- Section 2: Project Settings (only when a project is active) -->
             <%= if @active_project != nil do %>
               <div class="mt-4 pt-4 border-t border-base-200">
-                <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
                   {gettext("Project Settings")}
                 </p>
                 <EvoDashWeb.ProjectComponents.project_settings_tab
