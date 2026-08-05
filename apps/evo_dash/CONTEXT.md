@@ -11,7 +11,10 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 ## Routing Table
 
 - `./assets/` → Frontend source assets (JavaScript, CSS, vendor libraries)
+- `./assets/js/hooks/` → Standalone JS hook files (`adaptive_input.js`, `sidebar_collapse.js`, `node_switch_fade.js`); all other hooks are inline in `./assets/js/app.js`
 - `./lib/` → Application source code (`evo_dash/` domain logic, `evo_dash_web/` web interface)
+- `./lib/evo_dash_web/live/` → LiveView pages (`dashboard_live.ex` + `dashboard_live/` support modules, `agents_live.ex`, `tasks_live.ex`, `settings_live.ex`, `system_live.ex`, `review_live.ex`, `welcome_live.ex`)
+- `./lib/evo_dash_web/components/` → Function components (`project_components.ex`, `task_form_components.ex`, `task_card_components.ex`, `core_components.ex`, `layouts.ex`, etc.)
 - `./test/` → ExUnit test suite
 
 ## API Surface
