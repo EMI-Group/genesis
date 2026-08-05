@@ -50,12 +50,10 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
   end
 
-  # Render smoke tests: data-layout is server-driven, and the control ORDER
-  # differs per layout. Both layouts share the same DOM order (mode | Launch |
-  # model); the per-layout visual order is achieved with Tailwind order-*
-  # classes (Layout A: model order-2, Launch order-3 → mode | model | Launch;
-  # Layout B: Launch order-2, model order-3 → mode | Launch | model), so the
-  # tests assert those classes via Floki.
+  # Render smoke tests: data-layout is server-driven. Control ORDER is now
+  # IDENTICAL in both layouts — DOM order AND visual order are mode (order-1) |
+  # Launch (order-2, centered via mx-auto) | model (order-3). Only the textarea
+  # size differs per layout, so the tests assert the unified classes via Floki.
   describe "task_form/1 rendering" do
     test "compact layout renders data-layout=compact with Launch Task" do
       html =
@@ -74,28 +72,37 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ ~s(data-layout="expanded")
     end
 
-    test "Layout A (compact): Launch last (order-3), model before it (order-2)" do
+    test "Layout A (compact): Launch order-2 centered (mx-auto), model order-3" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 
-      # Visual order: mode (order-1) | model (order-2) | Launch (order-3).
-      assert button_class(html) =~ "order-3"
-      assert model_class(html) =~ "order-2"
+      # Visual order: mode (order-1) | Launch (order-2, mx-auto) | model (order-3).
+      assert button_class(html) =~ "order-2"
+      assert button_class(html) =~ "mx-auto"
+      assert model_class(html) =~ "order-3"
     end
 
-    test "Layout B (expanded): Launch in the middle (order-2), model last (order-3)" do
+    test "Layout B (expanded): Launch order-2 centered (mx-auto), model order-3" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: String.duplicate("a", 400),
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 
-      # Visual order: mode (order-1) | Launch (order-2) | model (order-3).
+      # Visual order: mode (order-1) | Launch (order-2, mx-auto) | model (order-3).
       assert button_class(html) =~ "order-2"
+      assert button_class(html) =~ "mx-auto"
       assert model_class(html) =~ "order-3"
+    end
+
+    test "Launch stays centered (mx-auto) when no model profiles exist" do
+      html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+
+      assert button_class(html) =~ "mx-auto"
+      refute html =~ ~s(name="model_id")
     end
 
     test "disabled state renders the welcome overlay" do

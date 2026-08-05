@@ -85,9 +85,11 @@ defmodule EvoDashWeb.TaskFormComponents do
              data-layout is SERVER-DRIVED via layout_for/1 (threshold:
              @short_objective_threshold chars or 8+ lines):
                "compact"  → Layout A — unified box: controls row is the card's
-                            last line (mode | model | Launch, launch bottom-right).
+                            last line (mode | model | Launch, launch centered).
                "expanded" → Layout B — large objective area with an in-flow
-                            launch panel below (mode | Launch | model).
+                            launch panel below (mode | model | Launch).
+             Both layouts share the same visual order (mode | model | Launch,
+             Launch centered via mx-auto); only the textarea size differs.
              The AdaptiveInput JS hook only autogrows the textarea now. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
@@ -118,11 +120,12 @@ defmodule EvoDashWeb.TaskFormComponents do
             ><%= @prompt %></textarea>
 
             <!-- Controls row — the card's LAST element, in normal document flow
-                 (never position: fixed). DOM order is mode | Launch | model;
-                 Tailwind order-* classes reorder per layout:
-                   Layout A: mode (order-1) | model (order-2) | Launch (order-3,
-                             far right via the CSS justify-content: space-between)
-                   Layout B: mode (order-1) | Launch (order-2, middle) | model (order-3) -->
+                 (never position: fixed). DOM order AND visual order are
+                 identical in both layouts: mode (order-1) | Launch (order-2,
+                 centered via mx-auto) | model (order-3). The Launch button
+                 carries mx-auto so it stays centered even when the model
+                 select is absent (2-item row: space-between would otherwise
+                 push it to the right edge). -->
             <div class="input-controls">
               <!-- Mode switch -->
               <select
@@ -142,14 +145,12 @@ defmodule EvoDashWeb.TaskFormComponents do
                 </option>
               </select>
 
-              <!-- Launch Task button — the focal point.
-                   Layout A: order-3 (bottom-right). Layout B: order-2 (middle). -->
+              <!-- Launch Task button — the focal point, centered in BOTH
+                   layouts (order-2 + mx-auto; works with or without the
+                   model select). -->
               <button
                 type="submit"
-                class={[
-                  "btn btn-primary gap-2 px-5",
-                  if(layout == :compact, do: "order-3", else: "order-2")
-                ]}
+                class={["btn btn-primary gap-2 px-5 order-2 mx-auto"]}
                 disabled={@disabled}
               >
                 <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}
@@ -160,10 +161,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <select
                   name="model_id"
                   phx-change="select_model"
-                  class={[
-                    "select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem]",
-                    if(layout == :compact, do: "order-2", else: "order-3")
-                  ]}
+                  class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem] order-3"
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
