@@ -6,7 +6,7 @@ Support modules extracted from `EvoDashWeb.DashboardLive` to keep the main LiveV
 
 ## Routing Table
 
-None — leaf directory (three module files: `state_persistence.ex`, `project.ex`, `assigns.ex`).
+None — leaf directory (four module files: `state_persistence.ex`, `project.ex`, `project_flow.ex`, `assigns.ex`).
 
 ## API Surface
 
@@ -16,6 +16,7 @@ None — leaf directory (three module files: `state_persistence.ex`, `project.ex
 |--------|---------|
 | `StatePersistence` | Session persistence helpers (serialize/restore LiveView state to browser localStorage) |
 | `Project` | Project-related pure functions (mode detection, path suggestions, config loading, model profiles) |
+| `ProjectFlow` | Event handler implementations for project creation/opening (create_project, open_project, select_project, toggle_open_project_form, toggle_new_project_form) — extracted from DashboardLive (commit `b86ae86e`) |
 | `Assigns` | Assign-building helpers (task categorization, form defaults) |
 
 ## Constraints
