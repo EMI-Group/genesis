@@ -1555,11 +1555,12 @@ button, a, input, textarea, select, summary,
 /* --- The controls row (mode / launch / model) ---
    Now the LAST element INSIDE .input-card (in normal document flow — never
    position: fixed; no --input-layout-center, no [dir="rtl"] transform).
-   justify-content: space-between spreads the row across the card width; the
-   server-side Tailwind order-* classes (applied in task_form_components.ex)
-   reorder the controls per layout:
-     Layout A: mode (order-1) | model (order-2) | Launch (order-3, far right)
-     Layout B: mode (order-1) | Launch (order-2, middle) | model (order-3) */
+   Control order is IDENTICAL in both layouts (server-side classes in
+   task_form_components.ex): mode (order-1) | Launch (order-2, centered via
+   mx-auto) | model (order-3). mx-auto centers Launch even when the model
+   select is absent (2-item row); justify-content: space-between is
+   neutralized for the auto-margin button. Only the textarea size differs
+   between compact and expanded layouts. */
 .input-controls {
   display: flex;
   align-items: center;
