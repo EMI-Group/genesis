@@ -59,6 +59,50 @@ defmodule EvoDashWeb.DashboardLiveTest do
     {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end
 
+  # Clears all recent projects from the shared SQLite store so tests are
+  # deterministic regardless of what other tests in this file inserted.
+  defp clear_recent_projects do
+    for project <- EvoGit.TaskRegistry.list_recent_projects() do
+      EvoGit.TaskRegistry.remove_recent_project(project.path)
+    end
+
+    :ok
+  end
+
+  # Seeds a recent project via the public TaskRegistry API and registers
+  # on_exit cleanup so it never leaks into other tests (the shared SQLite
+  # store persists across tests in this file).
+  defp seed_recent_project(path, name) do
+    EvoGit.TaskRegistry.add_recent_project(path, name)
+
+    on_exit(fn ->
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+      try do
+        EvoGit.TaskRegistry.remove_recent_project(path)
+      rescue
+        _ -> :ok
+      end
+    end)
+  end
+
+  # Extracts the inner HTML of the edit-mode path-suggestion datalist so
+  # option ordering/uniqueness can be asserted precisely.
+  defp path_suggestions_datalist(html) do
+    case Regex.run(~r{<datalist id="path-suggestions">(.*?)</datalist>}s, html) do
+      [_, inner] -> inner
+      _ -> ""
+    end
+  end
+
+  # Returns the byte index of the first occurrence of `pattern` in `string`,
+  # or nil if it is not present.
+  defp string_index(string, pattern) do
+    case :binary.match(string, pattern) do
+      {idx, _len} -> idx
+      :nomatch -> nil
+    end
+  end
+
   describe "dashboard without active project" do
     setup do
       # Clear all recent projects so auto-load doesn't activate a stale project
@@ -363,6 +407,194 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # No update_prompt handler exists; the prompt textarea remains client-owned
       assert html =~ ~s(phx-update="ignore")
+    end
+  end
+
+  describe "configure dropdown" do
+    setup do
+      clear_recent_projects()
+    end
+
+    test "toggle_configure_dropdown opens and closes the dropdown", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/")
+
+      # The dropdown content is ALWAYS in the DOM (hidden via CSS when closed)...
+      assert html =~ "Task Options"
+      # ...but the click-catcher overlay only renders while open
+      refute html =~ ~s(phx-click="close_configure_dropdown")
+
+      html = render_click(view, "toggle_configure_dropdown", %{})
+      assert html =~ ~s(phx-click="close_configure_dropdown")
+      assert html =~ ~s(class="fixed inset-0 z-40")
+
+      html = render_click(view, "toggle_configure_dropdown", %{})
+      refute html =~ ~s(phx-click="close_configure_dropdown")
+    end
+
+    test "close_configure_dropdown closes an open dropdown", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "toggle_configure_dropdown", %{})
+
+      html = render_click(view, "close_configure_dropdown", %{})
+      refute html =~ ~s(phx-click="close_configure_dropdown")
+    end
+  end
+
+  describe "address bar edit mode" do
+    setup do
+      clear_recent_projects()
+    end
+
+    test "toggle_address_bar toggles edit mode on and off", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/")
+
+      # Display mode: the path input + datalist are not rendered
+      assert html =~ "Open a project..."
+      refute html =~ ~s(id="project-path-input")
+
+      html = render_click(view, "toggle_address_bar", %{})
+      assert html =~ ~s(id="project-path-input")
+      assert html =~ ~s(<datalist id="path-suggestions">)
+      refute html =~ "Open a project..."
+
+      html = render_click(view, "toggle_address_bar", %{})
+      refute html =~ ~s(id="project-path-input")
+      assert html =~ "Open a project..."
+    end
+
+    test "entering edit mode seeds the datalist with recent project paths", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      recent_a = Path.join(tmp_dir, "recent-alpha")
+      recent_b = Path.join(tmp_dir, "recent-beta")
+      File.mkdir_p!(recent_a)
+      File.mkdir_p!(recent_b)
+      seed_recent_project(recent_a, "recent-alpha")
+      seed_recent_project(recent_b, "recent-beta")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "toggle_address_bar", %{})
+
+      datalist = path_suggestions_datalist(html)
+      assert datalist =~ ~s(<option value="#{recent_a}"></option>)
+      assert datalist =~ ~s(<option value="#{recent_b}"></option>)
+    end
+  end
+
+  describe "path input suggestions" do
+    setup do
+      clear_recent_projects()
+    end
+
+    test "path_input lists matching recent projects before filesystem suggestions", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      recent_path = Path.join(tmp_dir, "alpha")
+      fs_only_path = Path.join(tmp_dir, "alpha-extra")
+      File.mkdir_p!(recent_path)
+      File.mkdir_p!(fs_only_path)
+      seed_recent_project(recent_path, "alpha")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "toggle_address_bar", %{})
+
+      html = render_change(view, "path_input", %{"path" => recent_path})
+
+      datalist = path_suggestions_datalist(html)
+
+      # (a) the recent project path (which is also a real directory) is
+      # suggested, and so is the filesystem-only sibling
+      assert datalist =~ ~s(<option value="#{recent_path}"></option>)
+      assert datalist =~ ~s(<option value="#{fs_only_path}"></option>)
+
+      # (c) exact ordering from the rendered HTML: the recent match comes first
+      recent_idx = string_index(datalist, ~s(value="#{recent_path}"))
+      fs_idx = string_index(datalist, ~s(value="#{fs_only_path}"))
+      assert recent_idx != nil and fs_idx != nil
+      assert recent_idx < fs_idx
+    end
+
+    test "path_input deduplicates paths present in both recents and filesystem", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      recent_path = Path.join(tmp_dir, "alpha")
+      File.mkdir_p!(recent_path)
+      seed_recent_project(recent_path, "alpha")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "toggle_address_bar", %{})
+
+      html = render_change(view, "path_input", %{"path" => recent_path})
+
+      datalist = path_suggestions_datalist(html)
+
+      # (b) the path exists in recents AND on disk (a filesystem suggestion),
+      # but the datalist renders it exactly once
+      assert datalist =~ ~s(<option value="#{recent_path}"></option>)
+      assert length(String.split(datalist, ~s(value="#{recent_path}"))) == 2
+    end
+  end
+
+  describe "select_project" do
+    setup do
+      clear_recent_projects()
+    end
+
+    test "activates the selected project", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "select_project", %{"path" => tmp_dir})
+
+      # The address bar shows the selected project basename
+      assert html =~ Path.basename(tmp_dir)
+    end
+
+    test "shows an error for a non-existent path", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "select_project", %{"path" => "/nonexistent/select/project"})
+
+      assert html =~ "Directory does not exist"
+    end
+  end
+
+  describe "create_project" do
+    setup do
+      clear_recent_projects()
+    end
+
+    test "creates and activates a new project", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "toggle_new_project_form", %{})
+
+      full_path = Path.join(tmp_dir, "my-brand-new-project")
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.remove_recent_project(full_path)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      html =
+        view
+        |> element("form[phx-submit='create_project']")
+        |> render_submit(%{location: tmp_dir, name: "my-brand-new-project"})
+
+      # Flash confirms creation
+      assert html =~ "Project created"
+      # The project bar shows the new project name
+      assert html =~ "my-brand-new-project"
+      # The new project is registered in the recent list
+      assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == full_path))
     end
   end
 end
