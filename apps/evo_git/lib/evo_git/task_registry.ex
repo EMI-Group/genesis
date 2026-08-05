@@ -183,13 +183,36 @@ defmodule EvoGit.TaskRegistry do
     # problems rather than raising, so no rescue is needed here.
     EvoGit.Store.integrity_check(task_store)
 
+    # Startup reconciliation for orphaned :finalizing tasks. A task that was
+    # mid-finalization when the runtime died (e.g. slow git calls in
+    # merge_and_report/3 hanging while the app is killed) can never reach a
+    # terminal status in-process: the {ref, result} and {:DOWN, ...} handlers
+    # key off task_refs, which is empty after restart. Mark such tasks :failed
+    # synchronously here (NOT via the async update_task_status/4 cast, which
+    # would race callers). :running tasks are deliberately left alone — the
+    # one-shot :lease_sweep handles orphaned owners after the lease duration.
+    state =
+      EvoGit.Store.select_running_lease_info(task_store)
+      |> Enum.filter(fn %{status: status} -> status == :finalizing end)
+      |> Enum.reduce(state, fn %{id: task_id}, acc ->
+        handle_update_status(
+          acc,
+          task_id,
+          :failed,
+          "Runtime restarted during task finalization",
+          [],
+          {:startup_reconcile, :finalizing}
+        )
+      end)
+
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
     # Start the periodic heartbeat timer for lease renewal (owned tasks only).
-    # The sweep is NOT periodic — it fires once at startup (via reconcile) and
-    # once more after the lease duration to catch owners that died around our
-    # startup. After that, any new foreign instance does its own pair of checks.
+    # The sweep is NOT periodic — it fires once after the lease duration to
+    # catch owners that died around our startup. After that, any new foreign
+    # instance does its own check. (init itself reconciles orphaned
+    # :finalizing tasks directly, above.)
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
     Process.send_after(self(), :lease_sweep, @sweep_after)
 
