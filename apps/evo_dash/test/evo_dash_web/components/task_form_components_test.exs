@@ -6,8 +6,8 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   alias EvoDashWeb.TaskFormComponents
 
   # Unit tests for the server-driven layout decision behind the single-card
-  # two-layout task form. Threshold: objective length > 300 graphemes OR
-  # > 8 explicit lines → :expanded (Layout B), otherwise :compact (Layout A).
+  # two-layout task form. Threshold: objective length > 600 graphemes OR
+  # > 16 explicit lines → :expanded (Layout B), otherwise :compact (Layout A).
   describe "layout_for/1" do
     test "empty string is compact" do
       assert TaskFormComponents.layout_for("") == :compact
@@ -23,21 +23,21 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert TaskFormComponents.layout_for("Fix the login bug") == :compact
     end
 
-    test "exactly at the 300-char boundary is compact" do
-      assert TaskFormComponents.layout_for(String.duplicate("a", 300)) == :compact
+    test "exactly at the 600-char boundary is compact" do
+      assert TaskFormComponents.layout_for(String.duplicate("a", 600)) == :compact
     end
 
-    test "above the 300-char boundary is expanded" do
-      assert TaskFormComponents.layout_for(String.duplicate("a", 301)) == :expanded
+    test "above the 600-char boundary is expanded" do
+      assert TaskFormComponents.layout_for(String.duplicate("a", 601)) == :expanded
     end
 
-    test "exactly 8 lines is compact" do
-      prompt = Enum.join(1..8, "\n")
+    test "exactly 16 lines is compact" do
+      prompt = Enum.join(1..16, "\n")
       assert TaskFormComponents.layout_for(prompt) == :compact
     end
 
-    test "9 or more lines is expanded" do
-      prompt = Enum.join(1..9, "\n")
+    test "17 or more lines is expanded" do
+      prompt = Enum.join(1..17, "\n")
       assert TaskFormComponents.layout_for(prompt) == :expanded
     end
 
@@ -46,7 +46,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
 
     test "long single-line string is expanded" do
-      assert TaskFormComponents.layout_for(String.duplicate("x", 400)) == :expanded
+      assert TaskFormComponents.layout_for(String.duplicate("x", 700)) == :expanded
     end
   end
 
@@ -66,7 +66,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     test "expanded layout for a long objective" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: String.duplicate("a", 400)
+          prompt: String.duplicate("a", 700)
         )
 
       assert html =~ ~s(data-layout="expanded")
@@ -88,7 +88,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     test "Layout B (expanded): Launch order-2 centered (mx-auto), model order-3" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: String.duplicate("a", 400),
+          prompt: String.duplicate("a", 700),
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 
@@ -125,6 +125,21 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ "Evolution"
     end
 
+    test "Launch button carries the server-rendered data-mode attribute" do
+      # Default mode is genesis_new when no mode attr is passed.
+      html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+      assert button_attr(html, "data-mode") == "genesis_new"
+
+      # An explicit mode attr is rendered through to the button.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "evolve_simple"
+        )
+
+      assert button_attr(html, "data-mode") == "evolve_simple"
+    end
+
     test "textarea carries the task_prompt_change event and keeps AdaptiveInput" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
@@ -139,6 +154,11 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   defp button_class(html) do
     [btn] = Floki.find(parse(html), "button[type=submit]")
     btn |> Floki.attribute("class") |> List.first() |> to_string()
+  end
+
+  defp button_attr(html, attr) do
+    [btn] = Floki.find(parse(html), "button[type=submit]")
+    btn |> Floki.attribute(attr) |> List.first() |> to_string()
   end
 
   defp model_class(html) do
