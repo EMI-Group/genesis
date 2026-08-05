@@ -656,14 +656,7 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("palette_search", %{"_target" => ["palette_search"], "palette_search" => value}, socket) do
-    {:noreply,
-     socket
-     |> assign(:palette_search, value)
-     |> assign(:palette_selected_index, 0)}
-  end
-
-  def handle_event("palette_search", %{"value" => value}, socket) do
+  def handle_event("palette_search", %{"palette_search" => value}, socket) do
     {:noreply,
      socket
      |> assign(:palette_search, value)
@@ -1416,9 +1409,24 @@ defmodule EvoDashWeb.DashboardLive do
 
     cond do
       index < action_base and index < length(filtered) ->
-        # Activate the selected recent project
+        # Activate the selected recent project via push_patch
         project = Enum.at(filtered, index)
-        ProjectFlow.select_project(socket, %{"path" => project.path})
+        expanded = Path.expand(project.path)
+
+        if File.dir?(expanded) do
+          TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+          recent_projects = TaskRegistry.list_recent_projects()
+
+          socket
+          |> assign(:recent_projects, recent_projects)
+          |> assign(:project_palette_open, false)
+          |> assign(:palette_mode, :menu)
+          |> push_patch(to: "/?project=#{URI.encode(expanded)}")
+        else
+          socket
+          |> assign(:project_palette_open, false)
+          |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
+        end
 
       index == action_base ->
         socket

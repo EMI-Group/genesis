@@ -531,6 +531,72 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render_click(view, "palette_mode", %{"mode" => "new_project"})
       assert html =~ ~s(id="new-project-location-input")
     end
+
+    test "palette_search filters recent projects by name", %{conn: conn, tmp_dir: tmp_dir} do
+      project_a = Path.join(tmp_dir, "my-alpha")
+      project_b = Path.join(tmp_dir, "my-beta")
+      File.mkdir_p!(project_a)
+      File.mkdir_p!(project_b)
+      seed_recent_project(project_a, "my-alpha")
+      seed_recent_project(project_b, "my-beta")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      html = render_change(view, "palette_search", %{"palette_search" => "alpha", "_target" => ["palette_search"]})
+
+      # Filtered: alpha shows as a clickable select_project item
+      assert html =~ "my-alpha"
+      # beta's path should NOT appear as a select_project target in the palette
+      refute html =~ ~s(phx-value-path="#{project_b}")
+    end
+
+    test "palette_keydown ArrowDown/ArrowUp updates selected index", %{conn: conn, tmp_dir: tmp_dir} do
+      project_a = Path.join(tmp_dir, "aaa-project")
+      project_b = Path.join(tmp_dir, "bbb-project")
+      File.mkdir_p!(project_a)
+      File.mkdir_p!(project_b)
+      seed_recent_project(project_a, "aaa-project")
+      seed_recent_project(project_b, "bbb-project")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "open_project_palette", %{})
+
+      # Initial: index 0 is selected (the first project)
+      html = render(view)
+      assert html =~ ~s(data-selected)
+
+      # ArrowDown x4: 0→1→2→3 (clamped at 3, the max for 2 projects + 2 actions)
+      render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
+      render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
+      render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
+      render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
+
+      # ArrowUp: back to index 2
+      html = render_click(view, "palette_keydown", %{"key" => "ArrowUp"})
+      assert html =~ ~s(data-selected)
+    end
+
+    test "palette_keydown Escape closes the palette", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "open_project_palette", %{})
+
+      html = render_click(view, "palette_keydown", %{"key" => "Escape"})
+      refute html =~ ~s(id="palette-search-input")
+    end
+
+    test "palette_keydown Enter activates selected project", %{conn: conn, tmp_dir: tmp_dir} do
+      project = Path.join(tmp_dir, "enter-project")
+      File.mkdir_p!(project)
+      seed_recent_project(project, "enter-project")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "open_project_palette", %{})
+
+      # Enter on index 0 (the only recent project) selects it
+      html = render_click(view, "palette_keydown", %{"key" => "Enter"})
+      assert html =~ "enter-project"
+    end
   end
 
   describe "path input suggestions" do

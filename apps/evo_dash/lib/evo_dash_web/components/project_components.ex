@@ -137,6 +137,7 @@ defmodule EvoDashWeb.ProjectComponents do
         <input
           type="text"
           id="palette-search-input"
+          name="palette_search"
           phx-hook="FocusInput"
           phx-change="palette_search"
           phx-debounce="100"
