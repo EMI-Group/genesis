@@ -45,6 +45,11 @@ function longestCommonPrefix(strings) {
 const PathAutocomplete = {
   mounted() {
     const input = this.el;
+    // Focus on mount so the address-bar input is ready to type immediately when
+    // LiveView morphs it in on entering edit mode (morphs don't re-apply the
+    // `autofocus` attribute). No `updated()` focus — that would steal focus
+    // while the user is typing elsewhere.
+    this.el.focus();
     let prevValue = input.value;
 
     // Tab-key: complete to longest common prefix among all matching datalist options.
