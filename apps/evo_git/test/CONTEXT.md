@@ -48,6 +48,9 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ## Known Issues
 
+### ⚠️ `cow_worktree_test.exs` "handles pre-existing branch" flake (pre-existing, unrelated to store codec work)
+`make_repo/1` (`cow_worktree_test.exs:54-69`) creates repos under `/tmp/cow_test_<prefix>_<unique_integer>` but **never cleans them up** (`on_exit` only removes worktrees, not repos). Across separate VM runs, `System.unique_integer([:positive])` can repeat a number from an earlier run, so `make_repo("exists_branch")` can reuse a leftover dir that already contains the `cow-branch-exists` branch → `Git.create_branch` fails with "fatal: a branch named 'cow-branch-exists' already exists" (`cow_worktree_test.exs:433`). Manifests as an intermittent full-suite failure (~1 in several runs) that passes on rerun. Fix direction (not yet applied): `on_exit` should `File.rm_rf!` the repo dir, or `make_repo` should use ExUnit's `:tmp_dir` tag.
+
 ### ⚠️ RemoteConnection disconnect churn → intermittent `unknown registry` flake (lib bug, test-side mitigation in place)
 `EvoGit.RemoteConnection` managers are started via `DynamicSupervisor.start_child(@supervisor, {__MODULE__, target})` (`lib/evo_git/remote_connection.ex:1257`) — the default `use GenServer` child spec is `restart: :permanent`. `disconnect/1` stops the manager with `:normal` (`handle_call(:disconnect)` → `{:stop, :normal, ...}`, `remote_connection.ex:283-284`). Per OTP, `:permanent` children restart on **any** exit including `:normal`, and each restart counts toward the DynamicSupervisor's restart intensity (default 3 in 5s). Several bootstrap tests each start + disconnect a manager → churn exhausts intensity → DynamicSupervisor dies `:shutdown` → cascade can take down the Registry → teardown's `list_connections()` raises `ArgumentError: unknown registry: EvoGit.RemoteConnection.Registry` (~40% flake, only when several disconnect cycles run within 5s).
 
