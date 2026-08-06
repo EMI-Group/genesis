@@ -151,7 +151,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 </option>
               </select>
 
-              <!-- Launch Task button — the focal point, centered in BOTH
+              <!-- Launch button — the focal point, centered in BOTH
                    layouts (order-2 + mx-auto; works with or without the
                    model select). data-mode drives the per-mode hover ring
                    color (CSS in assets/css/app.css). -->

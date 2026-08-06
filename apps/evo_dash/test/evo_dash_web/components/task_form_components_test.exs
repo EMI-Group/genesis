@@ -60,7 +60,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "Short objective")
 
       assert html =~ ~s(data-layout="compact")
-      assert html =~ "Launch Task"
+      assert html =~ "🚀 Launch"
     end
 
     test "expanded layout for a long objective" do

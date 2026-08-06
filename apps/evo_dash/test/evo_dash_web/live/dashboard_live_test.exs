@@ -117,7 +117,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       # Task form is always visible
-      assert html =~ "Launch Task"
+      assert html =~ "🚀 Launch"
       # Command palette trigger shows the placeholder when no project is active
       assert html =~ "Open a project..."
     end
@@ -136,7 +136,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       # The form should be present but in disabled state
-      assert html =~ "Launch Task"
+      assert html =~ "🚀 Launch"
       # The execute button should be disabled
       assert html =~ "disabled"
     end
@@ -160,7 +160,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render(view)
 
       # Project should be active — task form enabled
-      assert html =~ "Launch Task"
+      assert html =~ "🚀 Launch"
       # Project settings should show config info
       assert html =~ "Foreign Repositories"
     end
@@ -257,7 +257,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
       # Task form should be present
-      assert html =~ "Launch Task"
+      assert html =~ "🚀 Launch"
       # Project settings should be shown
       assert html =~ "Project Settings"
     end
@@ -543,7 +543,12 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
 
       render_click(view, "open_project_palette", %{})
-      html = render_change(view, "palette_search", %{"palette_search" => "alpha", "_target" => ["palette_search"]})
+
+      html =
+        render_change(view, "palette_search", %{
+          "palette_search" => "alpha",
+          "_target" => ["palette_search"]
+        })
 
       # Filtered: alpha shows as a clickable select_project item
       assert html =~ "my-alpha"
@@ -551,7 +556,10 @@ defmodule EvoDashWeb.DashboardLiveTest do
       refute html =~ ~s(phx-value-path="#{project_b}")
     end
 
-    test "palette_keydown ArrowDown/ArrowUp updates selected index", %{conn: conn, tmp_dir: tmp_dir} do
+    test "palette_keydown ArrowDown/ArrowUp updates selected index", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
       project_a = Path.join(tmp_dir, "aaa-project")
       project_b = Path.join(tmp_dir, "bbb-project")
       File.mkdir_p!(project_a)
