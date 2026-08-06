@@ -556,15 +556,24 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    socket = load_task_data(socket, socket.assigns.task_id)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+  def handle_info({:tasks_updated} = msg, socket) do
+    # Debounced via NodeAware — the task-data reload + sidebar reload happen once
+    # in handle_info(:node_aware_reload_tasks, socket) when the timer fires.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
+  def handle_info({:task_status, _task_id, _status} = msg, socket) do
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+  end
+
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired: reload the reviewed task's data and the sidebar's
+    # running/pending tasks, then clear the debounce-pending flag.
     socket = load_task_data(socket, socket.assigns.task_id)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+    socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true

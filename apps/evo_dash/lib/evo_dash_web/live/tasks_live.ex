@@ -334,17 +334,27 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    socket = reload_current_page(socket)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+  def handle_info({:tasks_updated} = msg, socket) do
+    # Debounced via NodeAware — the page refresh + sidebar reload happen once in
+    # handle_info(:node_aware_reload_tasks, socket) when the debounce timer fires.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
+  def handle_info({:task_status, _task_id, _status} = msg, socket) do
     # Task status transitions (e.g. :finalizing, :running) are broadcast on the
     # "tasks" PubSub topic. Re-fetch the current page so the UI reflects the change.
+    # Debounced via NodeAware — see handle_info(:node_aware_reload_tasks, socket).
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+  end
+
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired: refresh the page task list and the sidebar's
+    # running/pending tasks, then clear the debounce-pending flag.
     socket = reload_current_page(socket)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+    socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true
@@ -573,7 +583,11 @@ defmodule EvoDashWeb.TasksLive do
     offset = (requested_page - 1) * page_size
 
     {tasks, total_count} =
-      EvoDash.NodeContext.list_tasks_paginated(node, limit: page_size, offset: offset, filters: filters)
+      EvoDash.NodeContext.list_tasks_paginated(node,
+        limit: page_size,
+        offset: offset,
+        filters: filters
+      )
 
     total_pages = total_pages(total_count, page_size)
     clamped_page = min(max(1, requested_page), total_pages)
@@ -618,6 +632,7 @@ defmodule EvoDashWeb.TasksLive do
   defp load_page_into_socket(socket, page) do
     node = socket.assigns.current_node
     filters = build_filters_from_assigns(socket)
+
     {tasks, current_page, total_count, total_pages} =
       load_page(node, page, socket.assigns.page_size, filters)
 

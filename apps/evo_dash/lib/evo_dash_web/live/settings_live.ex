@@ -566,12 +566,18 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired — reload the sidebar's running/pending tasks.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+  end
+
+  @impl true
   def handle_event("select_category", %{"category" => cat_str}, socket) do
     # Whitelist lookup: validate the client-supplied category string against the
     # known schema category atoms. Unknown value → nil → keep current category.
     cat =
       Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
-        (if cat_str == "remote_connections", do: :remote_connections) ||
+        if(cat_str == "remote_connections", do: :remote_connections) ||
         socket.assigns.active_category
 
     socket =
@@ -642,7 +648,13 @@ defmodule EvoDashWeb.SettingsLive do
                 EvoDash.NodeContext.reload_remote_config(node)
                 remote_cfg = EvoDash.NodeContext.get_remote_config(node)
                 fc = remote_config_to_file_config(remote_cfg)
-                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+
+                {fc,
+                 assign(
+                   socket,
+                   :config_status,
+                   EvoDash.NodeContext.get_remote_config_status(node)
+                 )}
               end
 
             config_file_exists = File.exists?(socket.assigns.config_path)
@@ -724,7 +736,13 @@ defmodule EvoDashWeb.SettingsLive do
                 EvoDash.NodeContext.reload_remote_config(node)
                 remote_cfg = EvoDash.NodeContext.get_remote_config(node)
                 fc = remote_config_to_file_config(remote_cfg)
-                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+
+                {fc,
+                 assign(
+                   socket,
+                   :config_status,
+                   EvoDash.NodeContext.get_remote_config_status(node)
+                 )}
               end
 
             config_file_exists = File.exists?(socket.assigns.config_path)
@@ -866,7 +884,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("save_api_key", %{"credential_key" => credential_key, "api_key" => api_key}, socket) do
+  def handle_event(
+        "save_api_key",
+        %{"credential_key" => credential_key, "api_key" => api_key},
+        socket
+      ) do
     if String.trim(api_key) == "" do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
     else
@@ -969,7 +991,11 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("add_remote_target", _params, socket) do
     {:noreply,
-     assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote", platform: nil})}
+     assign(socket, :remote_form_target, %{
+       dist_port: 9000,
+       remote_path: "/tmp/genesis_remote",
+       platform: nil
+     })}
   end
 
   @impl true

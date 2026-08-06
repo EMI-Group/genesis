@@ -629,6 +629,12 @@ defmodule EvoDashWeb.SystemLive do
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
   end
 
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired — reload the sidebar's running/pending tasks.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+  end
+
   # --- Private Helpers ---
 
   defp spawn_system_checks(socket) do
