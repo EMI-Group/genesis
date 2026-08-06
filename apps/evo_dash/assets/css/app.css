@@ -1544,7 +1544,7 @@ button, a, input, textarea, select, summary,
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- Launch Task button: colored hover ring keyed on the selected mode ---
+/* --- Launch button: colored hover ring keyed on the selected mode ---
    The Launch button carries a server-side data-mode attribute with values
    genesis_new | genesis_existing | evolve_simple. Each mode gets its own
    accent ring (plus a soft outer glow) on hover, framing the daisyUI

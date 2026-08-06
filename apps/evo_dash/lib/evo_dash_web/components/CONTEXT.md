@@ -75,7 +75,7 @@ The dashboard launch panel is ONE card (`.input-card`) containing the objective 
 - **`task_prompt_change` event contract**: the textarea carries `phx-change="task_prompt_change"` (payload `%{"prompt" => prompt}`) + `phx-debounce="200"` so the server learns the prompt length while typing and re-renders `data-layout`. `EvoDashWeb.DashboardLive` must implement `handle_event("task_prompt_change", %{"prompt" => prompt}, socket)` (stores the prompt in `@task_prompt`). Because `phx-update="ignore"` is on the textarea, the re-render never clobbers the user's typing.
 - **AdaptiveInput JS hook is autogrow-only**: it measures the textarea's content height and sets its height — it NO LONGER toggles `data-layout` and NO LONGER positions any floating panel (the old `--input-layout-center` / `position: fixed` logic was removed; the CSS floating rules and the `[dir="rtl"]` transform rule are gone).
 - **CSS**: `.input-layout` / `.input-card` / `.input-prompt` / `.input-controls` class names are unchanged (the hook's `closest(".input-layout")` and the CSS selectors keep working). `.input-controls` now only provides the in-flow row (flex, `space-between`, `border-top`). See `assets/css/app.css` "Adaptive Input Layout" section (sibling node — CSS lives in `./assets/`).
-- Existing tests assert `html =~ "Launch Task"` — the button text, `type="submit"`, `disabled={@disabled}`, rocket icon, gettext labels, mode options, and the disabled welcome overlay are all preserved. No new translatable strings were added.
+- Existing tests assert `html =~ "🚀 Launch"` — the button text, `type="submit"`, `disabled={@disabled}`, rocket icon, gettext labels, mode options, and the disabled welcome overlay are all preserved. No new translatable strings were added.
 
 ## Known Issues
 

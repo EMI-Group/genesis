@@ -55,7 +55,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   # Launch (order-2, centered via mx-auto) | model (order-3). Only the textarea
   # size differs per layout, so the tests assert the unified classes via Floki.
   describe "task_form/1 rendering" do
-    test "compact layout renders data-layout=compact with Launch Task" do
+    test "compact layout renders data-layout=compact with the Launch button" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "Short objective")
 
