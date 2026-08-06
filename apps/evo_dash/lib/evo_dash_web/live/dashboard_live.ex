@@ -13,7 +13,6 @@ defmodule EvoDashWeb.DashboardLive do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
-  use EvoDashWeb.ModalHelpers
 
   @impl true
   def render(assigns) do
@@ -49,7 +48,6 @@ defmodule EvoDashWeb.DashboardLive do
         config_status={@config_status}
         current_node_id={@current_node_id}
         current_node_name={@current_node_name}
-        tasks={@tasks}
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
       >
@@ -227,28 +225,6 @@ defmodule EvoDashWeb.DashboardLive do
                   build_systems={@build_systems}
                   selected_build_system={@task_build_system}
                 />
-
-                <!-- Full Result Modal -->
-                <%= if @selected_result do %>
-                  <EvoDashWeb.Helpers.modal on_close="close_result_modal">
-                    <:title>
-                      <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                      {gettext("Task Result")}
-                    </:title>
-                    {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
-                  </EvoDashWeb.Helpers.modal>
-                <% end %>
-
-                <!-- Full Options Modal -->
-                <%= if @selected_options do %>
-                  <EvoDashWeb.Helpers.modal on_close="close_options_modal">
-                    <:title>
-                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-                      {gettext("Full Objective")}
-                    </:title>
-                    <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-                  </EvoDashWeb.Helpers.modal>
-                <% end %>
               </div>
             <% end %>
             <%!-- end of @remote? else branch --%>
@@ -456,9 +432,6 @@ defmodule EvoDashWeb.DashboardLive do
           palette_selected_index: 0,
           recent_projects: recent_projects,
           path_suggestions: [],
-          expanded_task_ids: MapSet.new(),
-          selected_result: nil,
-          selected_options: nil,
           show_project_settings: false,
           project_config: nil,
           worktree_script: nil,
@@ -469,17 +442,12 @@ defmodule EvoDashWeb.DashboardLive do
           new_repo_path: "",
           new_repo_description: "",
           show_configure_dropdown: false,
-          tasks: [],
           model_profiles: model_profiles,
           selected_model_id: selected_model_id,
           build_systems: build_systems,
           tauri_detected: false,
           platform: "linux",
-          notified_task_ids:
-            TaskRegistry.list_tasks_summary()
-            |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
-            |> Enum.map(& &1.id)
-            |> MapSet.new()
+          notified_task_ids: Assigns.build_notified_task_ids(MapSet.new())
         )
 
       socket = Assigns.assign_form_defaults(socket)
@@ -557,14 +525,11 @@ defmodule EvoDashWeb.DashboardLive do
             activate_project(socket, expanded)
           else
             # Project path in URL is invalid, clear it
-            all_tasks = TaskRegistry.list_tasks_summary()
-
             socket
-            |> Assigns.assign_running_and_pending_tasks(all_tasks)
-            |> assign(:tasks, all_tasks)
+            |> Assigns.assign_running_and_pending_tasks()
             |> assign(
               :notified_task_ids,
-              Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+              Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
             )
             |> assign(
               active_project: nil,
@@ -580,26 +545,20 @@ defmodule EvoDashWeb.DashboardLive do
                   if File.dir?(recent_path) do
                     activate_project(socket, recent_path)
                   else
-                    all_tasks = TaskRegistry.list_tasks_summary()
-
                     socket
-                    |> Assigns.assign_running_and_pending_tasks(all_tasks)
-                    |> assign(:tasks, all_tasks)
+                    |> Assigns.assign_running_and_pending_tasks()
                     |> assign(
                       :notified_task_ids,
-                      Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+                      Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
                     )
                   end
 
                 _ ->
-                  all_tasks = TaskRegistry.list_tasks_summary()
-
                   socket
-                  |> Assigns.assign_running_and_pending_tasks(all_tasks)
-                  |> assign(:tasks, all_tasks)
+                  |> Assigns.assign_running_and_pending_tasks()
                   |> assign(
                     :notified_task_ids,
-                    Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
+                    Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
                   )
               end
             else
@@ -927,8 +886,6 @@ defmodule EvoDashWeb.DashboardLive do
 
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
-          all_tasks = TaskRegistry.list_tasks_summary_by_path(path)
-
           {:noreply,
            socket
            |> put_flash(
@@ -938,8 +895,7 @@ defmodule EvoDashWeb.DashboardLive do
                id: task.id
              )
            )
-           |> Assigns.assign_running_and_pending_tasks(all_tasks)
-           |> assign(:tasks, all_tasks)
+           |> Assigns.assign_running_and_pending_tasks()
            # The textarea keeps its text (`phx-update="ignore"`), so @task_prompt
            # must mirror the visible content or the server-side layout computation
            # (from prompt length) desyncs. Side effect: the draft prompt now
@@ -965,14 +921,13 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_event("cancel_task", %{"task_id" => task_id}, socket) do
     case TaskRegistry.cancel_task(task_id) do
       :ok ->
-        expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-        all_tasks = Assigns.current_tasks(socket)
-
         {:noreply,
          socket
-         |> Assigns.assign_running_and_pending_tasks(all_tasks)
-         |> assign(:tasks, all_tasks)
-         |> assign(:expanded_task_ids, expanded)}
+         |> Assigns.assign_running_and_pending_tasks()
+         |> assign(
+           :notified_task_ids,
+           MapSet.put(socket.assigns.notified_task_ids, task_id)
+         )}
 
       {:error, reason} ->
         {:noreply,
@@ -985,60 +940,27 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("toggle_task_details", %{"task_id" => task_id}, socket) do
-    expanded =
-      if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
-        MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-      else
-        MapSet.put(socket.assigns.expanded_task_ids, task_id)
-      end
-
-    {:noreply, assign(socket, :expanded_task_ids, expanded)}
-  end
-
-  @impl true
-  def handle_event("view_full_result", %{"task_id" => task_id}, socket) do
-    view_full_result(socket, task_id)
-  end
-
-  @impl true
-  def handle_event("close_result_modal", _params, socket) do
-    close_result_modal(socket)
-  end
-
-  @impl true
-  def handle_event("view_full_options", %{"task_id" => task_id}, socket) do
-    view_full_options(socket, task_id)
-  end
-
-  @impl true
-  def handle_event("close_options_modal", _params, socket) do
-    close_options_modal(socket)
-  end
-
-  @impl true
   def handle_event("clear_task_history", _params, socket) do
+    notified = Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
     TaskRegistry.clear_finished_tasks()
-    all_tasks = Assigns.current_tasks(socket)
 
     {:noreply,
      socket
-     |> Assigns.assign_running_and_pending_tasks(all_tasks)
-     |> assign(:tasks, all_tasks)
-     |> assign(:expanded_task_ids, MapSet.new())}
+     |> Assigns.assign_running_and_pending_tasks()
+     |> assign(:notified_task_ids, notified)}
   end
 
   @impl true
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
     TaskRegistry.delete_task(task_id)
-    expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-    all_tasks = Assigns.current_tasks(socket)
 
     {:noreply,
      socket
-     |> Assigns.assign_running_and_pending_tasks(all_tasks)
-     |> assign(:tasks, all_tasks)
-     |> assign(:expanded_task_ids, expanded)}
+     |> Assigns.assign_running_and_pending_tasks()
+     |> assign(
+       :notified_task_ids,
+       MapSet.put(socket.assigns.notified_task_ids, task_id)
+     )}
   end
 
   # --- Project Settings Events ---
@@ -1260,12 +1182,13 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   # Debounced reload fired by NodeAware after task broadcasts: refreshes the
-  # main task list + sidebar, reloads project settings when the settings panel
-  # is open, and pushes browser notifications for newly finished tasks.
+  # sidebar, reloads project settings when the settings panel is open, and
+  # pushes browser notifications for newly finished tasks. Notification
+  # detection uses the minimal id+status projection — only newly-terminal rows
+  # are fetched in full (get_task per new id), bounding decode cost instead of
+  # scanning the entire terminal history on every broadcast.
   @impl true
   def handle_info(:node_aware_reload_tasks, socket) do
-    new_tasks = Assigns.current_tasks(socket)
-
     # Refresh project settings if shown (foreign repos are in-memory, not re-read)
     socket =
       if socket.assigns.show_project_settings and socket.assigns.active_project_path do
@@ -1281,29 +1204,35 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     # Detect newly finished tasks for browser notifications
+    terminal_ids = TaskRegistry.list_task_ids([:completed, :failed, :cancelled])
     previously_notified = socket.assigns.notified_task_ids
 
-    {newly_finished, updated_notified} =
-      Enum.reduce(new_tasks, {[], previously_notified}, fn task, {acc, notified} ->
-        if task.status in [:completed, :failed, :cancelled] and
-             not MapSet.member?(notified, task.id) do
-          {[task | acc], MapSet.put(notified, task.id)}
-        else
+    {new_ids, updated_notified} =
+      Enum.reduce(terminal_ids, {[], previously_notified}, fn %{id: id}, {acc, notified} ->
+        if MapSet.member?(notified, id) do
           {acc, notified}
+        else
+          {[id | acc], MapSet.put(notified, id)}
         end
       end)
 
     socket =
-      Enum.reduce(newly_finished, socket, fn task, sock ->
-        {title, body} = Project.task_notification_content(task)
-        push_event(sock, "task_notification", %{title: title, body: body})
+      Enum.reduce(new_ids, socket, fn id, sock ->
+        case TaskRegistry.get_task(id) do
+          %EvoGit.TaskInfo{} = task ->
+            {title, body} = Project.task_notification_content(task)
+            push_event(sock, "task_notification", %{title: title, body: body})
+
+          _ ->
+            # task vanished between queries — still marked notified, no crash
+            sock
+        end
       end)
 
     socket =
       socket
       |> assign(:notified_task_ids, updated_notified)
-      |> Assigns.assign_running_and_pending_tasks(new_tasks)
-      |> assign(:tasks, new_tasks)
+      |> Assigns.assign_running_and_pending_tasks()
 
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
@@ -1479,8 +1408,6 @@ defmodule EvoDashWeb.DashboardLive do
         {current_mode, socket.assigns[:task_mode_info]}
       end
 
-    tasks = TaskRegistry.list_tasks_summary_by_path(path)
-
     # Load project settings eagerly — read genesis.toml once and thread
     # through all consumers to avoid redundant disk reads.
     config = ProjectConfig.read(path)
@@ -1491,8 +1418,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(
       active_project: %{path: path, name: name},
       active_project_path: path,
-      tasks: tasks,
-      notified_task_ids: Assigns.build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
+      notified_task_ids: Assigns.build_notified_task_ids(socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
       project_palette_open: false,
@@ -1506,7 +1432,7 @@ defmodule EvoDashWeb.DashboardLive do
       foreign_repos: foreign_repos,
       show_add_foreign_repo_form: false
     )
-    |> Assigns.assign_running_and_pending_tasks(tasks)
+    |> Assigns.assign_running_and_pending_tasks()
     |> Project.maybe_put_flash_mode_info(mode_info)
   end
 end
