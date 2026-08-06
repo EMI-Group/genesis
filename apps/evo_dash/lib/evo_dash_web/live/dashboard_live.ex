@@ -60,8 +60,8 @@ defmodule EvoDashWeb.DashboardLive do
         <%!--
           --project-accent now carries the TASK-MODE accent (not the project
           name): genesis_new → blue, genesis_existing → green, evolve_simple →
-          amber — so the objective-box ring/glow/top-line follows the selected
-          mode. The var name is historical; renaming it would require touching
+          green (lighter green when a resume task id is set — evolve only).
+          The var name is historical; renaming it would require touching
           assets/css/app.css (out of scope).
         --%>
         <div
@@ -70,7 +70,9 @@ defmodule EvoDashWeb.DashboardLive do
           data-project={@active_project_path}
           data-task-mode={@task_mode}
           class="flex flex-col min-h-full"
-          style={"--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode)}"}
+          style={
+            "--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode, @task_resume_from)}"
+          }
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>

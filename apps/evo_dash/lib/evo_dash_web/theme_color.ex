@@ -37,21 +37,38 @@ defmodule EvoDashWeb.ThemeColor do
 
     * `"genesis_new"` (and any other `"genesis*"` mode) → blue `oklch(0.62 0.19 255)`
     * `"genesis_existing"` → green `oklch(0.72 0.15 162)`
-    * `"evolve_simple"` (and any other `"evolve*"` mode) → amber `oklch(0.8 0.16 80)`
+    * `"evolve_simple"` (and any other `"evolve*"` mode) → green `oklch(0.72 0.17 152)`
+    * `"evolve*"` with a non-blank resume → lighter green `oklch(0.78 0.16 152)`
 
   Accepts the mode as a binary or atom (atoms are normalized with
   `Atom.to_string/1`). `nil`, `""`, or any unknown mode falls back to
   `default_color/0` (`"#6366f1"`).
+
+  This arity delegates to `accent_color_for_mode/2` with an empty resume, so
+  existing callers keep getting the plain mode color.
   """
   @spec accent_color_for_mode(nil | binary | atom) :: String.t()
-  def accent_color_for_mode(nil), do: default_color()
-  def accent_color_for_mode(""), do: default_color()
+  def accent_color_for_mode(mode), do: accent_color_for_mode(mode, "")
 
-  def accent_color_for_mode(mode) when is_atom(mode) do
-    mode |> Atom.to_string() |> accent_color_for_mode()
+  @doc """
+  Maps a task mode to its accent color, honoring the resume flag.
+
+  `resume` is a task id binary or `nil`; a non-blank (trimmed) string means
+  the task is a resume run. Resume only affects the evolve family (resume is
+  an evolve-only concept): a resumed evolve task gets a distinct, lighter
+  green of the same family. Genesis-family modes ignore resume entirely.
+  """
+  @spec accent_color_for_mode(nil | binary | atom, nil | binary) :: String.t()
+  def accent_color_for_mode(nil, _resume), do: default_color()
+  def accent_color_for_mode("", _resume), do: default_color()
+
+  def accent_color_for_mode(mode, resume) when is_atom(mode) do
+    accent_color_for_mode(Atom.to_string(mode), resume)
   end
 
-  def accent_color_for_mode(mode) when is_binary(mode) do
+  def accent_color_for_mode(mode, resume) when is_binary(mode) do
+    resume? = is_binary(resume) and String.trim(resume) != ""
+
     case mode do
       "genesis_new" ->
         "oklch(0.62 0.19 255)"
@@ -60,16 +77,21 @@ defmodule EvoDashWeb.ThemeColor do
         "oklch(0.72 0.15 162)"
 
       "evolve_simple" ->
-        "oklch(0.8 0.16 80)"
+        evolve_color(resume?)
 
       _ ->
         cond do
           String.starts_with?(mode, "genesis") -> "oklch(0.62 0.19 255)"
-          String.starts_with?(mode, "evolve") -> "oklch(0.8 0.16 80)"
+          String.starts_with?(mode, "evolve") -> evolve_color(resume?)
           true -> default_color()
         end
     end
   end
+
+  # Plain evolve → saturated green; resumed evolve → lighter green of the
+  # same family so the two states stay distinguishable.
+  defp evolve_color(true), do: "oklch(0.78 0.16 152)"
+  defp evolve_color(false), do: "oklch(0.72 0.17 152)"
 
   @doc "Returns the default accent color (indigo-500)."
   @spec default_color :: String.t()

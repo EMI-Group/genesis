@@ -55,12 +55,13 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   # Launch (order-2, centered via mx-auto) | model (order-3). Only the textarea
   # size differs per layout, so the tests assert the unified classes via Floki.
   describe "task_form/1 rendering" do
-    test "compact layout renders data-layout=compact with the Launch button" do
+    test "compact layout renders data-layout=compact with the rocket Launch button" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "Short objective")
 
       assert html =~ ~s(data-layout="compact")
-      assert html =~ "🚀 Launch"
+      assert html =~ "hero-rocket-launch"
+      assert button_text(html) == "Launch"
     end
 
     test "expanded layout for a long objective" do
@@ -83,6 +84,67 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert button_class(html) =~ "order-2"
       assert button_class(html) =~ "mx-auto"
       assert model_class(html) =~ "order-3"
+    end
+
+    test "DOM order of the controls row is mode | Launch | model (pins real order)" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "Short",
+          model_profiles: [%{id: "pro", model: "gpt-x"}]
+        )
+
+      doc = parse(html)
+      [controls] = Floki.find(doc, ".input-controls")
+
+      children =
+        controls
+        |> Floki.children()
+        |> Enum.filter(fn
+          {tag, _, _} when is_binary(tag) -> true
+          _ -> false
+        end)
+
+      # Exactly three element children, in document order: mode select, Launch
+      # button, model select.
+      assert [mode_el, button_el, model_el] = children
+
+      # Mode select comes FIRST and carries order-1.
+      assert {tag, mode_attrs, _} = mode_el
+      assert tag == "select"
+      assert {"name", "mode"} in mode_attrs
+      assert {"class", mode_class} = List.keyfind(mode_attrs, "class", 0)
+      assert mode_class =~ "order-1"
+
+      # Launch button is SECOND, carries order-2 + mx-auto.
+      assert {tag, button_attrs, _} = button_el
+      assert tag == "button"
+      assert {"type", "submit"} in button_attrs
+      assert {"class", button_class} = List.keyfind(button_attrs, "class", 0)
+      assert button_class =~ "order-2"
+      assert button_class =~ "mx-auto"
+
+      # Model select comes THIRD and carries order-3.
+      assert {tag, model_attrs, _} = model_el
+      assert tag == "select"
+      assert {"name", "model_id"} in model_attrs
+      assert {"class", model_class} = List.keyfind(model_attrs, "class", 0)
+      assert model_class =~ "order-3"
+    end
+
+    test "model option shows only the profile id as its label" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "Short",
+          model_profiles: [%{id: "pro", model: "gpt-x"}]
+        )
+
+      doc = parse(html)
+      [option] = Floki.find(doc, "select[name=model_id] option")
+
+      # Label is the bare profile id; the value attribute still carries it.
+      assert option |> Floki.text() |> String.trim() == "pro"
+      assert option |> Floki.attribute("value") |> List.first() == "pro"
+      refute html =~ "pro (gpt-x)"
     end
 
     test "Layout B (expanded): Launch order-2 centered (mx-auto), model order-3" do
@@ -154,6 +216,11 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   defp button_class(html) do
     [btn] = Floki.find(parse(html), "button[type=submit]")
     btn |> Floki.attribute("class") |> List.first() |> to_string()
+  end
+
+  defp button_text(html) do
+    [btn] = Floki.find(parse(html), "button[type=submit]")
+    btn |> Floki.text() |> String.trim()
   end
 
   defp button_attr(html, attr) do

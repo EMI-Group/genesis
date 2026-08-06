@@ -1566,6 +1566,6 @@ button, a, input, textarea, select, summary,
 
 .input-controls button[data-mode="evolve_simple"]:hover {
   box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.8 0.16 80) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.8 0.16 80) 50%, transparent);
+    0 0 0 2px color-mix(in oklch, oklch(0.72 0.17 152) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.72 0.17 152) 50%, transparent);
 }

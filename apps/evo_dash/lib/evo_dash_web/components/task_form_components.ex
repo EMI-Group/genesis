@@ -27,8 +27,6 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   use EvoDashWeb, :html
 
-  defdelegate model_display(value), to: EvoDashWeb.SettingsComponents.SettingCard
-
   @short_objective_threshold 600
 
   @doc """
@@ -161,7 +159,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 data-mode={@mode}
                 disabled={@disabled}
               >
-                {gettext("🚀 Launch")}
+                <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch")}
               </button>
 
               <!-- Model switch -->
@@ -173,7 +171,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
-                      {profile.id <> " (" <> profile_model_label(profile) <> ")"}
+                      {profile.id}
                     </option>
                   <% end %>
                 </select>
@@ -425,14 +423,5 @@ defmodule EvoDashWeb.TaskFormComponents do
       </div>
     <% end %>
     """
-  end
-
-  # Renders a compact label for a profile's model spec. Handles both
-  # string models (e.g., "gpt-5.6-sol") and map models
-  # (e.g., %{provider: "openai", id: "gpt-4"}). Delegates to
-  # model_display/1 (defined in SettingCard) for consistent rendering.
-  defp profile_model_label(profile) when is_map(profile) do
-    model = Map.get(profile, :model) || Map.get(profile, "model")
-    model_display(model)
   end
 end

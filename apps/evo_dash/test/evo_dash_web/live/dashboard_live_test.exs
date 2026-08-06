@@ -117,7 +117,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       # Task form is always visible
-      assert html =~ "🚀 Launch"
+      assert html =~ "hero-rocket-launch"
       # Command palette trigger shows the placeholder when no project is active
       assert html =~ "Open a project..."
     end
@@ -136,7 +136,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {:ok, _view, html} = live(conn, ~p"/")
 
       # The form should be present but in disabled state
-      assert html =~ "🚀 Launch"
+      assert html =~ "hero-rocket-launch"
       # The execute button should be disabled
       assert html =~ "disabled"
     end
@@ -160,7 +160,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render(view)
 
       # Project should be active — task form enabled
-      assert html =~ "🚀 Launch"
+      assert html =~ "hero-rocket-launch"
       # Project settings should show config info
       assert html =~ "Foreign Repositories"
     end
@@ -257,7 +257,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
       # Task form should be present
-      assert html =~ "🚀 Launch"
+      assert html =~ "hero-rocket-launch"
       # Project settings should be shown
       assert html =~ "Project Settings"
     end
