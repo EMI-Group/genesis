@@ -8,10 +8,13 @@ defmodule EvoDashWeb.TaskFormComponents do
   server-driven via `layout_for/1`:
 
     * Layout A (`data-layout="compact"`) — unified objective box: the controls
-      row is the card's last line, Launch button bottom-right
-      (mode | model | Launch).
+      row is the card's last line.
     * Layout B (`data-layout="expanded"`) — large objective area with an
-      in-flow launch panel below (mode | Launch | model).
+      in-flow launch panel below.
+
+  Both layouts share the same control order — mode (order-1) | Launch
+  (order-2, centered via mx-auto) | model (order-3); only the textarea size
+  differs.
 
   The AdaptiveInput JS hook only autogrows the textarea; the compact/expanded
   decision lives in `layout_for/1` (@short_objective_threshold / line count).
@@ -108,7 +111,9 @@ defmodule EvoDashWeb.TaskFormComponents do
               placeholder={
                 cond do
                   @mode == "genesis_existing" ->
-                    gettext("Optional — leave empty and click Launch to initialize an existing codebase")
+                    gettext(
+                      "Optional — leave empty and click Launch to initialize an existing codebase"
+                    )
 
                   String.starts_with?(@mode, "evolve") ->
                     gettext("Describe what you want to change or improve...")
@@ -126,12 +131,12 @@ defmodule EvoDashWeb.TaskFormComponents do
                  carries mx-auto so it stays centered even when the model
                  select is absent (2-item row: space-between would otherwise
                  push it to the right edge). -->
-            <div class="input-controls">
+            <div class="input-controls flex-wrap">
               <!-- Mode switch -->
               <select
                 name="mode"
                 phx-change="task_change"
-                class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[8.5rem] order-1"
+                class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9.5rem] order-1"
                 title={mode_description(@mode)}
               >
                 <option value="genesis_existing" selected={@mode == "genesis_existing"}>
@@ -155,7 +160,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 data-mode={@mode}
                 disabled={@disabled}
               >
-                <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch Task")}
+                {gettext("🚀 Launch")}
               </button>
 
               <!-- Model switch -->
@@ -163,7 +168,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <select
                   name="model_id"
                   phx-change="select_model"
-                  class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9rem] order-3"
+                  class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[10.5rem] order-3"
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
