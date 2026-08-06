@@ -1533,9 +1533,17 @@ button, a, input, textarea, select, summary,
    mx-auto) | model (order-3). mx-auto centers Launch even when the model
    select is absent (2-item row); justify-content: space-between is
    neutralized for the auto-margin button. Only the textarea size differs
-   between compact and expanded layouts. */
+   between compact and expanded layouts.
+
+   ONE-LINE CONTRACT: the row NEVER wraps (flex-nowrap). The two selects
+   carry min-w-0 + truncate so long labels (mode names, model profile ids)
+   shrink and clip with an ellipsis instead of forcing the row wider than
+   its container. flex-wrap: nowrap below is belt-and-braces so the
+   contract survives markup refactors; the Tailwind flex-nowrap class on
+   .input-controls is the testable source. */
 .input-controls {
   display: flex;
+  flex-wrap: nowrap; /* one-line contract: controls never wrap */
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;

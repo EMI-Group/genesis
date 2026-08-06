@@ -177,6 +177,28 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ "Open a project to get started"
     end
 
+    test "controls row stays on one line (flex-nowrap)" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "Short",
+          model_profiles: [%{id: "pro", model: "gpt-x"}]
+        )
+
+      doc = parse(html)
+      [controls] = Floki.find(doc, ".input-controls")
+
+      # One-line contract: flex-nowrap, never flex-wrap.
+      controls_class = controls |> Floki.attribute("class") |> List.first() |> to_string()
+      assert controls_class =~ "flex-nowrap"
+      refute controls_class =~ "flex-wrap"
+
+      # Both selects shrink/truncate instead of forcing the row wider.
+      assert mode_class(html) =~ "min-w-0"
+      assert mode_class(html) =~ "truncate"
+      assert model_class(html) =~ "min-w-0"
+      assert model_class(html) =~ "truncate"
+    end
+
     test "mode select keeps its three options and task_change event" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
@@ -230,6 +252,11 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
   defp model_class(html) do
     [sel] = Floki.find(parse(html), "select[name=model_id]")
+    sel |> Floki.attribute("class") |> List.first() |> to_string()
+  end
+
+  defp mode_class(html) do
+    [sel] = Floki.find(parse(html), "select[name=mode]")
     sel |> Floki.attribute("class") |> List.first() |> to_string()
   end
 

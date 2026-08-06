@@ -129,13 +129,17 @@ defmodule EvoDashWeb.TaskFormComponents do
                  centered via mx-auto) | model (order-3). The Launch button
                  carries mx-auto so it stays centered even when the model
                  select is absent (2-item row: space-between would otherwise
-                 push it to the right edge). -->
-            <div class="input-controls flex-wrap">
+                 push it to the right edge). The row is guaranteed ONE LINE
+                 (flex-nowrap — never wraps): the two selects use min-w-0 +
+                 truncate, so long labels (mode names, model profile ids) are
+                 clipped with an ellipsis instead of forcing the row wider
+                 than its container. -->
+            <div class="input-controls flex-nowrap">
               <!-- Mode switch -->
               <select
                 name="mode"
                 phx-change="task_change"
-                class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[9.5rem] order-1"
+                class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-1"
                 title={mode_description(@mode)}
               >
                 <option value="genesis_existing" selected={@mode == "genesis_existing"}>
@@ -167,7 +171,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <select
                   name="model_id"
                   phx-change="select_model"
-                  class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-[10.5rem] order-3"
+                  class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-3"
                 >
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
