@@ -1,8 +1,7 @@
 defmodule EvoDashWeb.SystemLive do
   @moduledoc """
-  System page: scheduler and system controls (pause/resume, restart/stop),
-  system self-check, plus usage guides and references (example config, CLI
-  usage, FAQ, credentials).
+  System page: scheduler and system controls (pause/resume, restart/stop)
+  and system self-check.
   """
 
   # zh_CN glossary translations used in this file:
@@ -17,7 +16,7 @@ defmodule EvoDashWeb.SystemLive do
 
   use EvoDashWeb, :live_view
 
-  alias EvoDashWeb.SystemLive.{Content, Status}
+  alias EvoDashWeb.SystemLive.Status
 
   @impl true
   def render(assigns) do
@@ -299,91 +298,6 @@ defmodule EvoDashWeb.SystemLive do
         </.link>
       </div>
 
-      <!-- Example Configuration -->
-      <div class="mt-6">
-        <details id="config-reference" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
-          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-            <.icon name="hero-book-open" class="size-5 shrink-0 text-info" />
-            <span class="font-semibold flex-1">{gettext("Example Configuration")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
-          </summary>
-          <div class="p-4">
-            <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@config_reference}</pre>
-          </div>
-        </details>
-      </div>
-
-      <!-- Example Usage -->
-      <div class="mt-6">
-        <details id="usage-reference" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
-          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-            <.icon name="hero-command-line" class="size-5 shrink-0 text-success" />
-            <span class="font-semibold flex-1">{gettext("Example Usage")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
-          </summary>
-          <div class="p-4">
-            <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@usage_reference}</pre>
-          </div>
-        </details>
-      </div>
-
-      <!-- FAQ -->
-      <div class="mt-6">
-        <details id="faq" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
-          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-            <.icon name="hero-question-mark-circle" class="size-5 shrink-0 text-accent" />
-            <span class="font-semibold flex-1">{gettext("Frequently Asked Questions")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
-          </summary>
-          <div class="p-4">
-            <div class="space-y-4">
-              <%= for {{question, answer}, idx} <- Enum.with_index(@faq_content) do %>
-                <details class="group rounded-lg border border-base-200 overflow-hidden bg-base-100/50">
-                  <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none hover:bg-base-200/50 transition-colors list-none">
-                    <.icon
-                      name="hero-chevron-down"
-                      class="size-4.5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180"
-                    />
-                    <span class="font-semibold text-sm">{question}</span>
-                  </summary>
-                  <div class="px-4 py-3 text-sm text-base-content/70 leading-relaxed border-t border-base-200">
-                    <p id={"faq-answer-#{idx}"}>{answer}</p>
-                  </div>
-                </details>
-              <% end %>
-            </div>
-          </div>
-        </details>
-      </div>
-
-      <!-- Credentials Reference -->
-      <div class="mt-6">
-        <details id="credentials-reference" open class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
-          <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-            <.icon name="hero-key" class="size-5 shrink-0 text-accent" />
-            <span class="font-semibold flex-1">{gettext("Credentials Reference")}</span>
-            <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
-          </summary>
-          <div class="p-4">
-            <pre class="text-sm font-mono bg-base-200/40 rounded-md p-4 border border-base-200 whitespace-pre-wrap break-words max-h-[500px] overflow-y-auto">{@credentials_reference}</pre>
-            <div class="mt-4 space-y-2">
-              <p class="text-sm text-base-content/60 flex items-start gap-2.5">
-                <.icon name="hero-arrows-right-left" class="size-4.5 shrink-0 mt-0.5" />
-                <span>{gettext(
-                  "Keys from credentials.toml are loaded as environment variables on startup. You can also set API keys directly via environment variables (e.g., GOOGLE_API_KEY)."
-                )}</span>
-              </p>
-              <p class="text-sm text-base-content/60 flex items-start gap-2.5">
-                <.icon name="hero-shield-check" class="size-4.5 shrink-0 mt-0.5" />
-                <span>{gettext(
-                  "For security, credentials cannot be edited from this page. Edit the file directly on your system."
-                )}</span>
-              </p>
-            </div>
-          </div>
-        </details>
-      </div>
-
       <!-- Restart confirmation modal -->
       <%= if @show_restart_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -482,10 +396,6 @@ defmodule EvoDashWeb.SystemLive do
       spawn_system_checks(socket)
     end
 
-    config_dir = EvoGit.Platform.config_dir()
-    config_path = Path.join(config_dir, "config.toml")
-    credentials_path = Path.join(config_dir, "credentials.toml")
-
     socket =
       assign(socket,
         remote?: false,
@@ -497,14 +407,7 @@ defmodule EvoDashWeb.SystemLive do
         tool_check: nil,
         sandbox_check: nil,
         supervisor_check: nil,
-        nix_check: nil,
-        config_dir: config_dir,
-        config_path: config_path,
-        credentials_path: credentials_path,
-        config_reference: Content.config_reference(config_path),
-        credentials_reference: Content.credentials_reference(credentials_path),
-        usage_reference: Content.usage_reference(),
-        faq_content: Content.faq_content(config_path, credentials_path)
+        nix_check: nil
       )
 
     {:ok, socket}
