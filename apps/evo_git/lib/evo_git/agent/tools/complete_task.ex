@@ -24,7 +24,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       name: "complete_task",
       description:
         "Call this tool to report your findings and results. This is the ONLY way to finish. " <>
-          "Your result MUST summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on.",
+          "Your result MUST summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on. " <>
+          "Write your final report in the same language as the original objective (e.g., if the objective is in Chinese, report back in Chinese).",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
