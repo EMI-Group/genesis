@@ -960,6 +960,9 @@ defmodule EvoDashWeb.AgentsLive do
   defp message_to_history_entry(%ReqLLM.Message{} = msg) do
     %{
       turn: Map.get(msg.metadata, :turn) || 0,
+      # Wall-clock timestamp stamped by the :evo_git runtime at the source
+      # (Unix-seconds integer or DateTime; absent on historical messages).
+      timestamp: Map.get(msg.metadata, :timestamp),
       type: Atom.to_string(msg.role),
       data: %{
         content:
