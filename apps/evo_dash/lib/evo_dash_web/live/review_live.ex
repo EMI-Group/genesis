@@ -581,12 +581,13 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_info({:tasks_updated} = msg, socket) do
     # Debounced via NodeAware — the task-data reload + sidebar reload happen once
     # in handle_info(:node_aware_reload_tasks, socket) when the timer fires.
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+    # handle_task_info/2 already returns {:noreply, socket}.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
   def handle_info({:task_status, _task_id, _status} = msg, socket) do
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true

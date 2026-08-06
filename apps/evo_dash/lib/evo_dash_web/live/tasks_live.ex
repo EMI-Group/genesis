@@ -387,7 +387,8 @@ defmodule EvoDashWeb.TasksLive do
   def handle_info({:tasks_updated} = msg, socket) do
     # Debounced via NodeAware — the page refresh + sidebar reload happen once in
     # handle_info(:node_aware_reload_tasks, socket) when the debounce timer fires.
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+    # handle_task_info/2 already returns {:noreply, socket}.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
@@ -395,7 +396,7 @@ defmodule EvoDashWeb.TasksLive do
     # Task status transitions (e.g. :finalizing, :running) are broadcast on the
     # "tasks" PubSub topic. Re-fetch the current page so the UI reflects the change.
     # Debounced via NodeAware — see handle_info(:node_aware_reload_tasks, socket).
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
