@@ -368,6 +368,29 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Returns a minimal id/status/updated_at projection for tasks on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_task_ids/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `[]` if the remote call fails.
+
+  `statuses` is a list of status ATOMS; `[]` (default) means all statuses. The
+  returned maps have `id`, `status` (atom), and `updated_at` (raw ISO string).
+  """
+  @spec list_task_ids(node(), [atom()]) :: [map()]
+  def list_task_ids(node, statuses \\ []) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_task_ids(statuses)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_task_ids, [statuses]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
   Returns lightweight task summaries filtered to a specific project_path on the given node.
   """
   @spec list_tasks_summary_by_path(node(), String.t(), [atom()]) :: [map()]

@@ -325,6 +325,19 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Returns a minimal id/status/updated_at projection for tasks matching
+  `statuses` (atoms; `[]` = all tasks).
+
+  Delegates to `EvoGit.TaskRegistry.list_task_ids/1`. Returns a list of plain
+  maps with `id`, `status` (atom), and `updated_at` (raw fixed-precision ISO
+  string). This runs on the REMOTE node when called via `:erpc.call/5`.
+  """
+  @spec list_task_ids([atom()]) :: [map()]
+  def list_task_ids(statuses \\ []) do
+    EvoGit.TaskRegistry.list_task_ids(statuses)
+  end
+
+  @doc """
   Returns lightweight task summaries filtered to a specific project_path.
 
   Delegates to `EvoGit.TaskRegistry.list_tasks_summary_by_path/2`.

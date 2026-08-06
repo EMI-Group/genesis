@@ -118,6 +118,19 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @doc """
+  Returns a minimal id/status/updated_at projection for tasks matching
+  `statuses` (atoms; `[]` = all tasks).
+
+  This is a lightweight query — only the `id`, `status`, and `updated_at`
+  columns are read, no heavy JSON fields are decoded. `updated_at` is returned
+  as the raw stored fixed-precision ISO string (not decoded to a DateTime).
+  When `statuses` is non-empty, the status filter is pushed into SQL.
+  """
+  def list_task_ids(statuses \\ []) do
+    GenServer.call(__MODULE__, {:list_task_ids, statuses}, @call_timeout)
+  end
+
+  @doc """
   Same as list_tasks_summary/2 but filtered to a specific project_path.
   """
   def list_tasks_summary_by_path(path, statuses \\ [], since \\ nil) do
@@ -400,20 +413,54 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_call({:list_tasks_summary, statuses, since}, _from, state) do
-    tasks = EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
-    {:reply, tasks, state}
+  def handle_call({:list_tasks_summary, statuses, since}, from, state) do
+    # Delegate the heavy decode to a short-lived Task process so the large
+    # decoded terms are allocated and discarded on that process's heap rather
+    # than ratcheting up this GenServer's heap.
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        result = EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
+        GenServer.reply(from, result)
+      end)
+
+    {:noreply, state}
   end
 
   @impl true
-  def handle_call({:list_tasks_summary_by_path, path, statuses, since}, _from, state) do
-    tasks = EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
-    {:reply, tasks, state}
+  def handle_call({:list_tasks_summary_by_path, path, statuses, since}, from, state) do
+    # Delegate the heavy decode to a short-lived Task process so the large
+    # decoded terms are allocated and discarded on that process's heap rather
+    # than ratcheting up this GenServer's heap.
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        result =
+          EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
+
+        GenServer.reply(from, result)
+      end)
+
+    {:noreply, state}
   end
 
   @impl true
-  def handle_call({:list_tasks_changed_since, since_iso}, _from, state) do
-    tasks = EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
+  def handle_call({:list_tasks_changed_since, since_iso}, from, state) do
+    # Delegate the heavy decode to a short-lived Task process so the large
+    # decoded terms are allocated and discarded on that process's heap rather
+    # than ratcheting up this GenServer's heap.
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        result = EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
+        GenServer.reply(from, result)
+      end)
+
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:list_task_ids, statuses}, _from, state) do
+    # Tiny projection (id, status, updated_at) — no heavy decode, so reply
+    # synchronously without the Task-start offload.
+    tasks = EvoGit.Store.select_task_ids(state.task_store, statuses)
     {:reply, tasks, state}
   end
 

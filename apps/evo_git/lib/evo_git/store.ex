@@ -167,6 +167,23 @@ defmodule EvoGit.Store do
   end
 
   @doc """
+  Returns a minimal id/status/updated_at projection for all tasks matching the
+  given `statuses` (atoms; `[]` = no filter, all rows).
+
+  This is a lightweight query — only the `id`, `status`, and `updated_at`
+  columns are read, no JSON blobs are decoded. `updated_at` is returned as the
+  RAW stored fixed-precision ISO string (not decoded to a DateTime). When
+  `statuses` is non-empty, the status filter is pushed into SQL
+  (`WHERE status IN (...)`).
+
+  Used by the dashboard to track which tasks changed without decoding the heavy
+  summary projection.
+  """
+  def select_task_ids(store \\ __MODULE__, statuses \\ []) do
+    GenServer.call(store, {:select_task_ids, statuses}, @call_timeout)
+  end
+
+  @doc """
   Returns lightweight lease info for running/finalizing tasks:
   `%{id, status, lease_expires_at}`. Only the `status` column is decoded (a
   lightweight atom); no heavy JSON fields (logs, result, usage,
@@ -587,6 +604,33 @@ defmodule EvoGit.Store do
            ) do
         {:ok, %{rows: rows}} -> Enum.map(rows, fn [id] -> id end)
         _ -> []
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: reads only id, status, updated_at — no JSON blob
+  # decoding. The status filter (atoms) is pushed into SQL via
+  # build_status_where/1; `[]` statuses = all rows. `updated_at` is returned as
+  # the RAW stored fixed-precision ISO string (store-internal bookkeeping,
+  # never decoded).
+  @impl true
+  def handle_call({:select_task_ids, statuses}, _from, state) do
+    {where_clause, where_params} = build_status_where(statuses)
+
+    reply =
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id, status, updated_at FROM tasks" <> where_clause,
+             where_params
+           ) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [id, status, updated_at] ->
+            %{id: id, status: Codec.decode_atom(status), updated_at: updated_at}
+          end)
+
+        _ ->
+          []
       end
 
     {:reply, reply, state}
