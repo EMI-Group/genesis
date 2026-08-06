@@ -119,7 +119,7 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 ## Fixed-precision timestamps (normalize_timestamps + encode_datetime)
 
 - `Codec.encode_datetime/1` now emits a **constant 24-char `:millisecond` ISO-8601 format** (`%Y-%m-%dT%H:%M:%S.SSSZ`, exactly 3 fractional digits — `.000Z` even for whole seconds) via `DateTime.truncate(dt, :millisecond)` + `DateTime.to_iso8601/1`. This format is **lexicographically sortable** in SQLite, fixing the mixed-precision `:auto` mis-sort (`'Z'` (0x5A) > `'.'` (0x2E)) that broke `ORDER BY started_at DESC` and blocked SQL-side datetime pushdowns (g1).
-- `Schema.normalize_timestamps/1` migrates **existing** DB rows (tasks.started_at / tasks.finished_at / projects.last_opened_at) to the same format. It is idempotent (GLOB guard `'*.[0-9][0-9][0-9]Z'` skips already-normalized rows; `%f` round-trips them unchanged) and skips unparseable rows (`julianday(...) IS NOT NULL` guard — never overwritten with NULL). A caller in `Store.init/1` invokes it after `migrate_schema/1`.
+- `Schema.normalize_timestamps/1` migrates **existing** DB rows (tasks.started_at / tasks.finished_at / projects.last_opened_at) to the same format. It is idempotent (GLOB guard `'*.[0-9][0-9][0-9]Z'` skips already-normalized rows; `%f` round-trips them unchanged) and skips unparseable rows (`julianday(...) IS NOT NULL` guard — never overwritten with NULL). A caller in `Store.init/1` used to invoke it after `migrate_schema/1`; since the no-auto-migration change it runs only via the one-time `mix migrate.store` task (step 3) or direct `Schema` calls in tests.
 
 ## SQL Access Patterns (verified 2025 — whole repo search)
 
