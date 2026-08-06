@@ -1473,7 +1473,7 @@ defmodule EvoGit.StoreTest do
       XqliteNIF.execute(
         conn,
         "INSERT OR REPLACE INTO tasks (id, type, status, opts, review_status) VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["bad-rs", "evolve", "completed", "[]", "some_unknown_value"]
+        ["bad-rs", "evolve", "completed", "{}", "some_unknown_value"]
       )
 
       :ok = XqliteNIF.close(conn)
@@ -1496,7 +1496,7 @@ defmodule EvoGit.StoreTest do
       XqliteNIF.execute(
         conn,
         "INSERT OR REPLACE INTO tasks (id, type, status, opts, review_status) VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["str-rs", "evolve", "completed", "[]", "merged"]
+        ["str-rs", "evolve", "completed", "{}", "merged"]
       )
 
       :ok = XqliteNIF.close(conn)

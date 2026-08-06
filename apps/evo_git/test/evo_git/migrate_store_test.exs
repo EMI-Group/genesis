@@ -79,7 +79,7 @@ defmodule EvoGit.MigrateStoreTest do
                ~s({"__result_tag__":"ok","data":{"branch_name":"feat/x","commit_sha":"abc"}})
 
       assert rows["tagged-error"].result == ~s({"__result_tag__":"error","reason":"boom"})
-      assert rows["untagged-obj"].result == ~s({"__result_tag__":"string","value":"{\"x\":1}"})
+      assert rows["untagged-obj"].result == ~S({"__result_tag__":"string","value":"{\"x\":1}"})
       assert Codec.decode_result(rows["untagged-obj"].result) == ~s({"x":1})
       assert rows["untagged-arr"].result == ~s({"__result_tag__":"string","value":"[1,2]"})
       assert Codec.decode_result(rows["untagged-arr"].result) == "[1,2]"
