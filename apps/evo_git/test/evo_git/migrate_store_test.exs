@@ -72,14 +72,19 @@ defmodule EvoGit.MigrateStoreTest do
       assert rows["scalar-str"].result == ~S({"__result_tag__":"string","value":"\"hello\""})
       assert Codec.decode_result(rows["scalar-str"].result) == ~s("hello")
 
-      # Tagged rows and untagged objects/arrays/null are left byte-identical.
+      # Tagged rows stay byte-identical; untagged JSON rows are wrapped as
+      # string-tagged JSON with content preserved verbatim; the JSON literal
+      # `null` is converted to SQL NULL.
       assert rows["tagged-ok"].result ==
                ~s({"__result_tag__":"ok","data":{"branch_name":"feat/x","commit_sha":"abc"}})
 
       assert rows["tagged-error"].result == ~s({"__result_tag__":"error","reason":"boom"})
-      assert rows["untagged-obj"].result == ~s({"x":1})
-      assert rows["untagged-arr"].result == "[1,2]"
+      assert rows["untagged-obj"].result == ~S({"__result_tag__":"string","value":"{\"x\":1}"})
+      assert Codec.decode_result(rows["untagged-obj"].result) == ~s({"x":1})
+      assert rows["untagged-arr"].result == ~s({"__result_tag__":"string","value":"[1,2]"})
+      assert Codec.decode_result(rows["untagged-arr"].result) == "[1,2]"
       assert rows["null-result"].result == nil
+      assert rows["json-null"].result == nil
 
       # Plain-string results on the opts rows are wrapped the same way.
       assert Codec.decode_result(rows["legacy-path"].result) == "legacy path crash"
@@ -325,6 +330,7 @@ defmodule EvoGit.MigrateStoreTest do
       %{id: "untagged-obj", result: ~s({"x":1})},
       %{id: "untagged-arr", result: "[1,2]"},
       %{id: "null-result"},
+      %{id: "json-null", result: "null"},
       # --- opts shapes ---
       %{id: "legacy-path", result: "legacy path crash", opts: ~s([["path","/tmp/p"]])},
       %{id: "legacy-archive", result: "legacy archive crash", opts: ~s([["archive",true]])},

@@ -26,10 +26,10 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
         garbage_id = "garbage_task_#{unique}"
 
         # Inject a row whose `opts` is a JSON array of non-pair elements —
-        # decode_opts/1 pattern-matches each element as [key, value], so this
-        # raises FunctionClauseError and the row must be skipped. (String
-        # garbage in a JSON column decodes to nil instead, so it would NOT
-        # exercise the skip path.)
+        # decode_opts/1 is a strict canonical codec that raises an explicit
+        # ArgumentError on ANY non-object JSON (only JSON objects with string
+        # keys are canonical), so this non-canonical array raises and the row
+        # must be skipped.
         conn = raw_conn(sqlite_path)
 
         {:ok, _} =
