@@ -102,7 +102,7 @@ Why the `!important`: the `SidebarCollapse` hook (`assets/js/hooks/sidebar_colla
 
 ## Task Cards & the Summary-Map Contract (dashboard optimization)
 
-The dashboard task list feeds `EvoDashWeb.Layouts.app`'s sidebar "Active Tasks" section (`@tasks` / `@running_tasks` / `@pending_tasks` assigns) with lightweight **summary maps** from `EvoGit.TaskRegistry.list_tasks_summary/0` / `list_tasks_summary_by_path/1` (the `live/` + `live_hooks/` layers switched from `list_tasks/0` + `lightweight_task/1` / `strip_heavy_fields/1`). Full `%TaskInfo{}` structs (heavy `logs`/`usage`/`archive_metadata` columns) remain only on the Tasks page (TasksLive paginated full loads) and the Review page.
+The dashboard's sidebar "Active Tasks" section in `EvoDashWeb.Layouts.app` is fed by the `@running_tasks` / `@pending_tasks` assigns — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])` (the `live/` + `live_hooks/` layers switched from `list_tasks/0` + `lightweight_task/1` / `strip_heavy_fields/1`). The former `@tasks` attr is GONE (Tasks A-D removed the dead dashboard main list and its `attr(:tasks, ...)` from `layouts.ex` — only `attr(:running_tasks, ...)` / `attr(:pending_tasks, ...)` remain). Full `%TaskInfo{}` structs (heavy `logs`/`usage`/`archive_metadata` columns) remain only on the Tasks page (TasksLive paginated full loads) and the Review page.
 
 ### The summary-map contract
 
@@ -118,23 +118,23 @@ Plain maps with keys: `id, status, review_status, result, started_at, finished_a
 
 | Component / render path | Field | Access | In contract? | Fed by |
 |---|---|---|---|---|
-| `Layouts.app` sidebar Active Tasks (`layouts.ex:146-178`, `task_label/1`, `task_status_dot_color/1`, `group_tasks_by_project/1`) | `status`, `id`, `started_at`, `finished_at` | dot | ✅ yes | **dashboard** (`@tasks`/`running_tasks`/`pending_tasks`) + every LiveView mount (NodeAware) |
+| `Layouts.app` sidebar Active Tasks (`layouts.ex:146-178`, `task_label/1`, `task_status_dot_color/1`, `group_tasks_by_project/1`) | `status`, `id`, `started_at`, `finished_at` | dot | ✅ yes | **dashboard** (`running_tasks`/`pending_tasks` only — the `tasks` attr was removed) + every LiveView mount (NodeAware) |
 | same | `opts`, `project_path` | `Map.get` | ✅ yes | same |
 | `TaskCardComponents.task_card/1` | `type`, `opts` (`[:mode]`/`[:prompt]`/`[:objective]`), `id`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `model_id` | dot | ✅ yes | TasksLive only (full structs via `list_tasks_paginated`) — **NOT dashboard-rendered**; hardened anyway for contract safety |
 | same | `review_status` | `Map.get` | ✅ yes | TasksLive |
 | same — "Token & Cost Usage" section (`:222-318`) | `usage` + nested `usage.*` | `Map.get` guard; inner dot access only inside guard | ❌ no | TasksLive only (section hidden on maps) |
 | same — "Execution Logs" section (`:343-390`) | `logs` | **was unguarded dot `@task.logs != []` (KeyError on map) — FIXED to `Map.get(@task, :logs) not in [nil, []]`; inner accesses via `Map.get(@task, :logs, [])`** | ❌ no | TasksLive only (section hidden on maps) |
 | same — archive section (`:392-397`) | `archive_metadata` | `Map.get` guard (`not in [nil, []]`) | ❌ no | TasksLive only (hidden on maps) |
-| `TaskCardComponents.render_result_full/1` (`dashboard_live.ex:238`, `tasks_live.ex:242`) | input is `Map.get(task, :result)` — the **result VALUE** (runtime tuple), not the task map | — | ✅ (`result`) | dashboard + TasksLive modals |
+| `TaskCardComponents.render_result_full/1` (`tasks_live.ex:294` — TasksLive only; the dashboard's full-result modal was removed in Tasks A-D) | input is `Map.get(task, :result)` — the **result VALUE** (runtime tuple), not the task map | — | ✅ (`result`) | TasksLive modal only |
 | `Helpers.task_description/1` (called from `task_card` `:93/:95`; lives in `helpers.ex`, outside this node) | `type`, `opts` (map pattern match + keyword access) | pattern | ✅ yes | TasksLive |
 | `ArchiveComponents` / `ReviewComponents` / `ProjectComponents` / `TaskFormComponents` / `AgentsComponents` | n/a | n/a | n/a | NOT task-list rendering (archive records, review page, palette/form, agent trees) — out of contract scope |
 
 **Findings:**
 1. The ONLY dashboard-rendered task-list markup under `components/` is the sidebar Active Tasks section in `layouts.ex`. It uses only contract keys (status/id/started_at/finished_at via dot; opts/project_path via Map.get) — **already summary-safe, no change needed**.
 2. `task_card_components.ex` is rendered ONLY by TasksLive with full structs today. Its single unguarded non-contract dot access (`@task.logs != []`, line 343) was hardened to `Map.get(@task, :logs) not in [nil, []]` — behavior-identical for structs, KeyError-safe for maps. The file was also run through `mix format` (it had drifted from formatter-clean: the HEAD version fails `mix format --check-formatted` under Elixir 1.20.2; the committed version passes).
-3. **No heavy field (logs/usage/archive_metadata) is needed by any dashboard-rendered card** — the dashboard card surfaces (sidebar + full-result modal) need only contract fields. Nothing to fetch lazily; no blocker to coordinate with the evo_git manager.
+3. **No heavy field (logs/usage/archive_metadata) is needed by any dashboard-rendered card** — the dashboard card surface is the sidebar only (the dashboard's full-result modal was removed in Tasks A-D), and it needs only contract fields. Nothing to fetch lazily; no blocker to coordinate with the evo_git manager.
 
 ### Notes for the live/ + live_hooks/ parallel work (read-only observations)
 
-- `live/modal_helpers.ex` `view_full_result/2` does `Enum.find(socket.assigns.tasks, &(&1.id == task_id))` + `Map.get(task || %{}, :result)` — already summary-safe (`id` and `result` are contract keys).
+- `live/modal_helpers.ex` `view_full_result/2` does `Enum.find(socket.assigns.tasks, &(&1.id == task_id))` + `Map.get(task || %{}, :result)` — `id`/`result` are contract keys (summary-safe), but post-Tasks-A-D **only TasksLive uses ModalHelpers**, where `socket.assigns.tasks` is the full TaskInfo page list (not summary maps) — struct-safe either way.
 - `live/dashboard_live/assigns.ex:112` comment says "`list_tasks_summary` (which omits opts)" — **appears STALE** relative to the new contract (summary maps INCLUDE `opts`; root CONTEXT.md's SQL-lowering analysis confirms `select_tasks_summary` includes opts). Verify against the new evo_git API when it lands.
