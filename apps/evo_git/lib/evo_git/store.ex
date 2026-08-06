@@ -48,6 +48,16 @@ defmodule EvoGit.Store do
   # 5s default. Keep the value tunable in one place.
   @call_timeout 30_000
 
+  ## Summary projection
+
+  # The 16-column SELECT projection shared by the summary handlers
+  # (select_tasks_summary, select_tasks_summary_by_path, and
+  # select_tasks_changed_since). `updated_at` is store-internal bookkeeping —
+  # the raw fixed-precision ISO string is returned as-is (NOT decoded to a
+  # DateTime). No heavy JSON fields (logs, usage, archive_metadata) are read.
+  @summary_columns "id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at"
+  @summary_select_sql "SELECT #{@summary_columns} FROM tasks"
+
   ## Child spec & start
 
   def child_spec(opts) do
@@ -236,11 +246,33 @@ defmodule EvoGit.Store do
   — no heavy JSON fields (logs, result, usage, archive_metadata) are decoded.
   The filter happens in SQL (`WHERE finished_at IS NOT NULL`).
 
-  Used by `TaskRegistry.Cleanup` to avoid a full decode of all tasks just to
-  check finished_at against age/count limits.
+  NOTE: `select_cleanup_info/3` is the SQL-pushdown variant used by cleanup —
+  it performs the age/count filtering in SQL and returns plain id strings.
   """
   def select_cleanup_info(store \\ __MODULE__) do
     GenServer.call(store, :select_cleanup_info, @call_timeout)
+  end
+
+  @doc """
+  SQL-pushdown variant of select_cleanup_info/1 used by cleanup. Runs TWO
+  queries and returns the concatenated id lists (`q1_ids ++ q2_ids`, id
+  strings; `[]` on query failure):
+
+    * Q1 (age-expired — ALL deleted, no count trim):
+      `SELECT id FROM tasks WHERE finished_at IS NOT NULL AND finished_at < ?1`
+    * Q2 (over-limit — beyond the newest `max_tasks` among NON-age-expired
+      finished rows):
+      `SELECT id FROM tasks WHERE finished_at IS NOT NULL AND finished_at >= ?1
+       ORDER BY finished_at DESC LIMIT -1 OFFSET ?2`
+
+  This exactly preserves the cleanup semantics of `TaskRegistry.Cleanup`:
+  age-expired rows are always removed regardless of count; the over-limit trim
+  only applies to the remaining finished rows. `cutoff_iso` is a
+  fixed-precision ISO string (string comparison works — the fixed-precision
+  24-char ISO format sorts chronologically).
+  """
+  def select_cleanup_info(store \\ __MODULE__, cutoff_iso, max_tasks) do
+    GenServer.call(store, {:select_cleanup_info, cutoff_iso, max_tasks}, @call_timeout)
   end
 
   @doc """
@@ -251,16 +283,42 @@ defmodule EvoGit.Store do
 
   `statuses` is a list of status ATOMS; `[]` (default) means all statuses. When
   non-empty, the status filter is pushed into SQL (`WHERE status IN (...)`).
+
+  `since` is an optional fixed-precision ISO string; when non-nil, only tasks
+  whose `updated_at` is strictly newer are returned (string comparison — the
+  fixed-precision 24-char ISO format sorts chronologically).
   """
-  def select_tasks_summary(store \\ __MODULE__, statuses \\ []) do
-    GenServer.call(store, {:select_tasks_summary, statuses}, @call_timeout)
+  def select_tasks_summary(store \\ __MODULE__, statuses \\ [], since \\ nil) do
+    GenServer.call(store, {:select_tasks_summary, statuses, since}, @call_timeout)
   end
 
   @doc """
-  Same as select_tasks_summary/2 but filtered to a specific project_path.
+  Same as select_tasks_summary/3 but filtered to a specific project_path.
+
+  `statuses` and `since` behave as in select_tasks_summary/3.
   """
-  def select_tasks_summary_by_path(store \\ __MODULE__, project_path, statuses \\ []) do
-    GenServer.call(store, {:select_tasks_summary_by_path, project_path, statuses}, @call_timeout)
+  def select_tasks_summary_by_path(
+        store \\ __MODULE__,
+        project_path,
+        statuses \\ [],
+        since \\ nil
+      ) do
+    GenServer.call(
+      store,
+      {:select_tasks_summary_by_path, project_path, statuses, since},
+      @call_timeout
+    )
+  end
+
+  @doc """
+  Returns lightweight task summaries (same 16-key projection as
+  select_tasks_summary/1, including the raw `updated_at` string) for all tasks
+  whose `updated_at` is strictly newer than the given fixed-precision ISO
+  string. No heavy JSON fields (logs, usage, archive_metadata) are decoded.
+  Returns `[]` on query failure.
+  """
+  def select_tasks_changed_since(store \\ __MODULE__, since_iso) do
+    GenServer.call(store, {:select_tasks_changed_since, since_iso}, @call_timeout)
   end
 
   ## Public API — Projects
@@ -660,117 +718,85 @@ defmodule EvoGit.Store do
     {:reply, reply, state}
   end
 
-  # Lightweight query: reads only id, status, review_status, result, started_at,
-  # finished_at, type, project_path, opts plus the remaining scalar columns
-  # (branch_name, model_id, agent_count, base_sha, commit_sha,
-  # lease_expires_at). No heavy JSON fields (logs, usage, archive_metadata) are
-  # decoded. Status filtering is pushed into SQL when `statuses` is non-empty.
+  # SQL-pushdown cleanup query: Q1 = age-expired finished rows (ALL deleted, no
+  # count trim); Q2 = finished rows beyond the newest `max_tasks` among the
+  # NON-age-expired ones (`LIMIT -1 OFFSET ?2` = all rows past the newest
+  # max_tasks, ordered newest-first). Returns q1_ids ++ q2_ids; [] on failure.
   @impl true
-  def handle_call({:select_tasks_summary, statuses}, _from, state) do
-    {where_clause, where_params} = build_status_where(statuses)
-
-    reply =
+  def handle_call({:select_cleanup_info, cutoff_iso, max_tasks}, _from, state) do
+    q1_ids =
       case XqliteNIF.query(
              state.conn,
-             "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at FROM tasks" <>
-               where_clause,
-             where_params
+             "SELECT id FROM tasks WHERE finished_at IS NOT NULL AND finished_at < ?1",
+             [cutoff_iso]
            ) do
-        {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [
-                              id,
-                              status,
-                              review_status,
-                              result,
-                              started_at,
-                              finished_at,
-                              type,
-                              project_path,
-                              opts,
-                              branch_name,
-                              model_id,
-                              agent_count,
-                              base_sha,
-                              commit_sha,
-                              lease_expires_at
-                            ] ->
-            %{
-              id: id,
-              status: Codec.decode_atom(status),
-              review_status: Codec.decode_atom(review_status),
-              result: Codec.decode_result(result),
-              started_at: Codec.decode_datetime(started_at),
-              finished_at: Codec.decode_datetime(finished_at),
-              type: Codec.decode_atom(type),
-              project_path: project_path,
-              opts: Codec.decode_opts(opts),
-              branch_name: branch_name,
-              model_id: model_id,
-              agent_count: agent_count,
-              base_sha: base_sha,
-              commit_sha: commit_sha,
-              lease_expires_at: lease_expires_at
-            }
-          end)
+        {:ok, %{rows: rows}} -> Enum.map(rows, fn [id] -> id end)
+        _ -> []
+      end
 
-        _ ->
-          []
+    q2_ids =
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id FROM tasks WHERE finished_at IS NOT NULL AND finished_at >= ?1 ORDER BY finished_at DESC LIMIT -1 OFFSET ?2",
+             [cutoff_iso, max_tasks]
+           ) do
+        {:ok, %{rows: rows}} -> Enum.map(rows, fn [id] -> id end)
+        _ -> []
+      end
+
+    {:reply, q1_ids ++ q2_ids, state}
+  end
+
+  # Lightweight query: reads the 16 summary columns (see @summary_columns) —
+  # no heavy JSON fields (logs, usage, archive_metadata) are decoded. Status
+  # filtering is pushed into SQL when `statuses` is non-empty; the optional
+  # `since` filter is pushed into SQL as `updated_at > ?N` (string comparison).
+  @impl true
+  def handle_call({:select_tasks_summary, statuses, since}, _from, state) do
+    {where_clause, where_params} = build_summary_where(statuses, since)
+
+    reply =
+      case XqliteNIF.query(state.conn, @summary_select_sql <> where_clause, where_params) do
+        {:ok, %{rows: rows}} -> Enum.map(rows, &decode_summary_row/1)
+        _ -> []
       end
 
     {:reply, reply, state}
   end
 
   @impl true
-  def handle_call({:select_tasks_summary_by_path, project_path, statuses}, _from, state) do
-    # project_path uses ?1; the optional status filter appends ?2..?N.
+  def handle_call({:select_tasks_summary_by_path, project_path, statuses, since}, _from, state) do
+    # project_path uses ?1; the optional status filter appends ?2..?N, and the
+    # optional since filter appends after that.
     {status_clause, status_params} = build_status_clause(statuses, 2)
+    {since_clause, since_params} = build_since_clause(since, 2 + length(status_params))
 
     reply =
       case XqliteNIF.query(
              state.conn,
-             "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at FROM tasks WHERE project_path = ?1" <>
-               status_clause,
-             [project_path] ++ status_params
+             @summary_select_sql <> " WHERE project_path = ?1" <> status_clause <> since_clause,
+             [project_path] ++ status_params ++ since_params
            ) do
-        {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [
-                              id,
-                              status,
-                              review_status,
-                              result,
-                              started_at,
-                              finished_at,
-                              type,
-                              project_path,
-                              opts,
-                              branch_name,
-                              model_id,
-                              agent_count,
-                              base_sha,
-                              commit_sha,
-                              lease_expires_at
-                            ] ->
-            %{
-              id: id,
-              status: Codec.decode_atom(status),
-              review_status: Codec.decode_atom(review_status),
-              result: Codec.decode_result(result),
-              started_at: Codec.decode_datetime(started_at),
-              finished_at: Codec.decode_datetime(finished_at),
-              type: Codec.decode_atom(type),
-              project_path: project_path,
-              opts: Codec.decode_opts(opts),
-              branch_name: branch_name,
-              model_id: model_id,
-              agent_count: agent_count,
-              base_sha: base_sha,
-              commit_sha: commit_sha,
-              lease_expires_at: lease_expires_at
-            }
-          end)
+        {:ok, %{rows: rows}} -> Enum.map(rows, &decode_summary_row/1)
+        _ -> []
+      end
 
-        _ ->
-          []
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: same 16-column summary projection as above, filtered by
+  # `updated_at > ?1` (string comparison — fixed-precision 24-char ISO format
+  # sorts chronologically). No heavy JSON fields are decoded.
+  @impl true
+  def handle_call({:select_tasks_changed_since, since_iso}, _from, state) do
+    reply =
+      case XqliteNIF.query(
+             state.conn,
+             @summary_select_sql <> " WHERE updated_at > ?1",
+             [since_iso]
+           ) do
+        {:ok, %{rows: rows}} -> Enum.map(rows, &decode_summary_row/1)
+        _ -> []
       end
 
     {:reply, reply, state}
@@ -923,6 +949,77 @@ defmodule EvoGit.Store do
       |> Enum.map_join(", ", fn {_, i} -> "?#{i}" end)
 
     {" AND status IN (#{placeholders})", Enum.map(statuses, &Atom.to_string/1)}
+  end
+
+  # Composes the optional statuses + optional `since` filters into a single
+  # WHERE clause for the plain summary query (no base filter):
+  #   statuses=[] + since=nil  -> {"", []}
+  #   statuses + since=nil     -> {" WHERE status IN (?1..?N)", S}
+  #   statuses=[] + since      -> {" WHERE updated_at > ?1", [since]}
+  #   statuses + since         -> {" WHERE status IN (?1..?N) AND updated_at > ?(N+1)", S ++ [since]}
+  defp build_summary_where(statuses, since) do
+    {status_clause, status_params} = build_status_where(statuses)
+
+    cond do
+      is_nil(since) ->
+        {status_clause, status_params}
+
+      status_params == [] ->
+        {" WHERE updated_at > ?1", [since]}
+
+      true ->
+        {"#{status_clause} AND updated_at > ?#{length(status_params) + 1}",
+         status_params ++ [since]}
+    end
+  end
+
+  # Builds an ` AND updated_at > ?N` clause (and its param) appended after
+  # existing ?1..?(N-1) filters. Returns {"", []} for a nil since (no filter).
+  defp build_since_clause(nil, _start_idx), do: {"", []}
+
+  defp build_since_clause(since, start_idx) do
+    {" AND updated_at > ?" <> Integer.to_string(start_idx), [since]}
+  end
+
+  # Decodes one row of the 16-column summary projection (@summary_columns).
+  # `updated_at` is store-internal bookkeeping — returned as the RAW
+  # fixed-precision ISO string from the DB (NOT decoded to a DateTime).
+  defp decode_summary_row([
+         id,
+         status,
+         review_status,
+         result,
+         started_at,
+         finished_at,
+         type,
+         project_path,
+         opts,
+         branch_name,
+         model_id,
+         agent_count,
+         base_sha,
+         commit_sha,
+         lease_expires_at,
+         updated_at
+       ]) do
+    %{
+      id: id,
+      status: Codec.decode_atom(status),
+      review_status: Codec.decode_atom(review_status),
+      result: Codec.decode_result(result),
+      started_at: Codec.decode_datetime(started_at),
+      finished_at: Codec.decode_datetime(finished_at),
+      type: Codec.decode_atom(type),
+      project_path: project_path,
+      opts: Codec.decode_opts(opts),
+      branch_name: branch_name,
+      model_id: model_id,
+      agent_count: agent_count,
+      base_sha: base_sha,
+      commit_sha: commit_sha,
+      lease_expires_at: lease_expires_at,
+      updated_at: updated_at
+    }
   end
 
   # Reads only the status column for a task id. Returns the decoded atom status
