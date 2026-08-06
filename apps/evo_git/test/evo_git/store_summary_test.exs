@@ -1,6 +1,8 @@
 defmodule EvoGit.StoreSummaryTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias EvoGit.Store
   alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
@@ -326,6 +328,89 @@ defmodule EvoGit.StoreSummaryTest do
         Store.select_tasks_summary_by_path(Store, "/tmp/proj", [], "2026-01-02T00:00:00.000Z")
 
       assert at_boundary == []
+    end
+  end
+
+  describe "legacy raw-string result skip-and-log" do
+    test "select_tasks_summary/1 skips the undecodable row and logs a warning", %{
+      sqlite_path: sqlite_path
+    } do
+      bad_id = "legacy-raw-#{System.unique_integer([:positive])}"
+      good_id = "legacy-raw-good-#{System.unique_integer([:positive])}"
+
+      put_task!(make_task(bad_id, status: :completed))
+      put_task!(make_task(good_id, status: :completed))
+
+      # Overwrite the result column with a legacy raw string (pre-canonical
+      # codec). decode_result/1 raises ArgumentError on it, so the summary read
+      # must skip + log the row instead of crashing.
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      {:ok, _} =
+        XqliteNIF.execute(
+          conn,
+          "UPDATE tasks SET result = ?1 WHERE id = ?2",
+          ["no-json-here", bad_id]
+        )
+
+      :ok = XqliteNIF.close(conn)
+
+      # Deterministic updated_at (put_task! stamps DateTime.utc_now(), which is
+      # not reproducible).
+      set_updated_at!(sqlite_path, bad_id, "2026-06-26T07:19:44.000Z")
+
+      {rows, log} = with_log(fn -> Store.select_tasks_summary(Store) end)
+
+      ids = Enum.map(rows, & &1.id)
+      assert good_id in ids
+      refute bad_id in ids
+      assert log =~ "Store: skipping undecodable row in tasks"
+
+      # The Store survives: a follow-up read still succeeds and still excludes
+      # the undecodable row.
+      rows_again = Store.select_tasks_summary(Store)
+      assert is_list(rows_again)
+      refute Enum.map(rows_again, & &1.id) |> Enum.member?(bad_id)
+    end
+
+    test "select_tasks_changed_since/2 skips the undecodable row and logs a warning", %{
+      sqlite_path: sqlite_path
+    } do
+      good_id = "cs-good-#{System.unique_integer([:positive])}"
+      bad_id = "cs-legacy-raw-#{System.unique_integer([:positive])}"
+
+      put_task!(make_task(good_id, status: :completed))
+      put_task!(make_task(bad_id, status: :completed))
+
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      {:ok, _} =
+        XqliteNIF.execute(
+          conn,
+          "UPDATE tasks SET result = ?1 WHERE id = ?2",
+          ["no-json-here", bad_id]
+        )
+
+      :ok = XqliteNIF.close(conn)
+
+      # Both rows are newer than the `since` cutoff, so both are selected by the
+      # SQL — the good row decodes, the legacy raw-string row is skipped + logged.
+      set_updated_at!(sqlite_path, good_id, "2026-06-26T08:00:00.000Z")
+      set_updated_at!(sqlite_path, bad_id, "2026-06-26T08:30:00.000Z")
+
+      {rows, log} =
+        with_log(fn -> Store.select_tasks_changed_since(Store, "2026-06-26T07:30:00.000Z") end)
+
+      ids = Enum.map(rows, & &1.id)
+      assert good_id in ids
+      refute bad_id in ids
+      assert log =~ "Store: skipping undecodable row in tasks"
+
+      # The Store survives: a follow-up read still succeeds and still excludes
+      # the undecodable row.
+      rows_again = Store.select_tasks_changed_since(Store, "2026-06-26T07:30:00.000Z")
+      assert is_list(rows_again)
+      refute Enum.map(rows_again, & &1.id) |> Enum.member?(bad_id)
     end
   end
 
