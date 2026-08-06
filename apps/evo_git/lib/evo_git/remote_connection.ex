@@ -144,7 +144,6 @@ defmodule EvoGit.RemoteConnection do
   restart, so disconnects don't count toward the DynamicSupervisor's restart
   intensity. Abnormal exits still restart, preserving crash recovery.
   """
-  @impl true
   def child_spec(opts) do
     %{
       id: __MODULE__,
