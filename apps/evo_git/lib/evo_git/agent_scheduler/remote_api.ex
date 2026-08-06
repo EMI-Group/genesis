@@ -313,22 +313,25 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @doc """
   Returns lightweight task summaries for all tasks.
 
-  Delegates to `EvoGit.TaskRegistry.list_tasks_summary/0`. Returns a list of
+  Delegates to `EvoGit.TaskRegistry.list_tasks_summary/1`. Returns a list of
   plain maps with only the columns needed for the dashboard sidebar.
+
+  `statuses` is a list of status ATOMS; `[]` (default) means all statuses. When
+  non-empty, the status filter is pushed into SQL.
   """
-  @spec list_tasks_summary() :: [map()]
-  def list_tasks_summary do
-    EvoGit.TaskRegistry.list_tasks_summary()
+  @spec list_tasks_summary([atom()]) :: [map()]
+  def list_tasks_summary(statuses \\ []) do
+    EvoGit.TaskRegistry.list_tasks_summary(statuses)
   end
 
   @doc """
   Returns lightweight task summaries filtered to a specific project_path.
 
-  Delegates to `EvoGit.TaskRegistry.list_tasks_summary_by_path/1`.
+  Delegates to `EvoGit.TaskRegistry.list_tasks_summary_by_path/2`.
   """
-  @spec list_tasks_summary_by_path(String.t()) :: [map()]
-  def list_tasks_summary_by_path(path) do
-    EvoGit.TaskRegistry.list_tasks_summary_by_path(path)
+  @spec list_tasks_summary_by_path(String.t(), [atom()]) :: [map()]
+  def list_tasks_summary_by_path(path, statuses \\ []) do
+    EvoGit.TaskRegistry.list_tasks_summary_by_path(path, statuses)
   end
 
   @doc """

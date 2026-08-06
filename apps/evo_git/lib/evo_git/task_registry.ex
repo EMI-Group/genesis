@@ -105,16 +105,19 @@ defmodule EvoGit.TaskRegistry do
   @doc """
   Returns lightweight task summaries for all tasks — only columns needed for
   the dashboard sidebar listing. Returns a list of plain maps.
+
+  `statuses` is a list of status ATOMS; `[]` (default) means all statuses. When
+  non-empty, the status filter is pushed into SQL.
   """
-  def list_tasks_summary do
-    GenServer.call(__MODULE__, :list_tasks_summary, @call_timeout)
+  def list_tasks_summary(statuses \\ []) do
+    GenServer.call(__MODULE__, {:list_tasks_summary, statuses}, @call_timeout)
   end
 
   @doc """
-  Same as list_tasks_summary/0 but filtered to a specific project_path.
+  Same as list_tasks_summary/1 but filtered to a specific project_path.
   """
-  def list_tasks_summary_by_path(path) do
-    GenServer.call(__MODULE__, {:list_tasks_summary_by_path, path}, @call_timeout)
+  def list_tasks_summary_by_path(path, statuses \\ []) do
+    GenServer.call(__MODULE__, {:list_tasks_summary_by_path, path, statuses}, @call_timeout)
   end
 
   def get_unique_paths do
@@ -177,11 +180,6 @@ defmodule EvoGit.TaskRegistry do
       task_store: task_store,
       task_refs: %{}
     }
-
-    # Repair the store from any corrupt (un-deserializable) entries before we
-    # read or normalize anything. integrity_check returns {:error, _} for
-    # problems rather than raising, so no rescue is needed here.
-    EvoGit.Store.integrity_check(task_store)
 
     # Startup reconciliation for orphaned :finalizing tasks. A task that was
     # mid-finalization when the runtime died (e.g. slow git calls in
@@ -295,9 +293,10 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:cancel_task, task_id}, _from, state) do
+    # Narrow-column existence/status check (reads only the status column).
     {result, state} =
-      case task_get(state, task_id) do
-        %TaskInfo{status: :running} = task ->
+      case EvoGit.Store.get_task_status(state.task_store, task_id) do
+        :running ->
           case Map.get(state.task_refs, task_id) do
             %Task{pid: pid} = task_ref ->
               if Process.alive?(pid) do
@@ -321,14 +320,17 @@ defmodule EvoGit.TaskRegistry do
 
                 Task.shutdown(task_ref, :brutal_kill)
 
-                updated = %{
-                  task
-                  | status: :cancelled,
-                    finished_at: DateTime.utc_now(),
-                    lease_expires_at: nil
-                }
+                # Targeted write — only the changed columns. A :running task's
+                # result is always nil (results are written only on terminal
+                # transitions), so writing result: nil preserves the old
+                # put_task semantics. `ref` is runtime-only and never persisted.
+                EvoGit.Store.update_task_columns(state.task_store, task_id,
+                  status: :cancelled,
+                  finished_at: DateTime.utc_now(),
+                  lease_expires_at: nil,
+                  result: nil
+                )
 
-                EvoGit.Store.put_task(state.task_store, updated)
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
                 {:ok, state}
               else
@@ -339,11 +341,11 @@ defmodule EvoGit.TaskRegistry do
               {{:error, :not_running}, state}
           end
 
-        %TaskInfo{} ->
-          {{:error, :not_running}, state}
-
         nil ->
           {{:error, :not_found}, state}
+
+        _status ->
+          {{:error, :not_running}, state}
       end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -380,14 +382,14 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_call(:list_tasks_summary, _from, state) do
-    tasks = EvoGit.Store.select_tasks_summary(state.task_store)
+  def handle_call({:list_tasks_summary, statuses}, _from, state) do
+    tasks = EvoGit.Store.select_tasks_summary(state.task_store, statuses)
     {:reply, tasks, state}
   end
 
   @impl true
-  def handle_call({:list_tasks_summary_by_path, path}, _from, state) do
-    tasks = EvoGit.Store.select_tasks_summary_by_path(state.task_store, path)
+  def handle_call({:list_tasks_summary_by_path, path, statuses}, _from, state) do
+    tasks = EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses)
     {:reply, tasks, state}
   end
 
@@ -448,8 +450,10 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_cast({:append_log, task_id, log_entry}, state) do
-    case task_get(state, task_id) do
-      %TaskInfo{logs: logs} ->
+    # Narrow-column read: only the logs column is fetched (no full 18-column
+    # task_get decode) just to read the existing logs.
+    case EvoGit.Store.select_task_logs(state.task_store, task_id) do
+      logs when is_list(logs) ->
         updated_logs = [log_entry | logs] |> Enum.take(@max_log_entries)
         EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs)
 
@@ -470,12 +474,13 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = _task ->
-        EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
-
+    # Narrow-column existence check: reads only the status column.
+    case EvoGit.Store.get_task_status(state.task_store, task_id) do
       nil ->
         :ok
+
+      _status ->
+        EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
     end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -484,15 +489,16 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
-    case task_get(state, task_id) do
-      %TaskInfo{} = _task ->
+    # Narrow-column existence check: reads only the status column.
+    case EvoGit.Store.get_task_status(state.task_store, task_id) do
+      nil ->
+        :ok
+
+      _status ->
         EvoGit.Store.update_task_columns(state.task_store, task_id,
           base_sha: base_sha,
           commit_sha: commit_sha
         )
-
-      nil ->
-        :ok
     end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -509,23 +515,31 @@ defmodule EvoGit.TaskRegistry do
     commit_sha = Keyword.get(opts, :commit_sha)
     archive_records = Keyword.get(opts, :archive_records)
 
+    # Narrow-column read: only status, opts, finished_at, lease_expires_at are
+    # fetched (no full 18-column task_get decode) — exactly the fields this
+    # handler needs for the stale-guard, preservation, and project_path.
     state =
-      case task_get(state, task_id) do
-        %TaskInfo{} = task ->
-          if task.status in [:completed, :failed, :cancelled] and
+      case EvoGit.Store.select_task_update_info(state.task_store, task_id) do
+        %{
+          status: task_status,
+          opts: task_opts,
+          finished_at: task_finished_at,
+          lease_expires_at: task_lease_expires_at
+        } ->
+          if task_status in [:completed, :failed, :cancelled] and
                status in [:completed, :failed, :cancelled] and
-               task.status != status and
+               task_status != status and
                status != :completed do
             Logger.warning(
               "TaskRegistry: Ignoring stale status update for task #{task_id}: " <>
-                "already #{task.status}, ignoring #{status}"
+                "already #{task_status}, ignoring #{status}"
             )
 
             state
           else
             # Log any transition INTO :failed that isn't already :failed.
-            if status == :failed and task.status != :failed do
-              Diagnostics.log_failed_transition(task_id, :update_status_cast, task.status,
+            if status == :failed and task_status != :failed do
+              Diagnostics.log_failed_transition(task_id, :update_status_cast, task_status,
                 result: result,
                 caller_info: caller_info
               )
@@ -534,12 +548,14 @@ defmodule EvoGit.TaskRegistry do
             finished_at =
               if status in [:completed, :failed, :cancelled],
                 do: DateTime.utc_now(),
-                else: task.finished_at
+                else: task_finished_at
 
             lease_expires_at =
-              if status in [:completed, :failed, :cancelled], do: nil, else: task.lease_expires_at
+              if status in [:completed, :failed, :cancelled],
+                do: nil,
+                else: task_lease_expires_at
 
-            project_path = Keyword.get(task.opts, :path)
+            project_path = Keyword.get(task_opts, :path)
 
             branch_name =
               case result do
@@ -627,15 +643,14 @@ defmodule EvoGit.TaskRegistry do
 
     finished_at = DateTime.utc_now()
 
-    updated = %{
-      task
-      | status: final_status,
-        result: final_result,
-        finished_at: finished_at,
-        lease_expires_at: nil
-    }
-
-    EvoGit.Store.put_task(state.task_store, updated)
+    # Targeted write — only the changed columns; `ref` is runtime-only and
+    # never persisted.
+    EvoGit.Store.update_task_columns(state.task_store, task_id,
+      status: final_status,
+      result: final_result,
+      finished_at: finished_at,
+      lease_expires_at: nil
+    )
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 

@@ -13,8 +13,10 @@ defmodule EvoGit.Store.Codec do
 
   ## Decode philosophy
 
-  Decode functions raise on bad data — the Store's quarantine logic handles
-  crash recovery by moving undecodable rows to a quarantine table.
+  Decode functions raise on bad data — the Store's safe-select helpers
+  (`safe_select_all_tasks/1`, `safe_select_all_projects/1`,
+  `safe_select_paginated_tasks/2`) skip undecodable rows and log a warning
+  instead of crashing.
 
   Two justified `try/rescue` patterns remain on the decode side:
 
@@ -222,8 +224,26 @@ defmodule EvoGit.Store.Codec do
   end
 
   # --- DateTime ---
+  @doc """
+  Encodes a `%DateTime{}` to a fixed-precision ISO-8601 string.
+
+  Truncates to `:millisecond` precision (`DateTime.truncate/2`) so
+  `DateTime.to_iso8601/1` always emits exactly 3 fractional digits
+  (`2024-01-01T12:00:00.123Z`, and `.000Z` even for whole seconds). The
+  default `:auto` precision emits a variable number of fractional digits (none
+  for whole seconds, up to 6 with microseconds), which breaks lexicographic
+  ordering of the TEXT timestamps in SQLite (`'Z'` (0x5A) > `'.'` (0x2E), so
+  `"…00Z"` sorts before `"…00.5Z"` while being chronologically after). The
+  constant 24-char `:millisecond` format sorts correctly, which is required
+  for SQL-side `ORDER BY started_at DESC` and datetime comparisons. All
+  writers use `DateTime.utc_now()` (UTC); existing rows are migrated by
+  `EvoGit.Store.Schema.normalize_timestamps/1`.
+  """
   def encode_datetime(nil), do: nil
-  def encode_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+
+  def encode_datetime(%DateTime{} = dt) do
+    dt |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()
+  end
 
   def decode_datetime(nil), do: nil
 
