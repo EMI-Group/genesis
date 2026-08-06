@@ -17,6 +17,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.TaskInfo
 
   # --- Shared test fixtures ---
 
@@ -74,6 +75,27 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
   defp put_agent_state(agent_id, state) do
     :ets.insert(:evogit_agent_state, {agent_id, state})
+  end
+
+  # Inserts a task directly into the shared app store (same pattern as
+  # remote_node_test.exs's list_tasks_changed_since test — the evo_git app
+  # auto-starts under mix test, so EvoGit.Store / EvoGit.TaskRegistry are
+  # running). Cleaned up in on_exit so the shared store stays empty for
+  # sibling tests.
+  defp insert_task(id, status) do
+    task = %TaskInfo{
+      id: id,
+      type: :genesis,
+      status: status,
+      opts: [path: "/tmp/test"],
+      started_at: DateTime.utc_now()
+    }
+
+    on_exit(fn ->
+      EvoGit.Store.delete_tasks(EvoGit.Store, [id])
+    end)
+
+    :ok = EvoGit.Store.put_task(EvoGit.Store, task)
   end
 
   # --- Setup ---
@@ -596,6 +618,54 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       # Model profiles still present
       assert Keyword.has_key?(opts, :model_profiles)
+    end
+  end
+
+  # ── list_task_ids/1 ────────────────────────────────────────────────
+
+  describe "list_task_ids/1" do
+    test "returns [] when the store is empty" do
+      assert RemoteAPI.list_task_ids() == []
+    end
+
+    test "returns all tasks as minimal id/status/updated_at maps with no statuses filter" do
+      id1 = "list-task-ids-1-#{System.unique_integer([:positive])}"
+      id2 = "list-task-ids-2-#{System.unique_integer([:positive])}"
+
+      insert_task(id1, :completed)
+      insert_task(id2, :running)
+
+      results = RemoteAPI.list_task_ids()
+
+      # Delegation through TaskRegistry → Store reaches both inserted rows.
+      assert Enum.sort(Enum.map(results, & &1.id)) == Enum.sort([id1, id2])
+
+      for result <- results do
+        # Minimal projection — EXACTLY id/status/updated_at, no heavy fields.
+        assert Enum.sort(Map.keys(result)) == [:id, :status, :updated_at]
+        # updated_at is the raw stored fixed-precision ISO string, not a DateTime.
+        assert is_binary(result.updated_at)
+        # status is an atom, not a string.
+        assert is_atom(result.status)
+      end
+
+      assert Enum.find(results, &(&1.id == id1)).status == :completed
+      assert Enum.find(results, &(&1.id == id2)).status == :running
+    end
+
+    test "filters to only matching statuses when a statuses list is given" do
+      id1 = "list-task-ids-completed-#{System.unique_integer([:positive])}"
+      id2 = "list-task-ids-failed-#{System.unique_integer([:positive])}"
+
+      insert_task(id1, :completed)
+      insert_task(id2, :failed)
+
+      [result] = RemoteAPI.list_task_ids([:completed])
+
+      assert result.id == id1
+      assert result.status == :completed
+      assert Enum.sort(Map.keys(result)) == [:id, :status, :updated_at]
+      assert is_binary(result.updated_at)
     end
   end
 end
