@@ -99,7 +99,6 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 
 - **`started_at` is NOT indexed**, yet the paginated list query hardcodes `ORDER BY started_at DESC LIMIT ?N OFFSET ?M` (`store.ex:468-471`) — every page read is a full scan + sort. Indexed columns are only `status`, `finished_at`, `lease_expires_at`, `project_path` (`schema.ex:82-85`). `type` and `review_status` are also unindexed (the "pending" review filter is driven by the indexed `status = 'completed'` predicate).
 - **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search for a value stored in `opts` matches only if the JSON text contains it verbatim.
-- **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search for a value stored in `opts` matches only if the JSON text contains it verbatim.
 
 ## SQLite Optimization Analysis (read-only review — ranked by impact)
 
