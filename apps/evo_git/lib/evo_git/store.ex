@@ -1,6 +1,6 @@
 defmodule EvoGit.Store do
   @moduledoc """
-  SQLite-backed persistent store for EvoDash tasks and recent projects.
+  SQLite-backed persistent store for EvoGit tasks and recent projects.
 
   A single GenServer wrapping one xqlite (SQLite) connection. Data lives in
   column-based tables with JSON encoding for complex fields — no opaque
@@ -9,8 +9,6 @@ defmodule EvoGit.Store do
   Tables:
     * `tasks` — one row per `EvoGit.TaskInfo`, one column per field.
     * `projects` — one row per `EvoGit.RecentProject`.
-    * `tasks_quarantine` — undecodable task rows moved here (raw JSON) for recovery.
-    * `projects_quarantine` — undecodable project rows moved here for recovery.
 
   ## Crash philosophy
 
@@ -21,28 +19,24 @@ defmodule EvoGit.Store do
 
   The codec (`EvoGit.Store.Codec`) uses non-crashing `Jason.encode/1` + `case`
   for TOTAL encode (no try/rescue). Decode functions raise on bad data by
-  design — the quarantine/recovery logic below catches those failures.
+  design — the safe-select helper `decode_skipping_bad/3` below is the
+  deliberate recovery boundary: it catches decode failures, logs a warning,
+  and SKIPS the bad row instead of crashing the whole select.
 
   The only justified try/rescue patterns that remain are:
     * `terminate/2` — graceful connection close during shutdown. GenServer
       terminate/2 must never raise; a crash here could prevent clean
       supervision shutdown.
-    * `safe_decode_rows`, `scan_and_repair` — quarantine/data-recovery
-      boundaries that deliberately catch decode failures to quarantine corrupt
-      rows rather than crashing. The decoder raises by design; quarantine is the
-      deliberate recovery boundary.
-    * `do_integrity_check` — a diagnostic/recovery routine called during
-      TaskRegistry init. It must return `{:error, _}` rather than crashing,
-      because a crash here would prevent TaskRegistry from starting.
-    * `quarantine_row` (INSERT/DELETE) — data-recovery boundary that must never
-      destroy data; if the quarantine INSERT fails, the row is left in place.
+    * `decode_skipping_bad/3` — safe-select boundary that deliberately catches
+      decode failures to skip corrupt rows rather than crashing. The decoder
+      raises by design; skipping is the deliberate recovery boundary.
   """
 
   use GenServer
 
   require Logger
 
-  alias EvoGit.Store.{Codec, Quarantine, Queries, Schema}
+  alias EvoGit.Store.{Codec, Queries, Schema}
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -128,8 +122,8 @@ defmodule EvoGit.Store do
 
   Returns `{tasks, total_count}` where `tasks` is a list of `TaskInfo`
   structs and `total_count` is an integer (total rows in the table,
-  independent of the page). Rows that fail to decode are quarantined (same
-  quarantine boundary as `safe_select_all_tasks/1`).
+  independent of the page). Rows that fail to decode are SKIPPED and logged
+  (same skip-and-log boundary as `safe_select_all_tasks/1`).
   """
   def safe_select_paginated_tasks(store \\ __MODULE__, opts) do
     GenServer.call(store, {:safe_select_paginated_tasks, opts}, @call_timeout)
@@ -163,12 +157,14 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns lightweight lease info for all tasks: `%{id, status, lease_expires_at}`.
-  Only the `status` column is decoded (a lightweight atom); no heavy JSON
-  fields (logs, result, usage, archive_metadata) are touched.
+  Returns lightweight lease info for running/finalizing tasks:
+  `%{id, status, lease_expires_at}`. Only the `status` column is decoded (a
+  lightweight atom); no heavy JSON fields (logs, result, usage,
+  archive_metadata) are touched. The status filter happens in SQL
+  (`WHERE status IN ('running', 'finalizing')`).
 
-  Used by TaskRegistry.lease_sweep to avoid a full decode of all tasks just to
-  check status == :running and lease validity.
+  Used by TaskRegistry.lease_sweep and startup reconciliation to avoid a full
+  decode of all tasks just to check status and lease validity.
   """
   def select_running_lease_info(store \\ __MODULE__) do
     GenServer.call(store, :select_running_lease_info, @call_timeout)
@@ -212,9 +208,33 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns lightweight cleanup info for all tasks: `%{id, finished_at}`.
+  Returns the decoded logs list for a single task (or nil if the row is
+  absent). Reads only the `logs` column — no heavy JSON decode of other
+  fields. Used by TaskRegistry.append_log to avoid a full 18-column decode
+  just to read the existing logs.
+  """
+  def select_task_logs(store \\ __MODULE__, task_id) do
+    GenServer.call(store, {:select_task_logs, task_id}, @call_timeout)
+  end
+
+  @doc """
+  Returns narrow update info for a single task:
+  `%{status: decoded atom, opts: decoded opts, finished_at: decoded datetime,
+  lease_expires_at: raw integer}` (or nil if the row is absent).
+
+  Reads only 4 columns — no heavy JSON fields (logs, result, usage,
+  archive_metadata) are decoded. Used by TaskRegistry.handle_update_status to
+  replace the full `task_get` read-modify-write.
+  """
+  def select_task_update_info(store \\ __MODULE__, task_id) do
+    GenServer.call(store, {:select_task_update_info, task_id}, @call_timeout)
+  end
+
+  @doc """
+  Returns lightweight cleanup info for finished tasks: `%{id, finished_at}`.
   Only `id` (raw string) and `finished_at` (decoded DateTime or nil) are returned
   — no heavy JSON fields (logs, result, usage, archive_metadata) are decoded.
+  The filter happens in SQL (`WHERE finished_at IS NOT NULL`).
 
   Used by `TaskRegistry.Cleanup` to avoid a full decode of all tasks just to
   check finished_at against age/count limits.
@@ -225,19 +245,22 @@ defmodule EvoGit.Store do
 
   @doc """
   Returns lightweight task summaries for all tasks — only columns needed for
-  the dashboard sidebar listing. No heavy JSON fields (logs, usage, opts,
+  the dashboard sidebar listing. No heavy JSON fields (logs, usage,
   archive_metadata) are decoded. Returns a list of plain maps with an :opts key
   (decoded keyword list containing :objective and :prompt).
+
+  `statuses` is a list of status ATOMS; `[]` (default) means all statuses. When
+  non-empty, the status filter is pushed into SQL (`WHERE status IN (...)`).
   """
-  def select_tasks_summary(store \\ __MODULE__) do
-    GenServer.call(store, :select_tasks_summary, @call_timeout)
+  def select_tasks_summary(store \\ __MODULE__, statuses \\ []) do
+    GenServer.call(store, {:select_tasks_summary, statuses}, @call_timeout)
   end
 
   @doc """
-  Same as select_tasks_summary/1 but filtered to a specific project_path.
+  Same as select_tasks_summary/2 but filtered to a specific project_path.
   """
-  def select_tasks_summary_by_path(store \\ __MODULE__, project_path) do
-    GenServer.call(store, {:select_tasks_summary_by_path, project_path}, @call_timeout)
+  def select_tasks_summary_by_path(store \\ __MODULE__, project_path, statuses \\ []) do
+    GenServer.call(store, {:select_tasks_summary_by_path, project_path, statuses}, @call_timeout)
   end
 
   ## Public API — Projects
@@ -273,61 +296,27 @@ defmodule EvoGit.Store do
     GenServer.call(store, :count_projects, @call_timeout)
   end
 
-  ## Public API — Safety / Integrity
+  ## Public API — Safety
 
   @doc """
-  Enumerates all tasks, quarantining (not raising on) rows that fail to decode.
-  Bad rows are moved to `tasks_quarantine` and skipped from the returned list.
+  Enumerates all tasks, skipping (not raising on) rows that fail to decode.
+  Bad rows are logged with a warning and excluded from the returned list.
   """
   def safe_select_all_tasks(store \\ __MODULE__) do
     GenServer.call(store, :safe_select_all_tasks, @call_timeout)
   end
 
   @doc """
-  Enumerates all projects, quarantining (not raising on) rows that fail to decode.
-  Bad rows are moved to `projects_quarantine` and skipped from the returned list.
+  Enumerates all projects, skipping (not raising on) rows that fail to decode.
+  Bad rows are logged with a warning and excluded from the returned list.
   """
   def safe_select_all_projects(store \\ __MODULE__) do
     GenServer.call(store, :safe_select_all_projects, @call_timeout)
   end
 
-  @doc """
-  Checks store integrity and repairs corruption.
-
-  1. Runs `PRAGMA integrity_check` to verify SQLite structural health.
-  2. Scans all rows in both tables, decoding each into the proper struct.
-     Undecodable rows are QUARANTINED — the raw column data is serialized as
-     JSON and moved to the corresponding quarantine table, then deleted from
-     the live table.
-
-  Returns:
-    * `:ok` — store is healthy.
-    * `{:repaired, count}` — some undecodable rows were quarantined.
-    * `{:error, reason}` — SQLite-level corruption detected.
-  """
-  def integrity_check(store \\ __MODULE__) do
-    GenServer.call(store, :integrity_check, @call_timeout)
-  end
-
   @doc "Returns the total number of rows across both tables."
   def size(store \\ __MODULE__) do
     GenServer.call(store, :size, @call_timeout)
-  end
-
-  @doc """
-  Attempts to recover rows from the quarantine tables back into the live tables.
-
-  Reads all rows from `tasks_quarantine` and `projects_quarantine`, decodes
-  the stored JSON column data, and tries to re-decode each row through the
-  Codec. Rows that now decode successfully (e.g. after a codec bugfix) are
-  INSERT OR REPLACE'd back into the live table and deleted from quarantine.
-  Rows that still fail to decode are left in quarantine untouched.
-
-  Returns `{:ok, recovered_count}` where `recovered_count` is the total number
-  of rows successfully recovered across both quarantine tables.
-  """
-  def recover_quarantine(store \\ __MODULE__) do
-    GenServer.call(store, :recover_quarantine, @call_timeout)
   end
 
   ## GenServer callbacks
@@ -341,6 +330,7 @@ defmodule EvoGit.Store do
       {:ok, conn} ->
         Schema.create_tables(conn)
         Schema.migrate_schema(conn)
+        Schema.normalize_timestamps(conn)
 
         # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
@@ -432,8 +422,19 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call({:delete_tasks, task_ids}, _from, state) do
-    Enum.each(task_ids, fn task_id ->
-      {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM tasks WHERE id = ?1", [task_id])
+    # Batch the deletes into chunked `WHERE id IN (...)` statements (chunk size
+    # 500, safely under SQLite's 999-parameter limit). This changes partial-crash
+    # semantics from "some deleted" to "all-or-nothing per chunk" — an improvement.
+    task_ids
+    |> Enum.chunk_every(500)
+    |> Enum.each(fn chunk ->
+      placeholders =
+        chunk
+        |> Enum.with_index(1)
+        |> Enum.map_join(", ", fn {_, i} -> "?#{i}" end)
+
+      {:ok, _} =
+        XqliteNIF.execute(state.conn, "DELETE FROM tasks WHERE id IN (#{placeholders})", chunk)
     end)
 
     {:reply, :ok, state}
@@ -466,8 +467,10 @@ defmodule EvoGit.Store do
     offset_idx = length(where_params) + 2
 
     select_sql =
-      Queries.task_select_sql() <> where_clause <>
-        " ORDER BY started_at DESC LIMIT ?" <> Integer.to_string(limit_idx) <>
+      Queries.task_select_sql() <>
+        where_clause <>
+        " ORDER BY started_at DESC LIMIT ?" <>
+        Integer.to_string(limit_idx) <>
         " OFFSET ?" <> Integer.to_string(offset_idx)
 
     select_params = where_params ++ [limit, offset]
@@ -478,8 +481,8 @@ defmodule EvoGit.Store do
         _ -> []
       end
 
-    # Reuse the SAME quarantine-safe decode boundary as safe_decode_rows.
-    tasks = Quarantine.safe_decode_rows(state.conn, "tasks", rows, &Codec.decode_task/1)
+    # Skip-and-log decode boundary (same as safe_select_all_tasks).
+    tasks = decode_skipping_bad(rows, &Codec.decode_task/1, "tasks")
 
     # COUNT with the SAME WHERE clause so total_count reflects filtered results.
     count_sql = "SELECT COUNT(*) FROM tasks" <> where_clause
@@ -528,12 +531,17 @@ defmodule EvoGit.Store do
     {:reply, reply, state}
   end
 
-  # Lightweight query: reads only id, status, lease_expires_at. The status is
+  # Lightweight query: reads only id, status, lease_expires_at for
+  # running/finalizing tasks (status filtering happens in SQL). The status is
   # decoded via the non-crashing Codec.decode_atom/1 (returns nil on unknown).
   @impl true
   def handle_call(:select_running_lease_info, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, "SELECT id, status, lease_expires_at FROM tasks", []) do
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id, status, lease_expires_at FROM tasks WHERE status IN ('running', 'finalizing')",
+             []
+           ) do
         {:ok, %{rows: rows}} ->
           Enum.map(rows, fn [id, status, lease_expires_at] ->
             %{id: id, status: Codec.decode_atom(status), lease_expires_at: lease_expires_at}
@@ -581,13 +589,59 @@ defmodule EvoGit.Store do
     {:reply, reply, state}
   end
 
-  # Lightweight query: reads only id and finished_at. The finished_at column is
-  # decoded via the non-crashing Codec.decode_datetime/1 (returns nil on bad
-  # data). No heavy JSON fields are decoded.
+  # Lightweight read: returns only the decoded logs list (or nil when the row
+  # is absent). Reads a single column — no full-row decode.
+  @impl true
+  def handle_call({:select_task_logs, task_id}, _from, state) do
+    reply =
+      case XqliteNIF.query(state.conn, "SELECT logs FROM tasks WHERE id = ?1", [task_id]) do
+        {:ok, %{rows: [row | _]}} -> Codec.decode_logs(hd(row))
+        {:ok, %{rows: []}} -> nil
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight read: returns %{status, opts, finished_at, lease_expires_at}
+  # (or nil when the row is absent). Reads 4 columns — no heavy JSON fields
+  # (logs, result, usage, archive_metadata) are decoded.
+  @impl true
+  def handle_call({:select_task_update_info, task_id}, _from, state) do
+    reply =
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT status, opts, finished_at, lease_expires_at FROM tasks WHERE id = ?1",
+             [task_id]
+           ) do
+        {:ok, %{rows: [row | _]}} ->
+          [status, opts, finished_at, lease_expires_at] = row
+
+          %{
+            status: Codec.decode_atom(status),
+            opts: Codec.decode_opts(opts),
+            finished_at: Codec.decode_datetime(finished_at),
+            lease_expires_at: lease_expires_at
+          }
+
+        {:ok, %{rows: []}} ->
+          nil
+      end
+
+    {:reply, reply, state}
+  end
+
+  # Lightweight query: reads only id and finished_at for finished tasks
+  # (WHERE finished_at IS NOT NULL). The finished_at column is decoded via the
+  # non-crashing Codec.decode_datetime/1 (returns nil on bad data). No heavy
+  # JSON fields are decoded.
   @impl true
   def handle_call(:select_cleanup_info, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, "SELECT id, finished_at FROM tasks", []) do
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id, finished_at FROM tasks WHERE finished_at IS NOT NULL",
+             []
+           ) do
         {:ok, %{rows: rows}} ->
           Enum.map(rows, fn [id, finished_at] ->
             %{id: id, finished_at: Codec.decode_datetime(finished_at)}
@@ -601,14 +655,39 @@ defmodule EvoGit.Store do
   end
 
   # Lightweight query: reads only id, status, review_status, result, started_at,
-  # finished_at, type, project_path, opts. No heavy JSON fields (logs, usage,
-  # archive_metadata) are decoded.
+  # finished_at, type, project_path, opts plus the remaining scalar columns
+  # (branch_name, model_id, agent_count, base_sha, commit_sha,
+  # lease_expires_at). No heavy JSON fields (logs, usage, archive_metadata) are
+  # decoded. Status filtering is pushed into SQL when `statuses` is non-empty.
   @impl true
-  def handle_call(:select_tasks_summary, _from, state) do
+  def handle_call({:select_tasks_summary, statuses}, _from, state) do
+    {where_clause, where_params} = build_status_where(statuses)
+
     reply =
-      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts FROM tasks", []) do
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at FROM tasks" <>
+               where_clause,
+             where_params
+           ) do
         {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path, opts] ->
+          Enum.map(rows, fn [
+                              id,
+                              status,
+                              review_status,
+                              result,
+                              started_at,
+                              finished_at,
+                              type,
+                              project_path,
+                              opts,
+                              branch_name,
+                              model_id,
+                              agent_count,
+                              base_sha,
+                              commit_sha,
+                              lease_expires_at
+                            ] ->
             %{
               id: id,
               status: Codec.decode_atom(status),
@@ -618,7 +697,13 @@ defmodule EvoGit.Store do
               finished_at: Codec.decode_datetime(finished_at),
               type: Codec.decode_atom(type),
               project_path: project_path,
-              opts: Codec.decode_opts(opts)
+              opts: Codec.decode_opts(opts),
+              branch_name: branch_name,
+              model_id: model_id,
+              agent_count: agent_count,
+              base_sha: base_sha,
+              commit_sha: commit_sha,
+              lease_expires_at: lease_expires_at
             }
           end)
 
@@ -630,11 +715,35 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call({:select_tasks_summary_by_path, project_path}, _from, state) do
+  def handle_call({:select_tasks_summary_by_path, project_path, statuses}, _from, state) do
+    # project_path uses ?1; the optional status filter appends ?2..?N.
+    {status_clause, status_params} = build_status_clause(statuses, 2)
+
     reply =
-      case XqliteNIF.query(state.conn, "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts FROM tasks WHERE project_path = ?1", [project_path]) do
+      case XqliteNIF.query(
+             state.conn,
+             "SELECT id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at FROM tasks WHERE project_path = ?1" <>
+               status_clause,
+             [project_path] ++ status_params
+           ) do
         {:ok, %{rows: rows}} ->
-          Enum.map(rows, fn [id, status, review_status, result, started_at, finished_at, type, project_path, opts] ->
+          Enum.map(rows, fn [
+                              id,
+                              status,
+                              review_status,
+                              result,
+                              started_at,
+                              finished_at,
+                              type,
+                              project_path,
+                              opts,
+                              branch_name,
+                              model_id,
+                              agent_count,
+                              base_sha,
+                              commit_sha,
+                              lease_expires_at
+                            ] ->
             %{
               id: id,
               status: Codec.decode_atom(status),
@@ -644,7 +753,13 @@ defmodule EvoGit.Store do
               finished_at: Codec.decode_datetime(finished_at),
               type: Codec.decode_atom(type),
               project_path: project_path,
-              opts: Codec.decode_opts(opts)
+              opts: Codec.decode_opts(opts),
+              branch_name: branch_name,
+              model_id: model_id,
+              agent_count: agent_count,
+              base_sha: base_sha,
+              commit_sha: commit_sha,
+              lease_expires_at: lease_expires_at
             }
           end)
 
@@ -723,8 +838,7 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call(:safe_select_all_tasks, _from, state) do
-    columns = Quarantine.table_columns("tasks")
-    col_list = Enum.join(columns, ", ")
+    col_list = Enum.join(Codec.task_columns(), ", ")
 
     rows =
       case XqliteNIF.query(state.conn, "SELECT #{col_list} FROM tasks", []) do
@@ -732,27 +846,13 @@ defmodule EvoGit.Store do
         _ -> []
       end
 
-    decoded =
-      Enum.flat_map(rows, fn row ->
-        try do
-          [Codec.decode_task(row)]
-        rescue
-          e ->
-            Logger.warning(
-              "Store: skipping undecodable task row (id: #{inspect(hd(row))}): #{Exception.message(e)}"
-            )
-
-            []
-        end
-      end)
-
+    decoded = decode_skipping_bad(rows, &Codec.decode_task/1, "tasks")
     {:reply, decoded, state}
   end
 
   @impl true
   def handle_call(:safe_select_all_projects, _from, state) do
-    columns = Quarantine.table_columns("projects")
-    col_list = Enum.join(columns, ", ")
+    col_list = Enum.join(Codec.project_columns(), ", ")
 
     rows =
       case XqliteNIF.query(state.conn, "SELECT #{col_list} FROM projects", []) do
@@ -760,25 +860,64 @@ defmodule EvoGit.Store do
         _ -> []
       end
 
-    decoded = Enum.map(rows, &Codec.decode_project/1)
+    decoded = decode_skipping_bad(rows, &Codec.decode_project/1, "projects")
     {:reply, decoded, state}
-  end
-
-  @impl true
-  def handle_call(:integrity_check, _from, state) do
-    reply = Quarantine.do_integrity_check(state.conn)
-    {:reply, reply, state}
-  end
-
-  @impl true
-  def handle_call(:recover_quarantine, _from, state) do
-    reply = Quarantine.do_recover_quarantine(state.conn)
-    {:reply, reply, state}
   end
 
   ## GenServer — Periodic memory cleanup
 
   ## Private — Helpers
+
+  # Safe-select decode boundary: decodes every row, SKIPPING (and logging) rows
+  # that raise instead of crashing the whole select. The decoder raises by
+  # design; skipping is the deliberate recovery boundary — no data-movement
+  # INSERT/DELETE is performed on bad rows.
+  defp decode_skipping_bad(rows, decoder, table) do
+    Enum.flat_map(rows, fn row ->
+      # Justified try/rescue — safe-select boundary. (1) Do we expect this?
+      # Yes — DB rows may contain corrupt or legacy data that fails to decode.
+      # (2) Cleanest approach? The decoder raises by design (Codec decode
+      # philosophy); skipping is the deliberate recovery boundary.
+      try do
+        [decoder.(row)]
+      rescue
+        e ->
+          Logger.warning(
+            "Store: skipping undecodable row in #{table} (id: #{inspect(hd(row))}): " <>
+              Exception.message(e)
+          )
+
+          []
+      end
+    end)
+  end
+
+  # Builds a ` WHERE status IN (?1, ?2, ...)` clause (and its string-encoded
+  # params) from a list of status atoms. Returns {"", []} for an empty list
+  # (all statuses).
+  defp build_status_where([]), do: {"", []}
+
+  defp build_status_where(statuses) do
+    placeholders =
+      statuses
+      |> Enum.with_index(1)
+      |> Enum.map_join(", ", fn {_, i} -> "?#{i}" end)
+
+    {" WHERE status IN (#{placeholders})", Enum.map(statuses, &Atom.to_string/1)}
+  end
+
+  # Builds an ` AND status IN (?N, ...)` clause appended after an existing
+  # ?1..?(N-1) filter. Returns {"", []} for an empty status list.
+  defp build_status_clause([], _start_idx), do: {"", []}
+
+  defp build_status_clause(statuses, start_idx) do
+    placeholders =
+      statuses
+      |> Enum.with_index(start_idx)
+      |> Enum.map_join(", ", fn {_, i} -> "?#{i}" end)
+
+    {" AND status IN (#{placeholders})", Enum.map(statuses, &Atom.to_string/1)}
+  end
 
   # Reads only the status column for a task id. Returns the decoded atom status
   # or nil if the row doesn't exist. Uses the same XqliteNIF.query pattern as
@@ -846,5 +985,4 @@ defmodule EvoGit.Store do
     {:ok, %{rows: [[count]]}} = XqliteNIF.query(conn, "SELECT COUNT(*) FROM #{table}", [])
     count
   end
-
 end

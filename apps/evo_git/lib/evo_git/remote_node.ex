@@ -202,6 +202,7 @@ defmodule EvoGit.RemoteNode do
       end
     end
   end
+
   @doc """
   Returns the config health status on the given node.
 
@@ -347,16 +348,18 @@ defmodule EvoGit.RemoteNode do
   @doc """
   Returns lightweight task summaries on the given node.
 
-  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary/0` directly.
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary/1` directly.
   On a remote node, routes the call through `:erpc` via `call_remote/4`. Returns
   `[]` if the remote call fails.
+
+  `statuses` is a list of status ATOMS; `[]` (default) means all statuses.
   """
-  @spec list_tasks_summary(node()) :: [map()]
-  def list_tasks_summary(node) do
+  @spec list_tasks_summary(node(), [atom()]) :: [map()]
+  def list_tasks_summary(node, statuses \\ []) do
     if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary()
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary(statuses)
     else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_summary, []) do
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_summary, [statuses]) do
         {:ok, list} when is_list(list) -> list
         {:ok, _other} -> []
         {:error, _reason} -> []
@@ -367,12 +370,15 @@ defmodule EvoGit.RemoteNode do
   @doc """
   Returns lightweight task summaries filtered to a specific project_path on the given node.
   """
-  @spec list_tasks_summary_by_path(node(), String.t()) :: [map()]
-  def list_tasks_summary_by_path(node, path) do
+  @spec list_tasks_summary_by_path(node(), String.t(), [atom()]) :: [map()]
+  def list_tasks_summary_by_path(node, path, statuses \\ []) do
     if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary_by_path(path)
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary_by_path(path, statuses)
     else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_summary_by_path, [path]) do
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_summary_by_path, [
+             path,
+             statuses
+           ]) do
         {:ok, list} when is_list(list) -> list
         {:ok, _other} -> []
         {:error, _reason} -> []
