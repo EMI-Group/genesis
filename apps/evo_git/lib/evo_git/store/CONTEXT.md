@@ -63,7 +63,7 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 | `pk_column/1` | Maps table name to its primary key column |
 
 ### Field-level encoders/decoders (Codec)
-- **Atoms**: `encode_atom/1` (accepts nil/atoms/strings), `decode_atom/1` (uses `String.to_existing_atom/1`)
+- **Atoms**: `encode_atom/1` (accepts nil/atoms/strings), `decode_atom/1` (uses `String.to_atom/1` guarded by a closed whitelist `@known_atoms` — safe because the set is bounded and application-controlled; `String.to_existing_atom/1` is only used in `decode_reason/1`, the one justified try/rescue)
 - **DateTime**: `encode_datetime/1`, `decode_datetime/1`
 - **Result tuples**: `encode_result/1`, `decode_result/1` — round-trips `{:ok, map}`, `{:error, reason}`, `{:exit, reason}` via `__result_tag__` JSON discriminator
 - **Usage**: `encode_usage/1`, `decode_usage/1` — `%EvoGit.Agent.Usage{}` struct ↔ list
