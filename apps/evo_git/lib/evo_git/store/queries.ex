@@ -50,6 +50,7 @@ defmodule EvoGit.Store.Queries do
   def encode_column_value(:review_status, value), do: Codec.encode_atom(value)
   def encode_column_value(:started_at, value), do: Codec.encode_datetime(value)
   def encode_column_value(:finished_at, value), do: Codec.encode_datetime(value)
+  def encode_column_value(:updated_at, value), do: Codec.encode_datetime(value)
   def encode_column_value(:logs, value), do: Codec.encode_logs(value)
   def encode_column_value(:result, value), do: Codec.encode_result(value)
   def encode_column_value(:usage, value), do: Codec.encode_usage(value)
@@ -116,8 +117,7 @@ defmodule EvoGit.Store.Queries do
           {clauses, params, idx}
 
         path ->
-          {clauses ++ ["project_path = ?" <> Integer.to_string(idx)],
-           params ++ [path], idx + 1}
+          {clauses ++ ["project_path = ?" <> Integer.to_string(idx)], params ++ [path], idx + 1}
       end
 
     # review_status filter ("pending" is a composite of completed + null review + branch)
@@ -133,8 +133,7 @@ defmodule EvoGit.Store.Queries do
           c2 = "review_status IS NULL"
           c3 = "branch_name IS NOT NULL"
 
-          {clauses ++ [c1, c2, c3],
-           params ++ ["completed"], idx + 1}
+          {clauses ++ [c1, c2, c3], params ++ ["completed"], idx + 1}
 
         rs ->
           {clauses ++ ["review_status = ?" <> Integer.to_string(idx)], params ++ [rs], idx + 1}
