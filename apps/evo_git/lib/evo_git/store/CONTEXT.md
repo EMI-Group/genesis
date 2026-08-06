@@ -98,7 +98,7 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 
 - Encode: `Jason.encode!/1` of a binary can never fail (TOTAL-encode philosophy preserved).
 - Decode: `decode_result/1` is STRICTLY canonical — nil passthrough + the 4 tagged forms only (`ok` with map data, `error`, `exit`, `string` with binary value). Raw strings, untagged JSON (objects/arrays/scalars), invalid JSON, and JSON null all raise `ArgumentError`.
-- This enables future `json_valid`-guarded `json_extract` SQL filters over the whole column. ⚠️ DBs that have NOT run `mix migrate.store` may still contain legacy rows — they will RAISE on decode, so run the migration first (its canonical-result rewrite, step 4, converts untagged JSON + JSON null → SQL NULL and raw strings → `"string"`-tag wrap).
+- This enables future `json_valid`-guarded `json_extract` SQL filters over the whole column. ⚠️ DBs that have NOT run `mix migrate.store` may still contain legacy rows — they will RAISE on decode, so run the migration first (its canonical-result rewrite, step 4, converts JSON `null` text → SQL NULL and wraps every other untagged value — raw strings AND untagged JSON objects/arrays/scalars — verbatim in a `"string"`-tag).
 
 ## Opts object encoding (JSON-path addressable)
 
