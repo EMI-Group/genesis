@@ -1178,8 +1178,9 @@ defmodule EvoGit.StoreTest do
       end
 
       # Inject an undecodable row via raw SQL: valid JSON but the WRONG shape —
-      # decode_opts/1 pattern-matches each element as [key, value], so a JSON
-      # array of non-pair elements raises FunctionClauseError on decode.
+      # decode_opts/1 is a strict canonical codec (only JSON objects with
+      # string keys are canonical), so a JSON array of non-pair elements
+      # raises ArgumentError on decode.
       {:ok, conn} = Xqlite.open(sqlite_path)
 
       XqliteNIF.execute(
