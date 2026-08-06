@@ -21,7 +21,15 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:system} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:system}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <!-- Scheduler Control banner -->
       <div class="p-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -627,6 +635,12 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def handle_info({:task_status, _task_id, _status}, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
+  end
+
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired — reload the sidebar's running/pending tasks.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
   end
 
   # --- Private Helpers ---

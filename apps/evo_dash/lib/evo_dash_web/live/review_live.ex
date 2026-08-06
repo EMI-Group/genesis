@@ -12,7 +12,15 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:review} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:review}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <%= if @error do %>
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
@@ -119,23 +127,24 @@ defmodule EvoDashWeb.ReviewLive do
                           is_no_changes={@is_no_changes}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
-                          <.link href={"/tasks/#{@task_id}/export"} class="btn btn-sm btn-outline btn-primary gap-2" download>
-                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext("Export JSON")}
+                          <.link
+                            href={"/tasks/#{@task_id}/export"}
+                            class="btn btn-sm btn-outline btn-primary gap-2"
+                            download
+                          >
+                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext(
+                              "Export JSON"
+                            )}
                           </.link>
                         <% end %>
-                        <EvoDashWeb.ReviewComponents.extract_skills_modal
-                          show={@show_extract_modal}
-                        />
+                        <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
                       </div>
-
                     <% @review_tab == :objective -> %>
                       <div class="p-4 sm:p-6 lg:p-8">
                         <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
                       </div>
-
                     <% @review_tab == :commits -> %>
                       <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-
                     <% @review_tab == :files_changed -> %>
                       <%= if @review_data do %>
                         <EvoDashWeb.ReviewComponents.split_diff_layout
@@ -146,11 +155,15 @@ defmodule EvoDashWeb.ReviewLive do
                         />
                       <% else %>
                         <div class="p-8 text-center">
-                          <.icon name="hero-document-magnifying-glass" class="size-10 text-base-content/30 mx-auto mb-3" />
-                          <p class="text-sm text-base-content/50">{gettext("No diff data available for this review.")}</p>
+                          <.icon
+                            name="hero-document-magnifying-glass"
+                            class="size-10 text-base-content/30 mx-auto mb-3"
+                          />
+                          <p class="text-sm text-base-content/50">
+                            {gettext("No diff data available for this review.")}
+                          </p>
                         </div>
                       <% end %>
-
                     <% @review_tab == :archive -> %>
                       <%= if @archive_metadata not in [nil, []] do %>
                         <div class="p-4 sm:p-6 lg:p-8">
@@ -161,8 +174,13 @@ defmodule EvoDashWeb.ReviewLive do
                         </div>
                       <% else %>
                         <div class="p-8 text-center">
-                          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/30 mx-auto mb-3" />
-                          <p class="text-sm text-base-content/50">{gettext("No archived agent data available for this task.")}</p>
+                          <.icon
+                            name="hero-archive-box-x-mark"
+                            class="size-10 text-base-content/30 mx-auto mb-3"
+                          />
+                          <p class="text-sm text-base-content/50">
+                            {gettext("No archived agent data available for this task.")}
+                          </p>
                         </div>
                       <% end %>
                   <% end %>
@@ -172,7 +190,11 @@ defmodule EvoDashWeb.ReviewLive do
               <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
                 <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
                   <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
-                  <p class="text-sm text-warning">{gettext("Could not load diff data. The branch may have been modified externally.")}</p>
+                  <p class="text-sm text-warning">
+                    {gettext(
+                      "Could not load diff data. The branch may have been modified externally."
+                    )}
+                  </p>
                 </div>
               <% end %>
             <% end %>
@@ -556,15 +578,24 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    socket = load_task_data(socket, socket.assigns.task_id)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+  def handle_info({:tasks_updated} = msg, socket) do
+    # Debounced via NodeAware — the task-data reload + sidebar reload happen once
+    # in handle_info(:node_aware_reload_tasks, socket) when the timer fires.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
+  def handle_info({:task_status, _task_id, _status} = msg, socket) do
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)}
+  end
+
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired: reload the reviewed task's data and the sidebar's
+    # running/pending tasks, then clear the debounce-pending flag.
     socket = load_task_data(socket, socket.assigns.task_id)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+    socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true
