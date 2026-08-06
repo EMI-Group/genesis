@@ -328,9 +328,10 @@ defmodule EvoGit.Store do
 
     case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
       {:ok, conn} ->
+        # Fresh DBs get the full schema from create_tables/1. Schema upgrades for
+        # existing DBs now happen via the manual `mix migrate.store` task — no
+        # auto-migration (migrate_schema/normalize_timestamps) at startup.
         Schema.create_tables(conn)
-        Schema.migrate_schema(conn)
-        Schema.normalize_timestamps(conn)
 
         # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
@@ -379,7 +380,9 @@ defmodule EvoGit.Store do
 
           # Always null the ref before persistence — it is runtime-only.
           task = %{task | ref: nil}
-          values = Codec.encode_task(task)
+          # 18 values from encode_task + 19th `updated_at` value (store-internal
+          # bookkeeping, not part of %TaskInfo{}/Codec.task_columns).
+          values = Codec.encode_task(task) ++ [Codec.encode_datetime(DateTime.utc_now())]
 
           {:ok, _} =
             XqliteNIF.execute(
@@ -388,8 +391,8 @@ defmodule EvoGit.Store do
               INSERT OR REPLACE INTO tasks
               (id, type, status, opts, started_at, finished_at, logs,
                result, review_status, usage, agent_count, base_sha, commit_sha,
-               archive_metadata, lease_expires_at, model_id, project_path, branch_name)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+               archive_metadata, lease_expires_at, model_id, project_path, branch_name, updated_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
               """,
               values
             )
@@ -567,9 +570,12 @@ defmodule EvoGit.Store do
     {:reply, :ok, state}
   end
 
-  # Lightweight write: updates only the specified columns for a task.
+  # Lightweight write: updates only the specified columns for a task. Every
+  # targeted update also bumps the store-internal `updated_at` column (the
+  # 60s lease heartbeat uses update_lease_expires_at/3 and must NOT bump it).
   @impl true
   def handle_call({:update_task_columns, task_id, columns}, _from, state) do
+    columns = [{:updated_at, DateTime.utc_now()} | columns]
     {set_clauses, values} = Queries.build_update_set(columns, 1)
 
     {:ok, _} =
