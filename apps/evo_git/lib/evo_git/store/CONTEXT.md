@@ -35,7 +35,7 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 | Function | Description |
 |----------|-------------|
 | `create_tables/1` | Creates tables (tasks, projects) and indexes |
-| `migrate_schema/1` | Idempotent column migration — adds missing columns to existing DBs |
+| `migrate_schema/1` | Idempotent column migration — adds missing columns to existing DBs (incl. `updated_at`); invoked by the `mix migrate.store` task to upgrade OLD databases since `Store.init/1` no longer auto-migrates |
 | `normalize_timestamps/1` | Idempotent, SQL-only data migration — rewrites existing timestamp rows to the fixed-precision format (see below) |
 | `existing_columns/2` | Reads column names via `PRAGMA table_info` |
 
@@ -55,17 +55,17 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 ### Field-level encoders/decoders (Codec)
 - **Atoms**: `encode_atom/1` (accepts nil/atoms/strings), `decode_atom/1` (uses `String.to_atom/1` guarded by a closed whitelist `@known_atoms` — safe because the set is bounded and application-controlled; `String.to_existing_atom/1` is only used in `decode_reason/1`, the one justified try/rescue)
 - **DateTime**: `encode_datetime/1`, `decode_datetime/1` — `encode_datetime/1` emits a **fixed-precision** constant 24-char ISO-8601 format (`%Y-%m-%dT%H:%M:%S.SSSZ`, exactly 3 fractional digits via `DateTime.truncate(:millisecond)` + `to_iso8601/1`), which is lexicographically sortable in SQLite. Legacy variable-precision rows are migrated by `Schema.normalize_timestamps/1`.
-- **Result tuples**: `encode_result/1`, `decode_result/1` — round-trips `{:ok, map}`, `{:error, reason}`, `{:exit, reason}` via `__result_tag__` JSON discriminator
+- **Result tuples**: `encode_result/1`, `decode_result/1` — round-trips `{:ok, map}`, `{:error, reason}`, `{:exit, reason}` via `__result_tag__` JSON discriminator. **Canonical encoding** (see "Canonical result encoding" below): plain strings (crash fallbacks) are ALWAYS JSON-wrapped with a `"string"` tag (`{"__result_tag__":"string","value":<str>}`) so every result value is valid JSON — enabling future `json_valid`-guarded `json_extract` SQL filters. `decode_result/1` handles the `"string"` tag AND keeps defensive branches for legacy raw strings and untagged JSON (pre-migration rows never crash the read path).
 - **Usage**: `encode_usage/1`, `decode_usage/1` — `%EvoGit.Agent.Usage{}` struct ↔ JSON string (map); `decode_usage_map/1` rebuilds the struct using precomputed `@usage_field_pairs` (string+atom key fallback lookup, zero-allocation)
 - **Archive metadata**: `encode_archive_metadata/1`, `decode_archive_metadata/1`
-- **Opts/Logs**: JSON encode/decode via Jason
+- **Opts/Logs**: JSON encode/decode via Jason. `encode_opts/1` writes a **JSON OBJECT with string keys** (`{"path": "...", "mode": "..."}` — values are JSON-path addressable for future SQL pushdowns); `decode_opts/1` decodes the object into a keyword list (atomizing keys via the `@known_opt_keys` whitelist) AND keeps a legacy decode path for pre-migration positional-array rows. Essential-keys fallback (`[:path, :mode, :prompt, :objective]`) + nil-on-failure semantics unchanged.
 
 ## Design Principles
 
 1. **TOTAL encode**: Encode functions never raise. All JSON encoding uses non-crashing `Jason.encode/1` with `case`/`with`.
 2. **Decode raises on bad data**: Decode functions raise on structurally bad rows; callers skip such rows and log a `Logger.warning` (no quarantine table — see "Removal: quarantine/integrity machinery" below).
 3. **Atom safety**: Uses closed whitelists with `Map.get/3` for atom conversion from DB-sourced strings.
-4. **Result tuple round-tripping**: `{:ok, %{...}}`, `{:error, _}`, `{:exit, _}` tuples survive JSON encode/decode via the `__result_tag__` discriminator.
+4. **Result tuple round-tripping**: `{:ok, %{...}}`, `{:error, _}`, `{:exit, _}` tuples survive JSON encode/decode via the `__result_tag__` discriminator; plain strings survive via the `"string"` tag (new code) or verbatim raw-string branch (legacy rows).
 5. **One justified `try/rescue`**: `decode_reason/1` — `String.to_existing_atom/1` has no non-crashing variant; unknown reason strings legitimately stay strings.
 
 ## Removal: quarantine/integrity machinery (decision + rationale)
@@ -80,6 +80,41 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 - **No quarantine tables are created** (DDL removed from `Schema.create_tables/1`; existing quarantine tables in live DBs are NOT dropped — harmless leftover rows are simply ignored).
 - **Undecodable rows are SKIPPED + `Logger.warning`** — decode errors in read paths are caught and logged, with no INSERT-into-quarantine + DELETE-from-live pair.
 - **The only startup DB check kept is lease reconciliation**, done with pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1` — see root CONTEXT.md "Stuck-`:finalizing`-forever bug"). No whole-table integrity scrub at init.
+
+## Schema: `updated_at` column (store-internal bookkeeping)
+
+- `tasks` gains a 19th column `updated_at TEXT` (after `branch_name`), written via targeted `update_task_columns` calls with `Queries.encode_column_value(:updated_at, dt)` → `Codec.encode_datetime/1` (fixed-precision ISO-8601, same as `started_at`/`finished_at`).
+- **`updated_at` is deliberately NOT in `Codec.@task_columns`** and NOT in `%TaskInfo{}` — it is store-internal bookkeeping (changed-since poll tracking). Positional `encode_task`/`decode_task` are untouched; `Queries.task_select_sql/0` therefore never selects it.
+- **New indexes** (`Schema.create_tables/1`, idempotent `IF NOT EXISTS`): `idx_tasks_updated_at ON tasks(updated_at)` (backs the changed-since poll query) and `idx_tasks_started_at ON tasks(started_at)` (backs `safe_select_paginated_tasks`'s `ORDER BY started_at DESC` — closes the old "started_at unindexed" gap, see Known Gaps).
+- **Migration**: `Schema.migrate_schema/1` has a new clause — `if "updated_at" not in columns do ALTER TABLE tasks ADD COLUMN updated_at TEXT end` (same pattern as the lease_expires_at/model_id/project_path/branch_name clauses). Since `Store.init/1` **no longer auto-migrates** (see parent workstream), old databases are upgraded by the new **`mix migrate.store`** task, which invokes `migrate_schema/1` (fresh DBs get the column from `create_tables/1` DDL directly).
+
+## Canonical result encoding (result column is uniformly valid JSON)
+
+`encode_result/1` used to store plain strings (crash fallbacks like `"Task process exited: …"`) verbatim, making the `result` column a mix of JSON and raw non-JSON strings (blocker g2). **Now**: plain strings are ALWAYS JSON-wrapped with the existing `__result_tag__` discriminator scheme:
+
+```json
+{"__result_tag__":"string","value":"Task process exited: ..."}
+```
+
+- Encode: `Jason.encode!/1` of a binary can never fail (TOTAL-encode philosophy preserved).
+- Decode: `decode_result/1` matches the `"string"` tag (returns the raw string value) and KEEPS the defensive branches for (a) legacy raw strings (`String.starts_with?` gate) and (b) untagged JSON — round-trips never crash on pre-migration rows.
+- This enables future `json_valid`-guarded `json_extract` SQL filters over the whole column. ⚠️ Legacy raw strings may still exist in old rows — any SQL-side JSON access must remain `json_valid`-guarded (g2 partially resolved: new writes are uniform, old rows aren't migrated by `migrate.store`).
+
+## Opts object encoding (JSON-path addressable)
+
+`encode_opts/1` used to store a positional JSON **array** of `[key_string, value]` pairs, which made JSON-path key lookup fragile (blocker g3). **Now**: a JSON **object** with string keys:
+
+```json
+{"path":"/tmp/repo","mode":"simple","prompt":"..."}
+```
+
+- Encode: `Map.new/2` over the keyword list (atom keys → strings), keeping the existing essential-keys fallback (`[:path, :mode, :prompt, :objective]`) and nil-on-failure semantics.
+- Decode: `decode_opts/1` decodes the object and rebuilds a keyword list, atomizing known keys via the existing `decode_opt_key/1` whitelist (`@known_opt_keys`). A **legacy decode path** for pre-migration array rows is kept (`{:ok, pairs} when is_list(pairs)` → same pair-mapping as before, raising FunctionClauseError on malformed shapes — consistent with "decode raises on bad data").
+- `Queries.build_where/1`'s `:search` filter (`opts LIKE ?N ESCAPE '\'`) is UNAFFECTED: values remain JSON text, so substring matches over the serialized JSON still work (matches `"path"` / `"mode"` key names and string values alike).
+
+## Store.init no longer auto-migrates
+
+`EvoGit.Store.init/1` no longer calls `migrate_schema/1` (see parent workstream — `store.ex`). Schema upgrades for existing databases go through the new **`mix migrate.store`** Mix task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`), which opens the DB and invokes `Schema.migrate_schema/1` (+ `normalize_timestamps/1` where applicable). Fresh databases are created with the full current DDL by `create_tables/1`.
 
 ## Fixed-precision timestamps (normalize_timestamps + encode_datetime)
 
@@ -97,8 +132,8 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 
 ## Known Gaps
 
-- **`started_at` is NOT indexed**, yet the paginated list query hardcodes `ORDER BY started_at DESC LIMIT ?N OFFSET ?M` (`store.ex:468-471`) — every page read is a full scan + sort. Indexed columns are only `status`, `finished_at`, `lease_expires_at`, `project_path` (`schema.ex:82-85`). `type` and `review_status` are also unindexed (the "pending" review filter is driven by the indexed `status = 'completed'` predicate).
-- **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search for a value stored in `opts` matches only if the JSON text contains it verbatim.
+- **✅ RESOLVED — `started_at` is now indexed** (`idx_tasks_started_at`, created in `Schema.create_tables/1`). The paginated list query hardcodes `ORDER BY started_at DESC LIMIT ?N OFFSET ?M` (`store.ex:468-471`); the index makes paging O(page) instead of full-scan + sort. Indexed columns are now `status`, `finished_at`, `lease_expires_at`, `project_path`, `updated_at`, `started_at`. `type` and `review_status` remain unindexed (the "pending" review filter is driven by the indexed `status = 'completed'` predicate).
+- **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search for a value stored in `opts` matches only if the JSON text contains it verbatim. (Unchanged by the opts object-encoding switch — values are still JSON text.)
 
 ## SQLite Optimization Analysis (read-only review — ranked by impact)
 
@@ -113,14 +148,14 @@ Goal context: lower work into SQL instead of Elixir. The codebase is already wel
 2. **`select_running_lease_info` (store.ex:534-547) reads ALL rows with no WHERE.** Both callers filter status in Elixir: init reconcile `== :finalizing` (task_registry.ex:196), `lease_sweep` `== :running` (task_registry.ex:905-909). Adding `WHERE status IN ('running','finalizing')` is trivially safe (status is a plain TEXT column, codec.ex:192 — no decode skipped that matters since only `decode_atom` runs). `id not in owned_ids` and lease-validity checks must stay Elixir-side (in-memory task_refs + wall-clock).
 3. **`select_cleanup_info` (store.ex:588-601) reads ALL rows; `Cleanup` (cleanup.ex:39-53) filters/sorts in Elixir.** `WHERE finished_at IS NOT NULL` is trivially safe (cleanup only ever deletes `finished_at != nil` rows). Age-cutoff and count-trim pushdown (`finished_at < ?cutoff`, `ORDER BY finished_at DESC LIMIT -1 OFFSET ?max_tasks`) were BLOCKED by the ISO-8601 mixed-precision string caveat — **now unblocked** for normalized rows (g1 resolved: `encode_datetime/1` fixed precision + `normalize_timestamps/1` migration). Also `delete_tasks/2` (store.ex:434-439) issues N individual DELETEs — batch as `DELETE ... WHERE id IN (...)` with chunking (SQLite max variables ~32766; rusqlite default).
 4. **`select_tasks_summary` (store.ex:607-630) decodes `result` for every row on every dashboard poll.** Consumers only need `branch_name` from result (`show_review_button?` at evo_dash dashboard_live/assigns.ex:52), and `branch_name` is ALREADY a denormalized column (codec.ex:85,100-106; store.ex:544-548). Adding `branch_name` to the summary SELECT + dropping `result` from it (dashboard change) skips `decode_result` per row per poll — result JSON can be huge (embeds archive_records). Note decode runs INLINE in the Store GenServer (Task-offload exists only for the two `safe_select_*` calls at task_registry.ex:273-291), so narrower columns also cut Store GenServer heap churn.
-5. **Index `started_at`** (schema.ex:82-85 — currently unindexed) — the paginated query hardcodes `ORDER BY started_at DESC` (store.ex:470): every page is a full scan + temp-B-tree sort. Index makes paging O(page). No behavior change.
+5. **✅ DONE — `started_at` indexed** (schema.ex — `idx_tasks_started_at`). The paginated query hardcodes `ORDER BY started_at DESC` (store.ex:470): the index makes paging O(page). No behavior change.
 6. **`trim_recent_projects`/`list_recent_projects` (task_registry.ex:649-675, 424-429)** — full project decode + Elixir sort; table is capped at 10 rows so impact is nil; if ever pushed to SQL, note SQLite `ORDER BY last_opened_at DESC` puts NULLs LAST (matches the nil-safe Elixir sort), but the ISO caveat applies.
 7. **Dead code cleanup** (housekeeping, not SQL): `cleanup_expired_tasks/2` pre-loaded variant (cleanup.ex:72-101) has zero callers; `Lease.set_crash_details/1` + `lookup_sched_meta_result/1` are dead (only reachable via the never-scheduled `:recheck_task`).
 
 ### Blockers specific to full SQL-lowering
 - **(g1) RESOLVED — ISO-8601 strings with mixed precision break lexicographic datetime comparison.** `DateTime.to_iso8601/1` `:auto` precision emits `"…00Z"` for whole seconds but `"…00.123456Z"` with microseconds — `'Z'` (0x5A) > `'.'` (0x2E), so `"…00Z"` sorts BEFORE `"…00.5Z"` lexicographically while being chronologically AFTER. **Fixed** by `Codec.encode_datetime/1` (fixed `:millisecond` precision, constant 24-char `%Y-%m-%dT%H:%M:%S.SSSZ`) + `Schema.normalize_timestamps/1` (migrates existing rows; idempotent via GLOB guard, skips unparseable rows via `julianday` guard). SQL-side datetime filtering/ordering pushdowns (cleanup cutoff, project recency) are now unblocked for normalized rows.
-- **(g2) `result` column mixes JSON and raw non-JSON strings** (crash fallbacks like `"Task process exited: …"` are stored verbatim — codec.ex:414,434-436). Any `json_extract` on `result` must be guarded by `json_valid(result)`; JSON1 functions are almost certainly available (rusqlite bundles SQLite ≥3.38 where JSON is core) but unverified at runtime (`SELECT json_valid('{}')`).
-- **(g3) `opts` is a positional JSON array of `[key_str, value]` pairs** — JSON-path key lookup requires knowing the array index; fragile. The only opts-based filter (`:search` in queries.ex:152-157) is a substring LIKE over raw JSON text and is fine as-is.
+- **(g2) PARTIALLY RESOLVED — `result` column is now uniformly valid JSON for NEW writes.** `encode_result/1` wraps plain strings (crash fallbacks) with a `"string"` `__result_tag__` (see "Canonical result encoding"), so `json_valid(result)` is true for all new rows. ⚠️ **Legacy raw non-JSON strings still exist in pre-migration rows** (stored verbatim by older code) and are NOT rewritten by `migrate.store` — any `json_extract` on `result` must remain guarded by `json_valid(result)`. JSON1 functions are almost certainly available (rusqlite bundles SQLite ≥3.38 where JSON is core) but unverified at runtime (`SELECT json_valid('{}')`).
+- **(g3) RESOLVED — `opts` is now a JSON object** (string keys) instead of a positional array of `[key_str, value]` pairs — values are addressable via JSON paths (e.g. `json_extract(opts, '$.path')`). ⚠️ Legacy array rows still exist in old DBs; `decode_opts/1` keeps a legacy decode path, and any SQL-side JSON-path querying must tolerate both shapes (or require `migrate.store` + `json_type(opts) = 'object'`). The `:search` filter (`opts LIKE` over raw JSON text) is fine as-is.
 - **(g5) Single GenServer connection serializes all SQLite I/O** — SQL pushdown reduces bytes/decode/GC but NOT contention; the 30s `@call_timeout` (store.ex:55) exists for NFS-slow disks, where fewer+smaller statements help directly. No transactions anywhere (each execute is autocommit).
 - **(g6) No prepared-statement reuse** — `Xqlite.prepare/2`/`step/1` exist in the dep (deps/xqlite/lib/xqlite.ex:983,1009) but the code uses only one-shot `XqliteNIF.query/3`/`execute/3`. Micro-optimization only; not a blocker for WHERE/LIMIT pushdown.
 
