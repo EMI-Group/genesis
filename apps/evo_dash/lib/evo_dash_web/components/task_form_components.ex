@@ -156,11 +156,14 @@ defmodule EvoDashWeb.TaskFormComponents do
               <!-- Launch button — the focal point, centered in BOTH
                    layouts (order-2 + mx-auto; works with or without the
                    model select). data-mode drives the per-mode hover ring
-                   color (CSS in assets/css/app.css). -->
+                   color; data-resume drives the resume-ring variant (lighter
+                   green when a resume task id is set — evolve only). Both
+                   keyed in CSS in assets/css/app.css. -->
               <button
                 type="submit"
                 class={["btn btn-primary gap-2 px-5 order-2 mx-auto"]}
                 data-mode={@mode}
+                data-resume={String.trim(@resume_from) != ""}
                 disabled={@disabled}
               >
                 <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch")}

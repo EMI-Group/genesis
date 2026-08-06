@@ -1275,9 +1275,11 @@ button, a, input, textarea, select, summary,
    All accent usage falls back to the DaisyUI primary color.
    ============================================================ */
 
-/* --- Project accent fallback (used when not set inline) --- */
+/* --- Project accent fallbacks (used when not set inline) --- */
 :root {
   --project-accent: var(--color-primary);
+  /* Top-bar project ring degrades to the mode accent, then primary. */
+  --project-ring-accent: var(--project-accent);
 }
 
 /* === Floating Top Bar === */
@@ -1309,7 +1311,7 @@ button, a, input, textarea, select, summary,
 }
 
 .project-palette-trigger:hover {
-  border-color: color-mix(in oklch, var(--project-accent) 50%, transparent);
+  border-color: color-mix(in oklch, var(--project-ring-accent) 50%, transparent);
 }
 
 /* Backdrop — full-screen, semi-transparent, click-to-close */
@@ -1562,18 +1564,27 @@ button, a, input, textarea, select, summary,
    light); never nest oklch(var(--x) / a) (Known Issue (i)). */
 .input-controls button[data-mode="genesis_new"]:hover {
   box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 255) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 255) 50%, transparent);
+    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 25) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 25) 50%, transparent);
 }
 
 .input-controls button[data-mode="genesis_existing"]:hover {
   box-shadow:
-    0 0 0 2px color-mix(in oklch, oklch(0.72 0.15 162) 60%, transparent),
-    0 0 20px -4px color-mix(in oklch, oklch(0.72 0.15 162) 50%, transparent);
+    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 255) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 255) 50%, transparent);
 }
 
 .input-controls button[data-mode="evolve_simple"]:hover {
   box-shadow:
     0 0 0 2px color-mix(in oklch, oklch(0.72 0.17 152) 60%, transparent),
     0 0 20px -4px color-mix(in oklch, oklch(0.72 0.17 152) 50%, transparent);
+}
+
+/* Resumed evolve run: lighter green ring, mirrors the objective-box accent
+   in resume state (server sets data-resume="true" when a resume task id is
+   selected; see task_form_components.ex). */
+.input-controls button[data-mode="evolve_simple"][data-resume="true"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.78 0.16 152) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 152) 50%, transparent);
 }

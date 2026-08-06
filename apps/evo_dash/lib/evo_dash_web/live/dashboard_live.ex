@@ -58,11 +58,14 @@ defmodule EvoDashWeb.DashboardLive do
         pending_tasks={@pending_tasks}
       >
         <%!--
-          --project-accent now carries the TASK-MODE accent (not the project
-          name): genesis_new → blue, genesis_existing → green, evolve_simple →
-          green (lighter green when a resume task id is set — evolve only).
-          The var name is historical; renaming it would require touching
-          assets/css/app.css (out of scope).
+          --project-accent carries the TASK-MODE accent: genesis_new → red,
+          genesis_existing → blue, evolve_simple → green (lighter green when a
+          resume task id is set — evolve only). It drives the objective box
+          (.input-card). --project-ring-accent carries the PROJECT-NAME-HASH
+          accent (ThemeColor.accent_color/1) — stable per project name — and
+          drives the top-bar project ring (.project-palette-trigger:hover).
+          The --project-accent var name is historical; renaming it would
+          require touching assets/css/app.css (out of scope).
         --%>
         <div
           id="dashboard-root"
@@ -71,7 +74,7 @@ defmodule EvoDashWeb.DashboardLive do
           data-task-mode={@task_mode}
           class="flex flex-col min-h-full"
           style={
-            "--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode, @task_resume_from)}"
+            "--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode, @task_resume_from)}; --project-ring-accent: #{ThemeColor.accent_color(@active_project && @active_project.name)}"
           }
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>

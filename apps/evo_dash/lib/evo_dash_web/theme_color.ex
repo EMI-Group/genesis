@@ -1,11 +1,18 @@
 defmodule EvoDashWeb.ThemeColor do
   @moduledoc """
-  Computes a deterministic theme accent color from a project name hash.
+  Computes deterministic accent colors for the dashboard theme.
 
-  The color is derived by hashing the project name with `:erlang.phash2/2`,
-  mapping the hash to a hue (0-360), then converting HSL → hex. This ensures
-  the same project always gets the same color while different projects get
-  visually distinct colors.
+  Two independent color sources:
+
+  * `accent_color/1` — a deterministic color derived from hashing a project
+    name with `:erlang.phash2/2`, mapping the hash to a hue (0-360), then
+    converting HSL → hex. The same project always gets the same color while
+    different projects get visually distinct colors. Used for the top-bar
+    project ring (`--project-ring-accent`).
+  * `accent_color_for_mode/1,2` — a task-mode → accent color palette used
+    for the objective box (`--project-accent`): create-new → red,
+    initialize-existing → blue, evolution → green, resumed evolution →
+    lighter green.
   """
 
   @default_color "#6366f1"
@@ -31,12 +38,12 @@ defmodule EvoDashWeb.ThemeColor do
   @doc """
   Maps a task mode to its accent color.
 
-  The palette mirrors the `[data-mode]` hover colors in `assets/css/app.css`
-  (lines ~1555-1571), so the objective-box accent matches the launch-button
-  hover ring for the same mode:
+  The palette mirrors the `[data-mode]` hover colors in `assets/css/app.css`,
+  so the objective-box accent matches the launch-button hover ring for the
+  same mode:
 
-    * `"genesis_new"` (and any other `"genesis*"` mode) → blue `oklch(0.62 0.19 255)`
-    * `"genesis_existing"` → green `oklch(0.72 0.15 162)`
+    * `"genesis_new"` (and any other `"genesis*"` mode) → red `oklch(0.62 0.19 25)`
+    * `"genesis_existing"` → blue `oklch(0.62 0.19 255)`
     * `"evolve_simple"` (and any other `"evolve*"` mode) → green `oklch(0.72 0.17 152)`
     * `"evolve*"` with a non-blank resume → lighter green `oklch(0.78 0.16 152)`
 
@@ -71,17 +78,17 @@ defmodule EvoDashWeb.ThemeColor do
 
     case mode do
       "genesis_new" ->
-        "oklch(0.62 0.19 255)"
+        "oklch(0.62 0.19 25)"
 
       "genesis_existing" ->
-        "oklch(0.72 0.15 162)"
+        "oklch(0.62 0.19 255)"
 
       "evolve_simple" ->
         evolve_color(resume?)
 
       _ ->
         cond do
-          String.starts_with?(mode, "genesis") -> "oklch(0.62 0.19 255)"
+          String.starts_with?(mode, "genesis") -> "oklch(0.62 0.19 25)"
           String.starts_with?(mode, "evolve") -> evolve_color(resume?)
           true -> default_color()
         end
