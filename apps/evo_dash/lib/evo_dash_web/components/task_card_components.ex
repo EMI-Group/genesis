@@ -113,7 +113,9 @@ defmodule EvoDashWeb.TaskCardComponents do
             <%= if Map.get(@task, :agent_count) do %>
               <span class="flex items-center gap-1.5">
                 <.icon name="hero-user-group" class="size-4 opacity-60" />
-                <%!-- zh_CN: Agent → "智能体" --%>{gettext("%{count} Agents", count: @task.agent_count)}
+                <%!-- zh_CN: Agent → "智能体" --%>{gettext("%{count} Agents",
+                  count: @task.agent_count
+                )}
               </span>
             <% end %>
           </div>
@@ -222,25 +224,30 @@ defmodule EvoDashWeb.TaskCardComponents do
               <%= if Map.get(@task, :usage) do %>
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary" /> <%!-- zh_CN: Token → "词元" --%>{gettext(
-                      "Token & Cost Usage"
-                    )}
+                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary" />
+                    <%!-- zh_CN: Token → "词元" --%>{gettext("Token & Cost Usage")}
                   </h4>
                   <div class="grid grid-cols-3 gap-3">
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1"><%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}</div>
+                      <div class="text-xs text-base-content/50 mb-1">
+                        <%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}
+                      </div>
                       <div class="text-sm font-semibold">
                         {format_number(@task.usage.input_tokens)}
                       </div>
                     </div>
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1"><%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}</div>
+                      <div class="text-xs text-base-content/50 mb-1">
+                        <%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}
+                      </div>
                       <div class="text-sm font-semibold">
                         {format_number(@task.usage.output_tokens)}
                       </div>
                     </div>
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1"><%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}</div>
+                      <div class="text-xs text-base-content/50 mb-1">
+                        <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
+                      </div>
                       <div class="text-sm font-semibold">
                         {format_number(@task.usage.total_tokens)}
                       </div>
@@ -321,9 +328,8 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
                     <span class="flex items-center gap-2">
-                      <.icon name="hero-user-group" class="size-4.5 text-primary" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
-                        "Agents Spawned"
-                      )}
+                      <.icon name="hero-user-group" class="size-4.5 text-primary" />
+                      <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
                     </span>
                     <%= if @task.model_id do %>
                       <span class="text-xs font-medium text-base-content/50">
@@ -340,8 +346,14 @@ defmodule EvoDashWeb.TaskCardComponents do
                 </div>
               <% end %>
 
-              <%= if @task.logs != [] do %>
-                <% log_count = length(@task.logs) %>
+              <%!--
+                logs is NOT in the summary-map contract (TaskRegistry.list_tasks_summary).
+                Map.get keeps this safe for both full %TaskInfo{} structs (TasksLive,
+                paginated full loads) and summary maps (missing key → nil → section
+                hidden, no KeyError).
+              --%>
+              <%= if Map.get(@task, :logs) not in [nil, []] do %>
+                <% log_count = length(Map.get(@task, :logs, [])) %>
                 <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
                   <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
                     <.icon
@@ -356,7 +368,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     </span>
                   </summary>
                   <div class="bg-neutral text-neutral-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
-                    <%= for {log, idx} <- Enum.with_index(Enum.reverse(@task.logs)) do %>
+                    <%= for {log, idx} <- Enum.with_index(Enum.reverse(Map.get(@task, :logs, []))) do %>
                       <div class={[
                         "flex items-start gap-3 p-1.5 rounded transition-colors",
                         rem(idx, 2) == 0 && "bg-black/10",
@@ -509,11 +521,17 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
-    wrapper_class = if truncate,
-      do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-      else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
-    assigns = %{reason: inspect(reason, limit: limit), size_class: size_class, wrapper_class: wrapper_class}
+    wrapper_class =
+      if truncate,
+        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
+        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{
+      reason: inspect(reason, limit: limit),
+      size_class: size_class,
+      wrapper_class: wrapper_class
+    }
 
     ~H"""
     <div class={@wrapper_class}>
@@ -529,11 +547,17 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
-    wrapper_class = if truncate,
-      do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-      else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
-    assigns = %{reason: inspect(reason, limit: limit), size_class: size_class, wrapper_class: wrapper_class}
+    wrapper_class =
+      if truncate,
+        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
+        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    assigns = %{
+      reason: inspect(reason, limit: limit),
+      size_class: size_class,
+      wrapper_class: wrapper_class
+    }
 
     ~H"""
     <div class={@wrapper_class}>
@@ -558,7 +582,8 @@ defmodule EvoDashWeb.TaskCardComponents do
       <%= if @truncate do %>
         <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
           <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" />
+            <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
           </h5>
           <div class="text-sm whitespace-pre-wrap break-words">
             {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
@@ -569,7 +594,9 @@ defmodule EvoDashWeb.TaskCardComponents do
             <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
           </h5>
           <p class="text-sm text-warning">
-            <%!-- zh_CN: agent → "智能体" --%>{gettext("The agent completed without making any changes to the codebase.")}
+            <%!-- zh_CN: agent → "智能体" --%>{gettext(
+              "The agent completed without making any changes to the codebase."
+            )}
           </p>
         </div>
       <% else %>
@@ -578,12 +605,15 @@ defmodule EvoDashWeb.TaskCardComponents do
             <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
           </h5>
           <p class="text-sm text-warning">
-            <%!-- zh_CN: agent → "智能体" --%>{gettext("The agent completed without making any changes to the codebase.")}
+            <%!-- zh_CN: agent → "智能体" --%>{gettext(
+              "The agent completed without making any changes to the codebase."
+            )}
           </p>
         </div>
         <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
           <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" />
+            <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
           </h5>
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
         </div>
@@ -639,9 +669,11 @@ defmodule EvoDashWeb.TaskCardComponents do
           <% end %>
         </div>
       <% end %>
-      <div class={if @truncate,
-        do: "bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner",
-        else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"}>
+      <div class={
+        if @truncate,
+          do: "bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner",
+          else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+      }>
         <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
           <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
         </h5>
@@ -693,9 +725,11 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
     inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
-    wrapper_class = if truncate,
-      do: "bg-base-100 p-3 rounded-lg border border-base-200",
-      else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    wrapper_class =
+      if truncate,
+        do: "bg-base-100 p-3 rounded-lg border border-base-200",
+        else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       result: inspect(result, inspect_opts),
@@ -712,9 +746,11 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
     inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
-    wrapper_class = if truncate,
-      do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
-      else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
+
+    wrapper_class =
+      if truncate,
+        do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
+        else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
       result: inspect(result, inspect_opts),
