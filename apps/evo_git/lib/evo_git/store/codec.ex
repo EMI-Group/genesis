@@ -15,10 +15,18 @@ defmodule EvoGit.Store.Codec do
 
   Decode functions raise on bad data — the Store's safe-select helpers
   (`safe_select_all_tasks/1`, `safe_select_all_projects/1`,
-  `safe_select_paginated_tasks/2`) skip undecodable rows and log a warning
+  `safe_select_paginated_tasks/2`) and the summary reads
+  (`select_tasks_summary/3`, `select_tasks_summary_by_path/4`,
+  `select_tasks_changed_since/2`) skip undecodable rows and log a warning
   instead of crashing.
 
-  Two justified `try/rescue` patterns remain on the decode side:
+  Decode is STRICTLY canonical: only values written by the current encoders
+  decode successfully. `decode_result/1` accepts just the 4 tagged forms and
+  `decode_opts/1` just JSON objects; legacy shapes (raw strings, untagged
+  JSON, pair-array opts, invalid JSON) raise `ArgumentError`. Old databases
+  must be upgraded with `mix migrate.store` before they can be read.
+
+  One justified `try/rescue` pattern remains on the decode side:
 
     * `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
       has no non-crashing variant; an unknown reason string legitimately stays
@@ -311,21 +319,21 @@ defmodule EvoGit.Store.Codec do
   def decode_opts(nil), do: nil
 
   def decode_opts(str) when is_binary(str) do
+    # Strictly canonical: only JSON objects decode. Non-object JSON (legacy
+    # pair-array rows, scalars, JSON null) and invalid JSON raise
+    # ArgumentError — legacy rows must be rewritten by `mix migrate.store`
+    # before they can be read.
     case Jason.decode(str) do
-      # Current encoding: JSON object with string keys.
       {:ok, map} when is_map(map) and not is_struct(map) ->
         Enum.map(map, fn {key_str, value} -> {decode_opt_key(key_str), value} end)
 
-      # Legacy encoding (pre-migration rows): positional JSON array of
-      # [key_string, value] pairs. Decoded for backward compatibility so old
-      # rows never crash the read path.
-      {:ok, pairs} when is_list(pairs) ->
-        Enum.map(pairs, fn [key_str, value] ->
-          {decode_opt_key(key_str), value}
-        end)
+      {:ok, other} ->
+        raise ArgumentError,
+              "Codec: undecodable opts value in DB (expected JSON object): " <> inspect(other)
 
-      _ ->
-        nil
+      {:error, _} ->
+        raise ArgumentError,
+              "Codec: undecodable opts value in DB (expected JSON object): " <> inspect(str)
     end
   end
 
@@ -375,8 +383,8 @@ defmodule EvoGit.Store.Codec do
   # Plain strings (crash fallbacks) are ALWAYS JSON-wrapped with a `"string"`
   # tag (`{"__result_tag__":"string","value":<str>}`), so every value in the
   # result column is valid JSON — this enables future `json_valid`-guarded
-  # `json_extract` SQL filters. Legacy raw strings (written verbatim by older
-  # code versions) still decode correctly (see decode_result/1).
+  # `json_extract` SQL filters. Decode is strictly canonical: only the tagged
+  # forms decode; legacy raw strings/untagged JSON raise (see decode_result/1).
   def encode_result(nil), do: nil
 
   # Plain strings (crash fallbacks) are JSON-wrapped with a "string" tag so the
@@ -394,7 +402,10 @@ defmodule EvoGit.Store.Codec do
 
       {:error, e} ->
         Logger.warning("Codec: failed to encode ok-result: #{Exception.message(e)}")
-        inspect({:ok, data})
+
+        # Fall back to a string-tagged inspect so the column stays uniformly
+        # valid JSON (Jason.encode!/1 of a binary can never fail).
+        Jason.encode!(%{"__result_tag__" => "string", "value" => inspect({:ok, data})})
     end
   end
 
@@ -422,8 +433,9 @@ defmodule EvoGit.Store.Codec do
   end
 
   def encode_result(other) do
-    # Any other shape — fall back to inspect so we never crash on encode.
-    inspect(other)
+    # Any other shape — fall back to a string-tagged inspect so we never crash
+    # on encode and never write raw (untagged) strings.
+    Jason.encode!(%{"__result_tag__" => "string", "value" => inspect(other)})
   end
 
   # Converts the success data map into a string-keyed, JSON-safe map.
@@ -443,38 +455,34 @@ defmodule EvoGit.Store.Codec do
   def decode_result(nil), do: nil
 
   def decode_result(str) when is_binary(str) do
-    # JSON-encoded values start with `{` or `[`. Legacy raw strings (crash
-    # fallbacks written verbatim by older code) do not and round-trip as-is.
-    if String.starts_with?(str, ["{", "["]) do
-      case Jason.decode(str) do
-        {:ok, %{"__result_tag__" => "ok", "data" => data}} when is_map(data) ->
-          {:ok, decode_result_data(data)}
+    # Strictly canonical: only the 4 tagged forms decode. Raw strings, untagged
+    # JSON, invalid JSON, and JSON null raise ArgumentError — legacy rows must
+    # be rewritten by `mix migrate.store` before they can be read.
+    case Jason.decode(str) do
+      {:ok, %{"__result_tag__" => "ok", "data" => data}} when is_map(data) ->
+        {:ok, decode_result_data(data)}
 
-        {:ok, %{"__result_tag__" => "error", "reason" => reason}} ->
-          {:error, decode_reason(reason)}
+      {:ok, %{"__result_tag__" => "error", "reason" => reason}} ->
+        {:error, decode_reason(reason)}
 
-        {:ok, %{"__result_tag__" => "exit", "reason" => reason}} ->
-          {:exit, decode_reason(reason)}
+      {:ok, %{"__result_tag__" => "exit", "reason" => reason}} ->
+        {:exit, decode_reason(reason)}
 
-        {:ok, %{"__result_tag__" => "string", "value" => value}} when is_binary(value) ->
-          # Canonical string encoding (new code) — return the raw string.
-          value
+      {:ok, %{"__result_tag__" => "string", "value" => value}} when is_binary(value) ->
+        # Canonical string encoding — return the raw string.
+        value
 
-        {:ok, value} ->
-          # JSON without a discriminator — return the decoded value as-is
-          # (also covers legacy untagged JSON, if any pre-migration rows
-          # were written that way).
-          value
+      {:ok, other} ->
+        # Untagged JSON (objects/arrays/scalars) or JSON null — non-canonical.
+        raise ArgumentError,
+              "Codec: undecodable result value in DB (missing canonical __result_tag__): " <>
+                inspect(other)
 
-        {:error, _} ->
-          # Looked like JSON but failed to decode — return the raw string so
-          # it round-trips untouched.
-          str
-      end
-    else
-      # Legacy raw strings (crash fallbacks written verbatim by older code)
-      # — return as-is so they round-trip untouched.
-      str
+      {:error, _} ->
+        # Raw non-JSON string (legacy crash fallback) — non-canonical.
+        raise ArgumentError,
+              "Codec: undecodable result value in DB (missing canonical __result_tag__): " <>
+                inspect(str)
     end
   end
 
@@ -550,9 +558,6 @@ defmodule EvoGit.Store.Codec do
     case Jason.decode(str) do
       {:ok, map} when is_map(map) and not is_struct(map) ->
         decode_usage_map(map)
-
-      {:ok, %EvoGit.Agent.Usage{} = usage} ->
-        usage
 
       _ ->
         nil

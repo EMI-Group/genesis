@@ -757,7 +757,7 @@ defmodule EvoGit.Store do
 
     reply =
       case XqliteNIF.query(state.conn, @summary_select_sql <> where_clause, where_params) do
-        {:ok, %{rows: rows}} -> Enum.map(rows, &decode_summary_row/1)
+        {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
         _ -> []
       end
 
@@ -777,7 +777,7 @@ defmodule EvoGit.Store do
              @summary_select_sql <> " WHERE project_path = ?1" <> status_clause <> since_clause,
              [project_path] ++ status_params ++ since_params
            ) do
-        {:ok, %{rows: rows}} -> Enum.map(rows, &decode_summary_row/1)
+        {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
         _ -> []
       end
 
@@ -795,7 +795,7 @@ defmodule EvoGit.Store do
              @summary_select_sql <> " WHERE updated_at > ?1",
              [since_iso]
            ) do
-        {:ok, %{rows: rows}} -> Enum.map(rows, &decode_summary_row/1)
+        {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
         _ -> []
       end
 
