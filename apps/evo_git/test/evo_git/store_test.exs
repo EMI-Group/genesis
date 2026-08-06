@@ -612,14 +612,18 @@ defmodule EvoGit.StoreTest do
       # Plain string crash fallback → canonical "string" tag, decoded back.
       assert Codec.decode_result(Codec.encode_result("raw fallback")) == "raw fallback"
 
-      # Legacy raw string (no `{`/`[` prefix) → returned as-is.
-      assert Codec.decode_result("no-json-here") == "no-json-here"
+      # Legacy raw string (no `{`/`[` prefix) — no longer canonical, raises.
+      assert_raise ArgumentError, fn -> Codec.decode_result("no-json-here") end
 
-      # Untagged JSON object → decoded value as-is.
-      assert Codec.decode_result(Jason.encode!(%{"a" => 1})) == %{"a" => 1}
+      # Untagged JSON object — no longer canonical, raises.
+      assert_raise ArgumentError, fn -> Codec.decode_result(Jason.encode!(%{"a" => 1})) end
 
-      # Untagged JSON array → decoded value as-is.
-      assert Codec.decode_result("[1,2,3]") == [1, 2, 3]
+      # Untagged JSON array — no longer canonical, raises.
+      assert_raise ArgumentError, fn -> Codec.decode_result("[1,2,3]") end
+
+      # Non-JSON-encodable term → string-tagged inspect fallback, decodes back
+      # to the inspect string (not the original term).
+      assert Codec.decode_result(Codec.encode_result({:weird_term, 1})) == "{:weird_term, 1}"
 
       # nil passthrough.
       assert Codec.encode_result(nil) == nil
@@ -641,9 +645,9 @@ defmodule EvoGit.StoreTest do
       assert Keyword.get(decoded, :path) == "/tmp/p"
       assert Keyword.get(decoded, :mode) == "simple"
 
-      # Legacy positional pair-array encoding (array of [key, value] pairs)
-      # still decodes to a keyword list.
-      assert Codec.decode_opts(~s([["path","/x"]])) == [path: "/x"]
+      # Legacy positional pair-array encoding (array of [key, value] pairs) —
+      # no longer canonical (only JSON objects with string keys are), raises.
+      assert_raise ArgumentError, fn -> Codec.decode_opts(~s([["path","/x"]])) end
 
       # nil passthrough.
       assert Codec.encode_opts(nil) == nil
