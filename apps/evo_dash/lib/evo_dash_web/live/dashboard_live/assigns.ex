@@ -26,7 +26,8 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   end
 
   @doc """
-  Assigns `:running_tasks` and `:pending_tasks` from `socket.assigns.tasks`.
+  Assigns `:running_tasks` and `:pending_tasks` for the sidebar from a fresh
+  statuses-filtered summary query.
 
   Uses a statuses-filtered lightweight summary query (SQL-side WHERE) that
   omits heavy JSON fields (logs, usage, archive_metadata) unnecessary for the
