@@ -8,6 +8,7 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 - `dashboard_live/` → Support modules extracted from `DashboardLive`: `StatePersistence`, `Project`, `Assigns`. Note: `dashboard_live.ex` is ~1390 lines and growing — a future split of more event handlers into this support directory may be warranted (the recent prompt-sync change was only ~7 lines).
 - `settings_live/` → Support modules extracted from `SettingsLive`: `ModelProfileHelpers` (pure data-transformation for `[[llm.models]]` CRUD), `ConfigIO` (config loading, runtime updates, atom whitelists)
 - `system_live/` → Support modules extracted from `SystemLive`: `Content` (static guides/references), `Status` (health-check status helpers)
+- `tasks_live/` → Support modules extracted from `TasksLive`: `DirtyTracker` (pure dirty-check state machine gating the remote-node `:remote_poll` full-page reloads)
 
 ## API Surface
 
