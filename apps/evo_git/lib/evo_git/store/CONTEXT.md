@@ -123,7 +123,7 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 
 ## Store.init no longer auto-migrates
 
-`EvoGit.Store.init/1` no longer calls `migrate_schema/1` (see parent workstream — `store.ex`). Schema upgrades for existing databases go through the new **`mix migrate.store`** Mix task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`), which opens the DB directly and invokes `Schema.migrate_schema/1` (+ `normalize_timestamps/1` where applicable). The task is **standalone — it never starts the `:evo_git` application**, so it can safely rewrite rows without booting the OTP runtime. Its canonical-result rewrite (step 4) converts legacy result rows: 4a JSON null → SQL NULL, 4b raw strings → `"string"`-tag wrap, and untagged JSON (objects/arrays/scalars) → SQL NULL. Fresh databases are created with the full current DDL by `create_tables/1`.
+`EvoGit.Store.init/1` no longer calls `migrate_schema/1` (see parent workstream — `store.ex`). Schema upgrades for existing databases go through the new **`mix migrate.store`** Mix task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`), which opens the DB directly and invokes `Schema.migrate_schema/1` (+ `normalize_timestamps/1` where applicable). The task is **standalone — it never starts the `:evo_git` application**, so it can safely rewrite rows without booting the OTP runtime. Its canonical-result rewrite (step 4) converts legacy result rows: 4a JSON literal `null` text → SQL NULL, 4b raw strings AND untagged JSON (objects/arrays/scalars) → `"string"`-tag wrap (content preserved verbatim as the string value). Tagged rows are untouched. Fresh databases are created with the full current DDL by `create_tables/1`.
 
 ## Fixed-precision timestamps (normalize_timestamps + encode_datetime)
 
