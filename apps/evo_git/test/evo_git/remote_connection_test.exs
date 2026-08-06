@@ -21,11 +21,11 @@ defmodule EvoGit.RemoteConnectionTest do
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 
     on_exit(fn ->
-      # Disconnect any connection managers started during this test so they
+      # Terminate any connection managers started during this test so they
       # don't leak into sibling tests (the DynamicSupervisor is app-level).
-      for {target_id, _status} <- EvoGit.RemoteConnection.list_connections() do
-        EvoGit.RemoteConnection.disconnect(target_id)
-      end
+      # Uses cleanup_connections/0 (terminate_child) — see its comment for
+      # why not disconnect/1.
+      cleanup_connections()
 
       if original_xdg do
         System.put_env("XDG_CONFIG_HOME", original_xdg)
@@ -63,13 +63,25 @@ defmodule EvoGit.RemoteConnectionTest do
     target.id
   end
 
-  # Cleanly stops any connection managers we started during a test.
+  # Terminates manager children directly via the DynamicSupervisor instead of
+  # `EvoGit.RemoteConnection.disconnect/1`. disconnect/1 stops the manager with
+  # `:normal`, and because managers are started as `:permanent` children (default
+  # `use GenServer` child spec), OTP restarts them on ANY exit — including
+  # `:normal` — and each restart counts toward the DynamicSupervisor's restart
+  # intensity (default 3 in 5s). Churning through several disconnect cycles
+  # exhausts the intensity and the supervisor dies with `:shutdown`, cascading
+  # into intermittent `unknown registry` teardown failures. terminate_child
+  # removes the child without restarting it. (The lib-side fix — restart:
+  # :transient on the child spec or a true terminate_child-based disconnect —
+  # belongs in lib/evo_git/remote_connection.ex, out of test scope.)
   defp cleanup_connections do
-    connections = EvoGit.RemoteConnection.list_connections()
-
-    for {target_id, _status} <- connections do
-      EvoGit.RemoteConnection.disconnect(target_id)
+    if sup = Process.whereis(EvoGit.RemoteConnection.Supervisor) do
+      for {_id, pid, _type, _mods} <- DynamicSupervisor.which_children(sup), is_pid(pid) do
+        DynamicSupervisor.terminate_child(sup, pid)
+      end
     end
+
+    :ok
   end
 
   describe "list_connections/0" do
