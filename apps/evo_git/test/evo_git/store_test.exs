@@ -2,8 +2,30 @@ defmodule EvoGit.StoreTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Store
+  alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
+
+  # The 16 summary keys returned by select_tasks_changed_since/2 (same
+  # projection as select_tasks_summary, plus the raw `updated_at` string).
+  @summary_keys [
+    :id,
+    :status,
+    :review_status,
+    :result,
+    :started_at,
+    :finished_at,
+    :type,
+    :project_path,
+    :opts,
+    :branch_name,
+    :model_id,
+    :agent_count,
+    :base_sha,
+    :commit_sha,
+    :lease_expires_at,
+    :updated_at
+  ]
 
   # Terminate production children (TaskRegistry depends on Store) and start
   # an isolated Store with a unique tmp SQLite path. `async: false` because
@@ -430,6 +452,202 @@ defmodule EvoGit.StoreTest do
       fetched = Store.get_task(Store, "rt-ref")
 
       assert fetched.ref == nil
+    end
+  end
+
+  describe "updated_at column" do
+    # Force the store-internal updated_at column to a known value via raw SQL
+    # (it is not part of %TaskInfo{}, so it can't be set through put_task).
+    defp set_updated_at!(sqlite_path, id, iso_string) do
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      {:ok, _} =
+        XqliteNIF.execute(conn, "UPDATE tasks SET updated_at = ?1 WHERE id = ?2", [
+          iso_string,
+          id
+        ])
+
+      :ok = XqliteNIF.close(conn)
+    end
+
+    defp raw_updated_at(sqlite_path, id) do
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      {:ok, %{rows: [[updated_at]]}} =
+        XqliteNIF.query(conn, "SELECT updated_at FROM tasks WHERE id = ?1", [id])
+
+      :ok = XqliteNIF.close(conn)
+      updated_at
+    end
+
+    test "put_task stamps updated_at with a fixed-precision ISO timestamp ≈ now", %{
+      sqlite_path: sqlite_path
+    } do
+      :ok =
+        Store.put_task(Store, %TaskInfo{
+          id: "upd-put",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        })
+
+      # updated_at is store-internal — only visible via raw query (or the
+      # summary projection), not via get_task/1's %TaskInfo{} decode.
+      updated_at = raw_updated_at(sqlite_path, "upd-put")
+
+      assert updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      {:ok, dt, _offset} = DateTime.from_iso8601(updated_at)
+      diff_seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
+      assert diff_seconds >= 0 and diff_seconds <= 10
+    end
+
+    test "update_task_columns bumps updated_at to ≈ now", %{sqlite_path: sqlite_path} do
+      :ok =
+        Store.put_task(Store, %TaskInfo{
+          id: "upd-col",
+          type: :genesis,
+          status: :pending,
+          opts: [path: "/tmp/test"]
+        })
+
+      # Force updated_at to a known old value, then update a column.
+      set_updated_at!(sqlite_path, "upd-col", "2000-01-01T00:00:00.000Z")
+      :ok = Store.update_task_columns(Store, "upd-col", status: :running)
+
+      updated_at = raw_updated_at(sqlite_path, "upd-col")
+      refute updated_at == "2000-01-01T00:00:00.000Z"
+      assert updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+      {:ok, dt, _offset} = DateTime.from_iso8601(updated_at)
+      diff_seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
+      assert diff_seconds >= 0 and diff_seconds <= 10
+
+      # The targeted update itself also took effect.
+      assert Store.get_task_status(Store, "upd-col") == :running
+    end
+
+    test "update_lease_expires_at does NOT bump updated_at", %{sqlite_path: sqlite_path} do
+      :ok =
+        Store.put_task(Store, %TaskInfo{
+          id: "upd-lease",
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"]
+        })
+
+      set_updated_at!(sqlite_path, "upd-lease", "2000-01-01T00:00:00.000Z")
+
+      # The 60s lease heartbeat must NOT bump updated_at.
+      :ok = Store.update_lease_expires_at(Store, "upd-lease", 1_700_000_000)
+
+      assert raw_updated_at(sqlite_path, "upd-lease") == "2000-01-01T00:00:00.000Z"
+
+      # But the lease column itself was updated.
+      {:ok, conn} = Xqlite.open(sqlite_path)
+
+      {:ok, %{rows: [[lease]]}} =
+        XqliteNIF.query(conn, "SELECT lease_expires_at FROM tasks WHERE id = ?1", ["upd-lease"])
+
+      :ok = XqliteNIF.close(conn)
+      assert lease == 1_700_000_000
+    end
+
+    test "select_tasks_changed_since returns only rows newer than the since boundary", %{
+      sqlite_path: sqlite_path
+    } do
+      for {id, ts} <- [
+            {"cs-1", "2026-01-01T00:00:00.000Z"},
+            {"cs-2", "2026-01-02T00:00:00.000Z"},
+            {"cs-3", "2026-01-03T00:00:00.000Z"}
+          ] do
+        :ok =
+          Store.put_task(Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: :completed,
+            opts: [path: "/tmp/test"]
+          })
+
+        set_updated_at!(sqlite_path, id, ts)
+      end
+
+      # since before all rows → all three returned.
+      all = Store.select_tasks_changed_since(Store, "2025-01-01T00:00:00.000Z")
+      assert Enum.map(all, & &1.id) |> Enum.sort() == ["cs-1", "cs-2", "cs-3"]
+
+      # since between cs-2 and cs-3 → only cs-3 (strict `>`: boundary-equal
+      # cs-2 and older cs-1 are excluded).
+      rows = Store.select_tasks_changed_since(Store, "2026-01-02T00:00:00.000Z")
+      assert Enum.map(rows, & &1.id) == ["cs-3"]
+      refute Enum.any?(rows, &(&1.id == "cs-2"))
+      refute Enum.any?(rows, &(&1.id == "cs-1"))
+
+      # Far-future since → empty.
+      assert Store.select_tasks_changed_since(Store, "2099-01-01T00:00:00.000Z") == []
+
+      # 16-key summary projection contract, with raw updated_at string.
+      [row] = rows
+      assert Map.keys(row) |> Enum.sort() == Enum.sort(@summary_keys)
+      assert row.updated_at == "2026-01-03T00:00:00.000Z"
+      assert row.status == :completed
+    end
+  end
+
+  describe "Codec result/opts round-trips" do
+    test "encode_result/decode_result round-trip tagged tuples and strings" do
+      # {:ok, map} with atom keys (known result-data fields atomize back).
+      assert Codec.decode_result(
+               Codec.encode_result({:ok, %{commit_sha: "abc", branch_name: "b"}})
+             ) == {:ok, %{commit_sha: "abc", branch_name: "b"}}
+
+      # {:error, string} — reason is not an existing atom, stays a string.
+      assert Codec.decode_result(Codec.encode_result({:error, "boom"})) == {:error, "boom"}
+
+      # {:exit, reason} — existing atoms round-trip as atoms.
+      assert Codec.decode_result(Codec.encode_result({:exit, :killed})) == {:exit, :killed}
+
+      # Plain string crash fallback → canonical "string" tag, decoded back.
+      assert Codec.decode_result(Codec.encode_result("raw fallback")) == "raw fallback"
+
+      # Legacy raw string (no `{`/`[` prefix) → returned as-is.
+      assert Codec.decode_result("no-json-here") == "no-json-here"
+
+      # Untagged JSON object → decoded value as-is.
+      assert Codec.decode_result(Jason.encode!(%{"a" => 1})) == %{"a" => 1}
+
+      # Untagged JSON array → decoded value as-is.
+      assert Codec.decode_result("[1,2,3]") == [1, 2, 3]
+
+      # nil passthrough.
+      assert Codec.encode_result(nil) == nil
+      assert Codec.decode_result(nil) == nil
+    end
+
+    test "encode_opts/decode_opts round-trip keyword lists with boolean values" do
+      opts = [path: "/tmp/p", archive: true, mode: "simple"]
+      encoded = Codec.encode_opts(opts)
+
+      # JSON object with STRING keys (not the legacy positional array).
+      assert encoded == ~s({"archive":true,"mode":"simple","path":"/tmp/p"})
+
+      decoded = Codec.decode_opts(encoded)
+      # Decode iterates the JSON object's keys, so compare sorted (order of a
+      # keyword list is not preserved through a JSON object).
+      assert Enum.sort(decoded) == Enum.sort(opts)
+      assert Keyword.get(decoded, :archive) == true
+      assert Keyword.get(decoded, :path) == "/tmp/p"
+      assert Keyword.get(decoded, :mode) == "simple"
+
+      # Legacy positional pair-array encoding (array of [key, value] pairs)
+      # still decodes to a keyword list.
+      assert Codec.decode_opts(~s([["path","/x"]])) == [path: "/x"]
+
+      # nil passthrough.
+      assert Codec.encode_opts(nil) == nil
+      assert Codec.decode_opts(nil) == nil
     end
   end
 
