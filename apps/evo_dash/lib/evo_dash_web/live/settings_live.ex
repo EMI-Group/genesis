@@ -13,12 +13,22 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:settings} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:settings}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <%= if @active_category != :remote_connections do %>
         <%!-- Config file path display --%>
         <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
           <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
-          <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext("Configuration file")}</span>
+          <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext(
+            "Configuration file"
+          )}</span>
           <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
           <button
             id="settings-config-path-copy"
@@ -135,20 +145,29 @@ defmodule EvoDashWeb.SettingsLive do
                   <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
                     <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
                     <p class="text-sm text-base-content/80">
-                      {gettext("Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file.")}
+                      {gettext(
+                        "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
+                      )}
                     </p>
                   </div>
 
                   <%!-- Existing targets --%>
                   <div :if={@remote_targets != []} class="space-y-3">
-                    <div :for={target <- @remote_targets} class="rounded-lg border border-base-200 bg-base-100 p-4">
+                    <div
+                      :for={target <- @remote_targets}
+                      class="rounded-lg border border-base-200 bg-base-100 p-4"
+                    >
                       <div class="flex items-start justify-between gap-2">
                         <div class="flex items-center gap-3 min-w-0">
-                          <span class={["w-2.5 h-2.5 rounded-full shrink-0 mt-1", remote_target_dot_color(target.id, @remote_statuses)]}></span>
+                          <span class={[
+                            "w-2.5 h-2.5 rounded-full shrink-0 mt-1",
+                            remote_target_dot_color(target.id, @remote_statuses)
+                          ]}></span>
                           <div class="min-w-0">
                             <p class="font-semibold text-sm truncate">{target.name}</p>
                             <p class="text-xs text-base-content/50 font-mono truncate">
-                              {target[:ssh_target] || "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
+                              {target[:ssh_target] ||
+                                "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
                             </p>
                           </div>
                         </div>
@@ -186,37 +205,78 @@ defmodule EvoDashWeb.SettingsLive do
                           </button>
                         <% else %>
                           <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
-                            <% stage_idx = case get_in(@bootstrap_progress, [target.id, :stage]) do
-                              :probing_platform -> 0
-                              :downloading -> 1
-                              :downloading_locally -> 2
-                              :uploading -> 3
-                              :extracting -> 4
-                              :setting_permissions -> 5
-                              :detecting_os -> 6
-                              :copying_config -> 7
-                              :generating_cookie -> 8
-                              :starting_daemon -> 9
-                              _ -> -1
-                            end %>
+                            <% stage_idx =
+                              case get_in(@bootstrap_progress, [target.id, :stage]) do
+                                :probing_platform -> 0
+                                :downloading -> 1
+                                :downloading_locally -> 2
+                                :uploading -> 3
+                                :extracting -> 4
+                                :setting_permissions -> 5
+                                :detecting_os -> 6
+                                :copying_config -> 7
+                                :generating_cookie -> 8
+                                :starting_daemon -> 9
+                                _ -> -1
+                              end %>
                             <ul class="steps steps-horizontal text-xs w-full">
-                              <li class={["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])}>{gettext("Probing platform")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])}>{gettext("Downloading")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])}>{gettext("Downloading locally")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])}>{gettext("Uploading binary")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 4, do: ["step-primary"], else: [])}>{gettext("Extracting")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 5, do: ["step-primary"], else: [])}>{gettext("Setting permissions")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 6, do: ["step-primary"], else: [])}>{gettext("Detecting OS")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 7, do: ["step-primary"], else: [])}>{gettext("Copying config")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 8, do: ["step-primary"], else: [])}>{gettext("Generating cookie")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 9, do: ["step-primary"], else: [])}>{gettext("Starting daemon")}</li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Probing platform")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Downloading")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Downloading locally")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Uploading binary")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 4, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Extracting")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 5, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Setting permissions")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 6, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Detecting OS")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 7, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Copying config")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 8, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Generating cookie")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 9, do: ["step-primary"], else: [])
+                              }>
+                                {gettext("Starting daemon")}
+                              </li>
                             </ul>
                           <% else %>
                             <button
                               class="btn btn-xs btn-ghost gap-1"
                               phx-click="bootstrap_remote_target"
                               phx-value-id={target.id}
-      >
+                            >
                               <.icon name="hero-rocket-launch" class="size-3.5" />
                               {gettext("Bootstrap")}
                             </button>
@@ -224,7 +284,7 @@ defmodule EvoDashWeb.SettingsLive do
                               class="btn btn-xs btn-primary gap-1"
                               phx-click="connect_remote_target"
                               phx-value-id={target.id}
-      >
+                            >
                               <.icon name="hero-arrow-right-end-on-rectangle" class="size-3.5" />
                               {gettext("Connect")}
                             </button>
@@ -244,13 +304,19 @@ defmodule EvoDashWeb.SettingsLive do
                     <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
                     <div class="space-y-1.5">
                       <p class="text-sm text-base-content/80">
-                        {gettext("Configure your SSH server in `~/.ssh/config` and set up SSH key authentication.")}
+                        {gettext(
+                          "Configure your SSH server in `~/.ssh/config` and set up SSH key authentication."
+                        )}
                       </p>
                       <p class="text-sm text-base-content/80">
-                        {gettext("Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`).")}
+                        {gettext(
+                          "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`)."
+                        )}
                       </p>
                       <p class="text-sm text-base-content/80">
-                        {gettext("SSH port, identity file, and other options are read from your SSH config — no need to enter them here.")}
+                        {gettext(
+                          "SSH port, identity file, and other options are read from your SSH config — no need to enter them here."
+                        )}
                       </p>
                     </div>
                   </div>
@@ -278,7 +344,7 @@ defmodule EvoDashWeb.SettingsLive do
                               value={@remote_form_target[:name]}
                               placeholder={gettext("e.g. GPU Server")}
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
+                            />
                           </div>
                           <div class="form-control col-span-2">
                             <label class="label">
@@ -290,11 +356,13 @@ defmodule EvoDashWeb.SettingsLive do
                               value={@remote_form_target[:ssh_target]}
                               placeholder={gettext("gpu-server or user@host")}
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
+                            />
                           </div>
                           <div class="form-control col-span-2">
                             <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Local Release Tarball")}</span>
+                              <span class="label-text font-semibold text-xs">{gettext(
+                                "Local Release Tarball"
+                              )}</span>
                             </label>
                             <input
                               type="text"
@@ -302,14 +370,16 @@ defmodule EvoDashWeb.SettingsLive do
                               value={@remote_form_target[:local_binary_path]}
                               placeholder="_build/prod/rel/genesis_remote.tar.gz"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
+                            />
                             <p class="text-xs text-base-content/50 mt-1">
                               {gettext("Leave blank to auto-download the release on the remote")}
                             </p>
                           </div>
                           <div class="form-control col-span-2">
                             <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Platform (optional)")}</span>
+                              <span class="label-text font-semibold text-xs">{gettext(
+                                "Platform (optional)"
+                              )}</span>
                             </label>
                             <input
                               type="text"
@@ -317,7 +387,7 @@ defmodule EvoDashWeb.SettingsLive do
                               value={@remote_form_target[:platform]}
                               placeholder="linux_x64, darwin_arm64, windows_x64"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
+                            />
                             <p class="text-xs text-base-content/50 mt-1">
                               {gettext("Blank = auto-probe the remote OS/arch")}
                             </p>
@@ -332,7 +402,7 @@ defmodule EvoDashWeb.SettingsLive do
                               value={@remote_form_target[:dist_port]}
                               placeholder="9000"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
+                            />
                           </div>
                           <div class="form-control">
                             <label class="label">
@@ -344,7 +414,7 @@ defmodule EvoDashWeb.SettingsLive do
                               value={@remote_form_target[:remote_path]}
                               placeholder="/tmp/genesis_remote"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-      />
+                            />
                           </div>
                         </div>
                         <div class="flex items-center justify-end gap-2 pt-1">
@@ -377,7 +447,7 @@ defmodule EvoDashWeb.SettingsLive do
                 </div>
               </div>
             <% else %>
-            <%!-- category_section renders its own <form phx-submit="save_category">
+              <%!-- category_section renders its own <form phx-submit="save_category">
                  internally. The LLM category's Quick Setup panel and Model
                  Profiles editor contain their own nested forms (save_api_key,
                  save_custom_model, save_model_profile), so they must NOT be
@@ -385,23 +455,23 @@ defmodule EvoDashWeb.SettingsLive do
                  are invalid HTML — browsers ignore the inner <form> tag, causing
                  the profile editor's Save button to submit save_category instead
                  of save_model_profile, which deletes the models list). --%>
-            <EvoDashWeb.SettingsComponents.category_section
-              category={@active_category}
-              schemas={Map.get(@schemas_by_category, @active_category, [])}
-              file_config={@file_config}
-              errors={Map.get(@per_category_errors, @active_category, [])}
-              sandbox_backend={@scheduler_config[:sandbox_backend]}
-              sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
-              llm_providers={@llm_providers}
-              selected_provider_id={@selected_provider_id}
-              selected_provider_models={@selected_provider_models}
-              selected_variant_id={@selected_variant_id}
-              llm_test_status={@llm_test_status}
-              model_profiles={@file_config[:llm][:models] || []}
-              editing_profile_id={@editing_profile_id}
-              test_profile_id={@test_profile_id}
-              credentials={@credentials}
-            />
+              <EvoDashWeb.SettingsComponents.category_section
+                category={@active_category}
+                schemas={Map.get(@schemas_by_category, @active_category, [])}
+                file_config={@file_config}
+                errors={Map.get(@per_category_errors, @active_category, [])}
+                sandbox_backend={@scheduler_config[:sandbox_backend]}
+                sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
+                llm_providers={@llm_providers}
+                selected_provider_id={@selected_provider_id}
+                selected_provider_models={@selected_provider_models}
+                selected_variant_id={@selected_variant_id}
+                llm_test_status={@llm_test_status}
+                model_profiles={@file_config[:llm][:models] || []}
+                editing_profile_id={@editing_profile_id}
+                test_profile_id={@test_profile_id}
+                credentials={@credentials}
+              />
             <% end %>
           <% end %>
         </div>
@@ -566,12 +636,18 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired — reload the sidebar's running/pending tasks.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+  end
+
+  @impl true
   def handle_event("select_category", %{"category" => cat_str}, socket) do
     # Whitelist lookup: validate the client-supplied category string against the
     # known schema category atoms. Unknown value → nil → keep current category.
     cat =
       Map.get(ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category), cat_str) ||
-        (if cat_str == "remote_connections", do: :remote_connections) ||
+        if(cat_str == "remote_connections", do: :remote_connections) ||
         socket.assigns.active_category
 
     socket =
@@ -642,7 +718,13 @@ defmodule EvoDashWeb.SettingsLive do
                 EvoDash.NodeContext.reload_remote_config(node)
                 remote_cfg = EvoDash.NodeContext.get_remote_config(node)
                 fc = remote_config_to_file_config(remote_cfg)
-                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+
+                {fc,
+                 assign(
+                   socket,
+                   :config_status,
+                   EvoDash.NodeContext.get_remote_config_status(node)
+                 )}
               end
 
             config_file_exists = File.exists?(socket.assigns.config_path)
@@ -724,7 +806,13 @@ defmodule EvoDashWeb.SettingsLive do
                 EvoDash.NodeContext.reload_remote_config(node)
                 remote_cfg = EvoDash.NodeContext.get_remote_config(node)
                 fc = remote_config_to_file_config(remote_cfg)
-                {fc, assign(socket, :config_status, EvoDash.NodeContext.get_remote_config_status(node))}
+
+                {fc,
+                 assign(
+                   socket,
+                   :config_status,
+                   EvoDash.NodeContext.get_remote_config_status(node)
+                 )}
               end
 
             config_file_exists = File.exists?(socket.assigns.config_path)
@@ -866,7 +954,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("save_api_key", %{"credential_key" => credential_key, "api_key" => api_key}, socket) do
+  def handle_event(
+        "save_api_key",
+        %{"credential_key" => credential_key, "api_key" => api_key},
+        socket
+      ) do
     if String.trim(api_key) == "" do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
     else
@@ -969,7 +1061,11 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("add_remote_target", _params, socket) do
     {:noreply,
-     assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote", platform: nil})}
+     assign(socket, :remote_form_target, %{
+       dist_port: 9000,
+       remote_path: "/tmp/genesis_remote",
+       platform: nil
+     })}
   end
 
   @impl true

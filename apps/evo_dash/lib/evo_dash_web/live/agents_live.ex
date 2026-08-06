@@ -172,6 +172,12 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired — reload the sidebar's running/pending tasks.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+  end
+
+  @impl true
   def handle_info(:remote_poll, socket) do
     current_node = socket.assigns.current_node
 
@@ -534,7 +540,10 @@ defmodule EvoDashWeb.AgentsLive do
       {:error, reason} ->
         {:noreply,
          socket
-         |> put_flash(:error, gettext("Failed to send message: %{reason}", reason: inspect(reason)))}
+         |> put_flash(
+           :error,
+           gettext("Failed to send message: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 

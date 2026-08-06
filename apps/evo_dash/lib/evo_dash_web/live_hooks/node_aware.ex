@@ -32,6 +32,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:connection_statuses, fn -> EvoDash.NodeContext.connection_status() end)
       |> assign_new(:running_tasks, fn -> [] end)
       |> assign_new(:pending_tasks, fn -> [] end)
+      |> assign_new(:tasks_reload_pending, fn -> false end)
 
     if Phoenix.LiveView.connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, @remote_connections_topic)
@@ -40,6 +41,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     # Load initial running/pending tasks for all live views
     socket = load_running_and_pending_tasks(socket)
+
+    # Seed the node-context dedup guard with the local context so the first
+    # `handle_params` → `assign_node/2` call doesn't double-fetch the sidebar
+    # (kills the mount double-fetch: on_mount already loaded local tasks).
+    socket = assign(socket, :tasks_node_loaded, {nil, node()})
 
     {:cont, socket}
   end
@@ -50,8 +56,13 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   Node-aware: when `@current_node` is the local BEAM node, tasks are read from
   the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
-  via `EvoDash.NodeContext.list_tasks_summary/1` (RPC). The filtering logic is
+  via `EvoDash.NodeContext.list_tasks_summary/2` (RPC). The filtering logic is
   identical either way — only the source of `all_tasks` changes.
+
+  The fetch is statuses-filtered: only `[:running, :pending, :finalizing,
+  :completed]` are loaded (the sidebar shows running/pending tasks and derives
+  `pending_tasks` review candidates from `:completed`), so the SQL query skips
+  finished tasks that can never appear in the sidebar.
 
   Uses lightweight summary queries that omit heavy JSON fields (logs, usage,
   archive_metadata) unnecessary for the sidebar display.
@@ -61,9 +72,14 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     all_tasks =
       if current_node == node() do
-        TaskRegistry.list_tasks_summary()
+        TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])
       else
-        EvoDash.NodeContext.list_tasks_summary(current_node)
+        EvoDash.NodeContext.list_tasks_summary(current_node, [
+          :running,
+          :pending,
+          :finalizing,
+          :completed
+        ])
       end
 
     running_tasks =
@@ -136,7 +152,21 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     # Reload sidebar tasks from the (possibly changed) node so the "Active
     # Tasks" section always reflects the node being viewed. This runs on every
     # `handle_params` call, including node switches.
-    load_running_and_pending_tasks(socket)
+    #
+    # Dedup guard: skip the reload when the node context hasn't changed since
+    # the last `handle_params` call (e.g. on_mount already loaded local tasks,
+    # or a pagination push_patch re-runs with the same node). Node switches
+    # (local↔remote, pending→connected) still reload since the context tuple
+    # differs.
+    context = {socket.assigns[:current_node_id], socket.assigns[:current_node]}
+
+    if Map.get(socket.assigns, :tasks_node_loaded) == context do
+      socket
+    else
+      socket
+      |> load_running_and_pending_tasks()
+      |> Phoenix.Component.assign(:tasks_node_loaded, context)
+    end
   end
 
   # Resolves a node param string into `:local`, `{:remote, target_map,
@@ -262,11 +292,52 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Handles task-related PubSub messages by reloading running/pending tasks.
-  Returns `{:noreply, socket}`.
+  Handles task-related PubSub messages by scheduling a debounced reload of
+  running/pending tasks. Returns `{:noreply, socket}`.
+
+  Uses a trailing-edge debounce (300ms via `:node_aware_reload_tasks`) to
+  coalesce broadcast bursts into a single reload: intermediate broadcasts
+  while a reload is already pending are dropped.
   """
   def handle_task_info(socket, _message) do
-    {:noreply, load_running_and_pending_tasks(socket)}
+    {:noreply, debounce_task_reload(socket)}
+  end
+
+  @doc """
+  Trailing-edge debounce for task reloads. When a reload is already scheduled
+  (`:tasks_reload_pending` is truthy), intermediate broadcasts are dropped and
+  the socket is returned unchanged. Otherwise schedules
+  `:node_aware_reload_tasks` after 300ms and sets `:tasks_reload_pending`.
+  LiveViews handle the `:node_aware_reload_tasks` message by calling
+  `reload_tasks/1`. Returns the socket.
+  """
+  def debounce_task_reload(socket) do
+    if Map.get(socket.assigns, :tasks_reload_pending, false) do
+      # A reload is already scheduled — drop this intermediate broadcast.
+      socket
+    else
+      Process.send_after(self(), :node_aware_reload_tasks, 300)
+      Phoenix.Component.assign(socket, :tasks_reload_pending, true)
+    end
+  end
+
+  @doc """
+  Executes the debounced task reload: reloads running/pending tasks from the
+  current node and clears the `:tasks_reload_pending` flag. Returns the socket.
+  """
+  def reload_tasks(socket) do
+    socket
+    |> load_running_and_pending_tasks()
+    |> Phoenix.Component.assign(:tasks_reload_pending, false)
+  end
+
+  @doc """
+  Clears the `:tasks_reload_pending` flag without reloading. Returns the
+  socket. Used by LiveViews that perform their own custom reload instead of
+  calling `reload_tasks/1`.
+  """
+  def clear_task_reload_pending(socket) do
+    Phoenix.Component.assign(socket, :tasks_reload_pending, false)
   end
 
   @doc """

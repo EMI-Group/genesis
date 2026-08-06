@@ -16,7 +16,7 @@ Contains all reusable UI component modules and layout templates for the EvoDash 
 | `EvoDashWeb.CoreComponents` | `core_components.ex` | Phoenix 1.8 scaffolded building blocks: `header/1`, `flash/1`, `flash_group/1`, `simple_form/1`, `button/1`, `icon/1`, `input/1`, `table/1`, `theme_toggle/1`, plus JS commands (`show_notification`, `toggle_dropdown`, `focus`, `close_parent`). The `flash/1` component supports three flash kinds: `:info`, `:error`, and `:warning` — each with appropriate styling (`alert-info`, `alert-error`, `alert-warning`) and corresponding Heroicon. |
 | `EvoDashWeb.ProjectComponents` | `project_components.ex` | **Command Palette** project control (`project_omnibox/1` — trigger button showing active project → centered modal overlay with search-filtered recent-projects list + "Open Project by Path" + "Create New Project"; keyboard-first via server-side `palette_keydown`; trigger typography is enlarged — trigger `px-4 py-2`, project name `text-base font-bold`, path `text-sm`, placeholder `text-base`; `filter_projects/2` public helper for search filtering), sub-components `palette_menu/1`, `palette_open_path/1` (with PathAutocomplete hook), `palette_new_project/1`. Project settings panel and dropdown tab (`project_settings_panel/1`, `project_settings_tab/1`, shared `project_settings_body/1`: genesis.toml status, worktree script, dev commands, foreign repos) |
 | `EvoDashWeb.TaskFormComponents` | `task_form_components.ex` | Single-card, two-layout objective editor (`task_form/1` — ONE `.input-card` containing the prompt textarea (`phx-hook="AdaptiveInput"` + `phx-update="ignore"` + `phx-change="task_prompt_change"` + `phx-debounce="200"`) AND the `.input-controls` row as its last element; `data-layout` is **server-driven** via `layout_for/1` — see "Task Form — Single-Card Two-Layout Design" below), `task_options_tab/1` (Configure-dropdown Task Options; inputs carry `form="task-form"`), legacy `advanced_options/1` |
-| `EvoDashWeb.TaskCardComponents` | `task_card_components.ex` | Task cards with accent bar, relative timestamps, expandable details, result/options rendering helpers (`render_result_full/1`) |
+| `EvoDashWeb.TaskCardComponents` | `task_card_components.ex` | Task cards with accent bar, relative timestamps, expandable details, result/options rendering helpers (`render_result_full/1`). **Summary-map safe** — hardened so both full `%TaskInfo{}` structs (TasksLive) and lightweight summary maps render without KeyError (see "Task Cards & the Summary-Map Contract" below). |
 | `EvoDashWeb.ArchiveComponents` | `archive_components.ex` | Per-agent archive records, nested agent hierarchy tree, recursive node renderer (uses `EvoDashWeb.ArchiveHelpers`) |
 | `EvoDashWeb.SettingsComponents` | `settings_components.ex` | Settings page components with VS Code-inspired sidebar+content layout: `setting_card/1` (schema-driven config key card with input widget, description, default hint, validation error display), `category_section/1` (right content area for a category with grouped settings and save button), `settings_sidebar/1` (category sidebar with icons, key counts, and search filter) |
 | `EvoDashWeb.AgentsComponents` | `agents_components.ex` | Agent tree visualization: recursive `agent_tree/1` with connector lines and status indicator helpers (color/background/border/icon) for pending/running/waiting states |
@@ -99,3 +99,42 @@ Why the `!important`: the `SidebarCollapse` hook (`assets/js/hooks/sidebar_colla
 - **History**: commit `6dd71210` ("fix: sidebar dropdowns covered by main content") changed `layouts.ex` to `overflow-visible` + `z-50` and added `z-0` to `#main-scroll`, but did NOT update the hook — so expanded-state clipping returned on the next mount. The proper root-cause fix lives in `sidebar_collapse.js`: remove the `overflow-hidden` add in the `applyCollapsed(false)` else branch (keep `overflow-visible`). That file is outside this node; if it is ever fixed, revert `overflow-visible!` in `layouts.ex` back to plain `overflow-visible`.
 - **z-index contract** (do not disturb): sidebar `<aside>` `z-50`; main content `#main-scroll` `z-0` (stacking context, traps page modals below the sidebar); `.dropdown-content { z-index: 50 !important }` (app.css, keeps dropdown panels above sidebar siblings); mobile overlay `z-40`; config warning banner `z-40`; mobile hamburger `z-50`. Lowering the sidebar below `z-50` or raising `#main-scroll` above `z-0` re-breaks the stacking.
 - **`simple_nav` mode** (WelcomeLive) renders branding **only** — the node selector lives INSIDE the `if !@simple_nav` block (bottom bar), so it is hidden in simple_nav mode along with the nav links, active-tasks section, and bottom bar; `overflow-visible` is safe there too.
+
+## Task Cards & the Summary-Map Contract (dashboard optimization)
+
+The dashboard task list feeds `EvoDashWeb.Layouts.app`'s sidebar "Active Tasks" section (`@tasks` / `@running_tasks` / `@pending_tasks` assigns) with lightweight **summary maps** from `EvoGit.TaskRegistry.list_tasks_summary/0` / `list_tasks_summary_by_path/1` (the `live/` + `live_hooks/` layers switched from `list_tasks/0` + `lightweight_task/1` / `strip_heavy_fields/1`). Full `%TaskInfo{}` structs (heavy `logs`/`usage`/`archive_metadata` columns) remain only on the Tasks page (TasksLive paginated full loads) and the Review page.
+
+### The summary-map contract
+
+Plain maps with keys: `id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at`. `opts` is a decoded keyword list (same as `TaskInfo.opts` — includes objective/prompt/mode). EXCLUDED: `logs`, `usage`, `archive_metadata` (and all other TaskInfo fields like `ref`).
+
+### Field-access rules for task-card components
+
+- **Dot access (`task.field`) is safe ONLY for contract keys.** On a plain map, a missing key raises `KeyError`; on a struct it returns nil. So any dot access to a non-contract key crashes once a summary map is fed in.
+- **`Map.get(task, field)` is safe for any key** (returns nil when absent).
+- **Non-contract heavy fields** (`logs`, `usage`, `archive_metadata`) must be guarded: `Map.get(task, :logs) not in [nil, []]`, `Map.get(task, :usage)`, `Map.get(task, :archive_metadata) not in [nil, []]`. Guarded sections simply hide on summary maps (correct — the dashboard never had these fields after the old stripping) and render on full structs.
+
+### Field-usage audit (components/ subtree) — conclusions
+
+| Component / render path | Field | Access | In contract? | Fed by |
+|---|---|---|---|---|
+| `Layouts.app` sidebar Active Tasks (`layouts.ex:146-178`, `task_label/1`, `task_status_dot_color/1`, `group_tasks_by_project/1`) | `status`, `id`, `started_at`, `finished_at` | dot | ✅ yes | **dashboard** (`@tasks`/`running_tasks`/`pending_tasks`) + every LiveView mount (NodeAware) |
+| same | `opts`, `project_path` | `Map.get` | ✅ yes | same |
+| `TaskCardComponents.task_card/1` | `type`, `opts` (`[:mode]`/`[:prompt]`/`[:objective]`), `id`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `model_id` | dot | ✅ yes | TasksLive only (full structs via `list_tasks_paginated`) — **NOT dashboard-rendered**; hardened anyway for contract safety |
+| same | `review_status` | `Map.get` | ✅ yes | TasksLive |
+| same — "Token & Cost Usage" section (`:222-318`) | `usage` + nested `usage.*` | `Map.get` guard; inner dot access only inside guard | ❌ no | TasksLive only (section hidden on maps) |
+| same — "Execution Logs" section (`:343-390`) | `logs` | **was unguarded dot `@task.logs != []` (KeyError on map) — FIXED to `Map.get(@task, :logs) not in [nil, []]`; inner accesses via `Map.get(@task, :logs, [])`** | ❌ no | TasksLive only (section hidden on maps) |
+| same — archive section (`:392-397`) | `archive_metadata` | `Map.get` guard (`not in [nil, []]`) | ❌ no | TasksLive only (hidden on maps) |
+| `TaskCardComponents.render_result_full/1` (`dashboard_live.ex:238`, `tasks_live.ex:242`) | input is `Map.get(task, :result)` — the **result VALUE** (runtime tuple), not the task map | — | ✅ (`result`) | dashboard + TasksLive modals |
+| `Helpers.task_description/1` (called from `task_card` `:93/:95`; lives in `helpers.ex`, outside this node) | `type`, `opts` (map pattern match + keyword access) | pattern | ✅ yes | TasksLive |
+| `ArchiveComponents` / `ReviewComponents` / `ProjectComponents` / `TaskFormComponents` / `AgentsComponents` | n/a | n/a | n/a | NOT task-list rendering (archive records, review page, palette/form, agent trees) — out of contract scope |
+
+**Findings:**
+1. The ONLY dashboard-rendered task-list markup under `components/` is the sidebar Active Tasks section in `layouts.ex`. It uses only contract keys (status/id/started_at/finished_at via dot; opts/project_path via Map.get) — **already summary-safe, no change needed**.
+2. `task_card_components.ex` is rendered ONLY by TasksLive with full structs today. Its single unguarded non-contract dot access (`@task.logs != []`, line 343) was hardened to `Map.get(@task, :logs) not in [nil, []]` — behavior-identical for structs, KeyError-safe for maps. The file was also run through `mix format` (it had drifted from formatter-clean: the HEAD version fails `mix format --check-formatted` under Elixir 1.20.2; the committed version passes).
+3. **No heavy field (logs/usage/archive_metadata) is needed by any dashboard-rendered card** — the dashboard card surfaces (sidebar + full-result modal) need only contract fields. Nothing to fetch lazily; no blocker to coordinate with the evo_git manager.
+
+### Notes for the live/ + live_hooks/ parallel work (read-only observations)
+
+- `live/modal_helpers.ex` `view_full_result/2` does `Enum.find(socket.assigns.tasks, &(&1.id == task_id))` + `Map.get(task || %{}, :result)` — already summary-safe (`id` and `result` are contract keys).
+- `live/dashboard_live/assigns.ex:112` comment says "`list_tasks_summary` (which omits opts)" — **appears STALE** relative to the new contract (summary maps INCLUDE `opts`; root CONTEXT.md's SQL-lowering analysis confirms `select_tasks_summary` includes opts). Verify against the new evo_git API when it lands.

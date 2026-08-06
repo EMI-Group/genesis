@@ -2,7 +2,7 @@
 
 ## Intent
 
-ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle behavior: status transitions & guards, lease/heartbeat, cleanup, SQLite integrity/quarantine, archive metadata, restart durability.
+ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle behavior: status transitions & guards, lease/heartbeat, cleanup, skip-and-log of undecodable rows, archive metadata, restart durability.
 
 ## API Surface
 
@@ -11,7 +11,7 @@ ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle 
 | `persistence_test.exs` (849 lines) | `set_review_metadata/3`, `TaskInfo` field backfill (`normalize_tasks` on restart), store CRUD, **registry restart round-trips** (`stop_supervised(EvoGit.TaskRegistry)` + `start_supervised({TaskRegistry, task_store: EvoGit.Store, data_dir: ..., name: EvoGit.TaskRegistry})` — store is KEPT running), recent-project persistence, corruption resilience, `archive_metadata`, the `describe "status recovery from spurious :failed"` block (lines 618-737), and the `describe "startup reconciliation of orphaned :finalizing tasks"` block (line 782: restart marks a persisted `:finalizing` row `:failed` at init while a `:running` row with a valid future lease is left untouched) |
 | `lease_heartbeat_test.exs` (108 lines) | lease cleared on completion; heartbeat does NOT sweep expired-lease unowned tasks (renewal only); one-shot `:lease_sweep` message sweeps expired-lease `:running` tasks → `:failed` |
 | `cleanup_test.exs` (232 lines) | `task_history_config/0` defaults; `cleanup_expired_tasks` age/count limits; never cleans `:running`/`:pending` |
-| `store_integrity_test.exs` (165 lines) | `Store.integrity_check/1`: healthy store, hard-delete of undecodable TASKS rows, quarantine of undecodable PROJECTS rows (uses raw `Xqlite.open`/`XqliteNIF.execute` to inject garbage, then `GenServer.stop`/restart store) |
+| `store_skip_and_log_test.exs` (272 lines) | `Store.safe_select_all_tasks/1`, `safe_select_all_projects/1`, `safe_select_paginated_tasks/2` skip-and-log semantics: undecodable rows are SKIPPED + `Logger.warning` — no data-movement (asserts the only tables in `sqlite_master` are `tasks`/`projects`, and the bad row remains untouched in the live table). Injects genuinely-undecodable rows via raw `Xqlite.open`/`XqliteNIF.execute`: malformed JSON `opts` (`[1,2,3]` — non-pair array that raises in `decode_opts/1`) for tasks, and an INTEGER `last_opened_at` in a pre-created INTEGER-affinity `projects` table (legacy-schema scenario that raises in `decode_datetime/1`) for projects. No store restart needed — WAL mode means the store's own connection sees raw-injected rows. `with_log` asserts the `"Store: skipping undecodable row in <table> (id: ...)"` warning. Also covers the negative case (all rows decodable → no warning) and paginated `total_count` (SQL-level count includes skipped rows) |
 
 ## Key Status-Guard Semantics (pinned by `persistence_test.exs:618-737`)
 

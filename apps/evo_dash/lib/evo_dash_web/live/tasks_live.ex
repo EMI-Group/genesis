@@ -16,88 +16,120 @@ defmodule EvoDashWeb.TasksLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app flash={@flash} current_page={:tasks} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
+    <EvoDashWeb.Layouts.app
+      flash={@flash}
+      current_page={:tasks}
+      config_status={@config_status}
+      current_node_id={@current_node_id}
+      current_node_name={@current_node_name}
+      running_tasks={@running_tasks}
+      pending_tasks={@pending_tasks}
+    >
       <!-- Filter Bar -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
           <div class="flex flex-col sm:flex-row gap-3">
-          <!-- Status Filter -->
-          <div class="form-control">
-            <select
-              name="status_filter"
-              class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              phx-change="filter_tasks"
-            >
-              <option value="all" selected={@status_filter == "all"}>{gettext("All Statuses")}</option>
-              <option value="running" selected={@status_filter == "running"}>{gettext("Running")}</option>
-              <option value="pending" selected={@status_filter == "pending"}>{gettext("Pending")}</option>
-              <option value="completed" selected={@status_filter == "completed"}>{gettext("Completed")}</option>
-              <option value="failed" selected={@status_filter == "failed"}>{gettext("Failed")}</option>
-              <option value="cancelled" selected={@status_filter == "cancelled"}>{gettext("Cancelled")}</option>
-            </select>
-          </div>
-
-          <!-- Project Filter -->
-          <div class="form-control">
-            <select
-              name="project_filter"
-              class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              phx-change="filter_tasks"
-            >
-              <option value="all" selected={@project_filter == "all"}>{gettext("All Projects")}</option>
-              <%= for path <- @project_paths do %>
-                <option value={path} selected={@project_filter == path}>
-                  <%= Path.basename(path) %> (<%= String.slice(path, 0, 30) %>...)
+            <!-- Status Filter -->
+            <div class="form-control">
+              <select
+                name="status_filter"
+                class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                phx-change="filter_tasks"
+              >
+                <option value="all" selected={@status_filter == "all"}>
+                  {gettext("All Statuses")}
                 </option>
-              <% end %>
-            </select>
-          </div>
-
-          <!-- Review Status Filter -->
-          <div class="form-control">
-            <select
-              name="review_filter"
-              class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-              phx-change="filter_review"
-            >
-              <option value="all" selected={@review_status_filter == "all"}>{gettext("All Reviews")}</option>
-              <option value="pending" selected={@review_status_filter == "pending"}>{gettext("Pending Review")}</option>
-              <option value="merged" selected={@review_status_filter == "merged"}>{gettext("Merged")}</option>
-              <option value="rejected" selected={@review_status_filter == "rejected"}>{gettext("Rejected")}</option>
-              <option value="continued" selected={@review_status_filter == "continued"}>{gettext("Continued")}</option>
-            </select>
-          </div>
-
-          <!-- Search -->
-          <div class="form-control flex-1">
-            <div class="relative">
-              <.icon
-                name="hero-magnifying-glass"
-                class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
-              />
-              <input
-                type="text"
-                name="search_query"
-                value={@search_query}
-                class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
-                placeholder={gettext("Search by task ID, prompt, or objective...")}
-                phx-change="search_tasks"
-                phx-debounce="200"
-              />
+                <option value="running" selected={@status_filter == "running"}>
+                  {gettext("Running")}
+                </option>
+                <option value="pending" selected={@status_filter == "pending"}>
+                  {gettext("Pending")}
+                </option>
+                <option value="completed" selected={@status_filter == "completed"}>
+                  {gettext("Completed")}
+                </option>
+                <option value="failed" selected={@status_filter == "failed"}>
+                  {gettext("Failed")}
+                </option>
+                <option value="cancelled" selected={@status_filter == "cancelled"}>
+                  {gettext("Cancelled")}
+                </option>
+              </select>
             </div>
-          </div>
 
-          <!-- Actions -->
-          <div class="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              class="btn btn-ghost btn-md"
-              phx-click="reset_filters"
-              title={gettext("Reset all filters")}
-            >
-              <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
-            </button>
-          </div>
+            <!-- Project Filter -->
+            <div class="form-control">
+              <select
+                name="project_filter"
+                class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                phx-change="filter_tasks"
+              >
+                <option value="all" selected={@project_filter == "all"}>
+                  {gettext("All Projects")}
+                </option>
+                <%= for path <- @project_paths do %>
+                  <option value={path} selected={@project_filter == path}>
+                    {Path.basename(path)} ({String.slice(path, 0, 30)}...)
+                  </option>
+                <% end %>
+              </select>
+            </div>
+
+            <!-- Review Status Filter -->
+            <div class="form-control">
+              <select
+                name="review_filter"
+                class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                phx-change="filter_review"
+              >
+                <option value="all" selected={@review_status_filter == "all"}>
+                  {gettext("All Reviews")}
+                </option>
+                <option value="pending" selected={@review_status_filter == "pending"}>
+                  {gettext("Pending Review")}
+                </option>
+                <option value="merged" selected={@review_status_filter == "merged"}>
+                  {gettext("Merged")}
+                </option>
+                <option value="rejected" selected={@review_status_filter == "rejected"}>
+                  {gettext("Rejected")}
+                </option>
+                <option value="continued" selected={@review_status_filter == "continued"}>
+                  {gettext("Continued")}
+                </option>
+              </select>
+            </div>
+
+            <!-- Search -->
+            <div class="form-control flex-1">
+              <div class="relative">
+                <.icon
+                  name="hero-magnifying-glass"
+                  class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
+                />
+                <input
+                  type="text"
+                  name="search_query"
+                  value={@search_query}
+                  class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
+                  placeholder={gettext("Search by task ID, prompt, or objective...")}
+                  phx-change="search_tasks"
+                  phx-debounce="200"
+                />
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                class="btn btn-ghost btn-md"
+                phx-click="reset_filters"
+                title={gettext("Reset all filters")}
+              >
+                <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
+              </button>
+            </div>
           </div>
         </form>
 
@@ -126,11 +158,16 @@ defmodule EvoDashWeb.TasksLive do
             <%= if @review_status_filter != "all" do %>
               <span class="badge badge-accent gap-1 rounded-md">
                 <%= case @review_status_filter do %>
-                  <% "pending" -> %>{gettext("Pending Review")}
-                  <% "merged" -> %>{gettext("Merged")}
-                  <% "rejected" -> %>{gettext("Rejected")}
-                  <% "continued" -> %>{gettext("Continued")}
-                  <% _ -> %>{@review_status_filter}
+                  <% "pending" -> %>
+                    {gettext("Pending Review")}
+                  <% "merged" -> %>
+                    {gettext("Merged")}
+                  <% "rejected" -> %>
+                    {gettext("Rejected")}
+                  <% "continued" -> %>
+                    {gettext("Continued")}
+                  <% _ -> %>
+                    {@review_status_filter}
                 <% end %>
                 <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
               </span>
@@ -142,7 +179,12 @@ defmodule EvoDashWeb.TasksLive do
       <!-- Task Count -->
       <div class="flex items-center justify-between mb-4">
         <p class="text-sm text-base-content/60">
-          {dngettext("default", "%{count} task found", "%{count} tasks found", length(@filtered_tasks))}
+          {dngettext(
+            "default",
+            "%{count} task found",
+            "%{count} tasks found",
+            length(@filtered_tasks)
+          )}
         </p>
       </div>
 
@@ -162,7 +204,10 @@ defmodule EvoDashWeb.TasksLive do
           </div>
         <% else %>
           <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
-            <div class={["relative z-10 has-[[open]]:z-30 animate-fade-in-up", animation_delay_class(idx)]}>
+            <div class={[
+              "relative z-10 has-[[open]]:z-30 animate-fade-in-up",
+              animation_delay_class(idx)
+            ]}>
               <EvoDashWeb.TaskCardComponents.task_card
                 task={task}
                 show_details={MapSet.member?(@expanded_task_ids, task.id)}
@@ -227,7 +272,12 @@ defmodule EvoDashWeb.TasksLive do
 
       <!-- Clear History (moved to bottom for safety) -->
       <div class="mt-6 flex justify-center sm:justify-end">
-        <button type="button" class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1" phx-click="clear_task_history" phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1"
+          phx-click="clear_task_history"
+          phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
+        >
           <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
         </button>
       </div>
@@ -334,17 +384,28 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    socket = reload_current_page(socket)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+  def handle_info({:tasks_updated} = msg, socket) do
+    # Debounced via NodeAware — the page refresh + sidebar reload happen once in
+    # handle_info(:node_aware_reload_tasks, socket) when the debounce timer fires.
+    # handle_task_info/2 already returns {:noreply, socket}.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
+  def handle_info({:task_status, _task_id, _status} = msg, socket) do
     # Task status transitions (e.g. :finalizing, :running) are broadcast on the
     # "tasks" PubSub topic. Re-fetch the current page so the UI reflects the change.
+    # Debounced via NodeAware — see handle_info(:node_aware_reload_tasks, socket).
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+  end
+
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired: refresh the page task list and the sidebar's
+    # running/pending tasks, then clear the debounce-pending flag.
     socket = reload_current_page(socket)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)}
+    socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true
@@ -573,7 +634,11 @@ defmodule EvoDashWeb.TasksLive do
     offset = (requested_page - 1) * page_size
 
     {tasks, total_count} =
-      EvoDash.NodeContext.list_tasks_paginated(node, limit: page_size, offset: offset, filters: filters)
+      EvoDash.NodeContext.list_tasks_paginated(node,
+        limit: page_size,
+        offset: offset,
+        filters: filters
+      )
 
     total_pages = total_pages(total_count, page_size)
     clamped_page = min(max(1, requested_page), total_pages)
@@ -618,6 +683,7 @@ defmodule EvoDashWeb.TasksLive do
   defp load_page_into_socket(socket, page) do
     node = socket.assigns.current_node
     filters = build_filters_from_assigns(socket)
+
     {tasks, current_page, total_count, total_pages} =
       load_page(node, page, socket.assigns.page_size, filters)
 
