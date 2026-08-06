@@ -2,6 +2,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
   use EvoDashWeb.ConnCase
   import Phoenix.LiveViewTest
 
+  alias EvoGit.TaskInfo
+
   setup [:setup_temp_dir, :set_onboarding_completed]
 
   defp setup_temp_dir(%{} = context) do
@@ -101,6 +103,41 @@ defmodule EvoDashWeb.DashboardLiveTest do
       {idx, _len} -> idx
       :nomatch -> nil
     end
+  end
+
+  # Inserts a task directly into the shared SQLite store (bypassing the async
+  # task spawn that `start_task/2` triggers) and registers on_exit cleanup so
+  # the fixture never leaks into other tests in this file (the shared store
+  # persists across tests). Returns the inserted %TaskInfo{}.
+  defp insert_task_fixture!(overrides) do
+    id = "fixture_#{System.unique_integer([:positive])}"
+
+    task =
+      %TaskInfo{
+        id: id,
+        type: :genesis,
+        status: :completed,
+        opts: Keyword.merge([path: "/tmp/test"], Keyword.get(overrides, :opts, [])),
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+      |> Map.merge(Enum.into(overrides, %{}))
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+      try do
+        EvoGit.Store.delete_task(EvoGit.Store, id)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    task
   end
 
   describe "dashboard without active project" do
@@ -721,6 +758,80 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "my-brand-new-project"
       # The new project is registered in the recent list
       assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == full_path))
+    end
+  end
+
+  describe "task notifications" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "no notification for a task already terminal before mount", %{conn: conn} do
+      insert_task_fixture!(status: :completed)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # The mount seed pre-notifies terminal ids, so a reload must not push a
+      # browser notification for them.
+      send(view.pid, :node_aware_reload_tasks)
+      html = render(view)
+
+      refute_push_event(view, "task_notification", %{})
+      assert html =~ "hero-rocket-launch"
+    end
+
+    test "notification fires only for newly-terminal ids with matching content", %{conn: conn} do
+      # Terminal before mount -> part of the mount seed -> never notified
+      insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Becomes terminal after mount -> newly-terminal -> notification pushed
+      new_task =
+        insert_task_fixture!(
+          status: :completed,
+          opts: [prompt: "notify me"],
+          result: {:ok, %{pr_title: "PR title"}}
+        )
+
+      send(view.pid, :node_aware_reload_tasks)
+      render(view)
+
+      {title, body} = EvoDashWeb.DashboardLive.Project.task_notification_content(new_task)
+      assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
+    end
+
+    test "user-initiated delete_task does not notify", %{conn: conn} do
+      task = insert_task_fixture!(status: :running)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "delete_task", %{"task_id" => task.id})
+
+      # delete_task is a cast — give the registry time to process the store
+      # deletion before the reload snapshot.
+      Process.sleep(50)
+
+      send(view.pid, :node_aware_reload_tasks)
+      render(view)
+
+      refute_push_event(view, "task_notification", %{})
+    end
+
+    test "user-initiated clear_task_history does not notify", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Terminal AFTER mount — would be newly-terminal on reload if the user
+      # had not cleared the history.
+      insert_task_fixture!(status: :completed, opts: [prompt: "cleared task"])
+
+      render_hook(view, "clear_task_history", %{})
+
+      send(view.pid, :node_aware_reload_tasks)
+      render(view)
+
+      refute_push_event(view, "task_notification", %{})
     end
   end
 end
