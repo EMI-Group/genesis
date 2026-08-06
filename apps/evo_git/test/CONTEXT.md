@@ -47,12 +47,6 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 - The `"platform override skips the probe and fails at download"` test queries the live GitHub API (via `RemoteBootstrap.download_url/1`) — with network it resolves then the remote curl fails at the ssh level; without network Req fails fast and the local curl fallback also fails. Assertion is deliberately broad. This test also emits a `curl: (22) ... 404` line (the release asset doesn't exist yet) — harmless.
 - The `connect/1` test emits a `Failed to enable distribution` warning (`:net_kernel` can't start in test env) — pre-existing and harmless; the test only asserts the error is NOT `:local_node_not_distributed`.
 
-### `evo_git/agent_scheduler/`
-- **`dispatch_test.exs`** — `EvoGit.AgentScheduler.DispatchTest`: tests `Dispatch.resolve_agent_repo_root/2` — worktree path stripping and foreign repo root resolution.
-- **`subagents_test.exs`** — `EvoGit.AgentScheduler.SubagentsTest`: tests `Subagents` — spatial contract validation (cross-repo read-only, same-repo hierarchy) and `store_sub_result/3` foreign repo commit tracking. Uses global named ETS tables directly.
-- **`lifecycle_test.exs`** — `EvoGit.AgentScheduler.LifecycleTest`: tests `Lifecycle.handle_agent_crash/3` — retry path (updates meta, resets agent_state, queues when paused), permanent failure (deletes ETS entries, replies to caller), missing sched_meta/agent_state defensive handling. Also tests `cancel_agent/2` — verifies the stored `%Task{}` struct is killed via `Task.shutdown/2`. Uses `async: false` with global named ETS tables.
-- **`slots_test.exs`** — `EvoGit.AgentScheduler.SlotsTest`: tests holder-set slot management — LLM/tool slot request grants when available, blocks when full, release frees + grants pending waiters, and `release_agent_slots/2` releases held slots and purges queues on agent death.
-
 ## Constraints
 - Tests use `@moduletag :tmp_dir` which provides a temporary directory via ExUnit's built-in fixture mechanism.
 - No mocking libraries — all git tests use real `git` operations on temporary filesystem repos.
