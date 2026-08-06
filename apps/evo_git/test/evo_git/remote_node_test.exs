@@ -20,6 +20,7 @@ defmodule EvoGit.RemoteNodeTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.RemoteNode
+  alias EvoGit.TaskInfo
 
   # A node name that definitely does not exist on this machine.
   # On a non-distributed local node (:nonode@nohost), :erpc.call to any foreign
@@ -93,6 +94,97 @@ defmodule EvoGit.RemoteNodeTest do
 
     test "local path delegates to RemoteAPI → TaskRegistry (returns :ok)" do
       assert RemoteNode.clear_finished_tasks(node()) == :ok
+    end
+  end
+
+  describe "list_tasks_changed_since/2" do
+    test "returns [] when the remote node is unreachable" do
+      assert RemoteNode.list_tasks_changed_since(@fake_remote, "2000-01-01T00:00:00.000Z") == []
+    end
+
+    test "local path delegates to RemoteAPI → TaskRegistry (returns [])" do
+      # On the local node, list_tasks_changed_since/2 calls
+      # RemoteAPI.list_tasks_changed_since/1 → TaskRegistry.list_tasks_changed_since/1
+      # → Store.select_tasks_changed_since/2. With an empty shared store, no task
+      # has updated_at > the given since, so [].
+      assert RemoteNode.list_tasks_changed_since(node(), "2000-01-01T00:00:00.000Z") == []
+    end
+
+    test "local path returns summaries newer than the since" do
+      id = "changed-since-#{System.unique_integer([:positive])}"
+
+      # Insert directly into the shared app store (same pattern as
+      # task_registry/cleanup_test.exs). updated_at is store-internal
+      # bookkeeping set to DateTime.utc_now() at insert time, so any task is
+      # strictly newer than a year-2000 since. Clean up in on_exit so the
+      # shared store stays empty for the other async tests.
+      task = %TaskInfo{
+        id: id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now()
+      }
+
+      on_exit(fn ->
+        EvoGit.Store.delete_tasks(EvoGit.Store, [id])
+      end)
+
+      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+
+      results = RemoteNode.list_tasks_changed_since(node(), "2000-01-01T00:00:00.000Z")
+      summary = Enum.find(results, &(&1.id == id))
+      refute is_nil(summary)
+
+      # The summary projection has exactly the 16 lightweight keys.
+      summary_keys = [
+        :agent_count,
+        :base_sha,
+        :branch_name,
+        :commit_sha,
+        :finished_at,
+        :id,
+        :lease_expires_at,
+        :model_id,
+        :opts,
+        :project_path,
+        :result,
+        :review_status,
+        :started_at,
+        :status,
+        :type,
+        :updated_at
+      ]
+
+      assert Enum.sort(Map.keys(summary)) == Enum.sort(summary_keys)
+      # updated_at is the raw fixed-precision ISO string.
+      assert is_binary(summary.updated_at)
+
+      # A far-future since excludes everything.
+      assert RemoteNode.list_tasks_changed_since(node(), "2999-01-01T00:00:00.000Z") == []
+    end
+  end
+
+  describe "list_tasks_summary/2" do
+    test "returns [] when the remote node is unreachable" do
+      assert RemoteNode.list_tasks_summary(@fake_remote) == []
+    end
+
+    test "local path delegates to RemoteAPI → TaskRegistry (returns [])" do
+      assert RemoteNode.list_tasks_summary(node()) == []
+    end
+  end
+
+  describe "RemoteAPI direct delegation" do
+    test "list_tasks_changed_since/1 delegates to the running TaskRegistry (returns [])" do
+      # Direct RemoteAPI call — delegates to TaskRegistry → Store; the shared
+      # store is empty at this point, so no task is newer than the since.
+      assert EvoGit.AgentScheduler.RemoteAPI.list_tasks_changed_since("2000-01-01T00:00:00.000Z") ==
+               []
+    end
+
+    test "list_tasks_summary/0 delegates to the running TaskRegistry (returns [])" do
+      assert EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary() == []
     end
   end
 end
