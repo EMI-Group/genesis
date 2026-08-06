@@ -18,83 +18,23 @@ defmodule EvoGit.TaskRegistry.Cleanup do
   @doc """
   Removes finished tasks that exceed the configured age or count limits.
 
-  Accepts a `task_store` name/pid (e.g. `EvoGit.Store`) and scans all tasks
-  via `EvoGit.Store.select_cleanup_info/1` — a lightweight query that reads
-  only `id` and `finished_at`, avoiding a full struct decode. Age-expired
-  finished tasks and over-limit finished tasks (keeping only the newest
-  `max_tasks`) are batched and deleted.
+  Accepts a `task_store` name/pid (e.g. `EvoGit.Store`) and reads only the task
+  **ids** to delete via `EvoGit.Store.select_cleanup_info/3` — the age cutoff
+  (`finished_at < cutoff`) and count trim (newest `max_tasks` kept) are both
+  pushed down to SQL. No rows are decoded and no Elixir-side sort/filter runs.
+  The returned ids are deleted in batches via `EvoGit.Store.delete_tasks/2`.
 
   This is the runtime entry point used by `TaskRegistry` after task-completion
-  transitions and explicit `clear_finished_tasks`. It performs its own store
-  read (lightweight columns only).
+  transitions and explicit `clear_finished_tasks`.
   """
   def cleanup_expired_tasks(task_store) do
     config = task_history_config()
-    max_age_days = config.max_age_days
-    max_tasks = config.max_tasks
-    cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
+    cutoff = DateTime.add(DateTime.utc_now(), -config.max_age_days * 24 * 60 * 60, :second)
+    cutoff_iso = EvoGit.Store.Codec.encode_datetime(cutoff)
+    ids = EvoGit.Store.select_cleanup_info(task_store, cutoff_iso, config.max_tasks)
 
-    rows = EvoGit.Store.select_cleanup_info(task_store)
-
-    # Partition: age-expired finished tasks vs everything else
-    {age_expired, remaining} =
-      Enum.split_with(rows, fn %{finished_at: finished_at} ->
-        finished_at != nil and DateTime.compare(finished_at, cutoff) == :lt
-      end)
-
-    age_expired_keys = Enum.map(age_expired, fn %{id: id} -> id end)
-
-    # From remaining finished tasks, enforce max_tasks limit (keep newest)
-    over_limit_keys =
-      remaining
-      |> Enum.filter(&(&1.finished_at != nil))
-      |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
-      |> Enum.drop(max_tasks)
-      |> Enum.map(fn %{id: id} -> id end)
-
-    all_keys = age_expired_keys ++ over_limit_keys
-
-    if all_keys != [] do
-      EvoGit.Store.delete_tasks(task_store, all_keys)
-    end
-
-    :ok
-  end
-
-  @doc """
-  Removes finished tasks that exceed the configured age or count limits,
-  operating on a **pre-loaded task list** instead of reading from the store.
-
-  This variant avoids a redundant full-table scan at init time, where the task
-  list has already been loaded (and normalized) by the caller. `tasks` should be
-  a list of `%EvoGit.TaskInfo{}` structs in their final (post-reconcile) state.
-  """
-  def cleanup_expired_tasks(tasks, task_store) do
-    config = task_history_config()
-    max_age_days = config.max_age_days
-    max_tasks = config.max_tasks
-    cutoff = DateTime.add(DateTime.utc_now(), -max_age_days * 24 * 60 * 60, :second)
-
-    # Partition: age-expired finished tasks vs everything else
-    {age_expired, remaining} =
-      Enum.split_with(tasks, fn task ->
-        task.finished_at != nil and DateTime.compare(task.finished_at, cutoff) == :lt
-      end)
-
-    age_expired_keys = Enum.map(age_expired, fn task -> task.id end)
-
-    # From remaining finished tasks, enforce max_tasks limit (keep newest)
-    over_limit_keys =
-      remaining
-      |> Enum.filter(&(&1.finished_at != nil))
-      |> Enum.sort_by(& &1.finished_at, {:desc, DateTime})
-      |> Enum.drop(max_tasks)
-      |> Enum.map(fn task -> task.id end)
-
-    all_keys = age_expired_keys ++ over_limit_keys
-
-    if all_keys != [] do
-      EvoGit.Store.delete_tasks(task_store, all_keys)
+    if ids != [] do
+      EvoGit.Store.delete_tasks(task_store, ids)
     end
 
     :ok

@@ -11,6 +11,8 @@ defmodule EvoDashWeb.TasksLive do
   use Gettext, backend: EvoDashWeb.Gettext
   use EvoDashWeb.ModalHelpers
 
+  alias EvoDashWeb.TasksLive.DirtyTracker
+
   @default_page_size 25
 
   @impl true
@@ -338,7 +340,10 @@ defmodule EvoDashWeb.TasksLive do
         current_page: 1,
         page_size: @default_page_size,
         total_count: 0,
-        total_pages: 1
+        total_pages: 1,
+        # Dirty-check state for remote-node polling; seeded in handle_params
+        # (never used on the local node).
+        dirty_tracker: nil
       )
 
     {:ok, socket}
@@ -352,6 +357,7 @@ defmodule EvoDashWeb.TasksLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
+      |> seed_dirty_tracker()
       |> load_page_into_socket(requested_page)
 
     current_node = socket.assigns.current_node
@@ -403,6 +409,10 @@ defmodule EvoDashWeb.TasksLive do
   def handle_info(:node_aware_reload_tasks, socket) do
     # Debounce timer fired: refresh the page task list and the sidebar's
     # running/pending tasks, then clear the debounce-pending flag.
+    #
+    # NOTE: the dirty tracker is deliberately NOT advanced here — the next
+    # :remote_poll tick re-detects the change and self-corrects, so at most
+    # one redundant full reload happens (local nodes don't use the tracker).
     socket = reload_current_page(socket)
     socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
@@ -413,9 +423,44 @@ defmodule EvoDashWeb.TasksLive do
     current_node = socket.assigns.current_node
 
     if current_node != node() do
-      # Still viewing a remote node — reload the current page and reschedule.
+      # Still viewing a remote node — reschedule first, then run one dirty
+      # check. Each tick transfers only the lightweight changed-since
+      # summaries (usually []) over :erpc; the full page of TaskInfo structs
+      # is fetched only when the tracker reports :reload or :resync.
       Process.send_after(self(), :remote_poll, 3_000)
-      {:noreply, reload_current_page(socket)}
+
+      tracker = socket.assigns[:dirty_tracker]
+
+      # Belt-and-braces: normally handle_params already seeded the tracker for
+      # this node; if not (e.g. the LiveView was mounted before this feature),
+      # seed now so the `since` baseline is never nil.
+      tracker =
+        if is_nil(tracker) or tracker.node != current_node do
+          summaries = EvoDash.NodeContext.list_tasks_summary(current_node)
+
+          DirtyTracker.seed(DirtyTracker.new(), current_node, summaries)
+        else
+          tracker
+        end
+
+      changed =
+        EvoDash.NodeContext.list_tasks_changed_since(current_node, tracker.last_seen_updated_at)
+
+      {action, tracker} = DirtyTracker.evaluate(tracker, changed)
+      socket = assign(socket, :dirty_tracker, tracker)
+
+      case action do
+        :noop ->
+          # Steady state — nothing changed, no full page transfer.
+          {:noreply, socket}
+
+        :reload ->
+          {:noreply, reload_current_page(socket)}
+
+        :resync ->
+          # Periodic full re-sync (deletion safeguard) — same reload as :reload.
+          {:noreply, reload_current_page(socket)}
+      end
     else
       # Switched back to local — stop polling (PubSub handles local updates).
       {:noreply, assign(socket, :remote_poll_timer, false)}
@@ -703,6 +748,35 @@ defmodule EvoDashWeb.TasksLive do
       review_status: socket.assigns.review_status_filter,
       search: socket.assigns.search_query
     ]
+  end
+
+  # Seeds the dirty tracker when viewing a remote node after a node switch.
+  # The tracker gates whether each :remote_poll tick needs a full page reload;
+  # the baseline snapshot is taken BEFORE load_page_into_socket to minimize the
+  # baseline/page-load race window (sub-millisecond; any missed change is
+  # re-detected by the next tick). Pagination/filter push_patches keep the same
+  # node, so the tracker is left untouched (no extra summary fetch per page
+  # turn). On the local node the tracker is never used.
+  defp seed_dirty_tracker(socket) do
+    current_node = socket.assigns.current_node
+
+    if current_node != node() do
+      tracker = socket.assigns[:dirty_tracker]
+
+      if is_nil(tracker) or tracker.node != current_node do
+        summaries = EvoDash.NodeContext.list_tasks_summary(current_node)
+
+        assign(
+          socket,
+          :dirty_tracker,
+          DirtyTracker.seed(DirtyTracker.new(), current_node, summaries)
+        )
+      else
+        socket
+      end
+    else
+      socket
+    end
   end
 
   defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"

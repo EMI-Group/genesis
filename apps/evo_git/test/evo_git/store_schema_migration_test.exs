@@ -8,10 +8,12 @@ defmodule EvoGit.StoreSchemaMigrationTest do
   # Tests the fixed-precision timestamp migration (`normalize_timestamps/1`)
   # introduced by the SQLite-optimization refactor. All tests use RAW Xqlite
   # connections against a private temp DB — the migration must be exercised
-  # directly (Store.init/1 already runs it, so a GenServer-backed store would
-  # never see unnormalized rows), except for the final wiring test which seeds
-  # old-format data and then starts a uniquely-named Store to prove init runs
-  # the migration before serving reads.
+  # directly (Store.init/1 NO LONGER runs it: it is now the `mix migrate.store`
+  # task's job, so a GenServer-backed store sees whatever precision the rows
+  # were written with). The final wiring test seeds old-format data, starts a
+  # uniquely-named Store to prove init leaves pre-existing rows untouched, then
+  # runs the manual migration and restarts the Store to prove the values ARE
+  # normalized afterwards.
   setup do
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_store_schema_#{unique}")
@@ -161,9 +163,12 @@ defmodule EvoGit.StoreSchemaMigrationTest do
   end
 
   describe "Store.init/1 migration wiring" do
-    test "normalizes pre-existing rows on startup", %{sqlite_path: path} do
+    test "does NOT normalize pre-existing rows on startup (manual migration required)", %{
+      sqlite_path: path
+    } do
       # Seed a DB with old-format timestamps via a raw connection, then start a
-      # Store on it: init must run normalize_timestamps before serving reads.
+      # Store on it: init must leave the rows untouched — normalization is now
+      # the `mix migrate.store` task's job, not Store.init's.
       {:ok, conn} = Xqlite.open(path)
       :ok = Schema.create_tables(conn)
       :ok = Schema.migrate_schema(conn)
@@ -179,6 +184,27 @@ defmodule EvoGit.StoreSchemaMigrationTest do
 
       # Unique name so the running production EvoGit.Store is untouched.
       name = :"store_schema_init_#{System.unique_integer([:positive])}"
+      start_supervised({Store, data_dir: path, name: name})
+
+      assert %TaskInfo{} = task = Store.get_task(name, "init-1")
+      # Untouched: 6-digit input keeps its original microsecond precision.
+      assert task.started_at.microsecond == {123_456, 6}
+      # Untouched: whole-second input stays second-precision (no fraction).
+      assert task.finished_at.microsecond == {0, 0}
+
+      # Now run the manual migration (what `mix migrate.store` does) on a raw
+      # connection to the same file while the store is stopped. stop_supervised
+      # takes the child spec id (the Store module), which removes the child
+      # from the test supervisor so it can be restarted below.
+      stop_supervised(Store)
+
+      {:ok, conn} = Xqlite.open(path)
+      assert :ok = Schema.normalize_timestamps(conn)
+      :ok = XqliteNIF.close(conn)
+
+      # Restart a fresh uniquely-named store: the values ARE now normalized,
+      # proving "untouched until the migration runs".
+      name = :"store_schema_migrated_#{System.unique_integer([:positive])}"
       start_supervised({Store, data_dir: path, name: name})
 
       assert %TaskInfo{} = task = Store.get_task(name, "init-1")

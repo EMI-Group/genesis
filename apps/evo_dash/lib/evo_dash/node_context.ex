@@ -367,6 +367,19 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Returns lightweight task summaries updated since an ISO-8601 timestamp on
+  the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks_changed_since/2`. Returns `[]`
+  if the remote call fails. `since_iso` is a fixed-precision ISO-8601 string;
+  the returned summary maps include an `updated_at` key.
+  """
+  @spec list_tasks_changed_since(node(), String.t()) :: [map()]
+  def list_tasks_changed_since(node, since_iso) do
+    EvoGit.RemoteNode.list_tasks_changed_since(node, since_iso)
+  end
+
+  @doc """
   Returns the set of unique project paths with tasks on the given node.
 
   Delegates to `EvoGit.RemoteNode.get_unique_paths/1`. Returns `[]` if the

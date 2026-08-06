@@ -255,27 +255,30 @@ defmodule EvoGit.Store.Codec do
   end
 
   # --- opts (keyword list) ---
-  # Encode as a JSON array of [key_string, value] pairs to preserve keyword
-  # list semantics. If Jason can't serialize the values (tuples, pids, etc.),
-  # fall back to encoding just the essential keys (path, mode, prompt,
-  # objective), or nil.
+  # Encode as a JSON OBJECT with string keys (`{"path": "...", "mode": "..."}`)
+  # — unlike the legacy positional array encoding, values are addressable via
+  # JSON paths (e.g. `json_extract(opts, '$.path')`) for future SQL pushdowns.
+  # Duplicate keys are impossible in a map, so if a keyword list ever repeated
+  # a key, the last occurrence wins on decode (not used in practice).
+  # If Jason can't serialize the values (tuples, pids, etc.), fall back to
+  # encoding just the essential keys (path, mode, prompt, objective), or nil.
   #
   # Known opt keys that the application accesses — atomized safely on decode
-  # via to_existing_atom/1 (these are all defined as literals in the codebase).
-  # Unknown keys remain as strings to avoid blind atomization.
+  # via the @known_opt_keys whitelist. Unknown keys remain as strings to avoid
+  # blind atomization.
   @known_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from)a
   @known_opt_key_strings MapSet.new(@known_opt_keys, &Atom.to_string/1)
 
   def encode_opts(nil), do: nil
 
   def encode_opts(opts) when is_list(opts) do
-    pairs =
-      Enum.map(opts, fn
-        {key, value} when is_atom(key) -> [Atom.to_string(key), value]
-        {key, value} -> [to_string(key), value]
+    map =
+      Map.new(opts, fn
+        {key, value} when is_atom(key) -> {Atom.to_string(key), value}
+        {key, value} -> {to_string(key), value}
       end)
 
-    case Jason.encode(pairs) do
+    case Jason.encode(map) do
       {:ok, json} ->
         json
 
@@ -288,7 +291,7 @@ defmodule EvoGit.Store.Codec do
         essential =
           opts
           |> Keyword.take([:path, :mode, :prompt, :objective])
-          |> Enum.map(fn {key, value} -> [Atom.to_string(key), value] end)
+          |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
 
         case Jason.encode(essential) do
           {:ok, json} ->
@@ -309,6 +312,13 @@ defmodule EvoGit.Store.Codec do
 
   def decode_opts(str) when is_binary(str) do
     case Jason.decode(str) do
+      # Current encoding: JSON object with string keys.
+      {:ok, map} when is_map(map) and not is_struct(map) ->
+        Enum.map(map, fn {key_str, value} -> {decode_opt_key(key_str), value} end)
+
+      # Legacy encoding (pre-migration rows): positional JSON array of
+      # [key_string, value] pairs. Decoded for backward compatibility so old
+      # rows never crash the read path.
       {:ok, pairs} when is_list(pairs) ->
         Enum.map(pairs, fn [key_str, value] ->
           {decode_opt_key(key_str), value}
@@ -362,13 +372,17 @@ defmodule EvoGit.Store.Codec do
   # `@result_data_fields`; the embedded `%EvoGit.Agent.Usage{}` struct is
   # serialized the same way the dedicated `usage` column is.
   #
-  # Plain strings (crash fallbacks) are stored as-is — they are NOT JSON-wrapped
-  # — so they round-trip without any decoding.
+  # Plain strings (crash fallbacks) are ALWAYS JSON-wrapped with a `"string"`
+  # tag (`{"__result_tag__":"string","value":<str>}`), so every value in the
+  # result column is valid JSON — this enables future `json_valid`-guarded
+  # `json_extract` SQL filters. Legacy raw strings (written verbatim by older
+  # code versions) still decode correctly (see decode_result/1).
   def encode_result(nil), do: nil
 
-  # Plain strings (crash fallbacks) are stored as-is, not JSON-wrapped.
+  # Plain strings (crash fallbacks) are JSON-wrapped with a "string" tag so the
+  # column is uniformly valid JSON. Jason.encode!/1 of a binary can never fail.
   def encode_result(result) when is_binary(result) do
-    result
+    Jason.encode!(%{"__result_tag__" => "string", "value" => result})
   end
 
   def encode_result({:ok, data}) when is_map(data) do
@@ -429,8 +443,8 @@ defmodule EvoGit.Store.Codec do
   def decode_result(nil), do: nil
 
   def decode_result(str) when is_binary(str) do
-    # JSON-encoded values start with `{` or `[`. Plain strings (crash
-    # fallbacks) are stored verbatim and round-trip as-is.
+    # JSON-encoded values start with `{` or `[`. Legacy raw strings (crash
+    # fallbacks written verbatim by older code) do not and round-trip as-is.
     if String.starts_with?(str, ["{", "["]) do
       case Jason.decode(str) do
         {:ok, %{"__result_tag__" => "ok", "data" => data}} when is_map(data) ->
@@ -442,8 +456,14 @@ defmodule EvoGit.Store.Codec do
         {:ok, %{"__result_tag__" => "exit", "reason" => reason}} ->
           {:exit, decode_reason(reason)}
 
+        {:ok, %{"__result_tag__" => "string", "value" => value}} when is_binary(value) ->
+          # Canonical string encoding (new code) — return the raw string.
+          value
+
         {:ok, value} ->
-          # JSON without a discriminator — return the decoded value as-is.
+          # JSON without a discriminator — return the decoded value as-is
+          # (also covers legacy untagged JSON, if any pre-migration rows
+          # were written that way).
           value
 
         {:error, _} ->
@@ -452,6 +472,8 @@ defmodule EvoGit.Store.Codec do
           str
       end
     else
+      # Legacy raw strings (crash fallbacks written verbatim by older code)
+      # — return as-is so they round-trip untouched.
       str
     end
   end
