@@ -1019,6 +1019,141 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     end
   end
 
+  describe "list_task_ids/1 — minimal id/status/updated_at projection" do
+    test "list_task_ids/0 returns ALL tasks with exactly id/status/updated_at keys",
+         %{sqlite_path: sqlite_path} do
+      unique = System.unique_integer([:positive])
+      t1 = "task_ids_all_a_#{unique}"
+      t2 = "task_ids_all_b_#{unique}"
+      t3 = "task_ids_all_c_#{unique}"
+      t4 = "task_ids_all_d_#{unique}"
+
+      for {id, status} <- [
+            {t1, :completed},
+            {t2, :running},
+            {t3, :pending},
+            {t4, :failed}
+          ] do
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/proj-task-ids"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+      end
+
+      # Control the store-internal updated_at column so the raw string
+      # pass-through is deterministic.
+      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
+      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
+      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
+      set_updated_at(sqlite_path, t4, "2024-01-04T00:00:00.000Z")
+
+      rows = TaskRegistry.list_task_ids()
+
+      assert Enum.map(rows, & &1.id) |> Enum.sort() == Enum.sort([t1, t2, t3, t4])
+
+      # Every row is a minimal projection — exactly id/status/updated_at, no
+      # heavy JSON fields decoded.
+      for row <- rows do
+        assert Map.keys(row) |> Enum.sort() == [:id, :status, :updated_at]
+        assert is_atom(row.status)
+        # Raw fixed-precision ISO binary, NOT a decoded DateTime.
+        assert is_binary(row.updated_at)
+      end
+
+      by_id = Map.new(rows, &{&1.id, &1})
+      assert by_id[t1].status == :completed
+      assert by_id[t1].updated_at == "2024-01-01T00:00:00.000Z"
+      assert by_id[t2].status == :running
+      assert by_id[t2].updated_at == "2024-01-02T00:00:00.000Z"
+      assert by_id[t3].status == :pending
+      assert by_id[t3].updated_at == "2024-01-03T00:00:00.000Z"
+      assert by_id[t4].status == :failed
+      assert by_id[t4].updated_at == "2024-01-04T00:00:00.000Z"
+    end
+
+    test "list_task_ids/1 with a single status returns only matching rows",
+         %{sqlite_path: sqlite_path} do
+      unique = System.unique_integer([:positive])
+      t1 = "task_ids_filter_a_#{unique}"
+      t2 = "task_ids_filter_b_#{unique}"
+      t3 = "task_ids_filter_c_#{unique}"
+
+      for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :completed}] do
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/proj-task-ids"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+      end
+
+      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
+      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
+      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
+
+      rows = TaskRegistry.list_task_ids([:completed])
+
+      assert Enum.map(rows, & &1.id) |> Enum.sort() == Enum.sort([t1, t3])
+      assert Enum.all?(rows, &(&1.status == :completed))
+
+      # Non-matching statuses are excluded.
+      assert TaskRegistry.list_task_ids([:running]) |> Enum.map(& &1.id) == [t2]
+    end
+
+    test "list_task_ids/1 with multiple statuses returns the union of matches",
+         %{sqlite_path: sqlite_path} do
+      unique = System.unique_integer([:positive])
+      t1 = "task_ids_multi_a_#{unique}"
+      t2 = "task_ids_multi_b_#{unique}"
+      t3 = "task_ids_multi_c_#{unique}"
+      t4 = "task_ids_multi_d_#{unique}"
+
+      for {id, status} <- [
+            {t1, :completed},
+            {t2, :failed},
+            {t3, :running},
+            {t4, :pending}
+          ] do
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/proj-task-ids"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+      end
+
+      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
+      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
+      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
+      set_updated_at(sqlite_path, t4, "2024-01-04T00:00:00.000Z")
+
+      rows = TaskRegistry.list_task_ids([:completed, :failed])
+
+      assert Enum.map(rows, & &1.id) |> Enum.sort() == Enum.sort([t1, t2])
+      assert Enum.all?(rows, &(&1.status in [:completed, :failed]))
+    end
+  end
+
   describe "recheck_task resolution" do
     setup do
       # The :evogit_sched_meta table is normally owned by AgentScheduler; in
