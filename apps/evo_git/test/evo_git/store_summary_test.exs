@@ -552,6 +552,68 @@ defmodule EvoGit.StoreSummaryTest do
       assert Store.select_cleanup_info(Store) == []
       assert Store.select_task_logs(Store, "missing") == nil
       assert Store.select_task_update_info(Store, "missing") == nil
+      assert Store.select_task_ids(Store) == []
+      assert Store.select_task_ids(Store, [:completed]) == []
+    end
+  end
+
+  describe "select_task_ids/2 minimal projection" do
+    test "returns ALL rows with [] statuses" do
+      put_task!(make_task("ids-a", status: :completed))
+      put_task!(make_task("ids-b", status: :running))
+      put_task!(make_task("ids-c", status: :pending))
+      put_task!(make_task("ids-d", status: :failed))
+
+      rows = Store.select_task_ids(Store, [])
+      assert length(rows) == 4
+      assert Enum.map(rows, & &1.id) |> Enum.sort() == ["ids-a", "ids-b", "ids-c", "ids-d"]
+    end
+
+    test "filters by status atoms pushed into SQL" do
+      put_task!(make_task("idf-completed", status: :completed))
+      put_task!(make_task("idf-running", status: :running))
+      put_task!(make_task("idf-pending", status: :pending))
+      put_task!(make_task("idf-failed", status: :failed))
+
+      only_completed = Store.select_task_ids(Store, [:completed])
+      assert Enum.map(only_completed, & &1.id) == ["idf-completed"]
+
+      mixed = Store.select_task_ids(Store, [:completed, :failed])
+      assert Enum.map(mixed, & &1.id) |> Enum.sort() == ["idf-completed", "idf-failed"]
+
+      # A status with no matching rows returns [].
+      assert Store.select_task_ids(Store, [:cancelled]) == []
+    end
+
+    test "returns maps with exactly the :id/:status/:updated_at keys" do
+      put_task!(make_task("idk-1", status: :completed, result: {:ok, %{commit_sha: "abc"}}))
+
+      [row] = Store.select_task_ids(Store)
+      assert Enum.sort(Map.keys(row)) == [:id, :status, :updated_at]
+      refute Map.has_key?(row, :result)
+      refute Map.has_key?(row, :opts)
+    end
+
+    test "updated_at is the raw stored ISO string, not a DateTime", %{sqlite_path: sqlite_path} do
+      put_task!(make_task("idu-1", status: :completed))
+
+      # Deterministic updated_at (put_task! stamps DateTime.utc_now(), which is
+      # not reproducible).
+      set_updated_at!(sqlite_path, "idu-1", "2026-01-02T03:04:05.000Z")
+
+      [row] = Store.select_task_ids(Store)
+      assert row.updated_at == "2026-01-02T03:04:05.000Z"
+      assert is_binary(row.updated_at)
+      refute is_struct(row.updated_at, DateTime)
+      assert row.updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    end
+
+    test "status is decoded to an atom, not a string" do
+      put_task!(make_task("idst-1", status: :running))
+
+      [row] = Store.select_task_ids(Store)
+      assert row.status == :running
+      assert is_atom(row.status)
     end
   end
 end
