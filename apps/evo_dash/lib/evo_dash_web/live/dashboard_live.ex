@@ -476,7 +476,7 @@ defmodule EvoDashWeb.DashboardLive do
           tauri_detected: false,
           platform: "linux",
           notified_task_ids:
-            TaskRegistry.list_tasks()
+            TaskRegistry.list_tasks_summary()
             |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
             |> Enum.map(& &1.id)
             |> MapSet.new()
