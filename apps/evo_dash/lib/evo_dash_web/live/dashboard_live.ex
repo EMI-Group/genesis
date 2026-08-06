@@ -28,21 +28,17 @@ defmodule EvoDashWeb.DashboardLive do
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
       >
-        <div class="flex items-center gap-3 mb-2 animate-fade-in-up">
-          <div class="bg-info/15 text-info p-3 rounded-xl">
-            <.icon name="hero-chart-bar" class="size-6" />
-          </div>
-          <div>
-            <h1 class="text-xl font-bold">{gettext("System Dashboard")}</h1>
-            <p class="text-sm text-base-content/60">
-              {gettext("Phoenix LiveDashboard — system metrics, processes, and application telemetry")}
-            </p>
-          </div>
-        </div>
+        <%!--
+          Full-bleed Phoenix LiveDashboard: no header chrome — the iframe
+          fills the entire main content area. The `Layouts.app` main content
+          is `flex-1` inside an `h-screen` flex column with `py-4` padding
+          (1rem top + 1rem bottom = 2rem), so `calc(100vh - 2rem)` spans
+          exactly the available area with no wasted space.
+        --%>
         <iframe
           src={~p"/phoenix/dashboard/home"}
-          class="w-full rounded-xl"
-          style="min-height: calc(100vh - 200px); border: none;"
+          class="w-full"
+          style="min-height: calc(100vh - 2rem); border: none;"
           title="Phoenix LiveDashboard"
         ></iframe>
       </EvoDashWeb.Layouts.app>
