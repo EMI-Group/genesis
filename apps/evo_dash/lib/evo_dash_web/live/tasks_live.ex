@@ -436,7 +436,7 @@ defmodule EvoDashWeb.TasksLive do
       # seed now so the `since` baseline is never nil.
       tracker =
         if is_nil(tracker) or tracker.node != current_node do
-          summaries = EvoDash.NodeContext.list_tasks_summary(current_node)
+          summaries = EvoDash.NodeContext.list_task_ids(current_node)
 
           DirtyTracker.seed(DirtyTracker.new(), current_node, summaries)
         else
@@ -764,7 +764,7 @@ defmodule EvoDashWeb.TasksLive do
       tracker = socket.assigns[:dirty_tracker]
 
       if is_nil(tracker) or tracker.node != current_node do
-        summaries = EvoDash.NodeContext.list_tasks_summary(current_node)
+        summaries = EvoDash.NodeContext.list_task_ids(current_node)
 
         assign(
           socket,
