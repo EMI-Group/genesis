@@ -37,7 +37,6 @@ defmodule EvoDashWeb.Layouts do
   attr(:remote_targets, :list, default: [])
   attr(:connection_statuses, :map, default: %{})
 
-  attr(:tasks, :list, default: [])
   attr(:running_tasks, :list, default: [])
   attr(:pending_tasks, :list, default: [])
 

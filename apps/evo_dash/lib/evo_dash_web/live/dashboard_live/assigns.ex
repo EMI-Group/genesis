@@ -3,7 +3,7 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   Assign-building helpers for the dashboard LiveView.
 
   Functions that compute derived assigns: notified task IDs, running/pending
-  task lists, review button visibility, form defaults, and current task list.
+  task lists, review button visibility, and form defaults.
   """
 
   alias EvoGit.TaskRegistry
@@ -12,11 +12,14 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
 
   @doc """
   Builds the set of notified task IDs by merging existing notified IDs with
-  all finished tasks in the given list.
+  all terminal tasks (completed/failed/cancelled) currently in the store.
+
+  Uses the minimal id+status projection (`TaskRegistry.list_task_ids/1`), so
+  no result/opts JSON decode happens — cheap enough for mount, `handle_params`
+  fallbacks, and task mutations.
   """
-  def build_notified_task_ids(tasks, existing_notified) do
-    tasks
-    |> Enum.filter(&(&1.status in [:completed, :failed, :cancelled]))
+  def build_notified_task_ids(existing_notified) do
+    TaskRegistry.list_task_ids([:completed, :failed, :cancelled])
     |> Enum.map(& &1.id)
     |> MapSet.new()
     |> MapSet.union(existing_notified)
@@ -101,20 +104,5 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
       task_build_system: nil,
       show_advanced: false
     )
-  end
-
-  @doc """
-  Returns the current task list for the socket, scoped to the active project
-  path if one is set. Uses lightweight summary queries that omit heavy fields
-  (logs, usage, archive_metadata) while keeping everything the main task list
-  needs — including `opts` (objective, mode, etc.) and `result` (for Review
-  buttons and result rendering).
-  """
-  def current_tasks(socket) do
-    if socket.assigns.active_project_path do
-      TaskRegistry.list_tasks_summary_by_path(socket.assigns.active_project_path)
-    else
-      TaskRegistry.list_tasks_summary()
-    end
   end
 end

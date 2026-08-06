@@ -355,6 +355,18 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Lists minimal task projections (id, status, updated_at) on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_task_ids/2`. Returns `[]` if the
+  remote call fails. `statuses` filters by task status (atoms such as
+  `:completed`, `:failed`, `:cancelled`); `[]` (the default) returns all rows.
+  """
+  @spec list_task_ids(node(), [atom()]) :: [map()]
+  def list_task_ids(node, statuses \\ []) do
+    EvoGit.RemoteNode.list_task_ids(node, statuses)
+  end
+
+  @doc """
   Returns a paginated slice of tasks on the given node.
 
   Delegates to `EvoGit.RemoteNode.list_tasks_paginated/2`. Returns `{[], 0}`
