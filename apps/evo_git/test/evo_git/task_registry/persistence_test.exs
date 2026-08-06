@@ -846,4 +846,425 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert running.lease_expires_at == future_lease
     end
   end
+
+  describe "list_tasks_summary / by_path / changed_since — since filter semantics" do
+    test "list_tasks_summary/2 since returns only strictly-newer rows; boundary-equal excluded; nil since returns all",
+         %{sqlite_path: sqlite_path} do
+      unique = System.unique_integer([:positive])
+      t1 = "summary_since_a_#{unique}"
+      t2 = "summary_since_b_#{unique}"
+      t3 = "summary_since_c_#{unique}"
+
+      for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :completed}] do
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/proj-since"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+      end
+
+      # Control the store-internal updated_at column directly via raw SQL so
+      # the string-comparison semantics of the `since` filter are deterministic.
+      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
+      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
+      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
+
+      # Strictly-newer only: the boundary-equal row (t2) is excluded.
+      ids =
+        TaskRegistry.list_tasks_summary([], "2024-01-02T00:00:00.000Z")
+        |> Enum.map(& &1.id)
+        |> Enum.sort()
+
+      assert ids == [t3]
+
+      # nil since → no time filter.
+      ids_all =
+        TaskRegistry.list_tasks_summary([], nil)
+        |> Enum.map(& &1.id)
+        |> Enum.sort()
+
+      assert ids_all == Enum.sort([t1, t2, t3])
+
+      # statuses + since combined.
+      assert TaskRegistry.list_tasks_summary([:completed], "2024-01-01T00:00:00.000Z")
+             |> Enum.map(& &1.id)
+             |> Enum.sort() == [t3]
+
+      assert TaskRegistry.list_tasks_summary([:running], "2024-01-01T00:00:00.000Z")
+             |> Enum.map(& &1.id) == [t2]
+    end
+
+    test "list_tasks_summary_by_path/3 combines path + since (+ statuses)", %{
+      sqlite_path: sqlite_path
+    } do
+      unique = System.unique_integer([:positive])
+      a1 = "summary_path_a_#{unique}"
+      a2 = "summary_path_b_#{unique}"
+      b1 = "summary_path_c_#{unique}"
+
+      for {id, path, status} <- [
+            {a1, "/proj-a", :completed},
+            {a2, "/proj-a", :running},
+            {b1, "/proj-b", :completed}
+          ] do
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: path],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+      end
+
+      set_updated_at(sqlite_path, a1, "2024-01-01T00:00:00.000Z")
+      set_updated_at(sqlite_path, a2, "2024-01-02T00:00:00.000Z")
+      set_updated_at(sqlite_path, b1, "2024-01-03T00:00:00.000Z")
+
+      assert TaskRegistry.list_tasks_summary_by_path("/proj-a", [], "2024-01-01T00:00:00.000Z")
+             |> Enum.map(& &1.id) == [a2]
+
+      assert TaskRegistry.list_tasks_summary_by_path("/proj-a", [], nil)
+             |> Enum.map(& &1.id)
+             |> Enum.sort() == Enum.sort([a1, a2])
+
+      assert TaskRegistry.list_tasks_summary_by_path("/proj-b", [], "2024-01-01T00:00:00.000Z")
+             |> Enum.map(& &1.id) == [b1]
+
+      # path + statuses + since: a2 is :running, so no :completed matches.
+      assert TaskRegistry.list_tasks_summary_by_path(
+               "/proj-a",
+               [:completed],
+               "2024-01-01T00:00:00.000Z"
+             ) ==
+               []
+
+      # path + statuses, no since.
+      assert TaskRegistry.list_tasks_summary_by_path("/proj-a", [:completed], nil)
+             |> Enum.map(& &1.id) == [a1]
+    end
+
+    test "list_tasks_changed_since/1 returns only newer rows with the 16-key projection",
+         %{sqlite_path: sqlite_path} do
+      unique = System.unique_integer([:positive])
+      t1 = "changed_a_#{unique}"
+      t2 = "changed_b_#{unique}"
+      t3 = "changed_c_#{unique}"
+
+      for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :pending}] do
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/proj-changed"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+      end
+
+      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
+      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
+      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
+
+      results = TaskRegistry.list_tasks_changed_since("2024-01-02T00:00:00.000Z")
+      assert Enum.map(results, & &1.id) |> Enum.sort() == [t3]
+
+      # Future since → nothing.
+      assert TaskRegistry.list_tasks_changed_since("2099-01-01T00:00:00.000Z") == []
+
+      # 16-key projection; updated_at passed through as the raw ISO string.
+      [row] = TaskRegistry.list_tasks_changed_since("2024-01-02T00:00:00.000Z")
+
+      expected_keys =
+        [
+          :id,
+          :status,
+          :review_status,
+          :result,
+          :started_at,
+          :finished_at,
+          :type,
+          :project_path,
+          :opts,
+          :branch_name,
+          :model_id,
+          :agent_count,
+          :base_sha,
+          :commit_sha,
+          :lease_expires_at,
+          :updated_at
+        ]
+        |> Enum.sort()
+
+      assert Map.keys(row) |> Enum.sort() == expected_keys
+      assert row.id == t3
+      assert row.status == :pending
+      assert row.updated_at == "2024-01-03T00:00:00.000Z"
+      assert row.project_path == "/proj-changed"
+    end
+  end
+
+  describe "recheck_task resolution" do
+    setup do
+      # The :evogit_sched_meta table is normally owned by AgentScheduler; in
+      # this test env it may or may not be running. Create it if missing and
+      # start each test from a clean table (no agents are active in tests).
+      if :ets.whereis(:evogit_sched_meta) == :undefined do
+        :ets.new(:evogit_sched_meta, [:set, :named_table, :public])
+      end
+
+      :ets.delete_all_objects(:evogit_sched_meta)
+
+      on_exit(fn ->
+        :ets.delete_all_objects(:evogit_sched_meta)
+      end)
+
+      :ok
+    end
+
+    test "resolves a :running task to :completed when no sched_meta entries remain" do
+      unique = System.unique_integer([:positive])
+      task_id = "recheck_resolve_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      assert_receive {:tasks_updated}, 1_000
+
+      fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert fetched.status == :completed
+      assert fetched.finished_at != nil
+      assert fetched.lease_expires_at == nil
+      assert fetched.branch_name == nil
+    end
+
+    test "does not clobber an existing branch_name when no result is found" do
+      unique = System.unique_integer([:positive])
+      task_id = "recheck_preserve_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          branch_name: "evogit/orig"
+        })
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      assert_receive {:tasks_updated}, 1_000
+
+      fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert fetched.status == :completed
+      assert fetched.branch_name == "evogit/orig"
+    end
+
+    test "reschedules while any sched_meta entry remains; resolves after cleanup" do
+      unique = System.unique_integer([:positive])
+      task_id = "recheck_active_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil
+        })
+
+      # Seed an entry carrying a tagged-ok result (as the scheduler might leave
+      # before recycling the entry). ANY remaining entry for the task means
+      # "agents still active" (Lease.sched_meta_has_active_agents?/1) → the
+      # recheck must reschedule, not resolve.
+      meta = %EvoGit.AgentScheduler.SchedMeta{
+        id: 1,
+        depth: 0,
+        spec: recheck_agent_spec(),
+        task_id: task_id,
+        parent_id: nil,
+        status: :completed,
+        sub_agent_results: %{"agent-1" => {:ok, %{branch_name: "feat/x", commit_sha: "abc"}}}
+      }
+
+      :ets.insert(:evogit_sched_meta, {1, meta})
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      refute_receive {:tasks_updated}, 200
+
+      fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert fetched.status == :running
+      assert fetched.branch_name == nil
+
+      # Once the entry is recycled (deleted), the next recheck resolves. The
+      # result was lost with the entry, so the task is marked :completed with a
+      # nil result and no branch_name.
+      :ets.delete(:evogit_sched_meta, 1)
+      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      assert_receive {:tasks_updated}, 1_000
+
+      resolved = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert resolved.status == :completed
+      assert resolved.result == nil
+      assert resolved.branch_name == nil
+    end
+
+    test "branch_name is extracted from {:ok, %{branch_name: _}} results on the cast path" do
+      unique = System.unique_integer([:positive])
+      task_id = "recheck_cast_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil
+        })
+
+      TaskRegistry.update_task_status(task_id, :completed, {:ok, %{branch_name: "feat/x"}},
+        commit_sha: "abc"
+      )
+
+      # Sync with a call to ensure the cast was processed.
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :completed
+      assert fetched.branch_name == "feat/x"
+      assert fetched.commit_sha == "abc"
+    end
+  end
+
+  describe "recent projects — nil last_opened_at handling" do
+    test "nil last_opened_at rows are sorted last and never crash add/list", %{
+      sqlite_path: sqlite_path
+    } do
+      unique = System.unique_integer([:positive])
+      insert_project_row(sqlite_path, "/nil-proj-#{unique}", "Nil Proj", nil)
+
+      :ok = TaskRegistry.add_recent_project("/fresh-#{unique}", "Fresh")
+
+      projects = TaskRegistry.list_recent_projects()
+      paths = Enum.map(projects, & &1.path)
+
+      assert "/fresh-#{unique}" in paths
+      assert "/nil-proj-#{unique}" in paths
+      assert hd(projects).path == "/fresh-#{unique}"
+      assert List.last(projects).path == "/nil-proj-#{unique}"
+    end
+
+    test "trim removes oldest dated rows (and nil rows) first, never crashes on nil",
+         %{sqlite_path: sqlite_path} do
+      unique = System.unique_integer([:positive])
+      now = DateTime.utc_now()
+
+      # @max_recent_projects is 10 (task_registry.ex); seed 10 dated rows plus
+      # one nil row, then add one more → 12 rows → trim keeps the 10 newest.
+      insert_project_row(sqlite_path, "/nil-proj-#{unique}", "Nil Proj", nil)
+
+      for i <- 1..10 do
+        :ok =
+          EvoGit.Store.put_project(EvoGit.Store, %EvoGit.RecentProject{
+            path: "/dated-#{unique}-#{i}",
+            name: "D#{i}",
+            last_opened_at: DateTime.add(now, -i * 86_400, :second)
+          })
+      end
+
+      :ok = TaskRegistry.add_recent_project("/newest-#{unique}", "Newest")
+
+      projects = TaskRegistry.list_recent_projects()
+      assert length(projects) == 10
+
+      # Sorted descending: newest first, then /dated-1..9. The oldest dated row
+      # (/dated-10) and the nil row (sorts last = oldest) are trimmed.
+      assert Enum.map(projects, & &1.path) ==
+               ["/newest-#{unique}"] ++ Enum.map(1..9, &"/dated-#{unique}-#{&1}")
+    end
+  end
+
+  # --- Helpers ---
+
+  # Overwrites the store-internal updated_at column with a fixed-precision ISO
+  # string via a raw connection (the summary `since` filters compare strings).
+  defp set_updated_at(sqlite_path, task_id, iso) do
+    {:ok, raw_conn} = Xqlite.open(sqlite_path)
+
+    {:ok, _} =
+      XqliteNIF.execute(raw_conn, "UPDATE tasks SET updated_at = ?1 WHERE id = ?2", [
+        iso,
+        task_id
+      ])
+
+    XqliteNIF.close(raw_conn)
+  end
+
+  defp insert_project_row(sqlite_path, path, name, last_opened_at) do
+    {:ok, raw_conn} = Xqlite.open(sqlite_path)
+
+    {:ok, _} =
+      XqliteNIF.execute(
+        raw_conn,
+        "INSERT INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
+        [path, name, last_opened_at]
+      )
+
+    XqliteNIF.close(raw_conn)
+  end
+
+  defp recheck_agent_spec do
+    %EvoGit.AgentSpec{
+      context_node: %EvoGit.Core.ContextNode{path: "./", repo: "/tmp/test"},
+      phylo_node: %EvoGit.Core.PhyloGraphNode{
+        repo: "/tmp/test",
+        base_commit: "abc",
+        current_commit: "abc"
+      },
+      agent_module: __MODULE__,
+      objective: "test"
+    }
+  end
 end

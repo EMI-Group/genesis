@@ -5,8 +5,10 @@ defmodule EvoGit.StoreSummaryTest do
   alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
 
-  # The exact 15 keys returned by the summary API (select_tasks_summary/0,1 and
-  # select_tasks_summary_by_path/2,3).
+  # The exact 16 keys returned by the summary API (select_tasks_summary/0,1,2,
+  # select_tasks_summary_by_path/2,3,4 and select_tasks_changed_since/1,2).
+  # `updated_at` is store-internal bookkeeping — returned as the raw
+  # fixed-precision ISO string, NOT a DateTime.
   @summary_keys [
     :id,
     :status,
@@ -22,7 +24,8 @@ defmodule EvoGit.StoreSummaryTest do
     :agent_count,
     :base_sha,
     :commit_sha,
-    :lease_expires_at
+    :lease_expires_at,
+    :updated_at
   ]
 
   @insert_task_sql """
@@ -88,8 +91,21 @@ defmodule EvoGit.StoreSummaryTest do
     :ok = XqliteNIF.close(conn)
   end
 
+  # Overwrites the store-internal `updated_at` column for a task through a raw
+  # Xqlite connection so since-filter tests control the value deterministically
+  # (put_task! writes DateTime.utc_now(), which is not reproducible). All values
+  # are fixed-precision 24-char ISO strings, so lexicographic == chronological.
+  defp set_updated_at!(sqlite_path, id, iso_string) do
+    {:ok, conn} = Xqlite.open(sqlite_path)
+
+    {:ok, _} =
+      XqliteNIF.execute(conn, "UPDATE tasks SET updated_at = ?1 WHERE id = ?2", [iso_string, id])
+
+    :ok = XqliteNIF.close(conn)
+  end
+
   describe "select_tasks_summary/1" do
-    test "returns maps with exactly the 15 contract keys and decoded values" do
+    test "returns maps with exactly the 16 contract keys and decoded values" do
       put_task!(
         make_task("sum-1",
           status: :completed,
@@ -123,6 +139,11 @@ defmodule EvoGit.StoreSummaryTest do
       assert summary.lease_expires_at == 1_234_567_890
       assert DateTime.compare(summary.started_at, ~U[2026-06-26 07:19:44Z]) == :eq
       assert DateTime.compare(summary.finished_at, ~U[2026-06-26 08:00:00Z]) == :eq
+
+      # updated_at is store-internal bookkeeping: the RAW fixed-precision ISO
+      # string written by put_task (Codec.encode_datetime(DateTime.utc_now())).
+      assert is_binary(summary.updated_at)
+      assert summary.updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
     end
 
     test "nil scalar columns stay nil" do
@@ -189,6 +210,122 @@ defmodule EvoGit.StoreSummaryTest do
       assert Enum.map(b_running, & &1.id) == ["b-running"]
 
       assert Store.select_tasks_summary_by_path(Store, "/nope", []) == []
+    end
+  end
+
+  describe "since filter + select_tasks_changed_since/2" do
+    test "select_tasks_summary/3 with since returns only rows with updated_at > since", %{
+      sqlite_path: sqlite_path
+    } do
+      put_task!(make_task("since-old", status: :completed))
+      put_task!(make_task("since-new", status: :completed))
+      put_task!(make_task("since-newer", status: :running))
+
+      set_updated_at!(sqlite_path, "since-old", "2026-01-01T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "since-new", "2026-01-02T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "since-newer", "2026-01-03T00:00:00.000Z")
+
+      newer =
+        Store.select_tasks_summary(Store, [], "2026-01-01T00:00:00.000Z")
+
+      assert Enum.map(newer, & &1.id) |> Enum.sort() == ["since-new", "since-newer"]
+
+      all = Store.select_tasks_summary(Store, [], "2000-01-01T00:00:00.000Z")
+      assert length(all) == 3
+    end
+
+    test "boundary: a row with updated_at == since is excluded (strict >)", %{
+      sqlite_path: sqlite_path
+    } do
+      put_task!(make_task("since-boundary", status: :completed))
+      put_task!(make_task("since-after", status: :completed))
+
+      set_updated_at!(sqlite_path, "since-boundary", "2026-01-02T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "since-after", "2026-01-03T00:00:00.000Z")
+
+      # The row whose updated_at exactly equals the since value must NOT match.
+      rows =
+        Store.select_tasks_summary(Store, [], "2026-01-02T00:00:00.000Z")
+
+      assert Enum.map(rows, & &1.id) == ["since-after"]
+    end
+
+    test "since combines with statuses", %{sqlite_path: sqlite_path} do
+      put_task!(make_task("since-completed-old", status: :completed))
+      put_task!(make_task("since-completed-new", status: :completed))
+      put_task!(make_task("since-running-new", status: :running))
+
+      set_updated_at!(sqlite_path, "since-completed-old", "2026-01-01T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "since-completed-new", "2026-01-02T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "since-running-new", "2026-01-02T00:00:00.000Z")
+
+      completed =
+        Store.select_tasks_summary(Store, [:completed], "2026-01-01T00:00:00.000Z")
+
+      assert Enum.map(completed, & &1.id) == ["since-completed-new"]
+    end
+
+    test "nil since (2-arity) still returns everything", %{sqlite_path: sqlite_path} do
+      put_task!(make_task("nil-since-a", status: :completed))
+      put_task!(make_task("nil-since-b", status: :running))
+
+      set_updated_at!(sqlite_path, "nil-since-a", "2026-01-01T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "nil-since-b", "2026-01-02T00:00:00.000Z")
+
+      summaries = Store.select_tasks_summary(Store, [])
+      assert length(summaries) == 2
+      assert Enum.map(summaries, & &1.id) |> Enum.sort() == ["nil-since-a", "nil-since-b"]
+    end
+
+    test "select_tasks_changed_since/2 returns only newer rows with the 16-key projection", %{
+      sqlite_path: sqlite_path
+    } do
+      put_task!(make_task("cs-old", status: :completed))
+      put_task!(make_task("cs-new", status: :running))
+
+      set_updated_at!(sqlite_path, "cs-old", "2026-01-01T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "cs-new", "2026-01-02T00:00:00.000Z")
+
+      changed = Store.select_tasks_changed_since(Store, "2026-01-01T00:00:00.000Z")
+
+      assert Enum.map(changed, & &1.id) == ["cs-new"]
+      assert Enum.map(changed, & &1.updated_at) == ["2026-01-02T00:00:00.000Z"]
+      assert Map.keys(hd(changed)) |> Enum.sort() == Enum.sort(@summary_keys)
+
+      # The boundary row (updated_at == since) is excluded here too.
+      assert Store.select_tasks_changed_since(Store, "2026-01-02T00:00:00.000Z") == []
+    end
+
+    test "select_tasks_changed_since/2 returns [] for a far-future since", %{
+      sqlite_path: sqlite_path
+    } do
+      put_task!(make_task("cs-future", status: :completed))
+      set_updated_at!(sqlite_path, "cs-future", "2026-01-01T00:00:00.000Z")
+
+      assert Store.select_tasks_changed_since(Store, "2100-01-01T00:00:00.000Z") == []
+    end
+
+    test "select_tasks_summary_by_path/4 applies the same since filter", %{
+      sqlite_path: sqlite_path
+    } do
+      put_task!(make_task("bp-old", status: :completed, opts: [path: "/tmp/proj"]))
+      put_task!(make_task("bp-new", status: :completed, opts: [path: "/tmp/proj"]))
+      put_task!(make_task("bp-other", status: :completed, opts: [path: "/tmp/other"]))
+
+      set_updated_at!(sqlite_path, "bp-old", "2026-01-01T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "bp-new", "2026-01-02T00:00:00.000Z")
+      set_updated_at!(sqlite_path, "bp-other", "2026-01-02T00:00:00.000Z")
+
+      rows =
+        Store.select_tasks_summary_by_path(Store, "/tmp/proj", [], "2026-01-01T00:00:00.000Z")
+
+      assert Enum.map(rows, & &1.id) == ["bp-new"]
+
+      # Strict > boundary within the path filter too.
+      at_boundary =
+        Store.select_tasks_summary_by_path(Store, "/tmp/proj", [], "2026-01-02T00:00:00.000Z")
+
+      assert at_boundary == []
     end
   end
 
@@ -324,6 +461,8 @@ defmodule EvoGit.StoreSummaryTest do
       assert Store.select_tasks_summary(Store) == []
       assert Store.select_tasks_summary(Store, [:completed]) == []
       assert Store.select_tasks_summary_by_path(Store, "/tmp/x", []) == []
+      assert Store.select_tasks_changed_since(Store, "2100-01-01T00:00:00.000Z") == []
+      assert Store.select_tasks_summary(Store, [], "2100-01-01T00:00:00.000Z") == []
       assert Store.select_running_lease_info(Store) == []
       assert Store.select_cleanup_info(Store) == []
       assert Store.select_task_logs(Store, "missing") == nil
