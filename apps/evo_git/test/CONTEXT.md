@@ -30,6 +30,12 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 - **`remote_connections_test.exs`** — `EvoGit.RemoteConnectionsTest` (`async: false`): TOML store tests including the `describe "platform field"` block (platform preserved / nil default / TOML round-trip / invalid stored as-is — no format validation at this layer).
 - **`remote_connection_test.exs`** — `EvoGit.RemoteConnectionTest` (`async: false`): lifecycle + bootstrap tests. The `describe "bootstrap/1"` block covers the auto-download behavior (no local_binary_path → probe; set-but-missing → probe fallback; platform override → download; invalid platform / windows → fast deterministic errors; existing local tarball → scp). Bootstrap tests use **real ssh against fake targets** (`testN@example.com` — connection refused, exit 255, fail fast) and the `platform: "linux_x64"` test calls the **live GitHub API** (`download_url/1`) — assertion kept broad (`{:error, {:download_failed, _}}`).
 
+### `evo_git/agent_scheduler/`
+- **`dispatch_test.exs`** — `EvoGit.AgentScheduler.DispatchTest`: tests `Dispatch.resolve_agent_repo_root/2` — worktree path stripping and foreign repo root resolution.
+- **`subagents_test.exs`** — `EvoGit.AgentScheduler.SubagentsTest`: tests `Subagents` — spatial contract validation (cross-repo read-only, same-repo hierarchy) and `store_sub_result/3` foreign repo commit tracking. Uses global named ETS tables directly.
+- **`lifecycle_test.exs`** — `EvoGit.AgentScheduler.LifecycleTest`: tests `Lifecycle.handle_agent_crash/3` — retry path (updates meta, resets agent_state, queues when paused), permanent failure (deletes ETS entries, replies to caller), missing sched_meta/agent_state defensive handling. Also tests `cancel_agent/2` — verifies the stored `%Task{}` struct is killed via `Task.shutdown/2`. Uses `async: false` with global named ETS tables.
+- **`slots_test.exs`** — `EvoGit.AgentScheduler.SlotsTest`: tests holder-set slot management — LLM/tool slot request grants when available, blocks when full, release frees + grants pending waiters, and `release_agent_slots/2` releases held slots and purges queues on agent death.
+
 ## Known Issues
 
 ### ⚠️ RemoteConnection disconnect churn → intermittent `unknown registry` flake (lib bug, test-side mitigation in place)
