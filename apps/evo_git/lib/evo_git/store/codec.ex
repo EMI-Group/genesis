@@ -13,8 +13,10 @@ defmodule EvoGit.Store.Codec do
 
   ## Decode philosophy
 
-  Decode functions raise on bad data — the Store's quarantine logic handles
-  crash recovery by moving undecodable rows to a quarantine table.
+  Decode functions raise on bad data — the Store's safe-select helpers
+  (`safe_select_all_tasks/1`, `safe_select_all_projects/1`,
+  `safe_select_paginated_tasks/2`) skip undecodable rows and log a warning
+  instead of crashing.
 
   Two justified `try/rescue` patterns remain on the decode side:
 
