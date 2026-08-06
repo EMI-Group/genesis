@@ -343,5 +343,25 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "Task history is only available when viewing the local node"
       assert html =~ "Search by task ID, prompt, or objective"
     end
+
+    test ":remote_poll on the local node does not crash and stops polling", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      # On the local node (current_node == node()) the poll handler takes the
+      # stop branch and sets :remote_poll_timer to false. No timer is
+      # scheduled for the local node, so nothing leaks. A crash in the
+      # handler would propagate through render/1.
+      send(view.pid, :remote_poll)
+      html = render(view)
+
+      assert is_binary(html)
+      assert html =~ "All Statuses"
+
+      # The stop branch disables the poll timer. This LiveViewTest version
+      # exposes no assigns accessor on the View struct, so read the LiveView
+      # GenServer's socket state directly.
+      state = :sys.get_state(view.pid)
+      assert state.socket.assigns[:remote_poll_timer] == false
+    end
   end
 end
