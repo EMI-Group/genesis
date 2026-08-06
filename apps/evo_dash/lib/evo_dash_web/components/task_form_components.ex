@@ -88,11 +88,12 @@ defmodule EvoDashWeb.TaskFormComponents do
              data-layout is SERVER-DRIVED via layout_for/1 (threshold:
              @short_objective_threshold chars or 16+ lines):
                "compact"  → Layout A — unified box: controls row is the card's
-                            last line (mode | model | Launch, launch centered).
+                            last line (mode | Launch | model, launch centered).
                "expanded" → Layout B — large objective area with an in-flow
-                            launch panel below (mode | model | Launch).
-             Both layouts share the same visual order (mode | model | Launch,
-             Launch centered via mx-auto); only the textarea size differs.
+                            launch panel below (mode | Launch | model).
+             Both layouts share the same visual order — mode (order-1) |
+             Launch (order-2, centered via mx-auto) | model (order-3); only
+             the textarea size differs.
              The AdaptiveInput JS hook only autogrows the textarea now. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
