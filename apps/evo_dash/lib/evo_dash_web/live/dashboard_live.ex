@@ -557,11 +557,11 @@ defmodule EvoDashWeb.DashboardLive do
             activate_project(socket, expanded)
           else
             # Project path in URL is invalid, clear it
-            all_tasks = TaskRegistry.list_tasks()
+            all_tasks = TaskRegistry.list_tasks_summary()
 
             socket
             |> Assigns.assign_running_and_pending_tasks(all_tasks)
-            |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+            |> assign(:tasks, all_tasks)
             |> assign(
               :notified_task_ids,
               Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
@@ -580,11 +580,11 @@ defmodule EvoDashWeb.DashboardLive do
                   if File.dir?(recent_path) do
                     activate_project(socket, recent_path)
                   else
-                    all_tasks = TaskRegistry.list_tasks()
+                    all_tasks = TaskRegistry.list_tasks_summary()
 
                     socket
                     |> Assigns.assign_running_and_pending_tasks(all_tasks)
-                    |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+                    |> assign(:tasks, all_tasks)
                     |> assign(
                       :notified_task_ids,
                       Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
@@ -592,11 +592,11 @@ defmodule EvoDashWeb.DashboardLive do
                   end
 
                 _ ->
-                  all_tasks = TaskRegistry.list_tasks()
+                  all_tasks = TaskRegistry.list_tasks_summary()
 
                   socket
                   |> Assigns.assign_running_and_pending_tasks(all_tasks)
-                  |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+                  |> assign(:tasks, all_tasks)
                   |> assign(
                     :notified_task_ids,
                     Assigns.build_notified_task_ids(all_tasks, socket.assigns.notified_task_ids)
@@ -927,7 +927,7 @@ defmodule EvoDashWeb.DashboardLive do
 
       case TaskRegistry.start_task(task_type, opts) do
         {:ok, task} ->
-          all_tasks = TaskRegistry.list_tasks_by_path(path)
+          all_tasks = TaskRegistry.list_tasks_summary_by_path(path)
 
           {:noreply,
            socket
@@ -939,7 +939,7 @@ defmodule EvoDashWeb.DashboardLive do
              )
            )
            |> Assigns.assign_running_and_pending_tasks(all_tasks)
-           |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+           |> assign(:tasks, all_tasks)
            # The textarea keeps its text (`phx-update="ignore"`), so @task_prompt
            # must mirror the visible content or the server-side layout computation
            # (from prompt length) desyncs. Side effect: the draft prompt now
@@ -971,7 +971,7 @@ defmodule EvoDashWeb.DashboardLive do
         {:noreply,
          socket
          |> Assigns.assign_running_and_pending_tasks(all_tasks)
-         |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+         |> assign(:tasks, all_tasks)
          |> assign(:expanded_task_ids, expanded)}
 
       {:error, reason} ->
@@ -1024,7 +1024,7 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> Assigns.assign_running_and_pending_tasks(all_tasks)
-     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+     |> assign(:tasks, all_tasks)
      |> assign(:expanded_task_ids, MapSet.new())}
   end
 
@@ -1037,7 +1037,7 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> Assigns.assign_running_and_pending_tasks(all_tasks)
-     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+     |> assign(:tasks, all_tasks)
      |> assign(:expanded_task_ids, expanded)}
   end
 
@@ -1251,6 +1251,19 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_info({:tasks_updated}, socket) do
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.debounce_task_reload(socket)}
+  end
+
+  @impl true
+  def handle_info({:task_status, _task_id, _status}, socket) do
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.debounce_task_reload(socket)}
+  end
+
+  # Debounced reload fired by NodeAware after task broadcasts: refreshes the
+  # main task list + sidebar, reloads project settings when the settings panel
+  # is open, and pushes browser notifications for newly finished tasks.
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
     new_tasks = Assigns.current_tasks(socket)
 
     # Refresh project settings if shown (foreign repos are in-memory, not re-read)
@@ -1286,21 +1299,13 @@ defmodule EvoDashWeb.DashboardLive do
         push_event(sock, "task_notification", %{title: title, body: body})
       end)
 
-    {:noreply,
-     socket
-     |> assign(:notified_task_ids, updated_notified)
-     |> Assigns.assign_running_and_pending_tasks(new_tasks)
-     |> assign(:tasks, Enum.map(new_tasks, &lightweight_task/1))}
-  end
+    socket =
+      socket
+      |> assign(:notified_task_ids, updated_notified)
+      |> Assigns.assign_running_and_pending_tasks(new_tasks)
+      |> assign(:tasks, new_tasks)
 
-  @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
-    all_tasks = Assigns.current_tasks(socket)
-
-    {:noreply,
-     socket
-     |> Assigns.assign_running_and_pending_tasks(all_tasks)
-     |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))}
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true
@@ -1369,13 +1374,6 @@ defmodule EvoDashWeb.DashboardLive do
             end
         end
     end
-  end
-
-  # Strips heavy fields from a %TaskInfo{} struct to reduce binary retention
-  # in LiveView assigns. The stripped fields (logs, result, usage, archive_metadata)
-  # are the primary sources of ~30MB memory pressure from holding full task data.
-  defp lightweight_task(task) do
-    %{task | logs: [], result: nil, usage: nil, archive_metadata: nil}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -1481,7 +1479,7 @@ defmodule EvoDashWeb.DashboardLive do
         {current_mode, socket.assigns[:task_mode_info]}
       end
 
-    tasks = TaskRegistry.list_tasks_by_path(path)
+    tasks = TaskRegistry.list_tasks_summary_by_path(path)
 
     # Load project settings eagerly — read genesis.toml once and thread
     # through all consumers to avoid redundant disk reads.
@@ -1493,7 +1491,7 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(
       active_project: %{path: path, name: name},
       active_project_path: path,
-      tasks: Enum.map(tasks, &lightweight_task/1),
+      tasks: tasks,
       notified_task_ids: Assigns.build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,

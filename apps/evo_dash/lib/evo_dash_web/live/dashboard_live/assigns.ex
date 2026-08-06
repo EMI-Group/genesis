@@ -25,11 +25,12 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   @doc """
   Assigns `:running_tasks` and `:pending_tasks` from `socket.assigns.tasks`.
 
-  Uses lightweight summary queries that omit heavy JSON fields (logs, usage,
-  archive_metadata) unnecessary for the sidebar task display.
+  Uses a statuses-filtered lightweight summary query (SQL-side WHERE) that
+  omits heavy JSON fields (logs, usage, archive_metadata) unnecessary for the
+  sidebar task display.
   """
   def assign_running_and_pending_tasks(socket) do
-    all_tasks = TaskRegistry.list_tasks_summary()
+    all_tasks = TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])
 
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
@@ -48,12 +49,10 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   end
 
   @doc """
-  Assigns `:running_tasks` and `:pending_tasks` from the given task list.
-  Uses lightweight summary queries (same as the /1 variant).
+  Assigns `:running_tasks` and `:pending_tasks` from the given task list
+  (callers already hold the list, so no re-fetch happens here).
   """
-  def assign_running_and_pending_tasks(socket, _all_tasks) do
-    all_tasks = TaskRegistry.list_tasks_summary()
-
+  def assign_running_and_pending_tasks(socket, all_tasks) do
     running_tasks =
       Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
 
@@ -74,8 +73,8 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   Returns `true` if the completed task has a branch ready for review.
   """
   def show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
-       when is_binary(branch) and branch != "",
-       do: true
+      when is_binary(branch) and branch != "",
+      do: true
 
   def show_review_button?(_), do: false
 
@@ -106,27 +105,16 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
 
   @doc """
   Returns the current task list for the socket, scoped to the active project
-  path if one is set. Strips heavy fields (logs, usage, archive_metadata) for
-  the main task card display. Task cards need the full `opts` field (objective,
-  mode, etc.), so we use `list_tasks` + manual strip rather than the lightweight
-  `list_tasks_summary` (which omits opts).
+  path if one is set. Uses lightweight summary queries that omit heavy fields
+  (logs, usage, archive_metadata) while keeping everything the main task list
+  needs — including `opts` (objective, mode, etc.) and `result` (for Review
+  buttons and result rendering).
   """
   def current_tasks(socket) do
-    tasks =
-      if socket.assigns.active_project_path do
-        TaskRegistry.list_tasks_by_path(socket.assigns.active_project_path)
-      else
-        TaskRegistry.list_tasks()
-      end
-
-    Enum.map(tasks, &strip_heavy_fields/1)
-  end
-
-  @doc """
-  Strips heavy JSON fields (logs, usage, archive_metadata) from a task struct,
-  returning a lightweight copy suitable for the main task card list.
-  """
-  def strip_heavy_fields(task) do
-    %{task | logs: [], usage: nil, archive_metadata: nil}
+    if socket.assigns.active_project_path do
+      TaskRegistry.list_tasks_summary_by_path(socket.assigns.active_project_path)
+    else
+      TaskRegistry.list_tasks_summary()
+    end
   end
 end
