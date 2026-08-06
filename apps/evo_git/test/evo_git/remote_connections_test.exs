@@ -107,6 +107,36 @@ defmodule EvoGit.RemoteConnectionsTest do
     end
   end
 
+  describe "platform field" do
+    test "platform is preserved on save" do
+      assert {:ok, target} =
+               EvoGit.RemoteConnections.save(%{ssh_target: "example.com", platform: "linux_x64"})
+
+      assert target.platform == "linux_x64"
+    end
+
+    test "platform is nil by default" do
+      assert {:ok, target} = EvoGit.RemoteConnections.save(%{ssh_target: "example.com"})
+      assert is_nil(target.platform)
+    end
+
+    test "platform round-trips through the TOML file" do
+      assert {:ok, _target} =
+               EvoGit.RemoteConnections.save(%{ssh_target: "example.com", platform: "darwin_arm64"})
+
+      list = EvoGit.RemoteConnections.list()
+      assert length(list) == 1
+      assert hd(list).platform == "darwin_arm64"
+    end
+
+    test "invalid platform strings are stored as-is (no format validation here)" do
+      assert {:ok, target} =
+               EvoGit.RemoteConnections.save(%{ssh_target: "example.com", platform: "bogus"})
+
+      assert target.platform == "bogus"
+    end
+  end
+
   describe "get/1" do
     test "returns the target when found" do
       assert {:ok, saved} = EvoGit.RemoteConnections.save(%{ssh_target: "example.com"})

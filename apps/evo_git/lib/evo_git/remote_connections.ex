@@ -17,7 +17,8 @@ defmodule EvoGit.RemoteConnections do
   | `id` | string | no | auto-generated | Unique identifier (slugified from name/ssh_target, max 40 chars) |
   | `name` | string | no | `ssh_target` | Display name |
   | `ssh_target` | string | **yes** | — | The SSH host string (e.g. `gpu-server`, `user@192.168.1.10`) — just what you'd type after `ssh`. Port/keys handled by `~/.ssh/config` |
-  | `local_binary_path` | string | **yes** | — | Path to local `genesis_remote` tarball to upload (e.g. `_build/prod/rel/genesis_remote.tar.gz`) |
+  | `local_binary_path` | string | no | — | Path to a local `genesis_remote` tarball. When set and the file exists, bootstrap uploads it via `scp`; when absent (or set but missing), bootstrap auto-probes the remote platform and downloads the matching release from GitHub |
+  | `platform` | string | no | `nil` | Optional platform override in `<os>_<arch>` form (e.g. `linux_x64`, `darwin_arm64`, `windows_x64`). When set, bootstrap skips the SSH platform probe; when nil, the remote platform is probed automatically (`uname -s && uname -m`) |
   | `dist_port` | integer | no | `9000` | Erlang distribution port for tunneling |
   | `remote_path` | string | no | `/tmp/genesis_remote` | Where to extract the release on the remote |
   | `last_connected` | string | no | `nil` | ISO8601 timestamp of last successful connection |
@@ -40,6 +41,7 @@ defmodule EvoGit.RemoteConnections do
     "name" => :name,
     "ssh_target" => :ssh_target,
     "local_binary_path" => :local_binary_path,
+    "platform" => :platform,
     "dist_port" => :dist_port,
     "remote_path" => :remote_path,
     "last_connected" => :last_connected
@@ -226,6 +228,7 @@ defmodule EvoGit.RemoteConnections do
       name: name,
       ssh_target: ssh_target,
       local_binary_path: Map.get(conn, :local_binary_path),
+      platform: Map.get(conn, :platform),
       dist_port: get_or_default(conn, :dist_port, @default_dist_port),
       remote_path: get_or_default(conn, :remote_path, @default_remote_path),
       last_connected: Map.get(conn, :last_connected)

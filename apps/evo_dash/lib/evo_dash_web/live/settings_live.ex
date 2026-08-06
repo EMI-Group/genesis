@@ -187,17 +187,29 @@ defmodule EvoDashWeb.SettingsLive do
                         <% else %>
                           <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
                             <% stage_idx = case get_in(@bootstrap_progress, [target.id, :stage]) do
-                              :uploading -> 0
-                              :setting_permissions -> 1
-                              :detecting_os -> 2
-                              :starting_daemon -> 3
+                              :probing_platform -> 0
+                              :downloading -> 1
+                              :downloading_locally -> 2
+                              :uploading -> 3
+                              :extracting -> 4
+                              :setting_permissions -> 5
+                              :detecting_os -> 6
+                              :copying_config -> 7
+                              :generating_cookie -> 8
+                              :starting_daemon -> 9
                               _ -> -1
                             end %>
                             <ul class="steps steps-horizontal text-xs w-full">
-                              <li class={["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])}>{gettext("Uploading binary")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])}>{gettext("Setting permissions")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])}>{gettext("Detecting OS")}</li>
-                              <li class={["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])}>{gettext("Starting daemon")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])}>{gettext("Probing platform")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])}>{gettext("Downloading")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])}>{gettext("Downloading locally")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])}>{gettext("Uploading binary")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 4, do: ["step-primary"], else: [])}>{gettext("Extracting")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 5, do: ["step-primary"], else: [])}>{gettext("Setting permissions")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 6, do: ["step-primary"], else: [])}>{gettext("Detecting OS")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 7, do: ["step-primary"], else: [])}>{gettext("Copying config")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 8, do: ["step-primary"], else: [])}>{gettext("Generating cookie")}</li>
+                              <li class={["step"] ++ if(stage_idx >= 9, do: ["step-primary"], else: [])}>{gettext("Starting daemon")}</li>
                             </ul>
                           <% else %>
                             <button
@@ -291,6 +303,24 @@ defmodule EvoDashWeb.SettingsLive do
                               placeholder="_build/prod/rel/genesis_remote.tar.gz"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
       />
+                            <p class="text-xs text-base-content/50 mt-1">
+                              {gettext("Leave blank to auto-download the release on the remote")}
+                            </p>
+                          </div>
+                          <div class="form-control col-span-2">
+                            <label class="label">
+                              <span class="label-text font-semibold text-xs">{gettext("Platform (optional)")}</span>
+                            </label>
+                            <input
+                              type="text"
+                              name="platform"
+                              value={@remote_form_target[:platform]}
+                              placeholder="linux_x64, darwin_arm64, windows_x64"
+                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+      />
+                            <p class="text-xs text-base-content/50 mt-1">
+                              {gettext("Blank = auto-probe the remote OS/arch")}
+                            </p>
                           </div>
                           <div class="form-control">
                             <label class="label">
@@ -938,7 +968,8 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("add_remote_target", _params, socket) do
-    {:noreply, assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote"})}
+    {:noreply,
+     assign(socket, :remote_form_target, %{dist_port: 9000, remote_path: "/tmp/genesis_remote", platform: nil})}
   end
 
   @impl true
@@ -1199,6 +1230,7 @@ defmodule EvoDashWeb.SettingsLive do
       name: params["name"] || "",
       ssh_target: params["ssh_target"] || "",
       local_binary_path: params["local_binary_path"] || "",
+      platform: params["platform"] || "",
       dist_port: parse_remote_port(params["dist_port"]),
       remote_path: params["remote_path"] || "/tmp/genesis_remote"
     }

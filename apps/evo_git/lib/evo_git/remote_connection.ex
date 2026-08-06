@@ -4,13 +4,43 @@ defmodule EvoGit.RemoteConnection do
 
   There are two distinct operations, kept deliberately separate:
 
-    * **Bootstrap** (`bootstrap/1`) — "first time setup": pushes the local
-      `genesis_remote` tarball to the remote host via CLI `scp`, extracts it
-      on the remote, sets the launcher executable via `ssh chmod +x`, detects
-      the remote OS, and launches it as a daemon (`systemd-run --user` on
-      Linux, `launchctl` on macOS). The daemon then runs independently and
-      stays up even after the local side disconnects. Bootstrap does NOT
-      connect.
+    * **Bootstrap** (`bootstrap/1`) — "first time setup": gets a
+      `genesis_remote` release tarball onto the remote host and launches it as
+      a daemon (`systemd-run --user` on Linux, `launchctl` on macOS). The
+      daemon then runs independently and stays up even after the local side
+      disconnects. Bootstrap does NOT connect.
+
+      The tarball comes from one of two sources:
+
+        * **Local tarball** — when the target's `local_binary_path` is set and
+          the file exists, it is uploaded via CLI `scp` (unchanged behavior).
+          When set but missing, a warning is logged and bootstrap falls back
+          to automatic download — a stale path should not hard-fail bootstrap
+          (VS Code Remote-SSH semantics).
+
+        * **Automatic download** (no usable `local_binary_path`) — mirrors
+          VS Code Remote-SSH: bootstrap probes the remote platform
+          (`uname -s && uname -m`, or the target's optional `platform` field
+          when set, which skips the probe), resolves the matching release
+          tarball from GitHub, and downloads it (curl on the remote host,
+          falling back to a local curl into a data-dir cache followed by
+          `scp`). It then proceeds with the same extract / chmod / config-copy
+          / cookie / launch steps.
+
+  ## Bootstrap stages
+
+  Progress is broadcast via `Phoenix.PubSub` on `"remote_connections"` as
+  `{:remote_connection_status, target_id, %{bootstrap_stage: stage, ...}}`:
+
+  Local-tarball path: `:uploading` → `:extracting` → `:setting_permissions` →
+  `:detecting_os` → `:copying_config` → `:generating_cookie` →
+  `:starting_daemon`.
+
+  Auto-download path: `:probing_platform` → `:downloading` (→
+  `:downloading_locally` when the remote curl fails and the local fallback
+  kicks in) → `:extracting` → `:setting_permissions` → `:copying_config` →
+  `:generating_cookie` → `:starting_daemon`. The probe/override supplies the
+  OS, so `:detecting_os` is skipped.
 
     * **Connection** (`connect/1`) — establishes an SSH tunnel forwarding the
       remote distribution port to loopback, then performs Erlang distribution
@@ -46,11 +76,18 @@ defmodule EvoGit.RemoteConnection do
   @heartbeat_interval_ms 10_000
   @tunnel_settle_ms 500
   @launch_receive_timeout_ms 5_000
-  @bootstrap_call_timeout_ms 120_000
+  # 900s — bootstrap now stages the release either by uploading a local tarball
+  # (scp) OR by probing the remote platform and downloading the release tarball
+  # (curl on the remote, with a local curl + scp fallback); both can be slow.
+  @bootstrap_call_timeout_ms 900_000
 
   # Default per-command timeout (30s). SCP gets a longer timeout.
   @cmd_timeout_ms 30_000
   @scp_timeout_ms 120_000
+
+  # Timeout for release-tarball downloads (tens of MB) — curl on the remote
+  # host, or the local curl fallback. Generous to handle slow links.
+  @download_timeout_ms 300_000
 
   # The remote daemon always binds loopback; the SSH tunnel forwards the dist
   # port to loopback on both sides. The remote daemon listens on port 9000 by
@@ -75,6 +112,9 @@ defmodule EvoGit.RemoteConnection do
 
   @type bootstrap_stage ::
           :uploading
+          | :probing_platform
+          | :downloading
+          | :downloading_locally
           | :extracting
           | :setting_permissions
           | :copying_config
@@ -95,6 +135,25 @@ defmodule EvoGit.RemoteConnection do
         }
 
   # ── Public API ─────────────────────────────────────────────────────
+
+  @doc """
+  Child spec for this GenServer.
+
+  `restart: :transient` — a `:normal` exit (e.g. graceful disconnect via
+  `handle_call(:disconnect, ...)` → `{:stop, :normal, ...}`) does NOT trigger a
+  restart, so disconnects don't count toward the DynamicSupervisor's restart
+  intensity. Abnormal exits still restart, preserving crash recovery.
+  """
+  @impl true
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :transient,
+      shutdown: 5_000
+    }
+  end
 
   @doc """
   Starts a connection manager for the given target map.
@@ -189,10 +248,12 @@ defmodule EvoGit.RemoteConnection do
   end
 
   @doc """
-  Executes the bootstrap process ONLY (upload tarball + launch daemon).
+  Executes the bootstrap process ONLY (stage the `genesis_remote` release +
+  launch daemon).
 
   Does NOT connect. Looks up the target, finds-or-starts the manager, then
-  performs the first-time setup using CLI `scp` and `ssh`.
+  performs the first-time setup using CLI `scp`/`ssh` and — when no usable
+  `local_binary_path` is set — automatic platform probing + release download.
 
   Returns `{:ok, :daemon_started}` on success or `{:error, reason}`.
   """
@@ -200,7 +261,7 @@ defmodule EvoGit.RemoteConnection do
   def bootstrap(target_id) do
     with {:ok, target} <- fetch_target(target_id),
          {:ok, pid} <- ensure_started(target) do
-      # 120s timeout — tarball upload via scp can be slow.
+      # 900s timeout — staging the release (upload or download) can be slow.
       GenServer.call(pid, :bootstrap, @bootstrap_call_timeout_ms)
     end
   end
@@ -398,14 +459,21 @@ defmodule EvoGit.RemoteConnection do
     local_path = Map.get(target, :local_binary_path)
 
     cond do
-      is_nil(local_path) or local_path == "" ->
-        {:error, :no_tarball_path, state}
+      is_binary(local_path) and local_path != "" and File.exists?(local_path) ->
+        do_bootstrap_with_tarball(state, target, local_path)
 
-      not File.exists?(local_path) ->
-        {:error, :tarball_not_found, state}
+      is_binary(local_path) and local_path != "" ->
+        # Set-but-missing: warn and fall back to auto-download (VS Code
+        # Remote-SSH semantics — a stale path shouldn't hard-fail bootstrap).
+        Logger.warning(
+          "RemoteConnection: local_binary_path #{inspect(local_path)} does not exist; " <>
+            "falling back to automatic download of the genesis_remote release."
+        )
+
+        do_bootstrap_auto(state, target)
 
       true ->
-        do_bootstrap_with_tarball(state, target, local_path)
+        do_bootstrap_auto(state, target)
     end
   end
 
@@ -425,59 +493,251 @@ defmodule EvoGit.RemoteConnection do
 
     case scp_tarball(ssh_target, local_path, remote_tarball) do
       :ok ->
-        # :extracting stage
-        state = %{state | bootstrap_stage: :extracting}
+        # OS detection happens inside launch_after_staging (os_or_nil = nil) so
+        # the existing stage order for this path is preserved: extracting →
+        # setting_permissions → detecting_os → copying_config → ...
+        launch_after_staging(
+          state,
+          target,
+          ssh_target,
+          nil,
+          launcher_path,
+          remote_dir,
+          remote_tarball
+        )
+
+      {:error, reason} ->
+        error_state = error_state(state, target, reason)
+        {:error, reason, error_state}
+    end
+  end
+
+  # Auto-download bootstrap path (no usable local_binary_path): probe the
+  # remote platform → resolve the GitHub release URL → download the tarball to
+  # the remote temp path (curl on the remote, local curl + scp fallback) →
+  # launch via the shared post-staging sequence.
+  defp do_bootstrap_auto(%__MODULE__{} = state, target) do
+    ssh_target = target.ssh_target
+    remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
+    remote_tarball = remote_tarball_path(remote_path)
+    remote_dir = Path.dirname(remote_path)
+    launcher_path = Path.join(remote_path, "bin/genesis_remote")
+
+    # :probing_platform stage
+    state = %{state | phase: :bootstrapping, bootstrap_stage: :probing_platform}
+    broadcast_status(target, state)
+
+    case resolve_platform(target, ssh_target) do
+      {:ok, daemon_os, platform} ->
+        # :downloading stage
+        state = %{state | bootstrap_stage: :downloading}
         broadcast_status(target, state)
 
-        case extract_tarball(ssh_target, remote_tarball, remote_dir) do
+        case download_tarball(state, target, ssh_target, platform, remote_tarball) do
+          {:ok, state} ->
+            launch_after_staging(
+              state,
+              target,
+              ssh_target,
+              daemon_os,
+              launcher_path,
+              remote_dir,
+              remote_tarball
+            )
+
+          {:error, reason, state} ->
+            {:error, reason, state}
+        end
+
+      {:error, reason} ->
+        error_state = error_state(state, target, reason)
+        {:error, reason, error_state}
+    end
+  end
+
+  # Resolves the remote platform. Uses the target's optional `platform` field
+  # (skipping the SSH probe entirely) when set; otherwise probes the remote
+  # via SSH. Returns {:ok, daemon_os, platform} where daemon_os is the
+  # canonical "Linux" | "Darwin" string used by the launcher functions.
+  defp resolve_platform(target, ssh_target) do
+    case Map.get(target, :platform) do
+      platform when is_binary(platform) and platform != "" ->
+        with {:ok, %{os: _os, arch: _arch}} <- EvoGit.RemoteBootstrap.parse_platform(platform),
+             {:ok, daemon_os} <- EvoGit.RemoteBootstrap.daemon_os(platform) do
+          {:ok, daemon_os, platform}
+        end
+
+      _ ->
+        probe_platform(ssh_target)
+    end
+  end
+
+  # Probes the remote OS + architecture via a single SSH call
+  # (`uname -s && uname -m`). Returns {:ok, daemon_os, platform} or
+  # {:error, reason}.
+  defp probe_platform(ssh_target) do
+    cmd = "ssh #{ssh_target} 'uname -s && uname -m'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, 0} ->
+        case String.split(String.trim(output), "\n") do
+          [os, arch] ->
+            with {:ok, platform} <-
+                   EvoGit.RemoteBootstrap.parse_uname(String.trim(os), String.trim(arch)),
+                 {:ok, daemon_os} <- EvoGit.RemoteBootstrap.daemon_os(platform) do
+              {:ok, daemon_os, platform}
+            end
+
+          _ ->
+            {:error, {:probe_failed, {:unexpected_output, String.trim(output)}}}
+        end
+
+      {:ok, _output, status} ->
+        {:error, {:probe_failed, {:exit_status, status}}}
+
+      :timeout ->
+        {:error, {:probe_failed, :timeout}}
+    end
+  end
+
+  # Downloads the release tarball for the platform to the remote temp path.
+  # Primary: curl directly on the remote host. Fallback: curl locally into the
+  # data-dir cache, then scp to the remote temp path. Returns
+  # {:ok, state} | {:error, reason, state}.
+  defp download_tarball(state, target, ssh_target, platform, remote_tarball) do
+    # download_url/1 always resolves (API failure falls back to the direct URL).
+    {:ok, url, version} = EvoGit.RemoteBootstrap.download_url(platform)
+
+    case download_on_remote(ssh_target, url, remote_tarball) do
+      :ok ->
+        {:ok, state}
+
+      {:error, reason} ->
+        Logger.warning(
+          "RemoteConnection: remote curl download failed (#{inspect(reason)}); " <>
+            "falling back to local download + scp."
+        )
+
+        local_state = %{state | bootstrap_stage: :downloading_locally}
+        broadcast_status(target, local_state)
+
+        case download_locally_and_scp(ssh_target, url, platform, version, remote_tarball) do
           :ok ->
-            # :setting_permissions stage
-            state = %{state | bootstrap_stage: :setting_permissions}
-            broadcast_status(target, state)
+            {:ok, local_state}
 
-            case chmod_executable(ssh_target, launcher_path) do
-              :ok ->
-                # :detecting_os stage (runs before config copy so we know the
-                # correct platform-specific config directory)
-                state = %{state | bootstrap_stage: :detecting_os}
-                broadcast_status(target, state)
+          {:error, reason} ->
+            error_state = error_state(local_state, target, reason)
+            {:error, reason, error_state}
+        end
+    end
+  end
 
-                case detect_os(ssh_target) do
-                  {:ok, os} ->
-                    # :copying_config stage (uses the detected OS to compute
-                    # the platform-specific remote config directory)
-                    state = %{state | bootstrap_stage: :copying_config}
-                    broadcast_status(target, state)
+  # Downloads the tarball directly on the remote host via `curl -fL`.
+  defp download_on_remote(ssh_target, url, remote_tarball) do
+    cmd = "ssh #{ssh_target} 'curl -fL -o #{remote_tarball} #{url}'"
 
-                    copy_config_to_remote(ssh_target, os)
+    case run_cmd(cmd, @download_timeout_ms) do
+      {:ok, _output, 0} -> :ok
+      {:ok, _output, status} -> {:error, {:download_failed, {:exit_status, status}}}
+      :timeout -> {:error, {:download_failed, :timeout}}
+    end
+  end
 
-                    # :generating_cookie stage
-                    state = %{state | bootstrap_stage: :generating_cookie}
-                    broadcast_status(target, state)
+  # Fallback download: curls the tarball into a cache file under the platform
+  # data dir (reusing a cached copy when present), then scps it to the remote
+  # temp path.
+  defp download_locally_and_scp(ssh_target, url, platform, version, remote_tarball) do
+    cache_file = EvoGit.RemoteBootstrap.cache_path(platform, version)
 
-                    cookie = ensure_cookie!()
+    case download_locally(cache_file, url) do
+      :ok ->
+        case scp_tarball(ssh_target, cache_file, remote_tarball) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:download_failed, {:local_scp, reason}}}
+        end
 
-                    # :starting_daemon stage
-                    state = %{state | bootstrap_stage: :starting_daemon}
-                    broadcast_status(target, state)
+      {:error, reason} ->
+        {:error, {:download_failed, {:local, reason}}}
+    end
+  end
 
-                    case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie) do
-                      :ok ->
-                        EvoGit.RemoteConnections.touch(target.id)
-                        completed = %{state | phase: :disconnected, bootstrap_stage: nil}
-                        broadcast_status(target, completed)
-                        {:ok, completed}
+  # Curls the tarball into the local cache file. Reuses the file when present.
+  defp download_locally(cache_file, url) do
+    if File.exists?(cache_file) do
+      :ok
+    else
+      case File.mkdir_p(Path.dirname(cache_file)) do
+        :ok ->
+          cmd = "curl -fL -o #{cache_file} #{url}"
 
-                      {:error, reason} ->
-                        error_state = error_state(state, target, reason)
-                        {:error, reason, error_state}
-                    end
+          case run_cmd(cmd, @download_timeout_ms) do
+            {:ok, _output, 0} -> :ok
+            {:ok, _output, status} -> {:error, {:exit_status, status}}
+            :timeout -> {:error, :timeout}
+          end
 
-                  {:error, reason} ->
-                    error_state = error_state(state, target, reason)
-                    {:error, reason, error_state}
-                end
+        {:error, reason} ->
+          {:error, {:mkdir_failed, reason}}
+      end
+    end
+  end
 
+  # Runs the post-staging launch sequence shared by both bootstrap paths:
+  # extract → chmod → (resolve OS) → config copy → cookie → daemon start →
+  # health verify. `os_or_nil` is the already-known daemon OS string when the
+  # platform was probed/overridden, or nil to detect it via SSH (local-tarball
+  # path, which broadcasts the :detecting_os stage).
+  defp launch_after_staging(
+         %__MODULE__{} = state,
+         target,
+         ssh_target,
+         os_or_nil,
+         launcher_path,
+         remote_dir,
+         remote_tarball
+       ) do
+    # :extracting stage
+    state = %{state | bootstrap_stage: :extracting}
+    broadcast_status(target, state)
+
+    case extract_tarball(ssh_target, remote_tarball, remote_dir) do
+      :ok ->
+        # :setting_permissions stage
+        state = %{state | bootstrap_stage: :setting_permissions}
+        broadcast_status(target, state)
+
+        case chmod_executable(ssh_target, launcher_path) do
+          :ok ->
+            with {:ok, os} <- resolve_daemon_os(state, target, ssh_target, os_or_nil) do
+              # :copying_config stage (uses the resolved OS to compute the
+              # platform-specific remote config directory)
+              state = %{state | bootstrap_stage: :copying_config}
+              broadcast_status(target, state)
+
+              copy_config_to_remote(ssh_target, os)
+
+              # :generating_cookie stage
+              state = %{state | bootstrap_stage: :generating_cookie}
+              broadcast_status(target, state)
+
+              cookie = ensure_cookie!()
+
+              # :starting_daemon stage
+              state = %{state | bootstrap_stage: :starting_daemon}
+              broadcast_status(target, state)
+
+              case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie) do
+                :ok ->
+                  EvoGit.RemoteConnections.touch(target.id)
+                  completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+                  broadcast_status(target, completed)
+                  {:ok, completed}
+
+                {:error, reason} ->
+                  error_state = error_state(state, target, reason)
+                  {:error, reason, error_state}
+              end
+            else
               {:error, reason} ->
                 error_state = error_state(state, target, reason)
                 {:error, reason, error_state}
@@ -493,6 +753,18 @@ defmodule EvoGit.RemoteConnection do
         {:error, reason, error_state}
     end
   end
+
+  # Resolves the canonical daemon OS string. When `os_or_nil` is nil, probes
+  # via `detect_os/1` (broadcasting the :detecting_os stage first — the
+  # local-tarball path); otherwise returns it unchanged (probed/overridden
+  # path).
+  defp resolve_daemon_os(state, target, ssh_target, nil) do
+    state = %{state | bootstrap_stage: :detecting_os}
+    broadcast_status(target, state)
+    detect_os(ssh_target)
+  end
+
+  defp resolve_daemon_os(_state, _target, _ssh_target, os), do: {:ok, os}
 
   # Constructs the error state, broadcasts it, and returns it.
   defp error_state(state, target, reason) do
@@ -954,8 +1226,8 @@ defmodule EvoGit.RemoteConnection do
 
       {:error, reason} ->
         raise RuntimeError,
-          "Failed to persist generated distribution cookie: #{inspect(reason)}. " <>
-            "Bootstrap cannot proceed without a persisted cookie."
+              "Failed to persist generated distribution cookie: #{inspect(reason)}. " <>
+                "Bootstrap cannot proceed without a persisted cookie."
     end
   end
 
