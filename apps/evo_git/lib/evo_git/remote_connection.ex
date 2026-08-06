@@ -137,6 +137,25 @@ defmodule EvoGit.RemoteConnection do
   # ── Public API ─────────────────────────────────────────────────────
 
   @doc """
+  Child spec for this GenServer.
+
+  `restart: :transient` — a `:normal` exit (e.g. graceful disconnect via
+  `handle_call(:disconnect, ...)` → `{:stop, :normal, ...}`) does NOT trigger a
+  restart, so disconnects don't count toward the DynamicSupervisor's restart
+  intensity. Abnormal exits still restart, preserving crash recovery.
+  """
+  @impl true
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :worker,
+      restart: :transient,
+      shutdown: 5_000
+    }
+  end
+
+  @doc """
   Starts a connection manager for the given target map.
 
   Registered under `#{inspect(@registry)}` with key `target.id`.
