@@ -335,6 +335,19 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Returns lightweight task summaries for tasks whose `updated_at` is strictly
+  newer than `since_iso` (a fixed-precision ISO-8601 string).
+
+  Delegates to `EvoGit.TaskRegistry.list_tasks_changed_since/1`. Returns a list
+  of plain maps (same projection as `list_tasks_summary/1`, including the
+  `updated_at` key). This runs on the REMOTE node when called via `:erpc.call/5`.
+  """
+  @spec list_tasks_changed_since(String.t()) :: [map()]
+  def list_tasks_changed_since(since_iso) do
+    EvoGit.TaskRegistry.list_tasks_changed_since(since_iso)
+  end
+
+  @doc """
   Cancels a running task by id.
 
   Delegates to `EvoGit.TaskRegistry.cancel_task/1` (a `GenServer.call`). This
