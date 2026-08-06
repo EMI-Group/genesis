@@ -119,6 +119,16 @@ READ-ONLY analysis of where dashboard-side Elixir work could be lowered into SQL
 
 **Remaining candidates (blockers in parens):** (6) raw archive JSON export for `TaskExportController` (decoded then re-encoded; a raw-column read would serve the stored JSON directly); (8) dead `tasks` attr passed to `Layouts.app` (declared but unused — noted by live/ sub-manager). `get_unique_paths` re-fetch and recent-projects sort are negligible.
 
+## Memory Profile (sustained BEAM memory vs tasks.sqlite size)
+
+Where per-task data is RETAINED in LiveView process heaps (the driver of sustained memory that scales with row count × result-blob size):
+
+- **DashboardLive `:tasks`** = the FULL 16-key summary-map list (incl. decoded `result` JSON — `Codec.decode_result` reconstructs the `{:ok, %{...}}` tuple with embedded `%Usage{}` and archive_records; see `store.ex:58` + `store.ex:987-1023`). Unfiltered `TaskRegistry.list_tasks_summary()` (ALL rows) when no project is active (`dashboard_live/assigns.ex:117`), `list_tasks_summary_by_path(path)` when a project is active. Assign sites: `dashboard_live.ex:564,587,599,942,974,1306,1494`. Re-fetched on EVERY task-broadcast burst (300ms trailing debounce, `node_aware.ex:319` → `dashboard_live.ex:1266`) — churn keeps the retained set fresh and large.
+- **`:running_tasks` / `:pending_tasks`** in EVERY LiveView (NodeAware `on_mount` via `evo_dash_web.ex:49-53`, `node_aware.ex:70-99` + `assigns.ex:33-69`): statuses-filtered subsets of the SAME summary maps (shared references, not copies; filtered from the same list — no per-assign duplication). Rendered in the sidebar (`layouts.ex:139-146`). Note `pending_tasks` retains full summary maps for every completed-unreviewed task with a branch (pattern-matches `result: {:ok, %{branch_name: _}}`, `assigns.ex:75`).
+- **TasksLive `:tasks`/`:filtered_tasks`** = one PAGE (25, `@default_page_size`) of FULL `%TaskInfo{}` structs (logs/usage/archive_metadata) via `list_tasks_paginated` — scales with page_size × blob, not row count. `:dirty_tracker` stores only `last_seen_updated_at` + tick counter (no maps).
+- **Lifecycle**: phoenix_live_view 1.2.8 has NO `live_disconnect_timeout` (option removed in LV 1.0; grep deps + config = no matches). The channel stops the LiveView process with `{:stop, {:shutdown, :closed}}` on socket close (`deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:96-103`) — so retention lasts exactly as long as tabs are OPEN (indefinite per tab; N tabs = N copies). No GenServers/ETS/persistent_term caches in evo_dash (greps confirm); `agents_live.ex:624-631` only READS evo_git ETS (agent data, scales with live agents, not DB size).
+- **Inline decode on the registry heap**: `list_tasks_summary*`/`list_tasks_changed_since` decode ALL rows inside the TaskRegistry GenServer (`task_registry.ex:403-406`-era inline handler; see round-1 note above) — each call transiently materializes the full decoded list on the evo_git GenServer heap, then hands the maps to the LiveView which retains them. Both heaps scale with DB size.
+
 ## Constraints
 
 - Domain modules in `./evo_dash/`, web modules in `./evo_dash_web/`
