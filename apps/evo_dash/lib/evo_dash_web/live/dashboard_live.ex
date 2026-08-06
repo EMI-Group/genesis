@@ -57,13 +57,20 @@ defmodule EvoDashWeb.DashboardLive do
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
       >
+        <%!--
+          --project-accent now carries the TASK-MODE accent (not the project
+          name): genesis_new → blue, genesis_existing → green, evolve_simple →
+          amber — so the objective-box ring/glow/top-line follows the selected
+          mode. The var name is historical; renaming it would require touching
+          assets/css/app.css (out of scope).
+        --%>
         <div
           id="dashboard-root"
           phx-hook="StatePersistence"
           data-project={@active_project_path}
           data-task-mode={@task_mode}
           class="flex flex-col min-h-full"
-          style={"--project-accent: #{ThemeColor.accent_color(@active_project && @active_project.name)}"}
+          style={"--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode)}"}
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
