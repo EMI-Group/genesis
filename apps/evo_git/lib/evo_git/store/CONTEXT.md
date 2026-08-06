@@ -94,6 +94,8 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 - **Recovery rebuilds rows positionally from the JSON map** (`quarantine.ex:160-164`): `Enum.map(columns, &Map.get(map, &1))` — a quarantined row stored with missing keys re-inserts with nil values; recovery checks only that the decoder doesn't raise, NOT `validate_task/1` (a nil-`id` row would still INSERT OR REPLACE — SQLite allows NULL in a TEXT PRIMARY KEY).
 - **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search for a value stored in `opts` matches only if the JSON text contains it verbatim.
 
+## Constraints
+
 - Pure functional — no GenServer, no I/O, no process calls (Codec, Schema, Queries, Quarantine are all pure-function modules).
 - Column order matters — `@task_columns` and `@project_columns` define positional encoding/decoding.
 - JSON encoding via Jason; complex fields stored as JSON TEXT in SQLite columns.
