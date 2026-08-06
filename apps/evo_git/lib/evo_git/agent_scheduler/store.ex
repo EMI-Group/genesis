@@ -336,12 +336,45 @@ defmodule EvoGit.AgentScheduler.Store do
     :ok
   end
 
+  # Metadata key under which the per-message wall-clock timestamp is stored.
+  # Kept as an atom, consistent with the existing `:turn` metadata convention
+  # (see `EvoGit.Agent.ContextBuilder.tag_message_turn/2`).
+  @timestamp_metadata_key :timestamp
+
   @doc """
   Updates the conversation context for an agent in the agent state table.
+
+  Stamps `metadata[:timestamp]` (Unix seconds via `System.system_time(:second)`)
+  on every message that does not already carry one, so the dashboard can display
+  when each message was produced. Idempotent: already-stamped messages keep
+  their original timestamp across repeated context syncs.
   """
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, %Context{} = context) do
-    batch_update_agent(agent_id, context: context)
+    batch_update_agent(agent_id, context: stamp_message_timestamps(context))
+  end
+
+  # Stamps the wall-clock timestamp (Unix seconds) into the metadata of every
+  # message that lacks one. Returns the context unchanged when nothing was
+  # stamped, avoiding a rebuild of the same struct on every sync.
+  defp stamp_message_timestamps(%Context{messages: messages} = context) do
+    {messages, stamped?} = stamp_missing_timestamps(messages)
+    if stamped?, do: %{context | messages: messages}, else: context
+  end
+
+  defp stamp_missing_timestamps(messages) do
+    now = System.system_time(:second)
+
+    Enum.map_reduce(messages, false, fn
+      %ReqLLM.Message{metadata: %{@timestamp_metadata_key => _}} = msg, stamped? ->
+        {msg, stamped?}
+
+      %ReqLLM.Message{metadata: metadata} = msg, _stamped? ->
+        {%{msg | metadata: Map.put(metadata || %{}, @timestamp_metadata_key, now)}, true}
+
+      other, stamped? ->
+        {other, stamped?}
+    end)
   end
 
   @doc """
