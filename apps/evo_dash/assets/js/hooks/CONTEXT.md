@@ -16,10 +16,13 @@ All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
+import NodeSwitchFade from "./hooks/node_switch_fade.js"
+import AdaptiveInput from "./hooks/adaptive_input.js"
 // ...
 hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
         DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash,
-        ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse}
+        ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse,
+        NodeSwitchFade, AdaptiveInput}
 ```
 
 ### Where each hook is defined
@@ -27,6 +30,8 @@ hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
 | Hook | Defined in | Attached to (HEEx) |
 |------|-----------|--------------------|
 | `SidebarCollapse` | `./sidebar_collapse.js` (own file, ES module default export) | `layouts.ex` `<aside id="sidebar" phx-hook="SidebarCollapse">` |
+| `AdaptiveInput` | `./adaptive_input.js` (own file, ES module default export) | `task_form_components.ex` prompt `<textarea phx-hook="AdaptiveInput">` (class `.input-prompt`) — **autogrow-ONLY**: measures `scrollHeight` and sets the textarea's `height` so it grows smoothly with its content (up to the CSS max-height, beyond which it scrolls internally). The compact/expanded `data-layout` is **SERVER-DRIVEN** — computed in `EvoDashWeb.TaskFormComponents.layout_for/1` (evo_dash_web app) from the prompt length and applied on the closest `.input-layout` ancestor: `"compact"` = Layout A unified objective box (the controls row is the card's last line), `"expanded"` = Layout B with a large objective area and an in-flow launch panel below the textarea. The controls row `.input-controls` is the last in-flow element of `.input-card` — no `position: fixed`, no `--input-layout-center` |
+| `NodeSwitchFade` | `./node_switch_fade.js` (own file, ES module default export) | `layouts.ex` `<main id="main-content" phx-hook="NodeSwitchFade" data-node-id=...>` — plays a 0.25s opacity fade when `data-node-id` changes |
 | `PathAutocomplete` | `../app.js` (inline, line ~43) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) |
 | `DirectoryPicker` | `../app.js` (inline, line ~107) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) |
 | `StatePersistence` | `../app.js` (inline, line ~170) | `dashboard_live.ex` dashboard root (`phx-hook="StatePersistence"`) |

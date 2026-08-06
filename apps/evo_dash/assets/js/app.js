@@ -26,6 +26,7 @@ import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
+import AdaptiveInput from "./hooks/adaptive_input.js"
 
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
@@ -44,6 +45,11 @@ function longestCommonPrefix(strings) {
 const PathAutocomplete = {
   mounted() {
     const input = this.el;
+    // Focus on mount so the address-bar input is ready to type immediately when
+    // LiveView morphs it in on entering edit mode (morphs don't re-apply the
+    // `autofocus` attribute). No `updated()` focus — that would steal focus
+    // while the user is typing elsewhere.
+    this.el.focus();
     let prevValue = input.value;
 
     // Tab-key: complete to longest common prefix among all matching datalist options.
@@ -469,11 +475,44 @@ const DialogModal = {
   }
 };
 
+// FocusInput hook: focuses an input element on mount. Used by the command
+// palette search box to auto-focus when the palette opens. Also re-focuses
+// on update if the element is the palette search input (prevents focus loss
+// during LiveView re-renders while typing in the search).
+const FocusInput = {
+  mounted() {
+    this.el.focus();
+  },
+  updated() {
+    // Only keep focus on the search input — not on path inputs or other fields
+    if (this.el.classList.contains("focus-on-update") !== false) {
+      this.el.focus();
+    }
+  }
+};
+
+// PaletteList hook: scrolls the currently [data-selected] item into view
+// whenever the list re-renders (after keyboard navigation).
+const PaletteList = {
+  mounted() {
+    this.scrollToSelected();
+  },
+  updated() {
+    this.scrollToSelected();
+  },
+  scrollToSelected() {
+    const selected = this.el.querySelector('[data-selected="true"]');
+    if (selected) {
+      selected.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList},
 })
 
 // Show progress bar on live navigation and form submits

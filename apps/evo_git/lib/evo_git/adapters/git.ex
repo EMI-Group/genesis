@@ -22,7 +22,7 @@ defmodule EvoGit.Adapters.Git do
       System.cmd(EvoGit.Executable.resolve("git"), args,
         cd: cd,
         stderr_to_stdout: true,
-        env: EvoGit.GitEnv.git_env()
+        env: EvoGit.GitEnv.git_env(cd)
       )
       |> handle_git_command_result(args, cd)
     end
@@ -58,7 +58,7 @@ defmodule EvoGit.Adapters.Git do
       # Branch already exists (previous session crashed) — force-delete and recreate
       System.cmd(EvoGit.Executable.resolve("git"), ["branch", "-D", branch_name],
         cd: repo_path,
-        env: EvoGit.GitEnv.git_env()
+        env: EvoGit.GitEnv.git_env(repo_path)
       )
     end
 
@@ -106,7 +106,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha],
            cd: path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(path)
          ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
@@ -118,7 +118,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha],
            cd: path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(path)
          ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
@@ -130,7 +130,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas],
            cd: path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(path)
          ) do
       {output, 0} -> {:ok, String.trim(output)}
       {output, 1} -> {:conflict, String.trim(output)}
@@ -185,7 +185,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files],
            cd: path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(path)
          ) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {_output, 1} -> {:ok, []}
@@ -434,7 +434,7 @@ defmodule EvoGit.Adapters.Git do
              EvoGit.Executable.resolve("git"),
              ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
              cd: repo_path,
-             env: EvoGit.GitEnv.git_env()
+             env: EvoGit.GitEnv.git_env(repo_path)
            ) do
         {_output, 0} -> true
         {_output, _code} -> false
@@ -465,7 +465,7 @@ defmodule EvoGit.Adapters.Git do
            ["merge-base", "--is-ancestor", branch, base],
            cd: repo_path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(repo_path)
          ) do
       # branch is ancestor of base, no unique commits
       {_output, 0} -> false
@@ -525,7 +525,7 @@ defmodule EvoGit.Adapters.Git do
     case System.cmd(EvoGit.Executable.resolve("git"), ["remote", "get-url", "origin"],
            cd: repo_path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(repo_path)
          ) do
       {_output, 0} -> true
       {_output, _} -> false
@@ -578,7 +578,7 @@ defmodule EvoGit.Adapters.Git do
            ["symbolic-ref", "refs/remotes/origin/HEAD"],
            cd: repo_path,
            stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env()
+           env: EvoGit.GitEnv.git_env(repo_path)
          ) do
       {output, 0} ->
         branch = output |> String.trim() |> String.split("/") |> List.last()

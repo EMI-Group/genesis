@@ -9,6 +9,7 @@ defmodule EvoDashWeb.DashboardLive do
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow}
+  alias EvoDashWeb.ThemeColor
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
@@ -56,16 +57,30 @@ defmodule EvoDashWeb.DashboardLive do
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
       >
+        <%!--
+          --project-accent now carries the TASK-MODE accent (not the project
+          name): genesis_new → blue, genesis_existing → green, evolve_simple →
+          green (lighter green when a resume task id is set — evolve only).
+          The var name is historical; renaming it would require touching
+          assets/css/app.css (out of scope).
+        --%>
         <div
           id="dashboard-root"
           phx-hook="StatePersistence"
           data-project={@active_project_path}
           data-task-mode={@task_mode}
           class="flex flex-col min-h-full"
+          style={
+            "--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode, @task_resume_from)}"
+          }
         >
           <div id="tauri-detect" phx-hook="TauriDetect" class="hidden"></div>
           <div id="platform-detect" phx-hook="PlatformDetect" class="hidden"></div>
-          <div id="browser-notifications" phx-hook="BrowserNotifications" class="flex-1 flex flex-col min-h-0">
+          <div
+            id="browser-notifications"
+            phx-hook="BrowserNotifications"
+            class="flex-1 flex flex-col min-h-0"
+          >
             <%= if @remote? do %>
               <!-- Remote node view: show the remote node's active agents.
                    The local task list and project management are LOCAL
@@ -131,7 +146,10 @@ defmodule EvoDashWeb.DashboardLive do
                           ]}>
                             {case Map.get(agent, :status) do
                               s when is_atom(s) ->
-                                Gettext.gettext(EvoDashWeb.Gettext, String.capitalize(Atom.to_string(s)))
+                                Gettext.gettext(
+                                  EvoDashWeb.Gettext,
+                                  String.capitalize(Atom.to_string(s))
+                                )
 
                               _ ->
                                 gettext("Unknown")
@@ -150,7 +168,8 @@ defmodule EvoDashWeb.DashboardLive do
                             <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
                           <% end %>
                           <% usage = Map.get(agent, :usage) || %{} %>
-                          <% total = Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
+                          <% total =
+                            Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
                           <%= if total > 0 do %>
                             <span>{gettext("Tokens")}: {total}</span>
                           <% end %>
@@ -161,44 +180,213 @@ defmodule EvoDashWeb.DashboardLive do
                 </div>
               <% end %>
             <% else %>
-            <!-- Immersive project selector (flush to top-left, minimal margin) -->
-            <div class="mb-4 animate-fade-in-up shrink-0">
-              <EvoDashWeb.ProjectComponents.project_selector
-                active_project={@active_project}
-                recent_projects={@recent_projects}
-                show_open_form={@show_open_project_form}
-                show_new_project_form={@show_new_project_form}
-                path_suggestions={@path_suggestions}
-                tauri_detected={@tauri_detected}
-                platform={@platform}
-              />
-            </div>
+              <div class="flex-1 flex flex-col min-h-0 gap-3">
+                <.top_bar
+                  active_project={@active_project}
+                  active_project_path={@active_project_path}
+                  recent_projects={@recent_projects}
+                  palette_open={@project_palette_open}
+                  palette_search={@palette_search}
+                  palette_mode={@palette_mode}
+                  palette_selected_index={@palette_selected_index}
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
+                  show_project_settings={@show_project_settings}
+                  task_mode={@task_mode}
+                  task_node_path={@task_node_path}
+                  task_starting_commit={@task_starting_commit}
+                  task_resume_from={@task_resume_from}
+                  task_archive={@task_archive}
+                  build_systems={@build_systems}
+                  task_build_system={@task_build_system}
+                  project_config={@project_config}
+                  worktree_script={@worktree_script}
+                  commands={@commands}
+                  foreign_repos={@foreign_repos}
+                  show_add_foreign_repo_form={@show_add_foreign_repo_form}
+                  new_repo_id={@new_repo_id}
+                  new_repo_path={@new_repo_path}
+                  new_repo_description={@new_repo_description}
+                  disabled={is_nil(@active_project)}
+                  show_configure_dropdown={@show_configure_dropdown}
+                />
 
-            <!-- Full-width prompt + toolbar (task form) -->
-            <div class="animate-fade-in-up animation-delay-100 flex-1 flex flex-col min-h-0">
-              <EvoDashWeb.TaskFormComponents.task_form
-                prompt={@task_prompt}
+                <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
+                <EvoDashWeb.TaskFormComponents.task_form
+                  prompt={@task_prompt}
+                  mode={@task_mode}
+                  mode_info={@task_mode_info}
+                  node_path={@task_node_path}
+                  starting_commit={@task_starting_commit}
+                  resume_from={@task_resume_from}
+                  show_advanced={@show_advanced}
+                  disabled={is_nil(@active_project)}
+                  archive={@task_archive}
+                  model_profiles={@model_profiles}
+                  selected_model_id={@selected_model_id}
+                  build_systems={@build_systems}
+                  selected_build_system={@task_build_system}
+                />
+
+                <!-- Full Result Modal -->
+                <%= if @selected_result do %>
+                  <EvoDashWeb.Helpers.modal on_close="close_result_modal">
+                    <:title>
+                      <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+                      {gettext("Task Result")}
+                    </:title>
+                    {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
+                  </EvoDashWeb.Helpers.modal>
+                <% end %>
+
+                <!-- Full Options Modal -->
+                <%= if @selected_options do %>
+                  <EvoDashWeb.Helpers.modal on_close="close_options_modal">
+                    <:title>
+                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+                      {gettext("Full Objective")}
+                    </:title>
+                    <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+                  </EvoDashWeb.Helpers.modal>
+                <% end %>
+              </div>
+            <% end %>
+            <%!-- end of @remote? else branch --%>
+          </div>
+        </div>
+      </EvoDashWeb.Layouts.app>
+    <% end %>
+    """
+  end
+
+  attr(:build_systems, :list, default: [])
+  attr(:selected, :string, default: nil)
+
+  def build_system_select(assigns) do
+    ~H"""
+    <select
+      name="build_system"
+      form="task-form"
+      class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-32"
+      title={gettext("Build System")}
+    >
+      <option value="">{gettext("No build system")}</option>
+      <%= for bs <- @build_systems do %>
+        <option value={to_string(bs.id)} selected={@selected == to_string(bs.id)}>
+          {bs.name}
+        </option>
+      <% end %>
+    </select>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # top_bar/1 — Immersive sticky app header with command palette project control.
+  #
+  # LEFT: command palette trigger (click to open centered overlay with search,
+  # recent projects, open-by-path, and create-new-project).
+  # RIGHT: a single "Configure" dropdown showing BOTH sections at once —
+  # "Task Options" and "Project Settings" — with no tab bar.
+  # ---------------------------------------------------------------------------
+
+  attr(:active_project, :map, default: nil)
+  attr(:active_project_path, :string, default: nil)
+  attr(:recent_projects, :list, default: [])
+  attr(:palette_open, :boolean, default: false)
+  attr(:palette_search, :string, default: "")
+  attr(:palette_mode, :atom, default: :menu)
+  attr(:palette_selected_index, :integer, default: 0)
+  attr(:path_suggestions, :list, default: [])
+  attr(:tauri_detected, :boolean, default: false)
+  attr(:platform, :string, default: "linux")
+  attr(:show_project_settings, :boolean, default: false)
+  attr(:task_mode, :string, default: "genesis_new")
+  attr(:task_node_path, :string, default: "")
+  attr(:task_starting_commit, :string, default: "")
+  attr(:task_resume_from, :string, default: "")
+  attr(:task_archive, :boolean, default: false)
+  attr(:build_systems, :list, default: [])
+  attr(:task_build_system, :string, default: nil)
+  attr(:project_config, :map, default: nil)
+  attr(:worktree_script, :string, default: nil)
+  attr(:commands, :map, default: %{})
+  attr(:foreign_repos, :list, default: [])
+  attr(:show_add_foreign_repo_form, :boolean, default: false)
+  attr(:new_repo_id, :string, default: "")
+  attr(:new_repo_path, :string, default: "")
+  attr(:new_repo_description, :string, default: "")
+  attr(:disabled, :boolean, default: false)
+  attr(:show_configure_dropdown, :boolean, default: false)
+
+  def top_bar(assigns) do
+    ~H"""
+    <div class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-3 px-4 py-3">
+      <!-- LEFT: command palette project control -->
+      <div class="flex-1 min-w-0">
+        <EvoDashWeb.ProjectComponents.project_omnibox
+          active_project={@active_project}
+          recent_projects={@recent_projects}
+          palette_open={@palette_open}
+          palette_search={@palette_search}
+          palette_mode={@palette_mode}
+          palette_selected_index={@palette_selected_index}
+          path_suggestions={@path_suggestions}
+          tauri_detected={@tauri_detected}
+          platform={@platform}
+        />
+      </div>
+
+      <!-- RIGHT: Configure dropdown — server-managed open state -->
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          class="btn btn-md btn-ghost gap-2"
+          title={gettext("Configure")}
+          phx-click="toggle_configure_dropdown"
+        >
+          <.icon name="hero-adjustments-horizontal" class="size-4" />
+          <span class="hidden sm:inline">{gettext("Configure")}</span>
+        </button>
+
+        <%= if @show_configure_dropdown do %>
+          <!-- Full-screen invisible click-catcher overlay -->
+          <div class="fixed inset-0 z-40" phx-click="close_configure_dropdown"></div>
+        <% end %>
+
+        <!-- Dropdown content — always in DOM, hidden when closed.
+             Using class-based toggling (not conditional render) so content
+             stays in the DOM and phx events inside still work reliably. -->
+        <div class={[
+          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
+          !@show_configure_dropdown && "hidden"
+        ]}>
+          <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
+            <!-- Section 1: Task Options -->
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                {gettext("Task Options")}
+              </p>
+              <EvoDashWeb.TaskFormComponents.task_options_tab
                 mode={@task_mode}
-                mode_info={@task_mode_info}
                 node_path={@task_node_path}
                 starting_commit={@task_starting_commit}
                 resume_from={@task_resume_from}
-                show_advanced={@show_advanced}
-                disabled={is_nil(@active_project)}
                 archive={@task_archive}
-                model_profiles={@model_profiles}
-                selected_model_id={@selected_model_id}
                 build_systems={@build_systems}
                 selected_build_system={@task_build_system}
+                disabled={@disabled}
               />
             </div>
 
-            <!-- Side-by-side: Project Settings + Advanced Options -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 items-start shrink-0 animate-fade-in-up animation-delay-100">
-              <%= if @active_project do %>
-                <EvoDashWeb.ProjectComponents.project_settings_panel
+            <!-- Section 2: Project Settings (only when a project is active) -->
+            <%= if @active_project != nil do %>
+              <div class="mt-4 pt-4 border-t border-base-200">
+                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                  {gettext("Project Settings")}
+                </p>
+                <EvoDashWeb.ProjectComponents.project_settings_tab
                   active_project={@active_project_path}
-                  show={@show_project_settings}
                   project_config={@project_config}
                   worktree_script={@worktree_script}
                   commands={@commands}
@@ -210,44 +398,12 @@ defmodule EvoDashWeb.DashboardLive do
                   tauri_detected={@tauri_detected}
                   platform={@platform}
                 />
-              <% end %>
-              <EvoDashWeb.TaskFormComponents.advanced_options
-                show_advanced={@show_advanced}
-                node_path={@task_node_path}
-                starting_commit={@task_starting_commit}
-                resume_from={@task_resume_from}
-                mode={@task_mode}
-                disabled={is_nil(@active_project)}
-              />
-            </div>
-
-            <!-- Full Result Modal -->
-            <%= if @selected_result do %>
-              <EvoDashWeb.Helpers.modal on_close="close_result_modal">
-                <:title>
-                  <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-                  {gettext("Task Result")}
-                </:title>
-                {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
-              </EvoDashWeb.Helpers.modal>
+              </div>
             <% end %>
-
-            <!-- Full Options Modal -->
-            <%= if @selected_options do %>
-              <EvoDashWeb.Helpers.modal on_close="close_options_modal">
-                <:title>
-                  <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-                  {gettext("Full Objective")}
-                </:title>
-                <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-              </EvoDashWeb.Helpers.modal>
-            <% end %>
-            <% end %>
-            <%!-- end of @remote? else branch --%>
           </div>
         </div>
-      </EvoDashWeb.Layouts.app>
-    <% end %>
+      </div>
+    </div>
     """
   end
 
@@ -295,8 +451,10 @@ defmodule EvoDashWeb.DashboardLive do
         assign(socket,
           active_project: nil,
           active_project_path: nil,
-          show_open_project_form: false,
-          show_new_project_form: false,
+          project_palette_open: false,
+          palette_search: "",
+          palette_mode: :menu,
+          palette_selected_index: 0,
           recent_projects: recent_projects,
           path_suggestions: [],
           expanded_task_ids: MapSet.new(),
@@ -311,6 +469,7 @@ defmodule EvoDashWeb.DashboardLive do
           new_repo_id: "",
           new_repo_path: "",
           new_repo_description: "",
+          show_configure_dropdown: false,
           tasks: [],
           model_profiles: model_profiles,
           selected_model_id: selected_model_id,
@@ -332,6 +491,7 @@ defmodule EvoDashWeb.DashboardLive do
           task_resume_from: "",
           task_build_system: nil,
           config_status: config_status,
+          config_tab: "task_options",
           remote?: false,
           remote_agents: []
         )
@@ -484,18 +644,86 @@ defmodule EvoDashWeb.DashboardLive do
   # --- Project Management Events ---
 
   @impl true
-  def handle_event("toggle_open_project_form", params, socket) do
-    ProjectFlow.toggle_open_project_form(socket, params)
+  def handle_event("open_project_palette", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:project_palette_open, true)
+     |> assign(:palette_mode, :menu)
+     |> assign(:palette_search, "")
+     |> assign(:palette_selected_index, 0)
+     |> assign(:show_configure_dropdown, false)}
   end
 
   @impl true
-  def handle_event("toggle_new_project_form", params, socket) do
-    ProjectFlow.toggle_new_project_form(socket, params)
+  def handle_event("close_project_palette", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:project_palette_open, false)
+     |> assign(:palette_mode, :menu)
+     |> assign(:palette_search, "")
+     |> assign(:palette_selected_index, 0)}
+  end
+
+  @impl true
+  def handle_event("palette_search", %{"palette_search" => value}, socket) do
+    {:noreply,
+     socket
+     |> assign(:palette_search, value)
+     |> assign(:palette_selected_index, 0)}
+  end
+
+  @impl true
+  def handle_event("palette_mode", %{"mode" => mode_str}, socket) do
+    mode =
+      case mode_str do
+        "open_path" -> :open_path
+        "new_project" -> :new_project
+        _ -> :menu
+      end
+
+    socket =
+      socket
+      |> assign(:palette_mode, mode)
+
+    # Seed path suggestions when entering open_path mode
+    socket =
+      if mode == :open_path do
+        assign(
+          socket,
+          :path_suggestions,
+          Project.path_suggestions("", socket.assigns.recent_projects)
+        )
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("palette_keydown", %{"key" => key}, socket) do
+    socket = handle_palette_key(socket, key, socket.assigns.palette_mode)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_configure_dropdown", _params, socket) do
+    {:noreply, assign(socket, :show_configure_dropdown, !socket.assigns.show_configure_dropdown)}
+  end
+
+  @impl true
+  def handle_event("close_configure_dropdown", _params, socket) do
+    {:noreply, assign(socket, :show_configure_dropdown, false)}
   end
 
   @impl true
   def handle_event("toggle_advanced", _params, socket) do
     {:noreply, assign(socket, :show_advanced, !socket.assigns.show_advanced)}
+  end
+
+  @impl true
+  def handle_event("select_config_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, :config_tab, tab)}
   end
 
   @impl true
@@ -528,6 +756,14 @@ defmodule EvoDashWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:selected_model_id, id)
+     |> StatePersistence.maybe_persist_state()}
+  end
+
+  @impl true
+  def handle_event("task_prompt_change", %{"prompt" => prompt}, socket) do
+    {:noreply,
+     socket
+     |> assign(:task_prompt, prompt)
      |> StatePersistence.maybe_persist_state()}
   end
 
@@ -705,7 +941,12 @@ defmodule EvoDashWeb.DashboardLive do
            )
            |> Assigns.assign_running_and_pending_tasks(all_tasks)
            |> assign(:tasks, Enum.map(all_tasks, &lightweight_task/1))
+           # The textarea keeps its text (`phx-update="ignore"`), so @task_prompt
+           # must mirror the visible content or the server-side layout computation
+           # (from prompt length) desyncs. Side effect: the draft prompt now
+           # survives reloads via localStorage — intentional improvement.
            |> Assigns.assign_form_defaults()
+           |> assign(:task_prompt, prompt)
            |> StatePersistence.maybe_persist_state()}
 
         {:error, reason} ->
@@ -815,9 +1056,17 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("toggle_project_settings", _params, socket) do
+    new_show = !socket.assigns.show_project_settings
+
     {:noreply,
      socket
-     |> assign(:show_project_settings, !socket.assigns.show_project_settings)
+     |> assign(:show_project_settings, new_show)
+     # When expanding, switch the config dropdown to the Project Settings tab
+     # so its content is visible. (Backwards-compatible entry point for tests
+     # and any external callers of the toggle_project_settings event.)
+     |> then(fn s ->
+       if new_show, do: assign(s, :config_tab, "project_settings"), else: s
+     end)
      |> StatePersistence.maybe_persist_state()}
   end
 
@@ -910,7 +1159,7 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("path_input", %{"path" => value}, socket) do
-    suggestions = Project.path_suggestions(value)
+    suggestions = Project.path_suggestions(value, socket.assigns.recent_projects)
     {:noreply, assign(socket, :path_suggestions, suggestions)}
   end
 
@@ -1130,6 +1379,94 @@ defmodule EvoDashWeb.DashboardLive do
     %{task | logs: [], result: nil, usage: nil, archive_metadata: nil}
   end
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Command Palette keyboard navigation helpers
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # In :open_path and :new_project modes, Escape is handled by the client-side
+  # phx-key binding on the input (which sends palette_keydown with key="Escape").
+  # Non-menu modes are no-ops here (the input's own Escape binding closes it
+  # via the palette_keydown → Escape clause below which matches any mode).
+  defp handle_palette_key(socket, "Escape", _mode) do
+    socket
+    |> assign(:project_palette_open, false)
+    |> assign(:palette_mode, :menu)
+    |> assign(:palette_search, "")
+    |> assign(:palette_selected_index, 0)
+  end
+
+  defp handle_palette_key(socket, "ArrowDown", :menu) do
+    max_index = palette_item_count(socket) - 1
+    new_index = min(socket.assigns.palette_selected_index + 1, max_index)
+    assign(socket, :palette_selected_index, max(new_index, 0))
+  end
+
+  defp handle_palette_key(socket, "ArrowUp", :menu) do
+    new_index = socket.assigns.palette_selected_index - 1
+    assign(socket, :palette_selected_index, max(new_index, 0))
+  end
+
+  defp handle_palette_key(socket, "Enter", :menu) do
+    filtered =
+      EvoDashWeb.ProjectComponents.filter_projects(
+        socket.assigns.recent_projects,
+        socket.assigns.palette_search
+      )
+
+    action_base = length(filtered)
+    index = socket.assigns.palette_selected_index
+
+    cond do
+      index < action_base and index < length(filtered) ->
+        # Activate the selected recent project via push_patch
+        project = Enum.at(filtered, index)
+        expanded = Path.expand(project.path)
+
+        if File.dir?(expanded) do
+          TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+          recent_projects = TaskRegistry.list_recent_projects()
+
+          socket
+          |> assign(:recent_projects, recent_projects)
+          |> assign(:project_palette_open, false)
+          |> assign(:palette_mode, :menu)
+          |> push_patch(to: "/?project=#{URI.encode(expanded)}")
+        else
+          socket
+          |> assign(:project_palette_open, false)
+          |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
+        end
+
+      index == action_base ->
+        socket
+        |> assign(:palette_mode, :open_path)
+        |> assign(
+          :path_suggestions,
+          Project.path_suggestions("", socket.assigns.recent_projects)
+        )
+
+      index == action_base + 1 ->
+        assign(socket, :palette_mode, :new_project)
+
+      true ->
+        socket
+    end
+  end
+
+  defp handle_palette_key(socket, _key, _mode), do: socket
+
+  # Counts the total number of items in the palette menu list:
+  # filtered recent projects + 2 actions (Open by Path, Create New).
+  defp palette_item_count(socket) do
+    filtered =
+      EvoDashWeb.ProjectComponents.filter_projects(
+        socket.assigns.recent_projects,
+        socket.assigns.palette_search
+      )
+
+    length(filtered) + 2
+  end
+
   defp activate_project(socket, path) do
     name = Path.basename(path)
     is_project_change = socket.assigns[:active_project_path] != path
@@ -1161,8 +1498,10 @@ defmodule EvoDashWeb.DashboardLive do
       notified_task_ids: Assigns.build_notified_task_ids(tasks, socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
-      show_open_project_form: false,
-      show_new_project_form: false,
+      project_palette_open: false,
+      palette_mode: :menu,
+      palette_search: "",
+      palette_selected_index: 0,
       show_project_settings: false,
       project_config: project_config,
       worktree_script: worktree_script,

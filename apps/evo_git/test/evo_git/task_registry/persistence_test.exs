@@ -135,8 +135,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       stop_supervised(EvoGit.TaskRegistry)
 
       start_supervised(
-        {TaskRegistry,
-         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The backfilled task should exist with nil for the new fields
@@ -172,8 +171,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       stop_supervised(TaskRegistry)
 
       start_supervised!(
-        {TaskRegistry,
-         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -237,8 +235,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
-        {TaskRegistry,
-         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The task persisted in the store must survive the registry restart.
@@ -268,8 +265,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
-        {TaskRegistry,
-         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       # The project must survive the registry restart.
@@ -350,7 +346,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
   end
 
   describe "corruption resilience — structural" do
-    test "registry survives and salvages good tasks when wrong-shape entries exist", %{sqlite_path: sqlite_path} do
+    test "registry survives and salvages good tasks when wrong-shape entries exist", %{
+      sqlite_path: sqlite_path
+    } do
       unique = System.unique_integer([:positive])
 
       # Good tasks
@@ -385,13 +383,28 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Inject corrupt rows via raw SQL (bypassing put_task validation).
       # The new typed API rejects non-struct input, so we go under the hood.
       {:ok, raw_conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(raw_conn, "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)", ["bad_string", "completed", "<<invalid json>>"])
-      XqliteNIF.execute(raw_conn, "INSERT OR REPLACE INTO tasks (id, status, type) VALUES (?1, ?2, ?3)", ["bad_map", "completed", "invalid_type_atom_xyz"])
+
+      XqliteNIF.execute(
+        raw_conn,
+        "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
+        ["bad_string", "completed", "<<invalid json>>"]
+      )
+
+      XqliteNIF.execute(
+        raw_conn,
+        "INSERT OR REPLACE INTO tasks (id, status, type) VALUES (?1, ?2, ?3)",
+        ["bad_map", "completed", "invalid_type_atom_xyz"]
+      )
+
       XqliteNIF.close(raw_conn)
 
       EvoGit.Store.put_project(
         EvoGit.Store,
-        %EvoGit.RecentProject{path: "/some/path", name: "test", last_opened_at: DateTime.utc_now()}
+        %EvoGit.RecentProject{
+          path: "/some/path",
+          name: "test",
+          last_opened_at: DateTime.utc_now()
+        }
       )
 
       pid = GenServer.whereis(EvoGit.TaskRegistry)
@@ -420,7 +433,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert is_list(projects)
     end
 
-    test "cleanup_expired_tasks does not crash GenServer when wrong-shape entries exist", %{sqlite_path: sqlite_path} do
+    test "cleanup_expired_tasks does not crash GenServer when wrong-shape entries exist", %{
+      sqlite_path: sqlite_path
+    } do
       unique = System.unique_integer([:positive])
 
       good = %TaskInfo{
@@ -440,7 +455,13 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Corrupt entry
       # Inject a corrupt row via raw SQL (put_task rejects non-struct input)
       {:ok, raw_conn2} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(raw_conn2, "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)", ["bad_cleanup", "completed", "<<not json>>"])
+
+      XqliteNIF.execute(
+        raw_conn2,
+        "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
+        ["bad_cleanup", "completed", "<<not json>>"]
+      )
+
       XqliteNIF.close(raw_conn2)
 
       pid = GenServer.whereis(EvoGit.TaskRegistry)
@@ -457,17 +478,25 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert Enum.any?(tasks, &(&1.id == "good_cleanup_#{unique}"))
     end
 
-    test "completing a task persists it even when corrupt entries exist elsewhere", %{sqlite_path: sqlite_path} do
+    test "completing a task persists it even when corrupt entries exist elsewhere", %{
+      sqlite_path: sqlite_path
+    } do
       unique = System.unique_integer([:positive])
 
       # Seed a corrupt entry FIRST
       # Inject a corrupt row via raw SQL (bypassing put_task validation)
       {:ok, raw_conn} = Xqlite.open(sqlite_path)
-      XqliteNIF.execute(raw_conn, "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)", [
-        "pre_existing_corrupt_#{unique}",
-        "completed",
-        "<<invalid json>>"
-      ])
+
+      XqliteNIF.execute(
+        raw_conn,
+        "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
+        [
+          "pre_existing_corrupt_#{unique}",
+          "completed",
+          "<<invalid json>>"
+        ]
+      )
+
       XqliteNIF.close(raw_conn)
 
       # Now start a task and complete it
@@ -514,7 +543,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "archive_store_#{System.unique_integer([:positive])}"
 
       archive = [
-        %{"agent_id" => "T1_A1", "parent_id" => nil, "objective" => "Genesis", "role" => "manager"}
+        %{
+          "agent_id" => "T1_A1",
+          "parent_id" => nil,
+          "objective" => "Genesis",
+          "role" => "manager"
+        }
       ]
 
       task = %TaskInfo{
@@ -570,8 +604,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       stop_supervised(TaskRegistry)
 
       start_supervised!(
-        {TaskRegistry,
-         task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -598,8 +631,18 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       EvoGit.Store.put_task(EvoGit.Store, task)
 
       archive_records = [
-        %{"agent_id" => "T1_A1", "parent_id" => nil, "objective" => "Genesis", "role" => "manager"},
-        %{"agent_id" => "T2_A1", "parent_id" => "T1_A1", "objective" => "Implement", "role" => "executor"}
+        %{
+          "agent_id" => "T1_A1",
+          "parent_id" => nil,
+          "objective" => "Genesis",
+          "role" => "manager"
+        },
+        %{
+          "agent_id" => "T2_A1",
+          "parent_id" => "T1_A1",
+          "objective" => "Implement",
+          "role" => "executor"
+        }
       ]
 
       # update_task_status is a cast; list_tasks() syncs to ensure it's processed.
@@ -733,6 +776,74 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       fetched = TaskRegistry.get_task(task_id)
       assert fetched != nil
       assert fetched.status == :cancelled
+    end
+  end
+
+  describe "startup reconciliation of orphaned :finalizing tasks" do
+    test "restart marks an orphaned :finalizing row :failed but leaves a :running row untouched",
+         %{data_dir: data_dir} do
+      unique = System.unique_integer([:positive])
+      finalizing_id = "startup_finalizing_#{unique}"
+      running_id = "startup_running_#{unique}"
+      future_lease = System.system_time(:second) + 300
+
+      # Stop the initial registry FIRST so the seeded rows exist in the Store
+      # before the fresh registry boots — literally "fresh registry against a
+      # DB containing :finalizing rows". The Store stays running (durable on
+      # disk); it is NOT stopped/restarted.
+      stop_supervised(EvoGit.TaskRegistry)
+
+      finalizing_task = %TaskInfo{
+        id: finalizing_id,
+        type: :genesis,
+        status: :finalizing,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: future_lease
+      }
+
+      running_task = %TaskInfo{
+        id: running_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: future_lease
+      }
+
+      :ok = EvoGit.Store.put_task(EvoGit.Store, finalizing_task)
+      :ok = EvoGit.Store.put_task(EvoGit.Store, running_task)
+
+      # Restart the registry pointing at the same store and data_dir.
+      start_supervised(
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+      )
+
+      # The Store is the durable source of truth; the registry's init
+      # reconciliation must have marked the orphaned :finalizing row :failed.
+      finalizing = EvoGit.Store.get_task(EvoGit.Store, finalizing_id)
+      assert finalizing != nil
+      assert finalizing.status == :failed
+      assert finalizing.finished_at != nil
+      assert finalizing.lease_expires_at == nil
+      # Do not over-pin the exact fix wording — just require a result payload.
+      assert is_binary(finalizing.result)
+
+      # Control row: a :running task with a valid (future) lease must NOT be
+      # touched at init — sweeping orphaned :running tasks is the :lease_sweep
+      # path (covered in lease_heartbeat_test.exs).
+      running = EvoGit.Store.get_task(EvoGit.Store, running_id)
+      assert running != nil
+      assert running.status == :running
+      assert running.lease_expires_at == future_lease
     end
   end
 end

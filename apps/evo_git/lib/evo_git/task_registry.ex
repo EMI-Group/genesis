@@ -19,6 +19,14 @@ defmodule EvoGit.TaskRegistry do
   alias EvoGit.TaskRegistry.Lease
   alias EvoGit.TaskRegistry.TaskExecutor
 
+  ## Call timeout
+
+  # GenServer self-calls can block on EvoGit.Store calls (SQLite I/O may be
+  # very slow on high-latency storage like an NFS-mounted home directory), so
+  # they use an explicit 30s timeout instead of the 5s default. Keep the value
+  # tunable in one place.
+  @call_timeout 30_000
+
   @max_recent_projects 10
 
   # Maximum number of log entries retained per task. Logs grow on every
@@ -42,15 +50,15 @@ defmodule EvoGit.TaskRegistry do
 
   def start_task(task_type, opts) do
     task_id = TaskExecutor.generate_id()
-    GenServer.call(__MODULE__, {:start_task, task_id, task_type, opts})
+    GenServer.call(__MODULE__, {:start_task, task_id, task_type, opts}, @call_timeout)
   end
 
   def get_task(task_id) do
-    GenServer.call(__MODULE__, {:get_task, task_id})
+    GenServer.call(__MODULE__, {:get_task, task_id}, @call_timeout)
   end
 
   def list_tasks do
-    GenServer.call(__MODULE__, :list_tasks)
+    GenServer.call(__MODULE__, :list_tasks, @call_timeout)
   end
 
   @doc """
@@ -60,11 +68,11 @@ defmodule EvoGit.TaskRegistry do
   to `EvoGit.Store.safe_select_paginated_tasks/2`). Returns `{tasks, total_count}`.
   """
   def list_tasks_paginated(opts \\ []) do
-    GenServer.call(__MODULE__, {:list_tasks_paginated, opts})
+    GenServer.call(__MODULE__, {:list_tasks_paginated, opts}, @call_timeout)
   end
 
   def cancel_task(task_id) do
-    GenServer.call(__MODULE__, {:cancel_task, task_id})
+    GenServer.call(__MODULE__, {:cancel_task, task_id}, @call_timeout)
   end
 
   def update_task_status(task_id, status, result \\ nil, opts \\ []) do
@@ -91,7 +99,7 @@ defmodule EvoGit.TaskRegistry do
   end
 
   def list_tasks_by_path(path) do
-    GenServer.call(__MODULE__, {:list_tasks_by_path, path})
+    GenServer.call(__MODULE__, {:list_tasks_by_path, path}, @call_timeout)
   end
 
   @doc """
@@ -99,18 +107,18 @@ defmodule EvoGit.TaskRegistry do
   the dashboard sidebar listing. Returns a list of plain maps.
   """
   def list_tasks_summary do
-    GenServer.call(__MODULE__, :list_tasks_summary)
+    GenServer.call(__MODULE__, :list_tasks_summary, @call_timeout)
   end
 
   @doc """
   Same as list_tasks_summary/0 but filtered to a specific project_path.
   """
   def list_tasks_summary_by_path(path) do
-    GenServer.call(__MODULE__, {:list_tasks_summary_by_path, path})
+    GenServer.call(__MODULE__, {:list_tasks_summary_by_path, path}, @call_timeout)
   end
 
   def get_unique_paths do
-    GenServer.call(__MODULE__, :get_unique_paths)
+    GenServer.call(__MODULE__, :get_unique_paths, @call_timeout)
   end
 
   def delete_task(task_id) do
@@ -118,7 +126,7 @@ defmodule EvoGit.TaskRegistry do
   end
 
   def clear_finished_tasks do
-    GenServer.call(__MODULE__, :clear_finished_tasks)
+    GenServer.call(__MODULE__, :clear_finished_tasks, @call_timeout)
   end
 
   ## Recent Projects Client API
@@ -128,21 +136,21 @@ defmodule EvoGit.TaskRegistry do
   Moves it to the top with the current timestamp.
   """
   def add_recent_project(path, name) do
-    GenServer.call(__MODULE__, {:add_recent_project, path, name})
+    GenServer.call(__MODULE__, {:add_recent_project, path, name}, @call_timeout)
   end
 
   @doc """
   Returns the list of recently opened projects, sorted by last_opened_at descending.
   """
   def list_recent_projects do
-    GenServer.call(__MODULE__, :list_recent_projects)
+    GenServer.call(__MODULE__, :list_recent_projects, @call_timeout)
   end
 
   @doc """
   Removes a project from the recent list by path.
   """
   def remove_recent_project(path) do
-    GenServer.call(__MODULE__, {:remove_recent_project, path})
+    GenServer.call(__MODULE__, {:remove_recent_project, path}, @call_timeout)
   end
 
   ## Server Callbacks
@@ -175,13 +183,36 @@ defmodule EvoGit.TaskRegistry do
     # problems rather than raising, so no rescue is needed here.
     EvoGit.Store.integrity_check(task_store)
 
+    # Startup reconciliation for orphaned :finalizing tasks. A task that was
+    # mid-finalization when the runtime died (e.g. slow git calls in
+    # merge_and_report/3 hanging while the app is killed) can never reach a
+    # terminal status in-process: the {ref, result} and {:DOWN, ...} handlers
+    # key off task_refs, which is empty after restart. Mark such tasks :failed
+    # synchronously here (NOT via the async update_task_status/4 cast, which
+    # would race callers). :running tasks are deliberately left alone — the
+    # one-shot :lease_sweep handles orphaned owners after the lease duration.
+    state =
+      EvoGit.Store.select_running_lease_info(task_store)
+      |> Enum.filter(fn %{status: status} -> status == :finalizing end)
+      |> Enum.reduce(state, fn %{id: task_id}, acc ->
+        handle_update_status(
+          acc,
+          task_id,
+          :failed,
+          "Runtime restarted during task finalization",
+          [],
+          {:startup_reconcile, :finalizing}
+        )
+      end)
+
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
     # Start the periodic heartbeat timer for lease renewal (owned tasks only).
-    # The sweep is NOT periodic — it fires once at startup (via reconcile) and
-    # once more after the lease duration to catch owners that died around our
-    # startup. After that, any new foreign instance does its own pair of checks.
+    # The sweep is NOT periodic — it fires once after the lease duration to
+    # catch owners that died around our startup. After that, any new foreign
+    # instance does its own check. (init itself reconciles orphaned
+    # :finalizing tasks directly, above.)
     Process.send_after(self(), :heartbeat, @heartbeat_interval)
     Process.send_after(self(), :lease_sweep, @sweep_after)
 

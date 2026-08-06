@@ -1037,28 +1037,28 @@ button, a, input, textarea, select, summary,
   font-weight: 700;
   margin: 1em 0 0.5em;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid oklch(var(--b3));
-  color: oklch(var(--bc));
+  border-bottom: 1px solid var(--color-base-300);
+  color: var(--color-base-content);
 }
 .md-content h2 {
   font-size: 1.3em;
   font-weight: 600;
   margin: 0.8em 0 0.4em;
   padding-bottom: 0.2em;
-  border-bottom: 1px solid oklch(var(--b3));
-  color: oklch(var(--bc));
+  border-bottom: 1px solid var(--color-base-300);
+  color: var(--color-base-content);
 }
 .md-content h3 {
   font-size: 1.15em;
   font-weight: 600;
   margin: 0.6em 0 0.3em;
-  color: oklch(var(--bc));
+  color: var(--color-base-content);
 }
 .md-content h4, .md-content h5, .md-content h6 {
   font-size: 1em;
   font-weight: 600;
   margin: 0.5em 0 0.3em;
-  color: oklch(var(--bc));
+  color: var(--color-base-content);
 }
 .md-content p {
   margin: 0.5em 0;
@@ -1080,7 +1080,7 @@ button, a, input, textarea, select, summary,
   margin: 0.1em 0;
 }
 .md-content a {
-  color: oklch(var(--p));
+  color: var(--color-primary);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -1100,10 +1100,10 @@ button, a, input, textarea, select, summary,
 .md-content blockquote {
   margin: 0.5em 0;
   padding: 0.5em 1em;
-  border-left: 4px solid oklch(var(--p));
-  background: oklch(var(--b2));
+  border-left: 4px solid var(--color-primary);
+  background: var(--color-base-200);
   border-radius: 0 0.5rem 0.5rem 0;
-  color: oklch(var(--bc));
+  color: var(--color-base-content);
 }
 .md-content blockquote > *:first-child {
   margin-top: 0;
@@ -1115,16 +1115,16 @@ button, a, input, textarea, select, summary,
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 0.875em;
   padding: 0.15em 0.4em;
-  background: oklch(var(--b2));
+  background: var(--color-base-200);
   border-radius: 0.25rem;
 }
 .md-content pre {
   margin: 0.75em 0;
   padding: 1em;
-  background: oklch(var(--b2));
+  background: var(--color-base-200);
   border-radius: 0.75rem;
   overflow-x: auto;
-  border: 1px solid oklch(var(--b3));
+  border: 1px solid var(--color-base-300);
 }
 .md-content pre code {
   padding: 0;
@@ -1136,13 +1136,13 @@ button, a, input, textarea, select, summary,
 .md-content hr {
   margin: 1em 0;
   border: none;
-  border-top: 1px solid oklch(var(--b3));
+  border-top: 1px solid var(--color-base-300);
 }
 .md-content table {
   width: 100%;
   margin: 0.75em 0;
   border-collapse: collapse;
-  border: 1px solid oklch(var(--b3));
+  border: 1px solid var(--color-base-300);
   border-radius: 0.5rem;
   overflow: hidden;
   display: block;
@@ -1150,15 +1150,15 @@ button, a, input, textarea, select, summary,
 }
 .md-content th, .md-content td {
   padding: 0.5em 0.75em;
-  border: 1px solid oklch(var(--b3));
+  border: 1px solid var(--color-base-300);
   text-align: left;
 }
 .md-content th {
-  background: oklch(var(--b2));
+  background: var(--color-base-200);
   font-weight: 600;
 }
 .md-content tr:nth-child(even) {
-  background: oklch(var(--b2) / 0.5);
+  background: color-mix(in oklab, var(--color-base-200) 50%, transparent);
 }
 .md-content img {
   max-width: 100%;
@@ -1166,7 +1166,7 @@ button, a, input, textarea, select, summary,
 }
 .md-content input[type="checkbox"] {
   margin-right: 0.5em;
-  accent-color: oklch(var(--p));
+  accent-color: var(--color-primary);
 }
 
 /* === RTL (Right-to-Left) Support === */
@@ -1216,7 +1216,7 @@ button, a, input, textarea, select, summary,
 
 [dir="rtl"] .md-content blockquote {
   border-left: 0;
-  border-right: 4px solid oklch(var(--p));
+  border-right: 4px solid var(--color-primary);
   border-radius: 0.5rem 0 0 0.5rem;
 }
 
@@ -1263,4 +1263,317 @@ button, a, input, textarea, select, summary,
     oklch(65% 0.18 255 / 0.03) 75%,
     transparent 100%
   );
+}
+
+/* ============================================================
+   Dashboard UI Redesign — Floating Top Bar, Address Bar,
+   Adaptive Input Layout
+   ------------------------------------------------------------
+   The --project-accent custom property is a hex color string
+   set via inline style on a container element by the server:
+     style="--project-accent: #4f46e5"
+   All accent usage falls back to the DaisyUI primary color.
+   ============================================================ */
+
+/* --- Project accent fallback (used when not set inline) --- */
+:root {
+  --project-accent: var(--color-primary);
+}
+
+/* === Floating Top Bar === */
+/* A floating, glassmorphic panel that sticks to the top of the viewport. */
+.dashboard-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  margin: 0.5rem;
+  border-radius: 1rem;
+  border: 1px solid var(--color-base-300);
+  background: color-mix(in oklab, var(--color-base-100) 80%, transparent);
+  /* NOTE: no backdrop-filter here — it would create a containing block that
+     traps the fixed-position command-palette backdrop/overlay (descendants of
+     the topbar) so they could only cover the topbar strip, not the viewport. */
+  box-shadow: 0 4px 24px -6px oklch(0% 0 0 / 0.2);
+  /* NOTE: no `overflow: hidden` here on purpose. The Configure dropdown
+     and the command palette overlay are positioned outside the bar and
+     must be allowed to escape it. */
+}
+
+/* === Command Palette (Project Omnibox) === */
+/* Trigger button styling (collapsed state) */
+.project-palette-trigger {
+  position: relative;
+  border-radius: 9999px;
+  border: 1px solid var(--color-base-300);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.project-palette-trigger:hover {
+  border-color: color-mix(in oklch, var(--project-accent) 50%, transparent);
+}
+
+/* Backdrop — full-screen, semi-transparent, click-to-close */
+.project-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: oklch(0% 0 0 / 0.3);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: palette-fade-in 0.15s ease;
+}
+
+/* Palette overlay — centered modal */
+.project-palette-overlay {
+  position: fixed;
+  top: 15vh;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  width: calc(100vw - 2rem);
+  max-width: 36rem;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0.75rem;
+  background: color-mix(in oklab, var(--color-base-100) 98%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-base-300);
+  box-shadow: 0 16px 48px -8px oklch(0% 0 0 / 0.3);
+  overflow: hidden;
+  animation: palette-slide-down 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Scrollable project list */
+.project-palette-list {
+  max-height: 50vh;
+}
+
+/* List items — keyboard-selected state highlighted */
+.project-palette-item {
+  color: var(--color-base-content);
+}
+
+.project-palette-item[data-selected="true"] {
+  background: color-mix(in oklch, var(--project-accent) 12%, transparent);
+}
+
+.project-palette-item:hover {
+  background: color-mix(in oklch, var(--project-accent) 12%, transparent);
+}
+
+/* Footer */
+.project-palette-footer {
+  background: color-mix(in oklab, var(--color-base-200) 50%, transparent);
+}
+
+.project-palette-footer kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--color-base-300);
+  background: var(--color-base-100);
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  color: color-mix(in oklab, var(--color-base-content) 60%, transparent);
+}
+
+/* Animations */
+@keyframes palette-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes palette-slide-down {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Responsive: on small screens, reduce top offset */
+@media (max-width: 640px) {
+  .project-palette-overlay {
+    top: 8vh;
+    max-height: 80vh;
+  }
+}
+
+/* === Adaptive Input Layout === */
+/* Single-card, two-layout objective editor.
+   data-layout is SERVER-DRIVEN (EvoDashWeb.TaskFormComponents.layout_for/1):
+     "compact"  → Layout A: unified objective box — the controls row is the
+                  card's last line; Launch button bottom-right.
+     "expanded" → Layout B: large objective area with an in-flow launch panel
+                  below the textarea; Launch button in the middle.
+   The AdaptiveInput JS hook (assets/js/hooks/adaptive_input.js) is autogrow-
+   ONLY — it no longer toggles data-layout and no longer positions anything
+   (the --input-layout-center / position: fixed logic is gone). */
+.input-layout {
+  display: flex;
+  flex-direction: column;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- The single card containing BOTH the textarea and the controls row --- */
+.input-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 1rem;
+  background: color-mix(in oklab, var(--color-base-100) 80%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--color-base-300);
+  box-shadow: 0 4px 16px -4px oklch(0% 0 0 / 0.15);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Layout A (compact): centered, floating, modest size */
+.input-layout[data-layout="compact"] .input-card {
+  max-width: 48rem;
+  margin-left: auto;
+  margin-right: auto;
+  /* Vertical centering (ChatGPT landing style): auto margins center the card
+     in the flex column. Auto margins collapse to 0 when the content overflows,
+     so a tall card stays reachable from the top. The controls row is INSIDE
+     the card now, so both auto margins live here. */
+  margin-top: auto;
+  margin-bottom: auto;
+  width: 100%;
+  /* Subtle accent border in compact mode */
+  border-color: color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
+  /* Layered background glow: the base card shadow is repeated here so
+     compact keeps the card's normal elevation, then a FAINT 2px accent ring
+     (a subtle hint at low alpha, not a prominent ring) and a two-layer glow —
+     a mid glow with negative spread plus a wide, very-low-alpha bloom that
+     extends beyond the card — so the accent reads as depth BEHIND the card
+     rather than a ring hugging it. Expanded layout intentionally has no
+     ring/glow (see the .input-card base rule). */
+  box-shadow:
+    0 4px 16px -4px oklch(0% 0 0 / 0.15),
+    0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
+    0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
+    0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
+}
+
+/* Subtle accent top-edge gradient on the input card (compact mode) */
+.input-layout[data-layout="compact"] .input-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1rem 1rem 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--project-accent) 30%,
+    var(--project-accent) 70%,
+    transparent 100%
+  );
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Layout B (expanded): taller, fills more space */
+.input-layout[data-layout="expanded"] .input-card {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* --- The textarea prompt --- */
+.input-prompt {
+  width: 100%;
+  resize: none;
+  border: none;
+  background: transparent;
+  color: var(--color-base-content);
+  padding: 1rem 1.25rem;
+  outline: none;
+  line-height: 1.6;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.input-prompt::placeholder {
+  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+}
+
+.input-prompt:focus {
+  outline: none;
+}
+
+/* Layout A (compact): starts ~3 lines, auto-grows up to ~8 lines */
+.input-layout[data-layout="compact"] .input-prompt {
+  min-height: calc(1.6em * 3);
+  max-height: calc(1.6em * 8);
+  overflow-y: auto;
+}
+
+/* Layout B (expanded): much taller, fills available space */
+.input-layout[data-layout="expanded"] .input-prompt {
+  flex: 1 1 auto;
+  min-height: calc(1.6em * 10);
+  max-height: none;
+  overflow-y: auto;
+}
+
+/* --- The controls row (mode / launch / model) ---
+   Now the LAST element INSIDE .input-card (in normal document flow — never
+   position: fixed; no --input-layout-center, no [dir="rtl"] transform).
+   Control order is IDENTICAL in both layouts (server-side classes in
+   task_form_components.ex): mode (order-1) | Launch (order-2, centered via
+   mx-auto) | model (order-3). mx-auto centers Launch even when the model
+   select is absent (2-item row); justify-content: space-between is
+   neutralized for the auto-margin button. Only the textarea size differs
+   between compact and expanded layouts.
+
+   ONE-LINE CONTRACT: the row NEVER wraps (flex-nowrap). The two selects
+   carry min-w-0 + truncate so long labels (mode names, model profile ids)
+   shrink and clip with an ellipsis instead of forcing the row wider than
+   its container. flex-wrap: nowrap below is belt-and-braces so the
+   contract survives markup refactors; the Tailwind flex-nowrap class on
+   .input-controls is the testable source. */
+.input-controls {
+  display: flex;
+  flex-wrap: nowrap; /* one-line contract: controls never wrap */
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-top: 1px solid var(--color-base-300);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- Launch button: colored hover ring keyed on the selected mode ---
+   The Launch button carries a server-side data-mode attribute with values
+   genesis_new | genesis_existing | evolve_simple. Each mode gets its own
+   accent ring (plus a soft outer glow) on hover, framing the daisyUI
+   btn-primary hover state — btn-primary sets no box-shadow, so the ring is
+   additive and the hover bg still shows. Colors are literal oklch values
+   mixed via color-mix so they read on BOTH custom DaisyUI themes (dark +
+   light); never nest oklch(var(--x) / a) (Known Issue (i)). */
+.input-controls button[data-mode="genesis_new"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 255) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.62 0.19 255) 50%, transparent);
+}
+
+.input-controls button[data-mode="genesis_existing"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.72 0.15 162) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.72 0.15 162) 50%, transparent);
+}
+
+.input-controls button[data-mode="evolve_simple"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.72 0.17 152) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.72 0.17 152) 50%, transparent);
 }

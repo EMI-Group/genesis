@@ -44,6 +44,10 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | `agent_type/0` | `:read_write` | `:read` or `:read_write` — controls spatial contract validation |
 | `delegation_level/0` | `:high` | `:high` or `:low` — controls turn-budget warning frequency for delegation reminders |
 
+## Known Issues
+
+- **✅ FIXED — stale `:finalizing` tasks after restart** (detailed in `./task_registry/CONTEXT.md` "Restart Recovery & Status Transitions"): `EvoGit.TaskRegistry.init/1` (`task_registry.ex:159-220`) now performs **startup reconciliation** for orphaned `:finalizing` tasks — after `integrity_check`, it queries `EvoGit.Store.select_running_lease_info/1` (lightweight id+status+lease_expires_at for ALL rows), filters `status == :finalizing`, and synchronously marks each `:failed` via the shared `handle_update_status/6` (`:506`) with result `"Runtime restarted during task finalization"` and `caller_info = {:startup_reconcile, :finalizing}`. This covers the crash window where slow git calls in `merge_and_report/3` hang while the task sits at `:finalizing` and the app dies before the terminal write. `:running` tasks are deliberately untouched — the one-shot `:lease_sweep` (`:896-947`) still handles orphaned `:running` owners after the lease duration (it respects lease validity for the legitimate multi-VM case). Remaining caveats: `:heartbeat` renews leases only for `:running`/`:pending`; `:periodic_cleanup` deletes only rows with `finished_at != nil`; the `{:recheck_task, _}` handler (`:971-990`) is still unreachable dead code (nothing schedules the first recheck). In-process resolution still requires the wrapper process to finish (→ `:completed`/`:failed`) or crash (→ `:DOWN` → `:failed` only if no active sched_meta agents) — lease expiry plays NO role in resolving `:finalizing`.
+
 ## Constraints
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` outside adapters.
 - Agents are transient modules using `EvoGit.Agent` behaviour; persistent state lives in ETS.

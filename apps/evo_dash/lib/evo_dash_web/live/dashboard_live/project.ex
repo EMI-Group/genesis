@@ -61,10 +61,33 @@ defmodule EvoDashWeb.DashboardLive.Project do
 
   @doc """
   Returns path suggestions for the file-system picker based on the input value.
-  """
-  def path_suggestions(value) when value == "" or is_nil(value), do: []
 
-  def path_suggestions(value) do
+  When `recent_projects` (a list of `%EvoGit.RecentProject{}` structs) is
+  given, recently opened projects whose path matches the typed value are
+  listed FIRST, followed by filesystem suggestions. A path that appears both
+  in the recent list and on disk is only listed once (recents win).
+  """
+  def path_suggestions(value, recent_projects \\ [])
+
+  def path_suggestions(value, recent_projects) do
+    recents =
+      recent_projects
+      |> Enum.map(& &1.path)
+      |> Enum.filter(&(is_binary(&1) and matches_prefix?(&1, value)))
+      |> Enum.take(8)
+
+    Enum.uniq(recents ++ filesystem_suggestions(value))
+  end
+
+  defp matches_prefix?(_path, value) when value == "" or is_nil(value), do: true
+
+  defp matches_prefix?(path, value) do
+    String.starts_with?(String.downcase(path), String.downcase(value))
+  end
+
+  defp filesystem_suggestions(value) when value == "" or is_nil(value), do: []
+
+  defp filesystem_suggestions(value) do
     expanded = Path.expand(value)
 
     {dir, prefix} =
@@ -217,7 +240,9 @@ defmodule EvoDashWeb.DashboardLive.Project do
         repos
         |> Enum.flat_map(fn {id_str, cfg} ->
           case build_foreign_repo(id_str, cfg) do
-            {:ok, repo} -> [repo]
+            {:ok, repo} ->
+              [repo]
+
             {:error, reason} ->
               Logger.warning("Failed to parse foreign_repos '#{id_str}': #{reason}")
               []

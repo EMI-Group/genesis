@@ -67,12 +67,14 @@ defmodule EvoDashWeb.Layouts do
         in the EXPANDED state on every mount/update, which clips the SSH
         node-selector dropdown (w-72 = 288px) at the expanded sidebar's edge
         (w-60 = 240px) — the main body then appears to cover the SSH switch.
-        The !important modifier pins overflow to visible so dropdown menus
-        (node selector, language, theme) are never clipped. The sidebar is a
-        z-50 stacking context above the main content (z-0), so overflowing
-        menus paint above the main body. If the hook is fixed at the source
-        (stop toggling overflow-hidden on expand), revert this to plain
-        `overflow-visible`. -->
+        (The node selector now lives in the sidebar's bottom bar, leftmost,
+        with its dropdown opening upward — the w-72 vs w-60 clipping concern
+        is unchanged.) The !important modifier pins overflow to visible so
+        dropdown menus (node selector, language, theme) are never clipped.
+        The sidebar is a z-50 stacking context above the main content (z-0),
+        so overflowing menus paint above the main body. If the hook is fixed
+        at the source (stop toggling overflow-hidden on expand), revert this
+        to plain `overflow-visible`. -->
       <aside
         id="sidebar"
         data-sidebar-collapsed="false"
@@ -80,21 +82,21 @@ defmodule EvoDashWeb.Layouts do
         class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
         <!-- Branding -->
-        <div class="flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
+        <div class="flex items-center h-14 px-4 shrink-0">
           <.link
             navigate={with_node_param(~p"/", @current_node_id)}
-            class="flex items-center gap-2.5 hover:opacity-80 transition-opacity min-w-0"
+            class="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0"
           >
             <%!-- zh_CN: Genesis → "启元" --%>
             <img
               src={~p"/images/logo.svg"}
-              class="h-7 w-auto block dark:hidden shrink-0"
+              class="h-6 w-auto block dark:hidden shrink-0"
               alt={gettext("Genesis")}
             />
             <%!-- zh_CN: Genesis → "启元" --%>
             <img
               src={~p"/images/logo-alt.svg"}
-              class="h-7 w-auto hidden dark:block shrink-0"
+              class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("Genesis")}
             />
             <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent truncate sidebar-label">
@@ -102,16 +104,6 @@ defmodule EvoDashWeb.Layouts do
               {gettext("Genesis")}
             </span>
           </.link>
-        </div>
-
-        <!-- Node Selector -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-800 shrink-0">
-          <.live_component
-            module={EvoDashWeb.NodeSelectorComponent}
-            id="node-selector"
-            current_node_id={@current_node_id}
-            current_node_name={@current_node_name}
-          />
         </div>
 
         <!-- Navigation Links -->
@@ -144,7 +136,7 @@ defmodule EvoDashWeb.Layouts do
           >{gettext("System")}</.sidebar_nav_link>
 
           <!-- Task Indicators Section -->
-          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4 border-t border-slate-200 dark:border-slate-800">
+          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
             <div class="px-3 mb-3 mt-1">
               <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
                 {gettext("Active Tasks")}
@@ -188,20 +180,30 @@ defmodule EvoDashWeb.Layouts do
           </div>
         </nav>
 
-        <!-- Bottom section: Language + Theme + Collapse -->
+        <!-- Bottom section: Node selector + Language + Theme + Collapse -->
         <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
           <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
             <div data-sidebar-bottom-group class="flex items-center gap-1">
+              <!-- Node Selector (remote server switch — dropdown opens upward) -->
+              <.live_component
+                module={EvoDashWeb.NodeSelectorComponent}
+                id="node-selector"
+                current_node_id={@current_node_id}
+                current_node_name={@current_node_name}
+                drop_up={true}
+              />
+            </div>
+            <div data-sidebar-bottom-group class="flex items-center gap-1">
               <.language_selector drop_up={true} />
               <.theme_toggle_compact drop_up={true} />
+              <button
+                id="sidebar-collapse-toggle"
+                class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
+                title={gettext("Collapse sidebar")}
+              >
+                <.icon name="hero-chevron-double-left" class="w-4 h-4" />
+              </button>
             </div>
-            <button
-              id="sidebar-collapse-toggle"
-              class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
-              title={gettext("Collapse sidebar")}
-            >
-              <.icon name="hero-chevron-double-left" class="w-4 h-4" />
-            </button>
           </div>
         </div>
         <% end %>

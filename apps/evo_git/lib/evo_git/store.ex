@@ -46,6 +46,14 @@ defmodule EvoGit.Store do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
+  ## Call timeout
+
+  # SQLite I/O can be very slow when the database file lives on high-latency
+  # storage (e.g. an NFS-mounted home directory on a remote server), so every
+  # GenServer.call/3 to this store uses an explicit 30s timeout instead of the
+  # 5s default. Keep the value tunable in one place.
+  @call_timeout 30_000
+
   ## Child spec & start
 
   def child_spec(opts) do
@@ -76,7 +84,7 @@ defmodule EvoGit.Store do
   def put_task(store \\ __MODULE__, task)
 
   def put_task(store, %TaskInfo{} = task) do
-    GenServer.call(store, {:put_task, task})
+    GenServer.call(store, {:put_task, task}, @call_timeout)
   end
 
   def put_task(_store, _other) do
@@ -85,27 +93,27 @@ defmodule EvoGit.Store do
 
   @doc "Reads a single task by id, returning the struct or nil."
   def get_task(store \\ __MODULE__, task_id) do
-    GenServer.call(store, {:get_task, task_id})
+    GenServer.call(store, {:get_task, task_id}, @call_timeout)
   end
 
   @doc "Deletes a single task by id."
   def delete_task(store \\ __MODULE__, task_id) do
-    GenServer.call(store, {:delete_task, task_id})
+    GenServer.call(store, {:delete_task, task_id}, @call_timeout)
   end
 
   @doc "Deletes multiple tasks by id in one call. `task_ids` is a list of id strings."
   def delete_tasks(store \\ __MODULE__, task_ids) do
-    GenServer.call(store, {:delete_tasks, task_ids})
+    GenServer.call(store, {:delete_tasks, task_ids}, @call_timeout)
   end
 
   @doc "Returns all tasks as a list of TaskInfo structs."
   def select_all_tasks(store \\ __MODULE__) do
-    GenServer.call(store, :select_all_tasks)
+    GenServer.call(store, :select_all_tasks, @call_timeout)
   end
 
   @doc "Returns the number of task rows."
   def count_tasks(store \\ __MODULE__) do
-    GenServer.call(store, :count_tasks)
+    GenServer.call(store, :count_tasks, @call_timeout)
   end
 
   @doc """
@@ -124,12 +132,12 @@ defmodule EvoGit.Store do
   quarantine boundary as `safe_select_all_tasks/1`).
   """
   def safe_select_paginated_tasks(store \\ __MODULE__, opts) do
-    GenServer.call(store, {:safe_select_paginated_tasks, opts})
+    GenServer.call(store, {:safe_select_paginated_tasks, opts}, @call_timeout)
   end
 
   @doc "Deletes all task rows."
   def clear_tasks(store \\ __MODULE__) do
-    GenServer.call(store, :clear_tasks)
+    GenServer.call(store, :clear_tasks, @call_timeout)
   end
 
   ## Public API — Lightweight task queries
@@ -141,7 +149,7 @@ defmodule EvoGit.Store do
   JSON blobs are decoded. Used by TaskRegistry.get_unique_paths/0.
   """
   def select_task_paths(store \\ __MODULE__) do
-    GenServer.call(store, :select_task_paths)
+    GenServer.call(store, :select_task_paths, @call_timeout)
   end
 
   @doc """
@@ -151,7 +159,7 @@ defmodule EvoGit.Store do
   to filter by status — the status filtering happens in SQL.
   """
   def select_finished_task_ids(store \\ __MODULE__) do
-    GenServer.call(store, :select_finished_task_ids)
+    GenServer.call(store, :select_finished_task_ids, @call_timeout)
   end
 
   @doc """
@@ -163,7 +171,7 @@ defmodule EvoGit.Store do
   check status == :running and lease validity.
   """
   def select_running_lease_info(store \\ __MODULE__) do
-    GenServer.call(store, :select_running_lease_info)
+    GenServer.call(store, :select_running_lease_info, @call_timeout)
   end
 
   @doc """
@@ -174,7 +182,7 @@ defmodule EvoGit.Store do
   decoding + re-encoding the whole task struct.
   """
   def update_lease_expires_at(store \\ __MODULE__, task_id, expires_at) do
-    GenServer.call(store, {:update_lease_expires_at, task_id, expires_at})
+    GenServer.call(store, {:update_lease_expires_at, task_id, expires_at}, @call_timeout)
   end
 
   @doc """
@@ -192,7 +200,7 @@ defmodule EvoGit.Store do
   review_status, appending logs, and status transitions.
   """
   def update_task_columns(store \\ __MODULE__, task_id, columns) when is_list(columns) do
-    GenServer.call(store, {:update_task_columns, task_id, columns})
+    GenServer.call(store, {:update_task_columns, task_id, columns}, @call_timeout)
   end
 
   @doc """
@@ -200,7 +208,7 @@ defmodule EvoGit.Store do
   Reads only the `status` column — no heavy JSON decode.
   """
   def get_task_status(store \\ __MODULE__, task_id) do
-    GenServer.call(store, {:get_task_status, task_id})
+    GenServer.call(store, {:get_task_status, task_id}, @call_timeout)
   end
 
   @doc """
@@ -212,7 +220,7 @@ defmodule EvoGit.Store do
   check finished_at against age/count limits.
   """
   def select_cleanup_info(store \\ __MODULE__) do
-    GenServer.call(store, :select_cleanup_info)
+    GenServer.call(store, :select_cleanup_info, @call_timeout)
   end
 
   @doc """
@@ -222,14 +230,14 @@ defmodule EvoGit.Store do
   (decoded keyword list containing :objective and :prompt).
   """
   def select_tasks_summary(store \\ __MODULE__) do
-    GenServer.call(store, :select_tasks_summary)
+    GenServer.call(store, :select_tasks_summary, @call_timeout)
   end
 
   @doc """
   Same as select_tasks_summary/1 but filtered to a specific project_path.
   """
   def select_tasks_summary_by_path(store \\ __MODULE__, project_path) do
-    GenServer.call(store, {:select_tasks_summary_by_path, project_path})
+    GenServer.call(store, {:select_tasks_summary_by_path, project_path}, @call_timeout)
   end
 
   ## Public API — Projects
@@ -238,7 +246,7 @@ defmodule EvoGit.Store do
   def put_project(store \\ __MODULE__, project)
 
   def put_project(store, %RecentProject{} = project) do
-    GenServer.call(store, {:put_project, project})
+    GenServer.call(store, {:put_project, project}, @call_timeout)
   end
 
   def put_project(_store, _other) do
@@ -247,22 +255,22 @@ defmodule EvoGit.Store do
 
   @doc "Reads a single project by path, returning the struct or nil."
   def get_project(store \\ __MODULE__, path) do
-    GenServer.call(store, {:get_project, path})
+    GenServer.call(store, {:get_project, path}, @call_timeout)
   end
 
   @doc "Deletes a single project by path."
   def delete_project(store \\ __MODULE__, path) do
-    GenServer.call(store, {:delete_project, path})
+    GenServer.call(store, {:delete_project, path}, @call_timeout)
   end
 
   @doc "Returns all projects as a list of RecentProject structs."
   def select_all_projects(store \\ __MODULE__) do
-    GenServer.call(store, :select_all_projects)
+    GenServer.call(store, :select_all_projects, @call_timeout)
   end
 
   @doc "Returns the number of project rows."
   def count_projects(store \\ __MODULE__) do
-    GenServer.call(store, :count_projects)
+    GenServer.call(store, :count_projects, @call_timeout)
   end
 
   ## Public API — Safety / Integrity
@@ -272,7 +280,7 @@ defmodule EvoGit.Store do
   Bad rows are moved to `tasks_quarantine` and skipped from the returned list.
   """
   def safe_select_all_tasks(store \\ __MODULE__) do
-    GenServer.call(store, :safe_select_all_tasks)
+    GenServer.call(store, :safe_select_all_tasks, @call_timeout)
   end
 
   @doc """
@@ -280,7 +288,7 @@ defmodule EvoGit.Store do
   Bad rows are moved to `projects_quarantine` and skipped from the returned list.
   """
   def safe_select_all_projects(store \\ __MODULE__) do
-    GenServer.call(store, :safe_select_all_projects)
+    GenServer.call(store, :safe_select_all_projects, @call_timeout)
   end
 
   @doc """
@@ -298,12 +306,12 @@ defmodule EvoGit.Store do
     * `{:error, reason}` — SQLite-level corruption detected.
   """
   def integrity_check(store \\ __MODULE__) do
-    GenServer.call(store, :integrity_check)
+    GenServer.call(store, :integrity_check, @call_timeout)
   end
 
   @doc "Returns the total number of rows across both tables."
   def size(store \\ __MODULE__) do
-    GenServer.call(store, :size)
+    GenServer.call(store, :size, @call_timeout)
   end
 
   @doc """
@@ -319,7 +327,7 @@ defmodule EvoGit.Store do
   of rows successfully recovered across both quarantine tables.
   """
   def recover_quarantine(store \\ __MODULE__) do
-    GenServer.call(store, :recover_quarantine)
+    GenServer.call(store, :recover_quarantine, @call_timeout)
   end
 
   ## GenServer callbacks

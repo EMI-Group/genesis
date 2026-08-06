@@ -47,7 +47,7 @@ defmodule EvoGit.Sandbox.MacOS do
       # uses the ORIGINAL executable param (before nix/bash wrapping).
       git_env =
         if EvoGit.GitEnv.git_command?(executable),
-          do: EvoGit.GitEnv.git_env_list(),
+          do: EvoGit.GitEnv.git_env_list(cwd),
           else: []
 
       # Wrap in bash with stdin redirected from /dev/null so commands like rg
@@ -65,7 +65,7 @@ defmodule EvoGit.Sandbox.MacOS do
       # Disabled path: wrap in bash with stdin redirect from /dev/null.
       git_env =
         if EvoGit.GitEnv.git_command?(executable),
-          do: EvoGit.GitEnv.git_env_list(),
+          do: EvoGit.GitEnv.git_env_list(cwd),
           else: []
 
       inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
@@ -233,7 +233,7 @@ defmodule EvoGit.Sandbox.MacOS do
           {"bash", ["-c", wrapped_cmd]}
         end
 
-      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
+      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
       task =
         Task.async(fn ->
@@ -255,7 +255,7 @@ defmodule EvoGit.Sandbox.MacOS do
       end
     else
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
-      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
+      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
       task =
         Task.async(fn ->

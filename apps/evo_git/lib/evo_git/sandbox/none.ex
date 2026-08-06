@@ -54,7 +54,7 @@ defmodule EvoGit.Sandbox.None do
       System.cmd("bash", ["-c", wrapped_cmd],
         cd: cwd,
         stderr_to_stdout: true,
-        env: EvoGit.GitEnv.git_env_list()
+        env: EvoGit.GitEnv.git_env_list(cwd)
       )
     else
       System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
@@ -67,7 +67,11 @@ defmodule EvoGit.Sandbox.None do
     # need for shell escaping and avoids PowerShell's lack of input redirection
     # (the `<` operator is reserved and throws a parser error).
     if EvoGit.GitEnv.git_command?(executable) do
-      System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: EvoGit.GitEnv.git_env_list())
+      System.cmd(executable, args,
+        cd: cwd,
+        stderr_to_stdout: true,
+        env: EvoGit.GitEnv.git_env_list(cwd)
+      )
     else
       System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
     end
@@ -122,7 +126,7 @@ defmodule EvoGit.Sandbox.None do
         {"bash", ["-c", wrapped_cmd]}
       end
 
-    git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
+    git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
     task =
       Task.async(fn ->
@@ -149,7 +153,7 @@ defmodule EvoGit.Sandbox.None do
     # captured from the return value; on timeout, partial output produced
     # before the OS kills the process is lost (we return a truncation notice).
     is_git = EvoGit.GitEnv.git_command?(executable)
-    git_env = if is_git, do: EvoGit.GitEnv.git_env_list(), else: []
+    git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
     task =
       Task.async(fn ->
