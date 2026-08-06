@@ -108,16 +108,34 @@ defmodule EvoGit.TaskRegistry do
 
   `statuses` is a list of status ATOMS; `[]` (default) means all statuses. When
   non-empty, the status filter is pushed into SQL.
+
+  `since` is an optional fixed-precision ISO-8601 timestamp string; when
+  non-nil, only tasks updated at or after `since` are returned (nil = no time
+  filter). The filter is pushed into SQL.
   """
-  def list_tasks_summary(statuses \\ []) do
-    GenServer.call(__MODULE__, {:list_tasks_summary, statuses}, @call_timeout)
+  def list_tasks_summary(statuses \\ [], since \\ nil) do
+    GenServer.call(__MODULE__, {:list_tasks_summary, statuses, since}, @call_timeout)
   end
 
   @doc """
-  Same as list_tasks_summary/1 but filtered to a specific project_path.
+  Same as list_tasks_summary/2 but filtered to a specific project_path.
   """
-  def list_tasks_summary_by_path(path, statuses \\ []) do
-    GenServer.call(__MODULE__, {:list_tasks_summary_by_path, path, statuses}, @call_timeout)
+  def list_tasks_summary_by_path(path, statuses \\ [], since \\ nil) do
+    GenServer.call(
+      __MODULE__,
+      {:list_tasks_summary_by_path, path, statuses, since},
+      @call_timeout
+    )
+  end
+
+  @doc """
+  Returns tasks created or updated at or after the given fixed-precision
+  ISO-8601 timestamp string (`since_iso`). Delegates to
+  `EvoGit.Store.select_tasks_changed_since/2`; returns a list of plain maps
+  (id, status, updated_at, ...).
+  """
+  def list_tasks_changed_since(since_iso) do
+    GenServer.call(__MODULE__, {:list_tasks_changed_since, since_iso}, @call_timeout)
   end
 
   def get_unique_paths do
@@ -382,14 +400,20 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_call({:list_tasks_summary, statuses}, _from, state) do
-    tasks = EvoGit.Store.select_tasks_summary(state.task_store, statuses)
+  def handle_call({:list_tasks_summary, statuses, since}, _from, state) do
+    tasks = EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
     {:reply, tasks, state}
   end
 
   @impl true
-  def handle_call({:list_tasks_summary_by_path, path, statuses}, _from, state) do
-    tasks = EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses)
+  def handle_call({:list_tasks_summary_by_path, path, statuses, since}, _from, state) do
+    tasks = EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
+    {:reply, tasks, state}
+  end
+
+  @impl true
+  def handle_call({:list_tasks_changed_since, since_iso}, _from, state) do
+    tasks = EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
     {:reply, tasks, state}
   end
 
@@ -643,14 +667,26 @@ defmodule EvoGit.TaskRegistry do
 
     finished_at = DateTime.utc_now()
 
+    # Mirror handle_update_status/6's extraction: pull branch_name from tuple
+    # results when present. Included in the write only when non-nil — writing
+    # nil would clobber an existing branch_name persisted earlier.
+    branch_name =
+      case final_result do
+        {:ok, data} when is_map(data) -> Map.get(data, :branch_name)
+        _ -> nil
+      end
+
+    update_cols =
+      [
+        status: final_status,
+        result: final_result,
+        finished_at: finished_at,
+        lease_expires_at: nil
+      ] ++ if(branch_name, do: [branch_name: branch_name], else: [])
+
     # Targeted write — only the changed columns; `ref` is runtime-only and
     # never persisted.
-    EvoGit.Store.update_task_columns(state.task_store, task_id,
-      status: final_status,
-      result: final_result,
-      finished_at: finished_at,
-      lease_expires_at: nil
-    )
+    EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 

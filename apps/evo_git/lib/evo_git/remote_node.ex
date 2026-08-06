@@ -387,6 +387,31 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Returns lightweight task summaries updated since an ISO-8601 timestamp on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_tasks_changed_since/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `[]` if the remote call fails.
+
+  `since_iso` is a fixed-precision ISO-8601 string; the returned summary-shaped
+  maps include an `updated_at` key.
+  """
+  @spec list_tasks_changed_since(node(), String.t()) :: [map()]
+  def list_tasks_changed_since(node, since_iso) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_tasks_changed_since(since_iso)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_tasks_changed_since, [
+             since_iso
+           ]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
   Cancels a task on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.cancel_task/1` directly.
