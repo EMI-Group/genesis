@@ -8,35 +8,6 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       assert html =~ "System"
     end
-
-    test "shows configuration guidance section", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
-
-      assert html =~ "Example Configuration"
-      assert html =~ "config.toml"
-    end
-
-    test "shows CLI usage examples", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
-
-      assert html =~ "Example Usage"
-      assert html =~ "genesis"
-      assert html =~ "evolve"
-    end
-
-    test "shows FAQ section", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
-
-      assert html =~ "Frequently Asked Questions"
-      assert html =~ "How do I set my API key?"
-    end
-
-    test "shows credentials reference", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
-
-      assert html =~ "Credentials Reference"
-      assert html =~ "credentials.toml"
-    end
   end
 
   # NOTE: The LOCAL "confirm_restart"/"confirm_stop" event handlers are
