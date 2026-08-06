@@ -68,14 +68,4 @@ defmodule EvoGit.TaskRegistry.Lease do
   def lease_valid?(expires_at) do
     System.system_time(:second) < expires_at
   end
-
-  @doc """
-  Sets crash details on a task struct: adds `finished_at` and a crash result
-  message if the task status is `:failed` and `finished_at` is `nil`.
-  """
-  def set_crash_details(%{status: :failed, finished_at: nil} = task) do
-    %{task | finished_at: DateTime.utc_now(), result: "Process crashed while task was running"}
-  end
-
-  def set_crash_details(task), do: task
 end
