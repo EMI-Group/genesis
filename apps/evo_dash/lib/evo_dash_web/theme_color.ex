@@ -28,6 +28,49 @@ defmodule EvoDashWeb.ThemeColor do
     hsl_to_hex(hue, @saturation, @lightness)
   end
 
+  @doc """
+  Maps a task mode to its accent color.
+
+  The palette mirrors the `[data-mode]` hover colors in `assets/css/app.css`
+  (lines ~1555-1571), so the objective-box accent matches the launch-button
+  hover ring for the same mode:
+
+    * `"genesis_new"` (and any other `"genesis*"` mode) → blue `oklch(0.62 0.19 255)`
+    * `"genesis_existing"` → green `oklch(0.72 0.15 162)`
+    * `"evolve_simple"` (and any other `"evolve*"` mode) → amber `oklch(0.8 0.16 80)`
+
+  Accepts the mode as a binary or atom (atoms are normalized with
+  `Atom.to_string/1`). `nil`, `""`, or any unknown mode falls back to
+  `default_color/0` (`"#6366f1"`).
+  """
+  @spec accent_color_for_mode(nil | binary | atom) :: String.t()
+  def accent_color_for_mode(nil), do: default_color()
+  def accent_color_for_mode(""), do: default_color()
+
+  def accent_color_for_mode(mode) when is_atom(mode) do
+    mode |> Atom.to_string() |> accent_color_for_mode()
+  end
+
+  def accent_color_for_mode(mode) when is_binary(mode) do
+    case mode do
+      "genesis_new" ->
+        "oklch(0.62 0.19 255)"
+
+      "genesis_existing" ->
+        "oklch(0.72 0.15 162)"
+
+      "evolve_simple" ->
+        "oklch(0.8 0.16 80)"
+
+      _ ->
+        cond do
+          String.starts_with?(mode, "genesis") -> "oklch(0.62 0.19 255)"
+          String.starts_with?(mode, "evolve") -> "oklch(0.8 0.16 80)"
+          true -> default_color()
+        end
+    end
+  end
+
   @doc "Returns the default accent color (indigo-500)."
   @spec default_color :: String.t()
   def default_color, do: @default_color
@@ -39,6 +82,7 @@ defmodule EvoDashWeb.ThemeColor do
     c = (1 - abs(2 * l_norm - 1)) * s_norm
     h_prime = h / 60.0
     x = c * (1 - abs(rem(trunc(h_prime), 2) - 1))
+
     {r1, g1, b1} =
       cond do
         h_prime < 1 -> {c, x, 0.0}
