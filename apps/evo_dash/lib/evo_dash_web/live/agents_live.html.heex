@@ -352,8 +352,11 @@
                               >
                                 <.icon name="hero-arrows-pointing-out" class="size-3" />
                               </button>
-                              <span class="text-xs text-base-content/40 ml-auto">
+                              <span class="text-xs text-base-content/40 ml-auto flex items-center gap-2">
                                 {format_turn(entry.turn)}
+                                <%= if timestamp = format_history_timestamp(entry.timestamp) do %>
+                                  <span class="text-base-content/30">{timestamp}</span>
+                                <% end %>
                               </span>
                             </div>
                             <%= case entry.type do %>

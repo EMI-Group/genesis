@@ -165,6 +165,74 @@ defmodule EvoDashWeb.Helpers do
   end
 
   @doc """
+  Formats a per-message wall-clock timestamp as a short LOCAL 24h time string
+  (`"HH:MM:SS"`, seconds precision).
+
+  The `:evo_git` runtime stamps wall-clock time into message
+  `metadata[:timestamp]` at the source; the value is either a Unix-seconds
+  integer or a `DateTime` (ISO8601 binaries are also accepted defensively).
+  Historical messages may lack the key entirely.
+
+  The machine's LOCAL wall-clock time is computed without a tz database: the
+  default `Calendar.UTCOnlyTimeZoneDatabase` only supports "Etc/UTC", so
+  instead of `DateTime.shift_zone!` we derive the local offset from
+  `:calendar.local_time/0` vs `:calendar.universal_time/0` and apply it to the
+  UTC instant (via gregorian seconds so it is correct across day boundaries).
+
+  Returns `nil` for absent/unparseable values so callers can render nothing
+  (graceful fallback for pre-stamping history).
+  """
+  def format_history_timestamp(nil), do: nil
+
+  def format_history_timestamp(%DateTime{} = datetime) do
+    datetime
+    |> datetime_to_local_naive()
+    |> format_local_short_time()
+  end
+
+  def format_history_timestamp(timestamp) when is_integer(timestamp) do
+    case DateTime.from_unix(timestamp, :second) do
+      {:ok, datetime} -> format_history_timestamp(datetime)
+      {:error, _} -> nil
+    end
+  end
+
+  def format_history_timestamp(timestamp) when is_binary(timestamp) do
+    case DateTime.from_iso8601(timestamp) do
+      {:ok, datetime, _offset} -> format_history_timestamp(datetime)
+      {:error, _} -> nil
+    end
+  end
+
+  def format_history_timestamp(_), do: nil
+
+  # Converts a UTC-aware DateTime to a naive datetime in the machine's LOCAL
+  # wall-clock time: first strip the DateTime's own offset to get the UTC
+  # instant, then apply the machine's current local offset.
+  defp datetime_to_local_naive(%DateTime{} = datetime) do
+    utc_naive =
+      datetime
+      |> DateTime.to_naive()
+      |> NaiveDateTime.add(-(datetime.utc_offset + datetime.std_offset), :second)
+
+    NaiveDateTime.add(utc_naive, local_offset_seconds(), :second)
+  end
+
+  # The machine's current local offset in seconds, from the difference between
+  # :calendar.local_time/0 and :calendar.universal_time/0. Computed via
+  # gregorian seconds so it is correct across day boundaries (e.g. 00:30 local
+  # in UTC+2 vs 22:30 UTC on the previous day).
+  defp local_offset_seconds do
+    local = :calendar.local_time()
+    utc = :calendar.universal_time()
+    :calendar.datetime_to_gregorian_seconds(local) - :calendar.datetime_to_gregorian_seconds(utc)
+  end
+
+  defp format_local_short_time(%NaiveDateTime{} = naive) do
+    Calendar.strftime(naive, "%H:%M:%S")
+  end
+
+  @doc """
   Formats a turn number as "Turn N".
   """
   def format_turn(turn) when is_integer(turn) do
