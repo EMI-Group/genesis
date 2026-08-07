@@ -9,6 +9,7 @@ defmodule Mix.Tasks.Bump.Version do
     * `desktop/src-tauri/tauri.conf.json`  (Tauri app manifest)
     * `desktop/src-tauri/Cargo.toml`       (Rust package metadata)
     * `desktop/src-tauri/Cargo.lock`       (Rust lockfile, if present)
+    * `README.md`                          (shields.io version badge)
 
   The three umbrella `mix.exs` files do **not** need editing — they read the
   version dynamically from `VERSION`, so they pick up the new value on the next
@@ -41,6 +42,7 @@ defmodule Mix.Tasks.Bump.Version do
   @tauri_conf "desktop/src-tauri/tauri.conf.json"
   @cargo_toml "desktop/src-tauri/Cargo.toml"
   @cargo_lock "desktop/src-tauri/Cargo.lock"
+  @readme "README.md"
 
   @impl Mix.Task
   def run([]) do
@@ -61,6 +63,7 @@ defmodule Mix.Tasks.Bump.Version do
       write_version_file(version)
       sync_tauri(version)
       sync_cargo(version)
+      sync_readme(version)
       Mix.shell().info("✓ Version bumped to #{version}")
       print_summary(version)
     end
@@ -154,6 +157,28 @@ defmodule Mix.Tasks.Bump.Version do
 
       File.write!(@cargo_lock, updated)
       Mix.shell().info("  ✓ #{@cargo_lock}")
+    end
+  end
+
+  # --- README badge -------------------------------------------------------
+
+  defp sync_readme(version) do
+    if File.exists?(@readme) do
+      contents = File.read!(@readme)
+
+      # shields.io badge URLs use `--` to escape dashes in the version
+      # portion (e.g. 2.0.0-rc.1  →  version-2.0.0--rc.1-8b5cf6).
+      escaped = String.replace(version, "-", "--")
+
+      updated =
+        Regex.replace(
+          ~r/(version-)(.+)(-8b5cf6)/,
+          contents,
+          fn _, prefix, _old, suffix -> prefix <> escaped <> suffix end
+        )
+
+      File.write!(@readme, updated)
+      Mix.shell().info("  ✓ #{@readme}")
     end
   end
 
