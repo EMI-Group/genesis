@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="apps/evo_dash/priv/static/images/logo.svg" height="44" alt="Genesis" style="vertical-align: middle;">
-  <span style="font-size: 2.75em; font-weight: bold; vertical-align: middle; margin-left: 12px;">Genesis</span>
+  <img src="apps/evo_dash/priv/static/images/logo.svg" height="32" alt="Genesis" style="vertical-align: middle;">
+  <span style="font-size: 5em; font-weight: bold; vertical-align: middle; margin-left: 12px;">Genesis</span>
 </p>
 
 <p align="center">
-  The evolutionary agentic <strong>system</strong>.
+  The recursive agentic <strong>system</strong>.
 </p>
 
 <p align="center">
