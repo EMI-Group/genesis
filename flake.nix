@@ -1,5 +1,5 @@
 {
-  description = "Genesis desktop app — NixOS development environment for building and testing the Tauri desktop app locally";
+  description = "Genesis — evolutionary software development in Elixir. `nix run` for the CLI; `nix run .#desktop` for the native desktop app; `nix develop` for the Tauri build environment.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -41,6 +41,33 @@
         ];
       in
       {
+        # ── `nix build` / `nix run` ──────────────────────────────────
+        # CLI app (both evo_git + evo_dash, no desktop flag).
+        packages.default = pkgs.callPackage ./genesis.nix {
+          src = self;
+          beamPackages = beamPkgs;
+        };
+
+        # Tauri desktop app (genesis_desktop release + native WebView shell).
+        packages.desktop = pkgs.callPackage ./genesis-desktop.nix {
+          src = self;
+          inherit (pkgs) rustPlatform makeWrapper pkg-config openssl file
+            webkitgtk_4_1 gtk3 glib glib-networking librsvg
+            libayatana-appindicator libsoup_3 xdo wrapGAppsHook3;
+          beamPackages = beamPkgs;
+        };
+
+        apps.default = {
+          type = "app";
+          program = "${self.packages.${system}.default}/bin/genesis";
+        };
+
+        apps.desktop = {
+          type = "app";
+          program = "${self.packages.${system}.desktop}/bin/genesis-desktop";
+        };
+
+        # ── Development shell ────────────────────────────────────────
         devShells.default = pkgs.mkShell {
           # pkg-config must be in nativeBuildInputs so the Rust/Tauri build
           # can locate the webkit/gtk libraries via *.pc files.
@@ -81,6 +108,10 @@
             echo "  ┌─────────────────────────────────────────────┐"
             echo "  │  Genesis Desktop — NixOS Development Shell   │"
             echo "  └─────────────────────────────────────────────┘"
+            echo ""
+            echo "  Quick start:"
+            echo "    nix run           — build & run Genesis CLI"
+            echo "    nix run .#desktop — build & run Genesis Desktop (Tauri)"
             echo ""
             echo "  Toolchain:"
             echo "    Erlang/OTP : $(erl -noshell -eval '{ok,V}=file:read_file(filename:join([code:root_dir(),"releases",erlang:system_info(otp_release),"OTP_VERSION"])), io:format("OTP ~s",[string:trim(V)]), halt()' 2>/dev/null || echo 'unknown')"
