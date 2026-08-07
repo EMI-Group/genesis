@@ -123,7 +123,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               }
             ><%= @prompt %></textarea>
 
-            <!-- Controls row — the card's LAST element, in normal document flow
+            <%!-- Controls row — the card's LAST element, in normal document flow
                  (never position: fixed). DOM order AND visual order are
                  identical in both layouts: mode (order-1) | Launch (order-2,
                  centered via mx-auto) | model (order-3). The Launch button
@@ -133,7 +133,13 @@ defmodule EvoDashWeb.TaskFormComponents do
                  (flex-nowrap — never wraps): the two selects use min-w-0 +
                  truncate, so long labels (mode names, model profile ids) are
                  clipped with an ellipsis instead of forcing the row wider
-                 than its container. -->
+                 than its container. --%>
+
+            <%!-- The launch panel renders ONLY when a project is open
+                 (@disabled == false). When no project is active the row is
+                 hidden entirely — the empty state shows just the faded
+                 textarea (wrapper opacity) + the centered hint overlay. --%>
+            <%= unless @disabled do %>
             <div class="input-controls flex-nowrap">
               <!-- Mode switch -->
               <select
@@ -184,6 +190,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 </select>
               <% end %>
             </div>
+            <% end %>
           </div>
 
           <!-- Welcome hint overlay when disabled (no project active) -->
@@ -197,7 +204,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                   {gettext("Open a project to get started")}
                 </p>
                 <p class="text-sm text-base-content/35 mt-0.5">
-                  {gettext("Select or create a project to get started")}
+                  {gettext("Use the project picker in the top bar to open or create one.")}
                 </p>
               </div>
             </div>
