@@ -233,10 +233,14 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   # The user-role nudge message appended when the LLM returns no tool calls.
+  # Stamped with a creation-time timestamp (not turn-tagged — it can be
+  # appended between turns inside prompt_until_tools_or_limit).
   def no_tool_call_nudge_message do
-    user(
-      "You did not make any tool calls in your last response. You must use the " <>
-        "provided tools to accomplish the task. Please respond with a tool call."
+    EvoGit.Agent.ContextBuilder.tag_message_timestamp(
+      user(
+        "You did not make any tool calls in your last response. You must use the " <>
+          "provided tools to accomplish the task. Please respond with a tool call."
+      )
     )
   end
 
@@ -462,6 +466,8 @@ defmodule EvoGit.Agent.ToolDispatch do
               usage: usage
           }
 
+          # Sync updated context to ETS for dashboard visibility (returns :ok).
+          # The in-memory context is already stamped at creation — no rebind.
           EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
 
           # Sync accumulated subagent usage to ETS
