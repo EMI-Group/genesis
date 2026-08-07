@@ -53,7 +53,7 @@
           src = self;
           inherit (pkgs) rustPlatform makeWrapper pkg-config openssl file
             webkitgtk_4_1 gtk3 glib glib-networking librsvg
-            libayatana-appindicator libsoup_3 xdo wrapGAppsHook;
+            libayatana-appindicator libsoup_3 xdo wrapGAppsHook3;
           beamPackages = beamPkgs;
         };
 
