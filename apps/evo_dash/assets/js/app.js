@@ -138,6 +138,14 @@ const DirectoryPicker = {
           const selected = Array.isArray(result) ? result[0] : result;
           if (selected) {
             this.fillInput(selected);
+            // Tauri native picks return a full path — auto-confirm the project
+            // picker by submitting the enclosing open_project form directly.
+            // (The browse button lives inside that form; browser-API picks are
+            // NOT auto-confirmed because showDirectoryPicker yields only the
+            // folder name, and the other pickers still need manual input.)
+            if (this.el.dataset.pickerId === "project") {
+              this.el.closest("form")?.requestSubmit();
+            }
           }
         } catch (_err) {
           // User cancelled or dialog failed — silently ignore
