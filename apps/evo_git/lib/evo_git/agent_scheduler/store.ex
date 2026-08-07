@@ -346,8 +346,11 @@ defmodule EvoGit.AgentScheduler.Store do
   # `context: nil` on crash-retry clears) pass through untouched.
   defp stamp_context_field(fields) do
     case Keyword.fetch(fields, :context) do
-      {:ok, %Context{} = context} -> Keyword.put(fields, :context, stamp_message_timestamps(context))
-      _ -> fields
+      {:ok, %Context{} = context} ->
+        Keyword.put(fields, :context, stamp_message_timestamps(context))
+
+      _ ->
+        fields
     end
   end
 
