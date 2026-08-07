@@ -143,6 +143,13 @@ in
 beamPackages.mixRelease {
   inherit pname version src mixFodDeps;
 
+  # nixpkgs mixRelease removes releases/COOKIE by default (postFixup). We
+  # bake a deterministic cookie in postInstall below, so opt out of the
+  # removal — otherwise the launcher script (bin/<release>) fails at runtime
+  # with "cat: .../releases/COOKIE: No such file or directory" because the
+  # read-only store cannot regenerate it.
+  removeCookie = false;
+
   # Build the specified release. Default is "genesis" (CLI, both evo_git + evo_dash).
   # Pass mixReleaseName = "genesis_desktop" for the Tauri-desktop variant.
   inherit mixReleaseName;
