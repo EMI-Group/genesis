@@ -41,6 +41,10 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 - **Live reload features** (server logs, click-to-editor) are gated behind `process.env.NODE_ENV === "development"` and must not be relied upon in production.
 - **No `node_modules/`**: Dependencies are either in `vendor/` or resolved via esbuild's path aliasing to `../deps/`. Do not run `npm install` unless a `package.json` is introduced.
 
+## Notes for Agents
+
+- **DirectoryPicker auto-confirm (project picker)**: Tauri native picks (via `window.__TAURI__.core.invoke('plugin:dialog|open')`) return a full absolute path, so after filling the input the `data-picker-id="project"` browse button submits the enclosing `open_project` form directly via `form.requestSubmit()` — the project opens immediately with no extra "Open" click. Browser File System Access API picks (`showDirectoryPicker`) deliberately do NOT auto-open because they yield only the folder *name* (`handle.name`), not a full path — they just fill the input. The other two pickers (`data-picker-id="new-project"` and `"foreign-repo"`) also only fill their input: new-project still needs a name and foreign-repo is a settings form field. The server-side `open_project` handler (`ProjectFlow.open_project/2`) validates the path (`Path.expand` + `File.dir?`), so auto-submitting is safe even for a stale/bad selection.
+
 ## Known Issues — Custom CSS Variables (`css/app.css`)
 
 - **(i) No old DaisyUI `--b1/--b2/--b3/--bc/--p` namespace.** Because DaisyUI is loaded with `themes: false`, only the new `--color-base-100/-200/-300`, `--color-base-content`, `--color-primary` (etc.) variables exist — they are defined by the two `@plugin "../vendor/daisyui-theme"` blocks at the top of `app.css`. Custom rules MUST use the `--color-base-*` namespace. For alpha, use `color-mix(in oklab, var(--color-base-100) 98%, transparent)` (or `in oklch` for accent colors) — never `oklch(var(--x) / a)` nesting: `oklch()` cannot take a variable that is already an `oklch()` color, so the declaration is silently dropped. Grep `--b1|--b2|--b3|--bc|var(--p)` after any CSS work to confirm no regressions.
