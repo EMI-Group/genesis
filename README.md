@@ -1,7 +1,7 @@
-<p style="text-align: center; font-size: 5em; font-weight: bold;">
+<div align="center">
   <img src="apps/evo_dash/priv/static/images/logo.svg" alt="Genesis" style="height: 1em; vertical-align: middle;">
   <span style="vertical-align: middle; margin-left: 12px;">Genesis</span>
-</p>
+</div>
 
 <p align="center">
   The recursive agentic <strong>system</strong>.
