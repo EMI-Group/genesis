@@ -193,5 +193,14 @@ beamPackages.mixRelease {
     chmod +x "$vendor_dir"/*
     echo "Vendor binaries installed to $vendor_dir"
     ls -l "$vendor_dir"
+
+    # Mix release launcher cookie. bin/<release> reads
+    # $RELEASE_ROOT/releases/COOKIE when RELEASE_COOKIE is unset; the
+    # Nix store is read-only, so a deterministic cookie must be baked in
+    # at build time or the launcher fails with "cat: .../COOKIE: No such
+    # file or directory" (this surfaced in both GUI and --headless runs
+    # of the nix-built desktop app).
+    echo -n "genesis-nix-${version}" > "$out/releases/COOKIE"
+    echo "Release cookie written to $out/releases/COOKIE"
   '';
 }
