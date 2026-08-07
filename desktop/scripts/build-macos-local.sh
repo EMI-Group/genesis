@@ -65,12 +65,14 @@ mix assets.deploy
 
 MIX_ENV=prod mix release genesis_desktop --overwrite
 
-rm -rf "${TAURI_DIR}/resources/genesis-backend"
-cp -a _build/prod/rel/genesis_desktop "${TAURI_DIR}/resources/genesis-backend"
+RESOURCE_DIR="${TAURI_DIR}/resources/genesis-backend"
+mkdir -p "$(dirname "${RESOURCE_DIR}")"
+rm -rf "${RESOURCE_DIR}"
+cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
 
 # Pre-sign Elixir/ERTS Mach-O files so notarization accepts nested Resources.
 # tauri-cli only auto-signs MacOS/Frameworks/… — not deep bundle.resources.
-"${SCRIPT_DIR}/sign-macos-nested.sh" "${TAURI_DIR}/resources/genesis-backend"
+"${SCRIPT_DIR}/sign-macos-nested.sh" "${RESOURCE_DIR}"
 
 cd "${TAURI_DIR}"
 (( $# == 0 )) && set -- --bundles app

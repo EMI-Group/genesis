@@ -234,7 +234,9 @@ jobs:
 
       - name: Place desktop release in Tauri resources
         run: |
+          set -euo pipefail
           RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          mkdir -p "$(dirname "${RESOURCE_DIR}")"
           rm -rf "${RESOURCE_DIR}"
           cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
 
@@ -331,7 +333,9 @@ jobs:
 
       - name: Place desktop release in Tauri resources
         run: |
+          set -euo pipefail
           RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          mkdir -p "$(dirname "${RESOURCE_DIR}")"
           rm -rf "${RESOURCE_DIR}"
           cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
 
@@ -521,6 +525,8 @@ jobs:
         shell: pwsh
         run: |
           $resourceDir = "desktop/src-tauri/resources/genesis-backend"
+          $resourceParent = Split-Path -Parent $resourceDir
+          New-Item -ItemType Directory -Force -Path $resourceParent | Out-Null
           if (Test-Path $resourceDir) { Remove-Item -Recurse -Force $resourceDir }
           # robocopy avoids MSYS2 cp -a treating extension-less ERTS bins as .exe
           # (File exists). Exit 0–7 = success; 8+ = failure.
