@@ -58,4 +58,4 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 - Each platform builds natively — no cross-compilation.
 - The `genesis_remote` tarball is uploaded alongside desktop installers as a release asset.
 - The workflow file is the single source of truth for the release build process.
-- Version is read from the root `VERSION` file.
+- Release assets are **unversioned** with permanent `releases/latest/download/<name>` links (e.g. `genesis_desktop_darwin_arm64.dmg`, `genesis_remote_linux_x64.tar.gz`); the version comes from the release tag and is baked into the app at build time, never into the filename. `EvoGit.RemoteBootstrap` (apps/evo_git/lib/evo_git/remote_bootstrap.ex) depends on the `genesis_remote_<platform>.tar.gz` naming.
