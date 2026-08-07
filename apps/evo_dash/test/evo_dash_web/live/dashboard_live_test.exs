@@ -153,8 +153,11 @@ defmodule EvoDashWeb.DashboardLiveTest do
     test "renders the dashboard with task form and project selector", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      # Task form is always visible
-      assert html =~ "hero-rocket-launch"
+      # Task form is always visible, but the launch panel is hidden
+      # without an active project
+      refute html =~ "hero-rocket-launch"
+      # Empty-state hint overlay is shown when the launch panel is hidden
+      assert html =~ "Open a project to get started"
       # Command palette trigger shows the placeholder when no project is active
       assert html =~ "Open a project..."
     end
@@ -169,13 +172,14 @@ defmodule EvoDashWeb.DashboardLiveTest do
       refute html =~ "genesis.toml found"
     end
 
-    test "task form is disabled when no project is active", %{conn: conn} do
+    test "task form shows empty-state hint when no project is active", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
-      # The form should be present but in disabled state
-      assert html =~ "hero-rocket-launch"
-      # The execute button should be disabled
-      assert html =~ "disabled"
+      # The launch panel (mode select + launch button + model select) is
+      # hidden entirely without an active project
+      refute html =~ "hero-rocket-launch"
+      # The empty-state hint overlay is shown instead
+      assert html =~ "Open a project to get started"
     end
   end
 
@@ -778,7 +782,9 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html = render(view)
 
       refute_push_event(view, "task_notification", %{})
-      assert html =~ "hero-rocket-launch"
+      # No active project in this describe (recent projects cleared, fixture
+      # inserted directly into the store), so the launch panel is hidden
+      refute html =~ "hero-rocket-launch"
     end
 
     test "notification fires only for newly-terminal ids with matching content", %{conn: conn} do
