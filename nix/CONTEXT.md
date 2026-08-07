@@ -16,5 +16,9 @@ Helper scripts for building the EvoGit desktop app on NixOS. The primary entry p
 
 ## Constraints
 
-- This directory contains no Nix expressions — the flake lives at the repository root (`flake.nix`).
+- This directory contains no Nix expressions — the flake and `genesis.nix` derivation live at the repository root.
 - Scripts are designed to run inside the `nix develop` shell where `curl`, `git`, and `rg` are available.
+
+## See Also
+
+- `../genesis.nix` — Nix derivation that builds the full Genesis Mix release (`nix build` / `nix run`)
