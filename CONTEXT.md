@@ -33,6 +33,7 @@ The full design specification is documented across the CONTEXT.md tree.
 | `VERSION` | Single source of truth for the project version (e.g. `0.1.0`). All umbrella `mix.exs` files read this; the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` provides a complete NixOS toolchain (Erlang/OTP 29, Elixir 1.20, Rust, Tauri v2 native deps) for local desktop app builds. `packages.default` builds the app via `genesis.nix` (`nix build`). `apps.default` runs the app (`nix run`). |
 | `genesis.nix` | Nix derivation — builds the Genesis Mix release using `beamPackages.mixRelease`, with pre-fetched Rustler NIFs and vendored system binaries (ripgrep, git). Called from `flake.nix`. |
+| `genesis-desktop.nix` | Nix derivation — builds the Tauri desktop app: first builds the `genesis_desktop` Mix release, then builds the Tauri Rust binary with `rustPlatform.buildRustPackage`, and wraps them together. Called from `flake.nix` as `packages.desktop`. |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
 | `.formatter.exs` | Code format configuration |
 | `.tool-versions` | Pinned Erlang/OTP 29 and Elixir 1.20.1 (for asdf/mise/CI) |
