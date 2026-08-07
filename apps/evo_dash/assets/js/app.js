@@ -195,6 +195,29 @@ const DirectoryPicker = {
     return false;
   },
 
+  // Custom `pick_directory` command (new desktop builds): a plain invoke with
+  // no args returning Option<String> — a directory path string, or null on
+  // cancel. It avoids the dialog plugin's macOS NSOpenPanel sheet hang
+  // entirely. Older desktop builds reject the invoke (unknown command); that
+  // is not a user-visible error, so log a warning and let the caller fall
+  // through to the plugin dialog.
+  async pickWithCustomCommand() {
+    let invokePromise;
+    try {
+      invokePromise = window.__TAURI__.core.invoke('pick_directory');
+      // Race it against the same timeout as the plugin dialog below, so a
+      // hung command can't leave the UI stuck.
+      const result = await this.withTimeout(invokePromise, DIRECTORY_PICK_TIMEOUT_MS);
+      return this.applyTauriResult(result, {autoSubmit: true}) ? "picked" : "cancelled";
+    } catch (err) {
+      console.warn(
+        "[DirectoryPicker] custom pick_directory unavailable, falling back to plugin dialog",
+        err
+      );
+      return "failed";
+    }
+  },
+
   // Tauri native dialog (desktop app). In Tauri v2 with withGlobalTauri: true,
   // window.__TAURI__ exposes the core API but NOT plugin-specific JS APIs (the
   // @tauri-apps/plugin-dialog JS package is not bundled in a Phoenix-served
@@ -202,6 +225,12 @@ const DirectoryPicker = {
   // core.invoke. The open command expects the options wrapped under an
   // "options" key (the same shape the official guest-js wrapper sends).
   async pickWithTauri() {
+    // Prefer the custom `pick_directory` command (new desktop builds). Only a
+    // genuine failure (invoke rejected or timed out) falls through to the
+    // plugin dialog below; "picked" and "cancelled" both stop here.
+    const custom = await this.pickWithCustomCommand();
+    if (custom !== "failed") return custom;
+
     let invokePromise;
     try {
       invokePromise = window.__TAURI__.core.invoke('plugin:dialog|open', {
