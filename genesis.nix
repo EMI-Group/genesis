@@ -9,7 +9,7 @@
 #
 # After updating mix.lock or NIF versions, update the hashes below. Use
 # `lib.fakeHash` as a placeholder, build, and copy the reported hashes.
-{
+{ 
   src,
   beamPackages,
   tailwindcss_4,
@@ -19,6 +19,7 @@
   stdenv,
   fetchurl,
   lib,
+  mixReleaseName ? "genesis",
 }:
 let
   # ── App metadata ──────────────────────────────────────────────────
@@ -142,8 +143,9 @@ in
 beamPackages.mixRelease {
   inherit pname version src mixFodDeps;
 
-  # Build the "genesis" release (both evo_git + evo_dash, no desktop flag).
-  mixReleaseName = "genesis";
+  # Build the specified release. Default is "genesis" (CLI, both evo_git + evo_dash).
+  # Pass mixReleaseName = "genesis_desktop" for the Tauri-desktop variant.
+  inherit mixReleaseName;
 
   # ── Build-time tools ────────────────────────────────────────────
   nativeBuildInputs = [
