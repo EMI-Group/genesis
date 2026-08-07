@@ -62,52 +62,81 @@ let
       throw "Unsupported platform for vendor binaries: ${stdenv.hostPlatform.system}";
 
   # ── Precompiled NIFs ──────────────────────────────────────────────
-  # Build a precompiled NIF entry for the current target platform.
-  # `tag` defaults to "v{version}" but some repos use a custom tag (e.g. lumis).
-  mkNif =
+  # Each entry describes a precompiled Rustler NIF tarball. The NIF version
+  # (e.g. 2.15, 2.17) is tied to the Erlang/OTP ABI that the package was
+  # compiled against. These are per-package and may differ.
+  #
+  # Actual release names/tags were verified against the respective GitHub
+  # repositories (2025-07).
+  #
+  # To update hashes: use lib.fakeHash, build, then copy the reported hashes.
+  precompiled_nifs = [
+    # ── lumis 0.6.3 ──────────────────────────────────────────────
     {
-      repo,       # GitHub owner/repo (e.g. "leandrocp/lumis")
-      version,    # Package version (e.g. "0.6.3")
-      name,       # Library prefix (e.g. "liblumis_nif")
-      tag ? "v${version}",  # Git tag on the release
-    }:
-    let
-      target = rustTarget;
-      filename = "${name}-v${version}-nif-2.17-${target}.so.tar.gz";
-    in
-    {
-      inherit version;
-      name = filename;
+      name = "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
+      version = "0.6.3";
       file = fetchurl {
-        url = "https://github.com/${repo}/releases/download/${tag}/${filename}";
+        url =
+          "https://github.com/leandrocp/lumis/releases/download/hex-lumis%2Fv0.6.3/"
+          + "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
         hash = lib.fakeHash;
       };
-    };
+    }
 
-  # All precompiled NIFs needed at build time.
-  # Each entry maps to a Rustler-precompiled tarball for the current target.
-  precompiled_nifs = [
-    (mkNif {
-      repo = "leandrocp/lumis";
-      version = "0.6.3";
-      name = "liblumis_nif";
-      tag = "hex-lumis%2Fv0.6.3";
-    })
-    (mkNif {
-      repo = "leandrocp/mdex_native";
+    # ── mdex_native 0.2.7 (base) ──────────────────────────────────
+    {
+      name = "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
       version = "0.2.7";
-      name = "libmdex_native_nif";
-    })
-    (mkNif {
-      repo = "leandrocp/html5ever";
+      file = fetchurl {
+        url =
+          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
+          + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
+        hash = lib.fakeHash;
+      };
+    }
+
+    # ── mdex_native 0.2.7 (--lumis variant) ──────────────────────
+    # This variant is required when lumis is also a dependency (which it is
+    # in the Genesis project). Without it, mdex_native fails to load because
+    # the rustler_precompiled loader looks for the feature-specific binary.
+    {
+      name = "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
+      version = "0.2.7";
+      file = fetchurl {
+        url =
+          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
+          + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
+        hash = lib.fakeHash;
+      };
+    }
+
+    # ── html5ever 0.18.0 ─────────────────────────────────────────═
+    # Note: this package lives under rusterlium/html5ever_elixir, not
+    # leandrocp/html5ever as one might expect.
+    {
+      name = "libhtml5ever_nif-v0.18.0-nif-2.15-${rustTarget}.so.tar.gz";
       version = "0.18.0";
-      name = "libhtml5ever_nif";
-    })
-    (mkNif {
-      repo = "leandrocp/xqlite";
+      file = fetchurl {
+        url =
+          "https://github.com/rusterlium/html5ever_elixir/releases/download/v0.18.0/"
+          + "libhtml5ever_nif-v0.18.0-nif-2.15-${rustTarget}.so.tar.gz";
+        hash = lib.fakeHash;
+      };
+    }
+
+    # ── xqlite 0.10.0 ───────────────────────────────────────────═
+    # Note: this package lives under dimitarvp/xqlite, not leandrocp/xqlite.
+    # The library prefix is "libxqlitenif" (no underscore between xqlite and nif).
+    {
+      name = "libxqlitenif-v0.10.0-nif-2.17-${rustTarget}.so.tar.gz";
       version = "0.10.0";
-      name = "libxqlite_nif";
-    })
+      file = fetchurl {
+        url =
+          "https://github.com/dimitarvp/xqlite/releases/download/v0.10.0/"
+          + "libxqlitenif-v0.10.0-nif-2.17-${rustTarget}.so.tar.gz";
+        hash = lib.fakeHash;
+      };
+    }
   ];
 in
 beamPackages.mixRelease {
