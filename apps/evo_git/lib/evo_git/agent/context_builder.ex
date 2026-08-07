@@ -5,7 +5,8 @@ defmodule EvoGit.Agent.ContextBuilder do
   Builds the context tree and foreign repos sections for the first user prompt,
   provides XML-like block wrappers for the context/objective framing, and
   handles syncing agent state (context, usage, turn, tokens) to ETS.
-  Also provides turn-tagging utilities for messages in the chat context.
+  Also provides turn-tagging and creation-time timestamp stamping utilities
+  for messages in the chat context (timestamps are Unix seconds).
   """
 
   alias EvoGit.Core.ContextNode
@@ -105,9 +106,23 @@ defmodule EvoGit.Agent.ContextBuilder do
 
   @doc """
   Tags a single message struct with the given turn number via its metadata.
+  Also stamps a creation-time timestamp (Unix seconds) on the metadata,
+  idempotently — an already-present timestamp is preserved.
   """
   def tag_message_turn(%ReqLLM.Message{} = msg, turn) when is_integer(turn) do
-    %{msg | metadata: Map.put(msg.metadata || %{}, :turn, turn)}
+    metadata = Map.put(msg.metadata || %{}, :turn, turn)
+    metadata = Map.put_new(metadata, :timestamp, System.system_time(:second))
+    %{msg | metadata: metadata}
+  end
+
+  @doc """
+  Stamps a single message struct with a creation-time timestamp (Unix seconds)
+  via its metadata, idempotently — an already-present timestamp is preserved.
+  Tolerates `metadata: nil`. For append sites that are NOT turn-tagged.
+  """
+  def tag_message_timestamp(%ReqLLM.Message{} = msg) do
+    metadata = msg.metadata || %{}
+    %{msg | metadata: Map.put_new(metadata, :timestamp, System.system_time(:second))}
   end
 
   @doc """

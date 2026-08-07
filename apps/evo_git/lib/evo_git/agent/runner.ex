@@ -120,10 +120,10 @@ defmodule EvoGit.Agent.Runner do
 
       max_turns = agent_state.max_turns
 
-      # Sync initial context to ETS for dashboard. Adopt the returned stamped
-      # context (the exact value written to ETS) as the in-memory context so the
-      # timestamp idempotence guard stays engaged across turns.
-      context = EvoGit.AgentScheduler.update_agent_context(agent_id, context)
+      # Sync initial context to ETS for dashboard. The in-memory context is
+      # already stamped at creation (tag_context_messages_with_turn above);
+      # update_agent_context returns :ok, so it is called for the side effect.
+      EvoGit.AgentScheduler.update_agent_context(agent_id, context)
 
       state = %LoopState{
         agent_id: agent_id,
@@ -235,9 +235,10 @@ defmodule EvoGit.Agent.Runner do
             ReqLLM.Context.append(ctx, tagged)
           end)
 
-        # Sync updated context to ETS for dashboard visibility. Rebind with the
-        # returned stamped context so the following state update uses it.
-        new_context = EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, new_context)
+        # Sync updated context to ETS for dashboard visibility (returns :ok).
+        # The in-memory new_context is already stamped at creation
+        # (tag_message_turn above) — no rebind needed.
+        EvoGit.Agent.ContextBuilder.sync_context_to_ets(agent_id, new_context)
 
         %{state | context: new_context}
     end
@@ -255,22 +256,13 @@ defmodule EvoGit.Agent.Runner do
 
     state = check_limit_warnings(state)
 
-    # Sync context to ETS after any updates (compression, warnings). Rebind
-    # state with the returned stamped context so the idempotence guard stays
-    # engaged in-memory across turns.
-    state =
-      if context_before != state.context do
-        state = %{
-          state
-          | context:
-              EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
-        }
-
-        EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
-        state
-      else
-        state
-      end
+    # Sync context to ETS after any updates (compression, warnings). The
+    # in-memory context is already stamped at creation; sync_context_to_ets
+    # returns :ok, so it is called for the side effect only.
+    if context_before != state.context do
+      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
+      EvoGit.Agent.ContextBuilder.sync_total_tokens_to_ets(state.agent_id, state.total_tokens)
+    end
 
     # Drain any pending user messages (injected externally via dashboard/RPC)
     # and append them to the context as user-role messages before the next LLM call.
