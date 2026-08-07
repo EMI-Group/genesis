@@ -85,6 +85,27 @@ mix assets.setup
 mix phx.server
 ```
 
+## 📦 Distribution via Package Managers
+
+We're working to make Genesis available through popular package managers so you can install and update it with the tools you already use. Planned targets include:
+
+| Package Manager | Platform | Status |
+|-----------------|----------|--------|
+| **AUR** | Arch Linux | Planned |
+| **Homebrew** | macOS / Linux | Planned |
+| **Nix** | NixOS / macOS | Planned |
+| **Snap** | Linux | Planned |
+
+More package managers will be added over time. If you'd like to help package Genesis for your preferred platform, please see [CONTRIBUTING.md](./CONTRIBUTING.md) — contributions are very welcome!
+
+Stay tuned — we'll update this section as packages become available.
+
+## 🤝 Contributing
+
+We welcome contributions! All contributors are required to sign an Individual Contributor License Agreement (CLA) — our CLA assistant bot handles this automatically when you open your first pull request.
+
+For full details on the CLA, development setup, and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
 ## 🙏 Acknowledgements
 
 Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit) project.
