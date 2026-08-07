@@ -30,7 +30,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
         Enum.reject(models, &incomplete_profile?/1)
       end
 
-    id = generate_profile_id(models)
+    id = generate_profile_id(models, base_name_from_model_value(model_value))
     profile = %{id: id, concurrency: 3} |> maybe_put_profile_model(model_value)
     put_in_model_profiles(file_config, models ++ [profile])
   end
@@ -40,11 +40,30 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   based on the count of existing profiles whose ids match the `"profile-N"` pattern.
   """
   def generate_profile_id(models) do
+    generate_profile_id(models, nil)
+  end
+
+  @doc """
+  Generates a unique profile id from a base name: `<base>`, `<base>-2`,
+  `<base>-3`, ... (numeric suffix starting at 2), skipping any ids already
+  present in `models`. When `base_name` is nil or empty, falls back to the
+  `"profile-N"` scheme based on the count of existing profiles.
+  """
+  def generate_profile_id(models, base_name) do
     existing_ids = Enum.map(models, &profile_id/1) |> MapSet.new()
 
-    Stream.iterate(length(models) + 1, &(&1 + 1))
-    |> Stream.map(&"profile-#{&1}")
-    |> Enum.find(fn id -> not MapSet.member?(existing_ids, id) end)
+    if base_name == "" or is_nil(base_name) do
+      Stream.iterate(length(models) + 1, &(&1 + 1))
+      |> Stream.map(&"profile-#{&1}")
+      |> Enum.find(fn id -> not MapSet.member?(existing_ids, id) end)
+    else
+      Stream.iterate(1, &(&1 + 1))
+      |> Stream.map(fn
+        1 -> base_name
+        n -> "#{base_name}-#{n}"
+      end)
+      |> Enum.find(fn id -> not MapSet.member?(existing_ids, id) end)
+    end
   end
 
   @doc """
@@ -266,6 +285,40 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   # ───────────────────────────────────────────────────────────────────────────
   # Private helpers
   # ───────────────────────────────────────────────────────────────────────────
+
+  # Derives a profile-id base name from a model value. Accepts:
+  #   - binary "provider:model_id" → the model_id part (after the FIRST colon);
+  #     a plain binary without a colon → itself
+  #   - map spec %{id: "..."} (or string-keyed "id") → the id value
+  # Then slugifies (downcase, non-alphanumeric runs → single "-", trim "-").
+  # Returns nil when nothing usable can be derived (callers fall back to
+  # the "profile-N" scheme).
+  defp base_name_from_model_value(value) when is_binary(value) do
+    value |> String.split(":", parts: 2) |> List.last() |> slugify_base_name()
+  end
+
+  defp base_name_from_model_value(value) when is_map(value) do
+    model_id = Map.get(value, :id) || Map.get(value, "id")
+    slugify_base_name(model_id)
+  end
+
+  defp base_name_from_model_value(_), do: nil
+
+  defp slugify_base_name(nil), do: nil
+  defp slugify_base_name(""), do: nil
+
+  defp slugify_base_name(value) when is_binary(value) do
+    slug =
+      value
+      |> String.downcase()
+      |> String.replace(~r/[^a-zA-Z0-9]+/, "-")
+      |> String.trim("-")
+
+    case slug do
+      "" -> nil
+      slug -> slug
+    end
+  end
 
   # Converts an untrusted provider id string to a canonical provider atom via a
   # whitelist Map.get lookup built from the LLMCatalog. Returns nil for unknown
