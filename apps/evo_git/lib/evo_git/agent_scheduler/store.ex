@@ -323,82 +323,30 @@ defmodule EvoGit.AgentScheduler.Store do
   """
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields) when is_list(fields) do
-    # Stamp a `:context` field before it hits ETS, so this write path (used by
-    # the agent loop after every LLM response) never leaves a no-timestamp
-    # window in the stored history.
-    stamped_fields = stamp_context_field(fields)
-
     {:ok, agent_state} = get_agent_state(agent_id)
-    updated_state = Kernel.struct!(agent_state, stamped_fields)
+    updated_state = Kernel.struct!(agent_state, fields)
 
     # Write through put_agent_state which does its own enriched broadcast.
     # We also emit the exact fields kwlist as a focused delta — subscribers
     # can use whichever granularity they prefer.
     :ets.insert(@agent_table, {agent_id, updated_state})
-    PubSub.broadcast_agent_updated(agent_id, stamped_fields)
+    PubSub.broadcast_agent_updated(agent_id, fields)
     PubSub.broadcast_agents_updated()
 
     :ok
   end
 
-  # Stamps the `:context` field (when present and a `%ReqLLM.Context{}`) with
-  # per-message timestamps. Non-context fields and non-context values (e.g.
-  # `context: nil` on crash-retry clears) pass through untouched.
-  defp stamp_context_field(fields) do
-    case Keyword.fetch(fields, :context) do
-      {:ok, %Context{} = context} ->
-        Keyword.put(fields, :context, stamp_message_timestamps(context))
-
-      _ ->
-        fields
-    end
-  end
-
-  # Metadata key under which the per-message wall-clock timestamp is stored.
-  # Kept as an atom, consistent with the existing `:turn` metadata convention
-  # (see `EvoGit.Agent.ContextBuilder.tag_message_turn/2`).
-  @timestamp_metadata_key :timestamp
-
   @doc """
   Updates the conversation context for an agent in the agent state table.
 
-  Stamps `metadata[:timestamp]` (Unix seconds via `System.system_time(:second)`)
-  on every message that does not already carry one, so the dashboard can display
-  when each message was produced. Idempotent: already-stamped messages keep
-  their original timestamp across repeated context syncs.
-
-  Returns the stamped context — the exact value written to ETS — so callers can
-  adopt it into their in-memory state and keep the idempotence guard engaged
-  across turns.
+  A dumb pass-through write — per-message `metadata[:timestamp]` stamping
+  happens at message-creation time in the agent code (see
+  `EvoGit.Agent.ContextBuilder.tag_message_turn/2`), never here. There is no
+  read-back: data flows one way, agent → ETS/pubsub → frontend.
   """
-  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: ReqLLM.Context.t()
+  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, %Context{} = context) do
-    stamped = stamp_message_timestamps(context)
-    batch_update_agent(agent_id, context: stamped)
-    stamped
-  end
-
-  # Stamps the wall-clock timestamp (Unix seconds) into the metadata of every
-  # message that lacks one. Returns the context unchanged when nothing was
-  # stamped, avoiding a rebuild of the same struct on every sync.
-  defp stamp_message_timestamps(%Context{messages: messages} = context) do
-    {messages, stamped?} = stamp_missing_timestamps(messages)
-    if stamped?, do: %{context | messages: messages}, else: context
-  end
-
-  defp stamp_missing_timestamps(messages) do
-    now = System.system_time(:second)
-
-    Enum.map_reduce(messages, false, fn
-      %ReqLLM.Message{metadata: %{@timestamp_metadata_key => _}} = msg, stamped? ->
-        {msg, stamped?}
-
-      %ReqLLM.Message{metadata: metadata} = msg, _stamped? ->
-        {%{msg | metadata: Map.put(metadata || %{}, @timestamp_metadata_key, now)}, true}
-
-      other, stamped? ->
-        {other, stamped?}
-    end)
+    batch_update_agent(agent_id, context: context)
   end
 
   @doc """
