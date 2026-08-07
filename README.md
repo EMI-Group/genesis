@@ -94,7 +94,6 @@ We're working to make Genesis available through popular package managers so you 
 | **AUR** | Arch Linux | Planned |
 | **Homebrew** | macOS / Linux | Planned |
 | **Nix** | NixOS / macOS | Planned |
-| **Snap** | Linux | Planned |
 
 More package managers will be added over time. If you'd like to help package Genesis for your preferred platform, please see [CONTRIBUTING.md](./CONTRIBUTING.md) — contributions are very welcome!
 
