@@ -169,7 +169,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.nix.flake_output == nil
 
       # Git
-      assert defaults.git.co_authored_by_enabled == true
+      assert defaults.git.co_authored_by_enabled == false
 
       # Tools
       assert defaults.tools.search.enabled == false

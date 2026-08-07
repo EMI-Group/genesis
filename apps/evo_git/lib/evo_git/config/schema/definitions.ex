@@ -508,7 +508,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:git, :co_authored_by_enabled],
         type: :boolean,
-        default: true,
+        default: false,
         validation: [],
         category: :git,
         sub_category: nil,
