@@ -849,7 +849,7 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Updates the conversation context for an agent in the agent state table.
   """
-  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: ReqLLM.Context.t()
+  @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, context), do: Store.update_agent_context(agent_id, context)
 
   @doc """
