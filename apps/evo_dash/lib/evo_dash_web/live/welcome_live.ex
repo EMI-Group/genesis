@@ -25,6 +25,19 @@ defmodule EvoDashWeb.WelcomeLive do
       pending_tasks={@pending_tasks}
     >
       <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
+          <!-- Back navigation: pure client-side (browser history back with a
+               dashboard fallback) — visible in both setup and all-set states -->
+          <div class="shrink-0 mb-2">
+            <button
+              type="button"
+              onclick="if (window.history.length > 1) { history.back(); } else { window.location.href = '/'; }"
+              class="btn btn-ghost btn-sm rounded-xl gap-2 px-3"
+            >
+              <.icon name="hero-arrow-left" class="size-4" />
+              {gettext("Back")}
+            </button>
+          </div>
+
           <!-- Header (non-scrolling) -->
           <div class="flex items-center gap-3 mb-3 shrink-0">
             <div class="text-3xl shrink-0">
@@ -251,6 +264,55 @@ defmodule EvoDashWeb.WelcomeLive do
                       </span>
                     </button>
                   </form>
+
+                  <!-- LLM connection test (compact) — a sibling of the save
+                       form, NOT inside it, so the button is not a form submit.
+                       Tests the resolved model value with the already-saved key
+                       (or the key typed above, which is saved first). -->
+                  <div class="mt-4 pt-3 border-t border-base-200/70">
+                    <%= case @llm_test_status do %>
+                      <% :idle -> %>
+                        <button
+                          phx-click="test_llm"
+                          class="btn btn-ghost btn-sm rounded-xl gap-2 w-full"
+                        >
+                          <.icon name="hero-signal" class="size-4" />
+                          {gettext("Test Connection")}
+                        </button>
+                      <% :testing -> %>
+                        <div class="flex items-center justify-center gap-2 text-sm text-base-content/80">
+                          <span class="loading loading-spinner loading-sm text-primary"></span>
+                          <span>{gettext("Testing LLM connection...")}</span>
+                        </div>
+                      <% {:ok, _data} -> %>
+                        <div class="flex items-center justify-center gap-2 text-sm">
+                          <.icon name="hero-check-circle" class="size-4 text-success shrink-0" />
+                          <span class="text-success font-medium">{gettext("Connected")}</span>
+                          <span class="text-xs text-base-content/70 truncate">
+                            ({@selected_entry.model_display_name})
+                          </span>
+                        </div>
+                        <button
+                          phx-click="test_llm"
+                          class="btn btn-ghost btn-xs rounded-xl gap-1 w-full mt-2"
+                        >
+                          <.icon name="hero-arrow-path" class="size-3.5" />
+                          {gettext("Retest")}
+                        </button>
+                      <% {:error, reason} -> %>
+                        <div class="flex items-start justify-center gap-2 text-sm">
+                          <.icon name="hero-x-circle" class="size-4 text-error shrink-0 mt-0.5" />
+                          <span class="text-error">{reason}</span>
+                        </div>
+                        <button
+                          phx-click="test_llm"
+                          class="btn btn-ghost btn-xs rounded-xl gap-1 w-full mt-2"
+                        >
+                          <.icon name="hero-arrow-path" class="size-3.5" />
+                          {gettext("Retry")}
+                        </button>
+                    <% end %>
+                  </div>
                 </div>
               <% else %>
                 <!-- Placeholder when no model is selected -->
@@ -304,6 +366,7 @@ defmodule EvoDashWeb.WelcomeLive do
         search_query: "",
         api_key_input: "",
         selected_entry: nil,
+        llm_test_status: :idle,
         current_version: current_version
       )
 
@@ -334,8 +397,10 @@ defmodule EvoDashWeb.WelcomeLive do
       end)
 
     # Reset the typed key input when switching models — the credential_key
-    # context changes.
-    {:noreply, assign(socket, selected_entry: entry, api_key_input: "")}
+    # context changes. Also reset any stale connection-test result (it would
+    # refer to the previously selected model).
+    {:noreply,
+     assign(socket, selected_entry: entry, api_key_input: "", llm_test_status: :idle)}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -399,6 +464,114 @@ defmodule EvoDashWeb.WelcomeLive do
     {:noreply, redirect(socket, to: "/welcome/complete")}
   end
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # LLM connection test
+  # ───────────────────────────────────────────────────────────────────────────
+
+  @impl true
+  def handle_event("test_llm", _params, socket) do
+    entry = socket.assigns.selected_entry
+
+    if entry do
+      provider_id_str = Atom.to_string(entry.provider_id)
+      variant_id_str = if(entry.variant_id, do: Atom.to_string(entry.variant_id), else: "")
+
+      with {:ok, model_value} <-
+             resolve_welcome_model_value(entry.model_string, provider_id_str, variant_id_str),
+           {:ok, socket} <- save_typed_key_for_test(entry.credential_key, socket) do
+        parent = self()
+
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          result = EvoGit.SystemCheck.llm_test(model_value)
+          send(parent, {:llm_test_result, result})
+        end)
+
+        {:noreply, assign(socket, :llm_test_status, :testing)}
+      else
+        {:error, msg} ->
+          {:noreply, put_flash(socket, :error, msg)}
+      end
+    else
+      # The button only renders when a model is selected; guard defensively.
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_info({:llm_test_result, result}, socket) do
+    status =
+      case result do
+        {:ok, data} -> {:ok, data}
+        {:error, reason} -> {:error, reason}
+      end
+
+    {:noreply, assign(socket, :llm_test_status, status)}
+  end
+
+  # Saves a newly-typed API key before running the connection test, so the
+  # test exercises the key the user just entered (`EvoGit.SystemCheck.llm_test`
+  # reads credentials from the saved credentials file). Returns `{:ok, socket}`
+  # with refreshed credentials + cleared input, or `{:error, msg}` (the test is
+  # then NOT started).
+  defp save_typed_key_for_test(credential_key, socket) do
+    api_key = String.trim(socket.assigns.api_key_input || "")
+
+    if api_key == "" do
+      {:ok, socket}
+    else
+      case EvoGit.Config.save_credentials(%{credential_key => api_key}) do
+        :ok ->
+          {:ok,
+           socket
+           |> assign(:credentials, EvoGit.Config.credentials())
+           |> assign(:api_key_input, "")}
+
+        {:error, reason} ->
+          {:error, gettext("Failed to save API key: %{reason}", reason: inspect(reason))}
+      end
+    end
+  end
+
+  # Resolves the model value (the exact form the save flow stores) from the
+  # flat-grid entry data. Shared by `save_welcome_setup` and the connection
+  # test so the test verifies precisely what will be configured.
+  defp resolve_welcome_model_value(model_string, provider_id_str, variant_id_str) do
+    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+
+    cond do
+      is_nil(provider) ->
+        {:error, gettext("Unknown provider.")}
+
+      String.trim(model_string || "") == "" ->
+        {:error, gettext("Model name cannot be empty.")}
+
+      true ->
+        model_name =
+          if String.contains?(model_string, ":") do
+            [_provider_prefix, name] = :binary.split(model_string, ":")
+            name
+          else
+            model_string
+          end
+
+        if EvoGit.Config.LLMCatalog.requires_base_url?(provider.id) do
+          {:error, gettext("Base URL cannot be empty.")}
+        else
+          provider_atom = hd(provider.provider_atoms)
+
+          opts =
+            if variant_id_str != nil and variant_id_str != "" do
+              variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
+              Keyword.put([], :variant, variant_atom)
+            else
+              []
+            end
+
+          {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
+        end
+    end
+  end
+
   # Resolves the model spec from provider + model + variant, then adds the
   # model profile, mirrors the default, and persists. Shows a combined success
   # flash. Returns {:noreply, socket}.
@@ -407,43 +580,7 @@ defmodule EvoDashWeb.WelcomeLive do
   # providers with base_url are excluded from the flat grid). If a provider
   # somehow requires one, an error flash is shown.
   defp do_save_model_profile(model_string, provider_id_str, variant_id_str, socket) do
-    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
-
-    result =
-      cond do
-        is_nil(provider) ->
-          {:error, gettext("Unknown provider.")}
-
-        String.trim(model_string || "") == "" ->
-          {:error, gettext("Model name cannot be empty.")}
-
-        true ->
-          model_name =
-            if String.contains?(model_string, ":") do
-              [_provider_prefix, name] = :binary.split(model_string, ":")
-              name
-            else
-              model_string
-            end
-
-          if EvoGit.Config.LLMCatalog.requires_base_url?(provider.id) do
-            {:error, gettext("Base URL cannot be empty.")}
-          else
-            provider_atom = hd(provider.provider_atoms)
-
-            opts =
-              if variant_id_str != nil and variant_id_str != "" do
-                variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
-                Keyword.put([], :variant, variant_atom)
-              else
-                []
-              end
-
-            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
-          end
-      end
-
-    case result do
+    case resolve_welcome_model_value(model_string, provider_id_str, variant_id_str) do
       {:error, msg} ->
         {:noreply, put_flash(socket, :error, msg)}
 
