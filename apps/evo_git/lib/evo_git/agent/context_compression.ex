@@ -82,7 +82,11 @@ defmodule EvoGit.Agent.ContextCompression do
 
             {:ok, response} = ReqLLM.StreamResponse.process_stream(stream_response)
             text = ReqLLM.Response.text(response)
-            summary_msg = ReqLLM.Context.user("Summary of previous events:\n" <> text)
+
+            summary_msg =
+              ReqLLM.Context.user("Summary of previous events:\n" <> text)
+              |> EvoGit.Agent.ContextBuilder.tag_message_timestamp()
+
             new_context = ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
             AgentScheduler.increment_compression_count(agent_id)
 
