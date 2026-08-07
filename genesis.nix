@@ -30,7 +30,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = lib.fakeHash;
+    hash = "sha256-+3388XM/R8LX2aP7uDlHf4so8dCn39sSDI0WnZNjHKM=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -79,7 +79,7 @@ let
         url =
           "https://github.com/leandrocp/lumis/releases/download/hex-lumis%2Fv0.6.3/"
           + "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = lib.fakeHash;
+        hash = "sha256-SqvVkgNljREPvsg2jKAN7BpWZmgGMAUxZ/neUTrXXiA=";
       };
     }
 
@@ -91,7 +91,7 @@ let
         url =
           "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
           + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = lib.fakeHash;
+        hash = "sha256-8MvCRKDqtgM/lf3A3F7MxTRZA4EFTlG94xz0TJob6AY=";
       };
     }
 
@@ -106,7 +106,7 @@ let
         url =
           "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
           + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
-        hash = lib.fakeHash;
+        hash = "sha256-02P3ONjNGMkrz2+LG7cGC9IDowCWBpGG+OcSui45TKc=";
       };
     }
 
@@ -120,7 +120,7 @@ let
         url =
           "https://github.com/rusterlium/html5ever_elixir/releases/download/v0.18.0/"
           + "libhtml5ever_nif-v0.18.0-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = lib.fakeHash;
+        hash = "sha256-7BoEq16kT9dRm0B/bljH2bDX/UgDHcnjliOg3TtigmI=";
       };
     }
 
@@ -134,7 +134,7 @@ let
         url =
           "https://github.com/dimitarvp/xqlite/releases/download/v0.10.0/"
           + "libxqlitenif-v0.10.0-nif-2.17-${rustTarget}.so.tar.gz";
-        hash = lib.fakeHash;
+        hash = "sha256-yO0mFn7IXcs5j1T6vK6YQFNNUkMISaOXUW5+6SwmmL4=";
       };
     }
   ];
