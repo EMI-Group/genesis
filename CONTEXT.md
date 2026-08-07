@@ -172,3 +172,6 @@ nix develop
 #   5. cp -a _build/prod/rel/genesis_desktop desktop/src-tauri/resources/genesis-backend
 #   6. cd desktop/src-tauri && cargo tauri build    (native desktop app)
 ```
+
+`nix build .#desktop` produces a working store app: the Tauri binary resolves the backend release via `sidecar_path::resolve_launcher` (checks `<exe_dir>/resources/genesis-backend/bin/genesis_desktop` first — `genesis-desktop.nix` symlinks the release there), the wrapper puts the full GTK/WebKit/tray runtime stack on `LD_LIBRARY_PATH`, and `genesis.nix` bakes a deterministic `releases/COOKIE` (`removeCookie = false`, otherwise nixpkgs' mixRelease postFixup deletes it and the launcher dies with `cat: .../COOKIE: No such file or directory`). The GUI needs a writable `XDG_RUNTIME_DIR` for the tray icon. Details in `desktop/CONTEXT.md` → Known Issues.
+```
