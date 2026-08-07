@@ -10,6 +10,7 @@ use tauri::{
     Manager, WindowEvent,
 };
 
+mod commands;
 mod sidecar;
 mod sidecar_path;
 
@@ -194,6 +195,7 @@ fn run_gui() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![commands::pick_directory])
         .setup(|app| {
             // 1. Launch the Phoenix backend via the Elixir release launcher
             //    script (`bin/genesis_desktop start`).
