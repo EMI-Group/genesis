@@ -173,7 +173,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
 
       assert {:ok, profile} = ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
 
-      assert %{provider: :deepseek, id: "deepseek-v4-pro", base_url: "https://custom.example.com/v1"} =
+      assert %{
+               provider: :deepseek,
+               id: "deepseek-v4-pro",
+               base_url: "https://custom.example.com/v1"
+             } =
                profile.model
     end
 
@@ -217,6 +221,99 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
 
       assert {:error, "model_id_empty"} =
                ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+    end
+  end
+
+  describe "profile id naming from model value" do
+    test "derives id from provider:model string" do
+      result =
+        ModelProfileHelpers.add_model_profile(%{llm: %{models: []}}, "deepseek:deepseek-flash")
+
+      assert [%{id: "deepseek-flash"}] = get_in(result, [:llm, :models])
+    end
+
+    test "plain model string uses itself as the base id" do
+      result = ModelProfileHelpers.add_model_profile(%{llm: %{models: []}}, "gpt-4o")
+      assert [%{id: "gpt-4o"}] = get_in(result, [:llm, :models])
+    end
+
+    test "map spec uses its :id value" do
+      result =
+        ModelProfileHelpers.add_model_profile(%{llm: %{models: []}}, %{
+          provider: :anthropic,
+          id: "claude-sonnet-4"
+        })
+
+      assert [%{id: "claude-sonnet-4"}] = get_in(result, [:llm, :models])
+    end
+
+    test "slugifies the model value (downcase, non-alphanumeric runs become dashes)" do
+      result = ModelProfileHelpers.add_model_profile(%{llm: %{models: []}}, "DeepSeek V3.2")
+      assert [%{id: "deepseek-v3-2"}] = get_in(result, [:llm, :models])
+    end
+  end
+
+  describe "profile id conflict suffixes" do
+    test "appends -2 when the base id already exists" do
+      # Seeded profile MUST carry a :model key — draft-cleaning would drop it otherwise.
+      existing = %{id: "deepseek-flash", concurrency: 3, model: "deepseek:deepseek-flash"}
+
+      result =
+        ModelProfileHelpers.add_model_profile(
+          %{llm: %{models: [existing]}},
+          "deepseek:deepseek-flash"
+        )
+
+      models = get_in(result, [:llm, :models])
+      assert Enum.map(models, & &1.id) == ["deepseek-flash", "deepseek-flash-2"]
+    end
+
+    test "skips to -3 when both the base and -2 exist" do
+      existing = [
+        %{id: "deepseek-flash", concurrency: 3, model: "deepseek:deepseek-flash"},
+        %{id: "deepseek-flash-2", concurrency: 3, model: "deepseek:deepseek-flash-2"}
+      ]
+
+      result =
+        ModelProfileHelpers.add_model_profile(
+          %{llm: %{models: existing}},
+          "deepseek:deepseek-flash"
+        )
+
+      assert List.last(get_in(result, [:llm, :models])).id == "deepseek-flash-3"
+    end
+  end
+
+  describe "profile id fallbacks" do
+    test "draft flow (nil model) keeps the profile-N scheme" do
+      result = ModelProfileHelpers.add_model_profile(%{llm: %{models: []}}, nil)
+      assert [%{id: "profile-1"}] = get_in(result, [:llm, :models])
+    end
+
+    test "unusable model value falls back to the profile-N scheme" do
+      result = ModelProfileHelpers.add_model_profile(%{llm: %{models: []}}, "!!!")
+      assert [%{id: "profile-1"}] = get_in(result, [:llm, :models])
+    end
+  end
+
+  describe "generate_profile_id/2" do
+    test "produces base, base-2, base-3... skipping existing ids" do
+      models = [
+        %{id: "foo", concurrency: 3, model: "x:foo"},
+        %{id: "foo-2", concurrency: 3, model: "x:foo-2"}
+      ]
+
+      assert ModelProfileHelpers.generate_profile_id(models, "foo") == "foo-3"
+    end
+
+    test "nil base falls back to the profile-N scheme" do
+      models = [%{id: "profile-1", concurrency: 3}]
+      assert ModelProfileHelpers.generate_profile_id(models, nil) == "profile-2"
+    end
+
+    test "one-arity wrapper keeps the profile-N scheme" do
+      models = [%{id: "profile-1", concurrency: 3}]
+      assert ModelProfileHelpers.generate_profile_id(models) == "profile-2"
     end
   end
 end
