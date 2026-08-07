@@ -35,7 +35,7 @@
   libsoup_3,
   xdo,
   # Runtime helpers for the wrapper (Linux)
-  wrapGAppsHook,
+  wrapGAppsHook3,
 }:
 let
   pname = "genesis-desktop";
@@ -99,7 +99,7 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     makeWrapper
   ] ++ lib.optionals stdenv.isLinux [
-    wrapGAppsHook
+    wrapGAppsHook3
   ];
 
   buildInputs = lib.optionals stdenv.isLinux [
