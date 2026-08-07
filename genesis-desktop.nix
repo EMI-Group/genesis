@@ -87,7 +87,9 @@ let
       ];
 
     # Tauri's build.rs embeds the config at compile time; the runtime
-    # resolves resources relative to the binary (exe_dir/resources/…).
+    # resolves resources via sidecar_path::resolve_launcher, checking
+    # <exe_dir>/resources/… first, then resource_dir() and
+    # $CARGO_MANIFEST_DIR (see desktop/src-tauri/src/sidecar_path.rs).
     # We don't bundle resources at build time — they are linked into the
     # final package below via symlink.
   };
@@ -106,6 +108,10 @@ stdenv.mkDerivation {
     glib
     glib-networking
     gtk3
+    librsvg
+    libsoup_3
+    webkitgtk_4_1
+    libayatana-appindicator
   ];
 
   dontUnpack = true;
@@ -121,12 +127,23 @@ stdenv.mkDerivation {
     # Symlink the Elixir release so the Tauri binary finds it at runtime.
     ln -s ${genesisRelease} $out/lib/genesis-desktop/resources/genesis-backend
 
-    # Wrapper script in $out/bin.
+    # Wrapper script in $out/bin. The full runtime library stack is put on
+    # LD_LIBRARY_PATH because Tauri's runtime dlopens these libraries
+    # (tray-icon dlopens libayatana-appindicator, wry dlopens WebKitGTK,
+    # librsvg provides the SVG pixbuf loader) — on minimal NixOS systems
+    # they are not reachable otherwise.
     makeWrapper $out/lib/genesis-desktop/genesis-desktop \
                 $out/bin/genesis-desktop \
       --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath (
         lib.optionals stdenv.isLinux [
           stdenv.cc.cc.lib
+          glib
+          glib-networking
+          gtk3
+          librsvg
+          libsoup_3
+          webkitgtk_4_1
+          libayatana-appindicator
         ]
       )}"
   '';
