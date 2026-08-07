@@ -41,6 +41,22 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 - **Tray menu "Quit"** → takes ownership of the `SidecarHandle`, calls `child.kill()`, then `app.exit(0)`
 - **Left-click tray icon** → shows and focuses the main window (via `.on_tray_icon_event`)
 
+## Native Folder Picker — macOS Sheet Hang
+
+**Root cause:** the dashboard's directory picker originally invoked the tauri-plugin-dialog `plugin:dialog|open` command. On macOS the plugin calls `set_parent(&window)` and rfd presents NSOpenPanel as a **sheet** (`beginSheetModalForWindow:completionHandler:`). When the parent window isn't visible / the app isn't active — aggravated by the close-to-tray behavior above (window hidden to tray, app demoted to inactive accessory) — the sheet never appears and the invoke **hangs forever** (or rfd panics resolving the parent window handle → invoke rejects). Linux/Windows were unaffected (rfd gtk3/win32 path).
+
+**Fix (commit `4f0f6ee8`):** custom Rust command `pick_directory` in `src/commands.rs`, registered via `.invoke_handler(tauri::generate_handler![commands::pick_directory])` on the Builder:
+
+1. macOS only (`#[cfg(target_os = "macos")]`): `app.set_activation_policy(tauri::ActivationPolicy::Regular)` then `window.show()` + `window.set_focus()` — re-activates the app after close-to-tray so the dialog can present.
+2. Blocking dialog API `app.dialog().file().blocking_pick_folder()` inside `tauri::async_runtime::spawn_blocking` (blocking dialogs must NOT run on the main/async thread) — deliberately **without** `set_parent`, so rfd falls back to an **app-modal** panel that always presents instead of a window-attached sheet.
+3. Returns `Result<Option<String>, String>` — the selected path, `null` on cancel, or an error string.
+
+**ACL note:** app-defined commands registered via `generate_handler!` are NOT gated by the Tauri v2 capability system (the ACL covers core/plugin commands) — no capability entry was needed (confirmed against the generated `gen/schemas/` after build). Keep `capabilities/default.json` unchanged for this command.
+
+**Frontend coupling (coordinated separately):** the dashboard JS (`apps/evo_dash/assets/js/app.js`) invokes `pick_directory` for the folder picker, falling back to `plugin:dialog|open` for builds without the command (browser mode / older desktop builds). Keep the command name and `Result<Option<String>, String>` contract stable.
+
+**Build gotcha:** tauri-build validates `bundle.resources` paths at compile time — `resources/genesis-backend/` must exist before `cargo check`/`cargo tauri build` (error: `resource path 'resources/genesis-backend' doesn't exist`). Create it locally with `mkdir -p resources/genesis-backend`; it is deliberately untracked in git (the Nix flake derivation symlinks a built release there in a preBuild hook — see root CONTEXT.md Known Issue).
+
 ## Regenerating Icons
 
 The icon set in `./icons/` (5 files: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo — NOT from the placeholder logo. Source SVGs live in the sibling app (read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light-background variant — the one used for the icons) and `logo-alt.svg` (white `#FEFEFE` + red, dark-background variant). Icons use a transparent background (the old placeholder set was dark-gray + violet on transparent, so the new set keeps the same style).
