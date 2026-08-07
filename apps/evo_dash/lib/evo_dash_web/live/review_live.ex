@@ -125,6 +125,8 @@ defmodule EvoDashWeb.ReviewLive do
                           pr_url={@pr_url}
                           loading={@action_loading}
                           is_no_changes={@is_no_changes}
+                          merge_targets={@merge_targets}
+                          default_merge_target={@default_merge_target}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
                           <.link
@@ -251,7 +253,9 @@ defmodule EvoDashWeb.ReviewLive do
         model_id: nil,
         summary_raw: false,
         started_at: nil,
-        finished_at: nil
+        finished_at: nil,
+        merge_targets: [],
+        default_merge_target: nil
       )
       |> load_task_data(task_id)
 
@@ -381,21 +385,70 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_event("merge", _params, socket) do
-    %{repo_path: repo_path, branch_name: branch_name, task_id: task_id} = socket.assigns
+  def handle_event("merge", params, socket) do
+    %{
+      repo_path: repo_path,
+      branch_name: branch_name,
+      task_id: task_id,
+      merge_targets: merge_targets,
+      default_merge_target: default_merge_target
+    } = socket.assigns
 
-    case Review.merge_branch(repo_path, branch_name) do
+    # The target branch comes from the merge form's `target_branch` select;
+    # a plain `phx-click="merge"` (legacy path) submits no params.
+    target =
+      case params do
+        %{"target_branch" => target} when is_binary(target) ->
+          case String.trim(target) do
+            "" -> nil
+            trimmed -> trimmed
+          end
+
+        _ ->
+          nil
+      end
+
+    # Sanity check: when a known branch list was loaded, only accept a
+    # submitted target that is a member of it; otherwise fall back to the
+    # resolved default (or no target).
+    target =
+      if target != nil and merge_targets != [] and target not in merge_targets do
+        default_merge_target
+      else
+        target
+      end
+
+    # The effective target (explicitly chosen or the resolved default) is
+    # what the merge actually used — mention it in the success flash.
+    effective_target = target || default_merge_target
+
+    result =
+      if target do
+        Review.merge_branch(repo_path, branch_name, target)
+      else
+        Review.merge_branch(repo_path, branch_name)
+      end
+
+    case result do
       {:ok, _sha} ->
         TaskRegistry.set_review_status(task_id, :merged)
 
+        success_flash =
+          if effective_target do
+            gettext(
+              "Changes merged successfully into %{target}! Branch %{branch} has been deleted.",
+              target: effective_target,
+              branch: branch_name
+            )
+          else
+            gettext("Changes merged successfully! Branch %{branch} has been deleted.",
+              branch: branch_name
+            )
+          end
+
         {:noreply,
          socket
-         |> put_flash(
-           :success,
-           gettext("Changes merged successfully! Branch %{branch} has been deleted.",
-             branch: branch_name
-           )
-         )
+         |> put_flash(:success, success_flash)
          |> push_navigate(to: ~p"/")}
 
       {:conflict, details} ->
@@ -636,6 +689,29 @@ defmodule EvoDashWeb.ReviewLive do
         result = task.result
         repo_path = task.opts[:path]
 
+        # Merge-target branch selector: list local branches and resolve the
+        # default merge target. Degrades gracefully to [] / nil when branches
+        # cannot be listed (e.g. missing repo) — plain case on the tuple
+        # returns, no try/rescue.
+        {merge_targets, default_merge_target} =
+          if repo_path && File.dir?(repo_path) do
+            targets =
+              case Review.list_branches(repo_path) do
+                {:ok, names} -> Enum.filter(names, &(is_binary(&1) and String.trim(&1) != ""))
+                _ -> []
+              end
+
+            default =
+              case Review.default_merge_target(repo_path) do
+                {:ok, name} -> name
+                _ -> nil
+              end
+
+            {targets, default}
+          else
+            {[], nil}
+          end
+
         {commit_sha, branch_name, agent_summary, pr_url, pr_title} =
           case result do
             {:ok,
@@ -746,7 +822,9 @@ defmodule EvoDashWeb.ReviewLive do
           task_status: task.status,
           model_id: task.model_id,
           started_at: task.started_at,
-          finished_at: task.finished_at
+          finished_at: task.finished_at,
+          merge_targets: merge_targets,
+          default_merge_target: default_merge_target
         )
     end
   end

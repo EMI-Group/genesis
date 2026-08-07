@@ -52,6 +52,10 @@ Key functions:
 - **`Actions`** — Action buttons (merge/reject/continue/create PR) and skills extraction modal.
 - **`Stats`** — Diff stats bar and commit list.
 
+### Merge-target branch selector (`Actions.action_buttons/1`)
+
+The review page's merge action can merge into a user-selectable branch instead of always the repo default. `action_buttons/1` takes `merge_targets` (list of local branch names) and `default_merge_target` (resolved default branch name, or nil). When `merge_targets != []`, the Merge button is wrapped in a `<form phx-submit="merge" class="contents">` alongside a compact `<select name="target_branch">` (DaisyUI `select-sm select-bordered rounded-lg`) pre-selecting `default_merge_target`; the Merge button becomes `type="submit"` (keeping `phx-confirm`). When `merge_targets == []` (branches couldn't be listed), the plain `phx-click="merge"` button renders exactly as before. The event params' `"target_branch"` lands in the `merge` handler. Data sources (all in `EvoGit.Review`, called from `ReviewLive.load_task_data/2` with plain `case` on the tuple returns — no try/rescue): `list_branches/1` (names filtered to non-blank binaries), `default_merge_target/1`, and `merge_branch/3` (merge_branch/2 remains the legacy default-resolving path — do not remove it).
+
 ## Constraints
 
 ### `try/rescue` Policy

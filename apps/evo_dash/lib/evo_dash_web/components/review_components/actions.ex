@@ -12,6 +12,8 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   attr(:loading, :boolean, default: false)
   attr(:can_continue, :boolean, default: false)
   attr(:is_no_changes, :boolean, default: false)
+  attr(:merge_targets, :list, default: [])
+  attr(:default_merge_target, :string, default: nil)
 
   def action_buttons(assigns) do
     ~H"""
@@ -22,15 +24,41 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
       </div>
       <div class="flex flex-wrap gap-3">
         <%= if @branch_exists do %>
-          <button
-            class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
-            phx-click="merge"
-            phx-confirm={gettext("Merge these changes into the current branch?")}
-            disabled={@loading}
-          >
-            <.icon name="hero-check" class="size-4.5" />
-            {gettext("Merge Changes")}
-          </button>
+          <%= if @merge_targets != [] do %>
+            <form phx-submit="merge" class="contents">
+              <label class="flex items-center gap-2">
+                <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Merge into")}</span>
+                <select
+                  name="target_branch"
+                  class="select select-sm select-bordered rounded-lg"
+                  aria-label={gettext("Merge into branch")}
+                >
+                  <option :for={name <- @merge_targets} value={name} selected={name == @default_merge_target}>
+                    {name}
+                  </option>
+                </select>
+              </label>
+              <button
+                type="submit"
+                class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
+                phx-confirm={gettext("Merge these changes into the current branch?")}
+                disabled={@loading}
+              >
+                <.icon name="hero-check" class="size-4.5" />
+                {gettext("Merge Changes")}
+              </button>
+            </form>
+          <% else %>
+            <button
+              class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
+              phx-click="merge"
+              phx-confirm={gettext("Merge these changes into the current branch?")}
+              disabled={@loading}
+            >
+              <.icon name="hero-check" class="size-4.5" />
+              {gettext("Merge Changes")}
+            </button>
+          <% end %>
           <button
             class="btn btn-outline btn-error rounded-full px-6 gap-2"
             phx-click="reject"

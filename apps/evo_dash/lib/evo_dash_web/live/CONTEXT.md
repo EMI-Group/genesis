@@ -22,6 +22,10 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 | `SettingsLive` | `GET /settings` | Runtime scheduler configuration (concurrency, retries, depth, LLM model). Shows config status warnings. Updates via `AgentScheduler.update_config/1`. Auto-refreshes every 2s. |
 | `SystemLive` | `GET /system` | System page: scheduler controls (pause/resume), system controls (restart/stop the Erlang VM), system self-check, plus usage guides and references (example config, CLI usage, FAQ, credentials). |
 
+### ReviewLive merge-target branch selector
+
+The review page (`ReviewLive`, `GET /review/:task_id`) has a merge-target branch selector: the merge action merges into a user-selectable branch instead of always the repo's default. `load_task_data/2` loads `merge_targets` and `default_merge_target` (assigns, defaulted to `[]`/`nil` in `mount/3`) via `EvoGit.Review.list_branches/1` and `EvoGit.Review.default_merge_target/1` when `repo_path` exists (plain `case` on tuple returns, no try/rescue; degrades gracefully to `[]`/`nil`). The `merge` event handler reads `params["target_branch"]` (trimmed; non-member targets fall back to the default when a known list was loaded) and calls `EvoGit.Review.merge_branch/3`, falling back to `merge_branch/2` (legacy default-resolving path) when no target is given. The success flash mentions the effective target branch. UI lives in `ReviewComponents.Actions.action_buttons/1` (see `components/review_components/CONTEXT.md`).
+
 ### LiveComponents (`./components/`)
 - **`NodeSelectorComponent`** (`components/node_selector_component.ex`) — `EvoDashWeb.NodeSelectorComponent`, a `use EvoDashWeb, :live_component` LiveComponent rendered in the navbar (next to the brand logo, via `Layouts.app/1`). Shows the current node with a status dot + a dropdown (Local / saved targets / "Manage Connections...") and a full **connection manager modal** (add/edit/delete targets, bootstrap/connect/disconnect, status badges). Manages its own state; selects nodes by sending `{:node_selected, id}` to the parent LiveView. Subscribes to the `"remote_connections"` PubSub topic via the parent LiveView's subscription.
 
