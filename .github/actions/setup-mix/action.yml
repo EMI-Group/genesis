@@ -1,0 +1,42 @@
+name: Setup Elixir and assets
+description: Install Elixir/OTP, cache deps and _build, fetch deps, deploy assets
+
+inputs:
+  cache-key:
+    description: Platform-specific cache key prefix (e.g. linux-x86_64)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Elixir
+      uses: erlef/setup-beam@0f75c29430f34bb5af4cce5e3b7f6a8860fca236 # v1
+      with:
+        otp-version: ${{ env.OTP_VERSION }}
+        elixir-version: ${{ env.ELIXIR_VERSION }}
+
+    - name: Cache mix deps
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: deps
+        key: mix-deps-${{ inputs.cache-key }}-${{ hashFiles('mix.lock') }}
+        restore-keys: |
+          mix-deps-${{ inputs.cache-key }}-
+
+    - name: Cache mix build
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: _build
+        key: mix-build-${{ inputs.cache-key }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
+        restore-keys: |
+          mix-build-${{ inputs.cache-key }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
+
+    - name: Install Elixir dependencies
+      shell: bash
+      run: mix deps.get
+
+    - name: Build assets
+      shell: bash
+      run: |
+        mix assets.setup
+        mix assets.deploy

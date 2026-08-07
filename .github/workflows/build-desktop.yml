@@ -5,300 +5,227 @@ on:
     types: [published, prereleased]
   workflow_dispatch:
     inputs:
+      target:
+        description: "Platform to build"
+        required: true
+        default: macos-arm64
+        type: choice
+        options:
+          - macos-arm64
+          - linux-x64
+          - linux-arm64
+          - windows-x64
+          - all
+      publish_release:
+        description: "Upload artifacts to a GitHub Release"
+        required: true
+        default: false
+        type: boolean
       tag:
-        description: "Release tag (e.g., v0.1.0)"
+        description: "Release tag (required when publish_release is true), e.g. v0.1.0"
         required: false
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}-
+    ${{ inputs.target || 'release' }}-
+    ${{ inputs.tag || github.event.release.tag_name || 'build' }}
   cancel-in-progress: true
 
 env:
   ELIXIR_VERSION: "1.20.2"
   OTP_VERSION: "29"
+  RUST_VERSION: "1.97.1"
+  TAURI_CLI_VERSION: "2.11.4"
   RIPGREP_VERSION: "15.1.0"
   MINGIT_VERSION: "2.54.0.windows.1"
 
 permissions:
-  contents: write
+  contents: read
 
 # ── Architecture ────────────────────────────────────────────────────────────
 #
-# Each platform builds its own native Elixir release (mix release --include_erts
-# bundles the host ERTS) and then packages it with Tauri.  No cross-compilation
-# or third-party wrapper is used — every job runs on a native runner
-# for its target platform.
-#
-# Each job also builds the genesis_remote headless daemon and uploads it as a
-# tarball alongside the desktop installers.
+# Native builds only (mix release --include_erts + Tauri on the host runner).
+# Each job also builds genesis_remote and stages installers under dist/.
 #
 # Jobs:
-#   build-linux-x64     ubuntu-22.04      deb, rpm, AppImage, tarball
-#   build-linux-arm64   ubuntu-22.04-arm  deb, rpm
-#   build-macos-arm64   macos-15          dmg, app (signed + notarized)
-#   build-windows-x64   windows-2022      msi, exe (NSIS)
+#   prepare             version, publish flag, linux matrix JSON
+#   build-linux         ubuntu-22.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
+#   build-macos-arm64   macos-15 — dmg, app.zip (signed + notarized)
+#   build-windows-x64   windows-2022 — msi, exe (NSIS)
+#   publish-release     single writer for GitHub Release assets
 #
-# macOS signing and notarization require these repository secrets:
-#   APPLE_CERTIFICATE            base64 of Developer ID Application .p12
-#                                (openssl base64 -A -in cert.p12)
-#   APPLE_CERTIFICATE_PASSWORD   password used when exporting the .p12
-#   APPLE_SIGNING_IDENTITY       e.g. Developer ID Application: Org (TEAMID)
-#   APPLE_API_ISSUER             App Store Connect Issuer ID (UUID)
-#   APPLE_API_KEY                App Store Connect Key ID
-#   APPLE_API_KEY_P8_BASE64      base64 of AuthKey_<KEYID>.p8
-#                                (openssl base64 -A -in AuthKey_XXX.p8)
+# Shared steps: .github/actions/setup-mix, .github/actions/install-tauri-cli
 #
-# Nested Elixir/ERTS Mach-O binaries are pre-signed with
-# desktop/scripts/sign-macos-nested.sh before cargo tauri build.
+# macOS secrets: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+# APPLE_SIGNING_IDENTITY, APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_P8_BASE64
+# Nested ERTS/NIFs: desktop/scripts/sign-macos-nested.sh
 #
-# Artifact naming convention (canonical, underscores only — no dashes):
-#   genesis_{type}_{version}_{platform}_{arch}.{format}
-#   type:     desktop | remote
-#   version:  release tag including the leading "v" (e.g. v0.8.6)
-#   platform: linux | windows | darwin
-#   arch:     x64 | arm64
-#   format:   tar.gz | deb | rpm | AppImage | dmg | app.zip | msi | exe
+# Artifact names: genesis_{desktop|remote}_{version}_{platform}_{arch}.{format}
 #
-# Every uploaded artifact (Tauri installers, portable tarball, and the
-# genesis_remote daemon tarball) is renamed to this scheme before upload.
+# Triggers: release → all platforms + publish; workflow_dispatch → `target`,
+# publish only when publish_release (tag required). Always upload-artifact.
 
 jobs:
-  # ── Linux x86_64 ────────────────────────────────────────────────────────
-  build-linux-x64:
-    name: Linux (x86_64)
+  prepare:
+    name: Prepare
     runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      publish: ${{ steps.meta.outputs.publish }}
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      linux_matrix: ${{ steps.linux.outputs.matrix }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Derive release version
-        run: |
-          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
-
-      - name: Install Linux system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            libdbus-1-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            wget
-
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-
-      - name: Cache mix deps
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: mix-deps-linux-x86_64-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-deps-linux-x86_64-
-
-      - name: Cache mix build
-        uses: actions/cache@v4
-        with:
-          path: _build
-          key: mix-build-linux-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-build-linux-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Install Elixir dependencies
-        run: mix deps.get
-
-      - name: Build assets
-        run: |
-          mix assets.setup
-          mix assets.deploy
-
-      - name: Bundle vendor binaries
+      - name: Resolve build metadata
+        id: meta
         env:
-          VENDOR_PLATFORM: linux-x86_64
-          RG_TARGET: x86_64-unknown-linux-musl
+          BUILD_TARGET: ${{ inputs.target }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          mkdir -p "${VENDOR_DIR}"
-          # --- ripgrep (musl target for a fully-static binary) ---
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          chmod +x "${VENDOR_DIR}/rg"
-          # --- system git ---
-          cp "$(which git)" "${VENDOR_DIR}/git"
-          chmod +x "${VENDOR_DIR}/git"
-          echo "Vendor binaries:"
-          ls -la "${VENDOR_DIR}/"
+          TAG="${RELEASE_TAG}"
+          PUBLISH=false
+          if [[ "${EVENT_NAME}" == "release" || "${PUBLISH_RELEASE}" == "true" ]]; then
+            PUBLISH=true
+          fi
+          if [[ "${PUBLISH}" == "true" && -z "${TAG}" ]]; then
+            echo "tag is required when publishing a release" >&2
+            exit 1
+          fi
+          VERSION="${TAG:-dev-${GITHUB_SHA::7}}"
+          if [[ ! "${VERSION}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            printf 'invalid artifact version: %q\n' "${VERSION}" >&2
+            echo "use 1-64 letters, digits, dots, underscores, or hyphens" >&2
+            exit 1
+          fi
 
-      - name: Build Elixir releases
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            TARGET=all
+          else
+            TARGET="${BUILD_TARGET}"
+          fi
+
+          {
+            echo "version=${VERSION}"
+            echo "publish=${PUBLISH}"
+            echo "release_tag=${TAG}"
+            echo "target=${TARGET}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Linux matrix
+        id: linux
+        env:
+          TARGET: ${{ steps.meta.outputs.target }}
         run: |
-          MIX_ENV=prod mix release genesis_desktop
-          MIX_ENV=prod mix release genesis_remote
+          set -euo pipefail
 
-      - name: Place desktop release in Tauri resources
-        run: |
-          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
-          rm -rf "${RESOURCE_DIR}"
-          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
-          echo "Release directory placed:"
-          ls "${RESOURCE_DIR}/"
+          # Dynamic matrix so unused linux arches never start a runner.
+          case "${TARGET}" in
+            all|linux-x64)
+              LINUX_X64=1 ;;
+            *)
+              LINUX_X64=0 ;;
+          esac
+          case "${TARGET}" in
+            all|linux-arm64)
+              LINUX_ARM64=1 ;;
+            *)
+              LINUX_ARM64=0 ;;
+          esac
 
-      - name: Create genesis_remote tarball
-        run: |
-          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_linux_x64.tar.gz" -C _build/prod/rel genesis_remote
-          echo "Remote tarball created:"
-          ls -la "/tmp/genesis_remote_${GENESIS_VERSION}_linux_x64.tar.gz"
+          LINUX_MATRIX="$(
+            LINUX_X64="${LINUX_X64}" LINUX_ARM64="${LINUX_ARM64}" python3 - <<'PY'
+          import json, os
+          rows = []
+          if os.environ["LINUX_X64"] == "1":
+              rows.append({
+                  "arch": "x64",
+                  "runner": "ubuntu-22.04",
+                  "vendor_platform": "linux-x86_64",
+                  "rg_target": "x86_64-unknown-linux-musl",
+                  "rg_sha256": "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                  "rust_target": "x86_64-unknown-linux-gnu",
+                  "bundles": "deb,rpm,appimage",
+                  "portable": True,
+                  "image_os": "",
+              })
+          if os.environ["LINUX_ARM64"] == "1":
+              rows.append({
+                  "arch": "arm64",
+                  "runner": "ubuntu-22.04-arm",
+                  "vendor_platform": "linux-arm64",
+                  "rg_target": "aarch64-unknown-linux-gnu",
+                  "rg_sha256": "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e",
+                  "rust_target": "aarch64-unknown-linux-gnu",
+                  "bundles": "deb,rpm",
+                  "portable": False,
+                  "image_os": "ubuntu22",
+              })
+          print(json.dumps(rows))
+          PY
+          )"
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
+          {
+            echo "matrix<<EOF"
+            echo "${LINUX_MATRIX}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop/src-tauri -> target
-          key: linux-tauri-x64
-
-      - name: Cache Tauri CLI binary
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-Linux-X64-v2
-
-      - name: Install Tauri CLI
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall tauri-cli --version "^2.0" --no-confirm
-
-      - name: Build Tauri app
-        run: |
-          cd desktop/src-tauri
-          cargo tauri build --target x86_64-unknown-linux-gnu --bundles deb,rpm,appimage
-
-      - name: Rename desktop installers
-        run: |
-          BUNDLE_DIR="desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle"
-          mv "${BUNDLE_DIR}/deb/"*.deb "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.deb"
-          mv "${BUNDLE_DIR}/rpm/"*.rpm "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.rpm"
-          mv "${BUNDLE_DIR}/appimage/"*.AppImage "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.AppImage"
-          echo "Renamed installers:"
-          ls -la /tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.*
-
-      - name: Create portable tarball
-        run: |
-          cd desktop/src-tauri/target/x86_64-unknown-linux-gnu/release
-          tar -czf "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.tar.gz" genesis-desktop
-          echo "Tarball created:"
-          ls -la "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_x64.tar.gz"
-
-      - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: |
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.deb
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.rpm
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.AppImage
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_x64.tar.gz
-            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_linux_x64.tar.gz
-
-  # ── Linux ARM64 ────────────────────────────────────────────────────────
-  build-linux-arm64:
-    name: Linux (ARM64)
-    runs-on: ubuntu-22.04-arm
+  # ── Linux (x86_64 + ARM64) ─────────────────────────────────────────────
+  build-linux:
+    name: Linux (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.linux_matrix != '[]'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.linux_matrix) }}
+    env:
+      GENESIS_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Derive release version
-        run: |
-          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
-
-      # GitHub-hosted ARM runners report an ImageOS value that setup-beam does
-      # not recognise.  Override it to the base value before setup-beam runs.
       - name: Fix ImageOS for ARM runner
-        run: echo "ImageOS=ubuntu22" >> $GITHUB_ENV
+        if: matrix.image_os != ''
+        run: echo "ImageOS=${{ matrix.image_os }}" >> "$GITHUB_ENV"
 
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            libdbus-1-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            wget
+            build-essential curl file \
+            libayatana-appindicator3-dev libdbus-1-dev librsvg2-dev \
+            libssl-dev libwebkit2gtk-4.1-dev libxdo-dev wget
 
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
+      - name: Setup Elixir and assets
+        uses: ./.github/actions/setup-mix
         with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-
-      - name: Cache mix deps
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: mix-deps-linux-arm64-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-deps-linux-arm64-
-
-      - name: Cache mix build
-        uses: actions/cache@v4
-        with:
-          path: _build
-          key: mix-build-linux-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-build-linux-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Install Elixir dependencies
-        run: mix deps.get
-
-      - name: Build assets
-        run: |
-          mix assets.setup
-          mix assets.deploy
+          cache-key: linux-${{ matrix.arch }}
 
       - name: Bundle vendor binaries
         env:
-          VENDOR_PLATFORM: linux-arm64
-          RG_TARGET: aarch64-unknown-linux-gnu
+          VENDOR_PLATFORM: ${{ matrix.vendor_platform }}
+          RG_TARGET: ${{ matrix.rg_target }}
+          RG_SHA256: ${{ matrix.rg_sha256 }}
         run: |
           set -euo pipefail
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          DOWNLOAD_DIR=".build/vendor-downloads"
           mkdir -p "${VENDOR_DIR}"
-          # --- ripgrep ---
+          mkdir -p "${DOWNLOAD_DIR}"
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
+          cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
           chmod +x "${VENDOR_DIR}/rg"
-          # --- system git ---
           cp "$(which git)" "${VENDOR_DIR}/git"
           chmod +x "${VENDOR_DIR}/git"
-          echo "Vendor binaries:"
-          ls -la "${VENDOR_DIR}/"
 
       - name: Build Elixir releases
         run: |
@@ -311,68 +238,119 @@ jobs:
           rm -rf "${RESOURCE_DIR}"
           cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
 
-      - name: Create genesis_remote tarball
-        run: |
-          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_linux_arm64.tar.gz" -C _build/prod/rel genesis_remote
-
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
-          targets: aarch64-unknown-linux-gnu
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.rust_target }}
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: desktop/src-tauri -> target
-          key: linux-tauri-arm64
-
-      - name: Cache Tauri CLI binary
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-Linux-ARM64-v2
+          key: linux-tauri-${{ matrix.arch }}
 
       - name: Install Tauri CLI
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall tauri-cli --version "^2.0" --no-confirm
+        uses: ./.github/actions/install-tauri-cli
+        with:
+          version: ${{ env.TAURI_CLI_VERSION }}
 
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target aarch64-unknown-linux-gnu --bundles deb,rpm
+          cargo tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}"
 
-      - name: Rename desktop installers
+      - name: Stage artifacts
         run: |
-          BUNDLE_DIR="desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle"
-          mv "${BUNDLE_DIR}/deb/"*.deb "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_arm64.deb"
-          mv "${BUNDLE_DIR}/rpm/"*.rpm "/tmp/genesis_desktop_${GENESIS_VERSION}_linux_arm64.rpm"
-          echo "Renamed installers:"
-          ls -la /tmp/genesis_desktop_${GENESIS_VERSION}_linux_arm64.*
+          set -euo pipefail
+          mkdir -p dist
+          BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          PREFIX="genesis_desktop_${GENESIS_VERSION}_linux_${{ matrix.arch }}"
+          mv "${BUNDLE_DIR}/deb/"*.deb "dist/${PREFIX}.deb"
+          mv "${BUNDLE_DIR}/rpm/"*.rpm "dist/${PREFIX}.rpm"
+          if [[ "${{ matrix.portable }}" == "true" ]]; then
+            mv "${BUNDLE_DIR}/appimage/"*.AppImage "dist/${PREFIX}.AppImage"
+            tar -czf "dist/${PREFIX}.tar.gz" \
+              -C "desktop/src-tauri/target/${{ matrix.rust_target }}/release" genesis-desktop
+          fi
+          tar -czf "dist/genesis_remote_${GENESIS_VERSION}_linux_${{ matrix.arch }}.tar.gz" \
+            -C _build/prod/rel genesis_remote
 
-      - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v3
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: |
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_arm64.deb
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_linux_arm64.rpm
-            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_linux_arm64.tar.gz
+          name: genesis-linux-${{ matrix.arch }}-${{ env.GENESIS_VERSION }}
+          path: dist/
+          if-no-files-found: error
 
   # ── macOS ARM64 ────────────────────────────────────────────────────────
   build-macos-arm64:
     name: macOS (ARM64)
+    needs: prepare
+    if: >-
+      github.event_name == 'release' ||
+      inputs.target == 'all' ||
+      inputs.target == 'macos-arm64'
     runs-on: macos-15
+    env:
+      GENESIS_VERSION: ${{ needs.prepare.outputs.version }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Derive release version
+      - name: Setup Elixir and assets
+        uses: ./.github/actions/setup-mix
+        with:
+          cache-key: macos-arm64
+
+      - name: Bundle vendor binaries
+        env:
+          VENDOR_PLATFORM: macos-arm64
+          RG_TARGET: aarch64-apple-darwin
+          RG_SHA256: 378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715
         run: |
-          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
+          set -euo pipefail
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          DOWNLOAD_DIR=".build/vendor-downloads"
+          mkdir -p "${VENDOR_DIR}"
+          mkdir -p "${DOWNLOAD_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | shasum -a 256 -c -
+          tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
+          cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+
+      - name: Build Elixir releases
+        run: |
+          MIX_ENV=prod mix release genesis_desktop
+          MIX_ENV=prod mix release genesis_remote
+
+      - name: Place desktop release in Tauri resources
+        run: |
+          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
+          rm -rf "${RESOURCE_DIR}"
+          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-apple-darwin
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: desktop/src-tauri -> target
+          key: macos-tauri-aarch64
+
+      - name: Install Tauri CLI
+        uses: ./.github/actions/install-tauri-cli
+        with:
+          version: ${{ env.TAURI_CLI_VERSION }}
 
       - name: Import Apple Developer ID certificate
         env:
@@ -402,7 +380,6 @@ jobs:
 
       - name: Write App Store Connect API key
         env:
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
         run: |
           set -euo pipefail
@@ -413,107 +390,14 @@ jobs:
           chmod 600 "${KEY_PATH}"
           echo "APPLE_API_KEY_PATH=${KEY_PATH}" >> "$GITHUB_ENV"
 
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-
-      - name: Cache mix deps
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: mix-deps-macos-arm64-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-deps-macos-arm64-
-
-      - name: Cache mix build
-        uses: actions/cache@v4
-        with:
-          path: _build
-          key: mix-build-macos-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-build-macos-arm64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Install Elixir dependencies
-        run: mix deps.get
-
-      - name: Build assets
-        run: |
-          mix assets.setup
-          mix assets.deploy
-
-      - name: Bundle vendor binaries
-        env:
-          VENDOR_PLATFORM: macos-arm64
-          RG_TARGET: aarch64-apple-darwin
-        run: |
-          set -euo pipefail
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          mkdir -p "${VENDOR_DIR}"
-          # --- ripgrep ---
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
-          tar -xzf "/tmp/${RG_ARCHIVE}" -C /tmp
-          cp "/tmp/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          chmod +x "${VENDOR_DIR}/rg"
-          echo "Vendor binaries:"
-          ls -la "${VENDOR_DIR}/"
-
-      - name: Build Elixir releases
-        run: |
-          MIX_ENV=prod mix release genesis_desktop
-          MIX_ENV=prod mix release genesis_remote
-
-      - name: Place desktop release in Tauri resources
-        run: |
-          RESOURCE_DIR="desktop/src-tauri/resources/genesis-backend"
-          rm -rf "${RESOURCE_DIR}"
-          cp -a _build/prod/rel/genesis_desktop "${RESOURCE_DIR}"
-
       - name: Codesign nested Elixir/ERTS Mach-O binaries
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
           : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY secret is empty}"
           ./desktop/scripts/sign-macos-nested.sh \
             desktop/src-tauri/resources/genesis-backend
 
-      - name: Create genesis_remote tarball
-        run: |
-          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_darwin_arm64.tar.gz" -C _build/prod/rel genesis_remote
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: desktop/src-tauri -> target
-          key: macos-tauri-aarch64
-
-      - name: Cache Tauri CLI binary
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-macOS-ARM64-v2
-
-      - name: Install Tauri CLI
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall tauri-cli --version "^2.0" --no-confirm
-
       - name: Build Tauri app
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          # APPLE_API_KEY_PATH set earlier via GITHUB_ENV
         run: |
           set -euo pipefail
           : "${APPLE_SIGNING_IDENTITY:?}"
@@ -524,10 +408,6 @@ jobs:
           cargo tauri build --target aarch64-apple-darwin --bundles app,dmg
 
       - name: Notarize and verify macOS artifacts
-        env:
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          # APPLE_API_KEY_PATH set earlier via GITHUB_ENV
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -546,100 +426,91 @@ jobs:
           ./desktop/scripts/verify-macos-artifacts.sh \
             "${APP_BUNDLES[0]}" "${DMG_BUNDLES[0]}"
 
-      - name: Rename desktop installers
+      - name: Stage artifacts
         run: |
           set -euo pipefail
           shopt -s nullglob
           BUNDLE_DIR="desktop/src-tauri/target/aarch64-apple-darwin/release/bundle"
           APP_BUNDLES=("${BUNDLE_DIR}/macos/"*.app)
           DMG_BUNDLES=("${BUNDLE_DIR}/dmg/"*.dmg)
-          [[ "${#APP_BUNDLES[@]}" -eq 1 && "${#DMG_BUNDLES[@]}" -eq 1 ]]
-          mv "${DMG_BUNDLES[0]}" "/tmp/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.dmg"
-          # GitHub Releases cannot upload a raw .app directory; zip it.
+          [[ "${#APP_BUNDLES[@]}" -eq 1 ]] || {
+            echo "expected one application bundle, found ${#APP_BUNDLES[@]}" >&2
+            exit 1
+          }
+          [[ "${#DMG_BUNDLES[@]}" -eq 1 ]] || {
+            echo "expected one DMG, found ${#DMG_BUNDLES[@]}" >&2
+            exit 1
+          }
+          mkdir -p dist
+          mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.dmg"
           ditto -c -k --keepParent "${APP_BUNDLES[0]}" \
-            "/tmp/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.app.zip"
-          echo "Renamed installers:"
-          ls -la /tmp/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.*
+            "dist/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.app.zip"
+          tar -czf "dist/genesis_remote_${GENESIS_VERSION}_darwin_arm64.tar.gz" \
+            -C _build/prod/rel genesis_remote
 
-      - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v3
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: |
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_darwin_arm64.dmg
-            /tmp/genesis_desktop_${{ env.GENESIS_VERSION }}_darwin_arm64.app.zip
-            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_darwin_arm64.tar.gz
+          name: genesis-darwin-arm64-${{ env.GENESIS_VERSION }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Remove Apple signing credentials
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -n "${APPLE_API_KEY_PATH:-}" ]]; then
+            rm -f "${APPLE_API_KEY_PATH}"
+          fi
+          rm -f "${RUNNER_TEMP}/certificate.p12"
+          security delete-keychain "${RUNNER_TEMP}/build.keychain" 2>/dev/null || true
 
   # ── Windows x86_64 ─────────────────────────────────────────────────────
   build-windows-x64:
     name: Windows (x86_64)
+    needs: prepare
+    if: >-
+      github.event_name == 'release' ||
+      inputs.target == 'all' ||
+      inputs.target == 'windows-x64'
     runs-on: windows-2022
     defaults:
       run:
         shell: bash
+    env:
+      GENESIS_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Derive release version
-        run: |
-          GENESIS_TAG="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          echo "GENESIS_VERSION=$GENESIS_TAG" >> "$GITHUB_ENV"
-
-      - name: Set up Elixir
-        uses: erlef/setup-beam@v1
+      - name: Setup Elixir and assets
+        uses: ./.github/actions/setup-mix
         with:
-          otp-version: ${{ env.OTP_VERSION }}
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-
-      - name: Cache mix deps
-        uses: actions/cache@v4
-        with:
-          path: deps
-          key: mix-deps-windows-x86_64-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-deps-windows-x86_64-
-
-      - name: Cache mix build
-        uses: actions/cache@v4
-        with:
-          path: _build
-          key: mix-build-windows-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-build-windows-x86_64-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Install Elixir dependencies
-        run: mix deps.get
-
-      - name: Build assets
-        run: |
-          mix assets.setup
-          mix assets.deploy
+          cache-key: windows-x86_64
 
       - name: Bundle vendor binaries
         env:
           VENDOR_PLATFORM: windows-x64
           RG_TARGET: x86_64-pc-windows-msvc
+          RG_SHA256: 124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a
+          MINGIT_SHA256: 04f937e1f0918b17b9be6f2294cb2bb66e96e1d9832d1c298e2de088a1d0e668
         run: |
           set -euo pipefail
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          DOWNLOAD_DIR=".build/vendor-downloads"
           mkdir -p "${VENDOR_DIR}"
-          # --- ripgrep (.zip) ---
+          mkdir -p "${DOWNLOAD_DIR}"
           RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.zip"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "/tmp/${RG_ARCHIVE}"
-          unzip -o "/tmp/${RG_ARCHIVE}" -d /tmp/rg-extract
-          cp "/tmp/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
-          echo "ripgrep installed:"
-          ls -la "${VENDOR_DIR}/"
-          # --- MinGit ---
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
+          unzip -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -d "${DOWNLOAD_DIR}/rg-extract"
+          cp "${DOWNLOAD_DIR}/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
           MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
           MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION_CLEAN}-64-bit.zip"
           MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
-          echo "Downloading ${MINGIT_URL}..."
-          curl -fsSL "${MINGIT_URL}" -o "/tmp/${MINGIT_ARCHIVE}"
-          unzip -o "/tmp/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
-          echo "MinGit installed:"
-          ls "${VENDOR_DIR}/mingit/cmd/git.exe"
+          curl -fsSL "${MINGIT_URL}" -o "${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}"
+          echo "${MINGIT_SHA256}  ${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}" | sha256sum -c -
+          unzip -o "${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}" -d "${VENDOR_DIR}/mingit"
 
       - name: Build Elixir releases
         run: |
@@ -651,19 +522,8 @@ jobs:
         run: |
           $resourceDir = "desktop/src-tauri/resources/genesis-backend"
           if (Test-Path $resourceDir) { Remove-Item -Recurse -Force $resourceDir }
-          # Use robocopy instead of MSYS2 cp -a to avoid .exe interpolation
-          # issues: MSYS2 treats extension-less files like 'erl' as equivalent
-          # to 'erl.exe', causing "File exists" errors when both exist in the
-          # ERTS bin/ directory of the release.
-          #
-          # robocopy exit codes: 0 = no copies needed, 1-7 = success (files
-          # copied), 8+ = failure.  Two things make this tricky in pwsh:
-          #   1. PS 7.4+ sets $PSNativeCommandErrorActionPreference=$true (via
-          #      the GHA wrapper), which turns robocopy's non-zero success
-          #      codes into terminating errors.
-          #   2. pwsh -Command propagates $LASTEXITCODE as the process exit
-          #      code when no explicit `exit` is called — so a robocopy exit
-          #      code of 1 would fail the step even though it succeeded.
+          # robocopy avoids MSYS2 cp -a treating extension-less ERTS bins as .exe
+          # (File exists). Exit 0–7 = success; 8+ = failure.
           $PSNativeCommandErrorActionPreference = $false
           robocopy "_build/prod/rel/genesis_desktop" $resourceDir /E /NFL /NDL /NJH /NJS /NP
           $rc = $LASTEXITCODE
@@ -673,52 +533,75 @@ jobs:
           }
           exit 0
 
-      - name: Create genesis_remote tarball
-        run: |
-          tar -czf "/tmp/genesis_remote_${GENESIS_VERSION}_windows_x64.tar.gz" -C _build/prod/rel genesis_remote
-
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-pc-windows-msvc
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
         with:
           workspaces: desktop/src-tauri -> target
           key: windows-tauri-x86_64
 
-      - name: Cache Tauri CLI binary
-        id: cache-tauri-cli
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-Windows-X64-v2
-
       - name: Install Tauri CLI
-        if: steps.cache-tauri-cli.outputs.cache-hit != 'true'
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall tauri-cli --version "^2.0" --no-confirm
+        uses: ./.github/actions/install-tauri-cli
+        with:
+          version: ${{ env.TAURI_CLI_VERSION }}
 
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
           cargo tauri build --target x86_64-pc-windows-msvc
 
-      - name: Rename desktop installers
+      - name: Stage artifacts
         run: |
+          set -euo pipefail
+          mkdir -p dist
           BUNDLE_DIR="desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-          mv "${BUNDLE_DIR}/msi/"*.msi "${BUNDLE_DIR}/msi/genesis_desktop_${GENESIS_VERSION}_windows_x64.msi"
-          mv "${BUNDLE_DIR}/nsis/"*.exe "${BUNDLE_DIR}/nsis/genesis_desktop_${GENESIS_VERSION}_windows_x64.exe"
-          echo "Renamed installers:"
-          ls -la "${BUNDLE_DIR}/msi/genesis_desktop_${GENESIS_VERSION}_windows_x64.msi" "${BUNDLE_DIR}/nsis/genesis_desktop_${GENESIS_VERSION}_windows_x64.exe"
+          mv "${BUNDLE_DIR}/msi/"*.msi "dist/genesis_desktop_${GENESIS_VERSION}_windows_x64.msi"
+          mv "${BUNDLE_DIR}/nsis/"*.exe "dist/genesis_desktop_${GENESIS_VERSION}_windows_x64.exe"
+          tar -czf "dist/genesis_remote_${GENESIS_VERSION}_windows_x64.tar.gz" \
+            -C _build/prod/rel genesis_remote
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: genesis-windows-x64-${{ env.GENESIS_VERSION }}
+          path: dist/
+          if-no-files-found: error
+
+  # ── Publish release ─────────────────────────────────────────────────────
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - prepare
+      - build-linux
+      - build-macos-arm64
+      - build-windows-x64
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.publish == 'true' &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
+      (needs.build-macos-arm64.result == 'success' || needs.build-macos-arm64.result == 'skipped') &&
+      (needs.build-windows-x64.result == 'success' || needs.build-windows-x64.result == 'skipped')
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: genesis-*-${{ needs.prepare.outputs.version }}
+          path: dist
+          merge-multiple: true
 
       - name: Upload to GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
-          files: |
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/genesis_desktop_${{ env.GENESIS_VERSION }}_windows_x64.msi
-            desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/genesis_desktop_${{ env.GENESIS_VERSION }}_windows_x64.exe
-            /tmp/genesis_remote_${{ env.GENESIS_VERSION }}_windows_x64.tar.gz
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          files: dist/*
+          fail_on_unmatched_files: true
