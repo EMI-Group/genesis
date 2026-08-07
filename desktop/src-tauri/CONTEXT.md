@@ -28,6 +28,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 - The `tray-icon` Cargo feature must be enabled for system tray support.
 - `capabilities/default.json` does NOT need a tray permission — tray icons are managed from Rust, not the frontend JS API.
 - The Elixir release directory (`resources/genesis-backend/`) — a standard `mix release` tree — must be placed in `src-tauri/resources/genesis-backend/` before `cargo tauri build`. Tauri bundles it as a resource.
+- **Two different launcher resolution strategies exist and must be kept consistent**: GUI mode (`src/sidecar.rs` `launcher_path`, lines 63-70) resolves ONLY via `app.path().resource_dir()` + `resources/genesis-backend/bin/<launcher>`; headless mode (`src/main.rs` `resolve_sidecar_path`, lines 91-118) checks `<exe_dir>/resources/...` first, then `$CARGO_MANIFEST_DIR`. The Nix package layout (`<store>/lib/genesis-desktop/...`) only satisfies the headless strategy — see Known Issues.
 - The desktop shell contains NO Elixir code — only Rust.
 - The release is launched via its `bin/genesis_desktop` launcher script (`bin/genesis_desktop.bat` on Windows) with the `start` command, which is a **foreground** process (blocks until the BEAM VM exits). This gives the Rust parent clean ownership/kill semantics.
 
