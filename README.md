@@ -85,6 +85,45 @@ mix assets.setup
 mix phx.server
 ```
 
+Then open http://localhost:4100 in your browser.
+
+#### Build the macOS desktop app
+
+For a signed/notarized `.app` (or `.dmg`) locally, use the helpers under `desktop/scripts/`. This packages the Elixir `genesis_desktop` release into a Tauri shell.
+
+**Prerequisites**
+
+- Xcode Command Line Tools (`xcode-select --install`)
+- Rust (`rustup`) and Tauri CLI: `cargo install tauri-cli --version "^2.0" --locked`
+- Elixir / OTP matching `.tool-versions`
+- Apple Developer ID Application certificate in your keychain, plus notarization credentials (App Store Connect API key or Apple ID)
+
+**Configure signing**
+
+```bash
+cp desktop/scripts/.env.macos.example desktop/scripts/.env.macos
+# Edit desktop/scripts/.env.macos — set APPLE_SIGNING_IDENTITY and Option A or B
+```
+
+`desktop/scripts/.env.macos` is gitignored. Do not commit secrets.
+
+**Build**
+
+```bash
+./desktop/scripts/build-macos-local.sh              # default: --bundles app
+./desktop/scripts/build-macos-local.sh --bundles dmg
+./desktop/scripts/build-macos-local.sh --bundles app,dmg
+```
+
+The script: builds the Elixir release → copies it into Tauri resources → codesigns nested Mach-O binaries (ERTS / NIFs) → runs `cargo tauri build` (app signing + Apple notarization).
+
+Output:
+
+- `.app`: `desktop/src-tauri/target/release/bundle/macos/`
+- `.dmg`: `desktop/src-tauri/target/release/bundle/dmg/`
+
+Notarization talks to Apple and can take several minutes with little log output; that is normal while `notarytool` waits.
+
 ## 📦 Distribution via Package Managers
 
 We're working to make Genesis available through popular package managers so you can install and update it with the tools you already use. Planned targets include:

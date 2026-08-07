@@ -33,6 +33,12 @@ evo_git-*.tar
 # Ignore local config files
 *.local.exs
 
+# Local secrets / env (Apple signing, API keys, etc.)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # Nix — flake.lock is committed, but result/ symlinks from nix build are not
 /result
 /result-*
@@ -40,3 +46,6 @@ evo_git-*.tar
 # Vendor binaries (downloaded at build time, not committed)
 /apps/evo_git/priv/vendor/*/git
 /apps/evo_git/priv/vendor/*/rg
+
+# Tauri bundled Elixir release (copied by desktop build)
+/desktop/src-tauri/resources/genesis-backend/
