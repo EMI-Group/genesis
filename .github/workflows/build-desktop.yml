@@ -50,7 +50,7 @@ permissions:
 # Each job also builds genesis_remote and stages installers under dist/.
 #
 # Jobs:
-#   prepare             version, publish flag, linux matrix JSON
+#   prepare             publish flag, release tag, linux matrix JSON
 #   build-linux         ubuntu-22.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
 #   build-macos-arm64   macos-15 — dmg, app.zip (signed + notarized)
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
@@ -62,7 +62,9 @@ permissions:
 # APPLE_SIGNING_IDENTITY, APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_P8_BASE64
 # Nested ERTS/NIFs: desktop/scripts/sign-macos-nested.sh
 #
-# Artifact names: genesis_{desktop|remote}_{version}_{platform}_{arch}.{format}
+# Artifact names: genesis_{desktop|remote}_{platform}_{arch}.{format}
+# (unversioned — permanent releases/latest/download/ links; the version comes
+# from the release tag and is baked into the app at build time, not the filename)
 #
 # Triggers: release → all platforms + publish; workflow_dispatch → `target`,
 # publish only when publish_release (tag required). Always upload-artifact.
@@ -72,7 +74,6 @@ jobs:
     name: Prepare
     runs-on: ubuntu-22.04
     outputs:
-      version: ${{ steps.meta.outputs.version }}
       publish: ${{ steps.meta.outputs.publish }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       linux_matrix: ${{ steps.linux.outputs.matrix }}
@@ -95,13 +96,6 @@ jobs:
             echo "tag is required when publishing a release" >&2
             exit 1
           fi
-          VERSION="${TAG:-dev-${GITHUB_SHA::7}}"
-          if [[ ! "${VERSION}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
-            printf 'invalid artifact version: %q\n' "${VERSION}" >&2
-            echo "use 1-64 letters, digits, dots, underscores, or hyphens" >&2
-            exit 1
-          fi
-
           if [[ "${EVENT_NAME}" == "release" ]]; then
             TARGET=all
           else
@@ -109,7 +103,6 @@ jobs:
           fi
 
           {
-            echo "version=${VERSION}"
             echo "publish=${PUBLISH}"
             echo "release_tag=${TAG}"
             echo "target=${TARGET}"
@@ -184,8 +177,6 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.prepare.outputs.linux_matrix) }}
-    env:
-      GENESIS_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -267,7 +258,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
-          PREFIX="genesis_desktop_${GENESIS_VERSION}_linux_${{ matrix.arch }}"
+          PREFIX="genesis_desktop_linux_${{ matrix.arch }}"
           mv "${BUNDLE_DIR}/deb/"*.deb "dist/${PREFIX}.deb"
           mv "${BUNDLE_DIR}/rpm/"*.rpm "dist/${PREFIX}.rpm"
           if [[ "${{ matrix.portable }}" == "true" ]]; then
@@ -275,13 +266,13 @@ jobs:
             tar -czf "dist/${PREFIX}.tar.gz" \
               -C "desktop/src-tauri/target/${{ matrix.rust_target }}/release" genesis-desktop
           fi
-          tar -czf "dist/genesis_remote_${GENESIS_VERSION}_linux_${{ matrix.arch }}.tar.gz" \
+          tar -czf "dist/genesis_remote_linux_${{ matrix.arch }}.tar.gz" \
             -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: genesis-linux-${{ matrix.arch }}-${{ env.GENESIS_VERSION }}
+          name: genesis-linux-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
@@ -295,7 +286,6 @@ jobs:
       inputs.target == 'macos-arm64'
     runs-on: macos-15
     env:
-      GENESIS_VERSION: ${{ needs.prepare.outputs.version }}
       APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
@@ -446,16 +436,16 @@ jobs:
             exit 1
           }
           mkdir -p dist
-          mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.dmg"
+          mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_darwin_arm64.dmg"
           ditto -c -k --keepParent "${APP_BUNDLES[0]}" \
-            "dist/genesis_desktop_${GENESIS_VERSION}_darwin_arm64.app.zip"
-          tar -czf "dist/genesis_remote_${GENESIS_VERSION}_darwin_arm64.tar.gz" \
+            "dist/genesis_desktop_darwin_arm64.app.zip"
+          tar -czf "dist/genesis_remote_darwin_arm64.tar.gz" \
             -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: genesis-darwin-arm64-${{ env.GENESIS_VERSION }}
+          name: genesis-darwin-arm64
           path: dist/
           if-no-files-found: error
 
@@ -481,8 +471,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      GENESIS_VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -566,15 +554,15 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           BUNDLE_DIR="desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
-          mv "${BUNDLE_DIR}/msi/"*.msi "dist/genesis_desktop_${GENESIS_VERSION}_windows_x64.msi"
-          mv "${BUNDLE_DIR}/nsis/"*.exe "dist/genesis_desktop_${GENESIS_VERSION}_windows_x64.exe"
-          tar -czf "dist/genesis_remote_${GENESIS_VERSION}_windows_x64.tar.gz" \
+          mv "${BUNDLE_DIR}/msi/"*.msi "dist/genesis_desktop_windows_x64.msi"
+          mv "${BUNDLE_DIR}/nsis/"*.exe "dist/genesis_desktop_windows_x64.exe"
+          tar -czf "dist/genesis_remote_windows_x64.tar.gz" \
             -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: genesis-windows-x64-${{ env.GENESIS_VERSION }}
+          name: genesis-windows-x64
           path: dist/
           if-no-files-found: error
 
@@ -601,7 +589,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          pattern: genesis-*-${{ needs.prepare.outputs.version }}
+          pattern: genesis-*
           path: dist
           merge-multiple: true
 
