@@ -58,6 +58,18 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 3. The WebView window opens, pointing to `http://localhost:9999`
 4. Closing the window hides it to the system tray (backend keeps running); the "Quit" tray menu item kills the backend process and exits
 
+## Regenerating Icons
+
+The Tauri icon set (`src-tauri/icons/`: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo. Source SVGs (sibling app, read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light variant — the one used) and `logo-alt.svg` (white + red, dark variant — reserved for a possible dark-tray icon). Transparent background, matching the old placeholder set's style.
+
+**Gotcha**: both SVGs have a huge viewBox (`98668.67 x 73192.18`) with the artwork filling it edge-to-edge — render high-res, then trim/fit to ~86% of a square 1024x1024 transparent canvas, then:
+
+```bash
+npx --yes @tauri-apps/cli@^2 icon <square-1024.png>   # or: cargo tauri icon <square-1024.png>
+```
+
+tauri-cli is NOT in nixpkgs (npm route used; `cargo install tauri-cli --version "^2.0"` also works). Delete the generator's extra outputs (`64x64.png`, `128x128@2x.png`, `Square*.png`, `StoreLogo.png`, `android/`, `ios/`) — nothing references them; `bundle.icon` lists only the 4 files above and the tray uses `app.default_window_icon()`. Full recipe (incl. render commands): `src-tauri/CONTEXT.md` → Regenerating Icons. Regenerated from the EVOX logo in commit `bacf702c` (was stale from the placeholder era).
+
 ## Known Issues
 
 - **`nix build .#desktop` GUI panicked at startup — FIXED**: `Failed to setup app: error encountered during setup hook: No such file or directory (os error 2)` (tauri-2.11.3 app.rs:1425). The Nix derivation (`genesis-desktop.nix` at repo root) symlinks the Elixir release at `<store>/lib/genesis-desktop/resources/genesis-backend` (exe_dir-relative), but the GUI setup hook used to resolve the launcher only via `app.path().resource_dir()`, which on Linux (non-AppImage) falls back to the hardcoded `/usr/lib/genesis-desktop` — nonexistent on NixOS → spawn failed ENOENT. **Fixed** by extracting a shared, existence-aware resolver `src-tauri/src/sidecar_path.rs::resolve_launcher` used by BOTH `main.rs` (headless: `[exe_dir, $CARGO_MANIFEST_DIR]`) and `sidecar.rs` (GUI: `[exe_dir, resource_dir(), $CARGO_MANIFEST_DIR]`); first existing candidate wins, descriptive error listing all candidates otherwise. Validated via `nix build .#desktop` + smoke test (setup hook now spawns the backend successfully). Details in `src-tauri/CONTEXT.md` → Known Issues.
