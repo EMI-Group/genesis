@@ -251,7 +251,6 @@ defmodule EvoDashWeb.ProjectComponents do
               type="button"
               id="project-path-browse-button"
               class="btn btn-sm btn-warning gap-1 shrink-0"
-              phx-click="pick_directory"
               phx-hook="DirectoryPicker"
               data-picker-id="project"
             >
@@ -327,7 +326,6 @@ defmodule EvoDashWeb.ProjectComponents do
                 type="button"
                 id="new-project-location-browse-button"
                 class="btn btn-sm btn-warning gap-1 shrink-0"
-                phx-click="pick_directory"
                 phx-hook="DirectoryPicker"
                 data-picker-id="new-project"
               >
@@ -580,7 +578,6 @@ defmodule EvoDashWeb.ProjectComponents do
                     type="button"
                     id="foreign-repo-path-browse-button"
                     class="btn btn-sm btn-warning gap-1 shrink-0"
-                    phx-click="pick_directory"
                     phx-hook="DirectoryPicker"
                     data-picker-id="foreign-repo"
                   >
