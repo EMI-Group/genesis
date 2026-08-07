@@ -86,12 +86,24 @@ let
         xdo
       ];
 
-    # Tauri's build.rs embeds the config at compile time; the runtime
-    # resolves resources via sidecar_path::resolve_launcher, checking
-    # <exe_dir>/resources/… first, then resource_dir() and
-    # $CARGO_MANIFEST_DIR (see desktop/src-tauri/src/sidecar_path.rs).
-    # We don't bundle resources at build time — they are linked into the
-    # final package below via symlink.
+    # tauri-build 2.x validates at compile time (relative to the crate
+    # dir) that every path declared in bundle.resources in
+    # tauri.conf.json exists — `resources/genesis-backend` must be
+    # present when build.rs runs, or the build fails with "resource
+    # path `resources/genesis-backend` doesn't exist". The bare git
+    # source tree contains no resources/ directory, so we symlink the
+    # Elixir release into the unpacked crate source in preBuild (cwd =
+    # desktop/src-tauri). Tauri's build.rs embeds the config at compile
+    # time; at runtime the binary resolves resources via
+    # sidecar_path::resolve_launcher, checking <exe_dir>/resources/…
+    # first, then resource_dir() and $CARGO_MANIFEST_DIR (see
+    # desktop/src-tauri/src/sidecar_path.rs). The final package below
+    # still links the release into place at install time so the runtime
+    # resolution finds it next to the binary.
+    preBuild = ''
+      mkdir -p resources
+      ln -s ${genesisRelease} resources/genesis-backend
+    '';
   };
 in
 # ── Final package: binary + release in the expected layout ───────────
