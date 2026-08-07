@@ -91,7 +91,7 @@ To bump the version, run:
 mix bump.version 0.2.0
 ```
 
-This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, and `Cargo.lock` in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
+This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, and `README.md` (shields.io badge) in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
 
 ### Runtime Data Directory (`tasks.sqlite`)
 
