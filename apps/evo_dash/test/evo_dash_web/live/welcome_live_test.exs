@@ -452,4 +452,127 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert html =~ "Save &amp; Use this model"
     end
   end
+
+  describe "back navigation" do
+    test "renders a Back button with browser-history fallback", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/welcome")
+      assert html =~ "Back"
+      assert html =~ "hero-arrow-left"
+      assert html =~ "history.back()"
+      # Single quotes inside the onclick attribute are HTML-escaped (&#39;)
+      assert html =~ "window.location.href = &#39;/&#39;;"
+    end
+
+    test "Back button renders in the all-set state too", %{conn: conn} do
+      config_path = config_file()
+      File.mkdir_p!(Path.dirname(config_path))
+
+      File.write!(config_path, """
+      [[llm.models]]
+      id = "profile-1"
+      model = {provider = "anthropic", id = "claude-sonnet-5"}
+      concurrency = 3
+      """)
+
+      on_exit(fn -> File.rm(config_path) end)
+      {:ok, _view, html} = live(conn, ~p"/welcome")
+      assert html =~ "Back"
+      assert html =~ "history.back()"
+    end
+  end
+
+  describe "LLM connection test" do
+    test "test connection button renders only when a model is selected", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+      refute render(view) =~ "Test Connection"
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      html = render(view)
+      assert html =~ "Test Connection"
+      assert html =~ "hero-signal"
+    end
+
+    test "testing state renders the spinner", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      # The event render (status :testing) is produced before the spawned task's
+      # result message is processed (FIFO mailbox), so the returned HTML is
+      # deterministic — the spinner, not a raced error state.
+      html = render_click(view, "test_llm", %{})
+      assert html =~ "Testing LLM connection..."
+      assert html =~ "loading loading-spinner"
+    end
+
+    test "ok result renders Connected with the model name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      send(
+        view.pid,
+        {:llm_test_result, {:ok, %{model: "anthropic:claude-sonnet-5", response: "hello"}}}
+      )
+
+      html = render(view)
+      assert html =~ "Connected"
+      assert html =~ "Claude Sonnet 5"
+    end
+
+    test "error result renders the reason", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      send(view.pid, {:llm_test_result, {:error, "Invalid API key"}})
+      html = render(view)
+      assert html =~ "Invalid API key"
+      assert html =~ "hero-x-circle"
+    end
+
+    test "selecting a different model resets the connection test status", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      send(
+        view.pid,
+        {:llm_test_result, {:ok, %{model: "anthropic:claude-sonnet-5", response: "hi"}}}
+      )
+
+      assert render(view) =~ "Connected"
+      render_click(view, "select_welcome_model", %{"model_string" => "google:gemini-3.5-flash"})
+      html = render(view)
+      refute html =~ "Connected"
+      assert html =~ "Test Connection"
+    end
+
+    test "test_llm handler starts the test (unit-style)", %{conn: _conn} do
+      alias EvoDashWeb.WelcomeLive
+      # No typed key — the spawned task fails fast without a real network call.
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: nil,
+          flash: %{},
+          selected_entry: %{
+            provider_id: :anthropic,
+            model_string: "anthropic:claude-sonnet-5",
+            variant_id: nil,
+            credential_key: "anthropic_api_key",
+            model_display_name: "Claude Sonnet 5"
+          },
+          credentials: %{},
+          api_key_input: "",
+          llm_test_status: :idle
+        }
+      }
+
+      assert {:noreply, result_socket} = WelcomeLive.handle_event("test_llm", %{}, socket)
+      assert result_socket.assigns.llm_test_status == :testing
+    end
+
+    test "typed API key is saved before the connection test runs", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      render_change(view, "api_key_changed", %{"api_key" => "sk-ant-typed"})
+      render_click(view, "test_llm", %{})
+      assert Map.get(EvoGit.Config.credentials(), "anthropic_api_key") == "sk-ant-typed"
+      assert assigns(view).api_key_input == ""
+      assert assigns(view).llm_test_status == :testing
+    end
+  end
 end
