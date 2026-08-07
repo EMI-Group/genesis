@@ -29,7 +29,7 @@ defmodule EvoGit.Runtime.HelpersTest do
     test "starts with the expected prefix" do
       name = Helpers.generate_branch_name("genesis")
 
-      assert String.starts_with?(name, "evogit/genesis_")
+      assert String.starts_with?(name, "genesis/agent_")
     end
 
     test "suffix after the last underscore is exactly 8 lowercase hex chars" do
@@ -44,6 +44,12 @@ defmodule EvoGit.Runtime.HelpersTest do
       name2 = Helpers.generate_branch_name("genesis")
 
       refute name1 == name2
+    end
+
+    test "does not contain the legacy evogit namespace" do
+      name = Helpers.generate_branch_name("genesis")
+
+      refute String.contains?(name, "evogit")
     end
   end
 
@@ -257,7 +263,7 @@ defmodule EvoGit.Runtime.HelpersTest do
       branch_name = report.branch_name
 
       assert branch_name != nil
-      assert String.starts_with?(branch_name, "evogit/genesis_")
+      assert String.starts_with?(branch_name, "genesis/agent_")
 
       suffix = branch_name |> String.split("_") |> List.last()
       assert Regex.match?(~r/^[0-9a-f]{8}$/, suffix)

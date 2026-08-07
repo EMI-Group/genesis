@@ -33,7 +33,7 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
    - **Mode B (New)** → `CodebaseLead` agent (read-write, 3-phase: architecture & design → implementation delegation → review & accountability). Also spawns a second root Manager agent for implementation.
 8. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
-9. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `evogit/genesis_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
+9. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `genesis/agent_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
 
 ### `Evolution.run/2` — Step by Step
 
@@ -42,7 +42,7 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 3. **Ensure repo + get HEAD**: Same as Genesis.
 4. **Validate node path**: `validate_node_path/2` ensures path is relative, directory exists, and contains `CONTEXT.md` (root `"./"` always passes).
 5. **Dispatch agent**: Spawns a `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents).
-6. **Post-processing**: Same `merge_and_report/3` pattern — creates `evogit/evolve_<hex>` branch, optionally PR.
+6. **Post-processing**: Same `merge_and_report/3` pattern — creates `genesis/agent_<hex>` branch, optionally PR.
 
 ### `PullRequest.try_create/4` — Step by Step
 
@@ -58,7 +58,7 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 ## Constraints
 
 - Both phases follow the same pattern: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
-- Agent changes go to **isolated branches** (`evogit/genesis_<hex>` / `evogit/evolve_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
+- Agent changes go to **isolated branches** (`genesis/agent_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
 - `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — both phases delegate to `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
 - No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
 - PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
