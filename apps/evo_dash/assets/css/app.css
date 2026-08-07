@@ -1587,3 +1587,33 @@ button, a, input, textarea, select, summary,
     0 0 0 2px color-mix(in oklch, oklch(0.78 0.16 152) 60%, transparent),
     0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 152) 50%, transparent);
 }
+
+/* --- DirectoryPicker manual-entry fallback hint ---
+   When neither the Tauri native dialog nor the File System Access API can
+   pick a directory (known macOS case: tauri-plugin-dialog 2.7.1 → rfd 0.16.0
+   fails to present its NSOpenPanel sheet, and WKWebView lacks
+   showDirectoryPicker), the DirectoryPicker hook (js/app.js) marks the picker
+   row with data-picker-error="manual" and focuses the path input. These rules
+   highlight the input and show a small transient hint that manual entry is
+   the way forward. Uses only the --color-base-* / --color-warning theme
+   variables via color-mix (never oklch(var(--x) / a) — Known Issue (i)). */
+[data-picker-error="manual"] .picker-container {
+  position: relative;
+}
+
+[data-picker-error="manual"] .picker-container::after {
+  content: "Picker unavailable — type the path manually";
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 10;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--color-warning) 75%, var(--color-base-100));
+  pointer-events: none;
+}
+
+[data-picker-error="manual"] .picker-container input[type="text"] {
+  border-color: color-mix(in oklab, var(--color-warning) 60%, transparent);
+}
