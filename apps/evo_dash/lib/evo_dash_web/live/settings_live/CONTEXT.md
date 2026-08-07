@@ -16,7 +16,7 @@ Pure data-transformation functions for model profile CRUD operations on the `[[l
 
 | Function | Purpose |
 |----------|---------|
-| `add_model_profile/2` | Adds a new model profile with a unique ID and default concurrency (3). |
+| `add_model_profile/2` | Adds a new model profile with a unique ID and default concurrency (3). **IDs are now named after the model**: `generate_profile_id(models, base_name)` produces `<base>`, `<base>-2`, `<base>-3`, ... (suffix from 2, skipping existing ids); base is derived from `model_value` (string `"provider:model_id"` → part after first `:`; plain string → itself; map spec → `:id`; slugified downcase + non-alphanumeric runs → `-`); nil/empty/unusable base falls back to the legacy `profile-N` scheme (draft flow — `add_model_profile(file_config, nil)` — keeps `profile-N` ids). `generate_profile_id/1` kept as a wrapper delegating to `/2` with nil base. |
 | `update_model_profile/3` | Updates an existing profile's fields. |
 | `replace_model_profiles/2` | Replaces all profiles in a category. |
 | `mirror_model_profiles_by_provider/2` | Copies profiles from one provider to another. |
