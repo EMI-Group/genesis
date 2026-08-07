@@ -151,10 +151,12 @@ beamPackages.mixRelease {
     esbuild
   ];
 
-  # Point the Phoenix tailwind/esbuild hex packages at the system-provided
-  # binaries instead of downloading platform-specific versions at build time.
-  TAILWIND_PATH = "${tailwindcss_4}/bin/tailwindcss";
-  ESBUILD_PATH = "${esbuild}/bin/esbuild";
+  # Point the tailwind/esbuild hex packages at the system-provided binaries.
+  # These env vars are read by config/config.exs which sets :path on the
+  # :tailwind and :esbuild application config, causing the hex packages to
+  # use the pre-installed binary instead of downloading one at build time.
+  TAILWIND_BIN = "${tailwindcss_4}/bin/tailwindcss";
+  ESBUILD_BIN = "${esbuild}/bin/esbuild";
 
   # ── Precompiled NIF cache ───────────────────────────────────────
   # Rustler precompiled looks for tarballs in this directory. We populate it
