@@ -46,6 +46,8 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
   **Fix (recommended)**: make `launcher_path` existence-aware with an exe_dir fallback mirroring `main.rs::resolve_sidecar_path` — check `<exe_dir>/resources/genesis-backend/bin/<launcher>` first (covers Nix, and also AppImage/deb/Windows where exe_dir == resource_dir), then `resource_dir()/resources/...` (covers macOS `Contents/MacOS` vs `Contents/Resources`); return a descriptive error if neither exists. Alternatively, restructure `genesis-desktop.nix` to satisfy tauri's layout heuristic (e.g. binary at `$out/lib/genesis-desktop/bin/` + release at `$out/lib/genesis-desktop/lib/genesis-desktop/resources/genesis-backend`), but that is fragile and relies on undocumented tauri internals.
   Note: the Nix release bundles its own ERTS (nixpkgs `mixRelease` keeps `erts-*` and rewrites `${erlang}/lib/erlang` refs into the release), so once the launcher path resolves, the backend should start without extra `erl` on PATH.
 
+## Configurable Binding Address
+
 - The backend binds to `127.0.0.1` (localhost only) by default for security.
 - Set `EVOGIT_BIND=0.0.0.0` before launching to allow remote access.
 - The bind address is passed to Phoenix as `PHX_IP`.
