@@ -364,6 +364,33 @@ defmodule EvoGit.ReviewTest do
     assert {:ok, "main"} = Git.current_branch(tmp_dir)
   end
 
+  test "merge_branch/3 returns conflict, keeps the agent branch, and restores the original branch",
+       %{tmp_dir: tmp_dir} do
+    {:ok, base_sha} = commit_file(tmp_dir, "file.txt", "base\n", "Initial commit")
+    rename_current_branch(tmp_dir, "main")
+
+    # dev diverges: modifies file.txt
+    System.cmd("git", ["branch", "dev"], cd: tmp_dir)
+    Git.checkout(tmp_dir, "dev")
+    commit_file(tmp_dir, "file.txt", "dev change\n", "Dev change")
+    Git.checkout(tmp_dir, "main")
+
+    # Agent branch modifies the same file → merging into dev conflicts
+    Git.create_branch(tmp_dir, "agent_branch", base_sha)
+    Git.checkout(tmp_dir, "agent_branch")
+    commit_file(tmp_dir, "file.txt", "agent change\n", "Agent change")
+    Git.checkout(tmp_dir, "main")
+
+    assert {:conflict, details} = Review.merge_branch(tmp_dir, "agent_branch", "dev")
+    assert is_binary(details)
+
+    # Agent branch NOT deleted on conflict
+    assert Git.branch_exists?(tmp_dir, "agent_branch")
+
+    # Repo is back on main despite the conflicted index
+    assert {:ok, "main"} = Git.current_branch(tmp_dir)
+  end
+
   test "default_merge_target/1 prefers dev over prod when main and master are absent",
        %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
