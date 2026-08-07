@@ -215,4 +215,209 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "agent-2"
     end
   end
+
+  describe "merge into target branch selector" do
+    # These tests cover the "Merge into" target-branch selector feature: the
+    # review page renders a <select> next to the Merge button, populated from
+    # the repo's local branches with the default merge target pre-selected,
+    # and the merge event merges the agent branch into the selected target.
+    #
+    # NOTE: the feature itself is being implemented in a parallel worktree and
+    # is NOT present here yet, so the feature-specific assertions below are
+    # expected to fail until that work lands.
+    setup do
+      {repo_path, task_id, change_sha} = create_review_task_with_repo!("main", "dev")
+
+      {:ok, repo_path: repo_path, task_id: task_id, change_sha: change_sha}
+    end
+
+    test "renders a target-branch selector with the default target pre-selected", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+
+      # The "Merge into" selector appears next to the Merge button when the
+      # repo has local branches.
+      assert html =~ "Merge into"
+
+      select_html = target_branch_select(html)
+      assert select_html != "", "expected a target-branch <select> to be rendered"
+
+      # Both local branches are offered, and the default target (main — first
+      # of the ["main", "master", "dev", "prod"] candidates) is pre-selected.
+      assert select_html =~ ~r{<option[^>]*value="main"[^>]*>}
+      assert select_html =~ ~r{<option[^>]*value="dev"[^>]*>}
+      assert selected_option_value(select_html) == "main"
+    end
+
+    test "merges the task branch into the selected target branch", %{
+      conn: conn,
+      task_id: task_id,
+      repo_path: repo_path,
+      change_sha: change_sha
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      render_click(view, "merge", %{"target_branch" => "dev"})
+
+      # The success flash mentions the chosen target branch.
+      flash = assert_redirect(view, "/")
+
+      assert flash["success"] =~ "dev",
+             "expected the success flash to mention the target branch, got: #{inspect(flash["success"])}"
+
+      # The agent branch is deleted after a successful merge.
+      {branches, 0} = System.cmd("git", ["branch"], cd: repo_path)
+      refute branches =~ "task-branch", "expected the agent branch to be deleted after merge"
+
+      # The change commit landed on the selected target (dev), not on the
+      # default target (main).
+      {_out, status} =
+        System.cmd(
+          "git",
+          ["merge-base", "--is-ancestor", change_sha, "dev"],
+          cd: repo_path,
+          stderr_to_stdout: true
+        )
+
+      assert status == 0, "expected the change commit to be an ancestor of dev"
+    end
+  end
+
+  describe "merge into target branch selector (single branch repo)" do
+    setup do
+      {repo_path, task_id, change_sha} = create_review_task_with_repo!("dev", nil)
+
+      {:ok, repo_path: repo_path, task_id: task_id, change_sha: change_sha}
+    end
+
+    test "pre-selects dev when it is the only default-candidate branch", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+
+      select_html = target_branch_select(html)
+      assert select_html != "", "expected a target-branch <select> to be rendered"
+      assert select_html =~ ~r{<option[^>]*value="dev"[^>]*>}
+
+      # main/master are absent, so the default target resolves to dev.
+      assert selected_option_value(select_html) == "dev"
+    end
+  end
+
+  # --- Helpers for the merge-target selector tests ---
+
+  # Runs a git command in `repo`, asserting it succeeds.
+  defp git!(repo, args) do
+    {output, status} = System.cmd("git", args, cd: repo, stderr_to_stdout: true)
+    assert status == 0, "git #{Enum.join(args, " ")} failed: #{output}"
+  end
+
+  # Creates a temp git repo with the given primary branch (plus an optional
+  # secondary branch pointing at the base commit), an agent `task-branch` with
+  # a change commit on top of the primary branch, and a completed review task
+  # pointing at it. Returns {repo_path, task_id, change_sha} and registers
+  # on_exit cleanup.
+  defp create_review_task_with_repo!(primary, secondary) do
+    tmp_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_review_merge_test_" <> to_string(System.unique_integer([:positive]))
+      )
+
+    File.mkdir_p!(tmp_dir)
+    git!(tmp_dir, ["init"])
+    git!(tmp_dir, ["config", "user.email", "test@example.com"])
+    git!(tmp_dir, ["config", "user.name", "Test User"])
+
+    # Base commit, then rename the branch to the primary name (the machine's
+    # init.defaultBranch may vary).
+    File.write!(Path.join(tmp_dir, "base.txt"), "base\n")
+    git!(tmp_dir, ["add", "base.txt"])
+    git!(tmp_dir, ["commit", "-m", "Initial commit"])
+    {current, 0} = System.cmd("git", ["rev-parse", "--abbrev-ref", "HEAD"], cd: tmp_dir)
+
+    if String.trim(current) != primary do
+      git!(tmp_dir, ["branch", "-m", primary])
+    end
+
+    if secondary do
+      git!(tmp_dir, ["branch", secondary])
+    end
+
+    # Agent task branch with a change commit, then back to the primary branch.
+    git!(tmp_dir, ["checkout", "-b", "task-branch"])
+    File.write!(Path.join(tmp_dir, "feature.txt"), "feature change\n")
+    git!(tmp_dir, ["add", "feature.txt"])
+    git!(tmp_dir, ["commit", "-m", "Agent change commit"])
+    {change_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: tmp_dir)
+    git!(tmp_dir, ["checkout", primary])
+
+    task_id = seed_review_task!(tmp_dir, String.trim(change_sha))
+
+    on_exit(fn ->
+      File.rm_rf!(tmp_dir)
+    end)
+
+    {tmp_dir, task_id, String.trim(change_sha)}
+  end
+
+  # Seeds a completed review task pointing at `repo_path` with the agent
+  # branch `task-branch` (which must exist in the repo).
+  defp seed_review_task!(repo_path, change_sha) do
+    task_id = "review_test_merge_#{System.unique_integer([:positive])}"
+
+    task = %TaskInfo{
+      id: task_id,
+      type: :evolve,
+      status: :completed,
+      opts: [path: repo_path, objective: "Test objective"],
+      ref: nil,
+      started_at: DateTime.utc_now(),
+      finished_at: DateTime.utc_now(),
+      logs: [],
+      review_status: nil,
+      result:
+        {:ok,
+         %{
+           commit_sha: change_sha,
+           branch_name: "task-branch",
+           result: "Agent summary",
+           pr_url: nil,
+           pr_title: nil
+         }}
+    }
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      TaskRegistry.delete_task(task_id)
+      # Synchronize the deletion cast.
+      TaskRegistry.list_tasks()
+    end)
+
+    task_id
+  end
+
+  # Extracts the "Merge into" target-branch <select> block, or "" if absent.
+  defp target_branch_select(html) do
+    case Regex.run(~r{<select[^>]*name="target_branch"[^>]*>.*?</select>}s, html) do
+      [select_html] -> select_html
+      _ -> ""
+    end
+  end
+
+  # Returns the value of the pre-selected <option> inside a select block, or
+  # nil. Tolerates `selected` appearing before or after the value attribute.
+  defp selected_option_value(select_html) do
+    case Regex.run(
+           ~r{<option[^>]*value="([^"]+)"[^>]*selected[^>]*>|<option[^>]*selected[^>]*value="([^"]+)"[^>]*>},
+           select_html
+         ) do
+      [_, v1, v2] -> v1 || v2
+      _ -> nil
+    end
+  end
 end
