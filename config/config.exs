@@ -22,8 +22,12 @@ config :evo_dash, EvoDashWeb.Endpoint,
   live_view: [signing_salt: "KUBoevuK"]
 
 # Configure esbuild (the version is required)
+esbuild_path = System.get_env("ESBUILD_BIN")
+esbuild_version = System.get_env("ESBUILD_VERSION", "0.25.4")
+
 config :esbuild,
-  version: "0.25.4",
+  version: esbuild_version,
+  path: esbuild_path,
   evo_dash: [
     args:
       ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
@@ -32,8 +36,12 @@ config :esbuild,
   ]
 
 # Configure tailwind (the version is required)
+tailwind_path = System.get_env("TAILWIND_BIN")
+tailwind_version = System.get_env("TAILWIND_VERSION", "4.1.7")
+
 config :tailwind,
-  version: "4.1.7",
+  version: tailwind_version,
+  path: tailwind_path,
   evo_dash: [
     args: ~w(
       --input=assets/css/app.css
