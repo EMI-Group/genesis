@@ -462,7 +462,13 @@ defmodule EvoGit.Agent.ToolDispatch do
               usage: usage
           }
 
-          EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
+          # Rebind with the returned stamped context (exact value written to
+          # ETS) so already-stamped messages keep their original timestamps.
+          state = %{
+            state
+            | context:
+                EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
+          }
 
           # Sync accumulated subagent usage to ETS
           AgentScheduler.batch_update_agent(state.agent_id, usage: state.usage)
