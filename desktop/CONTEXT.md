@@ -62,6 +62,8 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 
 - **`nix build .#desktop` GUI panics at startup**: `Failed to setup app: error encountered during setup hook: No such file or directory (os error 2)` (tauri-2.11.3 app.rs:1425). The Nix derivation (`genesis-desktop.nix` at repo root) symlinks the Elixir release at `<store>/lib/genesis-desktop/resources/genesis-backend` (exe_dir-relative), but the GUI setup hook resolves the launcher via `app.path().resource_dir()`, which on Linux (non-AppImage) falls back to the hardcoded `/usr/lib/genesis-desktop` — nonexistent on NixOS → spawn fails ENOENT. `--headless` works (checks `<exe_dir>/resources/...` first). Fix: add an exe_dir fallback to `src-tauri/src/sidecar.rs::launcher_path` (details in `src-tauri/CONTEXT.md` → Known Issues).
 
+## Build Process
+
 ```bash
 # Build the Elixir release (produces the release directory tree)
 MIX_ENV=prod mix release genesis_desktop
