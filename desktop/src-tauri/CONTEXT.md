@@ -21,7 +21,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 | `Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-dialog, reqwest) |
 | `tauri.conf.json` | Tauri config: window settings, trayIcon config, release resource reference, bundle metadata |
 | `capabilities/default.json` | Tauri v2 permissions: shell (release launcher), dialog (directory picker). No tray permission needed — tray managed from Rust. |
-| `icons/icon.png` | Tray icon (also used for window icon) |
+| `icons/icon.png` | 512x512 RGBA EVOX-brand icon (transparent background) — derived from `apps/evo_dash/priv/static/images/logo.svg`; kept as the standard source icon, not referenced by `bundle.icon` (which lists only `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) |
 
 ## Constraints
 
@@ -39,6 +39,32 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 - **Tray menu "Show Window"** → `window.show()` + `window.set_focus()`
 - **Tray menu "Quit"** → takes ownership of the `SidecarHandle`, calls `child.kill()`, then `app.exit(0)`
 - **Left-click tray icon** → shows and focuses the main window (via `.on_tray_icon_event`)
+
+## Regenerating Icons
+
+The icon set in `./icons/` (5 files: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo — NOT from the placeholder logo. Source SVGs live in the sibling app (read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light-background variant — the one used for the icons) and `logo-alt.svg` (white `#FEFEFE` + red, dark-background variant). Icons use a transparent background (the old placeholder set was dark-gray + violet on transparent, so the new set keeps the same style).
+
+**Gotcha — huge viewBox**: both SVGs declare `viewBox="0 0 98668.67 73192.18"`. Rendering that raw produces a tiny logo on a vast canvas (the artwork fills the entire viewBox edge-to-edge, so plain `-trim` finds nothing to cut). The working recipe — render high-res, then trim-and-fit to ~86% of a 1024x1024 transparent canvas:
+
+```bash
+TMP=$TMPDIR/evox_icons; mkdir -p "$TMP"
+# 1. render the SVG at high resolution (rsvg-convert via nixpkgs#librsvg)
+nix shell nixpkgs#librsvg -c rsvg-convert -w 4096 \
+  apps/evo_dash/priv/static/images/logo.svg -o "$TMP/raw.png"     # 4096x3039
+# 2. trim uniform/transparent margins (no-op here), fit long edge to ~880px
+nix shell nixpkgs#imagemagick -c bash -c '
+  magick '"$TMP"'/raw.png -fuzz 0% -trim +repage '"$TMP"'/trimmed.png
+  magick '"$TMP"'/trimmed.png -resize 880x880 '"$TMP"'/fit.png
+  # 3. center onto a 1024x1024 transparent RGBA canvas
+  magick -size 1024x1024 xc:none '"$TMP"'/fit.png -gravity center -composite '"$TMP"'/evox_1024.png'
+# 4. generate the icon set (default output dir: ./icons)
+cd desktop/src-tauri && npx --yes @tauri-apps/cli@^2 icon "$TMP/evox_1024.png"
+# or: cargo tauri icon "$TMP/evox_1024.png"  (tauri-cli must be installed; NOT in nixpkgs)
+```
+
+**Extra files**: `tauri icon` also emits `64x64.png`, `128x128@2x.png`, `Square*.png`, `StoreLogo.png`, and `android/` + `ios/` trees. Nothing references them — `tauri.conf.json` `bundle.icon` lists only `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`, and the tray icon comes from `app.default_window_icon()` (derived from `bundle.icon`). Delete the extras to keep the exact 5-file set.
+
+**Tray tradeoff**: the tray icon is the dark-gray + red EVOX logo — the dark-gray parts can be hard to see on dark system trays. Accepted for now (single simple icon set); a white/red variant from `logo-alt.svg` could be used later if tray visibility matters.
 
 ## Known Issues
 
