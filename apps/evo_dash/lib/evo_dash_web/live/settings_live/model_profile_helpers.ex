@@ -159,8 +159,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
             case Jason.decode(extra_raw) do
               {:ok, extra_map} when is_map(extra_map) ->
                 {:ok, Map.put(spec, :extra, extra_map)}
+
               {:ok, _} ->
                 {:error, "extra_must_be_object"}
+
               {:error, _} ->
                 {:error, "invalid_extra_json"}
             end
@@ -168,6 +170,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
         # Parse provider_options JSON config (profile-level, sibling of temperature etc.)
         provider_options_raw = String.trim(params["provider_options"] || "")
+
         provider_options_result =
           if provider_options_raw == "" do
             {:ok, nil}
@@ -175,8 +178,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
             case Jason.decode(provider_options_raw) do
               {:ok, po_map} when is_map(po_map) ->
                 {:ok, po_map}
+
               {:ok, _} ->
                 {:error, "provider_options_must_be_object"}
+
               {:error, _} ->
                 {:error, "invalid_provider_options_json"}
             end

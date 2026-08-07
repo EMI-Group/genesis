@@ -399,8 +399,7 @@ defmodule EvoDashWeb.WelcomeLive do
     # Reset the typed key input when switching models — the credential_key
     # context changes. Also reset any stale connection-test result (it would
     # refer to the previously selected model).
-    {:noreply,
-     assign(socket, selected_entry: entry, api_key_input: "", llm_test_status: :idle)}
+    {:noreply, assign(socket, selected_entry: entry, api_key_input: "", llm_test_status: :idle)}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
