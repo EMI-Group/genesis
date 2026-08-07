@@ -46,14 +46,13 @@ Download, run the installer, and launch **Genesis**. That's it.
 To fetch and install the latest release programmatically:
 
 ```bash
-# List the download URLs in the newest release
-curl -s https://api.github.com/repos/BillHuang2001/genesis/releases/latest \
-  | grep '"browser_download_url"' \
-  | grep -E '\.(dmg|rpm|AppImage|tar\.gz|msi|exe)"'
+# Download the installer for your platform (permanent links — always the latest release):
+#   macOS (Apple Silicon): https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg
+#   Linux x86_64:          https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_linux_x64.AppImage  (or .deb / .rpm / .tar.gz)
+#   Linux ARM64:           https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_linux_arm64.deb     (or .rpm)
+#   Windows x86_64:        https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_windows_x64.msi     (or .exe)
 
-# Download the artifact matching your OS and architecture
-# (filenames encode the target — e.g. darwin-arm64, linux-x64, windows-x64)
-curl -LO "<download-url>"
+curl -LO "https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg"
 
 # Install based on your platform:
 #   macOS:   open <file>.dmg
