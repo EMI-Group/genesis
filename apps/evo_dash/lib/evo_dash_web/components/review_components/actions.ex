@@ -33,7 +33,11 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
                   class="select select-sm select-bordered rounded-lg"
                   aria-label={gettext("Merge into branch")}
                 >
-                  <option :for={name <- @merge_targets} value={name} selected={name == @default_merge_target}>
+                  <option
+                    :for={name <- @merge_targets}
+                    value={name}
+                    selected={name == @default_merge_target}
+                  >
                     {name}
                   </option>
                 </select>
@@ -41,7 +45,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
               <button
                 type="submit"
                 class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
-                phx-confirm={gettext("Merge these changes into the current branch?")}
+                phx-confirm={
+                  gettext("Merge these changes into %{target}?", target: @default_merge_target)
+                }
                 disabled={@loading}
               >
                 <.icon name="hero-check" class="size-4.5" />
@@ -76,7 +82,8 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             <.icon name="hero-arrow-path" class="size-4.5" />
             {gettext("Continue from Here")}
           </button>
-          <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50"></div>
+          <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50">
+          </div>
         <% end %>
         <%= if @branch_exists and not @has_pr do %>
           <button
@@ -89,13 +96,18 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           </button>
         <% end %>
         <%= if @has_pr and @pr_url do %>
-          <a href={@pr_url} target="_blank" class="btn btn-outline btn-success rounded-full px-6 gap-2">
+          <a
+            href={@pr_url}
+            target="_blank"
+            class="btn btn-outline btn-success rounded-full px-6 gap-2"
+          >
             <.icon name="hero-arrow-top-right-on-square" class="size-4.5" />
             {gettext("View GitHub PR")}
           </a>
         <% end %>
         <%= if @branch_exists do %>
-          <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50"></div>
+          <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50">
+          </div>
           <button
             class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
             phx-click="extract_skills"
@@ -108,13 +120,26 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <%= if not @branch_exists do %>
           <div class={[
             "rounded-lg p-5 w-full",
-            if(@is_no_changes, do: "bg-info/10 border border-info/20", else: "bg-warning/10 border border-warning/20")
+            if(@is_no_changes,
+              do: "bg-info/10 border border-info/20",
+              else: "bg-warning/10 border border-warning/20"
+            )
           ]}>
             <div class="flex items-center gap-3">
-              <.icon name={if @is_no_changes, do: "hero-information-circle", else: "hero-exclamation-triangle"} class={"size-5 " <> if(@is_no_changes, do: "text-info", else: "text-warning")} />
-              <span class={["text-sm font-medium", if(@is_no_changes, do: "text-info", else: "text-warning")]}>
+              <.icon
+                name={
+                  if @is_no_changes, do: "hero-information-circle", else: "hero-exclamation-triangle"
+                }
+                class={"size-5 " <> if(@is_no_changes, do: "text-info", else: "text-warning")}
+              />
+              <span class={[
+                "text-sm font-medium",
+                if(@is_no_changes, do: "text-info", else: "text-warning")
+              ]}>
                 <%= if @is_no_changes do %>
-                  {gettext("The agent completed without making any code changes. You can continue from this investigation or dismiss it.")}
+                  {gettext(
+                    "The agent completed without making any code changes. You can continue from this investigation or dismiss it."
+                  )}
                 <% else %>
                   {gettext("This branch no longer exists. You can dismiss it with Ignore.")}
                 <% end %>
@@ -156,7 +181,8 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
     ~H"""
     <%= if @show do %>
       <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_extract_skills"></div>
+        <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_extract_skills">
+        </div>
         <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
           <div class="flex items-center gap-3 mb-4">
             <div class="flex items-center justify-center size-10 rounded-md bg-secondary/10">
@@ -166,7 +192,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           </div>
 
           <p class="text-sm text-base-content/70 mb-5">
-            {gettext("Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/.")}
+            {gettext(
+              "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
+            )}
           </p>
 
           <.form for={%{}} phx-submit="confirm_extract_skills" class="space-y-4">
@@ -179,15 +207,25 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
               <textarea
                 class="textarea textarea-bordered h-24 rounded-lg text-sm"
                 name="user_note"
-                placeholder={gettext("e.g., Focus on the deployment workflow and database migration patterns discovered in this PR.")}
+                placeholder={
+                  gettext(
+                    "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
+                  )
+                }
               ></textarea>
               <p class="text-xs text-base-content/50 mt-1">
-                {gettext("Provide specific instructions on what knowledge should be captured as skills.")}
+                {gettext(
+                  "Provide specific instructions on what knowledge should be captured as skills."
+                )}
               </p>
             </div>
 
             <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-full px-6" phx-click="cancel_extract_skills">
+              <button
+                type="button"
+                class="btn btn-ghost rounded-full px-6"
+                phx-click="cancel_extract_skills"
+              >
                 {gettext("Cancel")}
               </button>
               <button type="submit" class="btn btn-secondary rounded-full px-6 gap-2">
