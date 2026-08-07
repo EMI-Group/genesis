@@ -60,13 +60,35 @@ fn sidecar_env() -> Vec<(String, String)> {
 /// The release directory is bundled under `resources/genesis-backend/` and
 /// contains the standard mix release tree. The launcher script lives at
 /// `resources/genesis-backend/bin/genesis_desktop` (`.bat` on Windows).
+///
+/// Candidate locations are tried in order (shared logic in
+/// [`crate::sidecar_path::resolve_launcher`]):
+/// 1. `<exe_dir>/resources/genesis-backend/bin/<launcher>` — Nix store layout
+///    and Windows (`<exe_dir>` = parent of the running executable).
+/// 2. `<resource_dir>/resources/genesis-backend/bin/<launcher>` — macOS
+///    bundles (`Contents/Resources`) and Linux deb/AppImage (`/usr/lib/<name>`).
+/// 3. `$CARGO_MANIFEST_DIR/resources/genesis-backend/bin/<launcher>` — dev mode.
 fn launcher_path(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let resource_dir = app.path().resource_dir()?;
-    Ok(resource_dir
-        .join("resources")
-        .join("genesis-backend")
-        .join("bin")
-        .join(LAUNCHER_NAME))
+    // 1. <exe_dir>/resources/... — Nix store layout and Windows.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+
+    // 2. <resource_dir>/resources/... — macOS bundles and Linux deb/AppImage.
+    //    If tauri cannot resolve a resource dir at all, skip this candidate
+    //    rather than failing before the other fallbacks are tried.
+    let mut candidate_dirs = vec![exe_dir];
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        candidate_dirs.push(resource_dir);
+    }
+
+    // 3. <manifest_dir>/resources/... — development fallback.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    candidate_dirs.push(manifest_dir);
+
+    crate::sidecar_path::resolve_launcher(&candidate_dirs, LAUNCHER_NAME)
+        .map_err(|msg| -> Box<dyn std::error::Error> { msg.into() })
 }
 
 /// Spawns the Phoenix backend by invoking the Elixir release launcher script
