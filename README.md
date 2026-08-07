@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.8.5-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
+  <a href="https://genesis-doc.evoxgroup.workers.dev/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
 </p>
 
 ---
@@ -20,7 +21,7 @@ It's evolutionary: every change lands on a branch of the Git history, and partia
 
 ### ✨ Highlights
 
-- 🔭 **Scales without limits** — Recursive decomposition keeps every agent's context small, so there's no ceiling on how big a project can get.
+- 🔭 **Scales without limits** — Recursive decomposition keeps every agent's context small. Projects of a million lines or more present no special challenge — size is a non-issue.
 - 🧬 **Evolves, doesn't just generate** — Code grows through a Git DAG where incremental, measurable improvement always wins.
 - 🌳 **Knows its way around** — Every directory carries a semantic contract, so agents always understand the structure they're working in.
 - 🧠 **Stateless by design** — Agents are transient and wake up anywhere in history. No long-lived memory to corrupt, ever.
