@@ -221,10 +221,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
     # review page renders a <select> next to the Merge button, populated from
     # the repo's local branches with the default merge target pre-selected,
     # and the merge event merges the agent branch into the selected target.
-    #
-    # NOTE: the feature itself is being implemented in a parallel worktree and
-    # is NOT present here yet, so the feature-specific assertions below are
-    # expected to fail until that work lands.
     setup do
       {repo_path, task_id, change_sha} = create_review_task_with_repo!("main", "dev")
 
@@ -410,14 +406,21 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # Returns the value of the pre-selected <option> inside a select block, or
-  # nil. Tolerates `selected` appearing before or after the value attribute.
+  # nil. Tolerates `selected` appearing before or after the value attribute:
+  # first find the option tag carrying `selected` anywhere in its attribute
+  # list, then extract its `value` attribute. (A single Regex.run with
+  # alternation would only return the capture groups that participated, so the
+  # two-step approach is required.)
   defp selected_option_value(select_html) do
-    case Regex.run(
-           ~r{<option[^>]*value="([^"]+)"[^>]*selected[^>]*>|<option[^>]*selected[^>]*value="([^"]+)"[^>]*>},
-           select_html
-         ) do
-      [_, v1, v2] -> v1 || v2
-      _ -> nil
+    case Regex.run(~r{<option\b[^>]*selected[^>]*>}, select_html) do
+      [option_tag] ->
+        case Regex.run(~r/value="([^"]+)"/, option_tag) do
+          [_, v] -> v
+          _ -> nil
+        end
+
+      _ ->
+        nil
     end
   end
 end
