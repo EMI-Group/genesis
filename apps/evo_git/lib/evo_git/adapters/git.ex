@@ -381,16 +381,33 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
-  Lists branches, optionally filtered by a glob pattern.
+  Lists all local branches.
 
-  Returns a list of branch names (without the `*` current-branch marker
-  or surrounding whitespace). When `pattern` is `nil`, all local branches
-  are listed.
+  Returns `{:ok, [branch_names]}` or `{:error, code, output}`.
+  Uses `git for-each-ref --format=%(refname:short) refs/heads`.
   """
-  def list_branches(repo_root, pattern \\ nil) when is_binary(repo_root) do
-    args = if pattern, do: ["branch", "--list", pattern], else: ["branch", "--list"]
+  def list_branches(repo_root) when is_binary(repo_root) do
+    case run(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repo_root) do
+      {:ok, output} ->
+        {:ok, output |> String.split("\n", trim: true) |> Enum.map(&String.trim/1)}
 
-    case run(args, repo_root) do
+      {:conflict, output} ->
+        {:error, 1, output}
+
+      {:error, code, output} ->
+        {:error, code, output}
+    end
+  end
+
+  @doc """
+  Lists branches matching a glob pattern.
+
+  Returns a bare list of branch names (without the `*` current-branch marker
+  or surrounding whitespace), or `[]` on error.
+  Uses `git branch --list <pattern>`.
+  """
+  def list_branches(repo_root, pattern) when is_binary(repo_root) and is_binary(pattern) do
+    case run(["branch", "--list", pattern], repo_root) do
       {:ok, output} ->
         output
         |> String.split("\n", trim: true)

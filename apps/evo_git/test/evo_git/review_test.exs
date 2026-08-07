@@ -299,4 +299,115 @@ defmodule EvoGit.ReviewTest do
     assert String.contains?(diff, "-line2")
     assert String.contains?(diff, "+CHANGED")
   end
+
+  # Renames the current branch to `new_name` (no-op if it already has that
+  # name), so tests don't depend on the machine's `init.defaultBranch`.
+  defp rename_current_branch(tmp_dir, new_name) do
+    case Git.current_branch(tmp_dir) do
+      {:ok, ^new_name} -> :ok
+      {:ok, _other} -> System.cmd("git", ["branch", "-m", new_name], cd: tmp_dir)
+    end
+  end
+
+  defp is_ancestor?(tmp_dir, ancestor_sha, descendant_ref) do
+    {_output, 0} =
+      System.cmd(
+        "git",
+        ["merge-base", "--is-ancestor", ancestor_sha, descendant_ref],
+        cd: tmp_dir,
+        stderr_to_stdout: true
+      )
+
+    true
+  end
+
+  test "merge_branch/2 merges into the default target (current branch)", %{tmp_dir: tmp_dir} do
+    {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+    rename_current_branch(tmp_dir, "main")
+
+    Git.create_branch(tmp_dir, "agent_branch", base_sha)
+    Git.checkout(tmp_dir, "agent_branch")
+    {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
+    Git.checkout(tmp_dir, "main")
+
+    assert {:ok, ^feature_sha} = Review.merge_branch(tmp_dir, "agent_branch")
+
+    assert is_ancestor?(tmp_dir, feature_sha, "main")
+    refute Git.branch_exists?(tmp_dir, "agent_branch")
+    assert {:ok, "main"} = Git.current_branch(tmp_dir)
+  end
+
+  test "merge_branch/3 merges into a non-default target branch and restores the original branch",
+       %{tmp_dir: tmp_dir} do
+    {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+    rename_current_branch(tmp_dir, "main")
+
+    # Target branch that is not checked out
+    System.cmd("git", ["branch", "dev"], cd: tmp_dir)
+
+    # Agent branch with a feature commit
+    Git.create_branch(tmp_dir, "agent_branch", base_sha)
+    Git.checkout(tmp_dir, "agent_branch")
+    {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
+    Git.checkout(tmp_dir, "main")
+    assert {:ok, "main"} = Git.current_branch(tmp_dir)
+
+    assert {:ok, ^feature_sha} = Review.merge_branch(tmp_dir, "agent_branch", "dev")
+
+    # The change landed on dev
+    assert is_ancestor?(tmp_dir, feature_sha, "dev")
+
+    # Agent branch deleted
+    refute Git.branch_exists?(tmp_dir, "agent_branch")
+
+    # Repo is back on main after the merge
+    assert {:ok, "main"} = Git.current_branch(tmp_dir)
+  end
+
+  test "default_merge_target/1 prefers dev over prod when main and master are absent",
+       %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "feature/x")
+    System.cmd("git", ["branch", "dev"], cd: tmp_dir)
+    System.cmd("git", ["branch", "prod"], cd: tmp_dir)
+
+    assert {:ok, "dev"} = Review.default_merge_target(tmp_dir)
+  end
+
+  test "default_merge_target/1 resolves master when it is the only candidate", %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "feature/x")
+    System.cmd("git", ["branch", "master"], cd: tmp_dir)
+
+    assert {:ok, "master"} = Review.default_merge_target(tmp_dir)
+  end
+
+  test "default_merge_target/1 falls back to the current branch when no candidates exist",
+       %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "feature/x")
+
+    assert {:ok, "feature/x"} = Review.default_merge_target(tmp_dir)
+  end
+
+  test "default_merge_target/1 returns no_branch_found on an empty repo", %{tmp_dir: tmp_dir} do
+    # No commits — unborn HEAD, no branches
+    assert {:error, :no_branch_found} = Review.default_merge_target(tmp_dir)
+  end
+
+  test "list_branches/1 returns all local branches", %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    System.cmd("git", ["branch", "alpha"], cd: tmp_dir)
+    System.cmd("git", ["branch", "beta"], cd: tmp_dir)
+
+    assert {:ok, branches} = Git.list_branches(tmp_dir)
+    {:ok, current} = Git.current_branch(tmp_dir)
+    assert current in branches
+    assert "alpha" in branches
+    assert "beta" in branches
+
+    assert {:ok, branches} = Review.list_branches(tmp_dir)
+    assert "alpha" in branches
+    assert "beta" in branches
+  end
 end

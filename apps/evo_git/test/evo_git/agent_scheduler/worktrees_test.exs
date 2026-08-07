@@ -35,7 +35,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     Enum.reduce_while(1..100//1, nil, fn _, _ ->
-      if branch_name in Git.list_branches(tmp_dir) do
+      {:ok, branches} = Git.list_branches(tmp_dir)
+
+      if branch_name in branches do
         if System.monotonic_time(:millisecond) < deadline do
           Process.sleep(10)
           {:cont, nil}
@@ -65,7 +67,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # Branches are created with hyphens (see dispatch.ex / complete_task.ex).
       branch_name = "evogit-agent-T1-A42"
       Git.create_branch(tmp_dir, branch_name, base_sha)
-      assert branch_name in Git.list_branches(tmp_dir)
+      {:ok, branches} = Git.list_branches(tmp_dir)
+      assert branch_name in branches
 
       # Worktree directories use underscores.
       workers_dir = Path.join(tmp_dir, ".genesis/workers")
@@ -78,7 +81,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # Deletion is async (cast via WorktreeManager). Wait for the branch
       # to be removed before asserting.
       wait_for_branch_deletion(tmp_dir, branch_name)
-      refute branch_name in Git.list_branches(tmp_dir)
+      {:ok, branches} = Git.list_branches(tmp_dir)
+      refute branch_name in branches
     end
 
     test "deletes a branch for multi-digit task/local ids", %{tmp_dir: tmp_dir} do
@@ -95,7 +99,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # Deletion is async (cast via WorktreeManager). Wait for the branch
       # to be removed before asserting.
       wait_for_branch_deletion(tmp_dir, branch_name)
-      refute branch_name in Git.list_branches(tmp_dir)
+      {:ok, branches} = Git.list_branches(tmp_dir)
+      refute branch_name in branches
     end
   end
 end

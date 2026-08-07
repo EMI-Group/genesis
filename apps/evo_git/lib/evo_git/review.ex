@@ -129,11 +129,13 @@ defmodule EvoGit.Review do
             totals = parse_shortstat(shortstat)
             # Log discrepancy if per-file summing differs from shortstat
             per_file = count_changes(files)
+
             if totals != per_file do
               Logger.warning(
                 "Review totals mismatch for #{branch_name}: shortstat=#{inspect(totals)}, per_file=#{inspect(per_file)}"
               )
             end
+
             totals
 
           _ ->
@@ -292,13 +294,81 @@ defmodule EvoGit.Review do
     Git.file_diff(repo_path, file_path, "#{commit_sha}~1", commit_sha)
   end
 
+  @merge_target_candidates ["main", "master", "dev", "prod"]
+
   @doc """
-  Merges the branch into the current HEAD and deletes the branch.
+  Merges the branch into the default merge target branch and deletes the branch.
   Returns {:ok, merged_sha} or {:conflict, details} or {:error, reason}.
   """
   def merge_branch(repo_path, branch_name) do
-    {:ok, commit_sha} = Git.rev_parse(repo_path, branch_name)
+    case default_merge_target(repo_path) do
+      {:ok, target} -> merge_branch(repo_path, branch_name, target)
+      {:error, _} = error -> error
+    end
+  end
 
+  @doc """
+  Merges the branch's tip commit into `target_branch` and deletes the branch.
+
+  Works regardless of the currently checked-out branch: switches to
+  `target_branch`, merges, then restores the original branch. The agent branch
+  is only deleted on a successful merge.
+
+  Returns {:ok, merged_sha} or {:conflict, details} or {:error, reason}.
+  """
+  def merge_branch(repo_path, branch_name, target_branch) do
+    case Git.rev_parse(repo_path, branch_name) do
+      {:ok, commit_sha} ->
+        case Git.current_branch(repo_path) do
+          {:ok, current} ->
+            if target_branch == current do
+              merge_into_current(repo_path, branch_name, commit_sha)
+            else
+              merge_into_other(repo_path, branch_name, target_branch, current, commit_sha)
+            end
+
+          other ->
+            normalize_git_error(other)
+        end
+
+      other ->
+        normalize_git_error(other)
+    end
+  end
+
+  @doc """
+  Resolves the default branch to merge agent branches into.
+
+  Checks `main`, `master`, `dev`, `prod` in order, then falls back to the
+  current branch (skipping detached HEAD), then the first local branch.
+  Returns `{:ok, name}` or `{:error, :no_branch_found}`.
+  """
+  def default_merge_target(repo_path) do
+    case Enum.find(@merge_target_candidates, &Git.branch_exists?(repo_path, &1)) do
+      nil ->
+        case current_branch_or_first_local(repo_path) do
+          {:ok, name} -> {:ok, name}
+          :none -> {:error, :no_branch_found}
+        end
+
+      name ->
+        {:ok, name}
+    end
+  end
+
+  @doc """
+  Returns all local branch names.
+
+  Delegates to `EvoGit.Adapters.Git.list_branches/1`; returns
+  `{:ok, names}` or `{:error, code, output}`.
+  """
+  def list_branches(repo_path) do
+    Git.list_branches(repo_path)
+  end
+
+  # Merges the agent tip into the currently checked-out branch (no switching
+  # needed). Deletes the agent branch on success.
+  defp merge_into_current(repo_path, branch_name, commit_sha) do
     case Git.merge(repo_path, commit_sha) do
       {:ok, _output} ->
         Git.delete_branch(repo_path, branch_name)
@@ -311,6 +381,84 @@ defmodule EvoGit.Review do
         {:error, {code, output}}
     end
   end
+
+  # Merges the agent tip into a target branch that is not checked out:
+  # switch to the target, merge, then restore the original branch. The agent
+  # branch is only deleted on a successful merge.
+  defp merge_into_other(repo_path, branch_name, target_branch, current, commit_sha) do
+    case Git.checkout(repo_path, target_branch) do
+      {:ok, _} ->
+        case Git.merge(repo_path, commit_sha) do
+          {:ok, _output} ->
+            Git.delete_branch(repo_path, branch_name)
+
+            case restore_branch(repo_path, current) do
+              :ok -> {:ok, commit_sha}
+              {:error, reason} -> {:error, {:switch_back_failed, reason}}
+            end
+
+          {:conflict, details} ->
+            # A conflicted index blocks a plain `git checkout`; force the restore.
+            case force_restore_branch(repo_path, current) do
+              :ok ->
+                :ok
+
+              {:error, reason} ->
+                Logger.warning("Failed to restore branch #{current}: #{inspect(reason)}")
+            end
+
+            {:conflict, details}
+
+          {:error, code, output} ->
+            case restore_branch(repo_path, current) do
+              :ok ->
+                :ok
+
+              {:error, reason} ->
+                Logger.warning("Failed to restore branch #{current}: #{inspect(reason)}")
+            end
+
+            {:error, {code, output}}
+        end
+
+      other ->
+        normalize_git_error(other)
+    end
+  end
+
+  # Tries a plain checkout back to the original branch, falling back to a
+  # forced checkout if the index is in a conflicted state.
+  defp restore_branch(repo_path, branch) do
+    case Git.checkout(repo_path, branch) do
+      {:ok, _} -> :ok
+      _ -> force_restore_branch(repo_path, branch)
+    end
+  end
+
+  defp force_restore_branch(repo_path, branch) do
+    case Git.run(["checkout", "--force", branch], repo_path) do
+      {:ok, _} -> :ok
+      other -> normalize_git_error(other)
+    end
+  end
+
+  defp current_branch_or_first_local(repo_path) do
+    case Git.current_branch(repo_path) do
+      {:ok, "HEAD"} -> first_local_branch(repo_path)
+      {:ok, name} -> {:ok, name}
+      _ -> first_local_branch(repo_path)
+    end
+  end
+
+  defp first_local_branch(repo_path) do
+    case Git.list_branches(repo_path) do
+      {:ok, [first | _]} -> {:ok, first}
+      _ -> :none
+    end
+  end
+
+  defp normalize_git_error({:error, code, output}), do: {:error, {code, output}}
+  defp normalize_git_error({:conflict, output}), do: {:error, {1, output}}
 
   @doc """
   Rejects the changes by deleting the branch.
