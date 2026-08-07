@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.9.0-8b5cf6" alt="Version"></a>
+  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.9.1-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <a href="https://genesis-doc.evoxgroup.workers.dev/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
 </p>
