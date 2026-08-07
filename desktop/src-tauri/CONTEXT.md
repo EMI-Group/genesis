@@ -18,6 +18,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 | `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns the Elixir release, opens window, intercepts close-to-tray |
 | `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
 | `src/sidecar_path.rs` | Shared launcher-path resolution (`resolve_launcher/2`) — first existing candidate wins, descriptive error listing all candidates when none exist; used by both GUI (`sidecar.rs`) and headless (`main.rs`) modes; contains the unit tests |
+| `src/commands.rs` | Custom Tauri commands exposed to the dashboard frontend — currently `pick_directory` (native folder picker that avoids the macOS sheet hang, see "Native Folder Picker" below) |
 | `Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-dialog, reqwest) |
 | `tauri.conf.json` | Tauri config: window settings, trayIcon config, release resource reference, bundle metadata |
 | `capabilities/default.json` | Tauri v2 permissions: shell (release launcher), dialog (directory picker). No tray permission needed — tray managed from Rust. |
