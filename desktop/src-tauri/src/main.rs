@@ -11,6 +11,7 @@ use tauri::{
 };
 
 mod sidecar;
+mod sidecar_path;
 
 /// Default port the Phoenix dashboard backend listens on.
 const DEFAULT_PORT: u16 = 9999;
@@ -88,33 +89,19 @@ mod signal_handler {
 ///
 /// Looks next to the running executable first (production / bundled layout),
 /// and falls back to the source-tree `resources/` directory (development).
+/// The candidate-selection logic is shared with the GUI mode in
+/// [`sidecar_path`].
 fn resolve_sidecar_path() -> Result<std::path::PathBuf, String> {
-    let launcher_rel = std::path::Path::new("resources")
-        .join("genesis-backend")
-        .join("bin")
-        .join(LAUNCHER_NAME);
-
     // 1. Production: <exe_dir>/resources/genesis-backend/bin/<launcher>
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_default();
-    let prod_path = exe_dir.join(&launcher_rel);
-    if prod_path.exists() {
-        return Ok(prod_path);
-    }
 
     // 2. Development: <manifest_dir>/resources/genesis-backend/bin/<launcher>
-    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(&launcher_rel);
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    Err(format!(
-        "release launcher '{LAUNCHER_NAME}' not found — looked in {:?} and {:?}",
-        prod_path.parent().unwrap(),
-        dev_path.parent().unwrap()
-    ))
+    sidecar_path::resolve_launcher(&[exe_dir, manifest_dir], LAUNCHER_NAME)
 }
 
 /// Build the environment-variable list for the sidecar, mirroring
