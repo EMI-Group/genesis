@@ -105,9 +105,9 @@ defmodule EvoGit.Runtime.Helpers do
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
   end
 
-  def generate_branch_name(prefix) do
+  def generate_branch_name(_prefix) do
     short_id = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
-    "evogit/#{prefix}_#{short_id}"
+    "genesis/agent_#{short_id}"
   end
 
   def new_codebase?(repo_path) do
