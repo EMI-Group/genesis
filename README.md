@@ -102,10 +102,10 @@ For a signed/notarized `.app` (or `.dmg`) locally, use the helpers under `deskto
 
 ```bash
 cp desktop/scripts/.env.macos.example desktop/scripts/.env.macos
-# Edit desktop/scripts/.env.macos — set APPLE_SIGNING_IDENTITY and Option A or B
+# Edit desktop/scripts/.env.macos — APPLE_SIGNING_IDENTITY plus notarization credentials
 ```
 
-`desktop/scripts/.env.macos` is gitignored. Do not commit secrets.
+`desktop/scripts/.env.macos` is gitignored; do not commit secrets.
 
 **Build**
 
@@ -115,14 +115,25 @@ cp desktop/scripts/.env.macos.example desktop/scripts/.env.macos
 ./desktop/scripts/build-macos-local.sh --bundles app,dmg
 ```
 
-The script: builds the Elixir release → copies it into Tauri resources → codesigns nested Mach-O binaries (ERTS / NIFs) → runs `cargo tauri build` (app signing + Apple notarization).
+The script builds the Elixir release, copies it into Tauri resources, codesigns nested Mach-O binaries (including the BEAM JIT entitlement), then runs `cargo tauri build`. It notarizes and staples the final DMG when requested, and verifies the signatures, notarization tickets, and Gatekeeper assessments before returning successfully.
 
 Output:
 
 - `.app`: `desktop/src-tauri/target/release/bundle/macos/`
 - `.dmg`: `desktop/src-tauri/target/release/bundle/dmg/`
 
-Notarization talks to Apple and can take several minutes with little log output; that is normal while `notarytool` waits.
+Notarization contacts Apple and can take several minutes with little log output while `notarytool` waits.
+
+**CI (GitHub Actions)** — `build-macos-arm64` imports the Developer ID certificate, signs the nested runtime, lets Tauri sign and notarize the app, then notarizes the final DMG and verifies both artifacts before uploading them. Required repository secrets:
+
+| Secret | Value |
+|--------|--------|
+| `APPLE_CERTIFICATE` | base64 of Developer ID Application `.p12` (`openssl base64 -A -in cert.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | password used when exporting the `.p12` |
+| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Org (TEAMID)` |
+| `APPLE_API_ISSUER` | App Store Connect Issuer ID |
+| `APPLE_API_KEY` | App Store Connect Key ID |
+| `APPLE_API_KEY_P8_BASE64` | base64 of `AuthKey_<KEYID>.p8` (`openssl base64 -A -in AuthKey_XXX.p8`) |
 
 ## 📦 Distribution via Package Managers
 
