@@ -70,6 +70,66 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
+  # Directory picker browse buttons (Tauri desktop only).
+  #
+  # Regression guard: these buttons used to carry BOTH `phx-click="pick_directory"`
+  # and `phx-hook="DirectoryPicker"`. The hook owns the click (opens the native
+  # dialog and fills the input directly) but the leftover phx-click also fired a
+  # "pick_directory" event to the server, which had no handle_event/3 clause —
+  # crashing the LiveView in the desktop app. The buttons must keep the hook and
+  # have NO phx-click binding.
+  describe "directory picker browse buttons" do
+    test "open-path browse button keeps the hook but has no phx-click binding" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :open_path,
+          tauri_detected: true
+        )
+
+      assert attribute(html, "#project-path-browse-button", "phx-hook") == ["DirectoryPicker"]
+      assert attribute(html, "#project-path-browse-button", "phx-click") == []
+    end
+
+    test "new-project browse button keeps the hook but has no phx-click binding" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :new_project,
+          tauri_detected: true
+        )
+
+      assert attribute(html, "#new-project-location-browse-button", "phx-hook") == [
+               "DirectoryPicker"
+             ]
+
+      assert attribute(html, "#new-project-location-browse-button", "phx-click") == []
+    end
+
+    test "foreign-repo browse button keeps the hook but has no phx-click binding" do
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo: true,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: true,
+          platform: "linux"
+        )
+
+      assert attribute(html, "#foreign-repo-path-browse-button", "phx-hook") == [
+               "DirectoryPicker"
+             ]
+
+      assert attribute(html, "#foreign-repo-path-browse-button", "phx-click") == []
+    end
+  end
+
   # --- helpers ---
 
   defp trigger_class(html) do
