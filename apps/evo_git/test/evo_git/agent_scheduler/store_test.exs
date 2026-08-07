@@ -1,7 +1,9 @@
 defmodule EvoGit.AgentScheduler.StoreTest do
   @moduledoc """
   Tests for `EvoGit.AgentScheduler.Store` — the shared ETS helpers, focused on
-  the per-message timestamp stamping performed by `update_agent_context/2`.
+  the dumb pass-through semantics of `update_agent_context/2`. Per-message
+  `metadata[:timestamp]` stamping happens at message-creation time in the agent
+  code (`EvoGit.Agent.ContextBuilder`), never in the store.
 
   Uses `async: false` because the tests manipulate global named ETS tables
   (`:evogit_agent_state` and `:evogit_sched_meta`).
@@ -13,6 +15,10 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
+
+  # Distinctive past Unix-seconds value for deterministic pre-stamped
+  # timestamps — far from any real `now`, so assertions can never collide.
+  @old_ts 1_600_000_000
 
   # --- Shared test fixtures ---
 
@@ -36,7 +42,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     struct!(AgentState, Keyword.merge(defaults, overrides))
   end
 
-  defp message(role, overrides \\ []) do
+  defp message(role, overrides) do
     defaults = [role: role, content: [ReqLLM.Message.ContentPart.text("hello")]]
     struct!(ReqLLM.Message, Keyword.merge(defaults, overrides))
   end
@@ -74,89 +80,66 @@ defmodule EvoGit.AgentScheduler.StoreTest do
 
   # --- Tests ---
 
-  describe "update_agent_context/2 — timestamp stamping" do
-    test "stamps metadata[:timestamp] on every message" do
+  describe "update_agent_context/2 — dumb pass-through write" do
+    test "returns :ok and stores a pre-stamped context exactly as given" do
       agent_id = 1
       Store.put_agent_state(agent_id, agent_state())
 
-      context = %ReqLLM.Context{messages: [message(:user), message(:assistant)]}
+      context = %ReqLLM.Context{
+        messages: [
+          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
+          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 2})
+        ]
+      }
 
-      before = System.system_time(:second)
-      _stamped = Store.update_agent_context(agent_id, context)
-      after_ = System.system_time(:second)
+      assert :ok = Store.update_agent_context(agent_id, context)
 
-      stamped = stored_context(agent_id).messages
-      assert length(stamped) == 2
-
-      for msg <- stamped do
-        ts = msg.metadata[:timestamp]
-        assert is_integer(ts), "expected integer timestamp, got: #{inspect(ts)}"
-        assert ts >= before and ts <= after_
-      end
+      # No re-stamping, no modification — the exact value written is the exact
+      # value read back through the store's context-read path.
+      assert stored_context(agent_id) == context
     end
 
-    test "does not overwrite an already-stamped timestamp" do
+    test "does not re-stamp or modify any pre-existing metadata" do
       agent_id = 1
       Store.put_agent_state(agent_id, agent_state())
 
-      original_ts = 1_600_000_000
-      context = %ReqLLM.Context{messages: [message(:user, metadata: %{timestamp: original_ts})]}
+      context = %ReqLLM.Context{
+        messages: [message(:user, metadata: %{timestamp: @old_ts, turn: 3})]
+      }
 
-      _stamped = Store.update_agent_context(agent_id, context)
+      assert :ok = Store.update_agent_context(agent_id, context)
 
       [msg] = stored_context(agent_id).messages
-      assert msg.metadata[:timestamp] == original_ts
-    end
-
-    test "is idempotent across repeated syncs of an already-stamped context" do
-      agent_id = 1
-      Store.put_agent_state(agent_id, agent_state())
-
-      context = %ReqLLM.Context{messages: [message(:user)]}
-      _stamped = Store.update_agent_context(agent_id, context)
-
-      first_ts =
-        stored_context(agent_id).messages
-        |> hd()
-        |> Map.fetch!(:metadata)
-        |> Map.fetch!(:timestamp)
-
-      # Re-sync the already-stamped stored context — the guard must keep the
-      # original timestamp rather than re-stamping with a newer `now`.
-      stamped = Store.update_agent_context(agent_id, stored_context(agent_id))
-
-      second_ts =
-        stamped.messages
-        |> hd()
-        |> Map.fetch!(:metadata)
-        |> Map.fetch!(:timestamp)
-
-      assert second_ts == first_ts
-      # The returned context is the exact value written to ETS.
-      assert stamped.messages == stored_context(agent_id).messages
-    end
-
-    test "preserves pre-existing metadata (e.g. :turn) while adding the timestamp" do
-      agent_id = 1
-      Store.put_agent_state(agent_id, agent_state())
-
-      context = %ReqLLM.Context{messages: [message(:user, metadata: %{turn: 3})]}
-      _stamped = Store.update_agent_context(agent_id, context)
-
-      [msg] = stored_context(agent_id).messages
+      assert msg.metadata[:timestamp] == @old_ts
       assert msg.metadata[:turn] == 3
-      assert is_integer(msg.metadata[:timestamp])
     end
 
-    test "stamps messages whose metadata is nil" do
+    test "is a pass-through across repeated syncs of an already-stamped context" do
+      agent_id = 1
+      Store.put_agent_state(agent_id, agent_state())
+
+      context = %ReqLLM.Context{
+        messages: [message(:user, metadata: %{timestamp: @old_ts, turn: 1})]
+      }
+
+      # Re-sync the same pre-stamped context — stored unchanged every time.
+      assert :ok = Store.update_agent_context(agent_id, context)
+      assert :ok = Store.update_agent_context(agent_id, stored_context(agent_id))
+
+      [msg] = stored_context(agent_id).messages
+      assert msg.metadata[:timestamp] == @old_ts
+      assert msg.metadata[:turn] == 1
+    end
+
+    test "passes through messages with nil metadata untouched" do
       agent_id = 1
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{messages: [message(:user, metadata: nil)]}
-      _stamped = Store.update_agent_context(agent_id, context)
 
-      [msg] = stored_context(agent_id).messages
-      assert is_integer(msg.metadata[:timestamp])
+      assert :ok = Store.update_agent_context(agent_id, context)
+
+      assert stored_context(agent_id) == context
     end
 
     test "leaves non-Message entries untouched" do
@@ -165,7 +148,8 @@ defmodule EvoGit.AgentScheduler.StoreTest do
 
       loose = %{role: :user, content: "not a struct"}
       context = %ReqLLM.Context{messages: [loose]}
-      _stamped = Store.update_agent_context(agent_id, context)
+
+      assert :ok = Store.update_agent_context(agent_id, context)
 
       assert stored_context(agent_id).messages == [loose]
     end
@@ -175,58 +159,49 @@ defmodule EvoGit.AgentScheduler.StoreTest do
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{messages: []}
-      _stamped = Store.update_agent_context(agent_id, context)
+
+      assert :ok = Store.update_agent_context(agent_id, context)
 
       assert stored_context(agent_id).messages == []
     end
   end
 
-  describe "update_agent_context/2 + batch_update_agent/2 — two-turn write sequence" do
-    test "batch_update stamps immediately; end-of-turn sync preserves original stamps" do
+  describe "update_agent_context/2 + batch_update_agent/2 — one-way write sequence" do
+    test "repeated writes of pre-stamped contexts store them unchanged every time" do
       agent_id = 1
       Store.put_agent_state(agent_id, agent_state())
 
-      # Distinctive past value so the turn-2 `now` timestamp can never collide.
-      old_ts = 1_600_000_000
+      # Turn 1: post-LLM-response write via batch_update_agent (tool_dispatch.ex).
+      ctx1 = %ReqLLM.Context{
+        messages: [
+          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
+          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 1})
+        ]
+      }
 
-      # Turn 1: post-LLM-response write via batch_update_agent (tool_dispatch.ex:411).
-      ctx1 = %ReqLLM.Context{messages: [message(:user, metadata: %{timestamp: old_ts})]}
       :ok = Store.batch_update_agent(agent_id, context: ctx1)
+      assert stored_context(agent_id) == ctx1
 
-      # No no-timestamp window: the ETS context has timestamps immediately.
-      [m1] = stored_context(agent_id).messages
-      assert m1.metadata[:timestamp] == old_ts
+      # End-of-turn sync — dumb pass-through: returns :ok, stores unchanged.
+      assert :ok = Store.update_agent_context(agent_id, ctx1)
+      assert stored_context(agent_id) == ctx1
 
-      # End-of-turn sync (tool_dispatch.ex:465) returns the stamped context.
-      stamped1 = Store.update_agent_context(agent_id, ctx1)
-      assert [sm1] = stamped1.messages
-      assert sm1.metadata[:timestamp] == old_ts
-
-      # Turn 2: append a new assistant message to the in-memory context.
+      # Turn 2: append a new pre-stamped assistant message to the in-memory
+      # context (the agent code stamps it at creation — not the store).
       ctx2 = %ReqLLM.Context{
-        messages: [message(:user, metadata: %{timestamp: old_ts}), message(:assistant)]
+        messages: [
+          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
+          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 1}),
+          message(:assistant, metadata: %{timestamp: @old_ts + 2, turn: 2})
+        ]
       }
 
       :ok = Store.batch_update_agent(agent_id, context: ctx2)
+      assert stored_context(agent_id) == ctx2
 
-      # Pre-existing message keeps its EXACT original timestamp; the new message
-      # gets a fresh integer timestamp immediately (no no-timestamp window).
-      [u1, u2] = stored_context(agent_id).messages
-      assert u1.metadata[:timestamp] == old_ts
-      assert is_integer(u2.metadata[:timestamp])
-      assert u2.metadata[:timestamp] >= old_ts
-
-      # Final sync — idempotence guard keeps turn-1 stamps exact.
-      stamped2 = Store.update_agent_context(agent_id, ctx2)
-      [s1, s2] = stamped2.messages
-      assert s1.metadata[:timestamp] == old_ts
-      assert is_integer(s2.metadata[:timestamp])
-      assert s2.metadata[:timestamp] >= old_ts
-      # The new message must NOT share the turn-1 timestamp.
-      assert s1.metadata[:timestamp] != s2.metadata[:timestamp]
-
-      # The returned context carries the same stamps as what's in ETS.
-      assert stamped2.messages == stored_context(agent_id).messages
+      # Final sync — pass-through again; exact timestamps survive every write.
+      assert :ok = Store.update_agent_context(agent_id, ctx2)
+      assert stored_context(agent_id) == ctx2
     end
   end
 end
