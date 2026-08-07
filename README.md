@@ -14,7 +14,7 @@
 
 ---
 
-EvoX Genesis reimagines how software gets written. Instead of a single chat that runs out of room, it runs a **team of agents** that recursively split your project into a hierarchy of focused tasks — each agent working only where it should, with its own context and its own clean copy of the code.
+EvoX Genesis reimagines how software gets written. Instead of a single chat that runs out of room, it runs a **system** that recursively splits your project into a hierarchy of focused tasks — each agent working only where it should, with its own context and its own clean copy of the code.
 
 It's evolutionary: every change lands on a branch of the Git history, and partial progress is celebrated. A version that passes more tests or ships one more feature is a step forward — even if other pieces are still in flight.
 
@@ -84,8 +84,6 @@ mix deps.get
 mix assets.setup
 mix phx.server
 ```
-
-Then open http://localhost:4000 in your browser.
 
 ## 🙏 Acknowledgements
 
