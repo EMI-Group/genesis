@@ -2,15 +2,31 @@ defmodule EvoGit.Sandbox.MacOS do
   @moduledoc """
   macOS sandbox backend using `sandbox-exec`.
 
-  Provides filesystem isolation only — no resource limits or syscall filtering.
-  Uses Apple's Sandbox Policy Language (SBPL) to restrict filesystem access,
-  allowing read-write on project directories and build caches while blocking
-  sensitive directories like ~/.ssh, ~/.gnupg, etc.
+  Deny-by-default filesystem policy with an explicit allow list (SBPL):
+  system paths, the repo worktree (cwd + `.git`), tmp paths, the genesis
+  config/data dirs, and build caches are readable; the home directory is
+  readable EXCEPT for a deny-read list of sensitive dirs (`~/.ssh`,
+  `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/sops`, `~/.git-credentials`,
+  `~/.netrc`, `~/.password-store`, `~/Library/Keychains`). The host
+  `$TMPDIR` is readable so temp files written before sandbox invocation
+  (e.g. skill scripts) stay usable. Writes are restricted to the worktree,
+  tmp paths, genesis dirs, and package-manager/toolchain cache dirs, with
+  deny-write rules for sensitive dirs as defense in depth.
+
+  Also enforces a process-count limit (`(limit number N)`, see
+  `@max_processes`) and keeps network default-allowed (agents run
+  `git fetch/push`, `mix deps.get`, `curl`, and web tools).
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
 
   alias EvoGit.{Nix, Platform, Sandbox.Helpers}
+
+  # Maximum number of concurrently live processes/threads the sandboxed
+  # process may spawn, enforced via SBPL `(limit number N)`. Tunable —
+  # chosen to fit `mix test`-style parallel workloads (worker processes,
+  # compiler ports) while still capping a runaway agent's fork bombs.
+  @max_processes 200
 
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
@@ -80,35 +96,147 @@ defmodule EvoGit.Sandbox.MacOS do
   end
 
   # Generate an SBPL (Sandbox Policy Language) profile.
-  # Strategy: deny default, then allow specific paths.
-  # - Allow read-write on: cwd, tmp dirs, build caches, repo_root/.git
-  # - Deny write on: sensitive dirs (.ssh, .gnupg, .aws, etc.)
-  # - Allow read on: everything (so tools can read system headers, libraries, etc.)
-  # - Allow process execution (subprocess exec)
+  #
+  # Policy: DENY-BY-DEFAULT reads — the global `(allow file-read*)` is gone.
+  # Reads are granted only for: system paths, nix (when enabled), the repo
+  # worktree (cwd + repo_root/.git), tmp paths, the genesis config/data dirs,
+  # the host $TMPDIR (pre-sandbox temp files), and the home directory minus a
+  # deny-read list of sensitive dirs. In Apple's SBPL, deny rules take
+  # precedence over allow rules — so the deny-read list wins over the home
+  # read allow below. Writes are restricted to the worktree, tmp paths,
+  # genesis dirs, and package-manager/toolchain cache dirs, with deny-write
+  # rules for sensitive dirs as defense in depth.
+  #
+  # NOTE: all comments are kept in Elixir source (not emitted into the
+  # profile string) because `#` comment support in sandbox-exec could not be
+  # validated here; the emitted profile is pure SBPL rules.
   @doc false
   def generate_profile(cwd, repo_root \\ nil) when is_binary(cwd) do
     home = System.user_home!()
 
-    # Sensitive directories to explicitly deny write access
-    sensitive_dirs = [
+    # --- Filesystem READ rules (deny-by-default, explicit allows only) ---
+
+    # System paths: binaries, dyld, system libraries/frameworks, fonts,
+    # certificates, device nodes (/dev/urandom, /dev/null, ...). bash and
+    # every toolchain binary read from these at startup (see the note on
+    # real-macOS validation in the report).
+    system_read_paths = [
+      "/System",
+      "/usr",
+      "/bin",
+      "/sbin",
+      "/Library",
+      "/etc",
+      "/private/etc",
+      "/private/var",
+      "/dev"
+    ]
+
+    system_read_rules =
+      Enum.map_join(system_read_paths, "\n    ", fn path ->
+        ~s{(allow file-read* (subpath "#{path}"))}
+      end)
+
+    # Nix store/var: read (toolchain binaries) + write (build outputs) —
+    # only when nix is enabled.
+    nix_rules =
+      if Nix.enabled?() do
+        nix_paths = ["/nix/store", "/nix/var"]
+
+        nix_paths
+        |> Enum.flat_map(fn path ->
+          [
+            ~s{(allow file-read* (subpath "#{path}"))},
+            ~s{(allow file-write* (subpath "#{path}"))}
+          ]
+        end)
+        |> Enum.join("\n    ")
+      else
+        ""
+      end
+
+    # Repo access: the worktree (cwd) plus the git metadata dir. cwd is
+    # emitted here with the read allow; the write allow follows below.
+    git_rules =
+      if repo_root do
+        git_path = Path.join(repo_root, ".git")
+
+        ~s{(allow file-read* (subpath "#{git_path}"))\n    (allow file-write* (subpath "#{git_path}"))}
+      else
+        ""
+      end
+
+    # Tmp paths: read-write — processes create temp files and read them back.
+    tmp_paths = Platform.tmp_paths()
+
+    tmp_rules =
+      Enum.map_join(tmp_paths, "\n    ", fn path ->
+        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
+      end)
+
+    # Genesis config/data dirs (e.g. `~/Library/Application Support/genesis`
+    # on macOS — NOT under /tmp or the repo): the runtime reads and writes
+    # config, credentials, state, and logs there.
+    genesis_rw_rules =
+      [Platform.config_dir(), Platform.data_dir()]
+      |> Enum.map_join("\n    ", fn path ->
+        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
+      end)
+
+    # Home reads: allow the whole home, then deny-read the sensitive dirs.
+    # Deny rules take precedence over allow rules in SBPL, so the deny-read
+    # list below wins over this allow.
+    home_read_rule = ~s{(allow file-read* (subpath "#{home}"))}
+
+    sensitive_read_dirs = [
       ".ssh",
       ".gnupg",
       ".aws",
       ".kube",
       ".config/sops",
-      ".npmrc",
       ".git-credentials",
-      ".netrc"
+      ".netrc",
+      ".password-store",
+      "Library/Keychains"
     ]
 
-    sensitive_rules =
-      Enum.map(sensitive_dirs, fn dir ->
+    sensitive_read_rules =
+      Enum.map_join(sensitive_read_dirs, "\n    ", fn dir ->
         path = Path.join(home, dir)
-        ~s{(deny file-write* (subpath "#{path}"))}
+        ~s{(deny file-read* (subpath "#{path}"))}
       end)
-      |> Enum.join("\n    ")
 
-    # Build cache dirs to allow read-write
+    # SSH host verification: `git fetch/push` over SSH must read known_hosts
+    # and ssh config to verify the server. Private keys stay unreadable by
+    # design — key-based auth over SSH requires ssh-agent (`SSH_AUTH_SOCK`),
+    # which never exposes key material to the sandboxed process.
+    ssh_literal_rules =
+      Enum.map_join(
+        [Path.join(home, ".ssh/known_hosts"), Path.join(home, ".ssh/config")],
+        "\n    ",
+        fn path -> ~s{(allow file-read-data (literal "#{path}"))} end
+      )
+
+    # Host $TMPDIR read: on macOS the per-user tmp dir is `/var/folders/...`,
+    # NOT under /tmp. The skills executor and other callers write temp files
+    # (e.g. skill scripts) to `System.tmp_dir!()` BEFORE invoking the
+    # sandbox; with default-deny those files must still be readable inside.
+    # Skipped when TMPDIR is unset.
+    host_tmpdir_rule =
+      case System.get_env("TMPDIR") do
+        nil -> ""
+        "" -> ""
+        dir -> ~s{(allow file-read* (subpath "#{dir}"))}
+      end
+
+    # stat/ls/glob on arbitrary paths (e.g. PATH probing) under default-deny.
+    file_read_metadata_rule = "(allow file-read-metadata)"
+
+    # --- Filesystem WRITE rules ---
+
+    # Build-cache dirs: package managers and toolchains (`mix deps.get`,
+    # `npm install`, `cargo build`) must write their caches — these are core
+    # agent workflows.
     build_cache_dirs = [
       ".cache",
       ".local/share",
@@ -126,63 +254,73 @@ defmodule EvoGit.Sandbox.MacOS do
     ]
 
     cache_rw_rules =
-      Enum.map(build_cache_dirs, fn dir ->
+      Enum.map_join(build_cache_dirs, "\n    ", fn dir ->
         path = Path.join(home, dir)
         ~s{(allow file-write* (subpath "#{path}"))}
       end)
-      |> Enum.join("\n    ")
 
-    nix_rw_rules =
-      if Nix.enabled?() do
-        nix_paths = ["/nix/store", "/nix/var"]
+    # Sensitive dirs: deny WRITE too (defense in depth — reads are already
+    # blocked by the deny-read rules above).
+    sensitive_write_dirs = [
+      ".ssh",
+      ".gnupg",
+      ".aws",
+      ".kube",
+      ".config/sops",
+      ".npmrc",
+      ".git-credentials",
+      ".netrc"
+    ]
 
-        nix_paths
-        |> Enum.map(fn path ->
-          ~s{(allow file-write* (subpath "#{path}"))}
-        end)
-        |> Enum.join("\n    ")
-      else
-        ""
-      end
-
-    # Tmp paths
-    tmp_paths = Platform.tmp_paths()
-
-    tmp_rules =
-      tmp_paths
-      |> Enum.map(fn path ->
-        ~s{(allow file-write* (subpath "#{path}"))}
+    sensitive_write_rules =
+      Enum.map_join(sensitive_write_dirs, "\n    ", fn dir ->
+        path = Path.join(home, dir)
+        ~s{(deny file-write* (subpath "#{path}"))}
       end)
-      |> Enum.join("\n    ")
 
-    # Repo .git access
-    git_rule =
-      if repo_root do
-        git_path = Path.join(repo_root, ".git")
-        ~s{(allow file-write* (subpath "#{git_path}"))}
-      else
-        ""
-      end
-
+    # --- Assembly (order matters for readability; SBPL deny precedence is
+    # what makes the deny-read list win over the home allow) ---
+    #
+    # Network stays default-allow: agents legitimately run `git fetch/push`,
+    # `mix deps.get`, `curl`, and web tools; default-deny network breaks core
+    # workflows. The primary boundary is the tightened filesystem + process
+    # limits. Future extension point: a `[sandbox] network_mode = "allow" |
+    # "deny"` TOML key (belongs in config/schema/) could gate the
+    # `(allow network*)` rule below.
+    #
+    # Real-macOS validation warranted: bash/dyld startup reads (all covered
+    # by the system paths above) and `sandbox-exec -p` acceptance of the
+    # full profile — see report.
     """
     (version 1)
     (deny default)
-    (allow file-read*)
+
+    #{system_read_rules}
+    #{nix_rules}
+    (allow file-read* (subpath "#{cwd}"))
     (allow file-write* (subpath "#{cwd}"))
+    #{git_rules}
     #{tmp_rules}
+    #{genesis_rw_rules}
+    #{home_read_rule}
+    #{sensitive_read_rules}
+    #{ssh_literal_rules}
+    #{host_tmpdir_rule}
+    #{file_read_metadata_rule}
     #{cache_rw_rules}
-    #{nix_rw_rules}
-    #{git_rule}
+    (allow file-write-data (literal "/dev/null"))
+    (allow file-write-data (literal "/dev/dtracehelper"))
+    #{sensitive_write_rules}
+    (limit number #{@max_processes})
     (allow process-exec)
     (allow process-fork)
     (allow network*)
     (allow mach-lookup)
+    (allow sysctl-read)
+    (allow process-info*)
     (allow signal)
     (allow ipc-posix-sem)
     (allow ipc-posix-shm)
-    (allow file-write-data (literal "/dev/null"))
-    (allow file-write-data (literal "/dev/dtracehelper"))
-    #{sensitive_rules}
     """
     |> String.replace(~r/\n{3,}/, "\n\n")
     |> String.trim()
