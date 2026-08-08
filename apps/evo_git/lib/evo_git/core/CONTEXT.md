@@ -23,21 +23,24 @@ Struct: `path`, `repo`, `repo_id` (defaults to `"primary"`).
 | `context_file_path/1` | Returns the relative path to the context-bearing file |
 | `build_context/2` | Assembles full AI-ready context string by traversing hierarchy |
 
+> **Dead code removed:** `build_context_with_skills/2` was removed — it had zero call sites anywhere in the repo (its only consumer, the combined context+skills load, is no longer used; the agent loop calls `build_context/2` and `EvoGit.Skills.hierarchical_skill_names/2` separately). Note: `EvoGit.Skills.hierarchical_skill_names/2` itself is NOT dead — it has live callers in `agent/runner.ex` (skill loading at agent startup) and `agent/tools/skill/skill_list.ex`, so the skills-loading path remains.
+
 ### `EvoGit.Core.PhyloGraphNode` (`phylo_graph_node.ex`)
 
 Struct: `repo`, `base_commit`, `current_commit`.
 
 | Function | Description |
 |---|---|
-| `new/2` | Initializes a node (base and current commit at given ref) |
-| `find_merge_base/2` | Finds common ancestor between two nodes |
-| `add_and_commit/2` | Stages all changes and commits; returns updated node |
-| `crossover/2` | Merges another node's commit; detects conflicts |
-| `get_conflict_files/1` | Lists currently conflicting files |
-| `current_head/1` | Resolves HEAD SHA for a repo path |
-| `list_directories/1` | Lists all directories at the node's commit |
-| `list_files/1` | Lists all files at the node's commit |
-| `list_immediate_children/2` | Lists direct children of a path at the node's commit |
+| `new/1,2` | Initializes a node (base and current commit at given ref) — kept: used by `EvoGit.Task` and the runtime phases (genesis, evolution, skill_extraction) |
+| `find_merge_base/2` | Finds common ancestor between two nodes — kept: used by `phylo_graph_node_test.exs` |
+| `add_and_commit/2` | Stages all changes and commits; returns updated node — kept: used by `EvoGit.Task` (`mutate/3` commit path) |
+| `crossover/2` | Merges another node's commit; detects conflicts — kept: used by `phylo_graph_node_test.exs` |
+| `get_conflict_files/1` | Lists currently conflicting files — kept: used by `phylo_graph_node_test.exs` |
+| `current_head/1` | Resolves HEAD SHA for a repo path — kept: used by `Runtime.Helpers`, `Runtime.Genesis`, `Runtime.SkillExtraction` |
+| `list_files/1` | Lists all files at the node's commit — kept: used by `EvoGit.Task` (`diagnose/3` file tree) |
+| `list_immediate_children/2` | Lists direct children of a path at the node's commit — kept: used by `phylo_graph_node_test.exs` |
+
+> **Dead code removed:** `list_directories/1` was removed — it had zero references anywhere in the repo (no lib or test call sites; the `git ls-tree -r -d` directory listing is not used by any current code path). The review flagged 5 of 9 functions as never called from lib code, but 4 of those (`find_merge_base/2`, `crossover/2`, `get_conflict_files/1`, `list_immediate_children/2`) have test call sites in `test/evo_git/core/phylo_graph_node_test.exs` (tests are read-only), so only `list_directories/1` was removed.
 
 ### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
 

@@ -32,75 +32,88 @@ defmodule EvoGit.AgentScheduler.Subagents do
           State.t()
         ) :: {:noreply, State.t()}
   def spawn_validated_subagents(parent_id, %SchedMeta{} = parent, specs, from, %State{} = state) do
-    # Get parent agent state for validation context
-    {:ok, parent_agent_state} = Store.get_agent_state(parent_id)
+    # Get parent agent state for validation context.
+    # Parent entry may be reaped by cancel_agent while a subagent spawn is in flight.
+    case Store.get_agent_state(parent_id) do
+      {:ok, parent_agent_state} ->
+        # Pre-Delegation Cleanliness: the parent agent commits its pending changes
+        # BEFORE calling spawn_sub_agents (done in the agent process via
+        # Dispatch.commit_pending_in_worktree/0, not in the scheduler).
 
-    # Pre-Delegation Cleanliness: the parent agent commits its pending changes
-    # BEFORE calling spawn_sub_agents (done in the agent process via
-    # Dispatch.commit_pending_in_worktree/0, not in the scheduler).
+        # Mark parent as :waiting
+        Logger.info(
+          "AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents"
+        )
 
-    # Mark parent as :waiting
-    Logger.info("AgentScheduler: Agent #{parent_id} yielding to spawn #{length(specs)} subagents")
+        parent = %{parent | status: :waiting}
+        Store.put_sched_meta(parent_id, parent)
 
-    parent = %{parent | status: :waiting}
-    Store.put_sched_meta(parent_id, parent)
+        # Single reduce: validate, register, and build all collections in one pass
+        {sub_ids_rev, sub_agent_indices, invalid_results, state} =
+          specs
+          |> Enum.with_index()
+          |> Enum.reduce({[], %{}, %{}, state}, fn {spec, idx},
+                                                   {sub_ids_rev, sub_agent_indices_acc,
+                                                    invalid_acc, state_acc} ->
+            case validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
+              :ok ->
+                {sub_id, state_acc} =
+                  Dispatch.register_agent(
+                    state_acc,
+                    spec,
+                    _from = nil,
+                    parent_id,
+                    parent.depth + 1,
+                    parent.task_id,
+                    parent.task_number
+                  )
 
-    # Single reduce: validate, register, and build all collections in one pass
-    {sub_ids_rev, sub_agent_indices, invalid_results, state} =
-      specs
-      |> Enum.with_index()
-      |> Enum.reduce({[], %{}, %{}, state}, fn {spec, idx},
-                                                {sub_ids_rev, sub_agent_indices_acc, invalid_acc,
-                                                 state_acc} ->
-        case validate_single_subagent(parent_id, parent, spec, parent_agent_state, state) do
-          :ok ->
-            {sub_id, state_acc} =
-              Dispatch.register_agent(
-                state_acc,
-                spec,
-                _from = nil,
-                parent_id,
-                parent.depth + 1,
-                parent.task_id,
-                parent.task_number
-              )
+                {[sub_id | sub_ids_rev], Map.put(sub_agent_indices_acc, sub_id, idx), invalid_acc,
+                 state_acc}
 
-            {[sub_id | sub_ids_rev], Map.put(sub_agent_indices_acc, sub_id, idx), invalid_acc,
-             state_acc}
+              {:error, reason} ->
+                Logger.warning(
+                  "AgentScheduler: Subagent #{idx} failed validation: #{inspect(reason)}"
+                )
 
-          {:error, reason} ->
-            Logger.warning(
-              "AgentScheduler: Subagent #{idx} failed validation: #{inspect(reason)}"
-            )
+                {sub_ids_rev, sub_agent_indices_acc, Map.put(invalid_acc, idx, {:error, reason}),
+                 state_acc}
+            end
+          end)
 
-            {sub_ids_rev, sub_agent_indices_acc, Map.put(invalid_acc, idx, {:error, reason}),
-             state_acc}
+        sub_ids = :lists.reverse(sub_ids_rev)
+
+        # Track pending subagents, pre-failed results, and index mapping on the parent
+        Store.put_sched_meta(parent_id, %{
+          parent
+          | sub_agent_from: from,
+            total_sub_specs: length(specs),
+            pending_sub_agents: MapSet.new(sub_ids),
+            sub_agent_results: invalid_results,
+            sub_agent_indices: sub_agent_indices
+        })
+
+        # Dispatch all valid subagents
+        state = Enum.reduce(sub_ids, state, &Dispatch.try_dispatch(&2, &1))
+
+        # If no valid subagents, immediately reply with all errors
+        if sub_ids == [] do
+          results = build_ordered_results(invalid_results, length(specs))
+          GenServer.reply(from, results)
+          Store.put_sched_meta(parent_id, %{parent | status: :running})
+          {:noreply, state}
+        else
+          {:noreply, state}
         end
-      end)
 
-    sub_ids = :lists.reverse(sub_ids_rev)
+      :error ->
+        Logger.warning(
+          "AgentScheduler: Parent #{parent_id} recycled while spawning subagents; replying with errors"
+        )
 
-    # Track pending subagents, pre-failed results, and index mapping on the parent
-    Store.put_sched_meta(parent_id, %{
-      parent
-      | sub_agent_from: from,
-        total_sub_specs: length(specs),
-        pending_sub_agents: MapSet.new(sub_ids),
-        sub_agent_results: invalid_results,
-        sub_agent_indices: sub_agent_indices
-    })
-
-    # Dispatch all valid subagents
-    state = Enum.reduce(sub_ids, state, &Dispatch.try_dispatch(&2, &1))
-
-    # If no valid subagents, immediately reply with all errors
-    if sub_ids == [] do
-      results = build_ordered_results(invalid_results, length(specs))
-      GenServer.reply(from, results)
-      Store.put_sched_meta(parent_id, %{parent | status: :running})
-      {:noreply, state}
-    else
-      {:noreply, state}
+        results = Enum.map(specs, fn _ -> {:error, :parent_recycled} end)
+        GenServer.reply(from, results)
+        {:noreply, state}
     end
   end
 
@@ -114,7 +127,13 @@ defmodule EvoGit.AgentScheduler.Subagents do
           AgentState.t(),
           State.t()
         ) :: :ok | {:error, term()}
-  def validate_single_subagent(parent_id, %SchedMeta{} = parent, spec, parent_agent_state, %State{} = state) do
+  def validate_single_subagent(
+        parent_id,
+        %SchedMeta{} = parent,
+        spec,
+        parent_agent_state,
+        %State{} = state
+      ) do
     subagent_depth = parent.depth + 1
 
     with :ok <- validate_subagent_depth(parent_id, subagent_depth, state),
@@ -256,27 +275,37 @@ defmodule EvoGit.AgentScheduler.Subagents do
   """
   @spec store_sub_result(pos_integer(), pos_integer(), term()) :: :ok
   def store_sub_result(parent_id, sub_id, result) do
-    {:ok, parent} = Store.get_sched_meta(parent_id)
-    idx = Map.get(parent.sub_agent_indices, sub_id)
-    results = Map.put(parent.sub_agent_results, idx, result)
+    # Parent entry may be reaped by cancel_agent while a subagent completes in flight
+    case Store.get_sched_meta(parent_id) do
+      {:ok, parent} ->
+        idx = Map.get(parent.sub_agent_indices, sub_id)
+        results = Map.put(parent.sub_agent_results, idx, result)
 
-    # Track foreign repo commit SHAs — when a foreign-repo subagent completes,
-    # record its commit so subsequent subagents can start from it instead of HEAD.
-    foreign_repo_commits =
-      case result do
-        {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
-        when is_binary(sha) and not is_nil(repo_id) and repo_id != "primary" ->
-          Map.put(parent.foreign_repo_commits, repo_id, sha)
+        # Track foreign repo commit SHAs — when a foreign-repo subagent completes,
+        # record its commit so subsequent subagents can start from it instead of HEAD.
+        foreign_repo_commits =
+          case result do
+            {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
+            when is_binary(sha) and not is_nil(repo_id) and repo_id != "primary" ->
+              Map.put(parent.foreign_repo_commits, repo_id, sha)
 
-        _ ->
-          parent.foreign_repo_commits
-      end
+            _ ->
+              parent.foreign_repo_commits
+          end
 
-    Store.put_sched_meta(parent_id, %{
-      parent
-      | sub_agent_results: results,
-        foreign_repo_commits: foreign_repo_commits
-    })
+        Store.put_sched_meta(parent_id, %{
+          parent
+          | sub_agent_results: results,
+            foreign_repo_commits: foreign_repo_commits
+        })
+
+      :error ->
+        Logger.warning(
+          "AgentScheduler: Parent #{parent_id} recycled; dropping result from subagent #{sub_id}"
+        )
+
+        :ok
+    end
   end
 
   @doc """
@@ -287,24 +316,32 @@ defmodule EvoGit.AgentScheduler.Subagents do
   """
   @spec maybe_resume_parent(State.t(), pos_integer()) :: State.t()
   def maybe_resume_parent(%State{} = state, parent_id) do
-    {:ok, parent} = Store.get_sched_meta(parent_id)
+    # Parent entry may be reaped by cancel_agent while a subagent completes in flight
+    case Store.get_sched_meta(parent_id) do
+      {:ok, parent} ->
+        all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
 
-    all_done? = map_size(parent.sub_agent_results) == parent.total_sub_specs
+        if all_done? do
+          Logger.info(
+            "AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed"
+          )
 
-    if all_done? do
-      Logger.info("AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed")
+          # Parent always has its persistent worktree - resume immediately
+          parent = %{parent | status: :ready}
+          Store.put_sched_meta(parent_id, parent)
 
-      # Parent always has its persistent worktree - resume immediately
-      parent = %{parent | status: :ready}
-      Store.put_sched_meta(parent_id, parent)
+          if state.paused do
+            %{state | queue: :queue.in(parent_id, state.queue)}
+          else
+            dispatch_ready_parent(state, parent_id, parent)
+          end
+        else
+          state
+        end
 
-      if state.paused do
-        %{state | queue: :queue.in(parent_id, state.queue)}
-      else
-        dispatch_ready_parent(state, parent_id, parent)
-      end
-    else
-      state
+      :error ->
+        Logger.warning("AgentScheduler: Parent #{parent_id} recycled; cannot resume")
+        state
     end
   end
 
@@ -328,8 +365,19 @@ defmodule EvoGit.AgentScheduler.Subagents do
         total_sub_specs: 0
     })
 
-    {:ok, agent_state} = Store.get_agent_state(agent_id)
-    commit_sha = agent_state.phylo_node.current_commit
+    # Agent entry may be reaped by cancel_agent while a subagent completes in flight
+    commit_sha =
+      case Store.get_agent_state(agent_id) do
+        {:ok, agent_state} ->
+          agent_state.phylo_node.current_commit
+
+        :error ->
+          Logger.warning(
+            "AgentScheduler: Agent #{agent_id} state missing on resume; commit unknown"
+          )
+
+          "unknown"
+      end
 
     Logger.info(
       "AgentScheduler: Waiting agent #{agent_id} resumed with persistent worktree #{wt} at commit #{commit_sha}"

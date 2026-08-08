@@ -436,15 +436,15 @@ defmodule EvoGit.Agent.Tools.Shared do
         {:ok, _output} ->
           case EvoGit.Adapters.Git.commit(repo_path, commit_message) do
             {:ok, _} -> {:ok, "Commit successful"}
-            {:error, _, _} = error -> {:error, error}
-            {:conflict, _} = conflict -> {:error, conflict}
+            {:error, {:conflict, _}} = conflict -> {:error, conflict}
+            {:error, {_, _}} = error -> {:error, error}
           end
 
-        {:error, _, _} = error ->
-          {:error, "git add failed: #{inspect(error)}"}
-
-        {:conflict, output} ->
+        {:error, {:conflict, output}} ->
           {:error, "git add conflict: #{output}"}
+
+        {:error, {_, _}} = error ->
+          {:error, "git add failed: #{inspect(error)}"}
       end
     end
   end

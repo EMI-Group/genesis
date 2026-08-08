@@ -208,12 +208,12 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         Logger.info("Wrote git note for commit #{commit_sha} (ref: evogit)")
         :ok
 
-      {:error, _, _msg} ->
-        # If custom ref fails (might not exist yet), try with force to create it
+      {:error, {:conflict, _msg}} ->
+        # git notes add returns exit code 1 when note already exists — overwrite with force
         handle_fallback(repo_path, commit_sha, note_content)
 
-      {:conflict, _msg} ->
-        # git notes add returns exit code 1 when note already exists — overwrite with force
+      {:error, {_, _msg}} ->
+        # If custom ref fails (might not exist yet), try with force to create it
         handle_fallback(repo_path, commit_sha, note_content)
     end
   end
@@ -224,11 +224,11 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         Logger.info("Wrote git note for commit #{commit_sha} (ref: evogit, forced)")
         :ok
 
-      {:error, _code, msg} ->
+      {:error, {:conflict, msg}} ->
         Logger.warning("Failed to write git note for commit #{commit_sha}: #{msg}")
         {:error, msg}
 
-      {:conflict, msg} ->
+      {:error, {_code, msg}} ->
         Logger.warning("Failed to write git note for commit #{commit_sha}: #{msg}")
         {:error, msg}
     end
@@ -237,7 +237,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   @doc """
   Retrieves the metadata for an agent from their final commit's git note.
 
-  Returns {:ok, metadata_map} or :error if not found.
+  Returns {:ok, metadata_map} or {:error, {:no_note, _}} / {:error, {:invalid_json, _}} /
+  {:error, {:enoent, _}} (see `EvoGit.Adapters.Git.get_note/4`).
 
   ## Metadata includes
     - `agent_id` - The agent's ID

@@ -5,6 +5,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ## Routing Table
 - `evo_git/` → Test files mirroring source structure (core, adapters, agent tools, project config tests)
+- `evo_git/skills/` → Skills subsystem tests (executor injection safety + sandbox routing)
 
 ## API Surface
 
@@ -17,7 +18,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 - **`phylo_graph_node_test.exs`** — `EvoGit.Core.PhyloGraphNodeTest`: tests `PhyloGraphNode` — `new/0`, `crossover/2`, `add_and_commit/3`. Exercises phylogenetic graph node creation and merge logic via real git repos.
 
 ### `evo_git/adapters/`
-- **`git_test.exs`** — `EvoGit.Adapters.GitTest`: tests the Git adapter — `init/1`, `add_worktree/2`, `add/2`, `commit/2`, `merge/2`, `merge_octopus/2`, `status/1`. Full integration tests creating real git repos in temp dirs.
+- **`git_test.exs`** — `EvoGit.Adapters.GitTest`: tests the Git adapter — `init/1`, `add_worktree/2`, `add/2`, `commit/2`, `merge/2`, `merge_octopus/2`, `status/1`. Full integration tests creating real git repos in temp dirs. **Error-shape assertions updated** for the uniform `{:ok, value} | {:error, {tag, output}}` adapter contract (commit 8b0854a0): `show_note` conflict → `{:error, {:conflict, _}}`, `get_note` invalid JSON → `{:error, {:invalid_json, _}}`, no note → `{:error, {:no_note, _}}`, `rev_parse` on missing ref → `{:error, {_, _}}`.
 
 ### `evo_git/agent/`
 - **`tools_test.exs`** — `EvoGit.Agent.ToolsTest`: validates `Tools` schema definitions.
@@ -37,9 +38,19 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ### `evo_git/agent_scheduler/`
 - **`dispatch_test.exs`** — `EvoGit.AgentScheduler.DispatchTest`: tests `Dispatch.resolve_agent_repo_root/2` — worktree path stripping and foreign repo root resolution.
-- **`subagents_test.exs`** — `EvoGit.AgentScheduler.SubagentsTest`: tests `Subagents` — spatial contract validation (cross-repo read-only, same-repo hierarchy) and `store_sub_result/3` foreign repo commit tracking. Uses global named ETS tables directly.
+- **`subagents_test.exs`** — `EvoGit.AgentScheduler.SubagentsTest`: tests `Subagents` — spatial contract validation (cross-repo read-only, same-repo hierarchy), `store_sub_result/3` foreign repo commit tracking, and the **error paths for recycled parent entries** (missing ETS rows): `store_sub_result` drops the result + warns, `maybe_resume_parent` returns state unchanged, `spawn_validated_subagents` replies `[{:error, :parent_recycled}]` to the blocked caller without spawning, `dispatch_ready_parent` still replies/resets meta with commit "unknown". Uses global named ETS tables directly.
+- **`pubsub_test.exs`** — `EvoGit.AgentScheduler.PubSubTest` (`async: false`): the supervised broadcast Throttle (`EvoGit.AgentScheduler.PubSub.Throttle`) — 3 rapid `broadcast_agents_updated/0` casts collapse into exactly 1 `{:agents_updated}` (mailbox-drain + assert_receive/refute_receive pattern to stay deterministic under parallel-file noise), kill → `EvoGit.Supervisor` restarts → broadcasts resume, supervision-tree assertion (Throttle appears in `Supervisor.which_children(EvoGit.Supervisor)` as `{Throttle, pid, :worker, _}`). Uses the global `EvoGit.PubSub` "agents" topic.
 - **`lifecycle_test.exs`** — `EvoGit.AgentScheduler.LifecycleTest`: tests `Lifecycle.handle_agent_crash/3` — retry path (updates meta, resets agent_state, queues when paused), permanent failure (deletes ETS entries, replies to caller), missing sched_meta/agent_state defensive handling. Also tests `cancel_agent/2` — verifies the stored `%Task{}` struct is killed via `Task.shutdown/2`. Uses `async: false` with global named ETS tables.
 - **`slots_test.exs`** — `EvoGit.AgentScheduler.SlotsTest`: tests holder-set slot management — LLM/tool slot request grants when available, blocks when full, release frees + grants pending waiters, and `release_agent_slots/2` releases held slots and purges queues on agent death.
+
+### `evo_git/skills/`
+- **`executor_security_test.exs`** — `EvoGit.Skills.ExecutorSecurityTest` (`async: false`, 13 tests): skills-executor injection safety + sandbox routing. **Moved from `lib/evo_git/skills/`** (where it never ran in `mix test`) into the test tree — `git log --follow` tracks history. The skills executor routes its commands through `EvoGit.Sandbox` (skill execution injection vector fixed in 3635e719).
+
+### `evo_git/sandbox/`
+- **`macos_test.exs`** — `EvoGit.Sandbox.MacOSTest` (`async: false`): the hardened `sandbox-exec` profile (`generate_profile/2`): deny-by-default + sensitive-dir deny-read rules (`.ssh`, `.gnupg`, `.aws`, `.kube`, `.git-credentials`, `.netrc`, `.password-store`, `.docker`), repo worktree + tmp rw allows, `(limit number 200)` process limit, **fail-safe process-limit stripping wiring** (persistent-term rejection flag defaults false; simulated cached rejection never breaks `run/4`; macOS-only guarded live test when `sandbox-exec` exists — no-op pass elsewhere), and `EvoGit.Sandbox.resolve_tmpdir/0` (unset/under-tmp kept expanded/non-existent fallback/outside-tmp fallback). XDG_CONFIG_HOME redirected in setup so `Config.resolve([:sandbox, :mode])` is host-determined.
+
+### `evo_git/runtime/`
+- **`helpers_test.exs`** — `EvoGit.Runtime.HelpersTest` (`async: true`): `generate_branch_name/1`, `new_codebase?/1` edge cases, `validate_node_path/2`, `resolve_starting_commit/2`, `notify_finalizing/1`, `merge_and_report/3`, and **`load_foreign_repos/2`** (CLI-only / TOML-only / merge without id conflict / CLI precedence on id conflict — via `EvoGit.ProjectConfig.foreign_repos/1` reading a temp genesis.toml `[foreign_repos.<id>]` table with `path` + `description` keys; struct is `EvoGit.Core.ForeignRepo` with `id`/`root`/`description`).
 
 ### `evo_git/task_registry/`
 - **`persistence_test.exs`** — `EvoGit.TaskRegistryTest` (`async: false`, 850 lines, isolated TaskRegistry + Store on temp data_dir): task persistence across registry restarts, recent-project persistence, GenServer resilience, startup reconciliation of orphaned `:finalizing` tasks, **`since`-filter semantics** for `list_tasks_summary/2` + `list_tasks_summary_by_path/3` + `list_tasks_changed_since/1` (strict `updated_at > since`, 16-key projection), **recheck_task resolution** (seeds/cleans the global `:evogit_sched_meta` ETS — reschedule-while-any-entry-exists, resolve-to-`:completed`-with-nil-result after entry cleanup, existing branch_name NOT clobbered; branch_name extraction from `{:ok, %{branch_name: _}}` pinned on the `handle_update_status/6` cast path), and **nil `last_opened_at` handling** (raw SQL NULL insert; sorts last; overflow trim with 12 > `@max_recent_projects` = 10 rows keeps 10, trims oldest dated + nil rows, never crashes).
@@ -48,8 +59,16 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ## Known Issues
 
-### ⚠️ `cow_worktree_test.exs` "handles pre-existing branch" flake (pre-existing, unrelated to store codec work)
-`make_repo/1` (`cow_worktree_test.exs:54-69`) creates repos under `/tmp/cow_test_<prefix>_<unique_integer>` but **never cleans them up** (`on_exit` only removes worktrees, not repos). Across separate VM runs, `System.unique_integer([:positive])` can repeat a number from an earlier run, so `make_repo("exists_branch")` can reuse a leftover dir that already contains the `cow-branch-exists` branch → `Git.create_branch` fails with "fatal: a branch named 'cow-branch-exists' already exists" (`cow_worktree_test.exs:433`). Manifests as an intermittent full-suite failure (~1 in several runs) that passes on rerun. Fix direction (not yet applied): `on_exit` should `File.rm_rf!` the repo dir, or `make_repo` should use ExUnit's `:tmp_dir` tag.
+### ✅ FIXED — `cow_worktree_test.exs` "handles pre-existing branch" flake
+`make_repo/1` (`cow_worktree_test.exs:54-69`) created repos under `/tmp/cow_test_<prefix>_<unique_integer>` and never cleaned them up — across separate VM runs `System.unique_integer([:positive])` can repeat, so leftover dirs from earlier runs collided (`Git.create_branch` fails with "fatal: a branch named 'cow-branch-exists' already exists"). **Fixed**: `make_repo/1` now registers `on_exit(fn -> File.rm_rf!(dir) end)` (leftover dirs from pre-fix runs were also purged from /tmp). No accumulation, no cross-run collision.
+
+### ⚠️ 4 tests failing until the Git-adapter caller fixes merge (transient, NOT test bugs)
+The adapter refactor (8b0854a0, uniform `{:error, {tag, output}}` contract) left lib callers still matching old shapes. A parallel agent is fixing the lib callers; until that merges, these 4 tests fail with **CaseClauseError inside lib code** (assertions themselves are correct — they pin the unchanged PUBLIC contracts):
+- `complete_task_test.exs:718, 753` — `CompleteTask.complete` → `add_metadata_note/3` (`complete_task.ex:206-233` still matches `{:error, _, _msg}` / `{:error, _code, msg}`)
+- `review_test.exs:384` — `Review.merge_branch/3` → `merge_into_other` (`review.ex:380, 412` old shapes; public `{:conflict, details}` contract unchanged)
+- `phylo_graph_node_test.exs:77` — `PhyloGraphNode.crossover/2` (`phylo_graph_node.ex:69` old shape; public `{:conflict, node, files}` contract unchanged)
+
+When the lib fixes merge these pass with NO test edits. Reference: `lib/evo_git/adapters/CONTEXT.md` → "Legacy callers pending update" (all TEST call-site rows there are already updated).
 
 ### ⚠️ RemoteConnection disconnect churn → intermittent `unknown registry` flake (lib bug, test-side mitigation in place)
 `EvoGit.RemoteConnection` managers are started via `DynamicSupervisor.start_child(@supervisor, {__MODULE__, target})` (`lib/evo_git/remote_connection.ex:1257`) — the default `use GenServer` child spec is `restart: :permanent`. `disconnect/1` stops the manager with `:normal` (`handle_call(:disconnect)` → `{:stop, :normal, ...}`, `remote_connection.ex:283-284`). Per OTP, `:permanent` children restart on **any** exit including `:normal`, and each restart counts toward the DynamicSupervisor's restart intensity (default 3 in 5s). Several bootstrap tests each start + disconnect a manager → churn exhausts intensity → DynamicSupervisor dies `:shutdown` → cascade can take down the Registry → teardown's `list_connections()` raises `ArgumentError: unknown registry: EvoGit.RemoteConnection.Registry` (~40% flake, only when several disconnect cycles run within 5s).

@@ -59,7 +59,7 @@ defmodule EvoGit.Agent.ToolDispatch do
           AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
         end
 
-      {:error, code, msg} ->
+      {:error, {code, msg}} ->
         raise "Git rev_parse failed (#{code}): #{msg}"
     end
   end
@@ -72,7 +72,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     current_sha =
       case Git.rev_parse(repo_path) do
         {:ok, sha} -> sha
-        {:error, code, msg} -> raise "Git rev_parse failed (#{code}): #{msg}"
+        {:error, {code, msg}} -> raise "Git rev_parse failed (#{code}): #{msg}"
       end
 
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -361,56 +361,9 @@ defmodule EvoGit.Agent.ToolDispatch do
         loop_fn,
         trigger_recovery_fn
       ) do
-    # Track current context length (replace, don't accumulate)
-    usage = ReqLLM.Response.usage(response)
-
-    current_tokens =
-      if is_map(usage) do
-        usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
-      else
-        # Usage is nil - can happen with some providers or cached responses
-        # Keep the previous token count
-        Logger.warning("Agent #{state.agent_id}: LLM response doesn't contain token usage info.")
-
-        state.total_tokens
-      end
-
-    state = %{state | total_tokens: current_tokens}
-
-    # Accumulate cumulative usage (separate from total_tokens used for compression)
-    turn_usage = Usage.from_response_usage(usage)
-    state = %{state | usage: Usage.add(state.usage, turn_usage)}
-
-    # Keep tool calls as %ReqLLM.ToolCall{} structs (the shape already present
-    # in message.tool_calls). Do NOT convert them via ReqLLM.ToolCall.from_map/1,
-    # which returns plain maps — those would break the OpenAI Responses API
-    # request encoder (it calls ReqLLM.ToolCall.name/1 and args_json/1, which
-    # only match the struct) on the next turn. Access name/arguments via
-    # ReqLLM.ToolCall.name/1 and args_map/1 throughout the dispatch code.
-    tool_calls = ReqLLM.Response.tool_calls(response)
-
-    # Deduplicate tool calls (handles buggy models that emit identical
-    # duplicate calls — e.g. two identical subagent spawns)
-    {tool_calls, response} = dedupe_and_sync(tool_calls, response, state.agent_id)
-
-    # Validate tool calls have IDs
-    invalid_calls = Enum.filter(tool_calls, fn call -> is_nil(Map.get(call, :id)) end)
-
-    if invalid_calls != [] do
-      Logger.error(
-        "Agent #{state.agent_id}: Found #{length(invalid_calls)} tool calls without IDs: #{inspect(invalid_calls)}"
-      )
-    end
-
-    # Use the updated context from response (already has assistant message appended)
-    # Compact reasoning_details to avoid N small fragments from streaming
-    compacted_context = compact_reasoning_details(response.context)
-    new_turn = state.turn + 1
-
-    compacted_context =
-      EvoGit.Agent.ContextBuilder.tag_context_tail_with_turn(compacted_context, new_turn)
-
-    state = %{state | context: compacted_context, turn: new_turn}
+    state = update_turn_usage(state, response)
+    {tool_calls, response} = prepare_tool_calls(response, state.agent_id)
+    state = advance_turn_context(state, response)
 
     AgentScheduler.batch_update_agent(state.agent_id,
       context: state.context,
@@ -428,53 +381,14 @@ defmodule EvoGit.Agent.ToolDispatch do
         {:ok, final_result}
 
       {:continue, tool_responses, subagent_usage} ->
-        if EvoGit.Agent.grace_period_continue_failed?(state) do
-          {:error, :recovery_failed}
-        else
-          # Pick up updated delegation hints from tool execution
-          updated_hints = Process.get(:delegation_hints, state.delegation_hints)
-          Process.delete(:delegation_hints)
-
-          updated_read_hints =
-            Process.get(:read_delegation_hints, state.read_delegation_hints)
-
-          Process.delete(:read_delegation_hints)
-
-          # Detect subagent calls to reset the middle-warning counter
-          had_subagent_call =
-            Enum.any?(tool_calls, fn call ->
-              subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
-            end)
-
-          new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
-
-          tagged_tool_responses =
-            Enum.map(
-              tool_responses,
-              &EvoGit.Agent.ContextBuilder.tag_message_turn(&1, state.turn)
-            )
-
-          # Accumulate subagent usage into the parent agent's cumulative usage
-          usage = if subagent_usage, do: Usage.add(state.usage, subagent_usage), else: state.usage
-
-          state = %{
-            state
-            | context: ReqLLM.Context.append(state.context, tagged_tool_responses),
-              delegation_hints: updated_hints,
-              read_delegation_hints: updated_read_hints,
-              turns_since_subagent: new_turns_since,
-              usage: usage
-          }
-
-          # Sync updated context to ETS for dashboard visibility (returns :ok).
-          # The in-memory context is already stamped at creation — no rebind.
-          EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
-
-          # Sync accumulated subagent usage to ETS
-          AgentScheduler.batch_update_agent(state.agent_id, usage: state.usage)
-
-          loop_fn.(state)
-        end
+        continue_after_tools(
+          tool_responses,
+          subagent_usage,
+          tool_calls,
+          state,
+          subagent_modules,
+          loop_fn
+        )
 
       {:error, :protocol_violation} ->
         if state.in_grace_period do
@@ -482,6 +396,128 @@ defmodule EvoGit.Agent.ToolDispatch do
         else
           trigger_recovery_fn.(state, "agent stopped calling tools")
         end
+    end
+  end
+
+  # Tracks the current context length (replace, don't accumulate) and
+  # accumulates cumulative usage (separate from total_tokens used for
+  # compression).
+  defp update_turn_usage(%LoopState{} = state, response) do
+    usage = ReqLLM.Response.usage(response)
+
+    current_tokens =
+      if is_map(usage) do
+        usage.input_tokens + usage.output_tokens + Map.get(usage, :reasoning_tokens, 0)
+      else
+        # Usage is nil - can happen with some providers or cached responses
+        # Keep the previous token count
+        Logger.warning("Agent #{state.agent_id}: LLM response doesn't contain token usage info.")
+
+        state.total_tokens
+      end
+
+    turn_usage = Usage.from_response_usage(usage)
+
+    %{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)}
+  end
+
+  # Extracts tool calls from the response, deduplicates them (handles buggy
+  # models that emit identical duplicate calls — e.g. two identical subagent
+  # spawns), and validates that all calls carry IDs.
+  defp prepare_tool_calls(response, agent_id) do
+    # Keep tool calls as %ReqLLM.ToolCall{} structs (the shape already present
+    # in message.tool_calls). Do NOT convert them via ReqLLM.ToolCall.from_map/1,
+    # which returns plain maps — those would break the OpenAI Responses API
+    # request encoder (it calls ReqLLM.ToolCall.name/1 and args_json/1, which
+    # only match the struct) on the next turn. Access name/arguments via
+    # ReqLLM.ToolCall.name/1 and args_map/1 throughout the dispatch code.
+    tool_calls = ReqLLM.Response.tool_calls(response)
+
+    {tool_calls, response} = dedupe_and_sync(tool_calls, response, agent_id)
+
+    # Validate tool calls have IDs
+    invalid_calls = Enum.filter(tool_calls, fn call -> is_nil(Map.get(call, :id)) end)
+
+    if invalid_calls != [] do
+      Logger.error(
+        "Agent #{agent_id}: Found #{length(invalid_calls)} tool calls without IDs: #{inspect(invalid_calls)}"
+      )
+    end
+
+    {tool_calls, response}
+  end
+
+  # Uses the updated context from response (already has assistant message
+  # appended): compacts reasoning_details to avoid N small fragments from
+  # streaming and tags the context tail with the new turn number.
+  defp advance_turn_context(%LoopState{} = state, response) do
+    compacted_context = compact_reasoning_details(response.context)
+    new_turn = state.turn + 1
+
+    compacted_context =
+      EvoGit.Agent.ContextBuilder.tag_context_tail_with_turn(compacted_context, new_turn)
+
+    %{state | context: compacted_context, turn: new_turn}
+  end
+
+  # Handles the {:continue, ...} outcome of tool-call processing: picks up the
+  # updated delegation hints from the process dictionary, tags and appends the
+  # tool responses to the context, accumulates subagent usage, syncs state to
+  # ETS, and re-enters the loop.
+  defp continue_after_tools(
+         tool_responses,
+         subagent_usage,
+         tool_calls,
+         %LoopState{} = state,
+         subagent_modules,
+         loop_fn
+       ) do
+    if EvoGit.Agent.grace_period_continue_failed?(state) do
+      {:error, :recovery_failed}
+    else
+      # Pick up updated delegation hints from tool execution
+      updated_hints = Process.get(:delegation_hints, state.delegation_hints)
+      Process.delete(:delegation_hints)
+
+      updated_read_hints =
+        Process.get(:read_delegation_hints, state.read_delegation_hints)
+
+      Process.delete(:read_delegation_hints)
+
+      # Detect subagent calls to reset the middle-warning counter
+      had_subagent_call =
+        Enum.any?(tool_calls, fn call ->
+          subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
+        end)
+
+      new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
+
+      tagged_tool_responses =
+        Enum.map(
+          tool_responses,
+          &EvoGit.Agent.ContextBuilder.tag_message_turn(&1, state.turn)
+        )
+
+      # Accumulate subagent usage into the parent agent's cumulative usage
+      usage = if subagent_usage, do: Usage.add(state.usage, subagent_usage), else: state.usage
+
+      state = %{
+        state
+        | context: ReqLLM.Context.append(state.context, tagged_tool_responses),
+          delegation_hints: updated_hints,
+          read_delegation_hints: updated_read_hints,
+          turns_since_subagent: new_turns_since,
+          usage: usage
+      }
+
+      # Sync updated context to ETS for dashboard visibility (returns :ok).
+      # The in-memory context is already stamped at creation — no rebind.
+      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, state.context)
+
+      # Sync accumulated subagent usage to ETS
+      AgentScheduler.batch_update_agent(state.agent_id, usage: state.usage)
+
+      loop_fn.(state)
     end
   end
 
@@ -740,126 +776,180 @@ defmodule EvoGit.Agent.ToolDispatch do
     read_initial_hints = Process.get(:read_delegation_hints, %{})
 
     # Cache conflict files once per batch to avoid repeated git calls
-    conflict_files =
-      case Git.conflict_files(repo_path) do
-        {:ok, files} -> files
-        _ -> []
-      end
+    conflict_files = cached_conflict_files(repo_path)
 
     # Execute tools sequentially, threading delegation hints through
+    ctx = %{
+      agent_id: agent_id,
+      repo_path: repo_path,
+      repo_root: repo_root,
+      node_path: node_path,
+      max_timeout: max_timeout,
+      delegation_level: delegation_level,
+      threshold: threshold,
+      read_threshold: read_threshold,
+      conflict_files: conflict_files
+    }
+
     {results, final_hints, read_final_hints} =
-      Enum.reduce(indexed_calls, {[], initial_hints, read_initial_hints}, fn {call, index},
-                                                                             {acc_results, hints,
-                                                                              read_hints} ->
-        name = ReqLLM.ToolCall.name(call)
-        args = ReqLLM.ToolCall.args_map(call)
-        tool_call_id = call.id || name || "unknown"
-
-        tool_timeout =
-          Map.get(args, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
-
-        tool_timeout = min(tool_timeout, max_timeout)
-
-        output =
-          AgentScheduler.with_tool_slot(agent_id, fn ->
-            task =
-              Task.async(fn ->
-                EvoGit.Agent.Tools.execute(
-                  name,
-                  args,
-                  repo_path,
-                  repo_root,
-                  node_path
-                )
-              end)
-
-            case Task.yield(task, tool_timeout) || Task.shutdown(task) do
-              {:ok, {:error, reason}} ->
-                "Error: #{inspect(reason)}"
-
-              {:ok, result} ->
-                {sanitized, truncation_info} =
-                  OutputSanitizer.sanitize_and_truncate(result, name, args)
-
-                EvoGit.Agent.TruncationFeedback.append_truncation_feedback(
-                  sanitized,
-                  truncation_info,
-                  name
-                )
-
-              {:exit, reason} ->
-                "Error: Tool execution crashed: #{inspect(reason)}"
-
-              nil ->
-                "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
-            end
-          end)
-
-        output = maybe_append_redundant_cd_warning(output, name, args, repo_path, repo_root)
-
-        # Track delegation hints for write tools (skip during conflict resolution)
-        {output, hints} =
-          if threshold > 0 do
-            child_paths =
-              EvoGit.Agent.DelegationHints.extract_child_paths(
-                name,
-                args,
-                node_path,
-                repo_path
-              )
-
-            child_paths =
-              EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts(
-                child_paths,
-                conflict_files
-              )
-
-            EvoGit.Agent.DelegationHints.maybe_append_delegation_hint(
-              output,
-              hints,
-              child_paths,
-              threshold
-            )
-          else
-            {output, hints}
-          end
-
-        # Track read delegation hints for read tools (skip during conflict resolution)
-        {output, read_hints} =
-          if read_threshold > 0 do
-            read_child_paths =
-              EvoGit.Agent.DelegationHints.extract_read_child_paths(
-                name,
-                args,
-                node_path,
-                repo_path
-              )
-
-            read_child_paths =
-              EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts(
-                read_child_paths,
-                conflict_files
-              )
-
-            EvoGit.Agent.DelegationHints.maybe_append_read_delegation_hint(
-              output,
-              read_hints,
-              read_child_paths,
-              read_threshold,
-              delegation_level
-            )
-          else
-            {output, read_hints}
-          end
-
-        {acc_results ++ [{index, tool_call_id, name, output}], hints, read_hints}
-      end)
+      Enum.reduce(
+        indexed_calls,
+        {[], initial_hints, read_initial_hints},
+        &execute_indexed_call(&1, &2, ctx)
+      )
 
     # Store updated hints in process dictionary for do_turn to pick up
     Process.put(:delegation_hints, final_hints)
     Process.put(:read_delegation_hints, read_final_hints)
 
     results
+  end
+
+  # Executes one indexed tool call, sanitizes its output, and threads the
+  # write/read delegation hints through the batch accumulator.
+  defp execute_indexed_call({call, index}, {acc_results, hints, read_hints}, ctx) do
+    name = ReqLLM.ToolCall.name(call)
+    args = ReqLLM.ToolCall.args_map(call)
+    tool_call_id = call.id || name || "unknown"
+
+    output =
+      execute_tool_with_timeout(
+        name,
+        args,
+        ctx.agent_id,
+        ctx.repo_path,
+        ctx.repo_root,
+        ctx.node_path,
+        ctx.max_timeout
+      )
+
+    output = maybe_append_redundant_cd_warning(output, name, args, ctx.repo_path, ctx.repo_root)
+
+    # Track delegation hints for write tools (skip during conflict resolution)
+    {output, hints} = track_write_delegation_hint(output, hints, name, args, ctx)
+
+    # Track read delegation hints for read tools (skip during conflict resolution)
+    {output, read_hints} = track_read_delegation_hint(output, read_hints, name, args, ctx)
+
+    {acc_results ++ [{index, tool_call_id, name, output}], hints, read_hints}
+  end
+
+  # Runs a single tool call inside a tool slot with an async task, bounded
+  # timeout, and output sanitization/truncation feedback.
+  defp execute_tool_with_timeout(
+         name,
+         args,
+         agent_id,
+         repo_path,
+         repo_root,
+         node_path,
+         max_timeout
+       ) do
+    tool_timeout =
+      Map.get(args, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
+
+    tool_timeout = min(tool_timeout, max_timeout)
+
+    AgentScheduler.with_tool_slot(agent_id, fn ->
+      task =
+        Task.async(fn ->
+          EvoGit.Agent.Tools.execute(
+            name,
+            args,
+            repo_path,
+            repo_root,
+            node_path
+          )
+        end)
+
+      case Task.yield(task, tool_timeout) || Task.shutdown(task) do
+        {:ok, {:error, reason}} ->
+          "Error: #{inspect(reason)}"
+
+        {:ok, result} ->
+          {sanitized, truncation_info} =
+            OutputSanitizer.sanitize_and_truncate(result, name, args)
+
+          EvoGit.Agent.TruncationFeedback.append_truncation_feedback(
+            sanitized,
+            truncation_info,
+            name
+          )
+
+        {:exit, reason} ->
+          "Error: Tool execution crashed: #{inspect(reason)}"
+
+        nil ->
+          "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
+      end
+    end)
+  end
+
+  # Appends the write-tool delegation hint when the write threshold is
+  # exceeded (skipped during conflict resolution).
+  defp track_write_delegation_hint(output, hints, name, args, ctx) do
+    if ctx.threshold > 0 do
+      child_paths =
+        EvoGit.Agent.DelegationHints.extract_child_paths(
+          name,
+          args,
+          ctx.node_path,
+          ctx.repo_path
+        )
+
+      child_paths =
+        EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts(
+          child_paths,
+          ctx.conflict_files
+        )
+
+      EvoGit.Agent.DelegationHints.maybe_append_delegation_hint(
+        output,
+        hints,
+        child_paths,
+        ctx.threshold
+      )
+    else
+      {output, hints}
+    end
+  end
+
+  # Appends the read-tool delegation hint when the read threshold is exceeded
+  # (skipped during conflict resolution).
+  defp track_read_delegation_hint(output, read_hints, name, args, ctx) do
+    if ctx.read_threshold > 0 do
+      read_child_paths =
+        EvoGit.Agent.DelegationHints.extract_read_child_paths(
+          name,
+          args,
+          ctx.node_path,
+          ctx.repo_path
+        )
+
+      read_child_paths =
+        EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts(
+          read_child_paths,
+          ctx.conflict_files
+        )
+
+      EvoGit.Agent.DelegationHints.maybe_append_read_delegation_hint(
+        output,
+        read_hints,
+        read_child_paths,
+        ctx.read_threshold,
+        ctx.delegation_level
+      )
+    else
+      {output, read_hints}
+    end
+  end
+
+  # Caches conflict files once per batch to avoid repeated git calls.
+  defp cached_conflict_files(repo_path) do
+    case Git.conflict_files(repo_path) do
+      {:ok, files} -> files
+      _ -> []
+    end
   end
 
   # --- Redundant CD Warning ---

@@ -26,14 +26,14 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 2. Set up Erlang/OTP + Elixir (`.tool-versions` pins OTP 29, Elixir 1.20.1)
 3. Set up Rust toolchain (stable)
 4. Install system dependencies (Linux: webkit2gtk, libayatana, libdbus; macOS: none; Windows: none)
-5. Cache Mix deps (`deps/`), Mix build (`_build/`), Rust target, Tauri CLI
+5. Cache Mix deps (`deps/`), Mix build (`_build/`), Rust target, Tauri CLI (npm `@tauri-apps/cli`, cached in `~/tauri-cli`)
 6. Fetch Mix deps + compile
 7. Bundle assets (`assets.setup` + `assets.deploy`)
 8. Bundle vendor binaries (ripgrep, git)
 9. Build `genesis_desktop` release (`MIX_ENV=prod mix release genesis_desktop`)
 10. Build `genesis_remote` release (`MIX_ENV=prod mix release genesis_remote`) — headless daemon tarball
 11. Copy release to `desktop/src-tauri/resources/genesis-backend/`
-12. Build Tauri app (`cargo tauri build`) → native installers
+12. Build Tauri app (`tauri build`) → native installers
 
 **Platform matrix** (4 parallel jobs, each on native runners):
 
@@ -50,7 +50,10 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 - **Linux x86_64**: Downloads musl-linked ripgrep (static binary).
 - **Nix environment variable** (`NIX_PATH`): passed through to release build steps.
 
-**Cache layers**: Mix deps (`deps/`), Mix build (`_build/`), Rust target (`Swatinem/rust-cache@v2`), Tauri CLI binary.
+**Cache layers**: Mix deps (`deps/`), Mix build (`_build/`), Rust target (`Swatinem/rust-cache@v2`), Tauri CLI. The CLI is installed from npm `@tauri-apps/cli` (prebuilt binaries for all platforms, including linux-arm64-gnu) and cached in `~/tauri-cli` (POSIX) / `%APPDATA%\npm` (Windows); the `tauri` bin dir is appended to PATH unconditionally so a cache hit still yields a working CLI.
+
+**Known issues**:
+- **tauri-cli has no prebuilt aarch64-linux-gnu binary**: `tauri-cli` GitHub Releases ship prebuilt binaries for x86_64-linux, macOS, and Windows only — not linux-arm64. `cargo-binstall` therefore falls back to `cargo install` (full source compile) on the `ubuntu-24.04-arm` job, which is slow and flaky. The action instead installs the npm package `@tauri-apps/cli`, which ships prebuilt binaries for all platforms including `linux-arm64-gnu`. Never fall back to `cargo install` for the CLI: transitive dep `zune-jpeg 0.5.15` (`image 0.25.10` → `tauri-bundler 2.9.4`) has a known compile bug ("macro expansion ends with an incomplete expression" at `src/mcu_prog.rs:463`; `zune-core 0.5.2` yanked 2026-08-07, fixed by 0.5.3 the same day; upstream `zune-image` issue #424) that makes source compiles flaky and slow (~3-5 min per cache miss), and deps can't be pinned via `cargo install` (resolution is timing-dependent). Because the npm wrapper passes args through verbatim while `cargo` prepends `tauri` as argv[1], builds must invoke `tauri build` — `cargo tauri build` does NOT work with the npm-installed CLI (`error: unrecognized subcommand 'tauri'`).
 
 ## Constraints
 

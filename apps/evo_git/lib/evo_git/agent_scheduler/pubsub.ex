@@ -6,43 +6,19 @@ defmodule EvoGit.AgentScheduler.PubSub do
   for backward compatibility, and **enriched delta broadcasts** that carry
   specific change data so subscribers (e.g. the dashboard) can apply incremental
   updates without re-reading entire ETS tables.
+
+  The throttle — `EvoGit.AgentScheduler.PubSub.Throttle` — is a regular child
+  of the application supervision tree: declared in `EvoGit.Application`'s
+  `children` immediately after `Phoenix.PubSub`, it runs under
+  `EvoGit.Supervisor` (one_for_one) with the default `:permanent` restart.
+  Until the process is up (supervisor restart window, contexts where the app
+  isn't started), `broadcast_agents_updated/0` degrades gracefully to an
+  immediate broadcast.
   """
 
   @throttle_ms 200
   @agent_topic "agents"
   @config_topic "scheduler_config"
-
-  # ---------------------------------------------------------------------------
-  # Throttle process (internal)
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Starts the throttle process under a registered name.
-
-  Called once at application startup. Until the process is started,
-  `broadcast_agents_updated/0` degrades gracefully to an immediate broadcast.
-  """
-  def start_throttle do
-    unless Process.whereis(__MODULE__.Throttle) do
-      pid = spawn(fn -> throttle_loop(nil) end)
-      Process.register(pid, __MODULE__.Throttle)
-    end
-
-    :ok
-  end
-
-  defp throttle_loop(timer_ref) do
-    receive do
-      :flush ->
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agents_updated})
-        throttle_loop(nil)
-
-      :schedule ->
-        if timer_ref, do: Process.cancel_timer(timer_ref)
-        new_ref = Process.send_after(self(), :flush, @throttle_ms)
-        throttle_loop(new_ref)
-    end
-  end
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -65,7 +41,7 @@ defmodule EvoGit.AgentScheduler.PubSub do
         Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agents_updated})
 
       pid ->
-        send(pid, :schedule)
+        GenServer.cast(pid, :schedule)
     end
 
     :ok

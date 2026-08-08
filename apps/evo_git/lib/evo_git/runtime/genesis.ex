@@ -41,10 +41,7 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
-    # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
-    toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
-    cli_repos = Keyword.get(opts, :foreign_repos, [])
-    foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
+    foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
     case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
            foreign_repos: foreign_repos,
@@ -96,10 +93,7 @@ defmodule EvoGit.Runtime.Genesis do
           scripts
       end
 
-    # Load foreign repos: genesis.toml defaults merged with CLI-provided repos (CLI takes precedence)
-    toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
-    cli_repos = Keyword.get(opts, :foreign_repos, [])
-    foreign_repos = Helpers.merge_foreign_repos(toml_repos, cli_repos)
+    foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
     # --- Phase 1: Architecture (CodebaseLead as root agent) ---
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
@@ -115,20 +109,7 @@ defmodule EvoGit.Runtime.Genesis do
 
     case AgentScheduler.run_agent(architect_spec) do
       {:ok, architect_output} ->
-        # Validate genesis.toml integrity in case the CodebaseLead agent modified it.
-        if scripts != nil do
-          case ProjectConfig.read(repo_path) do
-            nil ->
-              Logger.warning(
-                "Genesis: genesis.toml corrupted after architecture phase, re-writing worktree script"
-              )
-
-              ProjectConfig.write_worktree_script(repo_path, scripts)
-
-            _ ->
-              :ok
-          end
-        end
+        ensure_worktree_script(repo_path, scripts, "architecture")
 
         run_implementation_phase(
           objective,
@@ -198,20 +179,7 @@ defmodule EvoGit.Runtime.Genesis do
 
     case AgentScheduler.run_agent(manager_spec) do
       {:ok, manager_output} ->
-        # Validate genesis.toml integrity in case the Manager agent modified it.
-        if scripts != nil do
-          case ProjectConfig.read(repo_path) do
-            nil ->
-              Logger.warning(
-                "Genesis: genesis.toml corrupted after implementation phase, re-writing worktree script"
-              )
-
-              ProjectConfig.write_worktree_script(repo_path, scripts)
-
-            _ ->
-              :ok
-          end
-        end
+        ensure_worktree_script(repo_path, scripts, "implementation")
 
         Helpers.notify_finalizing(task_id)
 
@@ -245,6 +213,24 @@ defmodule EvoGit.Runtime.Genesis do
 
         Helpers.notify_finalizing(task_id)
         Helpers.merge_and_report(repo_path, architect_output, "genesis")
+    end
+  end
+
+  # Validate genesis.toml integrity in case a root agent (CodebaseLead/Manager) modified it.
+  # Re-writes the worktree script when the file was corrupted during the phase.
+  defp ensure_worktree_script(repo_path, scripts, phase_label) do
+    if scripts != nil do
+      case ProjectConfig.read(repo_path) do
+        nil ->
+          Logger.warning(
+            "Genesis: genesis.toml corrupted after #{phase_label} phase, re-writing worktree script"
+          )
+
+          ProjectConfig.write_worktree_script(repo_path, scripts)
+
+        _ ->
+          :ok
+      end
     end
   end
 

@@ -272,7 +272,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
                   "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name}"
                 )
 
-              {:error, _, msg} ->
+              {:error, {_, msg}} ->
                 Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
                 raise "Failed to create worktree for agent #{agent_id}"
             end

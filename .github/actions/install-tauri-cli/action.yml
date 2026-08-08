@@ -1,5 +1,5 @@
 name: Install Tauri CLI
-description: Cache, install, and verify a pinned cargo-tauri version
+description: Cache, install, and verify a pinned tauri-cli version (npm @tauri-apps/cli)
 
 inputs:
   version:
@@ -9,32 +9,35 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Cache Tauri CLI binary
+    - name: Cache Tauri CLI
       id: cache
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
-        path: |
-          ~/.cargo/bin/cargo-tauri
-          ~/.cargo/bin/cargo-tauri.exe
+        path: ${{ runner.os == 'Windows' && '~\AppData\Roaming\npm' || '~/tauri-cli' }}
         key: tauri-cli-${{ runner.os }}-${{ runner.arch }}-${{ inputs.version }}
 
-    - name: Install cargo-binstall
-      if: steps.cache.outputs.cache-hit != 'true'
-      uses: cargo-bins/cargo-binstall@e00d2c94cc0067b77737821097a62d91c0301baa # v1.21.1
-      with:
-        version: "1.21.1"
-
-    - name: Install Tauri CLI
-      if: steps.cache.outputs.cache-hit != 'true'
+    - name: Install Tauri CLI (Linux/macOS)
+      if: runner.os != 'Windows' && steps.cache.outputs.cache-hit != 'true'
       shell: bash
       env:
         TAURI_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        cargo binstall tauri-cli \
-          --version "=${TAURI_VERSION}" \
-          --disable-strategies quick-install \
-          --no-confirm
+        npm install -g --prefix "$HOME/tauri-cli" "@tauri-apps/cli@${TAURI_VERSION}" --no-audit --no-fund
+
+    - name: Install Tauri CLI (Windows)
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        TAURI_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        npm install -g "@tauri-apps/cli@${TAURI_VERSION}" --no-audit --no-fund
+
+    - name: Add Tauri CLI bin to PATH
+      if: runner.os != 'Windows'
+      shell: bash
+      run: echo "$HOME/tauri-cli/bin" >> "$GITHUB_PATH"
 
     - name: Verify Tauri CLI version
       shell: bash
@@ -42,7 +45,7 @@ runs:
         TAURI_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        ACTUAL_VERSION="$(cargo tauri --version)"
+        ACTUAL_VERSION="$(tauri --version)"
         EXPECTED_VERSION="tauri-cli ${TAURI_VERSION}"
         if [[ "${ACTUAL_VERSION}" != "${EXPECTED_VERSION}" ]]; then
           echo "expected ${EXPECTED_VERSION}, found ${ACTUAL_VERSION}" >&2

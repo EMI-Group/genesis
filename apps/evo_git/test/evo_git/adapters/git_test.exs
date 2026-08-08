@@ -126,7 +126,7 @@ defmodule EvoGit.Adapters.GitTest do
     assert {:ok, _} = Git.remove_note(tmp_dir, commit_sha)
 
     # Show note again, should fail because note doesn't exist
-    assert {:conflict, _} = Git.show_note(tmp_dir, commit_sha)
+    assert {:error, {:conflict, _}} = Git.show_note(tmp_dir, commit_sha)
   end
 
   describe "get_note/3" do
@@ -167,7 +167,7 @@ defmodule EvoGit.Adapters.GitTest do
 
       assert {:ok, _} = Git.add_note(tmp_dir, commit_sha, "plain text note")
 
-      assert :error = Git.get_note(tmp_dir, commit_sha)
+      assert {:error, {:invalid_json, _}} = Git.get_note(tmp_dir, commit_sha)
     end
 
     test "returns error when no note exists", %{tmp_dir: tmp_dir} do
@@ -177,7 +177,7 @@ defmodule EvoGit.Adapters.GitTest do
 
       {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
 
-      assert :error = Git.get_note(tmp_dir, commit_sha)
+      assert {:error, {:no_note, _}} = Git.get_note(tmp_dir, commit_sha)
     end
   end
 
@@ -213,7 +213,7 @@ defmodule EvoGit.Adapters.GitTest do
       assert {:ok, _} = Git.delete_ref(tmp_dir, ref_name)
 
       # Verify it no longer resolves
-      assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_name)
+      assert {:error, {_, _}} = Git.rev_parse(tmp_dir, ref_name)
     end
 
     test "updates an existing ref to a new SHA", %{tmp_dir: tmp_dir} do

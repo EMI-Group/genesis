@@ -270,7 +270,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       CompleteTask.complete("agent_no_base", "Result text", base_commit, base_commit: nil)
 
       # Verify no note was created
-      assert :error = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
+      assert {:error, {:no_note, _}} = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
 
       Process.delete(:repo_path)
     end
@@ -339,7 +339,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert result.result == "Simple result"
 
       # No base_commit in opts, so no metadata note
-      assert :error = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
+      assert {:error, {:no_note, _}} = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
 
       :ets.delete(:evogit_sched_meta, "agent_defaults")
       :ets.delete(:evogit_agent_state, "agent_defaults")
@@ -403,12 +403,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       tmp_dir: tmp_dir,
       commit_sha: commit_sha
     } do
-      # No note was added, so it should return :error
-      assert :error = CompleteTask.get_agent_metadata(tmp_dir, commit_sha)
+      # No note was added, so it should return an error
+      assert {:error, {:no_note, _}} = CompleteTask.get_agent_metadata(tmp_dir, commit_sha)
     end
 
     test "returns error for a commit that doesn't exist" do
-      assert :error = CompleteTask.get_agent_metadata("/nonexistent/path", "abc123")
+      assert {:error, {:enoent, _}} = CompleteTask.get_agent_metadata("/nonexistent/path", "abc123")
     end
   end
 
@@ -525,8 +525,8 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       ref_final = "refs/genesis/archive/T2-A2-final"
 
       # These refs should not exist
-      assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_start)
-      assert {:error, _, _} = Git.rev_parse(tmp_dir, ref_final)
+      assert {:error, {_, _}} = Git.rev_parse(tmp_dir, ref_start)
+      assert {:error, {_, _}} = Git.rev_parse(tmp_dir, ref_final)
 
       # No archive records should be written
       assert :ets.lookup(:evogit_archive_records, {"2", "agent_arc2"}) == []

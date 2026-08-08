@@ -24,7 +24,7 @@ defmodule EvoGit.RemoteBootstrap do
 
   require Logger
 
-  @github_repo "BillHuang2001/genesis"
+  @github_repo "EMI-Group/genesis"
   @latest_release_api_url "https://api.github.com/repos/#{@github_repo}/releases/latest"
   @latest_download_base_url "https://github.com/#{@github_repo}/releases/latest/download/"
 

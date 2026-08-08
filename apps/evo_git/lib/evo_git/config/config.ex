@@ -423,16 +423,15 @@ defmodule EvoGit.Config do
   Reads and returns the parsed user config TOML file.
 
   Returns `%{}` if the file is not found or cannot be parsed.
+
+  The parsed map is cached in `:persistent_term` keyed by file path and
+  validated against `File.stat` mtime+size on every call, so external edits
+  to `config.toml` are picked up automatically. See `cached_file_read/2`.
   """
   @spec user_config() :: map()
   def user_config do
     path = config_path()
-
-    if File.exists?(path) do
-      read_toml_file(path, %{}, description: "config")
-    else
-      %{}
-    end
+    cached_file_read(path, fn -> read_toml_file(path, %{}, description: "config") end)
   end
 
   @doc false
@@ -482,7 +481,17 @@ defmodule EvoGit.Config do
              config = strip_flat_llm_fields(config),
              string_config = stringify_keys(config),
              {:ok, toml} <- TomlElixir.encode(string_config) do
-          File.write(path, toml)
+          case File.write(path, toml) do
+            :ok ->
+              # Explicit invalidation: the mtime+size check would eventually
+              # catch the rewrite, but erasing now covers coarse-mtime
+              # filesystems and same-second same-size rewrites.
+              invalidate_file_cache(path)
+              :ok
+
+            {:error, reason} ->
+              {:error, reason}
+          end
         else
           {:error, reason} -> {:error, reason}
         end
@@ -668,16 +677,16 @@ defmodule EvoGit.Config do
   Reads and returns the parsed credentials TOML file.
 
   Returns `%{}` if the file is not found or cannot be parsed.
+
+  Cached like `user_config/0` (persistent_term + `File.stat` mtime/size
+  validation). The ReqLLM `put_key` side effects in `read_credentials_file/1`
+  run only on an actual file read (cache miss) — on a cache hit the keys were
+  already loaded at first read, and `save_credentials/1` sets them explicitly.
   """
   @spec credentials() :: map()
   def credentials do
     path = credentials_path()
-
-    if File.exists?(path) do
-      read_credentials_file(path)
-    else
-      %{}
-    end
+    cached_file_read(path, fn -> read_credentials_file(path) end)
   end
 
   defp read_credentials_file(path) when is_binary(path) do
@@ -756,6 +765,7 @@ defmodule EvoGit.Config do
          {:ok, toml} <- TomlElixir.encode(string_creds),
          {:ok, contents} <- ensure_trailing_newline(toml),
          :ok <- File.write(path, contents) do
+      invalidate_file_cache(path)
       :ok
     else
       {:error, reason} -> {:error, reason}
@@ -792,23 +802,12 @@ defmodule EvoGit.Config do
   - **Linux**: `$XDG_CONFIG_HOME/genesis` (defaults to `~/.config/genesis`)
   - **macOS**: `~/Library/Application Support/genesis`
   - **Windows**: `%APPDATA%/genesis` (defaults to `~/genesis`)
+
+  Delegates to `EvoGit.Platform.config_dir/1`.
   """
   @spec config_dir() :: String.t()
   def config_dir do
-    case EvoGit.Platform.os() do
-      os when os in [:linux, :unknown] ->
-        xdg = System.get_env("XDG_CONFIG_HOME")
-        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".config")
-        Path.join(base, "genesis")
-
-      :macos ->
-        Path.join([System.user_home!(), "Library", "Application Support", "genesis"])
-
-      :windows ->
-        appdata = System.get_env("APPDATA")
-        base = if appdata && appdata != "", do: appdata, else: System.user_home!()
-        Path.join(base, "genesis")
-    end
+    EvoGit.Platform.config_dir("genesis")
   end
 
   @doc """
@@ -836,7 +835,7 @@ defmodule EvoGit.Config do
   @spec tools_search_enabled?() :: boolean()
   def tools_search_enabled? do
     config = resolve()
-    
+
     case get_in(config, [:tools, :search, :enabled]) do
       true ->
         provider = get_in(config, [:tools, :search, :provider]) || :tavily
@@ -918,4 +917,44 @@ defmodule EvoGit.Config do
   end
 
   defp get_in_path(_map, _path), do: nil
+
+  # --- File Caching (config.toml / credentials.toml) ---
+
+  # Caches the parsed content of a config file in `:persistent_term`, keyed by
+  # file path, storing `{mtime, size, parsed_map}`. Every call stats the file
+  # (cheap) and only reuses the cache entry when BOTH mtime and size match, so
+  # external edits are picked up automatically. Cache misses run `reader` (the
+  # read + TOML-decode step) and store its result — including the
+  # default-on-parse-failure case, so a corrupt-file warning is not re-emitted
+  # on every call until the file changes.
+  #
+  # Only `user_config/0` and `credentials/0` use this. `read_toml_file/3` is
+  # deliberately NOT cached here — it is also used for `genesis.toml` and
+  # `remote_connections.toml`, which must stay fresh.
+  defp cached_file_read(path, reader) when is_binary(path) do
+    case File.stat(path) do
+      {:ok, stat} ->
+        case :persistent_term.get(file_cache_key(path), :not_cached) do
+          {mtime, size, parsed} when mtime == stat.mtime and size == stat.size ->
+            parsed
+
+          _ ->
+            parsed = reader.()
+            :persistent_term.put(file_cache_key(path), {stat.mtime, stat.size, parsed})
+            parsed
+        end
+
+      {:error, _} ->
+        # Missing or unreadable file — same result as the old File.exists? gate.
+        %{}
+    end
+  end
+
+  defp file_cache_key(path) when is_binary(path) do
+    {__MODULE__, :file_cache, path}
+  end
+
+  defp invalidate_file_cache(path) when is_binary(path) do
+    :persistent_term.erase(file_cache_key(path))
+  end
 end

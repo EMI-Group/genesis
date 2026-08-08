@@ -19,7 +19,7 @@ None — leaf directory (modules: `skills.ex`, `skill.ex`, `executor.ex`, `crud.
 |--------|---------|
 | `EvoGit.Skills` | Top-level API — loading, parsing, YAML, delegation wrappers |
 | `EvoGit.Skills.Skill` | `%Skill{}` struct |
-| `EvoGit.Skills.Executor` | Skill execution — find, extract bash block, substitute params, run script |
+| `EvoGit.Skills.Executor` | Skill execution — find, extract bash block, positional-param substitution, sandboxed run |
 | `EvoGit.Skills.CRUD` | Skill file management — create, read, update, delete, validate |
 | `EvoGit.Skills.ContextIntegration` | Hierarchical enablement via CONTEXT.md frontmatter |
 
@@ -37,9 +37,11 @@ None — leaf directory (modules: `skills.ex`, `skill.ex`, `executor.ex`, `crud.
 
 | Function | Purpose |
 |----------|---------|
-| `execute/4` | Find a skill by name, substitute `{{params}}`, run its bash block, return output |
+| `execute/4` | Find a skill by name, build positional refs, run its bash block (sandboxed), return output |
 | `extract_bash_block/1` | Extract the first ```bash fenced block from markdown |
-| `substitute_params/3` | Replace `{{param_name}}` placeholders with arg values |
+| `build_positional_script/3` | **Injection-safe substitution** — replaces `{{param}}` with `"$N"` refs, returns `{script_with_refs, values}` (values passed as argv, never inlined) |
+| `substitute_params/3` | ⚠️ LEGACY raw `String.replace` — kept byte-for-byte for API/test compatibility, **NOT safe for shell execution** (runtime path does not use it) |
+| `run_script/3` | Writes script to a `resolve_tmpdir` temp file, executes via `EvoGit.sandbox_run/4` (Unix) or direct `System.cmd` argv (Windows) with values as positional args |
 
 ### CRUD Operations (delegates to `EvoGit.Skills.CRUD`)
 
@@ -68,6 +70,66 @@ The agent loop (`EvoGit.Agent`, lines ~120-131) loads skills at startup: `load_s
 
 Fields: `name`, `description`, `parameters` (list of `{name, type, description, required, default}` maps), `body`, `file_path`.
 
+## Security Design
+
+### Positional substitution — values NEVER enter the script text
+
+Text-level quoting is provably unsafe in all bash contexts (a `"`-containing value placed
+inside a double-quoted placeholder region can break out of any quoting wrapper). The runtime
+execution path therefore uses a **positional-parameter scheme** instead:
+
+- `EvoGit.Skills.Executor.build_positional_script/3` iterates `parameters` in list order and
+  replaces ALL occurrences of each `{{param}}` in the script with a **double-quoted positional
+  reference** `"$N"` (N = 1-indexed parameter position). It returns `{script_with_refs, values}`
+  where `values` is the list of resolved values (`get_param_value/2`: provided arg → default →
+  empty string) in the same order.
+- `execute_skill/3` passes `values` to bash as **argv** (`$1..$N`) — via
+  `EvoGit.sandbox_run(repo_path, "bash", [tmp_file | values], nil)` on Unix and
+  `System.cmd(bash_path, [tmp_file | values], ...)` on Windows. Both arg-list forms are
+  injection-safe: no metacharacter in a value (`;`, backticks, `$(...)`, quotes) can execute,
+  and values are echoed literally.
+- The `{{param}}` contract still works for skill scripts: bare tokens (`DEBUG={{debug}}` →
+  `DEBUG="$1"`), inside double quotes (`echo "{{name}}"` → `echo ""$1""`), and partial-token
+  concatenation all resolve correctly.
+- **Caveat**: a placeholder inside SINGLE quotes (`'{{name}}'`) now renders literally (the
+  quoted string contains `"$N"` verbatim) — only bare and double-quoted contexts are supported.
+
+### Sandbox routing
+
+`run_script/3` (Unix branch) writes the script to
+`Path.join(EvoGit.Sandbox.resolve_tmpdir(), "evogit_skill_<unique>.sh")` — NOT
+`System.tmp_dir!()`: `resolve_tmpdir/0` guarantees a dir under `/tmp` or `/var/tmp`, which the
+Linux systemd-run backend explicitly grants via `ReadWritePaths=-<...>` (sandbox/linux.ex) and
+the macOS sandbox-exec profile allows via tmp write rules (sandbox/macos.ex). The script is
+chmod 0o755, then executed via `EvoGit.sandbox_run(repo_path, "bash", [tmp_file | values], nil)`
+→ `{output, exit_code}`. On Linux this yields systemd-run isolation (values arrive as
+positional params through the sandbox's own per-arg shell-escaping wrapper); in test env the
+`Linux.enabled?/0` `@mix_env == :test` gate routes to the disabled plain-bash path, so tests
+stay hermetic. Output formatting is unchanged:
+`"Skill executed successfully:\n#{String.trim(output)}"` (exit 0) /
+`"Skill failed with exit code N:\n#{String.trim(output)}"` (non-zero). The tmp file is removed
+best-effort (`File.rm/1` result ignored). Windows keeps its status quo: bash-not-found error
+branch unchanged, direct `System.cmd(bash_path, [tmp_file | values], ...)` (no sandbox on
+Windows; argv execution is injection-safe).
+
+### `substitute_params/3` — legacy warning
+
+`substitute_params/3` is a **raw `String.replace`** that inlines values verbatim into the
+script text — LLM-controlled argument values containing shell metacharacters would execute.
+It is **NOT safe for execution** and is no longer used by the runtime path; it is kept
+byte-for-byte for API and test compatibility (pinned by `skills_test.exs`). Its `@doc` carries
+an explicit warning.
+
+### Security tests
+
+`executor_security_test.exs` in this node covers: pinned `substitute_params/3` raw behavior,
+`build_positional_script/3` refs/values/fallbacks, and end-to-end injection resistance through
+the FULL `Executor.execute/4` path (real bash; payloads `; rm -rf <sentinel>; #`, backtick
+`touch <marker>`, `$(touch <marker>)` — sentinel must survive, marker must not be created, and
+the literal payload must appear in the output). The file currently lives in the lib tree
+because the app test tree is outside this node's write scope — it is a normal ExUnit test file
+(`async: false`) awaiting relocation to `apps/evo_git/test/evo_git/`.
+
 ## Constraints
 
 - Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive); files named `{name}.md`
@@ -84,6 +146,8 @@ YAML frontmatter delimited by `---`, containing `name` (required), `description`
 
 1. **Find** the skill by name in the loaded list
 2. **Extract** the first ```bash code block from the body
-3. **Substitute** `{{param_name}}` placeholders with actual arguments
-4. **Execute** the script via bash in the repo directory
+3. **Substitute** `{{param_name}}` placeholders with positional references (`"$N"`) and pass
+   the values as bash argv — values never enter the script text (see Security Design)
+4. **Execute** the script via `EvoGit.sandbox_run/4` (Unix; systemd-run on Linux,
+   sandbox-exec on macOS) or direct `System.cmd` argv (Windows) in the repo directory
 5. **Return** stdout/stderr; if no bash block found, return body text as-is

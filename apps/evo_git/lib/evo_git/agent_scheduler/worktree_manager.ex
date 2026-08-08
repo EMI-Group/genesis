@@ -174,11 +174,19 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # Matches all branches with the `evogit-agent-` prefix and deletes each one.
   # Called during initialization to prevent stale branches from accumulating.
   defp clean_orphaned_branches(repo_root) do
-    Git.list_branches(repo_root, "evogit-agent-*")
-    |> Enum.each(fn branch ->
-      Logger.info("WorktreeManager: Cleaning up orphaned branch #{branch}")
-      Git.delete_branch(repo_root, branch)
-    end)
+    case Git.list_branches(repo_root, "evogit-agent-*") do
+      {:ok, branches} ->
+        Enum.each(branches, fn branch ->
+          Logger.info("WorktreeManager: Cleaning up orphaned branch #{branch}")
+          Git.delete_branch(repo_root, branch)
+        end)
+
+      {:error, {tag, output}} ->
+        Logger.warning(
+          "WorktreeManager: Failed to list evogit-agent-* branches for cleanup: " <>
+            "{#{inspect(tag)}, #{inspect(output)}}"
+        )
+    end
 
     :ok
   end

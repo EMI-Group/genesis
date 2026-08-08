@@ -16,6 +16,12 @@ defmodule EvoGit.Agent.DelegationHints do
   # Read/investigation tools whose paths should be tracked for read delegation hints
   @read_tools_for_delegation ~w(read_file rg glob list_dir)
 
+  # Shape of a per-child-path hint entry (shared by the write- and read-tool
+  # hint families): `count` holds the number of tracked tool calls, `hint_shown`
+  # gates the once-only emission of the delegation nudge.
+  @type hint_entry :: %{count: non_neg_integer(), hint_shown: boolean()}
+  @type hints :: %{optional(String.t()) => hint_entry()}
+
   # --- Threshold accessors ---
 
   def delegation_hint_threshold do
@@ -106,6 +112,7 @@ defmodule EvoGit.Agent.DelegationHints do
             else
               remainder
             end
+
           extract_first_segment_from_remainder(remainder, normalized_node)
         else
           []
@@ -142,11 +149,74 @@ defmodule EvoGit.Agent.DelegationHints do
     end
   end
 
-  def update_delegation_hints(hints, child_paths) do
+  # --- Shared internal helpers (used by both write- and read-tool hint families) ---
+
+  # Increments the delegation-hint counter for each child path in the hints
+  # map. `counter_key` is the entry key holding the call count (`:count` for
+  # both the write- and read-tool families); `hint_shown` is the once-only
+  # emission flag.
+  defp update_hints(hints, child_paths, counter_key) do
     Enum.reduce(child_paths, hints, fn child_path, acc ->
-      current = Map.get(acc, child_path, %{count: 0, hint_shown: false})
-      Map.put(acc, child_path, %{current | count: current.count + 1})
+      current = Map.get(acc, child_path, %{counter_key => 0, hint_shown: false})
+      Map.put(acc, child_path, Map.update!(current, counter_key, &(&1 + 1)))
     end)
+  end
+
+  # Shared hint-append pipeline: bumps the counters, collects the child paths
+  # that crossed `threshold` for the first time, renders each via
+  # `message_builder.(child_path, count, threshold)`, marks them hint-shown,
+  # and appends the joined hint text to the output.
+  defp maybe_append_hint(output, hints, child_paths, threshold, counter_key, message_builder) do
+    new_hints = update_hints(hints, child_paths, counter_key)
+
+    hint =
+      child_paths
+      |> Enum.filter(fn child_path ->
+        entry = Map.get(new_hints, child_path)
+        entry && Map.get(entry, counter_key) >= threshold && !entry.hint_shown
+      end)
+      |> Enum.map(fn child_path ->
+        message_builder.(child_path, entry_count(new_hints, child_path), threshold)
+      end)
+      |> Enum.join("\n\n")
+
+    if hint != "" do
+      # Mark these paths as hint-shown
+      marked_hints =
+        Enum.reduce(child_paths, new_hints, fn child_path, acc ->
+          entry = Map.get(acc, child_path)
+
+          if entry && Map.get(entry, counter_key) >= threshold do
+            Map.put(acc, child_path, %{entry | hint_shown: true})
+          else
+            acc
+          end
+        end)
+
+      {output <> "\n\n" <> hint, marked_hints}
+    else
+      {output, new_hints}
+    end
+  end
+
+  defp write_hint_message(child_path, _count, threshold) do
+    "💡 **Delegation Hint**: You've been editing files in `#{child_path}` for #{threshold}+ turns. " <>
+      "Consider finishing your current changes, committing them, and then spawning a subagent at `#{child_path}` to continue the work. " <>
+      "The subagent will run in its own isolated worktree on top of your committed changes and can handle the implementation autonomously."
+  end
+
+  defp read_hint_message(child_path, count, _threshold) do
+    "💡 **Delegation Hint**: You've been reading/investigating files in `#{child_path}` for #{count} turns. " <>
+      "As a high-level agent, investigation of child subtrees should be delegated — spawn a `subagent_codebase_investigator` (or `subagent_manager`) at `#{child_path}` and let it investigate its own domain. " <>
+      "Your turns are for routing decisions, coordination, and review — not deep investigation."
+  end
+
+  @doc """
+  Increments the write-tool delegation hint counter for each child path.
+  """
+  @spec update_delegation_hints(hints(), [String.t()]) :: hints()
+  def update_delegation_hints(hints, child_paths) do
+    update_hints(hints, child_paths, :count)
   end
 
   # When the agent is resolving merge conflicts, it MUST edit files
@@ -160,43 +230,15 @@ defmodule EvoGit.Agent.DelegationHints do
     []
   end
 
+  @doc """
+  Appends a delegation nudge to `output` when a child directory's write-tool
+  call count crosses `threshold` for the first time. Returns the updated output
+  and hints map.
+  """
+  @spec maybe_append_delegation_hint(String.t(), hints(), [String.t()], pos_integer()) ::
+          {String.t(), hints()}
   def maybe_append_delegation_hint(output, hints, child_paths, threshold) do
-    new_hints = update_delegation_hints(hints, child_paths)
-
-    # Check if any child path has crossed the threshold for the first time
-    hint =
-      child_paths
-      |> Enum.filter(fn child_path ->
-        entry = Map.get(new_hints, child_path)
-        entry && entry.count >= threshold && !entry.hint_shown
-      end)
-      |> Enum.map(fn child_path ->
-        "💡 **Delegation Hint**: You've been editing files in `#{child_path}` for #{threshold}+ turns. " <>
-          "Consider finishing your current changes, committing them, and then spawning a subagent at `#{child_path}` to continue the work. " <>
-          "The subagent will run in its own isolated worktree on top of your committed changes and can handle the implementation autonomously."
-      end)
-      |> Enum.join("\n\n")
-
-    {updated_output, updated_hints} =
-      if hint != "" do
-        # Mark these paths as hint-shown
-        marked_hints =
-          Enum.reduce(child_paths, new_hints, fn child_path, acc ->
-            entry = Map.get(acc, child_path)
-
-            if entry && entry.count >= threshold do
-              Map.put(acc, child_path, %{entry | hint_shown: true})
-            else
-              acc
-            end
-          end)
-
-        {output <> "\n\n" <> hint, marked_hints}
-      else
-        {output, new_hints}
-      end
-
-    {updated_output, updated_hints}
+    maybe_append_hint(output, hints, child_paths, threshold, :count, &write_hint_message/3)
   end
 
   # --- Read-Tool Delegation Hinting ---
@@ -241,13 +283,28 @@ defmodule EvoGit.Agent.DelegationHints do
     end
   end
 
+  @doc """
+  Increments the read-tool delegation hint counter for each child path.
+  """
+  @spec update_read_delegation_hints(hints(), [String.t()]) :: hints()
   def update_read_delegation_hints(read_hints, child_paths) do
-    Enum.reduce(child_paths, read_hints, fn child_path, acc ->
-      current = Map.get(acc, child_path, %{count: 0, hint_shown: false})
-      Map.put(acc, child_path, %{current | count: current.count + 1})
-    end)
+    update_hints(read_hints, child_paths, :count)
   end
 
+  @doc """
+  Appends an investigation delegation nudge to `output` when a child
+  directory's read-tool call count crosses `threshold` for the first time.
+  Only fires for high-level agents (`delegation_level == :high`). Returns the
+  updated output and read-hints map.
+  """
+  @spec maybe_append_read_delegation_hint(
+          String.t(),
+          hints(),
+          [String.t()],
+          pos_integer(),
+          atom()
+        ) ::
+          {String.t(), hints()}
   def maybe_append_read_delegation_hint(
         output,
         read_hints,
@@ -255,49 +312,14 @@ defmodule EvoGit.Agent.DelegationHints do
         threshold,
         delegation_level
       ) do
-    new_read_hints = update_read_delegation_hints(read_hints, child_paths)
-
-    # Only emit read delegation hints for high-level agents
-    {updated_output, updated_read_hints} =
-      if delegation_level == :high do
-        # Check if any child path has crossed the threshold for the first time
-        hint =
-          child_paths
-          |> Enum.filter(fn child_path ->
-            entry = Map.get(new_read_hints, child_path)
-            entry && entry.count >= threshold && !entry.hint_shown
-          end)
-          |> Enum.map(fn child_path ->
-            "💡 **Delegation Hint**: You've been reading/investigating files in `#{child_path}` for #{entry_count(new_read_hints, child_path)} turns. " <>
-              "As a high-level agent, investigation of child subtrees should be delegated — spawn a `subagent_codebase_investigator` (or `subagent_manager`) at `#{child_path}` and let it investigate its own domain. " <>
-              "Your turns are for routing decisions, coordination, and review — not deep investigation."
-          end)
-          |> Enum.join("\n\n")
-
-        if hint != "" do
-          # Mark these paths as hint-shown
-          marked_read_hints =
-            Enum.reduce(child_paths, new_read_hints, fn child_path, acc ->
-              entry = Map.get(acc, child_path)
-
-              if entry && entry.count >= threshold do
-                Map.put(acc, child_path, %{entry | hint_shown: true})
-              else
-                acc
-              end
-            end)
-
-          {output <> "\n\n" <> hint, marked_read_hints}
-        else
-          {output, new_read_hints}
-        end
-      else
-        {output, new_read_hints}
-      end
-
-    {updated_output, updated_read_hints}
+    if delegation_level == :high do
+      maybe_append_hint(output, read_hints, child_paths, threshold, :count, &read_hint_message/3)
+    else
+      {output, read_hints}
+    end
   end
 
+  @spec entry_count(hints(), String.t()) :: non_neg_integer()
   def entry_count(hints, child_path) do
     case Map.get(hints, child_path) do
       %{count: count} -> count

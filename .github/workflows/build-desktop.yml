@@ -251,7 +251,7 @@ jobs:
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}"
+          tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}"
 
       - name: Stage artifacts
         run: |
@@ -399,7 +399,7 @@ jobs:
           : "${APPLE_API_KEY:?}"
           : "${APPLE_API_KEY_PATH:?}"
           cd desktop/src-tauri
-          cargo tauri build --target aarch64-apple-darwin --bundles app,dmg
+          tauri build --target aarch64-apple-darwin --bundles app,dmg
 
       - name: Notarize and verify macOS artifacts
         run: |
@@ -547,7 +547,7 @@ jobs:
       - name: Build Tauri app
         run: |
           cd desktop/src-tauri
-          cargo tauri build --target x86_64-pc-windows-msvc
+          tauri build --target x86_64-pc-windows-msvc
 
       - name: Stage artifacts
         run: |
