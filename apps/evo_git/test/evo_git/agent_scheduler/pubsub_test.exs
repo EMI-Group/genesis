@@ -4,8 +4,9 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
 
   The throttle coalesces rapid `:schedule` casts into ONE `{:agents_updated}`
   broadcast on the `"agents"` topic at most 200ms after the last cast. It runs
-  under a named one_for_one Supervisor (`ThrottleSupervisor`) started by
-  `EvoGit.AgentScheduler.PubSub.start_throttle/0` (also called at app boot).
+  as a standard child of the application's `EvoGit.Supervisor` (declared in
+  `EvoGit.Application`'s children after `Phoenix.PubSub`, `:permanent`
+  restart).
 
   Uses `async: false` because the throttle process and the `EvoGit.PubSub`
   topic are global — shared with the running application and other test
@@ -22,8 +23,9 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
 
   setup do
     Phoenix.PubSub.subscribe(EvoGit.PubSub, @topic)
-    # Idempotent — ensures the throttle is up even if the app was not started
-    :ok = PubSub.start_throttle()
+    # The :evo_git app is started by Mix in test mode
+    # (mod: {EvoGit.Application, []} in mix.exs), so the Throttle is already
+    # running under EvoGit.Supervisor — no manual start needed here.
     # Flush any messages broadcast before this test subscribed
     drain_mailbox()
 
@@ -60,7 +62,7 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
 
     Process.exit(old_pid, :kill)
 
-    # The supervisor restarts the child (:permanent restart strategy)
+    # EvoGit.Supervisor (one_for_one) restarts the child (:permanent restart)
     new_pid = wait_for_restart(old_pid, 100)
     assert is_pid(new_pid)
     assert new_pid != old_pid
@@ -71,10 +73,19 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     assert_receive {:agents_updated}, 600
   end
 
-  test "start_throttle/0 is idempotent" do
-    assert :ok = PubSub.start_throttle()
-    assert :ok = PubSub.start_throttle()
-    assert is_pid(Process.whereis(Throttle))
+  test "throttle is a supervised child of EvoGit.Supervisor" do
+    throttle_pid = Process.whereis(Throttle)
+    assert is_pid(throttle_pid)
+
+    # The Throttle must appear in EvoGit.Supervisor's child list with its
+    # module as child id and :worker type.
+    assert Enum.any?(Supervisor.which_children(EvoGit.Supervisor), fn
+             {EvoGit.AgentScheduler.PubSub.Throttle, pid, :worker, _} ->
+               is_pid(pid) and pid == throttle_pid
+
+             _ ->
+               false
+           end)
   end
 
   defp wait_for_restart(old_pid, attempts) do

@@ -6,42 +6,19 @@ defmodule EvoGit.AgentScheduler.PubSub do
   for backward compatibility, and **enriched delta broadcasts** that carry
   specific change data so subscribers (e.g. the dashboard) can apply incremental
   updates without re-reading entire ETS tables.
+
+  The throttle — `EvoGit.AgentScheduler.PubSub.Throttle` — is a regular child
+  of the application supervision tree: declared in `EvoGit.Application`'s
+  `children` immediately after `Phoenix.PubSub`, it runs under
+  `EvoGit.Supervisor` (one_for_one) with the default `:permanent` restart.
+  Until the process is up (supervisor restart window, contexts where the app
+  isn't started), `broadcast_agents_updated/0` degrades gracefully to an
+  immediate broadcast.
   """
 
   @throttle_ms 200
   @agent_topic "agents"
   @config_topic "scheduler_config"
-
-  # ---------------------------------------------------------------------------
-  # Throttle process (internal)
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Starts the throttle supervisor + GenServer under a registered name.
-
-  Called once at application startup. Until the process is started,
-  `broadcast_agents_updated/0` degrades gracefully to an immediate broadcast.
-
-  The throttle runs under a self-contained named supervisor
-  (`__MODULE__.ThrottleSupervisor`, linked to the caller — the application
-  master at startup), so if it dies it is restarted instead of silently
-  degrading to unthrottled broadcasts forever. Idempotent — safe to call
-  multiple times.
-  """
-  def start_throttle do
-    unless Process.whereis(__MODULE__.Throttle) do
-      case Supervisor.start_link(
-             [{__MODULE__.Throttle, []}],
-             strategy: :one_for_one,
-             name: __MODULE__.ThrottleSupervisor
-           ) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-      end
-    end
-
-    :ok
-  end
 
   # ---------------------------------------------------------------------------
   # Public API
