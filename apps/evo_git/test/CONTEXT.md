@@ -5,6 +5,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ## Routing Table
 - `evo_git/` → Test files mirroring source structure (core, adapters, agent tools, project config tests)
+- `evo_git/skills/` → Skills subsystem tests (executor injection safety + sandbox routing)
 
 ## API Surface
 
