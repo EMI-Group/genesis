@@ -1512,9 +1512,9 @@ button, a, input, textarea, select, summary,
   outline: none;
 }
 
-/* Layout A (compact): starts ~3 lines, auto-grows up to ~8 lines */
+/* Layout A (compact): starts ~4 lines (120px), auto-grows up to ~8 lines */
 .input-layout[data-layout="compact"] .input-prompt {
-  min-height: calc(1.6em * 3);
+  min-height: 120px;
   max-height: calc(1.6em * 8);
   overflow-y: auto;
 }

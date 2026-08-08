@@ -106,7 +106,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               phx-hook="AdaptiveInput"
               phx-change="task_prompt_change"
               phx-debounce="200"
-              class="input-prompt w-full min-h-[120px] p-4 text-base leading-relaxed bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors"
+              class="input-prompt w-full p-4 text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors"
               placeholder={
                 cond do
                   @mode == "genesis_existing" ->
@@ -198,12 +198,12 @@ defmodule EvoDashWeb.TaskFormComponents do
             <div class="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
               <div class="text-center">
                 <div class="animate-float">
-                  <.icon name="hero-sparkles" class="size-12 mx-auto mb-2 text-base-content/40" />
+                  <.icon name="hero-sparkles" class="size-6 mx-auto mb-1 text-base-content/40" />
                 </div>
-                <p class="text-base font-medium text-base-content/50">
+                <p class="text-sm font-medium text-base-content/50">
                   {gettext("Open a project to get started")}
                 </p>
-                <p class="text-sm text-base-content/35 mt-0.5">
+                <p class="text-xs text-base-content/35">
                   {gettext("Use the project picker in the top bar to open or create one.")}
                 </p>
               </div>
