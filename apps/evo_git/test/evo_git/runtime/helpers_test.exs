@@ -3,6 +3,7 @@ defmodule EvoGit.Runtime.HelpersTest do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Runtime.Helpers
 
   # --------------------------------------------------------------------------
@@ -267,6 +268,84 @@ defmodule EvoGit.Runtime.HelpersTest do
 
       suffix = branch_name |> String.split("_") |> List.last()
       assert Regex.match?(~r/^[0-9a-f]{8}$/, suffix)
+    end
+  end
+
+  # ==========================================================================
+  # load_foreign_repos/2
+  # ==========================================================================
+  describe "load_foreign_repos/2" do
+    test "returns only the CLI-provided repo when no genesis.toml exists", %{
+      tmp_dir: tmp_dir
+    } do
+      cli_repo = %ForeignRepo{id: "cli1", root: "/cli/path"}
+
+      assert Helpers.load_foreign_repos(tmp_dir, foreign_repos: [cli_repo]) == [cli_repo]
+    end
+
+    test "returns the TOML-declared repo when opts has no :foreign_repos", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(
+        Path.join(tmp_dir, "genesis.toml"),
+        """
+        [foreign_repos.toml1]
+        path = "/abs/path/toml1"
+        description = "toml1 description"
+        """
+      )
+
+      assert Helpers.load_foreign_repos(tmp_dir, []) == [
+               %ForeignRepo{
+                 id: "toml1",
+                 root: "/abs/path/toml1",
+                 description: "toml1 description"
+               }
+             ]
+    end
+
+    test "merges TOML and CLI repos when there is no id conflict", %{tmp_dir: tmp_dir} do
+      File.write!(
+        Path.join(tmp_dir, "genesis.toml"),
+        """
+        [foreign_repos.toml1]
+        path = "/abs/path/toml1"
+
+        [foreign_repos.toml2]
+        path = "/abs/path/toml2"
+        description = "second toml repo"
+        """
+      )
+
+      result =
+        Helpers.load_foreign_repos(
+          tmp_dir,
+          foreign_repos: [%ForeignRepo{id: "cli1", root: "/cli/path"}]
+        )
+
+      assert length(result) == 3
+      assert MapSet.new(Enum.map(result, & &1.id)) == MapSet.new(["toml1", "toml2", "cli1"])
+    end
+
+    test "CLI repo takes precedence over TOML repo on id conflict", %{tmp_dir: tmp_dir} do
+      File.write!(
+        Path.join(tmp_dir, "genesis.toml"),
+        """
+        [foreign_repos.shared]
+        path = "/toml/path"
+        description = "toml shared repo"
+        """
+      )
+
+      result =
+        Helpers.load_foreign_repos(
+          tmp_dir,
+          foreign_repos: [%ForeignRepo{id: "shared", root: "/cli/path"}]
+        )
+
+      assert length(result) == 1
+      shared = Enum.find(result, &(&1.id == "shared"))
+      assert shared.root == "/cli/path"
     end
   end
 end
