@@ -490,11 +490,13 @@ defmodule EvoDashWeb.DashboardLive do
   def handle_params(params, _url, socket) do
     prev_node_id = socket.assigns[:current_node_id]
 
-    socket =
-      socket
-      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/")
-      |> assign(:remote?, socket.assigns.current_node != node())
+    # NOTE: `remote?` must be derived from the socket AFTER `assign_node/2`
+    # re-assigns `current_node` — computing it inside the pipe from the outer
+    # `socket` variable would read the PRE-assign_node value, so a page load at
+    # a connected `?node=` URL would render the error gate on the first pass.
+    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+    socket = assign(socket, :current_path, ~p"/")
+    socket = assign(socket, :remote?, socket.assigns.current_node != node())
 
     # Each node context (local + each remote target) has its own persisted
     # dashboard state; switching nodes clears the client-side state and

@@ -954,17 +954,11 @@ defmodule EvoDashWeb.DashboardLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, html} = live(conn, "/?node=" <> id)
 
-      # NOTE: the committed handle_params derives `remote?` from the socket
-      # BEFORE `assign_node` re-assigns `current_node`, so the very first
-      # render after mounting at a connected `?node=` URL still falls through
-      # to the error gate. The connected branch is reached on the NEXT
-      # handle_params run — in production that re-run is the NodeAware
-      # push_patch triggered when a connection completes/broadcasts; here we
-      # simulate it with a patch to the same URL.
-      html = render_patch(view, "/?node=" <> id)
-
+      # The connected view must render on the FIRST pass — `remote?` is derived
+      # from the post-assign_node socket so a page load at a connected `?node=`
+      # URL never falls through to the error gate.
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
       assert assigns(view)[:remote?] == true
