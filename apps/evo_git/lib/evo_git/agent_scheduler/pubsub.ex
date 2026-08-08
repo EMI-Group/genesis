@@ -17,31 +17,30 @@ defmodule EvoGit.AgentScheduler.PubSub do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Starts the throttle process under a registered name.
+  Starts the throttle supervisor + GenServer under a registered name.
 
   Called once at application startup. Until the process is started,
   `broadcast_agents_updated/0` degrades gracefully to an immediate broadcast.
+
+  The throttle runs under a self-contained named supervisor
+  (`__MODULE__.ThrottleSupervisor`, linked to the caller — the application
+  master at startup), so if it dies it is restarted instead of silently
+  degrading to unthrottled broadcasts forever. Idempotent — safe to call
+  multiple times.
   """
   def start_throttle do
     unless Process.whereis(__MODULE__.Throttle) do
-      pid = spawn(fn -> throttle_loop(nil) end)
-      Process.register(pid, __MODULE__.Throttle)
+      case Supervisor.start_link(
+             [{__MODULE__.Throttle, []}],
+             strategy: :one_for_one,
+             name: __MODULE__.ThrottleSupervisor
+           ) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
     end
 
     :ok
-  end
-
-  defp throttle_loop(timer_ref) do
-    receive do
-      :flush ->
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agents_updated})
-        throttle_loop(nil)
-
-      :schedule ->
-        if timer_ref, do: Process.cancel_timer(timer_ref)
-        new_ref = Process.send_after(self(), :flush, @throttle_ms)
-        throttle_loop(new_ref)
-    end
   end
 
   # ---------------------------------------------------------------------------
@@ -65,7 +64,7 @@ defmodule EvoGit.AgentScheduler.PubSub do
         Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agents_updated})
 
       pid ->
-        send(pid, :schedule)
+        GenServer.cast(pid, :schedule)
     end
 
     :ok
