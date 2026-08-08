@@ -59,8 +59,16 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ## Known Issues
 
-### ⚠️ `cow_worktree_test.exs` "handles pre-existing branch" flake (pre-existing, unrelated to store codec work)
-`make_repo/1` (`cow_worktree_test.exs:54-69`) creates repos under `/tmp/cow_test_<prefix>_<unique_integer>` but **never cleans them up** (`on_exit` only removes worktrees, not repos). Across separate VM runs, `System.unique_integer([:positive])` can repeat a number from an earlier run, so `make_repo("exists_branch")` can reuse a leftover dir that already contains the `cow-branch-exists` branch → `Git.create_branch` fails with "fatal: a branch named 'cow-branch-exists' already exists" (`cow_worktree_test.exs:433`). Manifests as an intermittent full-suite failure (~1 in several runs) that passes on rerun. Fix direction (not yet applied): `on_exit` should `File.rm_rf!` the repo dir, or `make_repo` should use ExUnit's `:tmp_dir` tag.
+### ✅ FIXED — `cow_worktree_test.exs` "handles pre-existing branch" flake
+`make_repo/1` (`cow_worktree_test.exs:54-69`) created repos under `/tmp/cow_test_<prefix>_<unique_integer>` and never cleaned them up — across separate VM runs `System.unique_integer([:positive])` can repeat, so leftover dirs from earlier runs collided (`Git.create_branch` fails with "fatal: a branch named 'cow-branch-exists' already exists"). **Fixed**: `make_repo/1` now registers `on_exit(fn -> File.rm_rf!(dir) end)` (leftover dirs from pre-fix runs were also purged from /tmp). No accumulation, no cross-run collision.
+
+### ⚠️ 4 tests failing until the Git-adapter caller fixes merge (transient, NOT test bugs)
+The adapter refactor (8b0854a0, uniform `{:error, {tag, output}}` contract) left lib callers still matching old shapes. A parallel agent is fixing the lib callers; until that merges, these 4 tests fail with **CaseClauseError inside lib code** (assertions themselves are correct — they pin the unchanged PUBLIC contracts):
+- `complete_task_test.exs:718, 753` — `CompleteTask.complete` → `add_metadata_note/3` (`complete_task.ex:206-233` still matches `{:error, _, _msg}` / `{:error, _code, msg}`)
+- `review_test.exs:384` — `Review.merge_branch/3` → `merge_into_other` (`review.ex:380, 412` old shapes; public `{:conflict, details}` contract unchanged)
+- `phylo_graph_node_test.exs:77` — `PhyloGraphNode.crossover/2` (`phylo_graph_node.ex:69` old shape; public `{:conflict, node, files}` contract unchanged)
+
+When the lib fixes merge these pass with NO test edits. Reference: `lib/evo_git/adapters/CONTEXT.md` → "Legacy callers pending update" (all TEST call-site rows there are already updated).
 
 ### ⚠️ RemoteConnection disconnect churn → intermittent `unknown registry` flake (lib bug, test-side mitigation in place)
 `EvoGit.RemoteConnection` managers are started via `DynamicSupervisor.start_child(@supervisor, {__MODULE__, target})` (`lib/evo_git/remote_connection.ex:1257`) — the default `use GenServer` child spec is `restart: :permanent`. `disconnect/1` stops the manager with `:normal` (`handle_call(:disconnect)` → `{:stop, :normal, ...}`, `remote_connection.ex:283-284`). Per OTP, `:permanent` children restart on **any** exit including `:normal`, and each restart counts toward the DynamicSupervisor's restart intensity (default 3 in 5s). Several bootstrap tests each start + disconnect a manager → churn exhausts intensity → DynamicSupervisor dies `:shutdown` → cascade can take down the Registry → teardown's `list_connections()` raises `ArgumentError: unknown registry: EvoGit.RemoteConnection.Registry` (~40% flake, only when several disconnect cycles run within 5s).
