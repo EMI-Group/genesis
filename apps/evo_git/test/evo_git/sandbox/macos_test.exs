@@ -5,6 +5,44 @@ defmodule EvoGit.Sandbox.MacOSTest do
   alias EvoGit.{Platform, Sandbox}
   alias EvoGit.Sandbox.MacOS
 
+  # The backend's built-in build-cache dirs (mirrored from
+  # lib/evo_git/sandbox/macos.ex — the default writable paths when the
+  # [sandbox] write_paths config key is unset).
+  @default_cache_dirs [
+    ".cache",
+    ".local/share",
+    ".local/state",
+    ".cargo",
+    ".rustup",
+    ".mix",
+    ".hex",
+    ".npm",
+    ".yarn",
+    ".bun",
+    ".m2",
+    ".gradle",
+    "go"
+  ]
+
+  defp cache_rule(dir),
+    do: ~s{(allow file-write* (subpath "#{Path.join(System.user_home!(), dir)}"))}
+
+  # Writes a minimal `[sandbox] write_paths = ...` config.toml into the
+  # XDG_CONFIG_HOME temp dir isolated by the global setup (each test gets a
+  # fresh unique dir, so the Config persistent_term cache can never go
+  # stale), runs `fun`, then removes the file.
+  defp with_write_paths(paths, fun) do
+    xdg = System.get_env("XDG_CONFIG_HOME")
+    genesis_dir = Path.join(xdg, "genesis")
+    File.mkdir_p!(genesis_dir)
+    config_path = Path.join(genesis_dir, "config.toml")
+    File.write!(config_path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
+
+    on_exit(fn -> File.rm_rf!(genesis_dir) end)
+
+    fun.()
+  end
+
   defp save_tmpdir do
     original = System.get_env("TMPDIR")
 
@@ -154,6 +192,76 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
       assert profile =~ "(limit number 200)"
       assert length(Regex.scan(~r/\(limit number 200\)/, profile)) == 1
+    end
+  end
+
+  describe "generate_profile/2 — write_paths default cache dirs (unset)" do
+    test "emits write rules for all 13 default build-cache dirs when write_paths is unset" do
+      # No config.toml is written — the global setup already isolated
+      # XDG_CONFIG_HOME, so [:sandbox, :write_paths] resolves to nil and the
+      # backend falls back to its built-in cache-dir list.
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      for dir <- @default_cache_dirs do
+        assert profile =~ cache_rule(dir),
+               "expected default cache-dir write rule for #{dir}"
+      end
+    end
+  end
+
+  describe "generate_profile/2 — write_paths configured" do
+    test "emits write rules for the user-configured write paths" do
+      with_write_paths(["/custom/cache", "/opt/build-cache"], fn ->
+        profile = MacOS.generate_profile("/some/cwd", nil)
+
+        assert profile =~ ~s{(allow file-write* (subpath "/custom/cache"))}
+        assert profile =~ ~s{(allow file-write* (subpath "/opt/build-cache"))}
+      end)
+    end
+
+    test "drops all default cache-dir write rules when write_paths is set" do
+      with_write_paths(["/custom/cache", "/opt/build-cache"], fn ->
+        profile = MacOS.generate_profile("/some/cwd", nil)
+
+        for dir <- @default_cache_dirs do
+          refute profile =~ cache_rule(dir),
+                 "expected no default cache-dir write rule for #{dir} when write_paths is set"
+        end
+      end)
+    end
+
+    test "keeps structural rules (/tmp, cwd) unchanged when write_paths is set" do
+      with_write_paths(["/custom/cache", "/opt/build-cache"], fn ->
+        profile = MacOS.generate_profile("/some/cwd", nil)
+
+        assert profile =~ ~s{(allow file-write* (subpath "/tmp"))}
+        assert profile =~ ~s{(allow file-write* (subpath "/some/cwd"))}
+      end)
+    end
+  end
+
+  describe "generate_profile/2 — write_paths explicitly empty" do
+    test "emits no default cache-dir write rules when write_paths is []" do
+      with_write_paths([], fn ->
+        profile = MacOS.generate_profile("/some/cwd", nil)
+
+        for dir <- @default_cache_dirs do
+          refute profile =~ cache_rule(dir),
+                 "expected no default cache-dir write rule for #{dir} when write_paths is []"
+        end
+
+        assert profile =~ ~s{(allow file-write* (subpath "/tmp"))}
+      end)
+    end
+  end
+
+  describe "generate_profile/2 — write_paths ~ expansion" do
+    test "expands a ~-prefixed write path to the user home" do
+      with_write_paths(["~/mycache"], fn ->
+        profile = MacOS.generate_profile("/some/cwd", nil)
+
+        assert profile =~ ~s{(allow file-write* (subpath "#{System.user_home!()}/mycache"))}
+      end)
     end
   end
 
