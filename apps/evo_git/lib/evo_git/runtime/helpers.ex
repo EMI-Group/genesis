@@ -154,6 +154,16 @@ defmodule EvoGit.Runtime.Helpers do
     Map.merge(toml_map, cli_map) |> Map.values()
   end
 
+  @doc """
+  Loads foreign repos for a runtime phase: `genesis.toml` defaults merged with
+  CLI-provided repos (CLI takes precedence).
+  """
+  def load_foreign_repos(repo_path, opts) do
+    toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
+    cli_repos = Keyword.get(opts, :foreign_repos, [])
+    merge_foreign_repos(toml_repos, cli_repos)
+  end
+
   def resolve_starting_commit(repo_path, nil) do
     EvoGit.Core.PhyloGraphNode.current_head(repo_path)
   end
