@@ -10,6 +10,7 @@ defmodule EvoDashWeb.DashboardLive do
   alias EvoGit.TaskRegistry
   alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow}
   alias EvoDashWeb.ThemeColor
+  alias EvoDashWeb.ExampleTask
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
   alias EvoGit.ProjectConfig
@@ -225,6 +226,75 @@ defmodule EvoDashWeb.DashboardLive do
                   build_systems={@build_systems}
                   selected_build_system={@task_build_system}
                 />
+
+                <%= if is_nil(@active_project) do %>
+                  <%!-- Empty-state example task help — shown only while no
+                       project is open (disappears once one is activated).
+                       Collapsible <details> + max-height scrollable <pre> keep
+                       it compact so it can never overflow on small screens.
+                       The hidden textarea is an RCDATA holder: reading .value
+                       in JS returns the exact example text (including the
+                       literal <link>/<script> strings) without HTML injection.
+                       The prefill button sets the prompt textarea's .value
+                       (never innerHTML) and dispatches a bubbling `input`
+                       event, which drives the AdaptiveInput autogrow AND the
+                       task_prompt_change phx-change (debounced) — syncing
+                       @task_prompt and switching the layout to expanded. --%>
+                  <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
+                    <details
+                      class="group rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
+                      open
+                    >
+                      <summary
+                        class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
+                      >
+                        <.icon name="hero-sparkles" class="size-4 shrink-0 text-primary/70" />
+                        <span>{gettext("New to Genesis? Start with an example")}</span>
+                        <span class="ml-auto text-xs font-normal text-base-content/40">
+                          <span class="group-open:hidden">{gettext("Show example")}</span>
+                          <span class="hidden group-open:inline">{gettext("Hide example")}</span>
+                        </span>
+                      </summary>
+                      <div class="px-4 pb-4 pt-1">
+                        <p class="text-sm text-base-content/70 mb-3">
+                          {gettext(
+                            "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
+                          )}
+                        </p>
+                        <div class="relative rounded-md border border-base-300 bg-base-200/50">
+                          <pre
+                            class="max-h-48 overflow-y-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre-wrap text-base-content/80"
+                          ><%= ExampleTask.example_objective() %></pre>
+                          <button
+                            id="example-task-copy"
+                            phx-hook="ClipboardCopy"
+                            data-content={ExampleTask.example_objective()}
+                            class="btn btn-ghost btn-sm btn-square absolute top-2 right-2 bg-base-100/80"
+                            title={gettext("Copy")}
+                          >
+                            <.icon name="hero-clipboard" class="size-4" />
+                          </button>
+                        </div>
+                        <button
+                          id="example-task-prefill"
+                          type="button"
+                          onclick="var h=document.getElementById('example-task-objective');var p=document.getElementById('prompt');if(h&&p){p.value=h.value;p.dispatchEvent(new Event('input',{bubbles:true}));}"
+                          class="btn btn-ghost btn-sm mt-3 gap-1.5"
+                        >
+                          <.icon name="hero-arrow-down-tray" class="size-4" />
+                          {gettext("Use this example")}
+                        </button>
+                      </div>
+                    </details>
+                    <textarea
+                      id="example-task-objective"
+                      class="hidden"
+                      readonly
+                      tabindex="-1"
+                      aria-hidden="true"
+                    ><%= ExampleTask.example_objective() %></textarea>
+                  </div>
+                <% end %>
               </div>
             <% end %>
             <%!-- end of @remote? else branch --%>
@@ -723,6 +793,12 @@ defmodule EvoDashWeb.DashboardLive do
      socket
      |> assign(:task_prompt, prompt)
      |> StatePersistence.maybe_persist_state()}
+  end
+
+  # Flash acknowledgement for the ClipboardCopy hook (example task copy button)
+  @impl true
+  def handle_event("copied", _params, socket) do
+    {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
   @impl true
