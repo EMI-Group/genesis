@@ -7,9 +7,13 @@
 </p>
 
 <p align="center">
+  👉 <strong>Home &amp; docs:</strong> <a href="https://genesis.evox.group">genesis.evox.group</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.9.2-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
-  <a href="https://genesis-doc.evoxgroup.workers.dev/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
+  <a href="https://genesis.evox.group"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
 </p>
 
 ---
@@ -28,7 +32,11 @@ It's evolutionary: every change lands on a branch of the Git history, and partia
 
 ## 📦 Install
 
-Genesis ships as a native desktop app. Grab the installer for your platform from the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** page:
+Genesis ships as a native desktop app.
+
+💡 **Prefer a guided download?** Visit [genesis.evox.group/#download](https://genesis.evox.group/#download) — it detects your platform automatically and points you to the right installer, so you don't have to pick through the GitHub release artifacts.
+
+Grab the installer for your platform from the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** page:
 
 | Platform    | Download |
 |-------------|----------|
@@ -86,54 +94,6 @@ mix phx.server
 
 Then open http://localhost:4100 in your browser.
 
-#### Build the macOS desktop app
-
-For a signed/notarized `.app` (or `.dmg`) locally, use the helpers under `desktop/scripts/`. This packages the Elixir `genesis_desktop` release into a Tauri shell.
-
-**Prerequisites**
-
-- Xcode Command Line Tools (`xcode-select --install`)
-- Rust (`rustup`) and Tauri CLI: `cargo install tauri-cli --version "^2.0" --locked`
-- Elixir / OTP matching `.tool-versions`
-- Apple Developer ID Application certificate in your keychain, plus notarization credentials (App Store Connect API key or Apple ID)
-
-**Configure signing**
-
-```bash
-cp desktop/scripts/.env.macos.example desktop/scripts/.env.macos
-# Edit desktop/scripts/.env.macos — APPLE_SIGNING_IDENTITY plus notarization credentials
-```
-
-`desktop/scripts/.env.macos` is gitignored; do not commit secrets.
-
-**Build**
-
-```bash
-./desktop/scripts/build-macos-local.sh              # default: --bundles app
-./desktop/scripts/build-macos-local.sh --bundles dmg
-./desktop/scripts/build-macos-local.sh --bundles app,dmg
-```
-
-The script builds the Elixir release, copies it into Tauri resources, codesigns nested Mach-O binaries (including the BEAM JIT entitlement), then runs `cargo tauri build`. It notarizes and staples the final DMG when requested, and verifies the signatures, notarization tickets, and Gatekeeper assessments before returning successfully.
-
-Output:
-
-- `.app`: `desktop/src-tauri/target/release/bundle/macos/`
-- `.dmg`: `desktop/src-tauri/target/release/bundle/dmg/`
-
-Notarization contacts Apple and can take several minutes with little log output while `notarytool` waits.
-
-**CI (GitHub Actions)** — `build-macos-arm64` imports the Developer ID certificate, signs the nested runtime, lets Tauri sign and notarize the app, then notarizes the final DMG and verifies both artifacts before uploading them. Required repository secrets:
-
-| Secret | Value |
-|--------|--------|
-| `APPLE_CERTIFICATE` | base64 of Developer ID Application `.p12` (`openssl base64 -A -in cert.p12`) |
-| `APPLE_CERTIFICATE_PASSWORD` | password used when exporting the `.p12` |
-| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Org (TEAMID)` |
-| `APPLE_API_ISSUER` | App Store Connect Issuer ID |
-| `APPLE_API_KEY` | App Store Connect Key ID |
-| `APPLE_API_KEY_P8_BASE64` | base64 of `AuthKey_<KEYID>.p8` (`openssl base64 -A -in AuthKey_XXX.p8`) |
-
 ## 📦 Distribution via Package Managers
 
 We're working to make Genesis available through popular package managers so you can install and update it with the tools you already use. Planned targets include:
@@ -153,10 +113,6 @@ Stay tuned — we'll update this section as packages become available.
 We welcome contributions! All contributors are required to sign an Individual Contributor License Agreement (CLA) — our CLA assistant bot handles this automatically when you open your first pull request.
 
 For full details on the CLA, development setup, and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
-
-## 🙏 Acknowledgements
-
-Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit) project.
 
 ## 📄 License
 
