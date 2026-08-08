@@ -160,9 +160,7 @@ defmodule EvoDashWeb.DashboardLive do
                         class="group rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
                         open
                       >
-                        <summary
-                          class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
-                        >
+                        <summary class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
                           <.icon name="hero-sparkles" class="size-4 shrink-0 text-primary/70" />
                           <span>{gettext("New to Genesis? Start with an example")}</span>
                           <span class="ml-auto text-xs font-normal text-base-content/40">
@@ -177,9 +175,7 @@ defmodule EvoDashWeb.DashboardLive do
                             )}
                           </p>
                           <div class="relative rounded-md border border-base-300 bg-base-200/50">
-                            <pre
-                              class="max-h-48 overflow-y-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre-wrap text-base-content/80"
-                            ><%= ExampleTask.example_objective() %></pre>
+                            <pre class="max-h-48 overflow-y-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre-wrap text-base-content/80"><%= ExampleTask.example_objective() %></pre>
                             <button
                               id="example-task-copy"
                               phx-hook="ClipboardCopy"
@@ -211,7 +207,6 @@ defmodule EvoDashWeb.DashboardLive do
                     </div>
                   <% end %>
                 </div>
-
               <% @remote? -> %>
                 <!-- Connected remote node: remote top bar (target badge,
                      Configure dropdown hidden) + the remote node's active
@@ -326,13 +321,13 @@ defmodule EvoDashWeb.DashboardLive do
                     </div>
                   </div>
                 <% end %>
-
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
                 <!-- Pending remote context: connecting chrome only — no
                      project data, no task form, no local recents (the
                      node-switch clear already reset project state). -->
                 <RemoteView.top_bar
                   remote={true}
+                  hide_palette={true}
                   current_node_name={@current_node_name}
                   active_project={@active_project}
                   active_project_path={@active_project_path}
@@ -346,12 +341,12 @@ defmodule EvoDashWeb.DashboardLive do
                   platform={@platform}
                 />
                 <RemoteView.connecting_state current_node_name={@current_node_name} />
-
               <% true -> %>
                 <!-- Failed/disconnected remote context: prominent error state
                      with Retry / Manage Connections / Switch to Local. -->
                 <RemoteView.top_bar
                   remote={true}
+                  hide_palette={true}
                   current_node_name={@current_node_name}
                   active_project={@active_project}
                   active_project_path={@active_project_path}
@@ -640,13 +635,21 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("open_project_palette", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:project_palette_open, true)
-     |> assign(:palette_mode, :menu)
-     |> assign(:palette_search, "")
-     |> assign(:palette_selected_index, 0)
-     |> assign(:show_configure_dropdown, false)}
+    # Gate guard (defense in depth): never open the palette while a selected
+    # remote target is pending/failed — `@current_node` is still the LOCAL
+    # BEAM node in that state, so project activation would touch local data
+    # while the user believes they are operating on the remote node.
+    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
+      {:noreply, socket}
+    else
+      {:noreply,
+       socket
+       |> assign(:project_palette_open, true)
+       |> assign(:palette_mode, :menu)
+       |> assign(:palette_search, "")
+       |> assign(:palette_selected_index, 0)
+       |> assign(:show_configure_dropdown, false)}
+    end
   end
 
   @impl true
@@ -1522,26 +1525,43 @@ defmodule EvoDashWeb.DashboardLive do
   # concerns). The push_patch URL carries the `&node=` param so handle_params
   # re-runs in the same remote context.
   defp activate_remote_palette_project(socket, project, expanded) do
-    node = socket.assigns[:current_node]
-
-    if EvoDash.NodeContext.dir?(node, expanded) do
-      EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
-      recent_projects = EvoDash.NodeContext.list_recent_projects(node)
-
+    # Gate guard (defense in depth): while the selected remote target is
+    # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
+    # or registering the path here would leak into the local filesystem and
+    # local TaskRegistry recents. Close the palette and surface an error.
+    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
       socket
-      |> assign(:recent_projects, recent_projects)
       |> assign(:project_palette_open, false)
       |> assign(:palette_mode, :menu)
-      |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
-      |> assign(:active_project_path, expanded)
-      |> push_patch(to: project_url(socket, expanded))
-    else
-      socket
-      |> assign(:project_palette_open, false)
       |> put_flash(
         :error,
-        gettext("Directory does not exist on the remote node: %{path}", path: project.path)
+        gettext(
+          "Cannot open project: remote node %{name} is not connected. Retry the connection first.",
+          name: socket.assigns[:current_node_name] || "remote"
+        )
       )
+    else
+      node = socket.assigns[:current_node]
+
+      if EvoDash.NodeContext.dir?(node, expanded) do
+        EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+        recent_projects = EvoDash.NodeContext.list_recent_projects(node)
+
+        socket
+        |> assign(:recent_projects, recent_projects)
+        |> assign(:project_palette_open, false)
+        |> assign(:palette_mode, :menu)
+        |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
+        |> assign(:active_project_path, expanded)
+        |> push_patch(to: project_url(socket, expanded))
+      else
+        socket
+        |> assign(:project_palette_open, false)
+        |> put_flash(
+          :error,
+          gettext("Directory does not exist on the remote node: %{path}", path: project.path)
+        )
+      end
     end
   end
 

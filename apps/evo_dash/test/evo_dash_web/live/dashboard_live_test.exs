@@ -1088,6 +1088,73 @@ defmodule EvoDashWeb.DashboardLiveTest do
       refute html =~ "Recent Projects"
     end
 
+    test "connecting-phase gate suppresses the palette trigger", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+      )
+
+      {:ok, _view, html} = live(conn, "/?node=" <> id)
+
+      # The palette trigger is replaced by a muted placeholder so no project
+      # activation is possible while the remote target is pending
+      refute html =~ ~s(phx-click="open_project_palette")
+      assert html =~ "Project control unavailable"
+    end
+
+    test "error-phase gate suppresses the palette trigger", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+         {id, %{phase: :error, last_error: "boom", node: nil}}}
+      )
+
+      {:ok, _view, html} = live(conn, "/?node=" <> id)
+
+      # Same suppression in the failed/disconnected gate state
+      refute html =~ ~s(phx-click="open_project_palette")
+      assert html =~ "Project control unavailable"
+    end
+
+    test "open_project_palette event is ignored while the gate is active", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Forged/raced event: the guard must reject it and leave the palette closed
+      render_click(view, "open_project_palette", %{})
+
+      assert assigns(view)[:project_palette_open] == false
+    end
+
+    test "open_project during the gate does not leak into the local recent-projects store", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Forged/raced submit: the palette is suppressed in the DOM but the event
+      # can still arrive — the gate guard must reject it with a flash error and
+      # must NOT register the (locally existing) path in the LOCAL recents.
+      html = render_submit(view, "open_project", %{path: tmp_dir})
+
+      assert html =~ "Cannot open project"
+      assert html =~ "is not connected"
+      refute Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == tmp_dir))
+    end
+
     test "remote open_project validates the path on the remote node", %{
       conn: conn,
       tmp_dir: tmp_dir
