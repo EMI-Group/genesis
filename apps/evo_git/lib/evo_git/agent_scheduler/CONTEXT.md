@@ -6,7 +6,30 @@ Contains data structs and extracted helper modules used internally by `EvoGit.Ag
 
 ## Routing Table
 
-None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `worktrees.ex`, `worktree_manager.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`).
+None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `store.ex`, `worktrees.ex`, `worktree_manager.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`, `pubsub.ex`, `throttle.ex`, `remote_api.ex`).
+
+## Throttled PubSub (PubSub module + throttle.ex) — supervised since e7decd46
+
+`EvoGit.AgentScheduler.PubSub` provides the throttled `{:agents_updated}` bulk broadcast plus enriched delta broadcasts (`:agent_registered` / `:agent_updated` / `:agent_removed`). The throttle is **supervised**:
+
+- `PubSub.start_throttle/0` (called once from `EvoGit.Application.start/2`, application.ex:27 — no wiring change needed there) starts a **self-contained named Supervisor** `EvoGit.AgentScheduler.PubSub.ThrottleSupervisor` (`strategy: :one_for_one`) with one child: `EvoGit.AgentScheduler.PubSub.Throttle` (throttle.ex — a small GenServer; `restart: :permanent` default). Idempotent: `{:error, {:already_started, _}}` → `:ok` (double-call race handled).
+- `broadcast_agents_updated/0` casts `:schedule` to the Throttle (coalesces rapid calls into one flush `@throttle_ms` = 200ms after the last schedule). `Process.whereis(EvoGit.AgentScheduler.PubSub.Throttle)` → nil (never started, tests, supervisor restart window) keeps the **immediate-broadcast fallback** — the old bare-spawn loop is gone, so a crash no longer permanently degrades to unthrottled broadcasts.
+- If the Throttle exhausts the supervisor's max_restarts, the supervisor dies and (being linked to the application master at startup) takes the app down — standard OTP; the 200ms timer loop is not a realistic crash source.
+
+## Defensive ETS lookups in Subagents (since 8666258a)
+
+`Store.get_sched_meta/1` / `Store.get_agent_state/1` return `{:ok, x} | :error`. Four sites in `subagents.ex` previously used **bare `{:ok, x} = Store.get_*(id)` matches** that crashed the scheduler GenServer with `MatchError` when a parent's ETS entries were reaped by `cancel_agent/2` while a subagent spawn/result was in flight. All four are now `case`-guarded with graceful fallbacks (log warning + safe return):
+
+1. `spawn_validated_subagents/5` — missing parent agent_state → replies `[{:error, :parent_recycled}]` per spec to the blocked `from`, spawns nothing, returns `{:noreply, state}` (bails BEFORE the `:waiting` status mutation).
+2. `store_sub_result/3` — missing parent sched_meta → `:ok` (result dropped; parent is gone).
+3. `maybe_resume_parent/2` — missing parent sched_meta → state unchanged.
+4. `dispatch_ready_parent/3` — missing agent_state (only needed for the resume log's commit SHA) → still replies/resets meta, logs `"unknown"` SHA.
+
+Normal-path behavior is preserved exactly. ⚠️ No tests cover the `:error` paths yet — test additions were blocked by node scope (test dir is a sibling); a parent agent should route them to `./apps/evo_git/test/evo_git/agent_scheduler/` (subagents_test.exs error-path tests + a new pubsub_test.exs for the Throttle).
+
+## CoW worktree batching — pending in sibling node (escalate to parent)
+
+The actual CoW copy code is **NOT** in this node — it lives in `./apps/evo_git/lib/evo_git/adapters/cow_worktree.ex` (sibling node, read-only from here). Known issue: `copy_files_macos/3` (cow_worktree.ex:263-296) runs **one `System.cmd("cp", ["-c", file, dest])` per file** (O(n) process spawns) while `copy_files_linux/3` batches ~1000 files per `cp --reflink=auto --parents` invocation (`@batch_size` = 1000). Fix (grouped invocations): within each batch, `Enum.group_by(&Path.dirname/1)` and run one `cp -c <files...> <worktree>/<dir>/` per directory group (BSD cp allows multiple sources with an existing directory destination; `-c`/clonefile CoW semantics apply per file; `dir == "."` → dest `<worktree>/`). Dirs are already pre-created by `create_dirs/2`. Reduces spawns from N files to D distinct dirs. Flagged by code review but NOT fixed in this node — the parent agent must route it to the adapters node.
 
 ## API Surface
 
