@@ -33,6 +33,7 @@ Configuration I/O bridge between the Settings LiveView and the core runtime.
 |----------|---------|
 | `load_file_config/0` | Loads the full resolved user config via `EvoGit.Config.resolve/0`. |
 | `build_config_from_category_params/2` | Converts category form params into a config map for persistence. |
+| `list_of_strings_value/1` | Parses a submitted `:list_of_strings` form value (commit `0ff33d39`): list → binaries with blanks filtered (so `[]`/blank-only round-trips as `[]`, NEVER treated as delete); any non-list → `:explicitly_empty` (the only delete signal — absent/nil params). Used by the `:list_of_strings` branch in `params_to_category_config/3`. |
 | `update_runtime_from_file_config/2` | Accepts and returns a LiveView socket — pushes runtime config changes to `EvoGit.AgentScheduler`. |
 | `build_whitelist/1`, `build_provider_whitelist/1` | Builds whitelist maps for safe untrusted-string-to-atom conversion (avoids `String.to_existing_atom/1` + `try/rescue`). |
 
