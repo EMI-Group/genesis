@@ -27,6 +27,7 @@ import topbar from "../vendor/topbar"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
+import PadFly from "./hooks/pad_fly.js"
 
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
@@ -416,6 +417,11 @@ const BrowserNotifications = {
   }
 };
 
+// (The Launchpad ComposerFocus / LPConsoleKeys hooks were archived together
+// with the rejected Flow/Console/Workspaces variants. The v3 home page uses
+// the PadFly hook — assets/js/hooks/pad_fly.js — which owns Enter-to-submit,
+// the optimistic launch animation, prompt clearing, and rail tooltips.)
+
 // ClipboardCopy hook: copies data-content to clipboard on click
 const ClipboardCopy = {
   mounted() {
@@ -673,7 +679,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList, PadFly},
 })
 
 // Show progress bar on live navigation and form submits

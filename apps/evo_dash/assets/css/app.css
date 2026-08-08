@@ -485,7 +485,7 @@ button, a, input, textarea, select, summary,
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
-    height: calc(100vh - 2rem); /* main padding (py-4) */
+    height: calc(100vh - 50px - 2rem); /* pad top bar (50px) + wrapper padding (p-4) */
     overflow: hidden;
   }
 
@@ -1617,3 +1617,9 @@ button, a, input, textarea, select, summary,
 [data-picker-error="manual"] .picker-container input[type="text"] {
   border-color: color-mix(in oklab, var(--color-warning) 60%, transparent);
 }
+
+/* Pad — the v3 home (`HomeLive` `/`) + `ReviewsLive` `/reviews`. The only
+   import appended at the end; all pad CSS lives in the dedicated file.
+   (The rejected Flow/Console/Workspaces variants and their launchpad.css /
+   console.css / workspaces.css imports were archived to evox/tmp/rejected-variants.) */
+@import "./pad.css";

@@ -1,0 +1,336 @@
+/* ==========================================================================
+   Pad — HomeLive (`/`) + ReviewsLive (`/reviews`), the v3 home design.
+   --------------------------------------------------------------------------
+   Attention model: ONLY two levels exist.
+     L1 = solid base-content — the prompt textarea, the Start button, the
+          current mode tab, the running pulse.
+     L3 = base-content at ~35–40% alpha — everything else.
+   No mid-levels (no semi-bold secondary headings, no colored badges).
+
+   All colors derive from the daisyUI theme variables (`--color-base-*`) so
+   dark/light themes both work. Alpha via color-mix — never oklch(var(--x)/a)
+   nesting (Known Issue (i) in assets/CONTEXT.md). Tailwind utilities carry
+   the typography/colors in markup; this file holds what they cannot express:
+   geometry, the textarea focus styling, the advanced-grid collapse, the rail
+   square status variants, the flight blob, the JS-positioned tooltip, and
+   the reduced-motion guards.
+   ========================================================================== */
+
+/* --- Stage: vertically centered composer, clear of topbar + rail --- */
+.pad-stage {
+  position: fixed;
+  inset: 50px 76px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+}
+
+.pad-composer {
+  width: 620px;
+  max-width: calc(100% - 64px);
+  /* Optical centering: nudge the block slightly above the true center. */
+  padding-bottom: 8vh;
+}
+
+/* --- Mode tabs: current = L1 underlined, the rest L3 --- */
+.pad-tab {
+  border: none;
+  background: none;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 13px;
+  color: color-mix(in oklab, var(--color-base-content) 38%, transparent);
+}
+
+.pad-tab-on {
+  color: var(--color-base-content);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--color-base-content);
+}
+
+/* --- Prompt textarea — the page's visual focus (L1) --- */
+.pad-prompt {
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 22px;
+  line-height: 1.5;
+  font-family: inherit;
+  min-height: 96px;
+  overflow-y: hidden;
+  padding: 4px 2px;
+  color: var(--color-base-content);
+  background: transparent;
+  border-bottom: 1px solid var(--color-base-300);
+}
+
+.pad-prompt::placeholder {
+  color: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+}
+
+.pad-prompt:focus {
+  outline: none;
+}
+
+/* --- Address row: full path input, mono, dotted underline --- */
+.pad-path-input {
+  border: none;
+  outline: none;
+  background: none;
+  border-bottom: 1px dotted color-mix(in oklab, var(--color-base-content) 25%, transparent);
+  padding: 2px 0;
+}
+
+.pad-path-input:focus {
+  outline: none;
+  border-bottom-color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+
+/* --- Advanced block: EXPANDED by default, collapses via .closed (server) --- */
+.pad-adv-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 9px 20px;
+  max-height: 260px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height 0.18s ease-out, opacity 0.15s, margin-top 0.18s;
+}
+
+@media (min-width: 640px) {
+  .pad-adv-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.pad-adv.closed .pad-adv-grid {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+}
+
+.pad-arrow {
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.pad-adv.closed .pad-arrow {
+  transform: rotate(-90deg);
+}
+
+/* Small L3 mono controls inside the advanced grid. Values carry a dotted
+   underline — the editable affordance from the wireframe. `appearance: none`
+   drops the native dropdown arrow (it overflowed narrow grid cells and
+   overlapped the next field's label); `min-width: 0` lets the select shrink
+   inside its cell instead of spilling. */
+.pad-select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  background: none;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px dotted color-mix(in oklab, var(--color-base-content) 25%, transparent);
+  text-decoration: none;
+}
+
+.pad-select:focus {
+  outline: none;
+  border-bottom-color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+
+/* --- Start button — the ONE solid filled element (L1) --- */
+.pad-start {
+  background: var(--color-base-content);
+  color: var(--color-base-100);
+  border: none;
+  border-radius: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 10px 30px;
+  cursor: pointer;
+}
+
+.pad-start:hover {
+  opacity: 0.88;
+}
+
+/* --- Rail: fixed right strip of task squares --- */
+.pad-rail {
+  position: fixed;
+  top: 50px;
+  right: 0;
+  bottom: 0;
+  width: 76px;
+  border-left: 1px solid var(--color-base-300);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px 0;
+  gap: 10px;
+  overflow-y: auto;
+  background: var(--color-base-100);
+  z-index: 10;
+}
+
+/* --- One task square: abbreviation + status dot (very little information) --- */
+.pad-sq {
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--color-base-300);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: var(--color-base-100);
+  position: relative;
+  flex: none;
+  color: color-mix(in oklab, var(--color-base-content) 38%, transparent);
+  text-decoration: none;
+}
+
+a.pad-sq:hover {
+  border-color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
+}
+
+.pad-sq-abbr {
+  font-size: 11px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  line-height: 1;
+}
+
+/* Status dot — L3 gray by default (completed & reviewed / cancelled). */
+.pad-st {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--color-base-content) 30%, transparent);
+}
+
+/* running / pending / finalizing — L1 border + pulsing black dot. */
+.pad-sq-run {
+  border-color: var(--color-base-content);
+}
+
+.pad-sq-run .pad-st {
+  background: var(--color-base-content);
+  animation: pad-pulse 1.6s ease-out infinite;
+}
+
+/* completed, awaiting review — solid black dot. */
+.pad-sq-review .pad-st {
+  background: var(--color-base-content);
+}
+
+/* failed — the dot becomes a small black square. */
+.pad-sq-failed .pad-st {
+  background: var(--color-base-content);
+  border-radius: 1px;
+}
+
+@keyframes pad-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-base-content) 30%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+/* New square entering the rail (real tasks land after the flight). */
+.pad-sq-enter {
+  animation: pad-pop 0.3s ease-out;
+}
+
+@keyframes pad-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* --- Flight blob (PadFly, optimistic launch animation) --- */
+.pad-fly {
+  position: fixed;
+  z-index: 40;
+  background: var(--color-base-100);
+  border: 1px solid var(--color-base-content);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-base-content);
+  font-size: 13px;
+  padding: 10px 14px;
+  max-width: 300px;
+  pointer-events: none;
+  overflow: hidden;
+  transition: all 0.55s cubic-bezier(0.5, -0.1, 0.2, 1);
+  box-shadow: 0 6px 24px oklch(0% 0 0 / 0.08);
+}
+
+/* --- Rail tooltip (fixed; positioned by the PadFly hook — the rail is a
+       scroll container, so an in-rail tooltip would be clipped) --- */
+.pad-fly-tip {
+  position: fixed;
+  z-index: 50;
+  width: 240px;
+  background: var(--color-base-100);
+  border: 1px solid var(--color-base-300);
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 16px oklch(0% 0 0 / 0.08);
+  pointer-events: none;
+}
+
+.pad-fly-tip-p {
+  color: var(--color-base-content);
+  font-size: 12px;
+  margin-bottom: 3px;
+  word-break: break-word;
+}
+
+.pad-fly-tip-m {
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  font-size: 11px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  word-break: break-all;
+}
+
+/* --- Reduced motion: kill the flight, the pulse, the pop, the collapse --- */
+@media (prefers-reduced-motion: reduce) {
+  .pad-fly {
+    transition: none;
+  }
+
+  .pad-sq-run .pad-st {
+    animation: none;
+  }
+
+  .pad-sq-enter {
+    animation: none;
+  }
+
+  .pad-adv-grid,
+  .pad-arrow {
+    transition: none;
+  }
+}
