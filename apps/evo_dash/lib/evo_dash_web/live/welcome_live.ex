@@ -326,6 +326,30 @@ defmodule EvoDashWeb.WelcomeLive do
             </div>
           <% end %>
 
+          <!-- Example task teaching card (renders in both setup and all-set states) -->
+          <div class="shrink-0 mt-6 rounded-xl border border-base-200 bg-base-100 p-4">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <h3 class="text-base font-bold">
+                {gettext("Try an example task")}
+              </h3>
+              <button
+                id="welcome-example-copy"
+                phx-hook="ClipboardCopy"
+                data-content={EvoDashWeb.ExampleTask.example_objective()}
+                class="btn btn-ghost btn-sm btn-square"
+                title={gettext("Copy")}
+              >
+                <.icon name="hero-clipboard" class="size-4" />
+              </button>
+            </div>
+            <p class="text-sm text-base-content/60 leading-snug mb-3">
+              {gettext(
+                "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
+              )}
+            </p>
+            <pre class="font-mono text-xs whitespace-pre-wrap bg-base-200/50 rounded-lg p-3 max-h-56 overflow-y-auto"><%= EvoDashWeb.ExampleTask.example_objective() %></pre>
+          </div>
+
           <!-- Skip link -->
           <div class="flex justify-center mt-6 shrink-0">
             <button
@@ -461,6 +485,13 @@ defmodule EvoDashWeb.WelcomeLive do
   @impl true
   def handle_event("get_started", _, socket) do
     {:noreply, redirect(socket, to: "/welcome/complete")}
+  end
+
+  # Fired by the global ClipboardCopy JS hook after a successful copy
+  # (used by the example task card's Copy button).
+  @impl true
+  def handle_event("copied", _params, socket) do
+    {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
