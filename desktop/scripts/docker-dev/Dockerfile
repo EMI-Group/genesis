@@ -1,7 +1,11 @@
+# syntax=docker/dockerfile:1
+
 # Genesis Docker (dev/test only) — mix release, foreground logs on stdout.
 #
 # Build from this directory:
-#   docker build --build-arg GENESIS_VERSION=v0.9.2 -t genesis:local .
+#   GIT_AUTH_TOKEN="$(gh auth token)" docker build \
+#     --secret id=GIT_AUTH_TOKEN --build-arg GENESIS_VERSION=v0.9.2 \
+#     -t genesis:local .
 #
 # The image runs as the non-root genesis account by default.
 
@@ -80,12 +84,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile default --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustc --version
 
-RUN git clone \
-        --branch "${GENESIS_VERSION}" \
-        --depth 1 \
-        --single-branch \
-        https://github.com/EMI-Group/genesis.git \
-        /app/genesis
+ADD --chown=genesis:genesis \
+    "https://github.com/EMI-Group/genesis.git#${GENESIS_VERSION}" \
+    /app/genesis
 
 WORKDIR /app/genesis
 

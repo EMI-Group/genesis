@@ -1,6 +1,6 @@
 # Genesis Docker
 
-This directory provides a Docker image and Compose configuration for running a development or test instance of Genesis. The image clones a tagged Genesis revision from GitHub, builds the release on `elixir:otp-29`, and serves the dashboard on port `9999`.
+This directory provides a Docker image and Compose configuration for running a development or test instance of Genesis. BuildKit fetches a tagged Genesis revision from GitHub, the image builds the release on `elixir:otp-29`, and the resulting container serves the dashboard on port `9999`.
 
 Do not use this configuration as a public production deployment. The image includes a shared development `SECRET_KEY_BASE` by default.
 
@@ -8,18 +8,22 @@ Do not use this configuration as a public production deployment. The image inclu
 
 - Docker Engine or Docker Desktop
 - Docker Compose v2 (`docker compose`)
+- An authenticated GitHub CLI (`gh`) session with read access to `EMI-Group/genesis`
 
 ## Build the image
 
 Build the image from this directory:
 
 ```bash
-docker build \
+GIT_AUTH_TOKEN="$(gh auth token)" docker build \
+  --secret id=GIT_AUTH_TOKEN \
   --build-arg GENESIS_VERSION=v0.9.2 \
   -t genesis:local .
 ```
 
-`GENESIS_VERSION` must be a complete Git tag from the [Genesis repository](https://github.com/EMI-Group/genesis/tags), including the `v` prefix. It defaults to `v0.9.2`. The build performs a shallow, single-tag clone from GitHub and does not copy source files from the local checkout. Commit SHAs are not supported by this argument.
+The command obtains the token from the local [GitHub CLI](https://cli.github.com/) session. BuildKit uses `GIT_AUTH_TOKEN` only to fetch the private Git source; the token is not exposed to Dockerfile instructions or stored in the image. If GitHub CLI is unavailable, populate `GIT_AUTH_TOKEN` through your normal secret manager before running the build. Do not pass it as a build argument.
+
+`GENESIS_VERSION` must be a complete Git tag from the [Genesis repository](https://github.com/EMI-Group/genesis/tags), including the `v` prefix. It defaults to `v0.9.2`. BuildKit resolves that tag as a remote Git input and does not copy source files from the local checkout. The repository metadata under `.git` is not included in the image.
 
 The resulting image is named `genesis:local`.
 
@@ -37,7 +41,8 @@ The image includes language runtimes and native build tools for projects opened 
 Use build arguments to select different language versions:
 
 ```bash
-docker build \
+GIT_AUTH_TOKEN="$(gh auth token)" docker build \
+  --secret id=GIT_AUTH_TOKEN \
   --build-arg GENESIS_VERSION=v0.9.2 \
   --build-arg NODE_VERSION=22 \
   --build-arg PYTHON_VERSION=3.13 \
