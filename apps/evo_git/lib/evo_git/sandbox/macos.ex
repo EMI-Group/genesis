@@ -42,6 +42,28 @@ defmodule EvoGit.Sandbox.MacOS do
   # first attempt.
   @process_limit_rejected_key {EvoGit.Sandbox.MacOS, :process_limit_rejected}
 
+  # Built-in writable cache dirs (home-relative) for package managers and
+  # toolchains (`mix deps.get`, `npm install`, `cargo build`). This is the
+  # DEFAULT list emitted as `(allow file-write* (subpath "<home>/<dir>"))`
+  # (rule group 12) when the user has NOT set `[sandbox] write_paths`. When
+  # set, the user's list REPLACES this one wholesale (even an empty list) —
+  # see `resolve_write_paths/2`.
+  @default_cache_dirs [
+    ".cache",
+    ".local/share",
+    ".local/state",
+    ".cargo",
+    ".rustup",
+    ".mix",
+    ".hex",
+    ".npm",
+    ".yarn",
+    ".bun",
+    ".m2",
+    ".gradle",
+    "go"
+  ]
+
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
   def enabled? do
@@ -270,26 +292,16 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # Build-cache dirs: package managers and toolchains (`mix deps.get`,
     # `npm install`, `cargo build`) must write their caches — these are core
-    # agent workflows.
-    build_cache_dirs = [
-      ".cache",
-      ".local/share",
-      ".local/state",
-      ".cargo",
-      ".rustup",
-      ".mix",
-      ".hex",
-      ".npm",
-      ".yarn",
-      ".bun",
-      ".m2",
-      ".gradle",
-      "go"
-    ]
+    # agent workflows. User-configurable via `[sandbox] write_paths`: nil
+    # (unset) → the built-in default cache-dir list; set (even `[]`) → the
+    # user's list REPLACES the default cache-dir list (only these cache-dir
+    # write rules; every other profile group is untouched). Structural paths
+    # (cwd, tmp, nix, repo .git, genesis dirs) are always granted elsewhere in
+    # the profile — they are not part of the user-configurable list.
+    write_paths = resolve_write_paths(EvoGit.Config.resolve([:sandbox, :write_paths]), home)
 
     cache_rw_rules =
-      Enum.map_join(build_cache_dirs, "\n    ", fn dir ->
-        path = Path.join(home, dir)
+      Enum.map_join(write_paths, "\n    ", fn path ->
         ~s{(allow file-write* (subpath "#{path}"))}
       end)
 
@@ -358,6 +370,34 @@ defmodule EvoGit.Sandbox.MacOS do
     """
     |> String.replace(~r/\n{3,}/, "\n\n")
     |> String.trim()
+  end
+
+  # Resolves the writable-path (cache-dir) list to absolute paths.
+  #
+  #   * `nil` (config unset) → the built-in `@default_cache_dirs` list joined
+  #     to `home` — byte-identical to the historical hard-coded output.
+  #   * set (even `[]`) → the user's list REPLACES the default cache-dir list;
+  #     `[]` means no cache-dir write rules at all.
+  #
+  # Path convention for user entries:
+  #   * `~`-prefixed entries expand to `System.user_home!()` (e.g. `~/cache`
+  #     → `<home>/cache`, bare `~` → `<home>`)
+  #   * absolute entries (leading `/`) are used as-is
+  #   * relative entries are joined to `home` — the same base the built-in
+  #     defaults use
+  #
+  # `Path.expand` is deliberately NOT used: on entries containing `$HOME` env
+  # substitution (e.g. `$HOME/.cache`) it would treat the literal `$HOME` text
+  # as a directory name. Env substitutions are NOT expanded — such entries are
+  # handled like any relative path.
+  defp resolve_write_paths(nil, home), do: Enum.map(@default_cache_dirs, &Path.join(home, &1))
+
+  defp resolve_write_paths(paths, home) do
+    Enum.map(paths, fn
+      "~" <> rest -> Path.join(home, String.trim_leading(rest, "/"))
+      "/" <> _ = path -> path
+      path -> Path.join(home, path)
+    end)
   end
 
   # Removes the `(limit ...)` line from a generated SBPL profile, preserving

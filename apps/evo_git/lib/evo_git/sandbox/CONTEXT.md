@@ -12,7 +12,7 @@ None — leaf directory (modules: `sandbox.ex`, `behaviour.ex`, `helpers.ex`, `l
 | `EvoGit.Sandbox` | Dispatch module (sibling file `lib/evo_git/sandbox.ex`) — routes to the active backend. `run/4` + `run_with_partial/6` accept ANY executable name + args list (no allowlist, no restriction) — the skills executor can pass `("bash", [script_path])` unchanged |
 | `EvoGit.Sandbox.Behaviour` | Formal `@behaviour` contract that all backends implement (`enabled?/0`, `ensure_initialized/0`, `run/4`, `run_with_partial/6`) |
 | `EvoGit.Sandbox.Helpers` | Shared utility functions extracted from the backends and lifecycle modules: `shell_escape/1` (POSIX-safe, security-sensitive), `read_tempfile/2` (temp-file read + delete with optional truncation), `system_cmd/2` (normalized `System.cmd` wrapper) |
-| `EvoGit.Sandbox.Linux` | Linux/systemd-run backend (`@behaviour EvoGit.Sandbox.Behaviour`) — full sandboxing (ReadWritePaths/InaccessiblePaths, ProtectHome/System, resource limits, slice). Unchanged by the 2026-08 macOS/Windows hardening work |
+| `EvoGit.Sandbox.Linux` | Linux/systemd-run backend (`@behaviour EvoGit.Sandbox.Behaviour`) — full sandboxing (ReadWritePaths/InaccessiblePaths, ProtectHome/System, resource limits, slice). The `ReadWritePaths` cache-dir list is configurable via `[sandbox] write_paths` (see "Configurable Writable Paths" below). Unchanged by the 2026-08 macOS/Windows hardening work |
 | `EvoGit.Sandbox.MacOS` | macOS/sandbox-exec backend (`@behaviour EvoGit.Sandbox.Behaviour`) — **deny-by-default SBPL profile with explicit file-read allows, process-count limit (with fail-safe), default-allow network** (see "macOS SBPL Profile" below) |
 | `EvoGit.Sandbox.None` | Passthrough backend (`@behaviour EvoGit.Sandbox.Behaviour`) — no OS-level isolation on Windows/unsupported platforms; `run_with_partial` Windows clause kills the WHOLE process tree on timeout via `taskkill /T /F` (see "Windows gap" below) |
 | `EvoGit.Nix` | Shared helper for running commands inside a cached Nix dev environment — builds the dev env ONCE via `nix print-dev-env`, caches the bash script to `<data_dir>/nix-dev-env.sh`, and sources it per call via `bash -c "source <path>; exec <cmd>"`. Gate: `active?/0` (enabled + dev-env build not failed); `enabled?/0` is the static capability check |
@@ -32,7 +32,7 @@ None — leaf directory (modules: `sandbox.ex`, `behaviour.ex`, `helpers.ex`, `l
 9. **SSH host-verification literal reads**: `(allow file-read-data (literal "<home>/.ssh/known_hosts"))` + `.ssh/config` — keeps `git fetch/push` over SSH working for public repos while private keys stay blocked; key-auth needs ssh-agent (`SSH_AUTH_SOCK`)
 10. **Host `$TMPDIR` read** `(allow file-read* (subpath <expanded $TMPDIR>))` — CRITICAL: macOS per-user tmp is `/var/folders/...`, NOT under `/tmp`; the skills executor and other callers write temp files (skill scripts) via `System.tmp_dir!()` BEFORE the sandbox starts, so they must be readable inside. Skipped when `$TMPDIR` unset
 11. `(allow file-read-metadata)` unqualified — stat/ls/glob on arbitrary paths under default-deny
-12. **Writes**: build-cache dirs under home (`.cache`, `.local/share`, `.local/state`, `.cargo`, `.rustup`, `.mix`, `.hex`, `.npm`, `.yarn`, `.bun`, `.m2`, `.gradle`, `go`) — documented rationale: package managers/toolchains (`mix deps.get`, `npm install`, `cargo build`) must write caches; plus `/dev/null` + `/dev/dtracehelper` literals
+12. **Writes**: build-cache dirs under home (`.cache`, `.local/share`, `.local/state`, `.cargo`, `.rustup`, `.mix`, `.hex`, `.npm`, `.yarn`, `.bun`, `.m2`, `.gradle`, `go`) — documented rationale: package managers/toolchains (`mix deps.get`, `npm install`, `cargo build`) must write caches; plus `/dev/null` + `/dev/dtracehelper` literals. **The cache-dir list is configurable via `[sandbox] write_paths`** — nil (unset) = this default list; set (even `[]`) = the user's list REPLACES it (see "Configurable Writable Paths" below)
 13. **Deny-write sensitive list** (defense in depth; original list: `.ssh`, `.gnupg`, `.aws`, `.kube`, `.config/sops`, `.npmrc`, `.git-credentials`, `.netrc`)
 14. **Process limit**: `(limit number #{@max_processes})` (`@max_processes 200`, module attribute, tunable) + `(allow process-exec)`, `(allow process-fork)`
 15. **Network: `(allow network*)` — KEPT (default-allow), deliberate decision** — agents legitimately run `git fetch/push`, `mix deps.get`, `curl`, web tools; default-deny network breaks core workflows. The primary boundary is the tightened filesystem + process limits. **Future extension point (schema proposal, NOT yet implemented):** a `[sandbox] network_mode = "allow" | "deny"` TOML key belongs in `config/schema/` (outside this node) to gate this rule.
@@ -46,6 +46,21 @@ The exact SBPL `limit` parameter syntax (`(limit number N)` vs `(limit (number N
 - bash/dyld startup reads (covered by system paths; verify on real hardware)
 - SSH literal allows vs deny-precedence: if strict deny-precedence shadows `known_hosts`/`config` literals, git-over-SSH host verification fails (then move the literals outside the `.ssh` deny-read subpath)
 - `/tmp` → `/private/tmp` symlink aliasing (existing rules use literal `/tmp`/`/var/tmp`)
+
+## Configurable Writable Paths — `[sandbox] write_paths`
+
+Both Linux (`args/4` → `-p ReadWritePaths=-<path>`) and macOS (`generate_profile/2` → `(allow file-write* (subpath "<path>"))`) resolve the writable cache-dir list from `EvoGit.Config.resolve([:sandbox, :write_paths])` (schema key `:list_of_strings`, default `nil`):
+
+- **`nil` (unset)** → the built-in default cache-dir list (`.cache`, `.local/share`, `.local/state`, `.cargo`, `.rustup`, `.mix`, `.hex`, `.npm`, `.yarn`, `.bun`, `.m2`, `.gradle`, `go`, home-relative) — byte-identical to historical output.
+- **set (even `[]`)** → the user's list REPLACES the default cache-dir list; `[]` disables the cache-dir write paths entirely.
+
+**Path convention** (per entry): `~`-prefixed → `System.user_home!()` (e.g. `~/cache` → `<home>/cache`, bare `~` → `<home>`); absolute (leading `/`) → used as-is; relative → joined to `System.user_home!()` (the same base the defaults use). `Path.expand` is deliberately NOT used — env substitutions like `$HOME` are NOT expanded (a `$HOME/x` entry is treated as a relative path component).
+
+**Structural paths are ALWAYS appended** after the cache-dir list — they are required for the sandbox to function, NOT part of the user-configurable list: Linux appends `cwd`, `Platform.tmp_paths()`, nix `/nix/store` + `/nix/var` (when `Nix.enabled?()`), and `<repo_root>/.git`; macOS always grants cwd, tmp paths, nix, repo `.git`, and genesis dirs in their own profile groups.
+
+**Deny lists are NEVER affected** — the config replaces only the ALLOW/write list: Linux `InaccessiblePaths` (sensitive-dir deny) and the macOS deny-read/deny-write sensitive lists stay exactly as-is.
+
+Implementation: both backends define a `@default_cache_dirs` module attribute + a private `resolve_write_paths/2` (deliberately duplicated across the two backend files — same ~20-line pure function, kept local to each backend per the edit-scope constraint).
 
 ## Windows / None Backend — No-Sandbox Gap (Known Issue)
 
