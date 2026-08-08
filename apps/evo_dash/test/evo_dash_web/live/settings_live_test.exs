@@ -956,4 +956,180 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert result_socket.assigns.llm_test_status == :idle
     end
   end
+
+  describe "sandbox write_paths list editor" do
+    # The write_paths card (:list_of_strings schema, commit 0ff33d39) renders in
+    # the sandbox category (all sub_category == nil schemas) and in search
+    # results. The add_list_entry / remove_list_entry events mutate only the
+    # in-memory file_config — nothing persists until save_category is submitted.
+
+    defp write_paths(view) do
+      get_in(assigns(view).file_config, [:sandbox, :write_paths])
+    end
+
+    # Seeds config.toml before mounting the LiveView. The file-level setup has
+    # already redirected XDG_CONFIG_HOME to a per-test temp dir, so
+    # EvoGit.Config.config_path() is unique to this test and resolve() picks the
+    # file up via its mtime+size-validated cache. The explicit on_exit rm is
+    # belt-and-braces (the setup already rm_rf!'s the whole temp dir).
+    defp seed_write_paths(paths) do
+      path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
+
+      on_exit(fn ->
+        # Teardown cleanup must not mask test failures.
+        File.rm(path)
+      end)
+    end
+
+    test "sandbox category renders the write_paths card without crashing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      # Regression: the sandbox category used to hard-filter to [:sandbox, :mode],
+      # so any other sub_category == nil schema (write_paths) hit a CaseClauseError
+      # in setting_card/1. Rendering without raising proves the :list_of_strings
+      # clause works.
+      assert html =~ "sandbox.write_paths"
+      assert html =~ "Add path"
+      # nil (unset) value renders the "Not set" hint instead of inputs
+      assert html =~ "platform default writable paths are used"
+      assert write_paths(view) == nil
+    end
+
+    test "search for write_paths renders the card", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "search", %{"value" => "write_paths"})
+
+      assert html =~ "Search Results"
+      assert html =~ "sandbox.write_paths"
+      assert html =~ "Add path"
+    end
+
+    test "add_list_entry appends a blank entry to the in-memory config", %{conn: conn} do
+      seed_write_paths(["/tmp/a", "/tmp/b"])
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      html = render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+
+      # The implementation appends a trailing "" entry (the "add row").
+      assert write_paths(view) == ["/tmp/a", "/tmp/b", ""]
+      # The re-rendered card keeps the existing entries and shows the new blank input
+      assert html =~ ~s(value="/tmp/a")
+      assert html =~ ~s(value="/tmp/b")
+    end
+
+    test "add_list_entry with an unknown key path flashes an error", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "add_list_entry", %{"key_path" => "nope.nope"})
+
+      assert html =~ "Invalid key path."
+      assert write_paths(view) == nil
+    end
+
+    test "remove_list_entry removes the entry at the given index", %{conn: conn} do
+      seed_write_paths(["/tmp/a", "/tmp/b"])
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      html =
+        render_hook(view, "remove_list_entry", %{
+          "key_path" => "sandbox.write_paths",
+          "index" => "0"
+        })
+
+      assert write_paths(view) == ["/tmp/b"]
+      refute html =~ ~s(value="/tmp/a")
+      assert html =~ ~s(value="/tmp/b")
+    end
+
+    test "remove_list_entry with malformed or out-of-range index is a no-op", %{conn: conn} do
+      seed_write_paths(["/tmp/a", "/tmp/b"])
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      # Malformed index → Integer.parse fails → treated as -1 → no-op
+      render_hook(view, "remove_list_entry", %{
+        "key_path" => "sandbox.write_paths",
+        "index" => "abc"
+      })
+
+      assert write_paths(view) == ["/tmp/a", "/tmp/b"]
+
+      # Out-of-range index → no-op
+      render_hook(view, "remove_list_entry", %{
+        "key_path" => "sandbox.write_paths",
+        "index" => "5"
+      })
+
+      assert write_paths(view) == ["/tmp/a", "/tmp/b"]
+    end
+
+    test "save_category persists the edited list to the config file", %{conn: conn} do
+      seed_write_paths(["/tmp/a", "/tmp/b"])
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      # Add a blank entry, then remove the first entry → ["/tmp/b", ""]
+      render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+
+      render_hook(view, "remove_list_entry", %{
+        "key_path" => "sandbox.write_paths",
+        "index" => "0"
+      })
+
+      html =
+        render_hook(view, "save_category", %{
+          "category" => "sandbox",
+          "sandbox.mode" => "auto",
+          # Form submission includes the hidden sentinel "" plus the text inputs;
+          # blank entries are filtered by list_of_strings_value/1.
+          "sandbox.write_paths" => ["", "/tmp/b", ""]
+        })
+
+      assert html =~ "Configuration saved successfully."
+      assert EvoGit.Config.resolve([:sandbox, :write_paths]) == ["/tmp/b"]
+      assert File.read!(EvoGit.Config.config_path()) =~ ~s(write_paths = ["/tmp/b"])
+    end
+
+    test "blank-only list saves as an explicit empty list", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      # The UI flow: add one blank entry, then save. The form submits the hidden
+      # sentinel "" plus the blank input → parsed to [] (a set-but-empty list
+      # that REPLACES the platform defaults, distinct from unset/nil).
+      render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
+
+      html =
+        render_hook(view, "save_category", %{
+          "category" => "sandbox",
+          "sandbox.mode" => "auto",
+          "sandbox.write_paths" => ["", ""]
+        })
+
+      assert html =~ "Configuration saved successfully."
+      assert EvoGit.Config.resolve([:sandbox, :write_paths]) == []
+      assert File.read!(EvoGit.Config.config_path()) =~ "write_paths = []"
+    end
+
+    test "absent write_paths on save keeps nil (no key introduced)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      html =
+        render_hook(view, "save_category", %{
+          "category" => "sandbox",
+          "sandbox.mode" => "auto"
+        })
+
+      assert html =~ "Configuration saved successfully."
+      assert EvoGit.Config.resolve([:sandbox, :write_paths]) == nil
+      refute File.read!(EvoGit.Config.config_path()) =~ "write_paths"
+    end
+  end
 end
