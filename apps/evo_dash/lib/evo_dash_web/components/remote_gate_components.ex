@@ -40,8 +40,24 @@ defmodule EvoDashWeb.RemoteGateComponents do
   """
   attr(:remote_status, :map, default: nil)
   attr(:name, :string, default: "Local")
+  attr(:current_node_name, :string, default: nil)
 
   def remote_connection_gate(assigns) do
+    # LiveView assigns carry `current_node_name` but no `:name` key. The
+    # Declarative-generated wrapper merges the attr defaults (`name: "Local"`)
+    # into every call, so the caller-provided assigns must be read from
+    # `:__given__` (Phoenix's reserved assign tracking given attrs — see
+    # `Phoenix.Component.assign/3`): an explicit `name` wins, then
+    # `current_node_name`, else "Local".
+    given = Map.get(assigns, :__given__, assigns)
+
+    assigns =
+      assign(
+        assigns,
+        :name,
+        Map.get(given, :name) || Map.get(given, :current_node_name) || "Local"
+      )
+
     ~H"""
     <%= if connecting_state?(@remote_status) do %>
       <div class="flex flex-col items-center justify-center gap-4 py-16">
