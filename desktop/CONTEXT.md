@@ -9,6 +9,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 ## Routing Table
 
 - `./src-tauri/` → Tauri project (Rust source, Cargo.toml, tauri.conf.json)
+- `./scripts/docker-dev/` → Dev/test-only Docker image from umbrella source (`mix release genesis` + `bin/genesis start`); see `scripts/docker-dev/README.md`
 
 ## API Surface
 

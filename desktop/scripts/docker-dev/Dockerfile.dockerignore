@@ -1,0 +1,56 @@
+# Build context for Dockerfile (repository root)
+
+.git
+.github
+.cursor
+.cursorignore
+.vscode
+.idea
+**/Dockerfile*
+**/*.dockerignore
+
+# Mix / Erlang artifacts (rebuilt in the image)
+_build
+deps
+cover
+doc
+tmp
+.elixir_ls
+.lexical
+erl_crash.dump
+*.beam
+
+# Nix / local results
+result
+result-*
+.genesis
+
+# Desktop native build trees (not needed for the Genesis release)
+desktop/src-tauri/target
+desktop/src-tauri/resources/genesis-backend
+desktop/scripts/docker-dev/config
+desktop/scripts/docker-dev/data
+desktop/scripts/docker-dev/workspace
+
+# Environment files, secrets, and local overrides
+.env
+.env.*
+*.local.exs
+config/*.local.exs
+
+# Tests and vendor binaries (the image installs system git and ripgrep)
+**/test
+apps/evo_git/priv/vendor/**/git
+apps/evo_git/priv/vendor/**/rg
+apps/evo_git/priv/vendor/**/git.exe
+apps/evo_git/priv/vendor/**/rg.exe
+
+# Miscellaneous files (keep Markdown files for agent context)
+**/.DS_Store
+**/node_modules
+LICENSE
+flake.lock
+flake.nix
+genesis.nix
+genesis-desktop.nix
+nix

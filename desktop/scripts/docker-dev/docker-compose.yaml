@@ -1,0 +1,41 @@
+# Runtime Compose example (dev/test only) — copy to any folder and run an
+# already-built image. PHX_HOST, PHX_SERVER, and the dev-only SECRET_KEY_BASE
+# default in the image.
+#
+#   # build once from the repository root (not from this runtime file):
+#   docker build -f desktop/scripts/docker-dev/Dockerfile -t genesis:local .
+#
+#   # run from anywhere (this file's directory):
+#   mkdir -p config data workspace
+#   docker compose up
+#   open http://localhost:9999
+
+services:
+  genesis:
+    # Change to your registry/tag after build or pull
+    image: genesis:local
+    # Use the init process supplied by the container runtime.
+    init: true
+    ports:
+      # host:container
+      - "9999:9999"
+    environment:
+      # Phoenix HTTP port (keep in sync with `ports:` above)
+      PORT: "9999"
+
+      # Dev/test default is baked into the image. Uncomment to override:
+      # SECRET_KEY_BASE: "${SECRET_KEY_BASE}"
+
+      # Default is localhost. Use the hostname or IP that browsers use when
+      # accessing Genesis from another machine:
+      # PHX_HOST: "genesis.example.test"
+    volumes:
+      # Genesis config and credentials.
+      - ./config:/app/.config/genesis
+
+      # Genesis database and runtime data.
+      - ./data:/app/.local/share/genesis
+
+      # Host project(s) for agents (relative to this Compose file).
+      - ./workspace:/app/workspace
+    restart: unless-stopped
