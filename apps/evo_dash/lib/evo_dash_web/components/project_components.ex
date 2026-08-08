@@ -113,7 +113,11 @@ defmodule EvoDashWeb.ProjectComponents do
               />
 
             <% :new_project -> %>
-              <.palette_new_project platform={@platform} tauri_detected={@tauri_detected} />
+              <.palette_new_project
+                path_suggestions={@path_suggestions}
+                platform={@platform}
+                tauri_detected={@tauri_detected}
+              />
           <% end %>
         </div>
       <% end %>
@@ -297,6 +301,7 @@ defmodule EvoDashWeb.ProjectComponents do
   # palette_new_project/1 — New project creation form (Create New mode)
   # ---------------------------------------------------------------------------
 
+  attr(:path_suggestions, :list, default: [])
   attr(:platform, :string, default: "linux")
   attr(:tauri_detected, :boolean, default: false)
 
@@ -344,7 +349,16 @@ defmodule EvoDashWeb.ProjectComponents do
                 class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
                 placeholder={platform_parent_placeholder(@platform)}
                 id="new-project-location-input"
+                phx-hook="PathAutocomplete"
+                phx-change="new_project_location_input"
+                phx-debounce="150"
+                list="new-project-location-suggestions"
               />
+              <datalist id="new-project-location-suggestions">
+                <%= for suggestion <- @path_suggestions do %>
+                  <option value={suggestion}></option>
+                <% end %>
+              </datalist>
             </div>
           </div>
         </div>

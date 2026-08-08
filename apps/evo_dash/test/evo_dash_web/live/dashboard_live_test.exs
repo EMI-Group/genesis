@@ -756,6 +756,36 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
   end
 
+  describe "new project location input suggestions" do
+    test "input carries autocomplete wiring and recomputes suggestions on change", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Open the palette and switch to Create New Project mode
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "new_project"})
+
+      # Typing into the Location input fires the phx-change handler, which
+      # recomputes `@path_suggestions` for the typed parent directory (the
+      # create-new-project palette is local-only, so these resolve against the
+      # local filesystem).
+      html = render_change(view, "new_project_location_input", %{"location" => tmp_dir})
+
+      assert html =~ ~s(id="new-project-location-input")
+      assert html =~ ~s(phx-hook="PathAutocomplete")
+      assert html =~ ~s(list="new-project-location-suggestions")
+      assert html =~ ~s(phx-change="new_project_location_input")
+      assert html =~ ~s(phx-debounce="150")
+      assert html =~ ~s(<datalist id="new-project-location-suggestions">)
+
+      # tmp_dir exists on disk, so it must appear among the recomputed suggestions
+      assert Enum.member?(assigns(view)[:path_suggestions], tmp_dir)
+      assert html =~ ~s(<option value="#{tmp_dir}"></option>)
+    end
+  end
+
   describe "select_project" do
     setup do
       clear_recent_projects()

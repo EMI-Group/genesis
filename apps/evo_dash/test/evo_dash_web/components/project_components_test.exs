@@ -173,6 +173,40 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
+  # New-project Location path input autocomplete wiring: the input carries the
+  # PathAutocomplete hook, the `new_project_location_input` change event
+  # (debounced 150ms), and a datalist fed by `@path_suggestions` — mirroring
+  # the open-path palette input and the foreign-repo form.
+  describe "new project location input autocomplete" do
+    test "input carries hook/list/change/debounce attributes and a datalist" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :new_project,
+          path_suggestions: ["/tmp/alpha", "/tmp/beta"]
+        )
+
+      assert attribute(html, "#new-project-location-input", "phx-hook") == [
+               "PathAutocomplete"
+             ]
+
+      assert attribute(html, "#new-project-location-input", "list") == [
+               "new-project-location-suggestions"
+             ]
+
+      assert attribute(html, "#new-project-location-input", "phx-change") == [
+               "new_project_location_input"
+             ]
+
+      assert attribute(html, "#new-project-location-input", "phx-debounce") == ["150"]
+
+      # The datalist renders one <option> per suggestion
+      assert html =~ ~s(<datalist id="new-project-location-suggestions">)
+      assert html =~ ~s(<option value="/tmp/alpha"></option>)
+      assert html =~ ~s(<option value="/tmp/beta"></option>)
+    end
+  end
+
   # Remote-context palette actions: "Create New Project" is a local dashboard
   # concern (it creates directories on the local filesystem), so it is hidden in
   # remote contexts while "Open Project by Path" stays available.

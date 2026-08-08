@@ -280,7 +280,7 @@ defmodule EvoDashWeb.SystemLive do
                       "LLM connection testing is now available on the Settings page."
                     )}</span>
                     <.link
-                      navigate={with_node_param(~p"/settings?category=llm", @current_node_id)}
+                      navigate={~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"}
                       class="btn btn-primary btn-sm gap-2"
                     >
                       <.icon name="hero-sparkles" class="size-4" />
@@ -437,13 +437,17 @@ defmodule EvoDashWeb.SystemLive do
     # after switching to a remote node.
     previous_remote? = socket.assigns[:remote?]
 
+    # NOTE: `remote?` must be derived from the socket AFTER `assign_node/2`
+    # re-assigns `current_node` — computing it inside the pipe from the outer
+    # `socket` variable would read the PRE-assign_node value, so a page load at
+    # a connected `?node=` URL would render as local (restart/stop would act on
+    # the LOCAL VM while the user is viewing a remote node).
+    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+    socket = assign(socket, :current_path, ~p"/system")
+    socket = assign(socket, :remote?, socket.assigns.current_node != node())
+
     socket =
-      socket
-      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/system")
-      |> assign(:remote?, socket.assigns.current_node != node())
-      # Refresh the scheduler paused state for the (possibly new) node context.
-      |> assign(:scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
+      assign(socket, :scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
 
     socket =
       if previous_remote? != nil and previous_remote? != socket.assigns.remote? do

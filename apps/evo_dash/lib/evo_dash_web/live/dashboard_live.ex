@@ -1178,6 +1178,21 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("new_project_location_input", %{"location" => value}, socket) do
+    # The create-new-project palette form is local-only (hidden in remote
+    # contexts), but suggestions resolve node-aware like `path_input` for
+    # consistency with the shared `@path_suggestions` assign.
+    suggestions =
+      Project.path_suggestions(
+        socket.assigns.current_node,
+        value,
+        socket.assigns.recent_projects
+      )
+
+    {:noreply, assign(socket, :path_suggestions, suggestions)}
+  end
+
+  @impl true
   def handle_event("foreign_repo_path_input", %{"path" => value}, socket) do
     # Foreign-repo paths are always LOCAL filesystem paths (project settings
     # are a local dashboard concern), so suggestions resolve against the local
