@@ -147,7 +147,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **macOS**: Builds ARM64 (`macos-14`) → `.dmg` / `.app` bundles
 - **Linux**: Builds x86_64 (`ubuntu-24.04`) and ARM64 (`ubuntu-24.04-arm`) → `.deb` / `.rpm` / AppImage / `.tar.gz` portable archive (AppImage excluded on ARM64 — `appimagetool`/`linuxdeploy` are x86_64-only). Flatpak is not built — Tauri v2 has no native Flatpak bundle target (documented in the workflow).
 - **Windows**: Builds x86_64 (`windows-2022`) → `.msi` / `.exe` (NSIS) installers.
-- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI. Tauri CLI binary is also cached.
+- **Caching**: Mix deps (`deps/`), Mix build (`_build/`), and Rust target (`Swatinem/rust-cache@v2`) are cached per platform/target to speed up CI. The Tauri CLI (npm `@tauri-apps/cli`, cached under `~/tauri-cli` on POSIX / `%APPDATA%\npm` on Windows) is also cached.
 - **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`) report `ImageOS` values that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24`) via `$GITHUB_ENV` before the setup-beam step for the ARM64 target.
 - **Toolchains**: CI requires Elixir/OTP and Rust (Tauri) on all platforms; Linux also needs system packages (webkit2gtk, libayatana-appindicator3-dev for system tray, libdbus-1-dev for tray-icon crate, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
