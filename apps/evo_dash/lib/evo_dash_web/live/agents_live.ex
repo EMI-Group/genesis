@@ -510,6 +510,18 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  def handle_event("retry_remote_connection", _params, socket) do
+    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("switch_to_local", _params, socket) do
+    send(self(), {:node_selected, "local"})
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("open_send_message", %{"id" => id}, socket) do
     agent_id = String.to_integer(id)
     {:noreply, assign(socket, send_message_agent_id: agent_id, send_message_text: "")}

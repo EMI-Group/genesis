@@ -21,12 +21,15 @@ defmodule EvoDashWeb.ReviewLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
+      <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
+        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+      <% else %>
       <%= if @error do %>
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
-          <.link navigate={~p"/"} class="btn btn-primary px-6 gap-2">
+          <.link navigate={with_node_param(~p"/", @current_node_id)} class="btn btn-primary px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
         </div>
@@ -35,11 +38,14 @@ defmodule EvoDashWeb.ReviewLive do
           <!-- Back button -->
           <div class="flex items-center gap-3">
             <%= if @live_action == :commit do %>
-              <.link navigate={~p"/review/#{@task_id}"} class="btn btn-ghost btn-sm gap-1 px-4">
+              <.link
+                navigate={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
+                class="btn btn-ghost btn-sm gap-1 px-4"
+              >
                 <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
               </.link>
             <% else %>
-              <.link navigate={~p"/"} class="btn btn-ghost btn-sm gap-1 px-4">
+              <.link navigate={with_node_param(~p"/", @current_node_id)} class="btn btn-ghost btn-sm gap-1 px-4">
                 <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
               </.link>
             <% end %>
@@ -203,6 +209,7 @@ defmodule EvoDashWeb.ReviewLive do
           <% end %>
         </div>
       <% end %>
+      <% end %>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -311,6 +318,18 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("copied", _params, socket) do
     {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
+  end
+
+  @impl true
+  def handle_event("retry_remote_connection", _params, socket) do
+    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("switch_to_local", _params, socket) do
+    send(self(), {:node_selected, "local"})
+    {:noreply, socket}
   end
 
   @impl true

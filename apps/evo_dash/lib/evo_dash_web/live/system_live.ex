@@ -30,6 +30,9 @@ defmodule EvoDashWeb.SystemLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
+      <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
+        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+      <% else %>
       <!-- Scheduler Control banner -->
       <div class="p-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -276,7 +279,10 @@ defmodule EvoDashWeb.SystemLive do
                     <span class="text-sm text-base-content/60">{gettext(
                       "LLM connection testing is now available on the Settings page."
                     )}</span>
-                    <.link navigate={~p"/settings?category=llm"} class="btn btn-primary btn-sm gap-2">
+                    <.link
+                      navigate={with_node_param(~p"/settings?category=llm", @current_node_id)}
+                      class="btn btn-primary btn-sm gap-2"
+                    >
                       <.icon name="hero-sparkles" class="size-4" />
                       {gettext("Test in Settings")}
                     </.link>
@@ -290,7 +296,7 @@ defmodule EvoDashWeb.SystemLive do
 
       <!-- System Dashboard -->
       <div class="mt-4">
-        <.link navigate={~p"/dashboard"} class="block">
+        <.link navigate={with_node_param(~p"/dashboard", @current_node_id)} class="block">
           <div class="rounded-lg border border-base-200 bg-base-100 p-4 hover:border-base-300 transition-colors">
             <div class="flex items-center gap-3">
               <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
@@ -392,6 +398,7 @@ defmodule EvoDashWeb.SystemLive do
             </div>
           </div>
         </div>
+      <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -598,6 +605,18 @@ defmodule EvoDashWeb.SystemLive do
          )
        )}
     end
+  end
+
+  @impl true
+  def handle_event("retry_remote_connection", _params, socket) do
+    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("switch_to_local", _params, socket) do
+    send(self(), {:node_selected, "local"})
+    {:noreply, socket}
   end
 
   @impl true

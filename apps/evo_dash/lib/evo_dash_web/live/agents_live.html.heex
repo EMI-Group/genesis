@@ -1,5 +1,9 @@
 <EvoDashWeb.Layouts.app flash={@flash} current_page={:agents} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
 
+  <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
+    <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+  <% else %>
+
   <!-- Fixed viewport layout: no page-level scroll on xl+, panels scroll independently -->
   <div class="agents-page-layout animate-fade-in-up animation-delay-100">
     <!-- Left Column: Tree + Legend -->
@@ -660,5 +664,6 @@
         <button class="cursor-default"><%= gettext("close") %></button>
       </div>
     </div>
+  <% end %>
   <% end %>
 </EvoDashWeb.Layouts.app>

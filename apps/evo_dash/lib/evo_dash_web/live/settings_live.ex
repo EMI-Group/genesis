@@ -23,6 +23,9 @@ defmodule EvoDashWeb.SettingsLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
+      <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
+        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+      <% else %>
       <%= if @active_category != :remote_connections do %>
         <%!-- Config file path display --%>
         <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
@@ -477,6 +480,7 @@ defmodule EvoDashWeb.SettingsLive do
           <% end %>
         </div>
       </div>
+      <% end %>
     </EvoDashWeb.Layouts.app>
     """
   end
@@ -667,6 +671,18 @@ defmodule EvoDashWeb.SettingsLive do
         socket
       end
 
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("retry_remote_connection", _params, socket) do
+    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("switch_to_local", _params, socket) do
+    send(self(), {:node_selected, "local"})
     {:noreply, socket}
   end
 

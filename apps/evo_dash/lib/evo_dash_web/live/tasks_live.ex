@@ -27,6 +27,9 @@ defmodule EvoDashWeb.TasksLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
     >
+      <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
+        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+      <% else %>
       <!-- Filter Bar -->
       <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
         <form id="task-filters" phx-submit="noop">
@@ -213,6 +216,8 @@ defmodule EvoDashWeb.TasksLive do
               <EvoDashWeb.TaskCardComponents.task_card
                 task={task}
                 show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                remote?={@current_node_id != nil}
+                current_node_id={@current_node_id}
               />
             </div>
           <% end %>
@@ -304,6 +309,7 @@ defmodule EvoDashWeb.TasksLive do
           </:title>
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
         </EvoDashWeb.Helpers.modal>
+      <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -503,6 +509,18 @@ defmodule EvoDashWeb.TasksLive do
   # Prevents page reload when pressing Enter in the filter/search form
   @impl true
   def handle_event("noop", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("retry_remote_connection", _params, socket) do
+    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("switch_to_local", _params, socket) do
+    send(self(), {:node_selected, "local"})
+    {:noreply, socket}
+  end
 
   @impl true
   def handle_event("reset_filters", _params, socket) do
