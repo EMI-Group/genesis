@@ -213,6 +213,10 @@ fn run_gui() {
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
+                // On macOS the default left-click opens the menu on mouse-down,
+                // which swallows the Click { Left, Up } event below. Disable it
+                // so left-click pops the window; the menu stays on right-click.
+                .show_menu_on_left_click(false)
                 .tooltip("Genesis")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => {
