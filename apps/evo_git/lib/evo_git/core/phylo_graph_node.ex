@@ -93,20 +93,6 @@ defmodule EvoGit.Core.PhyloGraphNode do
   end
 
   @doc """
-  Lists all directories in the given commit recursively.
-  """
-  def list_directories(%__MODULE__{} = node) do
-    case Git.run(["ls-tree", "-r", "-d", "--name-only", node.current_commit], node.repo) do
-      {:ok, output} ->
-        dirs = String.split(output, "\n", trim: true)
-        {:ok, dirs}
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
   Lists all files in the given commit recursively.
   """
   def list_files(%__MODULE__{} = node) do

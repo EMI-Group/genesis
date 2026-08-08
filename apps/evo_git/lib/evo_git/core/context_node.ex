@@ -229,22 +229,6 @@ defmodule EvoGit.Core.ContextNode do
     end
   end
 
-  @doc """
-  Builds the context tree AND extracts hierarchical skill names in a single pass.
-
-  Returns `{:ok, context_string, skill_names}` or `{:error, reason}`.
-  `skill_names` is a deduplicated list of skill name strings inherited from
-  root to the given node.
-  """
-  @spec build_context_with_skills(String.t(), String.t()) ::
-          {:ok, String.t(), [String.t()]} | {:error, term()}
-  def build_context_with_skills(relative_path, repo_path) do
-    with {:ok, context} <- build_context(relative_path, repo_path) do
-      skill_names = EvoGit.Skills.hierarchical_skill_names(relative_path, repo_path)
-      {:ok, context, skill_names}
-    end
-  end
-
   defp context_max_bytes do
     EvoGit.Config.resolve([:truncation, :context_max_bytes])
   end
