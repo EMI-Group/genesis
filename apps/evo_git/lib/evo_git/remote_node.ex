@@ -539,6 +539,47 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  @doc """
+  Returns filesystem path suggestions for the given node.
+
+  On the local node, calls `EvoGit.PathSuggestions.suggest/1` directly. On a
+  remote node, routes the call through `:erpc` via `call_remote/4` — the
+  remote daemon resolves paths against its own filesystem. Returns `[]` if
+  the remote call fails.
+  """
+  @spec list_path_suggestions(node(), String.t() | nil) :: [String.t()]
+  def list_path_suggestions(node, value) do
+    if node == node() do
+      EvoGit.PathSuggestions.suggest(value)
+    else
+      case call_remote(node, EvoGit.PathSuggestions, :suggest, [value]) do
+        {:ok, list} when is_list(list) -> list
+        {:ok, _other} -> []
+        {:error, _reason} -> []
+      end
+    end
+  end
+
+  @doc """
+  Returns whether `path` is a directory on the given node.
+
+  On the local node, calls `File.dir?/1` directly. On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the check runs on the
+  remote daemon's filesystem. Returns `false` if the remote call fails.
+  """
+  @spec dir?(node(), String.t()) :: boolean()
+  def dir?(node, path) do
+    if node == node() do
+      File.dir?(path)
+    else
+      case call_remote(node, File, :dir?, [path]) do
+        {:ok, bool} when is_boolean(bool) -> bool
+        {:ok, _other} -> false
+        {:error, _reason} -> false
+      end
+    end
+  end
+
   # Safe degraded config-status map returned when a remote config-status RPC
   # fails. Matches the shape of EvoGit.Config.config_status/0 so callers see a
   # well-formed (but unhealthy) status rather than a crash.

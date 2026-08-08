@@ -175,6 +175,38 @@ defmodule EvoGit.RemoteNodeTest do
     end
   end
 
+  describe "list_path_suggestions/2" do
+    test "returns [] when the remote node is unreachable" do
+      assert RemoteNode.list_path_suggestions(@fake_remote, "/tmp") == []
+    end
+
+    test "local path delegates to EvoGit.PathSuggestions.suggest/1" do
+      assert RemoteNode.list_path_suggestions(node(), nil) == []
+      assert RemoteNode.list_path_suggestions(node(), "") == []
+
+      # A real temp dir listed via the trailing-separator branch.
+      base = Path.join(System.tmp_dir!(), "evogit_rn_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(base)
+      on_exit(fn -> File.rm_rf!(base) end)
+      File.write!(Path.join(base, "suggested.txt"), "")
+
+      assert RemoteNode.list_path_suggestions(node(), base <> "/") == [
+               Path.join(base, "suggested.txt")
+             ]
+    end
+  end
+
+  describe "dir?/2" do
+    test "returns false when the remote node is unreachable" do
+      assert RemoteNode.dir?(@fake_remote, "/tmp") == false
+    end
+
+    test "local path delegates to File.dir?/1" do
+      assert RemoteNode.dir?(node(), System.tmp_dir!()) == true
+      assert RemoteNode.dir?(node(), "/definitely/not/a/real/dir") == false
+    end
+  end
+
   describe "RemoteAPI direct delegation" do
     test "list_tasks_changed_since/1 delegates to the running TaskRegistry (returns [])" do
       # Direct RemoteAPI call — delegates to TaskRegistry → Store; the shared
