@@ -176,15 +176,15 @@ The connect flow (`RemoteConnection.do_connect_distributed/1`, `remote_connectio
 
 ### Config Caching Behavior (important for remote/SSH scenarios)
 
-**`EvoGit.Config.resolve/0` has NO caching.** It reads config.toml from disk on every call (`File.read` + `TomlElixir.decode`). No `persistent_term`, module attributes, ETS, or memoization is used. `user_config/0`, `credentials/0`, and `defaults/0` all compute fresh values each call.
+**`EvoGit.Config.resolve/0` uses an mtime+size-validated `:persistent_term` cache.** The parsed TOML maps of `user_config/0` and `credentials/0` are cached per file path; every call does a cheap `File.stat` and only re-reads + TOML-decodes when mtime/size changed (external edits and `RemoteAPI.reload_config/0` are picked up on the next call). `save_user_config/1`/`save_credentials/1` explicitly invalidate after writing. The resolve merge pipeline (merge → atomize → migrate → validate) still runs per call because it populates the process-dictionary validation errors read by `config_status/0`. Details: `config/CONTEXT.md` → Config Caching.
 
 **The actual cache is the AgentScheduler GenServer state.** `AgentScheduler.init/1` calls `Config.resolve()` once at startup and stores the result in `%State{}`. `AgentScheduler.get_config/0` (and therefore `RemoteAPI.get_config/0`) returns values from this in-memory state — NOT from disk. This means:
 
 | Path | Reads disk? |
 |------|------------|
 | `RemoteAPI.get_config/0` → `AgentScheduler.get_config/0` | ❌ No — returns cached GenServer state |
-| `RemoteAPI.reload_config/0` → `Config.resolve()` → `AgentScheduler.update_config/1` | ✅ Yes — refreshes GenServer state from disk |
-| `RemoteAPI.get_config_status/0` → `Config.config_status/0` → `Config.resolve()` | ✅ Yes — reads disk fresh every call |
+| `RemoteAPI.reload_config/0` → `Config.resolve()` → `AgentScheduler.update_config/1` | ✅ Yes — stat-validated; refreshes GenServer state whenever the file changed |
+| `RemoteAPI.get_config_status/0` → `Config.config_status/0` → `Config.resolve()` | ✅ Yes — stat-validated (fresh when the file changed); validation errors from the per-call pipeline |
 
 **`save_user_config/1` does NOT auto-reload.** Writing to disk only persists the file; the caller must separately invoke `reload_config/0` to push changes into the running scheduler. The dashboard's `SettingsLive` does call `reload_remote_config/1` after saving remotely (settings_live.ex:612), but **the return value is not checked** — if the `:erpc.call/5` fails (timeout, node down), the scheduler silently retains its stale config while the user sees "Configuration saved successfully."
 
