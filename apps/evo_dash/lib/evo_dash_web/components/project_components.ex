@@ -58,6 +58,7 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
+  attr(:remote, :boolean, default: false)
 
   def project_omnibox(assigns) do
     ~H"""
@@ -101,6 +102,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 recent_projects={@recent_projects}
                 palette_search={@palette_search}
                 palette_selected_index={@palette_selected_index}
+                remote={@remote}
               />
 
             <% :open_path -> %>
@@ -126,6 +128,7 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:recent_projects, :list, default: [])
   attr(:palette_search, :string, default: "")
   attr(:palette_selected_index, :integer, default: 0)
+  attr(:remote, :boolean, default: false)
 
   defp palette_menu(assigns) do
     ~H"""
@@ -192,16 +195,18 @@ defmodule EvoDashWeb.ProjectComponents do
         <span class="text-sm">{gettext("Open Project by Path")}</span>
       </button>
 
-      <button
-        type="button"
-        phx-click="palette_mode"
-        phx-value-mode="new_project"
-        data-selected={@palette_selected_index == action_base + 1}
-        class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
-      >
-        <.icon name="hero-plus-circle" class="size-4 shrink-0" />
-        <span class="text-sm">{gettext("Create New Project")}</span>
-      </button>
+      <%= unless @remote do %>
+        <button
+          type="button"
+          phx-click="palette_mode"
+          phx-value-mode="new_project"
+          data-selected={@palette_selected_index == action_base + 1}
+          class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+        >
+          <.icon name="hero-plus-circle" class="size-4 shrink-0" />
+          <span class="text-sm">{gettext("Create New Project")}</span>
+        </button>
+      <% end %>
 
       <%= if filtered == [] and @palette_search != "" do %>
         <p class="text-xs text-base-content/40 px-3 py-2 text-center">
@@ -382,6 +387,7 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:worktree_script, :string, default: nil)
   attr(:commands, :map, default: %{})
   attr(:foreign_repos, :list, default: [])
+  attr(:foreign_repo_path_suggestions, :list, default: [])
   attr(:show_add_foreign_repo, :boolean, default: false)
   attr(:new_repo_id, :string, default: "")
   attr(:new_repo_path, :string, default: "")
@@ -426,6 +432,19 @@ defmodule EvoDashWeb.ProjectComponents do
   # dropdown. Renders the same body as project_settings_panel/1 but WITHOUT the
   # collapsible accordion header (the dropdown tab provides the framing).
   # ---------------------------------------------------------------------------
+
+  attr(:active_project, :string, required: true)
+  attr(:project_config, :map, default: nil)
+  attr(:worktree_script, :string, default: nil)
+  attr(:commands, :map, default: %{})
+  attr(:foreign_repos, :list, default: [])
+  attr(:foreign_repo_path_suggestions, :list, default: [])
+  attr(:show_add_foreign_repo, :boolean, default: false)
+  attr(:new_repo_id, :string, default: "")
+  attr(:new_repo_path, :string, default: "")
+  attr(:new_repo_description, :string, default: "")
+  attr(:tauri_detected, :boolean, default: false)
+  attr(:platform, :string, default: "linux")
 
   def project_settings_tab(assigns) do
     ~H"""
@@ -593,7 +612,16 @@ defmodule EvoDashWeb.ProjectComponents do
                     class="input input-bordered input-sm w-full font-mono pr-8"
                     required
                     id="foreign-repo-path-input"
+                    phx-hook="PathAutocomplete"
+                    phx-change="foreign_repo_path_input"
+                    phx-debounce="150"
+                    list="foreign-repo-path-suggestions"
                   />
+                  <datalist id="foreign-repo-path-suggestions">
+                    <%= for suggestion <- @foreign_repo_path_suggestions do %>
+                      <option value={suggestion}></option>
+                    <% end %>
+                  </datalist>
                 </div>
               </div>
             </div>

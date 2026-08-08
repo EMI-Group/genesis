@@ -7,7 +7,7 @@ defmodule EvoDashWeb.DashboardLive.StatePersistence do
   """
 
   alias EvoGit.Core.ForeignRepo
-  import Phoenix.Component, only: [assign: 3]
+  import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
   @doc """
@@ -25,10 +25,52 @@ defmodule EvoDashWeb.DashboardLive.StatePersistence do
       show_advanced: socket.assigns.show_advanced,
       show_project_settings: socket.assigns.show_project_settings,
       task_archive: socket.assigns.task_archive,
-      foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos])
+      foreign_repos: serialize_foreign_repos(socket.assigns[:foreign_repos]),
+      # Per-node storage: the StatePersistence JS hook reads `data-node-id`
+      # from #dashboard-root and merges `node` into sessionStorage, and the
+      # `restore_state` handler gates on it so state saved on one node never
+      # leaks into another node context.
+      node: socket.assigns[:current_node_id] || "local"
     }
 
     push_event(socket, "persist_state", state)
+  end
+
+  @doc """
+  Clears per-node dashboard state when the node context changes (local↔remote
+  or between remote targets). Each node has its own sessionStorage state, so
+  switching nodes must reset every persisted/project assign and re-persist the
+  cleared state under the new node key. Returns the socket unchanged when the
+  node did not change.
+  """
+  def maybe_clear_state_on_node_switch(socket, prev_node_id, current_node_id)
+      when prev_node_id == current_node_id do
+    socket
+  end
+
+  def maybe_clear_state_on_node_switch(socket, _prev_node_id, _current_node_id) do
+    socket
+    |> assign(
+      task_prompt: "",
+      task_resume_from: "",
+      task_starting_commit: "",
+      show_advanced: false,
+      task_archive: false,
+      active_project: nil,
+      active_project_path: nil,
+      foreign_repos: [],
+      show_add_foreign_repo_form: false,
+      new_repo_id: "",
+      new_repo_path: "",
+      new_repo_description: "",
+      show_project_settings: false,
+      show_configure_dropdown: false,
+      project_palette_open: false,
+      palette_mode: :menu,
+      palette_search: "",
+      palette_selected_index: 0
+    )
+    |> maybe_persist_state()
   end
 
   @doc """
