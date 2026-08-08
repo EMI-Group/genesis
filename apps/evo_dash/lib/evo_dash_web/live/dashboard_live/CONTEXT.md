@@ -1,12 +1,24 @@
-# DashboardLive Support Modules
+# DashboardLive Support Modules (mostly retired)
 
 ## Intent
 
-Support modules extracted from `EvoDashWeb.DashboardLive` to keep the main LiveView module focused on lifecycle callbacks and event handlers.
+Only `project.ex` (`EvoDashWeb.DashboardLive.Project`) remains here:
+project-related pure functions (mode detection, path suggestions, config
+loading, model profiles, foreign-repo loading) that **`HomeLive` depends
+on** (`detect_mode/path_suggestions/load_model_profiles/load_foreign_repos`).
+
+The rest of the classic dashboard interface is **RETIRED** (the pad shell
+is now the single global chrome for every page). Archived OUTSIDE the repo
+at `evox/tmp/original-interface/` (preserving `apps/evo_dash/...` relative
+paths): `live/dashboard_live.ex`, `live/dashboard_live/assigns.ex`,
+`live/dashboard_live/project_flow.ex`, `live/dashboard_live/state_persistence.ex`,
+and `test/evo_dash_web/live/dashboard_live_test.exs`. The `/classic` and
+`/dashboard` routes were removed from the router (Phoenix LiveDashboard
+stays at `/phoenix/dashboard`).
 
 ## Routing Table
 
-None — leaf directory (four module files: `state_persistence.ex`, `project.ex`, `project_flow.ex`, `assigns.ex`).
+None — leaf directory (one module file: `project.ex`).
 
 ## API Surface
 
@@ -14,17 +26,9 @@ None — leaf directory (four module files: `state_persistence.ex`, `project.ex`
 
 | Module | Purpose |
 |--------|---------|
-| `StatePersistence` | Session persistence helpers (serialize/restore LiveView state to browser localStorage) |
-| `Project` | Project-related pure functions (mode detection, path suggestions, config loading, model profiles) |
-| `ProjectFlow` | Event handler implementations for project creation/opening (create_project, open_project, select_project) — extracted from DashboardLive (commit `b86ae86e`). The old `toggle_open_project_form`/`toggle_new_project_form` handlers were removed when the address bar was replaced by the command palette. |
-| `Assigns` | Assign-building helpers (task categorization, form defaults) |
-
-## Notes
-
-- **Server-driven task-form layout**: The task-form layout (compact vs expanded) is computed server-side from prompt length via `TaskFormComponents.layout_for/1` (threshold 300 chars / 8 lines). `DashboardLive` tracks the prompt as the user types via the `task_prompt_change` event (`%{"prompt" => prompt}`, debounced 200ms) — required because the textarea is `phx-update="ignore"`, so the server's `@task_prompt` must mirror the visible text itself.
-- **Post-submit prompt preservation**: After a successful `task_submit`, `assign_form_defaults/1` resets `task_prompt: ""` but the visible textarea keeps the submitted text — so `task_submit` re-assigns `:task_prompt` to the submitted prompt to keep the server-side layout in sync (side effect: the draft prompt now survives reloads via localStorage, intentional).
+| `Project` | Project-related pure functions (mode detection, path suggestions, config loading, model profiles) — used by `HomeLive` |
 
 ## Constraints
 
-- All modules are pure functions — no I/O, no socket, no process calls (except `StatePersistence` which interacts with assigns/session).
+- All modules are pure functions — no I/O, no socket, no process calls.
 - Follows the project-wide `try/rescue` anti-pattern policy.

@@ -19,7 +19,8 @@ defmodule EvoDashWeb.Router do
   scope "/", EvoDashWeb do
     pipe_through(:browser)
 
-    live("/", DashboardLive, :index)
+    live("/", HomeLive, :index)
+    live("/reviews", ReviewsLive, :index)
     live("/welcome", WelcomeLive, :index)
     live("/tasks", TasksLive, :index)
     live("/agents", AgentsLive, :index)
@@ -29,7 +30,6 @@ defmodule EvoDashWeb.Router do
     live("/review/:task_id/commit/:commit_sha", ReviewLive, :commit)
     get("/tasks/:task_id/export", TaskExportController, :export)
     get("/welcome/complete", WelcomeController, :complete)
-    live("/dashboard", DashboardLive, :system_dashboard)
     live_dashboard("/phoenix/dashboard")
   end
 

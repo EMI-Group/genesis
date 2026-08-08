@@ -9,58 +9,55 @@ defmodule EvoDashWeb.WelcomeLive do
 
   use EvoDashWeb, :live_view
 
+  alias EvoDashWeb.PadComponents
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
 
   @impl true
   def render(assigns) do
     ~H"""
-    <EvoDashWeb.Layouts.app
-      flash={@flash}
-      current_page={:welcome}
-      simple_nav={false}
-      current_node_id={@current_node_id}
-      current_node_name={@current_node_name}
-      running_tasks={@running_tasks}
-      pending_tasks={@pending_tasks}
-    >
-      <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
+    <div id="welcome-root" class="h-screen flex flex-col bg-base-100 text-base-content">
+      <PadComponents.pad_top_bar current={:none} review_count={@review_count} />
+      <main class="flex-1 overflow-y-auto">
+        <div class="min-h-[calc(100vh-50px)] lg:h-[calc(100vh-50px)] lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
           <!-- Back navigation: pure client-side (browser history back with a
-               dashboard fallback) — visible in both setup and all-set states -->
+               home fallback) — visible in both setup and all-set states -->
           <div class="shrink-0 mb-2">
             <button
               type="button"
               onclick="if (window.history.length > 1) { history.back(); } else { window.location.href = '/'; }"
               class="btn btn-ghost btn-sm rounded-xl gap-2 px-3"
             >
-              <.icon name="hero-arrow-left" class="size-4" />
-              {gettext("Back")}
+              <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
             </button>
           </div>
-
           <!-- Header (non-scrolling) -->
           <div class="flex items-center gap-3 mb-3 shrink-0">
             <div class="text-3xl shrink-0">
               {if @has_model?, do: "✨", else: "🚀"}
             </div>
+            
             <div class="min-w-0">
               <h2 class="text-xl font-bold leading-tight">
                 {if @has_model?,
                   do: gettext("You're All Set!"),
                   else: gettext("Welcome to Genesis")}
               </h2>
+              
               <p class="text-sm text-base-content/60 leading-snug">
                 {if @has_model?,
-                  do: gettext(
-                    "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
-                  ),
-                  else: gettext(
-                    "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
-                  )}
+                  do:
+                    gettext(
+                      "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
+                    ),
+                  else:
+                    gettext(
+                      "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
+                    )}
               </p>
             </div>
           </div>
-
+          
           <%= if @has_model? do %>
             <!-- All-set state: ready to go -->
             <div class="flex flex-col items-center gap-6">
@@ -70,16 +67,18 @@ defmodule EvoDashWeb.WelcomeLive do
                   <p class="font-bold text-success">
                     {gettext("Ready to build!")}
                   </p>
+                  
                   <p class="text-sm text-base-content/60 mt-1">
                     {gettext("Your LLM is configured. You can manage it anytime in Settings.")}
                   </p>
                 </div>
               </div>
-
+              
               <div class="flex items-center gap-3 w-full justify-center">
                 <button phx-click="get_started" class="btn btn-primary rounded-xl px-8">
-                  {gettext("Go to Dashboard")}
+                  {gettext("Go to Home")}
                 </button>
+                
                 <a href={~p"/settings"} class="btn btn-ghost rounded-xl">
                   {gettext("Open Settings")}
                 </a>
@@ -91,11 +90,13 @@ defmodule EvoDashWeb.WelcomeLive do
               <h3 class="text-lg font-bold mb-1">
                 {gettext("Add your first LLM")}
               </h3>
+              
               <p class="text-sm text-base-content/60">
-                {gettext("Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere.")}
+                {gettext(
+                  "Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere."
+                )}
               </p>
             </div>
-
             <!-- Search box (visible in both desktop and web modes) -->
             <div class="shrink-0 mb-4">
               <div class="relative">
@@ -114,6 +115,7 @@ defmodule EvoDashWeb.WelcomeLive do
                     class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all duration-200"
                   />
                 </form>
+                
                 <%= if @search_query != "" do %>
                   <button
                     type="button"
@@ -126,7 +128,6 @@ defmodule EvoDashWeb.WelcomeLive do
                 <% end %>
               </div>
             </div>
-
             <!-- Model list: scrolls internally on large screens, page-scrolls on small screens -->
             <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
               <%!-- The "Choose a model:" heading is rendered inside the scroll region
@@ -134,11 +135,14 @@ defmodule EvoDashWeb.WelcomeLive do
               <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
                 {gettext("Choose a model:")}
               </p>
-
+              
               <%= if filtered_groups(@grouped_models, @search_query) == [] do %>
                 <!-- Zero search results -->
                 <div class="py-10 text-center">
-                  <.icon name="hero-magnifying-glass" class="size-8 text-base-content/30 mx-auto mb-2" />
+                  <.icon
+                    name="hero-magnifying-glass"
+                    class="size-8 text-base-content/30 mx-auto mb-2"
+                  />
                   <p class="text-sm text-base-content/50">
                     {gettext("No models match your search.")}
                   </p>
@@ -151,9 +155,11 @@ defmodule EvoDashWeb.WelcomeLive do
                     <p class="text-sm font-bold text-base-content/70 mb-2.5">
                       {t_provider(group.provider_display_name)}
                     </p>
+                    
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       <%= for entry <- group.models do %>
-                        <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
+                        <% selected =
+                          @selected_entry && @selected_entry.model_string == entry.model_string %>
                         <button
                           phx-click="select_welcome_model"
                           phx-value-model_string={entry.model_string}
@@ -177,7 +183,6 @@ defmodule EvoDashWeb.WelcomeLive do
                   </div>
                 <% end %>
               <% end %>
-
               <!-- End-of-list guidance -->
               <div class="mt-4 mb-2 bg-base-200/50 rounded-xl p-4 text-center">
                 <p class="text-xs text-base-content/50 leading-relaxed">
@@ -191,21 +196,19 @@ defmodule EvoDashWeb.WelcomeLive do
                 </p>
               </div>
             </div>
-
             <!-- Selected model: API key + save (pinned at bottom on large screens) -->
             <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-200">
               <%= if @selected_entry do %>
                 <div class="bg-base-50 rounded-xl border border-base-200 p-5">
-                  <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
-                  <% can_save = @api_key_input != "" or key_is_set %>
-
+                  <% key_is_set =
+                    Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %> <% can_save =
+                    @api_key_input != "" or key_is_set %>
                   <div class="flex items-center gap-2 mb-4">
                     <.icon name="hero-key" class="size-4 text-primary" />
                     <span class="text-sm font-semibold">
                       {gettext("Enter your API key")}
                     </span>
                   </div>
-
                   <!-- Merged save: API key + model profile in ONE action -->
                   <form phx-submit="save_welcome_setup">
                     <input type="hidden" name="credential_key" value={@selected_entry.credential_key} />
@@ -218,16 +221,23 @@ defmodule EvoDashWeb.WelcomeLive do
                     <input
                       type="hidden"
                       name="variant_id"
-                      value={if(@selected_entry.variant_id, do: Atom.to_string(@selected_entry.variant_id), else: "")}
+                      value={
+                        if(@selected_entry.variant_id,
+                          do: Atom.to_string(@selected_entry.variant_id),
+                          else: ""
+                        )
+                      }
                     />
                     <label class="label">
                       <span class="label-text font-semibold text-sm">
                         {@selected_entry.credential_key}
                       </span>
+                      
                       <%= if key_is_set do %>
                         <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
                       <% end %>
                     </label>
+                    
                     <input
                       type="password"
                       name="api_key"
@@ -248,7 +258,6 @@ defmodule EvoDashWeb.WelcomeLive do
                         provider: t_provider(@selected_entry.provider_display_name)
                       )}
                     </p>
-
                     <!-- Single button: saves API key (if entered) AND model profile -->
                     <button
                       type="submit"
@@ -264,7 +273,6 @@ defmodule EvoDashWeb.WelcomeLive do
                       </span>
                     </button>
                   </form>
-
                   <!-- LLM connection test (compact) — a sibling of the save
                        form, NOT inside it, so the button is not a form submit.
                        Tests the resolved model value with the already-saved key
@@ -276,8 +284,7 @@ defmodule EvoDashWeb.WelcomeLive do
                           phx-click="test_llm"
                           class="btn btn-ghost btn-sm rounded-xl gap-2 w-full"
                         >
-                          <.icon name="hero-signal" class="size-4" />
-                          {gettext("Test Connection")}
+                          <.icon name="hero-signal" class="size-4" /> {gettext("Test Connection")}
                         </button>
                       <% :testing -> %>
                         <div class="flex items-center justify-center gap-2 text-sm text-base-content/80">
@@ -292,24 +299,24 @@ defmodule EvoDashWeb.WelcomeLive do
                             ({@selected_entry.model_display_name})
                           </span>
                         </div>
+                        
                         <button
                           phx-click="test_llm"
                           class="btn btn-ghost btn-xs rounded-xl gap-1 w-full mt-2"
                         >
-                          <.icon name="hero-arrow-path" class="size-3.5" />
-                          {gettext("Retest")}
+                          <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retest")}
                         </button>
                       <% {:error, reason} -> %>
                         <div class="flex items-start justify-center gap-2 text-sm">
                           <.icon name="hero-x-circle" class="size-4 text-error shrink-0 mt-0.5" />
                           <span class="text-error">{reason}</span>
                         </div>
+                        
                         <button
                           phx-click="test_llm"
                           class="btn btn-ghost btn-xs rounded-xl gap-1 w-full mt-2"
                         >
-                          <.icon name="hero-arrow-path" class="size-3.5" />
-                          {gettext("Retry")}
+                          <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retry")}
                         </button>
                     <% end %>
                   </div>
@@ -317,7 +324,10 @@ defmodule EvoDashWeb.WelcomeLive do
               <% else %>
                 <!-- Placeholder when no model is selected -->
                 <div class="bg-base-200/30 rounded-xl border border-dashed border-base-300 p-5 text-center">
-                  <.icon name="hero-cursor-arrow-rays" class="size-5 text-base-content/30 mx-auto mb-1" />
+                  <.icon
+                    name="hero-cursor-arrow-rays"
+                    class="size-5 text-base-content/30 mx-auto mb-1"
+                  />
                   <p class="text-xs text-base-content/40">
                     {gettext("Select a model above to enter your API key.")}
                   </p>
@@ -325,7 +335,6 @@ defmodule EvoDashWeb.WelcomeLive do
               <% end %>
             </div>
           <% end %>
-
           <!-- Skip link -->
           <div class="flex justify-center mt-6 shrink-0">
             <button
@@ -335,13 +344,14 @@ defmodule EvoDashWeb.WelcomeLive do
               {gettext("Skip")}
             </button>
           </div>
-
-        <!-- Version footer -->
-        <div class="mt-6 text-xs text-base-content/40 shrink-0">
-          {gettext("Genesis %{version}", version: @current_version)}
+          <!-- Version footer -->
+          <div class="mt-6 text-xs text-base-content/40 shrink-0">
+            {gettext("Genesis %{version}", version: @current_version)}
+          </div>
         </div>
-      </div>
-    </EvoDashWeb.Layouts.app>
+      </main>
+       <Layouts.flash_group flash={@flash} />
+    </div>
     """
   end
 

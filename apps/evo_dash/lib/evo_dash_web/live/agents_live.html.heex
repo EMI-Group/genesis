@@ -1,664 +1,867 @@
-<EvoDashWeb.Layouts.app flash={@flash} current_page={:agents} config_status={@config_status} current_node_id={@current_node_id} current_node_name={@current_node_name} running_tasks={@running_tasks} pending_tasks={@pending_tasks}>
-
+<div id="agents-root" class="h-screen flex flex-col bg-base-100 text-base-content">
+  <PadComponents.pad_top_bar current={:tree} review_count={@review_count} />
   <!-- Fixed viewport layout: no page-level scroll on xl+, panels scroll independently -->
-  <div class="agents-page-layout animate-fade-in-up animation-delay-100">
-    <!-- Left Column: Tree + Legend -->
-    <div class="agents-left-col">
-      <!-- Agent Tree View -->
-      <div class="agents-tree-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
-        <div class="card-body p-4">
-          <h3 class="card-title mb-2">
-            <.icon name="hero-squares-2x2" class="size-5" /> <%= gettext("Agent Tree") %>
-          </h3>
-
-          <%= if @agents == [] do %>
-            <div class="text-center py-16 text-base-content/50">
-              <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
-              <p class="text-lg"><%= gettext("No agents currently registered") %></p>
-              <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
-            </div>
-          <% else %>
-            <div class="space-y-4">
-              <%= for {repo_name, tree_nodes} <- @repo_trees do %>
-                <div>
-                  <!-- Repo Header -->
-                  <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-200">
-                    <.icon name="hero-server-stack" class="size-5 text-primary" />
-                    <span class="font-bold text-base text-base-content"><%= repo_name %></span>
-                    <span class="text-xs text-base-content/50">(<%= length(tree_nodes) %> <%= gettext("directories") %>)</span>
-                  </div>
-                  <div class="space-y-4 font-mono text-sm">
-                    <EvoDashWeb.AgentsComponents.path_tree
-                      nodes={tree_nodes}
-                      depth={0}
-                      selected_id={@selected_agent_id}
-                      new_agent_ids={@new_agent_ids}
-                      changed_status_ids={@changed_status_ids}
-                    />
-                  </div>
+  <main class="flex-1 overflow-y-auto xl:overflow-hidden">
+    <div class="p-4">
+      <div class="agents-page-layout animate-fade-in-up animation-delay-100">
+        <!-- Left Column: Tree + Legend -->
+        <div class="agents-left-col">
+          <!-- Agent Tree View -->
+          <div class="agents-tree-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
+            <div class="card-body p-4">
+              <h3 class="card-title mb-2">
+                <.icon name="hero-squares-2x2" class="size-5" /> {gettext("Agent Tree")}
+              </h3>
+              
+              <%= if @agents == [] do %>
+                <div class="text-center py-16 text-base-content/50">
+                  <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
+                  <p class="text-lg">{gettext("No agents currently registered")}</p>
+                  
+                  <p class="text-sm mt-2">
+                    {gettext("Start a task from the home page to see agents here.")}
+                  </p>
+                </div>
+              <% else %>
+                <div class="space-y-4">
+                  <%= for {repo_name, tree_nodes} <- @repo_trees do %>
+                    <div>
+                      <!-- Repo Header -->
+                      <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-200">
+                        <.icon name="hero-server-stack" class="size-5 text-primary" />
+                        <span class="font-bold text-base text-base-content">{repo_name}</span>
+                        <span class="text-xs text-base-content/50">({length(tree_nodes)} {gettext(
+                          "directories"
+                        )})</span>
+                      </div>
+                      
+                      <div class="space-y-4 font-mono text-sm">
+                        <EvoDashWeb.AgentsComponents.path_tree
+                          nodes={tree_nodes}
+                          depth={0}
+                          selected_id={@selected_agent_id}
+                          new_agent_ids={@new_agent_ids}
+                          changed_status_ids={@changed_status_ids}
+                        />
+                      </div>
+                    </div>
+                  <% end %>
                 </div>
               <% end %>
             </div>
-          <% end %>
-        </div>
-      </div>
-
-      <!-- Legend — pinned to bottom of left column -->
-      <div class="agents-legend-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
-        <div class="card-body p-2">
-          <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            <span class="font-semibold text-base-content/70"><%= gettext("Status Legend") %></span>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is queued and waiting to be scheduled for execution.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-base-content/20"></span>
-              <span><%= gettext("Pending") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is actively executing its assigned task.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
-              <span><%= gettext("Running") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is waiting for subagents to finish. Nothing to do but wait.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-warning"></span>
-              <span><%= gettext("Waiting") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-error"></span>
-              <span><%= gettext("Blocked") %></span>
+          </div>
+          <!-- Legend — pinned to bottom of left column -->
+          <div class="agents-legend-panel card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
+            <div class="card-body p-2">
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                <span class="font-semibold text-base-content/70">{gettext("Status Legend")}</span>
+                <div
+                  class="flex items-center gap-2 tooltip"
+                  data-tip={gettext("Agent is queued and waiting to be scheduled for execution.")}
+                >
+                  <span class="w-2.5 h-2.5 rounded-full bg-base-content/20"></span>
+                  <span>{gettext("Pending")}</span>
+                </div>
+                
+                <div
+                  class="flex items-center gap-2 tooltip"
+                  data-tip={gettext("Agent is actively executing its assigned task.")}
+                >
+                  <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
+                  <span>{gettext("Running")}</span>
+                </div>
+                
+                <div
+                  class="flex items-center gap-2 tooltip"
+                  data-tip={
+                    gettext("Agent is waiting for subagents to finish. Nothing to do but wait.")
+                  }
+                >
+                  <span class="w-2.5 h-2.5 rounded-full bg-warning"></span>
+                  <span>{gettext("Waiting")}</span>
+                </div>
+                
+                <div
+                  class="flex items-center gap-2 tooltip"
+                  data-tip={
+                    gettext(
+                      "Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings."
+                    )
+                  }
+                >
+                  <span class="w-2.5 h-2.5 rounded-full bg-error"></span>
+                  <span>{gettext("Blocked")}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- Right Column: Agent Details Panel — full vertical space -->
-    <div class="agents-detail-col">
-      <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
-        <div class="card-body p-4">
-          <%= if @selected_agent_id do %>
-            <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
-            <%= if agent do %>
-              <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
-              <div class="flex items-center justify-between mb-2">
-                <div class="flex items-center gap-3">
-                  <h3 class="card-title">
-                    <.icon name="hero-identification" class="size-5" /> #<%= agent.task_local_id || agent.id %>
-                  </h3>
-                  <div class={["badge badge-md", agent_status_bg(agent.status)]}>
-                    <.icon name={agent_status_icon(agent.status)} class={"size-4 mr-1 #{agent_status_color(agent.status)}"} />
-                    <span class={agent_status_color(agent.status)}>{String.upcase(to_string(agent.status))}</span>
-                  </div>
-                </div>
-                <div class="flex items-center gap-1">
-                  <%= if agent.status in [:running, :waiting, :pending, :blocked] do %>
-                    <button
-                      class="btn btn-sm btn-ghost btn-circle tooltip"
-                      data-tip={gettext("Send Message")}
-                      phx-click="open_send_message"
-                      phx-value-id={agent.id}
-                    >
-                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-4" />
-                    </button>
-                  <% end %>
-                  <button
-                    class="btn btn-sm btn-ghost btn-circle"
-                    phx-click="close_details"
-                  >
-                    <.icon name="hero-x-mark" class="size-4" />
-                  </button>
-                </div>
-              </div>
-              
-<!-- Details -->
-              <div class="space-y-4">
-                <!-- Agent Module + Context Path on a single row -->
-                <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
-                  <div class="shrink-0 min-w-[130px]">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Agent Module") %>
-                    </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
-                      {inspect(agent.agent_module)}
-                    </code>
-                  </div>
-                  <div class="shrink-0 min-w-[130px]">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Model") %>
-                    </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
-                      {agent.model_id || gettext("N/A")}
-                    </code>
-                  </div>
-                  <div class="flex-1 min-w-[150px]">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Context Path") %>
-                    </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all w-full">
-                      {agent.context_path || gettext("N/A")}
-                    </code>
-                  </div>
-                </div>
-
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                    <%= gettext("Objective") %>
-                  </h4>
-                  <p class="text-sm bg-base-200 p-3 rounded">
-                    {String.slice(agent.objective, 0, 150)}{if String.length(agent.objective) >
-                                                                 150,
-                                                               do: "..."}
-                    <%= if String.length(agent.objective) > 150 do %>
-                      <button
-                        class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
-                        phx-click="view_full_objective"
-                        title={gettext("View Full Objective")}
-                      >
-                        <.icon name="hero-arrows-pointing-out" class="size-3" />
-                      </button>
-                    <% end %>
-                  </p>
-                </div>
-
-                <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                    <%= gettext("Worktree") %>
-                  </h4>
-                  <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
-                    {agent.worktree || gettext("Not assigned")}
-                  </code>
-                </div>
-
-                <!-- Task ID, Depth, Retries (compact) + Base/Current Commit (wide) on a single row -->
-                <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
-                  <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Task ID") %>
-                    </h4>
-                    <span class="text-sm">#<%= agent.task_number || agent.task_id %></span>
-                  </div>
-
-                  <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Depth") %>
-                    </h4>
-                    <span class="text-sm">{agent.depth}</span>
-                  </div>
-
-                  <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Retries") %>
-                    </h4>
-                    <span class="text-sm">{agent.retries}</span>
-                  </div>
-
-                  <%= if agent.base_commit do %>
-                    <div class="flex-1 min-w-0">
-                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                        <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Base Commit") %>
-                      </h4>
-                      <code class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate w-full" title={agent.base_commit}>
-                        {shorten_sha(agent.base_commit)}
-                      </code>
-                    </div>
-                  <% end %>
-
-                  <%= if agent.current_commit do %>
-                    <div class="flex-1 min-w-0">
-                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                        <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Current Commit") %>
-                      </h4>
-                      <code class={"text-xs font-mono px-3 py-1.5 rounded block truncate w-full " <> commit_bg_class(agent)} title={agent.current_commit}>
-                        {shorten_sha(agent.current_commit)}
-                      </code>
-                    </div>
-                  <% end %>
-                </div>
-
-                <div class="flex flex-col sm:flex-row gap-4">
-                  <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Parent") %>
-                    </h4>
-                    <%= if agent.parent_id do %>
-                      <button
-                        class="btn btn-sm btn-ghost btn-xs"
-                        phx-click="select_agent"
-                        phx-value-id={agent.parent_id}
-                      >
-                        #<%= @id_to_display[agent.parent_id] || agent.parent_id %>
-                      </button>
-                    <% else %>
-                      <span class="text-sm text-base-content/50"><%= gettext("None") %></span>
-                    <% end %>
-                  </div>
-
-                  <div class="flex-1 min-w-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
-                      <%= gettext("Children") %>
-                    </h4>
-                    <%= if agent.has_children do %>
-                      <div class="flex flex-wrap gap-1">
-                        <%= for {child_id, child_status} <- agent.children do %>
+        <!-- Right Column: Agent Details Panel — full vertical space -->
+        <div class="agents-detail-col">
+          <div class="card bg-base-100 shadow-sm border border-base-200 rounded-2xl">
+            <div class="card-body p-4">
+              <%= if @selected_agent_id do %>
+                <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
+                <%= if agent do %>
+                  <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-3">
+                        <h3 class="card-title">
+                          <.icon name="hero-identification" class="size-5" />
+                          #{agent.task_local_id || agent.id}
+                        </h3>
+                        
+                        <div class={["badge badge-md", agent_status_bg(agent.status)]}>
+                          <.icon
+                            name={agent_status_icon(agent.status)}
+                            class={"size-4 mr-1 #{agent_status_color(agent.status)}"}
+                          />
+                          <span class={agent_status_color(agent.status)}>{String.upcase(
+                            to_string(agent.status)
+                          )}</span>
+                        </div>
+                      </div>
+                      
+                      <div class="flex items-center gap-1">
+                        <%= if agent.status in [:running, :waiting, :pending, :blocked] do %>
                           <button
-                            class={["badge badge-sm btn-xs cursor-pointer badge-outline", agent_status_border(child_status), agent_status_color(child_status)]}
-                            phx-click="select_agent"
-                            phx-value-id={child_id}
+                            class="btn btn-sm btn-ghost btn-circle tooltip"
+                            data-tip={gettext("Send Message")}
+                            phx-click="open_send_message"
+                            phx-value-id={agent.id}
                           >
-                            #<%= @id_to_display[child_id] || child_id %>
+                            <.icon name="hero-chat-bubble-left-ellipsis" class="size-4" />
                           </button>
                         <% end %>
-                      </div>
-                    <% else %>
-                      <span class="text-sm text-base-content/50"><%= gettext("None") %></span>
-                    <% end %>
-                  </div>
-
-                    <div class="shrink-0">
-                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">&nbsp;</h4>
-                      <button
-                        class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors"
-                        phx-click="toggle_usage"
-                      >
-                        <.icon name="hero-currency-dollar" class="size-3.5" />
-                        <%= gettext("Token and Cost") %>
-                        <.icon
-                          name="hero-chevron-down"
-                          class={"size-3 opacity-50 transition-transform #{if @show_usage, do: "rotate-180"}"}
-                        />
-                      </button>
-                    </div>
-                </div>
-
-
-              </div>
-
-                <%= if @show_usage do %>
-                  <div class="mt-2">
-                    <div class="grid grid-cols-3 gap-2 mt-2">
-                      <div class="bg-base-200 rounded-lg p-2.5">
-                        <div class="text-xs text-base-content/50"><%= gettext("Input Tokens") %></div>
-                        <div class="text-sm font-semibold"><%= format_number(agent.usage.input_tokens) %></div>
-                      </div>
-                      <div class="bg-base-200 rounded-lg p-2.5">
-                        <div class="text-xs text-base-content/50"><%= gettext("Output Tokens") %></div>
-                        <div class="text-sm font-semibold"><%= format_number(agent.usage.output_tokens) %></div>
-                      </div>
-                      <div class="bg-base-200 rounded-lg p-2.5">
-                        <div class="text-xs text-base-content/50"><%= gettext("Total Tokens") %></div>
-                        <div class="text-sm font-semibold"><%= format_number(agent.usage.total_tokens) %></div>
+                        
+                        <button
+                          class="btn btn-sm btn-ghost btn-circle"
+                          phx-click="close_details"
+                        >
+                          <.icon name="hero-x-mark" class="size-4" />
+                        </button>
                       </div>
                     </div>
-                    <div class="mt-4 pt-4 border-t border-base-200">
-                        <div class="grid grid-cols-3 gap-2 mt-2">
-                          <div class="bg-base-200 rounded-lg p-2.5">
-                            <div class="text-xs text-base-content/50"><%= gettext("Cached Tokens") %></div>
-                            <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cached_tokens, 0)) %></div>
-                          </div>
-                          <div class="bg-base-200 rounded-lg p-2.5">
-                            <div class="text-xs text-base-content/50"><%= gettext("Cache Hit Rate") %></div>
-                            <div class="text-sm font-semibold text-success"><%= format_cache_hit_rate(agent.usage) %></div>
-                            <progress class="progress progress-success w-full mt-1" value={if agent.usage.input_tokens > 0, do: min(round(Map.get(agent.usage, :cached_tokens, 0) / agent.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
-                          </div>
-                          <div class="bg-base-200 rounded-lg p-2.5">
-                            <div class="text-xs text-base-content/50"><%= gettext("Context") %></div>
-                            <div class="text-sm font-semibold"><%= agent.compression_count %> (<%= agent.compression_pct %>%)</div>
-                            <progress class="progress progress-primary w-full mt-1" value={agent.compression_pct} max="100"></progress>
-                          </div>
+                    <!-- Details -->
+                    <div class="space-y-4">
+                      <!-- Agent Module + Context Path on a single row -->
+                      <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+                        <div class="shrink-0 min-w-[130px]">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Agent Module")}
+                          </h4>
+                          
+                          <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                            {inspect(agent.agent_module)}
+                          </code>
+                        </div>
+                        
+                        <div class="shrink-0 min-w-[130px]">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Model")}
+                          </h4>
+                          
+                          <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                            {agent.model_id || gettext("N/A")}
+                          </code>
+                        </div>
+                        
+                        <div class="flex-1 min-w-[150px]">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Context Path")}
+                          </h4>
+                          
+                          <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all w-full">
+                            {agent.context_path || gettext("N/A")}
+                          </code>
                         </div>
                       </div>
-                    <div class="mt-4 pt-4 border-t border-base-200">
-                      <div class="grid grid-cols-3 gap-2 mt-2">
-                        <div class="bg-base-200 rounded-lg p-2.5">
-                          <div class="text-xs text-base-content/50"><%= gettext("Input Cost") %></div>
-                          <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
-                        </div>
-                        <div class="bg-base-200 rounded-lg p-2.5">
-                          <div class="text-xs text-base-content/50"><%= gettext("Output Cost") %></div>
-                          <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
-                        </div>
-                        <div class="bg-base-200 rounded-lg p-2.5">
-                          <div class="text-xs text-base-content/50"><%= gettext("Total Cost") %></div>
-                          <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
-                        </div>
+                      
+                      <div>
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                          {gettext("Objective")}
+                        </h4>
+                        
+                        <p class="text-sm bg-base-200 p-3 rounded">
+                          {String.slice(agent.objective, 0, 150)}{if String.length(
+                                                                       agent.objective
+                                                                     ) >
+                                                                       150,
+                                                                     do: "..."}
+                          <%= if String.length(agent.objective) > 150 do %>
+                            <button
+                              class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
+                              phx-click="view_full_objective"
+                              title={gettext("View Full Objective")}
+                            >
+                              <.icon name="hero-arrows-pointing-out" class="size-3" />
+                            </button>
+                          <% end %>
+                        </p>
                       </div>
-                    </div>
-                  </div>
-                <% end %>
-
-                <!-- Chat History -->
-                <div class="agent-detail-history mt-6">
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
-                    <%= gettext("Chat History / Session Memory") %>
-                  </h4>
-                  <%= if agent.history && agent.history != [] do %>
-                    <div id={"agent-history-#{@selected_agent_id}"} class="bg-base-200 rounded-lg overflow-y-auto agent-history-scroll" phx-hook="AgentHistoryAutoScroll">
-                      <div class="divide-y divide-base-300">
-                        <%= for {entry, index} <- Enum.with_index(agent.history) do %>
-                          <div class="p-3 hover:bg-base-300/50">
-                            <div class="flex flex-wrap items-center gap-2 mb-1">
-                              <.icon
-                                name={history_entry_icon(entry.type)}
-                                class="size-4 shrink-0"
-                              />
-                              <span class={[
-                                "text-xs font-semibold",
-                                history_entry_color(entry.type)
-                              ]}>
-                                {entry.type}
-                              </span>
-                              <button
-                                class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
-                                phx-click="view_full_message"
-                                phx-value-index={index}
-                                title={gettext("View Full Message")}
-                              >
-                                <.icon name="hero-arrows-pointing-out" class="size-3" />
-                              </button>
-                              <span class="text-xs text-base-content/40 ml-auto flex items-center gap-2">
-                                {format_turn(entry.turn)}
-                                <%= if timestamp = format_history_timestamp(entry.timestamp) do %>
-                                  <span class="text-base-content/30">{timestamp}</span>
-                                <% end %>
-                              </span>
-                            </div>
-                            <%= case entry.type do %>
-                              <% "USER_PROMPT" -> %>
-                                <div class="text-sm mt-1 bg-info/10 p-2 rounded">
-                                  {entry.data.content}
-                                </div>
-                              <% "THOUGHT_CHUNK" -> %>
-                                <div class="text-sm mt-1">
-                                  {entry.data.text}
-                                </div>
-                              <% "TOOL_CALL_START" -> %>
-                                <div class="text-xs mt-1 bg-accent/10 p-2 rounded text-accent">
-                                  <div class="font-semibold">{entry.data.name}</div>
-                                  <pre class="mt-1 overflow-x-auto"><%= inspect(entry.data.args, limit: :infinity) %></pre>
-                                </div>
-                              <% "COMPLETE" -> %>
-                                <% result_text =
-                                  if is_map(entry.data.result),
-                                    do: entry.data.result.result,
-                                    else: entry.data.result %>
-                                <div class="text-sm mt-1 bg-success/10 p-2 rounded text-success">
-                                  {String.slice(result_text, 0, 500)}{if String.length( result_text) > 500, do: "..."}
-                                </div>
-                              <% "ERROR" -> %>
-                                <div class="text-sm mt-1 bg-error/10 p-2 rounded text-error">
-                                  {entry.data.error}
-                                </div>
-                              <% "RETRY" -> %>
-                                <div class="text-sm mt-1 bg-warning/10 p-2 rounded text-warning">
-                                  <div class="font-semibold">
-                                    <%= gettext("Retry attempt %{attempt}", attempt: entry.data.attempt) %>
-                                  </div>
-                                  <div class="text-xs mt-1">
-                                    {String.slice(entry.data.reason, 0, 200)}{if String.length( entry.data.reason) > 200, do: "..."}
-                                  </div>
-                                </div>
-                              <% "RETRY_DISPATCH" -> %>
-                                <div class="text-sm mt-1 bg-warning/10 p-2 rounded text-warning">
-                                  <div class="font-semibold">
-                                    <%= gettext("Retry #%{attempt} - Starting with %{backoff_seconds}s backoff", attempt: entry.data.attempt, backoff_seconds: entry.data.backoff_seconds) %>
-                                  </div>
-                                  <div class="text-xs mt-1">
-                                    Worktree: {Path.basename(entry.data.worktree)}
-                                  </div>
-                                </div>
-                              <% "QUEUED" -> %>
-                                <div class="text-sm mt-1 bg-base-200 p-2 rounded">
-                                  {entry.data.message}
-                                </div>
-                              <% "CONTEXT_TREE" -> %>
-                                <details class="text-xs mt-1">
-                                  <summary class="cursor-pointer text-secondary">
-                                    <%= gettext("View Context (Turn %{turn})", turn: entry.data.turn) %>
-                                  </summary>
-                                  <pre class="mt-2 bg-secondary/10 p-2 rounded overflow-x-auto text-secondary"><%= entry.data.content %></pre>
-                                </details>
-                              <% "system" -> %>
-                                <div class="mt-1 space-y-2">
-                                  <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                    <div class="text-sm bg-accent/10 p-2 rounded text-accent">
-                                      {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
-                                    </div>
-                                  <% end %>
-                                </div>
-                              <% "user" -> %>
-                                <div class="mt-1">
-                                  <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                    <div class="text-sm bg-info/10 p-2 rounded text-info">
-                                      {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
-                                    </div>
-                                  <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><%= gettext("<empty message>") %></div>
-                                  <% end %>
-                                </div>
-                              <% "assistant" -> %>
-                                <div class="mt-1 space-y-2">
-                                  <% reasoning_details = Map.get(entry.data, :reasoning_details) %>
-                                  <%= if reasoning_details do %>
-                                    <div class="text-xs bg-warning/10 p-2 rounded text-warning">
-                                      <div class="font-semibold mb-1"><%= gettext("Thinking") %></div>
-                                      <div>{String.slice(format_reasoning_details(reasoning_details) || "", 0, 200)}{if String.length(format_reasoning_details(reasoning_details) || "") > 200, do: "..."}</div>
-                                    </div>
-                                  <% end %>
-                                  <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                    <div class="text-sm bg-warning/10 p-2 rounded text-warning">
-                                      {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
-                                    </div>
-                                  <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><%= gettext("<no text content>") %></div>
-                                  <% end %>
-                                  <%= if entry.data.tool_calls && entry.data.tool_calls != [] do %>
-                                    <div class="text-xs bg-secondary/10 p-2 rounded text-secondary">
-                                      <div class="font-semibold mb-1"><%= gettext("Tool Calls (%{count})", count: length(entry.data.tool_calls)) %></div>
-                                      <div class="space-y-1">
-                                        <%= for call <- entry.data.tool_calls do %>
-                                          <div class="flex items-center gap-2">
-                                            <span class="font-mono">{tool_call_name(call)}</span>
-                                          </div>
-                                        <% end %>
-                                      </div>
-                                    </div>
-                                  <% end %>
-                                </div>
-                              <% "tool" -> %>
-                                <div class="mt-1 space-y-2">
-                                  <% tool_name = Map.get(entry.data, :tool_name) %>
-                                  <%= if tool_name do %>
-                                    <div class="text-xs bg-success/20 px-2 py-1 rounded font-mono">
-                                      <%= gettext("Tool Result: %{name}", name: tool_name) %>
-                                    </div>
-                                  <% end %>
-                                  <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                    <div class="text-sm bg-success/10 p-2 rounded text-success max-h-48 overflow-y-auto">
-                                      <pre class="text-xs whitespace-pre-wrap">{String.slice(entry.data.content, 0, 500)}{if String.length(entry.data.content) > 500, do: "\n...[truncated]"}</pre>
-                                    </div>
-                                  <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><%= gettext("<empty result>") %></div>
-                                  <% end %>
-                                </div>
-                              <% _ -> %>
-                                <pre class="text-xs mt-1 overflow-x-auto bg-base-200 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
-                            <% end %>
+                      
+                      <div>
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                          {gettext("Worktree")}
+                        </h4>
+                        
+                        <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                          {agent.worktree || gettext("Not assigned")}
+                        </code>
+                      </div>
+                      <!-- Task ID, Depth, Retries (compact) + Base/Current Commit (wide) on a single row -->
+                      <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+                        <div class="shrink-0">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Task ID")}
+                          </h4>
+                           <span class="text-sm">#{agent.task_number || agent.task_id}</span>
+                        </div>
+                        
+                        <div class="shrink-0">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Depth")}
+                          </h4>
+                           <span class="text-sm">{agent.depth}</span>
+                        </div>
+                        
+                        <div class="shrink-0">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Retries")}
+                          </h4>
+                           <span class="text-sm">{agent.retries}</span>
+                        </div>
+                        
+                        <%= if agent.base_commit do %>
+                          <div class="flex-1 min-w-0">
+                            <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                              <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> {gettext(
+                                "Base Commit"
+                              )}
+                            </h4>
+                            
+                            <code
+                              class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate w-full"
+                              title={agent.base_commit}
+                            >
+                              {shorten_sha(agent.base_commit)}
+                            </code>
+                          </div>
+                        <% end %>
+                        
+                        <%= if agent.current_commit do %>
+                          <div class="flex-1 min-w-0">
+                            <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                              <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> {gettext(
+                                "Current Commit"
+                              )}
+                            </h4>
+                            
+                            <code
+                              class={"text-xs font-mono px-3 py-1.5 rounded block truncate w-full " <> commit_bg_class(agent)}
+                              title={agent.current_commit}
+                            >
+                              {shorten_sha(agent.current_commit)}
+                            </code>
                           </div>
                         <% end %>
                       </div>
+                      
+                      <div class="flex flex-col sm:flex-row gap-4">
+                        <div class="shrink-0">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Parent")}
+                          </h4>
+                          
+                          <%= if agent.parent_id do %>
+                            <button
+                              class="btn btn-sm btn-ghost btn-xs"
+                              phx-click="select_agent"
+                              phx-value-id={agent.parent_id}
+                            >
+                              #{@id_to_display[agent.parent_id] || agent.parent_id}
+                            </button>
+                          <% else %>
+                            <span class="text-sm text-base-content/50">{gettext("None")}</span>
+                          <% end %>
+                        </div>
+                        
+                        <div class="flex-1 min-w-0">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            {gettext("Children")}
+                          </h4>
+                          
+                          <%= if agent.has_children do %>
+                            <div class="flex flex-wrap gap-1">
+                              <%= for {child_id, child_status} <- agent.children do %>
+                                <button
+                                  class={[
+                                    "badge badge-sm btn-xs cursor-pointer badge-outline",
+                                    agent_status_border(child_status),
+                                    agent_status_color(child_status)
+                                  ]}
+                                  phx-click="select_agent"
+                                  phx-value-id={child_id}
+                                >
+                                  #{@id_to_display[child_id] || child_id}
+                                </button>
+                              <% end %>
+                            </div>
+                          <% else %>
+                            <span class="text-sm text-base-content/50">{gettext("None")}</span>
+                          <% end %>
+                        </div>
+                        
+                        <div class="shrink-0">
+                          <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                            &nbsp;
+                          </h4>
+                          
+                          <button
+                            class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors"
+                            phx-click="toggle_usage"
+                          >
+                            <.icon name="hero-currency-dollar" class="size-3.5" /> {gettext(
+                              "Token and Cost"
+                            )}
+                            <.icon
+                              name="hero-chevron-down"
+                              class={"size-3 opacity-50 transition-transform #{if @show_usage, do: "rotate-180"}"}
+                            />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                  <% else %>
-                    <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center">
-                      <%= gettext("No history recorded yet") %>
-                    </div>
-                  <% end %>
-                </div>
-              </div>
-            <% else %>
-              <p class="text-base-content/50"><%= gettext("Agent not found") %></p>
-            <% end %>
-          <% else %>
-            <div class="text-center py-16 text-base-content/50">
-              <.icon name="hero-finger-pointing" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
-              <p class="text-lg"><%= gettext("Select an agent to view details") %></p>
-            </div>
-          <% end %>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Full Message Modal -->
-  <%= if @selected_history_entry do %>
-    <div class="modal modal-open bg-black/50" id="full-message-modal">
-      <div class="modal-box w-11/12 max-w-5xl">
-        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-          <.icon name={history_entry_icon(@selected_history_entry.type)} class="size-5" />
-          {@selected_history_entry.type}
-          <span class="text-sm font-normal text-base-content/50 ml-auto">
-            {format_turn(@selected_history_entry.turn)}
-          </span>
-        </h3>
-
-        <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
-          <%= case @selected_history_entry.type do %>
-            <% "USER_PROMPT" -> %>
-              <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
-            <% "THOUGHT_CHUNK" -> %>
-              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.text %></pre>
-            <% "TOOL_CALL_START" -> %>
-              <div class="font-semibold mb-2">{@selected_history_entry.data.name}</div>
-              <pre class="text-sm"><%= inspect(@selected_history_entry.data.args, pretty: true, limit: :infinity) %></pre>
-            <% "COMPLETE" -> %>
-              <% result_text =
-                if is_map(@selected_history_entry.data.result),
-                  do: @selected_history_entry.data.result.result,
-                  else: @selected_history_entry.data.result %>
-              <pre class="text-sm whitespace-pre-wrap"><%= safe_text(result_text) %></pre>
-            <% "ERROR" -> %>
-              <pre class="text-sm whitespace-pre-wrap text-error"><%= @selected_history_entry.data.error %></pre>
-            <% "RETRY" -> %>
-              <div class="font-semibold mb-2">
-                <%= gettext("Retry attempt %{attempt}", attempt: @selected_history_entry.data.attempt) %>
-              </div>
-              <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.reason %></pre>
-            <% "CONTEXT_TREE" -> %>
-              <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
-            <% "system" -> %>
-              <pre class="text-sm whitespace-pre-wrap text-accent"><%= safe_text(@selected_history_entry.data.content) %></pre>
-            <% "user" -> %>
-              <pre class="text-sm whitespace-pre-wrap text-info"><%= safe_text(@selected_history_entry.data.content) %></pre>
-            <% "assistant" -> %>
-              <div class="space-y-4">
-                <% reasoning_details = Map.get(@selected_history_entry.data, :reasoning_details) %>
-                <%= if reasoning_details do %>
-                  <div>
-                    <h4 class="font-semibold text-warning mb-2"><%= gettext("Thinking") %></h4>
-                    <pre class="text-sm bg-warning/10 p-3 rounded overflow-x-auto"><%= format_reasoning_details(reasoning_details) %></pre>
-                  </div>
-                <% end %>
-                <%= if @selected_history_entry.data.content && (not is_binary(@selected_history_entry.data.content) || String.trim(@selected_history_entry.data.content) != "") do %>
-                  <div>
-                    <h4 class="font-semibold text-warning mb-2"><%= gettext("Response") %></h4>
-                    <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= safe_text(@selected_history_entry.data.content) %></pre>
-                  </div>
-                <% end %>
-                <%= if @selected_history_entry.data.tool_calls && @selected_history_entry.data.tool_calls != [] do %>
-                  <div>
-                    <h4 class="font-semibold text-secondary mb-2"><%= gettext("Tool Calls") %></h4>
-                    <div class="space-y-2">
-                      <%= for call <- @selected_history_entry.data.tool_calls do %>
-                        <div class="bg-secondary/10 p-3 rounded">
-                          <div class="font-mono font-semibold mb-1">{tool_call_name(call)}</div>
-                          <pre class="text-xs overflow-x-auto"><%= safe_text(tool_call_arguments(call)) %></pre>
+                    
+                    <%= if @show_usage do %>
+                      <div class="mt-2">
+                        <div class="grid grid-cols-3 gap-2 mt-2">
+                          <div class="bg-base-200 rounded-lg p-2.5">
+                            <div class="text-xs text-base-content/50">
+                              {gettext("Input Tokens")}
+                            </div>
+                            
+                            <div class="text-sm font-semibold">
+                              {format_number(agent.usage.input_tokens)}
+                            </div>
+                          </div>
+                          
+                          <div class="bg-base-200 rounded-lg p-2.5">
+                            <div class="text-xs text-base-content/50">
+                              {gettext("Output Tokens")}
+                            </div>
+                            
+                            <div class="text-sm font-semibold">
+                              {format_number(agent.usage.output_tokens)}
+                            </div>
+                          </div>
+                          
+                          <div class="bg-base-200 rounded-lg p-2.5">
+                            <div class="text-xs text-base-content/50">
+                              {gettext("Total Tokens")}
+                            </div>
+                            
+                            <div class="text-sm font-semibold">
+                              {format_number(agent.usage.total_tokens)}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div class="mt-4 pt-4 border-t border-base-200">
+                          <div class="grid grid-cols-3 gap-2 mt-2">
+                            <div class="bg-base-200 rounded-lg p-2.5">
+                              <div class="text-xs text-base-content/50">
+                                {gettext("Cached Tokens")}
+                              </div>
+                              
+                              <div class="text-sm font-semibold">
+                                {format_number(Map.get(agent.usage, :cached_tokens, 0))}
+                              </div>
+                            </div>
+                            
+                            <div class="bg-base-200 rounded-lg p-2.5">
+                              <div class="text-xs text-base-content/50">
+                                {gettext("Cache Hit Rate")}
+                              </div>
+                              
+                              <div class="text-sm font-semibold text-success">
+                                {format_cache_hit_rate(agent.usage)}
+                              </div>
+                              
+                              <progress
+                                class="progress progress-success w-full mt-1"
+                                value={
+                                  if agent.usage.input_tokens > 0,
+                                    do:
+                                      min(
+                                        round(
+                                          Map.get(agent.usage, :cached_tokens, 0) /
+                                            agent.usage.input_tokens * 100
+                                        ),
+                                        100
+                                      ),
+                                    else: 0
+                                }
+                                max="100"
+                              ></progress>
+                            </div>
+                            
+                            <div class="bg-base-200 rounded-lg p-2.5">
+                              <div class="text-xs text-base-content/50">{gettext("Context")}</div>
+                              
+                              <div class="text-sm font-semibold">
+                                {agent.compression_count} ({agent.compression_pct}%)
+                              </div>
+                              
+                              <progress
+                                class="progress progress-primary w-full mt-1"
+                                value={agent.compression_pct}
+                                max="100"
+                              ></progress>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div class="mt-4 pt-4 border-t border-base-200">
+                          <div class="grid grid-cols-3 gap-2 mt-2">
+                            <div class="bg-base-200 rounded-lg p-2.5">
+                              <div class="text-xs text-base-content/50">
+                                {gettext("Input Cost")}
+                              </div>
+                              
+                              <div class="text-sm font-semibold">
+                                ${format_cost(agent.usage.input_cost)}
+                              </div>
+                            </div>
+                            
+                            <div class="bg-base-200 rounded-lg p-2.5">
+                              <div class="text-xs text-base-content/50">
+                                {gettext("Output Cost")}
+                              </div>
+                              
+                              <div class="text-sm font-semibold">
+                                ${format_cost(agent.usage.output_cost)}
+                              </div>
+                            </div>
+                            
+                            <div class="bg-base-200 rounded-lg p-2.5">
+                              <div class="text-xs text-base-content/50">
+                                {gettext("Total Cost")}
+                              </div>
+                              
+                              <div class="text-sm font-semibold text-primary">
+                                ${format_cost(agent.usage.total_cost)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    <% end %>
+                    <!-- Chat History -->
+                    <div class="agent-detail-history mt-6">
+                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
+                        {gettext("Chat History / Session Memory")}
+                      </h4>
+                      
+                      <%= if agent.history && agent.history != [] do %>
+                        <div
+                          id={"agent-history-#{@selected_agent_id}"}
+                          class="bg-base-200 rounded-lg overflow-y-auto agent-history-scroll"
+                          phx-hook="AgentHistoryAutoScroll"
+                        >
+                          <div class="divide-y divide-base-300">
+                            <%= for {entry, index} <- Enum.with_index(agent.history) do %>
+                              <div class="p-3 hover:bg-base-300/50">
+                                <div class="flex flex-wrap items-center gap-2 mb-1">
+                                  <.icon
+                                    name={history_entry_icon(entry.type)}
+                                    class="size-4 shrink-0"
+                                  />
+                                  <span class={[
+                                    "text-xs font-semibold",
+                                    history_entry_color(entry.type)
+                                  ]}>
+                                    {entry.type}
+                                  </span>
+                                  
+                                  <button
+                                    class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
+                                    phx-click="view_full_message"
+                                    phx-value-index={index}
+                                    title={gettext("View Full Message")}
+                                  >
+                                    <.icon name="hero-arrows-pointing-out" class="size-3" />
+                                  </button>
+                                  
+                                  <span class="text-xs text-base-content/40 ml-auto flex items-center gap-2">
+                                    {format_turn(entry.turn)}
+                                    <%= if timestamp = format_history_timestamp(entry.timestamp) do %>
+                                      <span class="text-base-content/30">{timestamp}</span>
+                                    <% end %>
+                                  </span>
+                                </div>
+                                
+                                <%= case entry.type do %>
+                                  <% "USER_PROMPT" -> %>
+                                    <div class="text-sm mt-1 bg-info/10 p-2 rounded">
+                                      {entry.data.content}
+                                    </div>
+                                  <% "THOUGHT_CHUNK" -> %>
+                                    <div class="text-sm mt-1">
+                                      {entry.data.text}
+                                    </div>
+                                  <% "TOOL_CALL_START" -> %>
+                                    <div class="text-xs mt-1 bg-accent/10 p-2 rounded text-accent">
+                                      <div class="font-semibold">{entry.data.name}</div>
+                                       <pre class="mt-1 overflow-x-auto"><%= inspect(entry.data.args, limit: :infinity) %></pre>
+                                    </div>
+                                  <% "COMPLETE" -> %>
+                                    <% result_text =
+                                      if is_map(entry.data.result),
+                                        do: entry.data.result.result,
+                                        else: entry.data.result %>
+                                    <div class="text-sm mt-1 bg-success/10 p-2 rounded text-success">
+                                      {String.slice(result_text, 0, 500)}{if String.length(
+                                                                               result_text
+                                                                             ) > 500, do: "..."}
+                                    </div>
+                                  <% "ERROR" -> %>
+                                    <div class="text-sm mt-1 bg-error/10 p-2 rounded text-error">
+                                      {entry.data.error}
+                                    </div>
+                                  <% "RETRY" -> %>
+                                    <div class="text-sm mt-1 bg-warning/10 p-2 rounded text-warning">
+                                      <div class="font-semibold">
+                                        {gettext("Retry attempt %{attempt}",
+                                          attempt: entry.data.attempt
+                                        )}
+                                      </div>
+                                      
+                                      <div class="text-xs mt-1">
+                                        {String.slice(entry.data.reason, 0, 200)}{if String.length(
+                                                                                       entry.data.reason
+                                                                                     ) > 200,
+                                                                                     do: "..."}
+                                      </div>
+                                    </div>
+                                  <% "RETRY_DISPATCH" -> %>
+                                    <div class="text-sm mt-1 bg-warning/10 p-2 rounded text-warning">
+                                      <div class="font-semibold">
+                                        {gettext(
+                                          "Retry #%{attempt} - Starting with %{backoff_seconds}s backoff",
+                                          attempt: entry.data.attempt,
+                                          backoff_seconds: entry.data.backoff_seconds
+                                        )}
+                                      </div>
+                                      
+                                      <div class="text-xs mt-1">
+                                        Worktree: {Path.basename(entry.data.worktree)}
+                                      </div>
+                                    </div>
+                                  <% "QUEUED" -> %>
+                                    <div class="text-sm mt-1 bg-base-200 p-2 rounded">
+                                      {entry.data.message}
+                                    </div>
+                                  <% "CONTEXT_TREE" -> %>
+                                    <details class="text-xs mt-1">
+                                      <summary class="cursor-pointer text-secondary">
+                                        {gettext("View Context (Turn %{turn})",
+                                          turn: entry.data.turn
+                                        )}
+                                      </summary>
+                                       <pre class="mt-2 bg-secondary/10 p-2 rounded overflow-x-auto text-secondary"><%= entry.data.content %></pre>
+                                    </details>
+                                  <% "system" -> %>
+                                    <div class="mt-1 space-y-2">
+                                      <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
+                                        <div class="text-sm bg-accent/10 p-2 rounded text-accent">
+                                          {String.slice(entry.data.content, 0, 300)}{if String.length(
+                                                                                          entry.data.content
+                                                                                        ) > 300,
+                                                                                        do: "..."}
+                                        </div>
+                                      <% end %>
+                                    </div>
+                                  <% "user" -> %>
+                                    <div class="mt-1">
+                                      <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
+                                        <div class="text-sm bg-info/10 p-2 rounded text-info">
+                                          {String.slice(entry.data.content, 0, 300)}{if String.length(
+                                                                                          entry.data.content
+                                                                                        ) > 300,
+                                                                                        do: "..."}
+                                        </div>
+                                      <% else %>
+                                        <div class="text-sm text-base-content/50 italic">
+                                          {gettext("<empty message>")}
+                                        </div>
+                                      <% end %>
+                                    </div>
+                                  <% "assistant" -> %>
+                                    <div class="mt-1 space-y-2">
+                                      <% reasoning_details =
+                                        Map.get(entry.data, :reasoning_details) %>
+                                      <%= if reasoning_details do %>
+                                        <div class="text-xs bg-warning/10 p-2 rounded text-warning">
+                                          <div class="font-semibold mb-1">
+                                            {gettext("Thinking")}
+                                          </div>
+                                          
+                                          <div>
+                                            {String.slice(
+                                              format_reasoning_details(reasoning_details) || "",
+                                              0,
+                                              200
+                                            )}{if String.length(
+                                                    format_reasoning_details(reasoning_details) ||
+                                                      ""
+                                                  ) > 200, do: "..."}
+                                          </div>
+                                        </div>
+                                      <% end %>
+                                      
+                                      <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
+                                        <div class="text-sm bg-warning/10 p-2 rounded text-warning">
+                                          {String.slice(entry.data.content, 0, 300)}{if String.length(
+                                                                                          entry.data.content
+                                                                                        ) > 300,
+                                                                                        do: "..."}
+                                        </div>
+                                      <% else %>
+                                        <div class="text-sm text-base-content/50 italic">
+                                          {gettext("<no text content>")}
+                                        </div>
+                                      <% end %>
+                                      
+                                      <%= if entry.data.tool_calls && entry.data.tool_calls != [] do %>
+                                        <div class="text-xs bg-secondary/10 p-2 rounded text-secondary">
+                                          <div class="font-semibold mb-1">
+                                            {gettext("Tool Calls (%{count})",
+                                              count: length(entry.data.tool_calls)
+                                            )}
+                                          </div>
+                                          
+                                          <div class="space-y-1">
+                                            <%= for call <- entry.data.tool_calls do %>
+                                              <div class="flex items-center gap-2">
+                                                <span class="font-mono">{tool_call_name(call)}</span>
+                                              </div>
+                                            <% end %>
+                                          </div>
+                                        </div>
+                                      <% end %>
+                                    </div>
+                                  <% "tool" -> %>
+                                    <div class="mt-1 space-y-2">
+                                      <% tool_name = Map.get(entry.data, :tool_name) %>
+                                      <%= if tool_name do %>
+                                        <div class="text-xs bg-success/20 px-2 py-1 rounded font-mono">
+                                          {gettext("Tool Result: %{name}", name: tool_name)}
+                                        </div>
+                                      <% end %>
+                                      
+                                      <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
+                                        <div class="text-sm bg-success/10 p-2 rounded text-success max-h-48 overflow-y-auto">
+                                          <pre class="text-xs whitespace-pre-wrap">{String.slice(entry.data.content, 0, 500)}{if String.length(entry.data.content) > 500, do: "\n...[truncated]"}</pre>
+                                        </div>
+                                      <% else %>
+                                        <div class="text-sm text-base-content/50 italic">
+                                          {gettext("<empty result>")}
+                                        </div>
+                                      <% end %>
+                                    </div>
+                                  <% _ -> %>
+                                    <pre class="text-xs mt-1 overflow-x-auto bg-base-200 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
+                                <% end %>
+                              </div>
+                            <% end %>
+                          </div>
+                        </div>
+                      <% else %>
+                        <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center">
+                          {gettext("No history recorded yet")}
                         </div>
                       <% end %>
                     </div>
                   </div>
+                <% else %>
+                  <p class="text-base-content/50">{gettext("Agent not found")}</p>
                 <% end %>
-              </div>
-            <% "tool" -> %>
-              <div class="space-y-4">
-                <% tool_name = Map.get(@selected_history_entry.data, :tool_name) %>
-                <%= if tool_name do %>
-                  <h4 class="font-semibold text-success"><%= gettext("Tool Result: %{name}", name: tool_name) %></h4>
-                <% end %>
-                <pre class="text-sm whitespace-pre-wrap bg-success/10 p-3 rounded max-h-[60vh] overflow-y-auto"><%= safe_text(@selected_history_entry.data.content) %></pre>
-              </div>
-            <% _ -> %>
-              <pre class="text-sm"><%= inspect(@selected_history_entry.data, pretty: true, limit: :infinity) %></pre>
-          <% end %>
-        </div>
-
-        <div class="modal-action">
-          <button class="btn" phx-click="close_message_modal"><%= gettext("Close") %></button>
-        </div>
-      </div>
-
-      <div class="modal-backdrop" phx-click="close_message_modal">
-        <button class="cursor-default"><%= gettext("close") %></button>
-      </div>
-    </div>
-  <% end %>
-
-  <!-- Full Objective Modal -->
-  <%= if @selected_objective do %>
-    <div class="modal modal-open bg-black/50" id="full-objective-modal">
-      <div class="modal-box w-11/12 max-w-5xl">
-        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-          <.icon name="hero-document-text" class="size-5" />
-          <%= gettext("Full Objective") %>
-        </h3>
-
-        <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
-          <pre class="text-sm whitespace-pre-wrap"><%= @selected_objective %></pre>
-        </div>
-
-        <div class="modal-action">
-          <button class="btn" phx-click="close_objective_modal"><%= gettext("Close") %></button>
-        </div>
-      </div>
-
-      <div class="modal-backdrop" phx-click="close_objective_modal">
-        <button class="cursor-default"><%= gettext("close") %></button>
-      </div>
-    </div>
-  <% end %>
-
-  <!-- Send Message Modal -->
-  <%= if @send_message_agent_id do %>
-    <div class="modal modal-open bg-black/50" id="send-message-modal">
-      <div class="modal-box w-11/12 max-w-2xl">
-        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" />
-          <%= gettext("Send Message to Agent #%{id}", id: @id_to_display[@send_message_agent_id] || @send_message_agent_id) %>
-        </h3>
-
-        <p class="text-sm text-base-content/60 mb-4">
-          <%= gettext("Your message will be added to the agent's context on its next turn.") %>
-        </p>
-
-        <form phx-submit="send_agent_message" phx-change="validate_send_message">
-          <input type="hidden" name="agent_id" value={@send_message_agent_id} />
-          <textarea
-            class="textarea textarea-bordered w-full min-h-32"
-            name="message"
-            placeholder={gettext("Type your message here...")}
-            autofocus
-          ><%= @send_message_text %></textarea>
-
-          <div class="modal-action">
-            <button type="button" class="btn btn-ghost" phx-click="close_send_message">
-              <%= gettext("Cancel") %>
-            </button>
-            <button type="submit" class="btn btn-primary">
-              <.icon name="hero-paper-airplane" class="size-4" />
-              <%= gettext("Send") %>
-            </button>
+              <% else %>
+                <div class="text-center py-16 text-base-content/50">
+                  <.icon
+                    name="hero-finger-pointing"
+                    class="size-20 mx-auto mb-4 opacity-40 animate-float"
+                  />
+                  <p class="text-lg">{gettext("Select an agent to view details")}</p>
+                </div>
+              <% end %>
+            </div>
           </div>
-        </form>
+        </div>
       </div>
-
-      <div class="modal-backdrop" phx-click="close_send_message">
-        <button class="cursor-default"><%= gettext("close") %></button>
-      </div>
+      <!-- Full Message Modal -->
+      <%= if @selected_history_entry do %>
+        <div class="modal modal-open bg-black/50" id="full-message-modal">
+          <div class="modal-box w-11/12 max-w-5xl">
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+              <.icon name={history_entry_icon(@selected_history_entry.type)} class="size-5" /> {@selected_history_entry.type}
+              <span class="text-sm font-normal text-base-content/50 ml-auto">
+                {format_turn(@selected_history_entry.turn)}
+              </span>
+            </h3>
+            
+            <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+              <%= case @selected_history_entry.type do %>
+                <% "USER_PROMPT" -> %>
+                  <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                <% "THOUGHT_CHUNK" -> %>
+                  <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.text %></pre>
+                <% "TOOL_CALL_START" -> %>
+                  <div class="font-semibold mb-2">{@selected_history_entry.data.name}</div>
+                   <pre class="text-sm"><%= inspect(@selected_history_entry.data.args, pretty: true, limit: :infinity) %></pre>
+                <% "COMPLETE" -> %>
+                  <% result_text =
+                    if is_map(@selected_history_entry.data.result),
+                      do: @selected_history_entry.data.result.result,
+                      else: @selected_history_entry.data.result %> <pre class="text-sm whitespace-pre-wrap"><%= safe_text(result_text) %></pre>
+                <% "ERROR" -> %>
+                  <pre class="text-sm whitespace-pre-wrap text-error"><%= @selected_history_entry.data.error %></pre>
+                <% "RETRY" -> %>
+                  <div class="font-semibold mb-2">
+                    {gettext("Retry attempt %{attempt}",
+                      attempt: @selected_history_entry.data.attempt
+                    )}
+                  </div>
+                   <pre class="text-sm whitespace-pre-wrap"><%= @selected_history_entry.data.reason %></pre>
+                <% "CONTEXT_TREE" -> %>
+                  <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                <% "system" -> %>
+                  <pre class="text-sm whitespace-pre-wrap text-accent"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                <% "user" -> %>
+                  <pre class="text-sm whitespace-pre-wrap text-info"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                <% "assistant" -> %>
+                  <div class="space-y-4">
+                    <% reasoning_details =
+                      Map.get(@selected_history_entry.data, :reasoning_details) %>
+                    <%= if reasoning_details do %>
+                      <div>
+                        <h4 class="font-semibold text-warning mb-2">{gettext("Thinking")}</h4>
+                         <pre class="text-sm bg-warning/10 p-3 rounded overflow-x-auto"><%= format_reasoning_details(reasoning_details) %></pre>
+                      </div>
+                    <% end %>
+                    
+                    <%= if @selected_history_entry.data.content && (not is_binary(@selected_history_entry.data.content) || String.trim(@selected_history_entry.data.content) != "") do %>
+                      <div>
+                        <h4 class="font-semibold text-warning mb-2">{gettext("Response")}</h4>
+                         <pre class="text-sm whitespace-pre-wrap bg-warning/10 p-3 rounded"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                      </div>
+                    <% end %>
+                    
+                    <%= if @selected_history_entry.data.tool_calls && @selected_history_entry.data.tool_calls != [] do %>
+                      <div>
+                        <h4 class="font-semibold text-secondary mb-2">{gettext("Tool Calls")}</h4>
+                        
+                        <div class="space-y-2">
+                          <%= for call <- @selected_history_entry.data.tool_calls do %>
+                            <div class="bg-secondary/10 p-3 rounded">
+                              <div class="font-mono font-semibold mb-1">
+                                {tool_call_name(call)}
+                              </div>
+                               <pre class="text-xs overflow-x-auto"><%= safe_text(tool_call_arguments(call)) %></pre>
+                            </div>
+                          <% end %>
+                        </div>
+                      </div>
+                    <% end %>
+                  </div>
+                <% "tool" -> %>
+                  <div class="space-y-4">
+                    <% tool_name = Map.get(@selected_history_entry.data, :tool_name) %>
+                    <%= if tool_name do %>
+                      <h4 class="font-semibold text-success">
+                        {gettext("Tool Result: %{name}", name: tool_name)}
+                      </h4>
+                    <% end %>
+                     <pre class="text-sm whitespace-pre-wrap bg-success/10 p-3 rounded max-h-[60vh] overflow-y-auto"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                  </div>
+                <% _ -> %>
+                  <pre class="text-sm"><%= inspect(@selected_history_entry.data, pretty: true, limit: :infinity) %></pre>
+              <% end %>
+            </div>
+            
+            <div class="modal-action">
+              <button class="btn" phx-click="close_message_modal">{gettext("Close")}</button>
+            </div>
+          </div>
+          
+          <div class="modal-backdrop" phx-click="close_message_modal">
+            <button class="cursor-default">{gettext("close")}</button>
+          </div>
+        </div>
+      <% end %>
+      <!-- Full Objective Modal -->
+      <%= if @selected_objective do %>
+        <div class="modal modal-open bg-black/50" id="full-objective-modal">
+          <div class="modal-box w-11/12 max-w-5xl">
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+              <.icon name="hero-document-text" class="size-5" /> {gettext("Full Objective")}
+            </h3>
+            
+            <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+              <pre class="text-sm whitespace-pre-wrap"><%= @selected_objective %></pre>
+            </div>
+            
+            <div class="modal-action">
+              <button class="btn" phx-click="close_objective_modal">{gettext("Close")}</button>
+            </div>
+          </div>
+          
+          <div class="modal-backdrop" phx-click="close_objective_modal">
+            <button class="cursor-default">{gettext("close")}</button>
+          </div>
+        </div>
+      <% end %>
+      <!-- Send Message Modal -->
+      <%= if @send_message_agent_id do %>
+        <div class="modal modal-open bg-black/50" id="send-message-modal">
+          <div class="modal-box w-11/12 max-w-2xl">
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5" /> {gettext(
+                "Send Message to Agent #%{id}",
+                id: @id_to_display[@send_message_agent_id] || @send_message_agent_id
+              )}
+            </h3>
+            
+            <p class="text-sm text-base-content/60 mb-4">
+              {gettext("Your message will be added to the agent's context on its next turn.")}
+            </p>
+            
+            <form phx-submit="send_agent_message" phx-change="validate_send_message">
+              <input type="hidden" name="agent_id" value={@send_message_agent_id} /> <textarea
+                class="textarea textarea-bordered w-full min-h-32"
+                name="message"
+                placeholder={gettext("Type your message here...")}
+                autofocus
+              ><%= @send_message_text %></textarea>
+              <div class="modal-action">
+                <button type="button" class="btn btn-ghost" phx-click="close_send_message">
+                  {gettext("Cancel")}
+                </button>
+                
+                <button type="submit" class="btn btn-primary">
+                  <.icon name="hero-paper-airplane" class="size-4" /> {gettext("Send")}
+                </button>
+              </div>
+            </form>
+          </div>
+          
+          <div class="modal-backdrop" phx-click="close_send_message">
+            <button class="cursor-default">{gettext("close")}</button>
+          </div>
+        </div>
+      <% end %>
     </div>
-  <% end %>
-</EvoDashWeb.Layouts.app>
+  </main>
+   <Layouts.flash_group flash={@flash} />
+</div>

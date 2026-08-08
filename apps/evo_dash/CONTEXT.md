@@ -36,14 +36,19 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 ### Routes
 
+The pad top bar (`PadComponents.pad_top_bar/1`) is the single global chrome on EVERY page — page switching is fixed in the top-right corner (Tree / Review N / Settings / System + theme toggle). The old sidebar shell (`Layouts.app`) and the classic dashboard are RETIRED (archived to `evox/tmp/original-interface/`).
+
 | Route | LiveView | Purpose |
 |-------|----------|---------|
-| `GET /` | `DashboardLive` | Project-based task dashboard with auto-mode detection, task form, project settings |
+| `GET /` | `HomeLive` | Launchpad home (v3) — central prompt box, address row, Advanced block, Start button, right-edge task rail |
+| `GET /reviews` | `ReviewsLive` | Review inbox — awaiting-review tasks + last 20 decided |
 | `GET /review/:task_id` | `ReviewLive` | Code review page — diff viewer with Lumis syntax highlighting, merge/reject/continue actions, optional GitHub PR creation |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer and token/cost usage display |
+| `GET /tasks` | `TasksLive` | Cross-project task list with filtering by status, project, and review state |
 | `GET /settings` | `SettingsLive` | Configuration File GUI editor (config.toml) with collapsible sections for LLM, User, Scheduler, Sandbox, Evolution, Truncation, Task History |
 | `GET /system` | `SystemLive` | System page: scheduler controls (pause/resume), system controls (restart/stop the Erlang VM), system self-check, plus usage guides and references (example config, CLI usage, FAQ, credentials) |
-| `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
+| `GET /welcome` | `WelcomeLive` | First-run onboarding (LLM quick setup) |
+| `/phoenix/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
 
 ### Multi-Model LLM Support
 

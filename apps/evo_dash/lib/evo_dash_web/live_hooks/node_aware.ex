@@ -51,8 +51,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Loads all tasks and assigns running/pending task lists to the socket. Same
-  logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+  Loads running/pending tasks plus the pad top bar's awaiting-review count
+  and assigns them to the socket.
 
   Node-aware: when `@current_node` is the local BEAM node, tasks are read from
   the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
@@ -60,12 +60,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   identical either way — only the source of `all_tasks` changes.
 
   The fetch is statuses-filtered: only `[:running, :pending, :finalizing,
-  :completed]` are loaded (the sidebar shows running/pending tasks and derives
-  `pending_tasks` review candidates from `:completed`), so the SQL query skips
-  finished tasks that can never appear in the sidebar.
+  :completed]` are loaded (`pending_tasks` review candidates are derived from
+  `:completed`), so the SQL query skips finished tasks that can never appear.
 
   Uses lightweight summary queries that omit heavy JSON fields (logs, usage,
-  archive_metadata) unnecessary for the sidebar display.
+  archive_metadata) unnecessary for these displays.
   """
   def load_running_and_pending_tasks(socket) do
     current_node = socket.assigns[:current_node] || node()
@@ -93,9 +92,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       end)
       |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
 
+    # The pad top bar's awaiting-review badge — the same set ReviewsLive
+    # shows as "Waiting for you" (completed + non-empty branch + no review
+    # decision). Kept fresh on every debounced reload for every LiveView.
+    review_count = Enum.count(all_tasks, &EvoDashWeb.PadComponents.awaiting_review?/1)
+
     socket
     |> Phoenix.Component.assign(:running_tasks, running_tasks)
     |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+    |> Phoenix.Component.assign(:review_count, review_count)
   end
 
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})

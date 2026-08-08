@@ -11,7 +11,7 @@ JS object with lifecycle callbacks (`mounted`, `updated`, `destroyed`) registere
 ### Hook Registration
 
 All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks:` map
-(line ~485):
+(line ~718):
 
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
@@ -22,7 +22,8 @@ import AdaptiveInput from "./hooks/adaptive_input.js"
 hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
         DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash,
         ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse,
-        NodeSwitchFade, AdaptiveInput}
+        NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList, ComposerFocus,
+        LPConsoleKeys}
 ```
 
 ### Where each hook is defined
@@ -43,6 +44,8 @@ hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
 | `ScrollToFile` | `../app.js` (inline, line ~300) | `review_components/diff_viewer.ex` (`phx-hook="ScrollToFile"`) |
 | `AgentHistoryAutoScroll` | `../app.js` (inline, line ~348) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) |
 | `DialogModal` | `../app.js` (inline, line ~463) | (native `<dialog class="modal">` elements) |
+| `ComposerFocus` | `../app.js` (inline, line ~424) | Launchpad composer forms (`phx-hook="ComposerFocus"` on `LaunchpadComponents.composer/1` and each Workspaces panel form). Handles the server-pushed `"lp:clear_prompt"` event after a successful submit: clears the `phx-update="ignore"` prompt textarea, re-dispatches `input` (so `AdaptiveInput` shrinks it back), and returns focus — the next requirement can be typed immediately while project/mode/params stay server-side. **Form-payload targeted-clear guard**: Workspaces (Variant C) runs one composer form per project panel and pushes `%{form: form_id}`; a payload whose `form` does not match `this.el.id` is ignored (`if (payload.form && payload.form !== this.el.id) return;`), so only the submitting panel's textarea is cleared. Single-composer variants push an empty payload and clear as before. |
+| `LPConsoleKeys` | `../app.js` (inline, line ~448) | Launchpad Console (Variant B) dock container `#lp-console-dock` (`phx-hook="LPConsoleKeys"` — mounted on the dock, NOT the form, because the form already carries `ComposerFocus` and one element can host only one hook). Keyboard-first composer: focuses the textarea on mount; Enter submits the composer form (`requestSubmit()`), Shift+Enter inserts a newline; the `e.isComposing` guard keeps IME candidate confirmation (CJK input) from submitting. After a successful submit, `ComposerFocus`'s `lp:clear_prompt` returns focus to the textarea — rapid-fire input never leaves the keyboard. |
 
 ### SidebarCollapse — selector contract
 

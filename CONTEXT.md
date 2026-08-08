@@ -125,11 +125,10 @@ Genesis supports a VSCode Remote-SSH-like workflow: a lightweight headless daemo
 | `EvoGit.AgentScheduler.RemoteAPI` | evo_git | Read-only RPC API over scheduler ETS (list_agents, get_agent_history, get_config, etc.) |
 | `EvoDash.NodeContext` | evo_dash | Thin client — wraps RemoteConnections + RemoteConnection + cross-node RPC helpers |
 | `EvoDashWeb.LiveHooks.NodeAware` | evo_dash | On-mount hook — resolves `?node=` param to remote BEAM node name for RPC routing |
-| `EvoDashWeb.NodeSelectorComponent` | evo_dash | Navbar node indicator/selector dropdown (links to Settings page for full connection management) |
+| `EvoDashWeb.NodeSelectorComponent` | evo_dash | Node indicator/selector dropdown (links to Settings page for full connection management). **Currently unrendered** — it lived in the retired sidebar shell; the pad chrome has no node selector. |
 
 **Dashboard UX:**
-- Node indicator/selector next to the brand logo in the navbar — shows green dot "Local" or blue dot + target name when remote.
-- All navigation links carry `?node=<target_id>` when viewing a remote node.
+- The pad top bar (`PadComponents.pad_top_bar/1`) is the single global chrome on every page — page switching fixed top-right (Tree / Review N / Settings / System + theme toggle). The old sidebar (which carried the node selector, language selector, and Active Tasks widget) is retired; `?node=<target_id>` deep links still work via the NodeAware hook but there is currently no node-switch UI.
 - Connection management on Settings page (`/settings?category=remote_connections`): add/edit/delete SSH targets (ssh_target, local_binary_path, dist_port, remote_path), bootstrap remote daemon, connect/disconnect.
 - When viewing a remote node: Agents page shows remote agents via RPC, Settings is read-only, System controls are disabled (restart/stop), config banner shows remote config status.
 - SSH targets are persisted and remembered across sessions.

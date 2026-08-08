@@ -5,7 +5,7 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 
 ## Routing Table
 - `components/` → LiveComponents (`use EvoDashWeb, :live_component`) — `NodeSelectorComponent` for the SSH Remote Development node selector
-- `dashboard_live/` → Support modules extracted from `DashboardLive`: `StatePersistence`, `Project`, `Assigns`. Note: `dashboard_live.ex` is ~1390 lines and growing — a future split of more event handlers into this support directory may be warranted (the recent prompt-sync change was only ~7 lines).
+- `dashboard_live/` → Only `project.ex` remains (`DashboardLive.Project` — helpers `HomeLive` depends on: `detect_mode/path_suggestions/load_model_profiles/load_foreign_repos`). The rest of the classic dashboard (`dashboard_live.ex`, `assigns.ex`, `project_flow.ex`, `state_persistence.ex`) is RETIRED and archived outside the repo at `evox/tmp/original-interface/`.
 - `settings_live/` → Support modules extracted from `SettingsLive`: `ModelProfileHelpers` (pure data-transformation for `[[llm.models]]` CRUD), `ConfigIO` (config loading, runtime updates, atom whitelists)
 - `system_live/` → Support modules extracted from `SystemLive`: `Content` (static guides/references), `Status` (health-check status helpers)
 - `tasks_live/` → Support modules extracted from `TasksLive`: `DirtyTracker` (pure dirty-check state machine gating the remote-node `:remote_poll` full-page reloads)
@@ -14,8 +14,9 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 
 | Module | Route | Summary |
 |--------|-------|---------|
-| `DashboardLive` | `GET /` | Project-based task dashboard with genesis/evolve forms, auto-mode detection, real-time task cards, and project tabs. Delegates to `TaskRegistry` and `DashboardComponents`. |
-| `WelcomeLive` | `GET /welcome` | Onboarding tutorial with 4 steps — LLM configuration, project setup, and getting started. Redirects to dashboard if already completed. |
+| `HomeLive` | `GET /` | Launchpad home (v3) — central prompt box, address row, Advanced block (default expanded), Start button, right-edge task rail. Deep links `?project=<path>` and `?resume_from=<id>&starting_commit=<sha>` (forces Modify tab). |
+| `ReviewsLive` | `GET /reviews` | Review inbox — "Waiting for you" (awaiting review) + "Decided" (last 20). |
+| `WelcomeLive` | `GET /welcome` | Onboarding page — inline first-LLM setup (flat model grid + API key) or the all-set state. |
 | `ReviewLive` | `GET /review/:task_id` | Code review page — diff viewer with syntax highlighting, commit list, agent summary, and action buttons (Merge, Reject, Continue, Create GitHub PR, Extract Skills). The Extract Skills action opens a modal for an optional user note, then starts an `:extract_skills` task via `TaskRegistry` that spawns a `SkillExtractor` agent to distill PR knowledge into `.agents/skills/` files. |
 | `AgentsLive` | `GET /agents` | Recursive agent tree inspector with selectable agent detail panel. Reads from ETS tables, auto-refreshes every 500ms. Uses `AgentsComponents.agent_tree/1`. |
 | `TasksLive` | `GET /tasks` | Task history list across all projects. |
@@ -27,7 +28,7 @@ Phoenix LiveView modules and templates for the EvoDash interactive UI — real-t
 The review page (`ReviewLive`, `GET /review/:task_id`) has a merge-target branch selector: the merge action merges into a user-selectable branch instead of always the repo's default. `load_task_data/2` loads `merge_targets` and `default_merge_target` (assigns, defaulted to `[]`/`nil` in `mount/3`) via `EvoGit.Review.list_branches/1` and `EvoGit.Review.default_merge_target/1` when `repo_path` exists (plain `case` on tuple returns, no try/rescue; degrades gracefully to `[]`/`nil`). The `merge` event handler reads `params["target_branch"]` (trimmed; non-member targets fall back to the default when a known list was loaded) and calls `EvoGit.Review.merge_branch/3`, falling back to `merge_branch/2` (legacy default-resolving path) when no target is given. The success flash mentions the effective target branch. UI lives in `ReviewComponents.Actions.action_buttons/1` (see `components/review_components/CONTEXT.md`).
 
 ### LiveComponents (`./components/`)
-- **`NodeSelectorComponent`** (`components/node_selector_component.ex`) — `EvoDashWeb.NodeSelectorComponent`, a `use EvoDashWeb, :live_component` LiveComponent rendered in the navbar (next to the brand logo, via `Layouts.app/1`). Shows the current node with a status dot + a dropdown (Local / saved targets / "Manage Connections...") and a full **connection manager modal** (add/edit/delete targets, bootstrap/connect/disconnect, status badges). Manages its own state; selects nodes by sending `{:node_selected, id}` to the parent LiveView. Subscribes to the `"remote_connections"` PubSub topic via the parent LiveView's subscription.
+- **`NodeSelectorComponent`** (`components/node_selector_component.ex`) — `EvoDashWeb.NodeSelectorComponent`, a `use EvoDashWeb, :live_component` LiveComponent. Shows the current node with a status dot + a dropdown (Local / saved targets / "Manage Connections...") and a full **connection manager modal** (add/edit/delete targets, bootstrap/connect/disconnect, status badges). Manages its own state; selects nodes by sending `{:node_selected, id}` to the parent LiveView. **Currently UNRENDERED** — it lived in the retired `Layouts.app` sidebar; the pad chrome has no node selector (accepted loss; remote connections are still managed under Settings → Remote Connections). Kept for a future re-integration.
 
 ### Templates
 - **`agents_live.html.heex`** — Companion template for `AgentsLive` with sidebar tree + detail panel layout.
@@ -35,12 +36,12 @@ The review page (`ReviewLive`, `GET /review/:task_id`) has a merge-target branch
 ### Node-Aware Integration (SSH Remote Development, Phase 2)
 All LiveViews register the `EvoDashWeb.LiveHooks.NodeAware` on-mount hook (via the `live_view/0` macro in `evo_dash_web.ex`). As part of the node-aware pattern, each LiveView:
 - Calls `assign_node/2` in `handle_params/3` (reads the `?node=<id>` query param, resolving it to a saved+connected target or falling back to local).
-- Passes `current_node_id` / `current_node_name` (and `remote_targets` / `connection_statuses`) to the `Layouts.app/1` call.
+- Gets `@running_tasks` / `@pending_tasks` / `@review_count` assigned by the hook (`load_running_and_pending_tasks/1`) and refreshed on every debounced task reload; `@review_count` feeds the pad top bar's Review badge.
 - Handles `{:node_selected, _}` (delegated to `NodeAware.handle_node_selected/2`) and `{:remote_connection_status, _, _}` messages (delegated to `NodeAware.handle_connection_status/2`).
 
 ### Shared Conventions
 - All LiveViews use `use EvoDashWeb, :live_view` and import `CoreComponents` and `Layouts`.
-- All pages use `EvoDashWeb.Layouts.app/1` layout with `current_page` for nav highlighting.
+- All pages render the pad shell directly: `PadComponents.pad_top_bar/1` (`current` atom for nav highlighting, `review_count` for the badge) + a `<main>` content wrapper + `Layouts.flash_group`. The old `Layouts.app/1` sidebar layout is deleted.
 - Styled with DaisyUI/Tailwind CSS; business logic delegated to context modules.
 
 ### UI Patterns (modals, forms, events)

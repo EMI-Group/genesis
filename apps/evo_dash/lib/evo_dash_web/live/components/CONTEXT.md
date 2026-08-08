@@ -2,7 +2,7 @@
 
 ## Intent
 
-LiveComponents (`use EvoDashWeb, :live_component`) rendered within parent LiveViews. Currently contains the `NodeSelectorComponent` for the SSH Remote Development feature — rendered in the navbar next to the brand logo via `Layouts.app/1`.
+LiveComponents (`use EvoDashWeb, :live_component`) rendered within parent LiveViews. Currently contains the `NodeSelectorComponent` for the SSH Remote Development feature — **currently UNRENDERED**: it lived in the retired `Layouts.app` sidebar, and the pad chrome (`PadComponents.pad_top_bar/1`) has no node selector. Kept for a future re-integration; remote connections are still managed under Settings → Remote Connections.
 
 ## Routing Table
 
@@ -12,7 +12,7 @@ None — leaf directory (single file: `node_selector_component.ex`).
 
 ### `EvoDashWeb.NodeSelectorComponent` (`node_selector_component.ex`)
 
-A LiveComponent that renders a compact dropdown for switching between local and remote BEAM nodes. It is rendered **inside the sidebar** (not a top navbar) via `Layouts.app/1`, in the node selector slot below the brand header.
+A LiveComponent that renders a compact dropdown for switching between local and remote BEAM nodes. Previously rendered **inside the sidebar** via `Layouts.app/1` (deleted with the classic dashboard shell) — currently not mounted by any page.
 
 - **Display**: Shows the current node name with a colored status dot (green = local, amber = connected remote, red = disconnected, slate = unknown).
 - **Dropdown**: Lists Local node, saved remote targets with connection status dots, and a "Manage Connections..." link to the Settings page's Remote Connections category.

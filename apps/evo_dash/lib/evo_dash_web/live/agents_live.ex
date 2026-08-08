@@ -10,6 +10,7 @@ defmodule EvoDashWeb.AgentsLive do
   """
   use EvoDashWeb, :live_view
 
+  alias EvoDashWeb.PadComponents
   alias EvoGit.Platform
 
   @agent_state_table :evogit_agent_state

@@ -362,7 +362,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       # Shows the all-set state (HEEx escapes the apostrophe in "You're")
       assert html =~ "You&#39;re All Set!"
-      assert html =~ "Go to Dashboard"
+      assert html =~ "Go to Home"
       # Does NOT show the setup grid
       refute html =~ "Add your first LLM"
       refute html =~ "Choose a model:"
@@ -383,7 +383,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      assert has_element?(view, "button", "Go to Dashboard")
+      assert has_element?(view, "button", "Go to Home")
     end
   end
 

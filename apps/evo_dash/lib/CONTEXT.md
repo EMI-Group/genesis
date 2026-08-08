@@ -34,10 +34,14 @@ NOTE: The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `Ta
 
 #### LiveViews (`./evo_dash_web/live/`)
 
+All pages use the pad shell (`PadComponents.pad_top_bar/1`, nav fixed top-right) — the classic sidebar dashboard (`DashboardLive`) is RETIRED and archived outside the repo (`evox/tmp/original-interface/`).
+
 | LiveView | Route | Purpose |
 |----------|-------|---------|
-| `DashboardLive` | `GET /` | Main dashboard: project tabs, task form, task cards, project settings |
+| `HomeLive` | `GET /` | Launchpad home (v3): prompt box, address row, Advanced params, Start button, task rail |
+| `ReviewsLive` | `GET /reviews` | Review inbox (awaiting + decided) |
 | `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
+| `TasksLive` | `GET /tasks` | Cross-project task list with filters + pagination |
 | `SettingsLive` | `GET /settings` | Runtime scheduler config (concurrency, retries, depth, model) |
 | `SystemLive` | `GET /system` | System controls (scheduler pause/resume, restart/stop VM), system self-check, usage guides and references |
 

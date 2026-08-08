@@ -13,10 +13,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "Task not found"
     end
 
-    test "renders back to dashboard link", %{conn: conn} do
+    test "renders back to home link", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id")
 
-      assert html =~ "Back to Dashboard"
+      assert html =~ "Back to Home"
       assert html =~ "href=\"/\""
     end
   end

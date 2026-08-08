@@ -27,7 +27,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 ### Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `live/` | Phoenix LiveView pages: Dashboard, Agents, Settings, System, Tasks, Review. Also contains the `live/components/` subdirectory (LiveComponents like `NodeSelectorComponent`). |
+| `live/` | Phoenix LiveView pages: Home, Reviews, Agents, Settings, System, Tasks, Review, Welcome. Also contains the `live/components/` subdirectory (LiveComponents like `NodeSelectorComponent`) and `live/dashboard_live/project.ex` (helpers HomeLive depends on — the rest of DashboardLive is retired/archived). Every page renders the same pad chrome: `PadComponents.pad_top_bar/1` (page switching fixed top-right) + a `<main>` wrapper; the old `Layouts.app` sidebar shell is deleted. |
 | `live/components/` | LiveComponents (`use EvoDashWeb, :live_component`): `NodeSelectorComponent` (navbar node selector + connection manager modal for SSH Remote Development). |
 | `live_hooks/` | On-mount hooks: `SetLocale` (locale), `NodeAware` (node-aware dashboard). |
 | `components/` | Reusable HEEx components: CoreComponents, DashboardComponents, AgentsComponents, Layouts. |
@@ -36,7 +36,8 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 ### LiveView Routes
 | Route | LiveView | Purpose |
 |-------|----------|---------|
-| `GET /` | `DashboardLive` | Unified dashboard — project selector, task form, project settings, task history. URL-based project state via `?project=<path>` query param. |
+| `GET /` | `HomeLive` | Launchpad home (v3, `docs/launchpad-frontend-spec.md`) — two-pole attention page: mode tabs (New/Modify), address row, Advanced block (default expanded), `Start ↵` button, and a right-edge rail of task squares. Supports `?project=<path>` and `?resume_from=<task_id>&starting_commit=<sha>` deep links. |
+| `GET /reviews` | `ReviewsLive` | Review inbox — awaiting-review tasks (completed + branch + nil `review_status`) linking to `/review/:id`, plus the last 20 decided reviews. |
 | `GET /review/:task_id` | `ReviewLive` (`:show`) | Code review page — diff viewer with expandable context, commit list, merge/reject/continue actions. Supports post-merge re-review via persisted SHAs. |
 | `GET /review/:task_id/commit/:commit_sha` | `ReviewLive` (`:commit`) | Single-commit inspection — reuses the shared diff viewer component to show changes for one commit. |
 | `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
