@@ -8,6 +8,12 @@ defmodule EvoGit.Sandbox.None do
   cached dev environment (sourced via `bash -c`) so that LLM-generated
   tool calls have access to the tools and environment defined in the
   user's Nix flake.
+
+  On Windows there is still no OS-level isolation (no Job Objects, no
+  AppContainer, no resource limits, no network isolation); the one hardening
+  provided is that `run_with_partial/6` kills the entire process tree on
+  timeout via `taskkill /T /F` (a bare `Task.shutdown/1` would only reach the
+  direct child). See `run_with_partial/6` for details.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
@@ -84,6 +90,11 @@ defmodule EvoGit.Sandbox.None do
   this function redirects stdout/stderr to a temp file. If the timeout fires, the
   partial output written so far can still be read from the temp file.
 
+  On Windows the implementation differs: output is accumulated in memory (no temp
+  file), and on timeout the **entire process tree** is killed via `taskkill /T /F`
+  (not just the direct child, which is all that `Task.shutdown/1` can reach), with
+  the partial output accumulated so far returned.
+
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
     * `{:timeout, partial_output}` — command timed out; partial_output may be empty
@@ -149,23 +160,101 @@ defmodule EvoGit.Sandbox.None do
   end
 
   defp run_with_partial_windows(cwd, executable, args, timeout, max_bytes) do
-    # On Windows, call System.cmd directly (no shell wrapper). Output is
-    # captured from the return value; on timeout, partial output produced
-    # before the OS kills the process is lost (we return a truncation notice).
+    # On Windows, System.cmd passes args as an array (no shell injection risk),
+    # so we call the executable directly without a shell wrapper. This avoids the
+    # need for shell escaping and avoids PowerShell's lack of input redirection
+    # (the `<` operator is reserved and throws a parser error).
+    #
+    # A timeout is needed here, but System.cmd/3 is blocking, and wrapping it in
+    # a Task would make Task.shutdown/1 kill only the DIRECT child process — any
+    # process tree it spawned (e.g. a cmd.exe or powershell grandchild) would be
+    # orphaned and keep running. So instead we open the port ourselves, mirroring
+    # System.cmd's exact port options (binary, exit_status, hide, stderr_to_stdout,
+    # args, cd, env). Direct port ownership lets us read the OS PID and, on
+    # timeout, kill the WHOLE process tree via `taskkill /T /F` — Windows'
+    # built-in tree killer — before returning the partial output.
     is_git = EvoGit.GitEnv.git_command?(executable)
     git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
-    task =
-      Task.async(fn ->
-        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: git_env)
-      end)
+    # Same resolution System.cmd/3 performs: absolute paths are used as-is,
+    # otherwise a PATH/PATHEXT lookup (raises ErlangError(:enoent) when missing).
+    exec =
+      if Path.type(executable) == :absolute do
+        executable
+      else
+        :os.find_executable(executable) || :erlang.error(:enoent, [executable, args, cwd])
+      end
 
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {output, exit_code}} ->
+    port =
+      Port.open(
+        {:spawn_executable, exec},
+        [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+          [{:args, args}, {:cd, cwd}, {:env, git_env}]
+      )
+
+    os_pid = wait_for_os_pid(port)
+
+    collect_windows_output(port, [], timeout, max_bytes, os_pid)
+  end
+
+  # The OS PID is populated asynchronously after the child process is spawned;
+  # poll briefly for it. If it never materializes, fall back to :undefined and
+  # the timeout path degrades to closing the port (kills only the direct child —
+  # identical to the pre-hardening behavior).
+  defp wait_for_os_pid(port, attempts \\ 10) do
+    case Port.info(port, :os_pid) do
+      pid when is_integer(pid) ->
+        pid
+
+      _ when attempts > 0 ->
+        Process.sleep(10)
+        wait_for_os_pid(port, attempts - 1)
+
+      _ ->
+        :undefined
+    end
+  end
+
+  defp collect_windows_output(port, acc, timeout, max_bytes, os_pid) do
+    receive do
+      {^port, {:data, data}} ->
+        collect_windows_output(port, [data | acc], timeout, max_bytes, os_pid)
+
+      {^port, {:exit_status, exit_code}} ->
+        output = acc |> Enum.reverse() |> IO.iodata_to_binary()
         {:ok, Helpers.truncate_output(output, max_bytes), exit_code}
+    after
+      timeout ->
+        kill_windows_tree(os_pid)
+        Port.close(port)
+        drain_port_messages(port)
 
-      nil ->
-        {:timeout, "\n[TRUNCATED due to timeout]"}
+        partial = acc |> Enum.reverse() |> IO.iodata_to_binary()
+
+        {:timeout, Helpers.truncate_output(partial, max_bytes) <> "\n[TRUNCATED due to timeout]"}
+    end
+  end
+
+  # `taskkill /T` walks the whole descendant tree; `/F` forces termination. The
+  # result is ignored: the direct process may already have exited on its own
+  # (taskkill then reports "process not found", which is harmless).
+  defp kill_windows_tree(os_pid) when is_integer(os_pid) do
+    System.cmd("taskkill", ["/PID", Integer.to_string(os_pid), "/T", "/F"],
+      stderr_to_stdout: true
+    )
+
+    :ok
+  end
+
+  defp kill_windows_tree(_), do: :ok
+
+  # After Port.close/1, messages already delivered stay in this process's
+  # mailbox; drain them so they can't be matched by later receives.
+  defp drain_port_messages(port) do
+    receive do
+      {^port, _message} -> drain_port_messages(port)
+    after
+      0 -> :ok
     end
   end
 end
