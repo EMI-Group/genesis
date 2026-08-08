@@ -65,6 +65,10 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
     Git.run(["config", "user.name", "Test User"], dir)
     Git.run(["config", "commit.gpgsign", "false"], dir)
 
+    # Clean up the repo dir after the test so leftover dirs can't collide with
+    # future runs (System.unique_integer([:positive]) repeats across VM runs).
+    on_exit(fn -> File.rm_rf!(dir) end)
+
     dir
   end
 
