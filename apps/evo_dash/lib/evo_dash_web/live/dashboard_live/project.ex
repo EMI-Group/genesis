@@ -70,13 +70,31 @@ defmodule EvoDashWeb.DashboardLive.Project do
   def path_suggestions(value, recent_projects \\ [])
 
   def path_suggestions(value, recent_projects) do
+    path_suggestions(node(), value, recent_projects)
+  end
+
+  @doc """
+  Node-aware variant of `path_suggestions/2`: resolves suggestions against the
+  given node's filesystem. On a remote node (`node != node()`) suggestions come
+  from `EvoDash.NodeContext.list_path_suggestions/2` (the remote daemon
+  resolves paths against its own filesystem; `[]` on RPC failure). On the local
+  node the existing filesystem-suggestion implementation is used unchanged.
+  """
+  def path_suggestions(node, value, recent_projects) do
     recents =
       recent_projects
       |> Enum.map(& &1.path)
       |> Enum.filter(&(is_binary(&1) and matches_prefix?(&1, value)))
       |> Enum.take(8)
 
-    Enum.uniq(recents ++ filesystem_suggestions(value))
+    suggestions =
+      if node == node() do
+        filesystem_suggestions(value)
+      else
+        EvoDash.NodeContext.list_path_suggestions(node, value)
+      end
+
+    Enum.uniq(recents ++ suggestions)
   end
 
   defp matches_prefix?(_path, value) when value == "" or is_nil(value), do: true

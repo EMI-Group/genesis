@@ -8,7 +8,7 @@ defmodule EvoDashWeb.DashboardLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
-  alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow}
+  alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow, RemoteView}
   alias EvoDashWeb.ThemeColor
   alias EvoDashWeb.ExampleTask
   alias EvoGit.Core.ForeignRepo
@@ -67,6 +67,7 @@ defmodule EvoDashWeb.DashboardLive do
           phx-hook="StatePersistence"
           data-project={@active_project_path}
           data-task-mode={@task_mode}
+          data-node-id={@current_node_id || "local"}
           class="flex flex-col min-h-full"
           style={
             "--project-accent: #{ThemeColor.accent_color_for_mode(@task_mode, @task_resume_from)}; --project-ring-accent: #{ThemeColor.accent_color(@active_project && @active_project.name)}"
@@ -79,107 +80,147 @@ defmodule EvoDashWeb.DashboardLive do
             phx-hook="BrowserNotifications"
             class="flex-1 flex flex-col min-h-0"
           >
-            <%= if @remote? do %>
-              <!-- Remote node view: show the remote node's active agents.
-                   The local task list and project management are LOCAL
-                   concerns — the remote daemon runs evo_git only, no
-                   evo_dash (no TaskRegistry/Store). -->
-              <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
-                <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
-                <div>
-                  <h2 class="font-bold text-sm text-info mb-0.5">
-                    {gettext("Remote Node — Active Agents")}
-                  </h2>
-                  <p class="text-sm text-base-content/70">
-                    {gettext(
-                      "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
-                    )}
-                  </p>
-                </div>
-              </div>
+            <%!-- Node-context gate: `phase` drives the render branches below.
+                 `@remote_status` is a %{phase: ...} map in ANY remote context
+                 (set by NodeAware.assign_node/2); a missing/absent status with
+                 `@current_node_id` set is treated as connecting so no local
+                 data is ever shown for an unresolved remote context. --%>
+            <% phase =
+              case @remote_status do
+                %{phase: p} -> p
+                _ -> :connecting
+              end %>
+            <%= cond do %>
+              <% is_nil(@current_node_id) -> %>
+                <div class="flex-1 flex flex-col min-h-0 gap-3">
+                  <RemoteView.top_bar
+                    active_project={@active_project}
+                    active_project_path={@active_project_path}
+                    recent_projects={@recent_projects}
+                    palette_open={@project_palette_open}
+                    palette_search={@palette_search}
+                    palette_mode={@palette_mode}
+                    palette_selected_index={@palette_selected_index}
+                    path_suggestions={@path_suggestions}
+                    tauri_detected={@tauri_detected}
+                    platform={@platform}
+                    show_project_settings={@show_project_settings}
+                    task_mode={@task_mode}
+                    task_node_path={@task_node_path}
+                    task_starting_commit={@task_starting_commit}
+                    task_resume_from={@task_resume_from}
+                    task_archive={@task_archive}
+                    build_systems={@build_systems}
+                    task_build_system={@task_build_system}
+                    project_config={@project_config}
+                    worktree_script={@worktree_script}
+                    commands={@commands}
+                    foreign_repos={@foreign_repos}
+                    foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+                    show_add_foreign_repo_form={@show_add_foreign_repo_form}
+                    new_repo_id={@new_repo_id}
+                    new_repo_path={@new_repo_path}
+                    new_repo_description={@new_repo_description}
+                    disabled={is_nil(@active_project)}
+                    show_configure_dropdown={@show_configure_dropdown}
+                  />
 
-              <%= if @remote_agents == [] do %>
-                <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
-                  <div class="animate-float">
-                    <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
-                  </div>
-                  <p class="text-base font-medium">{gettext("No active agents")}</p>
-                  <p class="text-sm mt-1">
-                    {gettext("There are no running agents on this remote node.")}
-                  </p>
-                </div>
-              <% else %>
-                <div class="mt-6 animate-fade-in-up">
-                  <div class="flex items-center gap-2 mb-4">
-                    <div class="bg-success/15 text-success p-2 rounded-lg">
-                      <.icon name="hero-play-circle" class="size-5" />
-                    </div>
-                    <h2 class="text-lg font-semibold text-base-content/80">
-                      {gettext("Agents")}
-                    </h2>
-                    <span class="badge badge-success">{length(@remote_agents)}</span>
-                  </div>
-                  <div class="space-y-3">
-                    <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
-                      <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
-                        <div class="flex items-center justify-between gap-3 mb-2">
-                          <div class="flex items-center gap-2 min-w-0">
-                            <span class="badge badge-ghost badge-sm font-mono shrink-0">
-                              #{Map.get(agent, :id, "?")}
-                            </span>
-                            <code class="text-xs text-base-content/60 truncate">
-                              {Map.get(agent, :agent_module, "")}
-                            </code>
-                          </div>
-                          <span class={[
-                            "badge badge-sm shrink-0",
-                            case Map.get(agent, :status) do
-                              :running -> "badge-success"
-                              :pending -> "badge-warning"
-                              :waiting -> "badge-info"
-                              :ready -> "badge-info"
-                              :blocked -> "badge-error"
-                              _ -> "badge-ghost"
-                            end
-                          ]}>
-                            {case Map.get(agent, :status) do
-                              s when is_atom(s) ->
-                                Gettext.gettext(
-                                  EvoDashWeb.Gettext,
-                                  String.capitalize(Atom.to_string(s))
-                                )
+                  <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
+                  <EvoDashWeb.TaskFormComponents.task_form
+                    prompt={@task_prompt}
+                    mode={@task_mode}
+                    mode_info={@task_mode_info}
+                    node_path={@task_node_path}
+                    starting_commit={@task_starting_commit}
+                    resume_from={@task_resume_from}
+                    show_advanced={@show_advanced}
+                    disabled={is_nil(@active_project)}
+                    archive={@task_archive}
+                    model_profiles={@model_profiles}
+                    selected_model_id={@selected_model_id}
+                    build_systems={@build_systems}
+                    selected_build_system={@task_build_system}
+                  />
 
-                              _ ->
-                                gettext("Unknown")
-                            end}
+                  <%= if is_nil(@active_project) do %>
+                    <%!-- Empty-state example task help — shown only while no
+                         project is open (disappears once one is activated).
+                         Collapsible <details> + max-height scrollable <pre> keep
+                         it compact so it can never overflow on small screens.
+                         The hidden textarea is an RCDATA holder: reading .value
+                         in JS returns the exact example text (including the
+                         literal <link>/<script> strings) without HTML injection.
+                         The prefill button sets the prompt textarea's .value
+                         (never innerHTML) and dispatches a bubbling `input`
+                         event, which drives the AdaptiveInput autogrow AND the
+                         task_prompt_change phx-change (debounced) — syncing
+                         @task_prompt and switching the layout to expanded. --%>
+                    <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
+                      <details
+                        class="group rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
+                        open
+                      >
+                        <summary
+                          class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
+                        >
+                          <.icon name="hero-sparkles" class="size-4 shrink-0 text-primary/70" />
+                          <span>{gettext("New to Genesis? Start with an example")}</span>
+                          <span class="ml-auto text-xs font-normal text-base-content/40">
+                            <span class="group-open:hidden">{gettext("Show example")}</span>
+                            <span class="hidden group-open:inline">{gettext("Hide example")}</span>
                           </span>
+                        </summary>
+                        <div class="px-4 pb-4 pt-1">
+                          <p class="text-sm text-base-content/70 mb-3">
+                            {gettext(
+                              "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
+                            )}
+                          </p>
+                          <div class="relative rounded-md border border-base-300 bg-base-200/50">
+                            <pre
+                              class="max-h-48 overflow-y-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre-wrap text-base-content/80"
+                            ><%= ExampleTask.example_objective() %></pre>
+                            <button
+                              id="example-task-copy"
+                              phx-hook="ClipboardCopy"
+                              data-content={ExampleTask.example_objective()}
+                              class="btn btn-ghost btn-sm btn-square absolute top-2 right-2 bg-base-100/80"
+                              title={gettext("Copy")}
+                            >
+                              <.icon name="hero-clipboard" class="size-4" />
+                            </button>
+                          </div>
+                          <button
+                            id="example-task-prefill"
+                            type="button"
+                            onclick="var h=document.getElementById('example-task-objective');var p=document.getElementById('prompt');if(h&&p){p.value=h.value;p.dispatchEvent(new Event('input',{bubbles:true}));}"
+                            class="btn btn-ghost btn-sm mt-3 gap-1.5"
+                          >
+                            <.icon name="hero-arrow-down-tray" class="size-4" />
+                            {gettext("Use this example")}
+                          </button>
                         </div>
-                        <% objective = Map.get(agent, :objective) %>
-                        <%= if objective do %>
-                          <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
-                        <% end %>
-                        <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
-                          <%= if Map.get(agent, :model_id) do %>
-                            <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
-                          <% end %>
-                          <%= if Map.get(agent, :repo_id) do %>
-                            <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
-                          <% end %>
-                          <% usage = Map.get(agent, :usage) || %{} %>
-                          <% total =
-                            Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
-                          <%= if total > 0 do %>
-                            <span>{gettext("Tokens")}: {total}</span>
-                          <% end %>
-                        </div>
-                      </div>
-                    <% end %>
-                  </div>
+                      </details>
+                      <textarea
+                        id="example-task-objective"
+                        class="hidden"
+                        readonly
+                        tabindex="-1"
+                        aria-hidden="true"
+                      ><%= ExampleTask.example_objective() %></textarea>
+                    </div>
+                  <% end %>
                 </div>
-              <% end %>
-            <% else %>
-              <div class="flex-1 flex flex-col min-h-0 gap-3">
-                <.top_bar
+
+              <% @remote? -> %>
+                <!-- Connected remote node: remote top bar (target badge,
+                     Configure dropdown hidden) + the remote node's active
+                     agents. The local task list and project management are
+                     LOCAL concerns — the remote daemon runs evo_git only, no
+                     evo_dash (no TaskRegistry/Store). -->
+                <RemoteView.top_bar
+                  remote={true}
+                  current_node_name={@current_node_name}
                   active_project={@active_project}
                   active_project_path={@active_project_path}
                   recent_projects={@recent_projects}
@@ -190,114 +231,145 @@ defmodule EvoDashWeb.DashboardLive do
                   path_suggestions={@path_suggestions}
                   tauri_detected={@tauri_detected}
                   platform={@platform}
-                  show_project_settings={@show_project_settings}
-                  task_mode={@task_mode}
-                  task_node_path={@task_node_path}
-                  task_starting_commit={@task_starting_commit}
-                  task_resume_from={@task_resume_from}
-                  task_archive={@task_archive}
-                  build_systems={@build_systems}
-                  task_build_system={@task_build_system}
-                  project_config={@project_config}
-                  worktree_script={@worktree_script}
-                  commands={@commands}
-                  foreign_repos={@foreign_repos}
-                  show_add_foreign_repo_form={@show_add_foreign_repo_form}
-                  new_repo_id={@new_repo_id}
-                  new_repo_path={@new_repo_path}
-                  new_repo_description={@new_repo_description}
-                  disabled={is_nil(@active_project)}
-                  show_configure_dropdown={@show_configure_dropdown}
                 />
 
-                <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
-                <EvoDashWeb.TaskFormComponents.task_form
-                  prompt={@task_prompt}
-                  mode={@task_mode}
-                  mode_info={@task_mode_info}
-                  node_path={@task_node_path}
-                  starting_commit={@task_starting_commit}
-                  resume_from={@task_resume_from}
-                  show_advanced={@show_advanced}
-                  disabled={is_nil(@active_project)}
-                  archive={@task_archive}
-                  model_profiles={@model_profiles}
-                  selected_model_id={@selected_model_id}
-                  build_systems={@build_systems}
-                  selected_build_system={@task_build_system}
-                />
+                <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
+                  <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
+                  <div>
+                    <h2 class="font-bold text-sm text-info mb-0.5">
+                      {gettext("Remote Node — Active Agents")}
+                    </h2>
+                    <p class="text-sm text-base-content/70">
+                      {gettext(
+                        "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
+                      )}
+                    </p>
+                  </div>
+                </div>
 
-                <%= if is_nil(@active_project) do %>
-                  <%!-- Empty-state example task help — shown only while no
-                       project is open (disappears once one is activated).
-                       Collapsible <details> + max-height scrollable <pre> keep
-                       it compact so it can never overflow on small screens.
-                       The hidden textarea is an RCDATA holder: reading .value
-                       in JS returns the exact example text (including the
-                       literal <link>/<script> strings) without HTML injection.
-                       The prefill button sets the prompt textarea's .value
-                       (never innerHTML) and dispatches a bubbling `input`
-                       event, which drives the AdaptiveInput autogrow AND the
-                       task_prompt_change phx-change (debounced) — syncing
-                       @task_prompt and switching the layout to expanded. --%>
-                  <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
-                    <details
-                      class="group rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
-                      open
-                    >
-                      <summary
-                        class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
-                      >
-                        <.icon name="hero-sparkles" class="size-4 shrink-0 text-primary/70" />
-                        <span>{gettext("New to Genesis? Start with an example")}</span>
-                        <span class="ml-auto text-xs font-normal text-base-content/40">
-                          <span class="group-open:hidden">{gettext("Show example")}</span>
-                          <span class="hidden group-open:inline">{gettext("Hide example")}</span>
-                        </span>
-                      </summary>
-                      <div class="px-4 pb-4 pt-1">
-                        <p class="text-sm text-base-content/70 mb-3">
-                          {gettext(
-                            "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
-                          )}
-                        </p>
-                        <div class="relative rounded-md border border-base-300 bg-base-200/50">
-                          <pre
-                            class="max-h-48 overflow-y-auto p-3 pr-12 font-mono text-xs leading-relaxed whitespace-pre-wrap text-base-content/80"
-                          ><%= ExampleTask.example_objective() %></pre>
-                          <button
-                            id="example-task-copy"
-                            phx-hook="ClipboardCopy"
-                            data-content={ExampleTask.example_objective()}
-                            class="btn btn-ghost btn-sm btn-square absolute top-2 right-2 bg-base-100/80"
-                            title={gettext("Copy")}
-                          >
-                            <.icon name="hero-clipboard" class="size-4" />
-                          </button>
-                        </div>
-                        <button
-                          id="example-task-prefill"
-                          type="button"
-                          onclick="var h=document.getElementById('example-task-objective');var p=document.getElementById('prompt');if(h&&p){p.value=h.value;p.dispatchEvent(new Event('input',{bubbles:true}));}"
-                          class="btn btn-ghost btn-sm mt-3 gap-1.5"
-                        >
-                          <.icon name="hero-arrow-down-tray" class="size-4" />
-                          {gettext("Use this example")}
-                        </button>
+                <%= if @remote_agents == [] do %>
+                  <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+                    <div class="animate-float">
+                      <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+                    </div>
+                    <p class="text-base font-medium">{gettext("No active agents")}</p>
+                    <p class="text-sm mt-1">
+                      {gettext("There are no running agents on this remote node.")}
+                    </p>
+                  </div>
+                <% else %>
+                  <div class="mt-6 animate-fade-in-up">
+                    <div class="flex items-center gap-2 mb-4">
+                      <div class="bg-success/15 text-success p-2 rounded-lg">
+                        <.icon name="hero-play-circle" class="size-5" />
                       </div>
-                    </details>
-                    <textarea
-                      id="example-task-objective"
-                      class="hidden"
-                      readonly
-                      tabindex="-1"
-                      aria-hidden="true"
-                    ><%= ExampleTask.example_objective() %></textarea>
+                      <h2 class="text-lg font-semibold text-base-content/80">
+                        {gettext("Agents")}
+                      </h2>
+                      <span class="badge badge-success">{length(@remote_agents)}</span>
+                    </div>
+                    <div class="space-y-3">
+                      <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
+                        <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
+                          <div class="flex items-center justify-between gap-3 mb-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                              <span class="badge badge-ghost badge-sm font-mono shrink-0">
+                                #{Map.get(agent, :id, "?")}
+                              </span>
+                              <code class="text-xs text-base-content/60 truncate">
+                                {Map.get(agent, :agent_module, "")}
+                              </code>
+                            </div>
+                            <span class={[
+                              "badge badge-sm shrink-0",
+                              case Map.get(agent, :status) do
+                                :running -> "badge-success"
+                                :pending -> "badge-warning"
+                                :waiting -> "badge-info"
+                                :ready -> "badge-info"
+                                :blocked -> "badge-error"
+                                _ -> "badge-ghost"
+                              end
+                            ]}>
+                              {case Map.get(agent, :status) do
+                                s when is_atom(s) ->
+                                  Gettext.gettext(
+                                    EvoDashWeb.Gettext,
+                                    String.capitalize(Atom.to_string(s))
+                                  )
+
+                                _ ->
+                                  gettext("Unknown")
+                              end}
+                            </span>
+                          </div>
+                          <% objective = Map.get(agent, :objective) %>
+                          <%= if objective do %>
+                            <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
+                          <% end %>
+                          <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
+                            <%= if Map.get(agent, :model_id) do %>
+                              <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
+                            <% end %>
+                            <%= if Map.get(agent, :repo_id) do %>
+                              <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
+                            <% end %>
+                            <% usage = Map.get(agent, :usage) || %{} %>
+                            <% total =
+                              Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
+                            <%= if total > 0 do %>
+                              <span>{gettext("Tokens")}: {total}</span>
+                            <% end %>
+                          </div>
+                        </div>
+                      <% end %>
+                    </div>
                   </div>
                 <% end %>
-              </div>
+
+              <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
+                <!-- Pending remote context: connecting chrome only — no
+                     project data, no task form, no local recents (the
+                     node-switch clear already reset project state). -->
+                <RemoteView.top_bar
+                  remote={true}
+                  current_node_name={@current_node_name}
+                  active_project={@active_project}
+                  active_project_path={@active_project_path}
+                  recent_projects={@recent_projects}
+                  palette_open={@project_palette_open}
+                  palette_search={@palette_search}
+                  palette_mode={@palette_mode}
+                  palette_selected_index={@palette_selected_index}
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
+                />
+                <RemoteView.connecting_state current_node_name={@current_node_name} />
+
+              <% true -> %>
+                <!-- Failed/disconnected remote context: prominent error state
+                     with Retry / Manage Connections / Switch to Local. -->
+                <RemoteView.top_bar
+                  remote={true}
+                  current_node_name={@current_node_name}
+                  active_project={@active_project}
+                  active_project_path={@active_project_path}
+                  recent_projects={@recent_projects}
+                  palette_open={@project_palette_open}
+                  palette_search={@palette_search}
+                  palette_mode={@palette_mode}
+                  palette_selected_index={@palette_selected_index}
+                  path_suggestions={@path_suggestions}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
+                />
+                <RemoteView.error_state
+                  current_node_name={@current_node_name}
+                  last_error={Map.get(@remote_status || %{}, :last_error)}
+                />
             <% end %>
-            <%!-- end of @remote? else branch --%>
+            <%!-- end of node-context cond --%>
           </div>
         </div>
       </EvoDashWeb.Layouts.app>
@@ -323,132 +395,6 @@ defmodule EvoDashWeb.DashboardLive do
         </option>
       <% end %>
     </select>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # top_bar/1 — Immersive sticky app header with command palette project control.
-  #
-  # LEFT: command palette trigger (click to open centered overlay with search,
-  # recent projects, open-by-path, and create-new-project).
-  # RIGHT: a single "Configure" dropdown showing BOTH sections at once —
-  # "Task Options" and "Project Settings" — with no tab bar.
-  # ---------------------------------------------------------------------------
-
-  attr(:active_project, :map, default: nil)
-  attr(:active_project_path, :string, default: nil)
-  attr(:recent_projects, :list, default: [])
-  attr(:palette_open, :boolean, default: false)
-  attr(:palette_search, :string, default: "")
-  attr(:palette_mode, :atom, default: :menu)
-  attr(:palette_selected_index, :integer, default: 0)
-  attr(:path_suggestions, :list, default: [])
-  attr(:tauri_detected, :boolean, default: false)
-  attr(:platform, :string, default: "linux")
-  attr(:show_project_settings, :boolean, default: false)
-  attr(:task_mode, :string, default: "genesis_new")
-  attr(:task_node_path, :string, default: "")
-  attr(:task_starting_commit, :string, default: "")
-  attr(:task_resume_from, :string, default: "")
-  attr(:task_archive, :boolean, default: false)
-  attr(:build_systems, :list, default: [])
-  attr(:task_build_system, :string, default: nil)
-  attr(:project_config, :map, default: nil)
-  attr(:worktree_script, :string, default: nil)
-  attr(:commands, :map, default: %{})
-  attr(:foreign_repos, :list, default: [])
-  attr(:show_add_foreign_repo_form, :boolean, default: false)
-  attr(:new_repo_id, :string, default: "")
-  attr(:new_repo_path, :string, default: "")
-  attr(:new_repo_description, :string, default: "")
-  attr(:disabled, :boolean, default: false)
-  attr(:show_configure_dropdown, :boolean, default: false)
-
-  def top_bar(assigns) do
-    ~H"""
-    <div class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-3 px-4 py-3">
-      <!-- LEFT: command palette project control -->
-      <div class="flex-1 min-w-0">
-        <EvoDashWeb.ProjectComponents.project_omnibox
-          active_project={@active_project}
-          recent_projects={@recent_projects}
-          palette_open={@palette_open}
-          palette_search={@palette_search}
-          palette_mode={@palette_mode}
-          palette_selected_index={@palette_selected_index}
-          path_suggestions={@path_suggestions}
-          tauri_detected={@tauri_detected}
-          platform={@platform}
-        />
-      </div>
-
-      <!-- RIGHT: Configure dropdown — server-managed open state -->
-      <div class="relative shrink-0">
-        <button
-          type="button"
-          class="btn btn-md btn-ghost gap-2"
-          title={gettext("Configure")}
-          phx-click="toggle_configure_dropdown"
-        >
-          <.icon name="hero-adjustments-horizontal" class="size-4" />
-          <span class="hidden sm:inline">{gettext("Configure")}</span>
-        </button>
-
-        <%= if @show_configure_dropdown do %>
-          <!-- Full-screen invisible click-catcher overlay -->
-          <div class="fixed inset-0 z-40" phx-click="close_configure_dropdown"></div>
-        <% end %>
-
-        <!-- Dropdown content — always in DOM, hidden when closed.
-             Using class-based toggling (not conditional render) so content
-             stays in the DOM and phx events inside still work reliably. -->
-        <div class={[
-          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
-          !@show_configure_dropdown && "hidden"
-        ]}>
-          <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
-            <!-- Section 1: Task Options -->
-            <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
-                {gettext("Task Options")}
-              </p>
-              <EvoDashWeb.TaskFormComponents.task_options_tab
-                mode={@task_mode}
-                node_path={@task_node_path}
-                starting_commit={@task_starting_commit}
-                resume_from={@task_resume_from}
-                archive={@task_archive}
-                build_systems={@build_systems}
-                selected_build_system={@task_build_system}
-                disabled={@disabled}
-              />
-            </div>
-
-            <!-- Section 2: Project Settings (only when a project is active) -->
-            <%= if @active_project != nil do %>
-              <div class="mt-4 pt-4 border-t border-base-200">
-                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
-                  {gettext("Project Settings")}
-                </p>
-                <EvoDashWeb.ProjectComponents.project_settings_tab
-                  active_project={@active_project_path}
-                  project_config={@project_config}
-                  worktree_script={@worktree_script}
-                  commands={@commands}
-                  foreign_repos={@foreign_repos}
-                  show_add_foreign_repo={@show_add_foreign_repo_form}
-                  new_repo_id={@new_repo_id}
-                  new_repo_path={@new_repo_path}
-                  new_repo_description={@new_repo_description}
-                  tauri_detected={@tauri_detected}
-                  platform={@platform}
-                />
-              </div>
-            <% end %>
-          </div>
-        </div>
-      </div>
-    </div>
     """
   end
 
@@ -502,6 +448,7 @@ defmodule EvoDashWeb.DashboardLive do
           palette_selected_index: 0,
           recent_projects: recent_projects,
           path_suggestions: [],
+          foreign_repo_path_suggestions: [],
           show_project_settings: false,
           project_config: nil,
           worktree_script: nil,
@@ -541,15 +488,30 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_params(params, _url, socket) do
-    socket =
-      socket
-      |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
-      |> assign(:current_path, ~p"/")
-      |> assign(:remote?, socket.assigns.current_node != node())
+    prev_node_id = socket.assigns[:current_node_id]
 
-    # When viewing a remote node, the dashboard shows the remote node's active
-    # agents instead of local tasks/projects. Load them here so the render
-    # branch has the data.
+    # NOTE: `remote?` must be derived from the socket AFTER `assign_node/2`
+    # re-assigns `current_node` — computing it inside the pipe from the outer
+    # `socket` variable would read the PRE-assign_node value, so a page load at
+    # a connected `?node=` URL would render the error gate on the first pass.
+    socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
+    socket = assign(socket, :current_path, ~p"/")
+    socket = assign(socket, :remote?, socket.assigns.current_node != node())
+
+    # Each node context (local + each remote target) has its own persisted
+    # dashboard state; switching nodes clears the client-side state and
+    # re-persists it under the new node key so no state leaks across nodes.
+    socket =
+      StatePersistence.maybe_clear_state_on_node_switch(
+        socket,
+        prev_node_id,
+        socket.assigns[:current_node_id]
+      )
+
+    # When viewing a connected remote node, the dashboard shows the remote
+    # node's active agents instead of local tasks/projects. Load them here so
+    # the render branch has the data (connected contexts only — pending/error
+    # contexts render connecting/error states without agent data).
     socket =
       if socket.assigns.remote? do
         assign(
@@ -562,31 +524,36 @@ defmodule EvoDashWeb.DashboardLive do
       end
 
     # Reload recent projects from the correct node on every handle_params run.
-    # When remote, load via RPC; when local, load from the local TaskRegistry.
-    # This ensures the project list refreshes on every node switch
-    # (local→remote and remote→local).
+    # When connected to a remote node, load via RPC; in a pending/error remote
+    # context no recents are shown (local recents must never leak into a
+    # remote view); when local, load from the local TaskRegistry.
     socket =
-      if socket.assigns.remote? do
-        assign(
-          socket,
-          :recent_projects,
-          EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
-        )
-      else
-        assign(socket, :recent_projects, TaskRegistry.list_recent_projects())
+      cond do
+        socket.assigns.remote? ->
+          assign(
+            socket,
+            :recent_projects,
+            EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+          )
+
+        socket.assigns[:current_node_id] != nil ->
+          assign(socket, :recent_projects, [])
+
+        true ->
+          assign(socket, :recent_projects, TaskRegistry.list_recent_projects())
       end
 
     project_path = params["project"]
 
     socket =
-      if socket.assigns.remote? do
-        # Remote node — do not activate local projects or check local file
-        # paths. The remote render branch shows remote agents instead of the
-        # project UI. Clear local project assigns so no stale local state
-        # leaks into the remote view.
+      if socket.assigns[:current_node_id] != nil do
+        # Any remote context (connected OR pending): never activate or
+        # auto-load a LOCAL project — skip `params["project"]` expansion,
+        # `File.dir?` checks, and auto-load-most-recent entirely. A
+        # display-only remote project selection made via the palette must
+        # survive same-node handle_params runs; the node-switch clear above is
+        # what resets it.
         socket
-        |> assign(:active_project, nil)
-        |> assign(:active_project_path, nil)
       else
         if project_path && project_path != "" do
           expanded = Path.expand(project_path)
@@ -713,13 +680,18 @@ defmodule EvoDashWeb.DashboardLive do
       socket
       |> assign(:palette_mode, mode)
 
-    # Seed path suggestions when entering open_path mode
+    # Seed path suggestions when entering open_path mode (node-aware: remote
+    # suggestions resolve against the remote daemon's filesystem)
     socket =
       if mode == :open_path do
         assign(
           socket,
           :path_suggestions,
-          Project.path_suggestions("", socket.assigns.recent_projects)
+          Project.path_suggestions(
+            socket.assigns.current_node,
+            "",
+            socket.assigns.recent_projects
+          )
         )
       else
         socket
@@ -769,6 +741,29 @@ defmodule EvoDashWeb.DashboardLive do
     ProjectFlow.select_project(socket, params)
   end
 
+  # --- Remote Node Events ---
+
+  # Re-initiates a connection to the currently selected (failed/disconnected)
+  # remote target. The connection manager runs asynchronously; the status
+  # broadcast triggers handle_connection_status → push_patch once connected.
+  @impl true
+  def handle_event("retry_remote_connection", _params, socket) do
+    if node_id = socket.assigns[:current_node_id] do
+      EvoDash.NodeContext.connect(node_id)
+    end
+
+    {:noreply, socket}
+  end
+
+  # Switches back to the local node from a failed/disconnected remote context.
+  # Reuses the existing {:node_selected, _} → NodeAware.handle_node_selected/2
+  # path, which push_patches to the current path without the ?node= param.
+  @impl true
+  def handle_event("switch_to_local", _params, socket) do
+    send(self(), {:node_selected, "local"})
+    {:noreply, socket}
+  end
+
   # --- Task Form Events ---
 
   @impl true
@@ -813,70 +808,83 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("restore_state", params, socket) do
-    # Don't let restore_state overwrite a starting_commit that came from the URL
-    # (set in handle_params from ?starting_commit=... query param)
-    socket =
-      if socket.assigns.task_starting_commit != "" do
-        socket
-      else
-        StatePersistence.maybe_restore_assign(
-          socket,
-          :task_starting_commit,
-          params["task_starting_commit"]
-        )
-      end
-
-    # Don't let restore_state overwrite a resume_from that came from the URL
-    # (set in handle_params from ?resume_from=... query param)
-    socket =
-      if socket.assigns.task_resume_from != "" do
-        socket
-      else
-        StatePersistence.maybe_restore_assign(
-          socket,
-          :task_resume_from,
-          params["task_resume_from"]
-        )
-      end
-
-    socket =
-      socket
-      |> StatePersistence.maybe_restore_assign(:task_prompt, params["task_prompt"])
-      |> StatePersistence.maybe_restore_show_project_settings(params["show_project_settings"])
-      |> StatePersistence.maybe_restore_task_archive(params["task_archive"])
-      |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
-      |> StatePersistence.maybe_restore_assign(:selected_model_id, params["selected_model_id"])
-
-    # Always restore task_mode from sessionStorage — the user's explicit choice
-    # takes precedence over auto-detection when returning to a project.
-    socket = StatePersistence.maybe_restore_assign(socket, :task_mode, params["task_mode"])
-
-    # Restore project if we don't already have one active.
-    # Only restore project-specific assigns (node_path) when no project is
-    # active — otherwise the auto-detected values from detect_mode/1 should win.
-    socket =
-      if is_nil(socket.assigns.active_project) do
-        socket =
+    # Per-node sessionStorage gate: the StatePersistence JS hook merges
+    # `node` (from #dashboard-root's data-node-id) into the persisted state.
+    # If the saved state belongs to a different node context (or an older
+    # session without the node key), skip restoring ALL persisted values so
+    # no task/project state leaks across nodes.
+    # Per-node storage gate: state persisted under one node context must never
+    # be restored in another. The StatePersistence JS hook always sends the
+    # `node` key (defaulting to "local"); a missing key is treated as "local"
+    # for backward compatibility with legacy callers.
+    if (params["node"] || "local") != (socket.assigns[:current_node_id] || "local") do
+      {:noreply, socket}
+    else
+      # Don't let restore_state overwrite a starting_commit that came from the URL
+      # (set in handle_params from ?starting_commit=... query param)
+      socket =
+        if socket.assigns.task_starting_commit != "" do
           socket
-          |> StatePersistence.maybe_restore_assign(:task_node_path, params["task_node_path"])
+        else
+          StatePersistence.maybe_restore_assign(
+            socket,
+            :task_starting_commit,
+            params["task_starting_commit"]
+          )
+        end
 
-        project_path = params["project"]
+      # Don't let restore_state overwrite a resume_from that came from the URL
+      # (set in handle_params from ?resume_from=... query param)
+      socket =
+        if socket.assigns.task_resume_from != "" do
+          socket
+        else
+          StatePersistence.maybe_restore_assign(
+            socket,
+            :task_resume_from,
+            params["task_resume_from"]
+          )
+        end
 
-        if is_binary(project_path) and project_path != "" and File.dir?(project_path) do
-          activate_project(socket, project_path)
+      socket =
+        socket
+        |> StatePersistence.maybe_restore_assign(:task_prompt, params["task_prompt"])
+        |> StatePersistence.maybe_restore_show_project_settings(params["show_project_settings"])
+        |> StatePersistence.maybe_restore_task_archive(params["task_archive"])
+        |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
+        |> StatePersistence.maybe_restore_assign(:selected_model_id, params["selected_model_id"])
+
+      # Always restore task_mode from sessionStorage — the user's explicit choice
+      # takes precedence over auto-detection when returning to a project.
+      socket = StatePersistence.maybe_restore_assign(socket, :task_mode, params["task_mode"])
+
+      # Restore project if we don't already have one active.
+      # Only restore project-specific assigns (node_path) when no project is
+      # active — otherwise the auto-detected values from detect_mode/1 should win.
+      socket =
+        if is_nil(socket.assigns.active_project) do
+          socket =
+            socket
+            |> StatePersistence.maybe_restore_assign(:task_node_path, params["task_node_path"])
+
+          project_path = params["project"]
+
+          if is_binary(project_path) and project_path != "" and File.dir?(project_path) do
+            activate_project(socket, project_path)
+          else
+            socket
+          end
         else
           socket
         end
-      else
-        socket
-      end
 
-    # Restore foreign repos from session AFTER activate_project, which loads
-    # repos from genesis.toml. The session-restored repos are the authoritative
-    # snapshot from before navigation/reload.
-    socket = StatePersistence.maybe_restore_foreign_repos(socket, params["foreign_repos"])
+      # Restore foreign repos from session AFTER activate_project, which loads
+      # repos from genesis.toml. The session-restored repos are the authoritative
+      # snapshot from before navigation/reload.
+      socket = StatePersistence.maybe_restore_foreign_repos(socket, params["foreign_repos"])
 
-    {:noreply, socket}
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -1156,8 +1164,23 @@ defmodule EvoDashWeb.DashboardLive do
 
   @impl true
   def handle_event("path_input", %{"path" => value}, socket) do
-    suggestions = Project.path_suggestions(value, socket.assigns.recent_projects)
+    suggestions =
+      Project.path_suggestions(
+        socket.assigns.current_node,
+        value,
+        socket.assigns.recent_projects
+      )
+
     {:noreply, assign(socket, :path_suggestions, suggestions)}
+  end
+
+  @impl true
+  def handle_event("foreign_repo_path_input", %{"path" => value}, socket) do
+    # Foreign-repo paths are always LOCAL filesystem paths (project settings
+    # are a local dashboard concern), so suggestions resolve against the local
+    # node.
+    suggestions = Project.path_suggestions(node(), value, socket.assigns.recent_projects)
+    {:noreply, assign(socket, :foreign_repo_path_suggestions, suggestions)}
   end
 
   @impl true
@@ -1263,6 +1286,12 @@ defmodule EvoDashWeb.DashboardLive do
   # detection uses the minimal id+status projection — only newly-terminal rows
   # are fetched in full (get_task per new id), bounding decode cost instead of
   # scanning the entire terminal history on every broadcast.
+  #
+  # Node-aware: the sidebar reload goes through
+  # NodeAware.load_running_and_pending_tasks/1 (remote tasks via RPC, empty
+  # lists in pending/error remote contexts), and browser notifications are
+  # LOCAL-context only — a remote/pending context must never fire local
+  # notifications.
   @impl true
   def handle_info(:node_aware_reload_tasks, socket) do
     # Refresh project settings if shown (foreign repos are in-memory, not re-read)
@@ -1279,43 +1308,62 @@ defmodule EvoDashWeb.DashboardLive do
         socket
       end
 
-    # Detect newly finished tasks for browser notifications
-    terminal_ids = TaskRegistry.list_task_ids([:completed, :failed, :cancelled])
-    previously_notified = socket.assigns.notified_task_ids
-
-    {new_ids, updated_notified} =
-      Enum.reduce(terminal_ids, {[], previously_notified}, fn %{id: id}, {acc, notified} ->
-        if MapSet.member?(notified, id) do
-          {acc, notified}
-        else
-          {[id | acc], MapSet.put(notified, id)}
-        end
-      end)
-
     socket =
-      Enum.reduce(new_ids, socket, fn id, sock ->
-        case TaskRegistry.get_task(id) do
-          %EvoGit.TaskInfo{} = task ->
-            {title, body} = Project.task_notification_content(task)
-            push_event(sock, "task_notification", %{title: title, body: body})
+      if socket.assigns[:current_node_id] == nil do
+        # Detect newly finished tasks for browser notifications (local context
+        # only — remote nodes have no local TaskRegistry to scan)
+        terminal_ids = TaskRegistry.list_task_ids([:completed, :failed, :cancelled])
+        previously_notified = socket.assigns.notified_task_ids
 
-          _ ->
-            # task vanished between queries — still marked notified, no crash
-            sock
-        end
-      end)
+        {new_ids, updated_notified} =
+          Enum.reduce(terminal_ids, {[], previously_notified}, fn %{id: id}, {acc, notified} ->
+            if MapSet.member?(notified, id) do
+              {acc, notified}
+            else
+              {[id | acc], MapSet.put(notified, id)}
+            end
+          end)
 
-    socket =
-      socket
-      |> assign(:notified_task_ids, updated_notified)
-      |> Assigns.assign_running_and_pending_tasks()
+        socket =
+          Enum.reduce(new_ids, socket, fn id, sock ->
+            case TaskRegistry.get_task(id) do
+              %EvoGit.TaskInfo{} = task ->
+                {title, body} = Project.task_notification_content(task)
+                push_event(sock, "task_notification", %{title: title, body: body})
+
+              _ ->
+                # task vanished between queries — still marked notified, no crash
+                sock
+            end
+          end)
+
+        assign(socket, :notified_task_ids, updated_notified)
+      else
+        socket
+      end
+
+    socket = EvoDashWeb.LiveHooks.NodeAware.load_running_and_pending_tasks(socket)
 
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true
   def handle_info({:recent_projects_updated}, socket) do
-    {:noreply, assign(socket, :recent_projects, TaskRegistry.list_recent_projects())}
+    recent_projects =
+      cond do
+        socket.assigns.remote? ->
+          # Connected remote node — reload the remote node's recents via RPC
+          EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+
+        socket.assigns[:current_node_id] != nil ->
+          # Pending/error remote context — never show local recents
+          []
+
+        true ->
+          TaskRegistry.list_recent_projects()
+      end
+
+    {:noreply, assign(socket, :recent_projects, recent_projects)}
   end
 
   @impl true
@@ -1420,23 +1468,29 @@ defmodule EvoDashWeb.DashboardLive do
 
     cond do
       index < action_base and index < length(filtered) ->
-        # Activate the selected recent project via push_patch
+        # Activate the selected recent project via push_patch (node-aware:
+        # remote contexts validate/register on the remote node and carry the
+        # `&node=` param so the node context survives the patch)
         project = Enum.at(filtered, index)
         expanded = Path.expand(project.path)
 
-        if File.dir?(expanded) do
-          TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
-          recent_projects = TaskRegistry.list_recent_projects()
-
-          socket
-          |> assign(:recent_projects, recent_projects)
-          |> assign(:project_palette_open, false)
-          |> assign(:palette_mode, :menu)
-          |> push_patch(to: "/?project=#{URI.encode(expanded)}")
+        if socket.assigns[:current_node_id] != nil do
+          activate_remote_palette_project(socket, project, expanded)
         else
-          socket
-          |> assign(:project_palette_open, false)
-          |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
+          if File.dir?(expanded) do
+            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+            recent_projects = TaskRegistry.list_recent_projects()
+
+            socket
+            |> assign(:recent_projects, recent_projects)
+            |> assign(:project_palette_open, false)
+            |> assign(:palette_mode, :menu)
+            |> push_patch(to: "/?project=#{URI.encode(expanded)}")
+          else
+            socket
+            |> assign(:project_palette_open, false)
+            |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
+          end
         end
 
       index == action_base ->
@@ -1444,10 +1498,15 @@ defmodule EvoDashWeb.DashboardLive do
         |> assign(:palette_mode, :open_path)
         |> assign(
           :path_suggestions,
-          Project.path_suggestions("", socket.assigns.recent_projects)
+          Project.path_suggestions(
+            socket.assigns.current_node,
+            "",
+            socket.assigns.recent_projects
+          )
         )
 
       index == action_base + 1 ->
+        # Unreachable when remote (palette_item_count clamps to action_base)
         assign(socket, :palette_mode, :new_project)
 
       true ->
@@ -1457,8 +1516,39 @@ defmodule EvoDashWeb.DashboardLive do
 
   defp handle_palette_key(socket, _key, _mode), do: socket
 
+  # Remote palette selection: validates the directory on the remote node,
+  # registers it in the remote node's recent projects, and sets a DISPLAY-ONLY
+  # active project (no local project config / mode detection — those are local
+  # concerns). The push_patch URL carries the `&node=` param so handle_params
+  # re-runs in the same remote context.
+  defp activate_remote_palette_project(socket, project, expanded) do
+    node = socket.assigns[:current_node]
+
+    if EvoDash.NodeContext.dir?(node, expanded) do
+      EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+      recent_projects = EvoDash.NodeContext.list_recent_projects(node)
+
+      socket
+      |> assign(:recent_projects, recent_projects)
+      |> assign(:project_palette_open, false)
+      |> assign(:palette_mode, :menu)
+      |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
+      |> assign(:active_project_path, expanded)
+      |> push_patch(to: project_url(socket, expanded))
+    else
+      socket
+      |> assign(:project_palette_open, false)
+      |> put_flash(
+        :error,
+        gettext("Directory does not exist on the remote node: %{path}", path: project.path)
+      )
+    end
+  end
+
   # Counts the total number of items in the palette menu list:
-  # filtered recent projects + 2 actions (Open by Path, Create New).
+  # filtered recent projects + 2 actions (Open by Path, Create New) locally;
+  # the "Create New Project" action is hidden in remote contexts, so the count
+  # is filtered + 1 there (keeps ArrowDown clamping in sync with the DOM).
   defp palette_item_count(socket) do
     filtered =
       EvoDashWeb.ProjectComponents.filter_projects(
@@ -1466,7 +1556,18 @@ defmodule EvoDashWeb.DashboardLive do
         socket.assigns.palette_search
       )
 
-    length(filtered) + 2
+    length(filtered) + if socket.assigns[:current_node_id] != nil, do: 1, else: 2
+  end
+
+  # Builds the dashboard URL for a project path. In a remote context the
+  # `&node=` param is appended so the node context survives the push_patch —
+  # NOTE: deliberately NOT `EvoDashWeb.Helpers.with_node_param/2`, which
+  # appends with `?` and would corrupt the existing `?project=` query.
+  defp project_url(socket, path) do
+    case socket.assigns[:current_node_id] do
+      nil -> "/?project=#{URI.encode(path)}"
+      node_id -> "/?project=#{URI.encode(path)}&node=#{node_id}"
+    end
   end
 
   defp activate_project(socket, path) do
