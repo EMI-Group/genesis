@@ -1,6 +1,6 @@
 [package]
 name = "genesis-desktop"
-version = "0.9.1"
+version = "0.9.2"
 description = "Genesis desktop shell — native Tauri window for the Phoenix dashboard"
 edition = "2021"
 
