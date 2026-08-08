@@ -8,13 +8,13 @@ Contains data structs and extracted helper modules used internally by `EvoGit.Ag
 
 None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `store.ex`, `worktrees.ex`, `worktree_manager.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`, `pubsub.ex`, `throttle.ex`, `remote_api.ex`).
 
-## Throttled PubSub (PubSub module + throttle.ex) — supervised since e7decd46
+## Throttled PubSub (PubSub module + throttle.ex)
 
 `EvoGit.AgentScheduler.PubSub` provides the throttled `{:agents_updated}` bulk broadcast plus enriched delta broadcasts (`:agent_registered` / `:agent_updated` / `:agent_removed`). The throttle is **supervised**:
 
-- `PubSub.start_throttle/0` (called once from `EvoGit.Application.start/2`, application.ex:27 — no wiring change needed there) starts a **self-contained named Supervisor** `EvoGit.AgentScheduler.PubSub.ThrottleSupervisor` (`strategy: :one_for_one`) with one child: `EvoGit.AgentScheduler.PubSub.Throttle` (throttle.ex — a small GenServer; `restart: :permanent` default). Idempotent: `{:error, {:already_started, _}}` → `:ok` (double-call race handled).
-- `broadcast_agents_updated/0` casts `:schedule` to the Throttle (coalesces rapid calls into one flush `@throttle_ms` = 200ms after the last schedule). `Process.whereis(EvoGit.AgentScheduler.PubSub.Throttle)` → nil (never started, tests, supervisor restart window) keeps the **immediate-broadcast fallback** — the old bare-spawn loop is gone, so a crash no longer permanently degrades to unthrottled broadcasts.
-- If the Throttle exhausts the supervisor's max_restarts, the supervisor dies and (being linked to the application master at startup) takes the app down — standard OTP; the 200ms timer loop is not a realistic crash source.
+- `EvoGit.AgentScheduler.PubSub.Throttle` (throttle.ex — a small GenServer) is a **standard child of the application supervision tree**: declared in `EvoGit.Application`'s `children` (application.ex) immediately after `{Phoenix.PubSub, name: EvoGit.PubSub}`, it runs under `EvoGit.Supervisor` (one_for_one) with the default `:permanent` restart — a crash restarts it instead of silently degrading to unthrottled broadcasts forever. (Formerly wired as a self-contained named supervisor started from `EvoGit.Application.start/2`; now plain supervision.)
+- `broadcast_agents_updated/0` casts `:schedule` to the Throttle (coalesces rapid calls into one flush `@throttle_ms` = 200ms after the last schedule). `Process.whereis(EvoGit.AgentScheduler.PubSub.Throttle)` → nil (tests, supervisor restart window, contexts where the app isn't started) keeps the **immediate-broadcast fallback** — the old bare-spawn loop is gone, so a crash no longer permanently degrades to unthrottled broadcasts.
+- If the Throttle exhausts the supervisor's max_restarts, `EvoGit.Supervisor` dies and takes the app down — standard OTP; the 200ms timer loop is not a realistic crash source.
 
 ## Defensive ETS lookups in Subagents (since 8666258a)
 
@@ -44,8 +44,8 @@ The actual CoW copy code is **NOT** in this node — it lives in `./apps/evo_git
 | `EvoGit.AgentScheduler.Dispatch` | Agent registration, dispatching, agent-process git commit, repo root resolution, queue processing |
 | `EvoGit.AgentScheduler.Subagents` | Subagent validation/spawning, spatial contract checks, result tracking, parent resumption |
 | `EvoGit.AgentScheduler.Lifecycle` | Agent recycling (cleanup) and crash handling (retry logic, permanent failure) |
-| `EvoGit.AgentScheduler.PubSub` | Centralized broadcast helpers — throttled `{:agents_updated}` (via `Throttle` GenServer under a self-contained named supervisor, see "Throttled PubSub" below) plus enriched delta broadcasts |
-| `EvoGit.AgentScheduler.PubSub.Throttle` | GenServer (throttle.ex) — coalesces `:schedule` casts into one flush broadcast 200ms after the last schedule; restarted by `ThrottleSupervisor` if it dies |
+| `EvoGit.AgentScheduler.PubSub` | Centralized broadcast helpers — throttled `{:agents_updated}` (via `Throttle` GenServer supervised under `EvoGit.Supervisor`, see "Throttled PubSub" below) plus enriched delta broadcasts |
+| `EvoGit.AgentScheduler.PubSub.Throttle` | GenServer (throttle.ex) — coalesces `:schedule` casts into one flush broadcast 200ms after the last schedule; supervised child of `EvoGit.Supervisor` (`:permanent` restart), declared in `EvoGit.Application`'s children after `Phoenix.PubSub` |
 
 ### Slot Management (Slots module)
 
