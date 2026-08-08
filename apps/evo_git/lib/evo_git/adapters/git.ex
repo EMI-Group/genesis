@@ -1,6 +1,28 @@
 defmodule EvoGit.Adapters.Git do
   @moduledoc """
   Wrapper for Git CLI operations, focusing on Worktree isolation.
+
+  ## Return contract
+
+  Every function returns `{:ok, value}` on success or `{:error, {tag, output}}`
+  on failure, where `output` is a trimmed `String.t` and `tag` is one of:
+
+  | Tag | Meaning |
+  |-----|---------|
+  | `code :: integer` | git CLI exited with that non-zero status (other than the conflict case below) |
+  | `:conflict` | git exited 1 in a merge-style conflict (or any other exit-1 command) |
+  | `:enoent` | the repository path does not exist |
+  | `:no_note` | `git notes show` found no note for the object (get_note) |
+  | `:invalid_json` | the note content is not valid JSON metadata (get_note) |
+
+  **Documented exceptions** (these are questions or always-successful lookups and
+  deliberately keep their own shapes):
+
+  * Predicates `branch_exists?/2`, `gh_available?/0`, `branch_has_unique_commits?/3`,
+    `has_origin_remote?/1` return booleans.
+  * `origin_default_branch/1` always returns `{:ok, branch}` (falls back to `"main"`).
+  * `commit/2` treats "nothing to commit, working tree clean" (exit 1) as success
+    `{:ok, _}`.
   """
 
   @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
@@ -14,10 +36,13 @@ defmodule EvoGit.Adapters.Git do
   Sets LC_ALL=C to ensure locale-independent (English) output for reliable parsing,
   and GIT_EDITOR to a no-op (`true`) so automated operations that may open an
   interactive editor (e.g. `merge --continue`, rebase, am, commit) never block.
+
+  Returns `{:ok, output}` on success or `{:error, {tag, output}}` on failure
+  (see the module "## Return contract" section).
   """
   def run(args, cd) when is_list(args) do
     if cd && not File.dir?(cd) do
-      {:error, :enoent, "Repository path does not exist: #{cd}"}
+      {:error, {:enoent, "Repository path does not exist: #{cd}"}}
     else
       System.cmd(EvoGit.Executable.resolve("git"), args,
         cd: cd,
@@ -36,17 +61,17 @@ defmodule EvoGit.Adapters.Git do
       {:ok, String.trim(output)}
     else
       # If it's a commit command with exit 1, but not the "nothing to commit" message, it's an error
-      {:error, 1, String.trim(output)}
+      {:error, {1, String.trim(output)}}
     end
   end
 
   defp handle_git_command_result({output, 1}, _args, _cd) do
     # Default behavior for exit code 1 (e.g., merge conflicts)
-    {:conflict, String.trim(output)}
+    {:error, {:conflict, String.trim(output)}}
   end
 
   defp handle_git_command_result({output, code}, _args, _cd),
-    do: {:error, code, String.trim(output)}
+    do: {:error, {code, String.trim(output)}}
 
   def init(path) when is_binary(path) do
     run(["init"], path)
@@ -102,41 +127,37 @@ defmodule EvoGit.Adapters.Git do
     run(["commit", "-m", full_message], path)
   end
 
+  @doc """
+  Merges a commit into the current branch.
+
+  Returns `{:ok, output}` on success or `{:error, {:conflict, output}}` on a
+  merge conflict (see the module "## Return contract" section).
+  """
   def merge(path, commit_sha) when is_binary(path) and is_binary(commit_sha) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", commit_sha],
-           cd: path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(path)
-         ) do
-      {output, 0} -> {:ok, String.trim(output)}
-      {output, 1} -> {:conflict, String.trim(output)}
-      {output, code} -> {:error, code, String.trim(output)}
-    end
+    do_merge(path, ["merge", commit_sha])
   end
 
+  @doc """
+  Merges a commit into the current branch without committing.
+
+  Returns `{:ok, output}` on success or `{:error, {:conflict, output}}` on a
+  merge conflict (see the module "## Return contract" section).
+  """
   def merge_no_commit(path, commit_sha) when is_binary(path) and is_binary(commit_sha) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge", "--no-commit", commit_sha],
-           cd: path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(path)
-         ) do
-      {output, 0} -> {:ok, String.trim(output)}
-      {output, 1} -> {:conflict, String.trim(output)}
-      {output, code} -> {:error, code, String.trim(output)}
-    end
+    do_merge(path, ["merge", "--no-commit", commit_sha])
   end
 
+  @doc """
+  Merges multiple commits into the current branch (octopus merge).
+
+  Returns `{:ok, output}` on success or `{:error, {:conflict, output}}` on a
+  merge conflict (see the module "## Return contract" section).
+  """
   def merge_octopus(path, commit_shas) when is_binary(path) and is_list(commit_shas) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["merge" | commit_shas],
-           cd: path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(path)
-         ) do
-      {output, 0} -> {:ok, String.trim(output)}
-      {output, 1} -> {:conflict, String.trim(output)}
-      {output, code} -> {:error, code, String.trim(output)}
-    end
+    do_merge(path, ["merge" | commit_shas])
   end
+
+  defp do_merge(path, args), do: run(args, path)
 
   def merge_base(path, commit_a, commit_b)
       when is_binary(path) and is_binary(commit_a) and is_binary(commit_b) do
@@ -189,7 +210,7 @@ defmodule EvoGit.Adapters.Git do
          ) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {_output, 1} -> {:ok, []}
-      {output, code} -> {:error, code, String.trim(output)}
+      {output, code} -> {:error, {code, String.trim(output)}}
     end
   end
 
@@ -258,7 +279,8 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Lists all file paths in a git tree (recursive).
   Runs `git ls-tree -r --name-only <treeish>`.
-  Returns `{:ok, [files]}` (empty list if no files) or `{:error, code, msg}`.
+  Returns `{:ok, [files]}` (empty list if no files) or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
   """
   def ls_tree_names(repo_path, treeish)
       when is_binary(repo_path) and is_binary(treeish) do
@@ -272,7 +294,8 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Lists file paths changed between two commits.
   Runs `git diff --name-only <commit_a> <commit_b>`.
-  Returns `{:ok, [files]}` (empty list if no changes) or `{:error, code, msg}`.
+  Returns `{:ok, [files]}` (empty list if no changes) or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
   """
   def diff_name_only(repo_path, commit_a, commit_b)
       when is_binary(repo_path) and is_binary(commit_a) and is_binary(commit_b) do
@@ -335,7 +358,12 @@ defmodule EvoGit.Adapters.Git do
 
   @doc """
   Gets the parsed note content for a given object as a map.
-  Returns {:ok, metadata_map} or :error if note doesn't exist or is invalid JSON.
+
+  Returns `{:ok, metadata_map}` on success. On failure returns `{:error, {tag, output}}`:
+  `{:error, {:no_note, output}}` when no note exists for the object (git exits 1),
+  `{:error, {:invalid_json, note_content}}` when the note content is not valid
+  JSON metadata, or `{:error, {code, output}}` for other git failures
+  (see the module "## Return contract" section).
   """
   def get_note(path, object, args \\ [])
       when is_binary(path) and is_binary(object) and is_list(args) do
@@ -343,11 +371,15 @@ defmodule EvoGit.Adapters.Git do
       {:ok, note_content} ->
         case Jason.decode(note_content) do
           {:ok, metadata} when is_map(metadata) -> {:ok, metadata}
-          _ -> :error
+          _ -> {:error, {:invalid_json, note_content}}
         end
 
-      _ ->
-        :error
+      {:error, {:conflict, output}} ->
+        # git notes show exits 1 when no note exists for the object
+        {:error, {:no_note, output}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -383,7 +415,8 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Lists all local branches.
 
-  Returns `{:ok, [branch_names]}` or `{:error, code, output}`.
+  Returns `{:ok, [branch_names]}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
   Uses `git for-each-ref --format=%(refname:short) refs/heads`.
   """
   def list_branches(repo_root) when is_binary(repo_root) do
@@ -391,30 +424,29 @@ defmodule EvoGit.Adapters.Git do
       {:ok, output} ->
         {:ok, output |> String.split("\n", trim: true) |> Enum.map(&String.trim/1)}
 
-      {:conflict, output} ->
-        {:error, 1, output}
-
-      {:error, code, output} ->
-        {:error, code, output}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   @doc """
   Lists branches matching a glob pattern.
 
-  Returns a bare list of branch names (without the `*` current-branch marker
-  or surrounding whitespace), or `[]` on error.
+  Returns `{:ok, [branch_names]}` (branch names without the `*` current-branch
+  marker or surrounding whitespace) or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
   Uses `git branch --list <pattern>`.
   """
   def list_branches(repo_root, pattern) when is_binary(repo_root) and is_binary(pattern) do
     case run(["branch", "--list", pattern], repo_root) do
       {:ok, output} ->
-        output
-        |> String.split("\n", trim: true)
-        |> Enum.map(fn line -> line |> String.trim_leading("* ") |> String.trim() end)
+        {:ok,
+         output
+         |> String.split("\n", trim: true)
+         |> Enum.map(fn line -> line |> String.trim_leading("* ") |> String.trim() end)}
 
-      _ ->
-        []
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -496,7 +528,8 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Pushes a branch to the remote repository.
 
-  Returns `{:ok, output}` on success, `{:conflict, output}` or `{:error, code, output}` on failure.
+  Returns `{:ok, output}` on success, `{:error, {tag, output}}` on failure
+  (see the module "## Return contract" section).
   """
   def push_branch(repo_path, branch_name) when is_binary(repo_path) and is_binary(branch_name) do
     run(["push", "-u", "origin", branch_name], repo_path)
@@ -506,7 +539,8 @@ defmodule EvoGit.Adapters.Git do
   Creates a pull request using the `gh` CLI.
 
   Uses `gh pr create --head <head> --base <base> --title <title> --body <body>`.
-  Returns `{:ok, pr_url}` on success, `{:error, code, output}` on failure.
+  Returns `{:ok, pr_url}` on success, `{:error, {code, output}}` on failure
+  (see the module "## Return contract" section).
   """
   def create_pull_request(repo_path, head_branch, base_branch, title, body)
       when is_binary(repo_path) and is_binary(head_branch) and is_binary(base_branch) and
@@ -529,7 +563,7 @@ defmodule EvoGit.Adapters.Git do
            stderr_to_stdout: true
          ) do
       {output, 0} -> {:ok, String.trim(output)}
-      {output, code} -> {:error, code, String.trim(output)}
+      {output, code} -> {:error, {code, String.trim(output)}}
     end
   end
 
@@ -553,7 +587,8 @@ defmodule EvoGit.Adapters.Git do
   Creates a new remote repository using `gh` CLI and adds it as origin.
 
   Uses `gh repo create` with the current directory name as the repo name.
-  Returns `{:ok, repo_url}` on success, `{:error, code, output}` on failure.
+  Returns `{:ok, repo_url}` on success, `{:error, {code, output}}` on failure
+  (see the module "## Return contract" section).
   """
   def create_origin_remote(repo_path) when is_binary(repo_path) do
     dir_name = Path.basename(repo_path)
@@ -580,7 +615,7 @@ defmodule EvoGit.Adapters.Git do
         end
 
       {output, code} ->
-        {:error, code, String.trim(output)}
+        {:error, {code, String.trim(output)}}
     end
   end
 
