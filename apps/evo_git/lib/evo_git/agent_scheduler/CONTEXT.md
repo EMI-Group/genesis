@@ -44,6 +44,8 @@ The actual CoW copy code is **NOT** in this node — it lives in `./apps/evo_git
 | `EvoGit.AgentScheduler.Dispatch` | Agent registration, dispatching, agent-process git commit, repo root resolution, queue processing |
 | `EvoGit.AgentScheduler.Subagents` | Subagent validation/spawning, spatial contract checks, result tracking, parent resumption |
 | `EvoGit.AgentScheduler.Lifecycle` | Agent recycling (cleanup) and crash handling (retry logic, permanent failure) |
+| `EvoGit.AgentScheduler.PubSub` | Centralized broadcast helpers — throttled `{:agents_updated}` (via `Throttle` GenServer under a self-contained named supervisor, see "Throttled PubSub" below) plus enriched delta broadcasts |
+| `EvoGit.AgentScheduler.PubSub.Throttle` | GenServer (throttle.ex) — coalesces `:schedule` casts into one flush broadcast 200ms after the last schedule; restarted by `ThrottleSupervisor` if it dies |
 
 ### Slot Management (Slots module)
 
