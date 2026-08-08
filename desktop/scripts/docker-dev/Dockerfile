@@ -1,15 +1,19 @@
 # Genesis Docker (dev/test only) — mix release, foreground logs on stdout.
 #
-# Build from the repository root:
-#   docker build -f desktop/scripts/docker-dev/Dockerfile -t genesis:local .
+# Build from this directory:
+#   docker build --build-arg GENESIS_VERSION=v0.9.2 -t genesis:local .
 #
 # The image runs as the non-root genesis account by default.
 
 FROM elixir:otp-29
 
+ARG GENESIS_VERSION=v0.9.2
 ARG NODE_VERSION=lts-latest
 ARG PYTHON_VERSION=3.12
 ARG RUST_TOOLCHAIN=stable
+
+LABEL org.opencontainers.image.source="https://github.com/EMI-Group/genesis" \
+      org.opencontainers.image.version="${GENESIS_VERSION}"
 
 ENV LANG=C.UTF-8 \
     MIX_ENV=prod \
@@ -76,7 +80,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile default --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustc --version
 
-COPY --chown=genesis:genesis . .
+RUN git clone \
+        --branch "${GENESIS_VERSION}" \
+        --depth 1 \
+        --single-branch \
+        https://github.com/EMI-Group/genesis.git \
+        /app/genesis
+
+WORKDIR /app/genesis
 
 RUN mix local.hex --force \
     && mix local.rebar --force \
@@ -92,4 +103,4 @@ EXPOSE 9999
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=5 \
     CMD curl --fail --silent --show-error "http://127.0.0.1:${PORT:-9999}/" >/dev/null || exit 1
 
-CMD ["/app/_build/prod/rel/genesis/bin/genesis", "start"]
+CMD ["/app/genesis/_build/prod/rel/genesis/bin/genesis", "start"]

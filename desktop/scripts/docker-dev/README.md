@@ -1,6 +1,6 @@
 # Genesis Docker
 
-This directory provides a Docker image and Compose configuration for running a development or test instance of Genesis. The image builds the Genesis release from source on `elixir:otp-29` and serves the dashboard on port `9999`.
+This directory provides a Docker image and Compose configuration for running a development or test instance of Genesis. The image clones a tagged Genesis revision from GitHub, builds the release on `elixir:otp-29`, and serves the dashboard on port `9999`.
 
 Do not use this configuration as a public production deployment. The image includes a shared development `SECRET_KEY_BASE` by default.
 
@@ -11,13 +11,17 @@ Do not use this configuration as a public production deployment. The image inclu
 
 ## Build the image
 
-Run the build from the Genesis repository root so Docker can access the complete source tree:
+Build the image from this directory:
 
 ```bash
-docker build -f desktop/scripts/docker-dev/Dockerfile -t genesis:local .
+docker build \
+  --build-arg GENESIS_VERSION=v0.9.2 \
+  -t genesis:local .
 ```
 
-The resulting image is named `genesis:local`. `desktop/scripts/docker-dev/Dockerfile.dockerignore` excludes local build outputs, dependencies, editor files, and runtime data from the build context.
+`GENESIS_VERSION` must be a complete Git tag from the [Genesis repository](https://github.com/EMI-Group/genesis/tags), including the `v` prefix. It defaults to `v0.9.2`. The build performs a shallow, single-tag clone from GitHub and does not copy source files from the local checkout. Commit SHAs are not supported by this argument.
+
+The resulting image is named `genesis:local`.
 
 ## Included development tools
 
@@ -34,10 +38,10 @@ Use build arguments to select different language versions:
 
 ```bash
 docker build \
+  --build-arg GENESIS_VERSION=v0.9.2 \
   --build-arg NODE_VERSION=22 \
   --build-arg PYTHON_VERSION=3.13 \
   --build-arg RUST_TOOLCHAIN=1.89.0 \
-  -f desktop/scripts/docker-dev/Dockerfile \
   -t genesis:local .
 ```
 
@@ -82,7 +86,7 @@ Paths in the Compose file are relative to the directory containing `docker-compo
 | `./data` | `/app/.local/share/genesis` | SQLite database, logs, and runtime data |
 | `./workspace` | `/app/workspace` | Projects available to Genesis agents |
 
-Do not mount a directory over `/app`. The application source and compiled release are stored there. Mounting over the complete directory prevents the container from starting.
+Do not mount a directory over `/app`. The application source and compiled release are stored under `/app/genesis`. Mounting over the complete directory prevents the container from starting.
 
 ## Configuration
 
