@@ -66,7 +66,7 @@ CoW (copy-on-write) optimized worktree creation. Instead of extracting every fil
 | `flag/0` | Reads the persistent-term flag (`:not_set`/`:enabled`/`:disabled`). |
 | `enable/0`, `disable/0` | Set the persistent-term flag. |
 
-**Algorithm**: resolve source HEAD → get dirty files in source working tree → compute changed files between source and target commits → get all target tree files → compute shared files (identical + not dirty) → create empty worktree (`git worktree add --no-checkout`) → copy shared files via batched `cp` (Linux: `--reflink=auto --parents`; macOS: `-c` with pre-created dirs) → checkout remaining files. All steps handle errors gracefully (NO `try/rescue`), cleaning up partial worktrees and disabling the feature on failure.
+**Algorithm**: resolve source HEAD → get dirty files in source working tree → compute changed files between source and target commits → get all target tree files → compute shared files (identical + not dirty) → create empty worktree (`git worktree add --no-checkout`) → copy shared files via batched `cp` (Linux: `--reflink=auto --parents`, ~1000 files per invocation; macOS: `-c` clonefile with pre-created dirs — within each 1000-file batch, files are grouped by parent directory via `Enum.group_by(&Path.dirname/1)` and ONE `cp -c` invocation is run per distinct directory, reducing process spawns from N files to D directories; top-level files (`dir == "."`) target the worktree root directly) → checkout remaining files. All steps handle errors gracefully (NO `try/rescue`), cleaning up partial worktrees and disabling the feature on failure.
 
 ## Legacy callers pending update (adapter refactor — follow-up agent)
 

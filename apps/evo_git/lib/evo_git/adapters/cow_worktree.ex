@@ -269,12 +269,23 @@ defmodule EvoGit.Adapters.CowWorktree do
 
       case create_dirs(worktree_path, dirs) do
         :ok ->
-          # Copy files in this batch
+          # Copy files in this batch — one `cp` invocation per distinct parent
+          # directory. BSD `cp` accepts multiple sources with an existing
+          # directory target (the dirs are pre-created above), and `-c`
+          # (clonefile) CoW semantics apply per file. This reduces process
+          # spawns from N files to D distinct directories.
           result =
-            Enum.reduce_while(batch, :ok, fn file, _acc ->
-              dest = Path.join(worktree_path, file)
+            batch
+            |> Enum.group_by(&Path.dirname/1)
+            |> Enum.reduce_while(:ok, fn {dir, dir_files}, _acc ->
+              dest = if dir == ".", do: worktree_path, else: Path.join(worktree_path, dir)
 
-              case System.cmd("cp", ["-c", file, dest], cd: source_path, stderr_to_stdout: true) do
+              case System.cmd(
+                     "cp",
+                     ["-c" | dir_files] ++ [dest],
+                     cd: source_path,
+                     stderr_to_stdout: true
+                   ) do
                 {_output, 0} -> {:cont, :ok}
                 {output, code} -> {:halt, {:error, code, output}}
               end
