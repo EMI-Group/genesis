@@ -41,7 +41,7 @@ defmodule EvoGit.Config.Schema do
   @type sub_category :: :resources | :process | :linux | nil
 
   @typedoc "Supported config value types"
-  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :float | :atom | :boolean | :model_spec | :model_profiles
+  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :list_of_strings | :float | :atom | :boolean | :model_spec | :model_profiles
 
   @typedoc "A single config key's full schema metadata"
   @type schema_map :: %{
@@ -219,6 +219,14 @@ defmodule EvoGit.Config.Schema do
       []
     else
       [error(key_path, "must be a string, got #{inspect(value)}", value, :string)]
+    end
+  end
+
+  defp type_errors(key_path, :list_of_strings, value) do
+    if is_list(value) and Enum.all?(value, &is_binary/1) do
+      []
+    else
+      [error(key_path, "must be a list of strings, got #{inspect(value)}", value, :list_of_strings)]
     end
   end
 

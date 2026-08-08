@@ -117,11 +117,16 @@ github_username = "..."      # For PR creation
 
 [sandbox]
 mode = "auto"                # "auto" | "enabled" | "disabled"
+write_paths = []             # Optional user-defined writable paths for sandboxed tools
+                             # (unset/nil = use platform default writable paths; set,
+                             # including an empty list, = REPLACES the built-in list)
 
 [nix]
 enabled = false              # Run tool calls inside a cached Nix dev environment (requires flake.nix in config dir)
 flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
+
+**`[sandbox] write_paths` semantics**: `[:sandbox, :write_paths]` is a `:list_of_strings` schema key (default `nil`). Unset/nil means the sandbox backends use their platform-default writable paths; set (including an explicitly empty list) REPLACES the built-in list — `[]` disables those writable paths entirely. The value survives the resolve pipeline (`deep_merge` → `atomize_enum_values` → `Schema.validate`) and any non-list/non-string-list value surfaces as a validation error (never a crash). **Currently schema-only — no sandbox backend consumes this key yet.**
 
 ### credentials.toml Structure
 ```toml
