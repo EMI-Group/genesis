@@ -289,4 +289,19 @@ defmodule EvoDashWeb.HelpersTest do
       assert mode_info_message("unknown_mode") == ""
     end
   end
+
+  describe "with_node_param/2" do
+    test "appends ?node=<id> when a node id is given" do
+      assert with_node_param("/agents", "gpu-server") == "/agents?node=gpu-server"
+    end
+
+    test "handles paths that already carry query params" do
+      assert with_node_param("/review/task-1?tab=diff", "gpu-server") ==
+               "/review/task-1?tab=diff?node=gpu-server"
+    end
+
+    test "returns the path unchanged for nil node id (local node)" do
+      assert with_node_param("/agents", nil) == "/agents"
+    end
+  end
 end
