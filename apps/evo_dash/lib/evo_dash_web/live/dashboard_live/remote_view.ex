@@ -8,6 +8,12 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
   the right (where the Configure dropdown lives locally) and hides the
   Configure dropdown entirely.
 
+  The `hide_palette` flag suppresses the command palette trigger, replacing it
+  with a muted non-interactive placeholder. It is passed by gate-state renders
+  (connecting/bootstrapping/disconnecting and error/disconnected remote
+  contexts) where project activation must not touch the local filesystem or
+  local TaskRegistry recents.
+
   `connecting_state/1` and `error_state/1` are the full-page states shown
   while a selected remote target is connecting/bootstrapping or has failed
   (`:error`/`:disconnected` phase). They render NO project data and no task
@@ -57,6 +63,7 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
   attr(:show_configure_dropdown, :boolean, default: false)
   attr(:remote, :boolean, default: false)
   attr(:current_node_name, :string, default: "Local")
+  attr(:hide_palette, :boolean, default: false)
 
   def top_bar(assigns) do
     ~H"""
@@ -64,20 +71,29 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
       class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-3 px-4 py-3"
       data-remote={@remote}
     >
-      <!-- LEFT: command palette project control -->
+      <!-- LEFT: command palette project control. When hide_palette is set
+           (pending/failed remote gate states) a muted non-interactive
+           placeholder replaces the trigger — project activation must not be
+           possible while the selected remote node is not connected. -->
       <div class="flex-1 min-w-0">
-        <EvoDashWeb.ProjectComponents.project_omnibox
-          active_project={@active_project}
-          recent_projects={@recent_projects}
-          palette_open={@palette_open}
-          palette_search={@palette_search}
-          palette_mode={@palette_mode}
-          palette_selected_index={@palette_selected_index}
-          path_suggestions={@path_suggestions}
-          tauri_detected={@tauri_detected}
-          platform={@platform}
-          remote={@remote}
-        />
+        <%= if @hide_palette do %>
+          <p class="text-sm text-base-content/40 truncate">
+            {gettext("Project control unavailable")}
+          </p>
+        <% else %>
+          <EvoDashWeb.ProjectComponents.project_omnibox
+            active_project={@active_project}
+            recent_projects={@recent_projects}
+            palette_open={@palette_open}
+            palette_search={@palette_search}
+            palette_mode={@palette_mode}
+            palette_selected_index={@palette_selected_index}
+            path_suggestions={@path_suggestions}
+            tauri_detected={@tauri_detected}
+            platform={@platform}
+            remote={@remote}
+          />
+        <% end %>
       </div>
 
       <!-- RIGHT: remote target badge (Configure dropdown is local-only) -->

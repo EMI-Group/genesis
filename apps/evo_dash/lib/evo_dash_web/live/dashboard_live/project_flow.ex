@@ -126,29 +126,45 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   # mode detection — those are local concerns). The push_patch URL carries the
   # `&node=` param so handle_params re-runs in the same remote context.
   defp activate_remote_project(socket, path) do
-    expanded = Path.expand(path)
-    node = socket.assigns[:current_node]
-
-    if EvoDash.NodeContext.dir?(node, expanded) do
-      EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
-      recent_projects = EvoDash.NodeContext.list_recent_projects(node)
-
-      socket =
-        socket
-        |> assign(:recent_projects, recent_projects)
-        |> assign(:project_palette_open, false)
-        |> assign(:palette_mode, :menu)
-        |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
-        |> assign(:active_project_path, expanded)
-
-      {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-    else
+    # Gate guard (defense in depth): while the selected remote target is
+    # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
+    # or registering the path here would leak into the local filesystem and
+    # local TaskRegistry recents. Reject the event with a flash error.
+    if EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) do
       {:noreply,
        put_flash(
          socket,
          :error,
-         gettext("Directory does not exist on the remote node: %{path}", path: path)
+         gettext(
+           "Cannot open project: remote node %{name} is not connected. Retry the connection first.",
+           name: socket.assigns[:current_node_name] || "remote"
+         )
        )}
+    else
+      expanded = Path.expand(path)
+      node = socket.assigns[:current_node]
+
+      if EvoDash.NodeContext.dir?(node, expanded) do
+        EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+        recent_projects = EvoDash.NodeContext.list_recent_projects(node)
+
+        socket =
+          socket
+          |> assign(:recent_projects, recent_projects)
+          |> assign(:project_palette_open, false)
+          |> assign(:palette_mode, :menu)
+          |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
+          |> assign(:active_project_path, expanded)
+
+        {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+      else
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Directory does not exist on the remote node: %{path}", path: path)
+         )}
+      end
     end
   end
 
