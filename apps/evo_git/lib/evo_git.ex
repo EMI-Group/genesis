@@ -25,6 +25,9 @@ defmodule EvoGit do
 
       [sandbox]
       mode = "auto"
+      # Optional: replaces the built-in writable cache-dir list (e.g. ".cache", ".cargo");
+      # "~" expands to the user's home. Unset = platform defaults.
+      write_paths = ["/custom/writable"]
 
       [sandbox.resources]
       cpu_quota = "1000%"
@@ -98,7 +101,14 @@ defmodule EvoGit do
   - `{:ok, output, exit_code}` — command completed within timeout
   - `{:timeout, partial_output}` — command timed out, partial output recovered
   """
-  def sandbox_run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil) do
+  def sandbox_run_with_partial(
+        cwd,
+        executable,
+        args \\ [],
+        repo_root \\ nil,
+        timeout,
+        max_bytes \\ nil
+      ) do
     EvoGit.Sandbox.run_with_partial(cwd, executable, args, repo_root, timeout, max_bytes)
   end
 
