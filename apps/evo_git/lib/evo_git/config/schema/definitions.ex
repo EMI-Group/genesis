@@ -261,6 +261,16 @@ defmodule EvoGit.Config.Schema.Definitions do
           "Sandbox execution mode. 'auto' enables sandboxing on supported platforms (Linux with systemd-run, macOS with sandbox-exec) and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
       },
       %{
+        key_path: [:sandbox, :write_paths],
+        type: :list_of_strings,
+        default: nil,
+        validation: [],
+        category: :sandbox,
+        sub_category: nil,
+        description:
+          "User-defined list of writable paths for sandboxed tool execution (e.g. cache directories). When set, this list REPLACES the built-in writable cache-dir list; an explicitly empty list disables those writable paths entirely. When unset (nil), the platform's default writable paths are used."
+      },
+      %{
         key_path: [:sandbox, :resources, :cpu_quota],
         type: :string,
         default: "1000%",
