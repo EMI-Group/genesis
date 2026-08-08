@@ -156,6 +156,46 @@ defmodule EvoGit.Sandbox.Helpers do
   end
 
   # ---------------------------------------------------------------------------
+  # Writable-path resolution (for sandbox backends)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Resolves the writable-path (cache-dir) list to absolute paths.
+
+  Shared by the Linux and macOS sandbox backends to apply the user-configurable
+  `[sandbox] write_paths` list:
+
+    * `config_paths == nil` (config unset) → the provided `defaults` list (each
+      backend's built-in `@default_cache_dirs`) joined to `home` — byte-identical
+      to the historical hard-coded output.
+    * `config_paths` set (even `[]`) → the user's list REPLACES the default
+      cache-dir list; `[]` means no cache-dir write paths at all.
+
+  Path convention for user entries:
+
+    * `~`-prefixed entries expand to `home` (`System.user_home!()`), e.g.
+      `~/cache` → `<home>/cache`, bare `~` → `<home>`
+    * absolute entries (leading `/`) are used as-is
+    * relative entries are joined to `home` — the same base the defaults use
+
+  `Path.expand` is deliberately NOT used: on entries containing `$HOME` env
+  substitution (e.g. `$HOME/.cache`) it would treat the literal `$HOME` text
+  as a directory name. Env substitutions are NOT expanded — such entries are
+  handled like any relative path.
+  """
+  @spec resolve_write_paths([String.t()] | nil, [String.t()], String.t()) :: [String.t()]
+  def resolve_write_paths(nil, defaults, home),
+    do: Enum.map(defaults, &Path.join(home, &1))
+
+  def resolve_write_paths(paths, _defaults, home) do
+    Enum.map(paths, fn
+      "~" <> rest -> Path.join(home, String.trim_leading(rest, "/"))
+      "/" <> _ = path -> path
+      path -> Path.join(home, path)
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
   # Command execution (for SandboxSlice / SandboxProcessRegistry)
   # ---------------------------------------------------------------------------
 

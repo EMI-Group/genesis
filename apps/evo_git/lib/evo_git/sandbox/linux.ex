@@ -20,7 +20,7 @@ defmodule EvoGit.Sandbox.Linux do
   # toolchains (`mix deps.get`, `npm install`, `cargo build`). This is the
   # DEFAULT list emitted as `-p ReadWritePaths=-<home>/<dir>` when the user has
   # NOT set `[sandbox] write_paths`. When set, the user's list REPLACES this
-  # one wholesale (even an empty list) — see `resolve_write_paths/2`.
+  # one wholesale (even an empty list) — see `Helpers.resolve_write_paths/3`.
   @default_cache_dirs [
     # Universal cache (Python pip, Go build, C/C++ ccache)
     ".cache",
@@ -153,7 +153,12 @@ defmodule EvoGit.Sandbox.Linux do
     # REPLACES the default cache-dir list. Structural paths (cwd, tmp paths,
     # nix store/var, repo .git) are ALWAYS appended below — they are required
     # for the sandbox to function, not part of the user-configurable list.
-    write_paths = resolve_write_paths(EvoGit.Config.resolve([:sandbox, :write_paths]), home)
+    write_paths =
+      Helpers.resolve_write_paths(
+        EvoGit.Config.resolve([:sandbox, :write_paths]),
+        @default_cache_dirs,
+        home
+      )
 
     # Add nix store and daemon socket dirs when nix wrapping is enabled
     nix_paths =
@@ -459,34 +464,6 @@ defmodule EvoGit.Sandbox.Linux do
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
     end
-  end
-
-  # Resolves the writable-path (cache-dir) list to absolute paths.
-  #
-  #   * `nil` (config unset) → the built-in `@default_cache_dirs` list joined
-  #     to `home` — byte-identical to the historical hard-coded output.
-  #   * set (even `[]`) → the user's list REPLACES the default cache-dir list;
-  #     `[]` means no cache-dir write paths at all.
-  #
-  # Path convention for user entries:
-  #   * `~`-prefixed entries expand to `System.user_home!()` (e.g. `~/cache`
-  #     → `<home>/cache`, bare `~` → `<home>`)
-  #   * absolute entries (leading `/`) are used as-is
-  #   * relative entries are joined to `home` — the same base the built-in
-  #     defaults use
-  #
-  # `Path.expand` is deliberately NOT used: on entries containing `$HOME` env
-  # substitution (e.g. `$HOME/.cache`) it would treat the literal `$HOME` text
-  # as a directory name. Env substitutions are NOT expanded — such entries are
-  # handled like any relative path.
-  defp resolve_write_paths(nil, home), do: Enum.map(@default_cache_dirs, &Path.join(home, &1))
-
-  defp resolve_write_paths(paths, home) do
-    Enum.map(paths, fn
-      "~" <> rest -> Path.join(home, String.trim_leading(rest, "/"))
-      "/" <> _ = path -> path
-      path -> Path.join(home, path)
-    end)
   end
 
   # Appends --setenv args for git env vars when the original executable is git.
