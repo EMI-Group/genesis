@@ -373,6 +373,7 @@ const StatePersistence = {
         const state = Object.assign({}, existing, {
           project: project,
           task_mode: taskMode,
+          node: this.el.dataset.nodeId || "local",
           task_prompt: this.el.querySelector('[name="prompt"]')?.value || '',
           task_node_path: this.el.querySelector('[name="node_path"]')?.value || '',
           task_seeds: this.el.querySelector('[name="seeds"]')?.value || '',

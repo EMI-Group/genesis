@@ -1301,6 +1301,19 @@ button, a, input, textarea, select, summary,
      must be allowed to escape it. */
 }
 
+/* Remote node variant — distinct info-blue tint when viewing a remote node
+   (data-remote="true" is set by the server template). A ~10% info tint is
+   composed over the default base-100 mix above, keeping the same glassy
+   look while clearly distinguishing remote from local. */
+.dashboard-topbar[data-remote="true"] {
+  background: color-mix(
+    in oklab,
+    var(--color-info) 10%,
+    color-mix(in oklab, var(--color-base-100) 80%, transparent)
+  );
+  border-color: color-mix(in oklab, var(--color-info) 40%, transparent);
+}
+
 /* === Command Palette (Project Omnibox) === */
 /* Trigger button styling (collapsed state) */
 .project-palette-trigger {
