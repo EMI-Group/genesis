@@ -8,6 +8,25 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
   @tmp_prefix "--setenv=TMPDIR="
 
+  # The default cache-dir write list (joined with the user home) that
+  # `args/4` emits when the `[sandbox] write_paths` config key is unset.
+  # Pinned here so a change to the lib defaults fails loudly.
+  @default_cache_dirs [
+    ".cache",
+    ".local/share",
+    ".local/state",
+    ".cargo",
+    ".rustup",
+    ".mix",
+    ".hex",
+    ".npm",
+    ".yarn",
+    ".bun",
+    ".m2",
+    ".gradle",
+    "go"
+  ]
+
   defp build_args(cwd \\ System.tmp_dir!()) do
     Linux.args(cwd, "/usr/bin/env", [], nil)
   end
@@ -30,6 +49,48 @@ defmodule EvoGit.Sandbox.LinuxTest do
     end)
 
     original
+  end
+
+  # Redirects the user config dir ($XDG_CONFIG_HOME) to a fresh unique temp
+  # dir. A fresh path per test avoids `Config.resolve/1`'s per-path
+  # mtime+size-validated `:persistent_term` cache staleness.
+  defp redirect_xdg_config_home do
+    original = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-linux-test-xdg-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      case original do
+        nil -> System.delete_env("XDG_CONFIG_HOME")
+        value -> System.put_env("XDG_CONFIG_HOME", value)
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    tmp_xdg
+  end
+
+  # Writes a config.toml with a `[sandbox] write_paths = <paths>` key into the
+  # redirected XDG config dir. Call this inside the test (after the describe
+  # setup redirected XDG_CONFIG_HOME).
+  defp write_config(paths) do
+    path = Path.join([System.get_env("XDG_CONFIG_HOME"), "genesis", "config.toml"])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
+    on_exit(fn -> File.rm(path) end)
+    path
+  end
+
+  defp cache_write_arg(dir) do
+    "ReadWritePaths=-#{Path.join(System.user_home!(), dir)}"
   end
 
   setup do
@@ -254,6 +315,110 @@ defmodule EvoGit.Sandbox.LinuxTest do
       assert "bash" in args
       # The -c and wrapped command should be passed as-is
       assert "-c" in args
+    end
+  end
+
+  describe "args/4 — write_paths default cache dirs (unset)" do
+    # XDG redirected to an empty dir, NO config.toml written: `write_paths`
+    # is unset, so the default cache-dir write list applies. Deterministic
+    # because the real user config is isolated away.
+    setup do
+      redirect_xdg_config_home()
+      :ok
+    end
+
+    test "includes the default cache dirs as ReadWritePaths when write_paths is unset" do
+      args = build_args()
+
+      for dir <- @default_cache_dirs do
+        assert cache_write_arg(dir) in args,
+               "expected #{cache_write_arg(dir)} in args, got: #{inspect(args)}"
+      end
+    end
+  end
+
+  describe "args/4 — write_paths configured" do
+    setup do
+      redirect_xdg_config_home()
+      :ok
+    end
+
+    @custom_write_paths ["/custom/writable", "/another/path"]
+
+    test "includes the configured write paths as ReadWritePaths" do
+      write_config(@custom_write_paths)
+      args = build_args()
+
+      assert "ReadWritePaths=-/custom/writable" in args
+      assert "ReadWritePaths=-/another/path" in args
+    end
+
+    test "replaces the default cache-dir write paths when write_paths is set" do
+      write_config(@custom_write_paths)
+      args = build_args()
+
+      for dir <- @default_cache_dirs do
+        refute cache_write_arg(dir) in args,
+               "did not expect default cache dir #{cache_write_arg(dir)} in args, got: #{inspect(args)}"
+      end
+    end
+
+    test "still includes structural paths (cwd, tmp) alongside configured write paths" do
+      write_config(@custom_write_paths)
+
+      cwd =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_linux_test_cwd_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(cwd)
+      on_exit(fn -> File.rm_rf!(cwd) end)
+
+      args = build_args(cwd)
+
+      assert "ReadWritePaths=-/tmp" in args
+      assert "ReadWritePaths=-/var/tmp" in args
+      assert "ReadWritePaths=-#{cwd}" in args
+    end
+  end
+
+  describe "args/4 — write_paths explicitly empty" do
+    setup do
+      redirect_xdg_config_home()
+      :ok
+    end
+
+    test "an empty write_paths list removes all default cache-dir entries" do
+      write_config([])
+      args = build_args()
+
+      for dir <- @default_cache_dirs do
+        refute cache_write_arg(dir) in args,
+               "did not expect default cache dir #{cache_write_arg(dir)} in args, got: #{inspect(args)}"
+      end
+    end
+
+    test "still includes structural tmp paths with write_paths = []" do
+      write_config([])
+      args = build_args()
+
+      assert "ReadWritePaths=-/tmp" in args
+      assert "ReadWritePaths=-/var/tmp" in args
+    end
+  end
+
+  describe "args/4 — write_paths ~ expansion" do
+    setup do
+      redirect_xdg_config_home()
+      :ok
+    end
+
+    test "expands a ~-prefixed write path to the user home" do
+      write_config(["~/mycache"])
+      args = build_args()
+
+      assert cache_write_arg("mycache") in args
     end
   end
 
