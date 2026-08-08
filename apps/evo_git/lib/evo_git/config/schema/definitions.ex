@@ -543,8 +543,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Enable web search tool for agents. Requires a configured API key."
+        description: "Enable web search tool for agents. Requires a configured API key."
       },
       %{
         key_path: [:tools, :search, :provider],
@@ -553,8 +552,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [in: [:tavily]],
         category: :tools,
         sub_category: nil,
-        description:
-          "Search service provider."
+        description: "Search service provider."
       },
       %{
         key_path: [:tools, :search, :tavily, :api_key_credential_key],
@@ -563,8 +561,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Credential key name for the Tavily API key."
+        description: "Credential key name for the Tavily API key."
       },
       %{
         key_path: [:tools, :search, :tavily, :base_url],
@@ -573,8 +570,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Tavily API endpoint URL."
+        description: "Tavily API endpoint URL."
       },
       %{
         key_path: [:tools, :search, :tavily, :search_depth],
@@ -583,8 +579,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [in: [:basic, :advanced]],
         category: :tools,
         sub_category: nil,
-        description:
-          "Search depth (basic or advanced)."
+        description: "Search depth (basic or advanced)."
       },
       %{
         key_path: [:tools, :search, :tavily, :max_results],
@@ -593,8 +588,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [min: 1, max: 50],
         category: :tools,
         sub_category: nil,
-        description:
-          "Maximum number of search results (1-50)."
+        description: "Maximum number of search results (1-50)."
       },
       %{
         key_path: [:tools, :search, :tavily, :timeout],
@@ -603,8 +597,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Search request timeout in milliseconds."
+        description: "Search request timeout in milliseconds."
       },
       %{
         key_path: [:tools, :search, :tavily, :max_bytes],
@@ -613,8 +606,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         validation: [],
         category: :tools,
         sub_category: nil,
-        description:
-          "Maximum output size in bytes."
+        description: "Maximum output size in bytes."
       },
       # ── Server ─────────────────────────────────────────────────────────
       %{

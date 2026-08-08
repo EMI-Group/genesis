@@ -35,24 +35,45 @@ defmodule EvoGit.Config.Schema do
   @type key_path :: [atom()]
 
   @typedoc "Top-level config category"
-  @type category :: :scheduler | :llm | :user | :sandbox | :truncation | :task_history | :nix | :git | :server | :tools | :node
+  @type category ::
+          :scheduler
+          | :llm
+          | :user
+          | :sandbox
+          | :truncation
+          | :task_history
+          | :nix
+          | :git
+          | :server
+          | :tools
+          | :node
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | :linux | nil
 
   @typedoc "Supported config value types"
-  @type schema_type :: :pos_integer | :non_neg_integer | :integer | :string | :list_of_strings | :float | :atom | :boolean | :model_spec | :model_profiles
+  @type schema_type ::
+          :pos_integer
+          | :non_neg_integer
+          | :integer
+          | :string
+          | :list_of_strings
+          | :float
+          | :atom
+          | :boolean
+          | :model_spec
+          | :model_profiles
 
   @typedoc "A single config key's full schema metadata"
   @type schema_map :: %{
-    key_path: key_path(),
-    type: schema_type(),
-    default: term(),
-    validation: keyword(),
-    category: category(),
-    sub_category: sub_category(),
-    description: String.t()
-  }
+          key_path: key_path(),
+          type: schema_type(),
+          default: term(),
+          validation: keyword(),
+          category: category(),
+          sub_category: sub_category(),
+          description: String.t()
+        }
 
   defmodule ValidationError do
     @moduledoc """
@@ -67,11 +88,11 @@ defmodule EvoGit.Config.Schema do
     defstruct [:key_path, :message, :value, :rule]
 
     @type t :: %__MODULE__{
-      key_path: [atom()],
-      message: String.t(),
-      value: term(),
-      rule: term()
-    }
+            key_path: [atom()],
+            message: String.t(),
+            value: term(),
+            rule: term()
+          }
   end
 
   alias EvoGit.Config.Schema.{Definitions, LLM}
@@ -194,7 +215,14 @@ defmodule EvoGit.Config.Schema do
     if is_integer(value) and value > 0 do
       []
     else
-      [error(key_path, "must be a positive integer (greater than 0), got #{inspect(value)}", value, :pos_integer)]
+      [
+        error(
+          key_path,
+          "must be a positive integer (greater than 0), got #{inspect(value)}",
+          value,
+          :pos_integer
+        )
+      ]
     end
   end
 
@@ -202,7 +230,14 @@ defmodule EvoGit.Config.Schema do
     if is_integer(value) and value >= 0 do
       []
     else
-      [error(key_path, "must be a non-negative integer (0 or greater), got #{inspect(value)}", value, :non_neg_integer)]
+      [
+        error(
+          key_path,
+          "must be a non-negative integer (0 or greater), got #{inspect(value)}",
+          value,
+          :non_neg_integer
+        )
+      ]
     end
   end
 
@@ -226,7 +261,14 @@ defmodule EvoGit.Config.Schema do
     if is_list(value) and Enum.all?(value, &is_binary/1) do
       []
     else
-      [error(key_path, "must be a list of strings, got #{inspect(value)}", value, :list_of_strings)]
+      [
+        error(
+          key_path,
+          "must be a list of strings, got #{inspect(value)}",
+          value,
+          :list_of_strings
+        )
+      ]
     end
   end
 
@@ -235,7 +277,8 @@ defmodule EvoGit.Config.Schema do
   # Must be a 2-element tuple: {provider_atom, keyword_list}. The keyword list
   # must have at least :id with a non-empty string. :extra is optional but,
   # if present, must be a map.
-  defp type_errors(key_path, :model_spec, {provider, opts}) when is_atom(provider) and is_list(opts) do
+  defp type_errors(key_path, :model_spec, {provider, opts})
+       when is_atom(provider) and is_list(opts) do
     id = Keyword.get(opts, :id)
     has_extra = Keyword.has_key?(opts, :extra)
     extra = Keyword.get(opts, :extra)
@@ -244,12 +287,26 @@ defmodule EvoGit.Config.Schema do
       if is_binary(id) and id != "" do
         []
       else
-        [error(key_path, "model tuple must have a valid non-empty 'id' string, got #{inspect(id)}", {provider, opts}, :model_spec)]
+        [
+          error(
+            key_path,
+            "model tuple must have a valid non-empty 'id' string, got #{inspect(id)}",
+            {provider, opts},
+            :model_spec
+          )
+        ]
       end
 
     extra_errors =
       if has_extra and not is_map(extra) do
-        [error(key_path, "model tuple 'extra' must be a map, got #{inspect(extra)}", {provider, opts}, :model_spec)]
+        [
+          error(
+            key_path,
+            "model tuple 'extra' must be a map, got #{inspect(extra)}",
+            {provider, opts},
+            :model_spec
+          )
+        ]
       else
         []
       end
@@ -273,24 +330,52 @@ defmodule EvoGit.Config.Schema do
 
         extra_errors =
           if has_extra and not is_map(extra) do
-            [error(key_path, "model map 'extra' must be a map, got #{inspect(extra)}", value, :model_spec)]
+            [
+              error(
+                key_path,
+                "model map 'extra' must be a map, got #{inspect(extra)}",
+                value,
+                :model_spec
+              )
+            ]
           else
             []
           end
 
         cond do
           not has_provider ->
-            [error(key_path, "model map must have a 'provider' key, got #{inspect(value)}", value, :model_spec)]
+            [
+              error(
+                key_path,
+                "model map must have a 'provider' key, got #{inspect(value)}",
+                value,
+                :model_spec
+              )
+            ]
 
           not has_id ->
-            [error(key_path, "model map must have an 'id' key, got #{inspect(value)}", value, :model_spec)]
+            [
+              error(
+                key_path,
+                "model map must have an 'id' key, got #{inspect(value)}",
+                value,
+                :model_spec
+              )
+            ]
 
           true ->
             extra_errors
         end
 
       true ->
-        [error(key_path, "must be a string (e.g. \"provider:model\"), a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\", extra: %{...}}), or a tuple (e.g. {:openai, [id: \"...\", base_url: \"...\"]}), got #{inspect(value)}", value, :model_spec)]
+        [
+          error(
+            key_path,
+            "must be a string (e.g. \"provider:model\"), a map (e.g. %{provider: :openai, id: \"...\", base_url: \"...\", extra: %{...}}), or a tuple (e.g. {:openai, [id: \"...\", base_url: \"...\"]}), got #{inspect(value)}",
+            value,
+            :model_spec
+          )
+        ]
     end
   end
 
@@ -310,7 +395,14 @@ defmodule EvoGit.Config.Schema do
         validate_model_profile(key_path, value)
 
       true ->
-        [error(key_path, "must be a list of model profiles, got #{inspect(value)}", value, :model_profiles)]
+        [
+          error(
+            key_path,
+            "must be a list of model profiles, got #{inspect(value)}",
+            value,
+            :model_profiles
+          )
+        ]
     end
   end
 
@@ -350,7 +442,15 @@ defmodule EvoGit.Config.Schema do
       if is_binary(id) and id != "" do
         errors
       else
-        [error(path ++ [:id], "profile must have a non-empty 'id' string, got #{inspect(id)}", id, :string) | errors]
+        [
+          error(
+            path ++ [:id],
+            "profile must have a non-empty 'id' string, got #{inspect(id)}",
+            id,
+            :string
+          )
+          | errors
+        ]
       end
 
     model_errors =
@@ -374,7 +474,14 @@ defmodule EvoGit.Config.Schema do
           []
 
         po when not is_map(po) ->
-          [error(path ++ [:provider_options], "provider_options must be a map, got #{inspect(po)}", po, :map)]
+          [
+            error(
+              path ++ [:provider_options],
+              "provider_options must be a map, got #{inspect(po)}",
+              po,
+              :map
+            )
+          ]
 
         _po ->
           []
@@ -384,7 +491,14 @@ defmodule EvoGit.Config.Schema do
   end
 
   defp validate_model_profile(path, profile) do
-    [error(path, "profile must be a map/table, got #{inspect(profile)}", profile, :model_profiles)]
+    [
+      error(
+        path,
+        "profile must be a map/table, got #{inspect(profile)}",
+        profile,
+        :model_profiles
+      )
+    ]
   end
 
   defp rule_errors(key_path, validation, value) do
@@ -393,21 +507,42 @@ defmodule EvoGit.Config.Schema do
         if is_number(value) and value >= min_val do
           []
         else
-          [error(key_path, "must be >= #{min_val}, got #{inspect(value)}", value, {:min, min_val})]
+          [
+            error(
+              key_path,
+              "must be >= #{min_val}, got #{inspect(value)}",
+              value,
+              {:min, min_val}
+            )
+          ]
         end
 
       {:max, max_val} ->
         if is_number(value) and value <= max_val do
           []
         else
-          [error(key_path, "must be <= #{max_val}, got #{inspect(value)}", value, {:max, max_val})]
+          [
+            error(
+              key_path,
+              "must be <= #{max_val}, got #{inspect(value)}",
+              value,
+              {:max, max_val}
+            )
+          ]
         end
 
       {:in, allowed} ->
         if value in allowed do
           []
         else
-          [error(key_path, "must be one of #{inspect(allowed)}, got #{inspect(value)}", value, {:in, allowed})]
+          [
+            error(
+              key_path,
+              "must be one of #{inspect(allowed)}, got #{inspect(value)}",
+              value,
+              {:in, allowed}
+            )
+          ]
         end
 
       _ ->
