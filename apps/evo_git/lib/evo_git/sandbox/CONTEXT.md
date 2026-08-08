@@ -60,7 +60,7 @@ Both Linux (`args/4` → `-p ReadWritePaths=-<path>`) and macOS (`generate_profi
 
 **Deny lists are NEVER affected** — the config replaces only the ALLOW/write list: Linux `InaccessiblePaths` (sensitive-dir deny) and the macOS deny-read/deny-write sensitive lists stay exactly as-is.
 
-Implementation: both backends define a `@default_cache_dirs` module attribute + a private `resolve_write_paths/2` (deliberately duplicated across the two backend files — same ~20-line pure function, kept local to each backend per the edit-scope constraint).
+Implementation: both backends define a `@default_cache_dirs` module attribute (the platform-specific defaults, kept local — they may diverge later) + delegate the shared path-resolution logic to the single public `EvoGit.Sandbox.Helpers.resolve_write_paths/3` (`config_paths, defaults, home`): `nil` config → defaults joined to home; set config (even `[]`) → the user's list replaces defaults. This follows the node constraint that shared helpers live in `Helpers` rather than being duplicated per backend.
 
 ## Windows / None Backend — No-Sandbox Gap (Known Issue)
 
