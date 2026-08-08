@@ -103,6 +103,15 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert deepseek_pos < google_pos, "expected \"DeepSeek\" before \"Google\""
       assert google_pos < openai_pos, "expected \"Google\" before \"OpenAI\""
     end
+
+    test "renders the example task teaching section with copy button", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/welcome")
+
+      assert html =~ "Try an example task"
+      assert html =~ "Build a simulated, web-based Windows desktop environment"
+      assert html =~ "Taskbar containing a Start button"
+      assert html =~ "welcome-example-copy"
+    end
   end
 
   describe "model selection + merged save flow" do

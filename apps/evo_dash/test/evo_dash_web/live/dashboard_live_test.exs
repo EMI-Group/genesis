@@ -181,6 +181,21 @@ defmodule EvoDashWeb.DashboardLiveTest do
       # The empty-state hint overlay is shown instead
       assert html =~ "Open a project to get started"
     end
+
+    test "renders example task help block when no project is active", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      # Explanation heading + how-it-works text
+      assert html =~ "New to Genesis? Start with an example"
+      assert html =~ "Set an end goal, launch, and Genesis builds it"
+      # Example objective is rendered (from EvoDashWeb.ExampleTask)
+      assert html =~ "Build a simulated, web-based Windows desktop environment"
+      # Prefill + copy actions are present
+      assert html =~ "Use this example"
+      assert html =~ "example-task-copy"
+      # Hidden RCDATA holder for the prefill JS is present
+      assert html =~ "example-task-objective"
+    end
   end
 
   describe "opening a project" do
@@ -204,6 +219,8 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "hero-rocket-launch"
       # Project settings should show config info
       assert html =~ "Foreign Repositories"
+      # Example-task help block hides once a project is open
+      refute html =~ "example-task-objective"
     end
 
     test "detects genesis_new mode for empty directory", %{conn: conn, tmp_dir: tmp_dir} do
