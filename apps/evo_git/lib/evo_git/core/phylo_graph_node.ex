@@ -66,7 +66,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
         {:ok, new_sha} = Git.rev_parse(node.repo)
         {:ok, %{node | current_commit: new_sha}}
 
-      {:conflict, _output} ->
+      {:error, {:conflict, _output}} ->
         {:ok, conflicts} = Git.conflict_files(node.repo)
         {:conflict, node, conflicts}
 
@@ -131,7 +131,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
         items = String.split(output, "\n", trim: true)
         {:ok, items}
 
-      {:error, _code, msg} ->
+      {:error, {_code, msg}} ->
         # If it fails because it's not a tree (e.g. it's a file), return empty list.
         if String.contains?(msg, "not a tree object") do
           {:ok, []}
