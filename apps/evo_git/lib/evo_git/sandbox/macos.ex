@@ -7,7 +7,8 @@ defmodule EvoGit.Sandbox.MacOS do
   config/data dirs, and build caches are readable; the home directory is
   readable EXCEPT for a deny-read list of sensitive dirs (`~/.ssh`,
   `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/sops`, `~/.git-credentials`,
-  `~/.netrc`, `~/.password-store`, `~/Library/Keychains`). The host
+  `~/.netrc`, `~/.password-store`, `~/Library/Keychains`, `~/.npmrc`,
+  `~/.pypirc`, `~/.docker`, `~/.gem` — credential stores). The host
   `$TMPDIR` is readable so temp files written before sandbox invocation
   (e.g. skill scripts) stay usable. Writes are restricted to the worktree,
   tmp paths, genesis dirs, and package-manager/toolchain cache dirs, with
@@ -15,10 +16,16 @@ defmodule EvoGit.Sandbox.MacOS do
 
   Also enforces a process-count limit (`(limit number N)`, see
   `@max_processes`) and keeps network default-allowed (agents run
-  `git fetch/push`, `mix deps.get`, `curl`, and web tools).
+  `git fetch/push`, `mix deps.get`, `curl`, and web tools). If the host's
+  `sandbox-exec` rejects the `(limit ...)` syntax (unverifiable without a
+  macOS host), `run/4`/`run_with_partial/6` transparently retry once with
+  the limit stripped and cache the decision — the sandbox keeps working
+  with all other hardening intact.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
+
+  require Logger
 
   alias EvoGit.{Nix, Platform, Sandbox.Helpers}
 
@@ -27,6 +34,13 @@ defmodule EvoGit.Sandbox.MacOS do
   # chosen to fit `mix test`-style parallel workloads (worker processes,
   # compiler ports) while still capping a runaway agent's fork bombs.
   @max_processes 200
+
+  # Cached decision that `sandbox-exec` on THIS macOS rejects the
+  # `(limit ...)` rule (see `strip_process_limit/1` and the retry logic in
+  # `run/4` / `run_with_partial/6`). Once set to `true`, every subsequent
+  # call uses the stripped profile directly, skipping the guaranteed-failing
+  # first attempt.
+  @process_limit_rejected_key {EvoGit.Sandbox.MacOS, :process_limit_rejected}
 
   @doc "Returns true when sandbox mode allows sandbox-exec on macOS."
   @spec enabled?() :: boolean()
@@ -50,6 +64,11 @@ defmodule EvoGit.Sandbox.MacOS do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
       profile = generate_profile(cwd, repo_root)
 
+      # Once this macOS has been observed rejecting the `(limit ...)` rule,
+      # use the stripped profile directly — no guaranteed-failing first
+      # attempt on every call.
+      profile = if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
+
       {exec, exec_args} =
         if Nix.active?() do
           Nix.wrap_command(executable, args)
@@ -72,10 +91,19 @@ defmodule EvoGit.Sandbox.MacOS do
       wrapped_cmd = inner_cmd <> " < /dev/null"
 
       # sandbox-exec -p <profile> -- bash -c <wrapped_cmd>
-      System.cmd("sandbox-exec", ["-p", profile, "--", "bash", "-c", wrapped_cmd],
-        cd: cwd,
-        stderr_to_stdout: true,
-        env: [{"TMPDIR", resolved_tmpdir} | git_env]
+      result = sandbox_exec(profile, "bash", ["-c", wrapped_cmd], cwd, resolved_tmpdir, git_env)
+
+      # Fail-safe: if sandbox-exec rejects the `(limit ...)` rule (syntax
+      # could not be validated without a macOS host), retry once with the
+      # limit stripped so one bad rule can't break EVERY sandboxed command.
+      maybe_retry_without_process_limit(
+        result,
+        profile,
+        "bash",
+        ["-c", wrapped_cmd],
+        cwd,
+        resolved_tmpdir,
+        git_env
       )
     else
       # Disabled path: wrap in bash with stdin redirect from /dev/null.
@@ -197,7 +225,13 @@ defmodule EvoGit.Sandbox.MacOS do
       ".git-credentials",
       ".netrc",
       ".password-store",
-      "Library/Keychains"
+      "Library/Keychains",
+      # Additional credential stores (parity with the Linux backend's
+      # InaccessiblePaths, which already includes .npmrc).
+      ".npmrc",
+      ".pypirc",
+      ".docker",
+      ".gem"
     ]
 
     sensitive_read_rules =
@@ -326,6 +360,76 @@ defmodule EvoGit.Sandbox.MacOS do
     |> String.trim()
   end
 
+  # Removes the `(limit ...)` line from a generated SBPL profile, preserving
+  # the rest verbatim. Used by the fail-safe retry: if `sandbox-exec` on
+  # some macOS rejects the `(limit number N)` syntax, the whole profile
+  # would fail to parse and EVERY sandboxed command would break — stripping
+  # just that line keeps all other hardening intact (the process-count limit
+  # is the only thing lost).
+  defp strip_process_limit(profile) do
+    profile
+    |> String.split("\n")
+    |> Enum.reject(&String.starts_with?(String.trim_leading(&1), "(limit "))
+    |> Enum.join("\n")
+  end
+
+  defp process_limit_rejected?,
+    do: :persistent_term.get(@process_limit_rejected_key, false)
+
+  # sandbox-exec -p <profile> -- <exec> <args> (shared by the run/4 and
+  # run_with_partial/6 enabled paths).
+  defp sandbox_exec(profile, exec, exec_args, cwd, tmpdir, git_env) do
+    System.cmd("sandbox-exec", ["-p", profile, "--", exec | exec_args],
+      cd: cwd,
+      stderr_to_stdout: true,
+      env: [{"TMPDIR", tmpdir} | git_env]
+    )
+  end
+
+  # Fail-safe process-limit retry. On macOS where `(limit ...)` IS valid,
+  # the first attempt succeeds and this helper is never reached — zero
+  # overhead on healthy systems. On macOS where it is rejected, the FIRST
+  # sandboxed command pays one extra spawn: the failed attempt is retried
+  # once with the process-count limit stripped; on retry success the
+  # decision is cached in `:persistent_term` (warned about once), so
+  # subsequent calls skip straight to the stripped profile. If the retry
+  # ALSO fails, the command genuinely failed — the retry result is the more
+  # accurate one.
+  defp maybe_retry_without_process_limit(
+         {_output, 0} = result,
+         _profile,
+         _exec,
+         _exec_args,
+         _cwd,
+         _tmpdir,
+         _git_env
+       ) do
+    result
+  end
+
+  defp maybe_retry_without_process_limit(result, profile, exec, exec_args, cwd, tmpdir, git_env) do
+    if process_limit_rejected?() do
+      # Another caller already discovered the rejection (and the profile we
+      # ran was already stripped) — return this attempt's result as-is.
+      result
+    else
+      case sandbox_exec(strip_process_limit(profile), exec, exec_args, cwd, tmpdir, git_env) do
+        {retry_output, 0} ->
+          :persistent_term.put(@process_limit_rejected_key, true)
+
+          Logger.warning(
+            "sandbox-exec rejected the (limit ...) rule on this macOS; " <>
+              "running with the process-count limit disabled"
+          )
+
+          {retry_output, 0}
+
+        retry_result ->
+          retry_result
+      end
+    end
+  end
+
   @doc """
   Runs a command with timeout, recovering partial output on timeout via temp-file redirection.
 
@@ -364,6 +468,12 @@ defmodule EvoGit.Sandbox.MacOS do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
       profile = generate_profile(cwd, repo_root)
 
+      # The cached decision (if any) is resolved BEFORE spawning the Task so
+      # a known-rejecting macOS skips the guaranteed-failing first attempt.
+      # The attempt-then-retry dance only happens when no decision is cached
+      # yet — and it runs inside the Task so it stays within the timeout.
+      profile = if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
+
       {exec, exec_args} =
         if Nix.active?() do
           Nix.wrap_command("bash", ["-c", wrapped_cmd])
@@ -375,10 +485,16 @@ defmodule EvoGit.Sandbox.MacOS do
 
       task =
         Task.async(fn ->
-          System.cmd("sandbox-exec", ["-p", profile, "--", exec | exec_args],
-            cd: cwd,
-            stderr_to_stdout: true,
-            env: [{"TMPDIR", resolved_tmpdir} | git_env]
+          result = sandbox_exec(profile, exec, exec_args, cwd, resolved_tmpdir, git_env)
+
+          maybe_retry_without_process_limit(
+            result,
+            profile,
+            exec,
+            exec_args,
+            cwd,
+            resolved_tmpdir,
+            git_env
           )
         end)
 
