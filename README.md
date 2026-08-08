@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="apps/evo_dash/priv/static/images/logo.svg" alt="" height="28" style="vertical-align: middle;"> Genesis
+  <img src="apps/evo_dash/priv/static/images/logo.svg" alt="" height="28" style="vertical-align: middle;"> EvoX Genesis
 </h1>
 
 <p align="center">
