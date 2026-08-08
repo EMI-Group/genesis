@@ -34,7 +34,9 @@ defmodule EvoDashWeb.ProjectComponentsTest do
 
     test "trigger keeps the enlarged typography classes" do
       html =
-        render_component(&ProjectComponents.project_omnibox/1, active_project: %{name: "p", path: nil})
+        render_component(&ProjectComponents.project_omnibox/1,
+          active_project: %{name: "p", path: nil}
+        )
 
       assert trigger_class(html) =~ "px-4"
       assert trigger_class(html) =~ "py-2"
@@ -127,6 +129,75 @@ defmodule EvoDashWeb.ProjectComponentsTest do
              ]
 
       assert attribute(html, "#foreign-repo-path-browse-button", "phx-click") == []
+    end
+  end
+
+  # Foreign-repo path input autocomplete wiring: the input carries the
+  # PathAutocomplete hook, the `foreign_repo_path_input` change event (debounced
+  # 150ms), and a datalist fed by `@foreign_repo_path_suggestions` (local-only
+  # suggestions resolved via `Project.path_suggestions/3` in the LiveView).
+  describe "foreign repo path input autocomplete" do
+    test "input carries hook/list/change/debounce attributes and a datalist" do
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          foreign_repo_path_suggestions: ["/tmp/alpha", "/tmp/beta"],
+          show_add_foreign_repo: true,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert attribute(html, "#foreign-repo-path-input", "phx-hook") == ["PathAutocomplete"]
+
+      assert attribute(html, "#foreign-repo-path-input", "list") == [
+               "foreign-repo-path-suggestions"
+             ]
+
+      assert attribute(html, "#foreign-repo-path-input", "phx-change") == [
+               "foreign_repo_path_input"
+             ]
+
+      assert attribute(html, "#foreign-repo-path-input", "phx-debounce") == ["150"]
+
+      # The datalist renders one <option> per suggestion
+      assert html =~ ~s(<datalist id="foreign-repo-path-suggestions">)
+      assert html =~ ~s(<option value="/tmp/alpha"></option>)
+      assert html =~ ~s(<option value="/tmp/beta"></option>)
+    end
+  end
+
+  # Remote-context palette actions: "Create New Project" is a local dashboard
+  # concern (it creates directories on the local filesystem), so it is hidden in
+  # remote contexts while "Open Project by Path" stays available.
+  describe "palette actions in remote contexts" do
+    test "remote palette hides Create New Project but keeps Open by Path" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :menu,
+          remote: true
+        )
+
+      assert html =~ "Open Project by Path"
+      refute html =~ "Create New Project"
+    end
+
+    test "local palette shows both actions" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :menu
+        )
+
+      assert html =~ "Open Project by Path"
+      assert html =~ "Create New Project"
     end
   end
 
