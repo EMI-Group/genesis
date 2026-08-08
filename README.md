@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/BillHuang2001/genesis/releases"><img src="https://img.shields.io/badge/version-0.9.1-8b5cf6" alt="Version"></a>
+  <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.9.1-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <a href="https://genesis-doc.evoxgroup.workers.dev/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
 </p>
@@ -28,7 +28,7 @@ It's evolutionary: every change lands on a branch of the Git history, and partia
 
 ## 📦 Install
 
-Genesis ships as a native desktop app. Grab the installer for your platform from the **[GitHub Releases](https://github.com/BillHuang2001/genesis/releases)** page:
+Genesis ships as a native desktop app. Grab the installer for your platform from the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** page:
 
 | Platform    | Download |
 |-------------|----------|
@@ -47,12 +47,12 @@ To fetch and install the latest release programmatically:
 
 ```bash
 # Download the installer for your platform (permanent links — always the latest release):
-#   macOS (Apple Silicon): https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg
-#   Linux x86_64:          https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_linux_x64.AppImage  (or .deb / .rpm / .tar.gz)
-#   Linux ARM64:           https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_linux_arm64.deb     (or .rpm)
-#   Windows x86_64:        https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_windows_x64.msi     (or .exe)
+#   macOS (Apple Silicon): https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg
+#   Linux x86_64:          https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_x64.AppImage  (or .deb / .rpm / .tar.gz)
+#   Linux ARM64:           https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_arm64.deb     (or .rpm)
+#   Windows x86_64:        https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_windows_x64.msi     (or .exe)
 
-curl -LO "https://github.com/BillHuang2001/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg"
+curl -LO "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg"
 
 # Install based on your platform:
 #   macOS:   open <file>.dmg
@@ -77,7 +77,7 @@ To clone and run Genesis from source:
 #       Arch:              sudo pacman -S elixir
 #       Fedora:            sudo dnf install elixir
 
-git clone https://github.com/BillHuang2001/genesis.git
+git clone https://github.com/EMI-Group/genesis.git
 cd genesis
 mix deps.get
 mix assets.setup
