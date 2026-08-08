@@ -5,7 +5,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   This module provides the "spatial" glue for SSH Remote Development (Phase 2):
   it reads the `?node=` query param, resolves it to a saved connection target,
   and exposes the current node context (`@current_node`, `@current_node_name`,
-  `@current_node_id`) to every LiveView and the shared layout.
+  `@current_node_id`, `@remote_status`) to every LiveView and the shared layout.
 
   The domain foundation lives in `EvoDash.NodeContext` — this module only calls
   it, never modifies it.
@@ -28,6 +28,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:current_node, fn -> node() end)
       |> assign_new(:current_node_name, fn -> "Local" end)
       |> assign_new(:current_node_id, fn -> nil end)
+      |> assign_new(:remote_status, fn -> nil end)
       |> assign_new(:remote_targets, fn -> EvoDash.NodeContext.list_targets() end)
       |> assign_new(:connection_statuses, fn -> EvoDash.NodeContext.connection_status() end)
       |> assign_new(:running_tasks, fn -> [] end)
@@ -70,32 +71,42 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   def load_running_and_pending_tasks(socket) do
     current_node = socket.assigns[:current_node] || node()
 
-    all_tasks =
-      if current_node == node() do
-        TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])
-      else
-        EvoDash.NodeContext.list_tasks_summary(current_node, [
-          :running,
-          :pending,
-          :finalizing,
-          :completed
-        ])
-      end
+    if socket.assigns[:current_node_id] != nil and current_node == node() do
+      # A remote context was requested (`?node=<id>`) but the connection hasn't
+      # completed yet (pending/connecting/error state) — `@current_node` still
+      # points at the local BEAM node. Local tasks must NEVER appear in the
+      # sidebar while the user is in a remote context, so both lists are empty.
+      socket
+      |> assign(:running_tasks, [])
+      |> assign(:pending_tasks, [])
+    else
+      all_tasks =
+        if current_node == node() do
+          TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])
+        else
+          EvoDash.NodeContext.list_tasks_summary(current_node, [
+            :running,
+            :pending,
+            :finalizing,
+            :completed
+          ])
+        end
 
-    running_tasks =
-      Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
+      running_tasks =
+        Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
 
-    pending_tasks =
-      all_tasks
-      |> Enum.filter(fn task ->
-        task.status == :completed and is_nil(task.review_status) and
-          show_review_button?(task)
-      end)
-      |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
+      pending_tasks =
+        all_tasks
+        |> Enum.filter(fn task ->
+          task.status == :completed and is_nil(task.review_status) and
+            show_review_button?(task)
+        end)
+        |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
 
-    socket
-    |> Phoenix.Component.assign(:running_tasks, running_tasks)
-    |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+      socket
+      |> Phoenix.Component.assign(:running_tasks, running_tasks)
+      |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+    end
   end
 
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
@@ -126,6 +137,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
           |> assign(:current_node, node())
           |> assign(:current_node_name, "Local")
           |> assign(:current_node_id, nil)
+          |> assign(:remote_status, nil)
 
         {:remote, target, remote_node} ->
           # The remote BEAM node name is resolved from the connection manager's
@@ -136,6 +148,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
           |> assign(:current_node, remote_node)
           |> assign(:current_node_name, target.name)
           |> assign(:current_node_id, node_param)
+          |> assign(:remote_status, remote_status(node_param))
 
         {:pending, target} ->
           # A known target that exists but isn't connected yet (e.g. a
@@ -147,6 +160,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
           |> assign(:current_node, node())
           |> assign(:current_node_name, target.name)
           |> assign(:current_node_id, node_param)
+          |> assign(:remote_status, remote_status(node_param))
       end
 
     # Reload sidebar tasks from the (possibly changed) node so the "Active
@@ -201,6 +215,19 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     end
   end
 
+  # Derives the `:remote_status` assign for a remote node param from the
+  # connection manager's current status. `EvoDash.NodeContext.connection_status/1`
+  # returns a `%{phase: ...}` map when the connection subsystem is available;
+  # any other result (the `:disconnected` atom when the subsystem is
+  # unavailable, or an empty `%{}` fallback) maps to a well-formed disconnected
+  # status map so callers always receive a map with a `:phase` key.
+  defp remote_status(node_param) do
+    case EvoDash.NodeContext.connection_status(node_param) do
+      %{phase: _} = status -> status
+      _ -> %{phase: :disconnected, last_error: nil}
+    end
+  end
+
   @doc """
   Returns the display name for the current node from a map of assigns.
 
@@ -250,6 +277,17 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     socket = assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())
 
     current_node_id = socket.assigns[:current_node_id]
+
+    # Recompute `:remote_status` from the live connection manager so a
+    # connecting→error (or any other phase) change updates the gate immediately,
+    # without waiting for a push_patch-triggered `handle_params` re-run.
+    socket =
+      if current_node_id != nil do
+        assign(socket, :remote_status, remote_status(current_node_id))
+      else
+        socket
+      end
+
     current_node = socket.assigns[:current_node]
 
     transition? =
@@ -286,9 +324,19 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     end
   end
 
-  # Fallback for unexpected message shapes — just refresh statuses.
+  # Fallback for unexpected message shapes — just refresh statuses (and the
+  # `:remote_status` gate when a remote context is selected).
   def handle_connection_status(socket, _message) do
-    {:noreply, assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())}
+    socket = assign(socket, :connection_statuses, EvoDash.NodeContext.connection_status())
+
+    socket =
+      if socket.assigns[:current_node_id] != nil do
+        assign(socket, :remote_status, remote_status(socket.assigns[:current_node_id]))
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   @doc """

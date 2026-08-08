@@ -587,8 +587,8 @@ defmodule EvoDashWeb.Helpers do
   Returns a short human-readable description of the given task mode.
   """
   def mode_description("genesis_new"),
+    # zh_CN: Prompt → "提示词"
     do:
-      # zh_CN: Prompt → "提示词"
       gettext(
         "Creates a brand new codebase from scratch in an empty directory using your prompt."
       )
@@ -703,4 +703,16 @@ defmodule EvoDashWeb.Helpers do
   def truncate_string(nil, _len), do: ""
   def truncate_string(str, len) when byte_size(str) > len, do: String.slice(str, 0, len) <> "..."
   def truncate_string(str, _len), do: str
+
+  # ---------------------------------------------------------------------------
+  # URL / Query Param Helpers
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Appends the `?node=<id>` query param to a path when a remote node is
+  selected, so navigation links preserve the node context across pages. No-op
+  (returns the path unchanged) for the local node (`nil` node_id).
+  """
+  def with_node_param(path, nil), do: path
+  def with_node_param(path, node_id), do: path <> "?node=" <> node_id
 end

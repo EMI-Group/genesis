@@ -462,6 +462,29 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.add_recent_project(node, path, name)
   end
 
+  @doc """
+  Returns filesystem path suggestions for the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_path_suggestions/2` — the remote daemon
+  resolves paths against its own filesystem. Returns `[]` if the remote call
+  fails.
+  """
+  @spec list_path_suggestions(node(), String.t() | nil) :: [String.t()]
+  def list_path_suggestions(node, value) do
+    EvoGit.RemoteNode.list_path_suggestions(node, value)
+  end
+
+  @doc """
+  Returns whether `path` is a directory on the given node.
+
+  Delegates to `EvoGit.RemoteNode.dir?/2` — the check runs on the remote
+  daemon's filesystem. Returns `false` if the remote call fails.
+  """
+  @spec dir?(node(), String.t()) :: boolean()
+  def dir?(node, path) do
+    EvoGit.RemoteNode.dir?(node, path)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning

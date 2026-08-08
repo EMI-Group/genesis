@@ -253,11 +253,6 @@ defmodule EvoDashWeb.Layouts do
     """
   end
 
-  # Appends the ?node= query param to a path when a remote node is selected,
-  # so nav links preserve the node context across pages. No-op for local node.
-  defp with_node_param(path, nil), do: path
-  defp with_node_param(path, node_id), do: path <> "?node=" <> node_id
-
   # Extract a display label for a task: objective > prompt > truncated task ID
   defp task_label(task) do
     opts = Map.get(task, :opts, []) || []
