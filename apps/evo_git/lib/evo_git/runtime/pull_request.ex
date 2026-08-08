@@ -37,12 +37,12 @@ defmodule EvoGit.Runtime.PullRequest do
           {:ok, _} ->
             Logger.info("Pushed base branch '#{base_branch}' to remote")
 
-          {:error, _code, output} ->
+          {:error, {:conflict, output}} ->
+            Logger.debug("Conflict pushing base branch '#{base_branch}': #{output}")
+
+          {:error, {_code, output}} ->
             # Base branch may already exist on remote — log but don't abort
             Logger.debug("Could not push base branch '#{base_branch}': #{output}")
-
-          {:conflict, output} ->
-            Logger.debug("Conflict pushing base branch '#{base_branch}': #{output}")
         end
 
         case Git.push_branch(repo_path, head_branch) do
@@ -54,21 +54,21 @@ defmodule EvoGit.Runtime.PullRequest do
                 Logger.info("Created pull request: #{pr_url}")
                 {pr_url, pr_title}
 
-              {:error, _code, output} ->
+              {:error, {_code, output}} ->
                 Logger.warning("Failed to create pull request: #{output}")
                 {nil, nil}
             end
 
-          {:error, _code, output} ->
-            Logger.warning("Failed to push branch '#{head_branch}': #{output}")
+          {:error, {:conflict, output}} ->
+            Logger.warning("Conflict pushing branch '#{head_branch}': #{output}")
             {nil, nil}
 
-          {:conflict, output} ->
-            Logger.warning("Conflict pushing branch '#{head_branch}': #{output}")
+          {:error, {_code, output}} ->
+            Logger.warning("Failed to push branch '#{head_branch}': #{output}")
             {nil, nil}
         end
       else
-        {:error, _code, output} ->
+        {:error, {_code, output}} ->
           Logger.warning("Failed to create remote repository: #{output}")
           {nil, nil}
 
@@ -186,7 +186,7 @@ defmodule EvoGit.Runtime.PullRequest do
         Logger.info("Created remote repository: #{repo_url}")
         true
 
-      {:error, _code, output} ->
+      {:error, {_code, output}} ->
         Logger.warning("Failed to create remote repository: #{output}")
         false
     end
