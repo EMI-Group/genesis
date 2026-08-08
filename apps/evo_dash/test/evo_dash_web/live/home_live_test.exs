@@ -487,22 +487,24 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/")
 
-      # Running: ASCII abbr (first two letters), run variant, links to /agents
+      # Running: folder name + prompt preview, run variant, links to /agents
       assert has_element?(view, "a#pad-sq-#{running.id}.pad-sq-run[href='/agents']")
-      assert has_element?(view, "#pad-sq-#{running.id} .pad-sq-abbr", "mo")
+      assert has_element?(view, "#pad-sq-#{running.id} .pad-sq-name", "moon-cli")
+      assert has_element?(view, "#pad-sq-#{running.id} .pad-sq-preview", "running task")
 
-      # Awaiting review: CJK abbr (first grapheme), review variant, links to /review/:id
+      # Awaiting review: CJK folder name, review variant, links to /review/:id
       assert has_element?(
                view,
                "a#pad-sq-#{awaiting.id}.pad-sq-review[href='/review/#{awaiting.id}']"
              )
 
-      assert has_element?(view, "#pad-sq-#{awaiting.id} .pad-sq-abbr", "测")
+      assert has_element?(view, "#pad-sq-#{awaiting.id} .pad-sq-name", "测试")
 
-      # Decided: plain variant (gray dot), NOT clickable
-      assert has_element?(view, "div#pad-sq-#{decided.id}.pad-sq")
-      refute has_element?(view, "#pad-sq-#{decided.id}.pad-sq-review")
-      refute has_element?(view, "a#pad-sq-#{decided.id}")
+      # Decided: completed, so also the review variant, clickable to /review/:id
+      assert has_element?(
+               view,
+               "a#pad-sq-#{decided.id}.pad-sq-review[href='/review/#{decided.id}']"
+             )
 
       # Failed: failed variant (the dot becomes a small square)
       assert has_element?(view, "div#pad-sq-#{failed.id}.pad-sq-failed")

@@ -18,15 +18,15 @@ defmodule EvoDashWeb.PadComponents do
       page's link is L1, all other links L3. `current` is one of `:home`,
       `:tree`, `:reviews`, `:settings`, `:system`, `:tasks`, `:review`,
       `:none`.
-    * `rail_square/1` — one 44px task square in the home rail: a project
-      abbreviation + a status dot, nothing more. Tooltip content travels in
+    * `rail_square/1` — one task card in the home rail: the project folder
+      name + a prompt preview + a status dot. Tooltip content travels in
       `data-tip-*` attributes (the PadFly hook renders it fixed-position —
       the rail is a scroll container and would clip an in-rail tooltip).
 
   Pure helpers (shared by both LiveViews; summary-map safe — `Map.get` only,
   no dot access beyond contract keys): `task_prompt/1`, `task_branch/1`,
   `awaiting_review?/1`, `decided_review?/1`, `rail_status/1`, `square_link/1`,
-  `project_abbr/1`.
+  `project_name/1`, `prompt_preview/1`.
   """
 
   use EvoDashWeb, :html
@@ -57,11 +57,11 @@ defmodule EvoDashWeb.PadComponents do
       <div class="flex-1"></div>
       <nav class="flex items-center gap-5" aria-label={gettext("Pad navigation")}>
         <.link
-          navigate={~p"/tasks"}
-          class={pad_nav_classes(@current == :tasks)}
-          aria-current={if @current == :tasks, do: "page", else: false}
+          navigate={~p"/"}
+          class={pad_nav_classes(@current == :home)}
+          aria-current={if @current == :home, do: "page", else: false}
         >
-          {gettext("Projects")}
+          {gettext("Start")}
         </.link>
         <.link
           navigate={~p"/agents"}
@@ -79,6 +79,13 @@ defmodule EvoDashWeb.PadComponents do
           <b :if={@review_count > 0} class="font-semibold text-base-content not-italic">
             {@review_count}
           </b>
+        </.link>
+        <.link
+          navigate={~p"/tasks"}
+          class={pad_nav_classes(@current == :tasks)}
+          aria-current={if @current == :tasks, do: "page", else: false}
+        >
+          {gettext("Projects")}
         </.link>
         <.link
           navigate={~p"/settings"}
@@ -129,8 +136,13 @@ defmodule EvoDashWeb.PadComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # rail_square/1 — one task square in the home rail. Clickable only when the
-  # task leads somewhere: awaiting review → /review/:id, running → /agents.
+  # rail_square/1 — one task card in the home rail: project folder name +
+  # prompt preview + a status dot. Clickable when the task leads somewhere:
+  # unfinished (running/pending/finalizing) → /agents (tree); completed →
+  # /review/:id (review, with the review color as the cue). Tooltip content
+  # travels in `data-tip-*` attributes (the PadFly hook renders it
+  # fixed-position — the rail is a scroll container and would clip an
+  # in-rail tooltip).
   # ---------------------------------------------------------------------------
 
   attr(:task, :map, required: true)
@@ -142,7 +154,8 @@ defmodule EvoDashWeb.PadComponents do
     assigns =
       assigns
       |> assign(:status, status)
-      |> assign(:abbr, project_abbr(Map.get(assigns.task, :project_path)))
+      |> assign(:name, project_name(Map.get(assigns.task, :project_path)))
+      |> assign(:preview, prompt_preview(assigns.task))
       |> assign(:link, square_link(assigns.task))
       |> assign(:prompt, task_prompt(assigns.task))
       |> assign(:tip_time, tip_time(assigns.task))
@@ -157,7 +170,8 @@ defmodule EvoDashWeb.PadComponents do
         data-tip-path={Map.get(@task, :project_path)}
         data-tip-time={@tip_time}
       >
-        <span class="pad-sq-abbr">{@abbr}</span>
+        <span class="pad-sq-name">{@name}</span>
+        <span class="pad-sq-preview">{@preview}</span>
         <span class="pad-st"></span>
       </.link>
     <% else %>
@@ -168,7 +182,8 @@ defmodule EvoDashWeb.PadComponents do
         data-tip-path={Map.get(@task, :project_path)}
         data-tip-time={@tip_time}
       >
-        <span class="pad-sq-abbr">{@abbr}</span>
+        <span class="pad-sq-name">{@name}</span>
+        <span class="pad-sq-preview">{@preview}</span>
         <span class="pad-st"></span>
       </div>
     <% end %>
@@ -227,10 +242,12 @@ defmodule EvoDashWeb.PadComponents do
   @doc """
   Rail status classification → square CSS variant:
 
-    * `:run` — running/pending/finalizing: L1 border + pulsing black dot
-    * `:review` — completed awaiting review: solid black dot
+    * `:run` — running/pending/finalizing (unfinished): L1 border + pulsing
+      black dot, links to the tree (`/agents`)
+    * `:review` — completed: solid black dot, links to the review
+      (`/review/:id`)
     * `:failed` — failed: the dot becomes a small black square
-    * `:plain` — everything else (completed & decided, cancelled): gray dot
+    * `:plain` — everything else (cancelled): gray dot
   """
   def rail_status(task) do
     status = Map.get(task, :status)
@@ -238,14 +255,14 @@ defmodule EvoDashWeb.PadComponents do
     cond do
       status in [:running, :pending, :finalizing] -> :run
       status == :failed -> :failed
-      status == :completed and awaiting_review?(task) -> :review
+      status == :completed -> :review
       true -> :plain
     end
   end
 
   @doc """
-  Where a rail square links to: awaiting review → `/review/:id`, active →
-  `/agents`, everything else is not clickable (`nil`).
+  Where a rail square links to: completed → `/review/:id`, unfinished →
+  `/agents` (tree), everything else is not clickable (`nil`).
   """
   def square_link(task) do
     case rail_status(task) do
@@ -256,37 +273,31 @@ defmodule EvoDashWeb.PadComponents do
   end
 
   @doc """
-  Project abbreviation for a square: ASCII names take the first two LETTERS
-  lowercased (non-letters stripped; if none remain, the first two graphemes);
-  non-ASCII (e.g. CJK) names take the first grapheme.
+  Project folder name for a square: the basename of the project path
+  (the last folder), `"?"` when there is none.
   """
-  def project_abbr(path) when is_binary(path) do
-    name =
-      path
-      |> String.replace("\\", "/")
-      |> String.trim_trailing("/")
-      |> Path.basename()
-
-    case String.graphemes(name) do
-      [] ->
-        "?"
-
-      [first | _] ->
-        if ascii_printable?(first) do
-          letters =
-            name |> String.replace(~r/[^A-Za-z]/, "") |> String.slice(0, 2) |> String.downcase()
-
-          if letters == "", do: String.slice(name, 0, 2), else: letters
-        else
-          first
-        end
+  def project_name(path) when is_binary(path) do
+    case path |> String.replace("\\", "/") |> String.trim_trailing("/") |> Path.basename() do
+      "" -> "?"
+      name -> name
     end
   end
 
-  def project_abbr(_), do: "?"
+  def project_name(_), do: "?"
 
-  defp ascii_printable?(<<c::utf8>>), do: c >= 0x20 and c <= 0x7E
-  defp ascii_printable?(_), do: false
+  @doc """
+  The first few graphemes of the task's prompt (project description) for a
+  square, with an ellipsis when truncated.
+  """
+  def prompt_preview(task, limit \\ 12) do
+    prompt = task_prompt(task)
+
+    if String.length(prompt) > limit do
+      String.slice(prompt, 0, limit) <> "…"
+    else
+      prompt
+    end
+  end
 
   defp status_class(:run), do: "pad-sq-run"
   defp status_class(:review), do: "pad-sq-review"

@@ -19,7 +19,7 @@
 /* --- Stage: vertically centered composer, clear of topbar + rail --- */
 .pad-stage {
   position: fixed;
-  inset: 50px 76px 0 0;
+  inset: 50px 148px 0 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -163,13 +163,13 @@
   opacity: 0.88;
 }
 
-/* --- Rail: fixed right strip of task squares --- */
+/* --- Rail: fixed right strip of task cards --- */
 .pad-rail {
   position: fixed;
   top: 50px;
   right: 0;
   bottom: 0;
-  width: 76px;
+  width: 148px;
   border-left: 1px solid var(--color-base-300);
   display: flex;
   flex-direction: column;
@@ -181,17 +181,18 @@
   z-index: 10;
 }
 
-/* --- One task square: abbreviation + status dot (very little information) --- */
+/* --- One task card: folder name + prompt preview + status dot --- */
 .pad-sq {
-  width: 44px;
-  height: 44px;
+  width: 128px;
+  min-height: 44px;
   border: 1px solid var(--color-base-300);
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   gap: 3px;
+  padding: 7px 9px;
   background: var(--color-base-100);
   position: relative;
   flex: none;
@@ -204,10 +205,25 @@ a.pad-sq:hover {
   color: color-mix(in oklab, var(--color-base-content) 55%, transparent);
 }
 
-.pad-sq-abbr {
+.pad-sq-name {
   font-size: 11px;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  line-height: 1;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pad-sq-preview {
+  font-size: 10px;
+  line-height: 1.25;
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  color: color-mix(in oklab, var(--color-base-content) 30%, transparent);
 }
 
 /* Status dot — L3 gray by default (completed & reviewed / cancelled). */

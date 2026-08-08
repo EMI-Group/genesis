@@ -3484,3 +3484,8 @@ msgstr "选择"
 #, elixir-autogen, elixir-format
 msgid "Task Options"
 msgstr "任务选项"
+
+#: lib/evo_dash_web/components/pad_components.ex:64
+#, elixir-autogen, elixir-format
+msgid "Start"
+msgstr "开始"
