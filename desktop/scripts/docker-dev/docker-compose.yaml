@@ -1,19 +1,23 @@
-# Runtime Compose example (dev/test only) — copy to any folder and run an
-# already-built image. PHX_HOST, PHX_SERVER, and the dev-only SECRET_KEY_BASE
-# default in the image.
+# Genesis Docker (dev/test only). Keep this file next to the Dockerfile.
+# PHX_HOST, PHX_SERVER, and the dev-only SECRET_KEY_BASE default in the image.
 #
-#   # build once from the repository root (not from this runtime file):
-#   docker build -f desktop/scripts/docker-dev/Dockerfile -t genesis:local .
-#
-#   # run from anywhere (this file's directory):
-#   mkdir -p config data workspace
-#   docker compose up
+#   mkdir -p {config,data,workspace}
+#   GIT_AUTH_TOKEN="$(gh auth token)" docker compose up --build
 #   open http://localhost:9999
 
 services:
   genesis:
-    # Change to your registry/tag after build or pull
     image: genesis:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GENESIS_VERSION: "${GENESIS_VERSION:-v0.9.2}"
+        NODE_VERSION: "${NODE_VERSION:-lts-latest}"
+        PYTHON_VERSION: "${PYTHON_VERSION:-3.12}"
+        RUST_TOOLCHAIN: "${RUST_TOOLCHAIN:-stable}"
+      secrets:
+        - GIT_AUTH_TOKEN
     # Use the init process supplied by the container runtime.
     init: true
     ports:
@@ -39,3 +43,7 @@ services:
       # Host project(s) for agents (relative to this Compose file).
       - ./workspace:/app/workspace
     restart: unless-stopped
+
+secrets:
+  GIT_AUTH_TOKEN:
+    environment: GIT_AUTH_TOKEN

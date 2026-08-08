@@ -2,10 +2,8 @@
 
 # Genesis Docker (dev/test only) — mix release, foreground logs on stdout.
 #
-# Build from this directory:
-#   GIT_AUTH_TOKEN="$(gh auth token)" docker build \
-#     --secret id=GIT_AUTH_TOKEN --build-arg GENESIS_VERSION=v0.9.2 \
-#     -t genesis:local .
+# Build with the adjacent Compose file:
+#   GIT_AUTH_TOKEN="$(gh auth token)" docker compose build
 #
 # The image runs as the non-root genesis account by default.
 
