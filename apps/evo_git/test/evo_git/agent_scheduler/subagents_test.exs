@@ -2,6 +2,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.AgentScheduler.SchedMeta
+  alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.Agent.Result
   alias EvoGit.AgentSpec
@@ -286,6 +287,136 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       # Second result overwrites first for same repo
       assert updated.foreign_repo_commits == %{"original" => "sha_v2"}
+    end
+  end
+
+  # --- Error paths: recycled parent entries ---
+  #
+  # These fire when ETS entries are missing — e.g. the parent was recycled by
+  # `cancel_agent` while a subagent completes in flight. Uses distinctive
+  # ids (9000+) so they never collide with the entries of sibling describes.
+
+  describe "error paths — recycled parent entries" do
+    setup do
+      ensure_ets_table(:evogit_sched_meta)
+      ensure_ets_table(:evogit_agent_state)
+
+      on_exit(fn ->
+        :ets.delete(:evogit_sched_meta, 9000)
+        :ets.delete(:evogit_sched_meta, 9001)
+        :ets.delete(:evogit_sched_meta, 9002)
+        :ets.delete(:evogit_agent_state, 9000)
+      end)
+
+      :ok
+    end
+
+    test "store_sub_result/3 drops the result when the parent entry is missing" do
+      parent_id = 9000
+      sub_id = 9001
+
+      # A pre-existing unrelated entry must survive untouched
+      existing = base_sched_meta(9002, %{})
+      :ets.insert(:evogit_sched_meta, {9002, existing})
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert :ok =
+                   Subagents.store_sub_result(
+                     parent_id,
+                     sub_id,
+                     {:ok, %Result{result: "done", commit_sha: "abc"}}
+                   )
+        end)
+
+      assert log =~ "recycled"
+      # No entry was created for the recycled parent — the result was dropped
+      assert :ets.lookup(:evogit_sched_meta, parent_id) == []
+      # Pre-existing entries are untouched
+      assert :ets.lookup_element(:evogit_sched_meta, 9002, 2) == existing
+    end
+
+    test "maybe_resume_parent/2 leaves the state unchanged when the parent entry is missing" do
+      state = %State{}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert ^state = Subagents.maybe_resume_parent(state, 9000)
+        end)
+
+      assert log =~ "recycled"
+    end
+
+    test "spawn_validated_subagents/5 replies with errors when the parent agent_state is missing" do
+      parent_id = 9000
+      sub_id = 9001
+
+      parent = base_sched_meta(parent_id, %{})
+      :ets.insert(:evogit_sched_meta, {parent_id, parent})
+
+      specs = [
+        %AgentSpec{
+          context_node: %ContextNode{path: "./", repo: "/test"},
+          phylo_node: %PhyloGraphNode{repo: "/test", base_commit: "abc", current_commit: "abc"},
+          agent_module: DummyReadOnlyAgent,
+          objective: "test"
+        }
+      ]
+
+      state = %State{}
+      ref = make_ref()
+      from = {self(), ref}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, ^state} =
+                   Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)
+        end)
+
+      assert log =~ "recycled"
+      # The blocked caller gets an error reply for every spec
+      assert_receive {^ref, [{:error, :parent_recycled}]}
+      # Nothing was spawned or registered for any subagent id
+      assert :ets.lookup(:evogit_sched_meta, sub_id) == []
+      # The parent entry itself is untouched
+      assert :ets.lookup_element(:evogit_sched_meta, parent_id, 2) == parent
+    end
+
+    test "dispatch_ready_parent/3 resumes with ordered results when the agent_state is missing" do
+      parent_id = 9000
+      ref = make_ref()
+
+      meta = %{
+        base_sched_meta(parent_id, %{})
+        | worktree: "/tmp/wt",
+          sub_agent_from: {self(), ref},
+          total_sub_specs: 1,
+          sub_agent_results: %{0 => {:ok, %Result{result: "done", commit_sha: "abc"}}}
+      }
+
+      :ets.insert(:evogit_sched_meta, {parent_id, meta})
+      state = %State{}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert ^state = Subagents.dispatch_ready_parent(state, parent_id, meta)
+        end)
+
+      # Agent state missing → commit_sha falls back to "unknown"
+      assert log =~ "state missing on resume"
+      assert log =~ "commit unknown"
+
+      # The blocked caller still receives the ordered results
+      assert_receive {^ref, [{:ok, %Result{result: "done"}}]}
+
+      # The sched_meta entry is reset for the resumed run
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      assert updated.status == :running
+      assert updated.sub_agent_from == nil
+      assert updated.sub_agent_results == %{}
+      assert updated.pending_sub_agents == MapSet.new()
+      assert updated.sub_agent_indices == %{}
+      assert updated.total_sub_specs == 0
     end
   end
 end
