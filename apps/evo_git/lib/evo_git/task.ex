@@ -142,7 +142,7 @@ defmodule EvoGit.Task do
 
         {:ok, %{state | phylo_node: updated_phylo_node}}
 
-      {:conflict, _} ->
+      {:error, {:conflict, _}} ->
         {:ok, conflicts} = Git.conflict_files(worktree_path)
 
         Enum.each(conflicts, fn file ->

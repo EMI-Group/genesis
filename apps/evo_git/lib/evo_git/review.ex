@@ -34,7 +34,7 @@ defmodule EvoGit.Review do
   Fetches the full content of a file at a specific commit.
 
   Returns `{:ok, content}` if the file exists at that commit, or
-  `{:error, code, output}` if not.
+  `{:error, {tag, output}}` if not.
 
   This uses the standard git `"commit_sha:file_path"` revision syntax to
   address a file at a specific revision, enabling the caller to highlight
@@ -65,7 +65,7 @@ defmodule EvoGit.Review do
 
           {:ok, commits}
 
-        {:error, _, _} ->
+        {:error, {_, _}} ->
           {:ok, []}
       end
     else
@@ -162,7 +162,7 @@ defmodule EvoGit.Review do
   Loads the diff for a single file between two commits.
   Delegates to `Git.file_diff/5` with the given base and commit SHAs.
 
-  Returns `{:ok, diff_string}` or `{:error, code, output}`.
+  Returns `{:ok, diff_string}` or `{:error, {tag, output}}`.
   """
   def load_file_diff(repo_path, base_sha, commit_sha, file_path) do
     Git.file_diff(repo_path, file_path, base_sha, commit_sha, [])
@@ -177,7 +177,7 @@ defmodule EvoGit.Review do
       for a specific number of lines, `:all` for the full file, or `nil` (default)
       for git's default of 3 context lines.
 
-  Returns `{:ok, diff_string}` or `{:error, code, output}`.
+  Returns `{:ok, diff_string}` or `{:error, {tag, output}}`.
   """
   def load_file_diff(repo_path, base_sha, commit_sha, file_path, opts) when is_list(opts) do
     args =
@@ -245,7 +245,7 @@ defmodule EvoGit.Review do
 
         {:ok, commits}
 
-      {:error, _, _} ->
+      {:error, {_, _}} ->
         {:ok, []}
     end
   end
@@ -288,7 +288,7 @@ defmodule EvoGit.Review do
   @doc """
   Loads the diff for a single file in a single commit (against its parent).
 
-  Returns `{:ok, diff_string}` or `{:error, code, output}`.
+  Returns `{:ok, diff_string}` or `{:error, {tag, output}}`.
   """
   def load_commit_file_diff(repo_path, commit_sha, file_path) do
     Git.file_diff(repo_path, file_path, "#{commit_sha}~1", commit_sha)
@@ -360,7 +360,7 @@ defmodule EvoGit.Review do
   Returns all local branch names.
 
   Delegates to `EvoGit.Adapters.Git.list_branches/1`; returns
-  `{:ok, names}` or `{:error, code, output}`.
+  `{:ok, names}` or `{:error, {tag, output}}`.
   """
   def list_branches(repo_path) do
     Git.list_branches(repo_path)
@@ -374,10 +374,10 @@ defmodule EvoGit.Review do
         Git.delete_branch(repo_path, branch_name)
         {:ok, commit_sha}
 
-      {:conflict, details} ->
+      {:error, {:conflict, details}} ->
         {:conflict, details}
 
-      {:error, code, output} ->
+      {:error, {code, output}} ->
         {:error, {code, output}}
     end
   end
@@ -397,7 +397,7 @@ defmodule EvoGit.Review do
               {:error, reason} -> {:error, {:switch_back_failed, reason}}
             end
 
-          {:conflict, details} ->
+          {:error, {:conflict, details}} ->
             # A conflicted index blocks a plain `git checkout`; force the restore.
             case force_restore_branch(repo_path, current) do
               :ok ->
@@ -409,7 +409,7 @@ defmodule EvoGit.Review do
 
             {:conflict, details}
 
-          {:error, code, output} ->
+          {:error, {code, output}} ->
             case restore_branch(repo_path, current) do
               :ok ->
                 :ok
@@ -457,8 +457,7 @@ defmodule EvoGit.Review do
     end
   end
 
-  defp normalize_git_error({:error, code, output}), do: {:error, {code, output}}
-  defp normalize_git_error({:conflict, output}), do: {:error, {1, output}}
+  defp normalize_git_error({:error, {code, output}}), do: {:error, {code, output}}
 
   @doc """
   Rejects the changes by deleting the branch.
@@ -467,7 +466,7 @@ defmodule EvoGit.Review do
   def reject_branch(repo_path, branch_name) do
     case Git.delete_branch(repo_path, branch_name) do
       {:ok, _} -> :ok
-      {:error, code, output} -> {:error, {code, output}}
+      {:error, {code, output}} -> {:error, {code, output}}
     end
   end
 
