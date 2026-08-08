@@ -29,7 +29,9 @@ defmodule EvoDashWeb.SettingsComponents do
   #    model_profiles_editor, flat_llm_schemas) are already callable
   #    as EvoDashWeb.SettingsComponents.func/arity via import. ──
 
-  defdelegate schema_matches?(schema, search_text), to: EvoDashWeb.SettingsComponents.CategoryMetadata
+  defdelegate schema_matches?(schema, search_text),
+    to: EvoDashWeb.SettingsComponents.CategoryMetadata
+
   defdelegate model_display(value), to: EvoDashWeb.SettingsComponents.SettingCard
   defdelegate search_results(assigns), to: EvoDashWeb.SettingsComponents.SearchResults
   defdelegate settings_sidebar(assigns), to: EvoDashWeb.SettingsComponents.Sidebar
@@ -612,14 +614,17 @@ defmodule EvoDashWeb.SettingsComponents do
                   <% end %>
                 </div>
 
-                <%!-- Sandbox mode (sub_category: nil) at top --%>
-                <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil and &1.key_path == [:sandbox, :mode])) do %>
+                <%!-- Sandbox mode + writable paths (sub_category: nil) at top.
+                     write_paths is disabled when sandboxing is off, like the
+                     resources/process/linux cards — the mode card stays
+                     enabled so the user can re-enable sandboxing. --%>
+                <%= for schema <- Enum.filter(@schemas, &(&1.sub_category == nil)) do %>
                   <div class="mb-10">
                     <.setting_card
                       schema={schema}
                       value={get_in(@file_config, schema.key_path)}
                       error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                      disabled={@disabled}
+                      disabled={@disabled or (@sandbox_mode == :disabled and schema.key_path != [:sandbox, :mode])}
                     />
                   </div>
                 <% end %>
@@ -747,8 +752,6 @@ defmodule EvoDashWeb.SettingsComponents do
     </div>
     """
   end
-
-
 
   # ── Connection test profile selector helpers ──
 

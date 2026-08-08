@@ -32,16 +32,28 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   def update_runtime_from_file_config(file_config, socket) do
     updates =
       []
-      |> SettingsUtils.maybe_add_kw(:max_concurrency, get_in(file_config, [:scheduler, :max_concurrency]))
+      |> SettingsUtils.maybe_add_kw(
+        :max_concurrency,
+        get_in(file_config, [:scheduler, :max_concurrency])
+      )
       |> SettingsUtils.maybe_add_kw(
         :max_tool_concurrency,
         get_in(file_config, [:scheduler, :max_tool_concurrency])
       )
-      |> SettingsUtils.maybe_add_kw(:agent_max_retries, get_in(file_config, [:scheduler, :agent_max_retries]))
-      |> SettingsUtils.maybe_add_kw(:max_agent_depth, get_in(file_config, [:scheduler, :max_agent_depth]))
+      |> SettingsUtils.maybe_add_kw(
+        :agent_max_retries,
+        get_in(file_config, [:scheduler, :agent_max_retries])
+      )
+      |> SettingsUtils.maybe_add_kw(
+        :max_agent_depth,
+        get_in(file_config, [:scheduler, :max_agent_depth])
+      )
       |> SettingsUtils.maybe_add_kw(:max_retries, get_in(file_config, [:scheduler, :max_retries]))
       |> SettingsUtils.maybe_add_kw(:max_turns, get_in(file_config, [:scheduler, :max_turns]))
-      |> SettingsUtils.maybe_add_kw(:max_turns_root, get_in(file_config, [:scheduler, :max_turns_root]))
+      |> SettingsUtils.maybe_add_kw(
+        :max_turns_root,
+        get_in(file_config, [:scheduler, :max_turns_root])
+      )
 
     # Note: :tools config (e.g., web_search) is read from EvoGit.Config.resolve()
     # at execution time — no runtime push needed here.
@@ -117,6 +129,9 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
 
           schema.type == :atom ->
             SettingsUtils.parse_atom(value, schema)
+
+          schema.type == :list_of_strings ->
+            list_of_strings_value(value)
         end
 
       cond do
@@ -135,6 +150,26 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: parsing
   # ───────────────────────────────────────────────────────────────────────────
+
+  @doc """
+  Parses a submitted `:list_of_strings` form value.
+
+  Repeated form inputs with the same name arrive as a list (the list editor's
+  trailing blank "add" row produces `""` entries, which are filtered out). An
+  absent param (nil) means the key is unset — the only "delete" signal. A
+  set-but-empty list (`[]`, or blank-only entries) is a legitimate value and
+  MUST round-trip as `[]` (e.g. `[sandbox] write_paths = []` replaces the
+  built-in writable paths with nothing).
+  """
+  def list_of_strings_value(value) do
+    if is_list(value) do
+      value
+      |> Enum.filter(&is_binary/1)
+      |> Enum.reject(&(String.trim(&1) == ""))
+    else
+      :explicitly_empty
+    end
+  end
 
   @doc """
   Parses a dot-separated path string into a list of atoms, validated against

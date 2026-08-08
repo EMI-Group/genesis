@@ -169,6 +169,56 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                     {gettext("Configure via the editor below")}
                   </p>
                 </div>
+              <% :list_of_strings -> %>
+                <% key = Enum.join(@schema.key_path, ".") %>
+                <% entries = list_entries(@value) %>
+                <div class="w-full sm:w-96">
+                  <%= if entries == nil do %>
+                    <p class="text-[11px] text-base-content/70 flex items-start gap-1.5">
+                      <.icon name="hero-information-circle" class="size-3.5 shrink-0 mt-0.5" />
+                      {gettext("Not set — platform default writable paths are used.")}
+                    </p>
+                  <% else %>
+                    <%!-- Hidden sentinel keeps a SET list (even an empty one)
+                         distinct from an UNSET (nil) list on submit: a set list
+                         always submits at least [""], which parses to [] and is
+                         stored as [] (meaningful: replaces the defaults with
+                         nothing), while an absent param means "unset" (nil). --%>
+                    <input type="hidden" name={key} value="" />
+                    <div class="space-y-1.5">
+                      <%= for {entry, idx} <- Enum.with_index(entries) do %>
+                        <div class="flex items-center gap-2">
+                          <input
+                            type="text"
+                            name={key}
+                            value={entry}
+                            placeholder={gettext("e.g. ~/.cache/genesis")}
+                            class="input input-bordered input-sm rounded-md w-full font-mono text-base"
+                          />
+                          <button
+                            type="button"
+                            phx-click="remove_list_entry"
+                            phx-value-key_path={key}
+                            phx-value-index={idx}
+                            class="btn btn-ghost btn-xs btn-square text-base-content/60 hover:text-error shrink-0"
+                            title={gettext("Remove entry")}
+                          >
+                            <.icon name="hero-x-mark" class="size-4" />
+                          </button>
+                        </div>
+                      <% end %>
+                    </div>
+                  <% end %>
+                  <button
+                    type="button"
+                    phx-click="add_list_entry"
+                    phx-value-key_path={key}
+                    class="btn btn-ghost btn-xs gap-1 mt-1.5 text-primary hover:bg-primary/10"
+                  >
+                    <.icon name="hero-plus" class="size-3.5" />
+                    {gettext("Add path")}
+                  </button>
+                </div>
             <% end %>
           <% end %>
         </div>
@@ -235,7 +285,21 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
 
   def model_display(value), do: to_string(value)
 
+  # Normalizes a :list_of_strings value for the list editor. nil (unset) → nil
+  # (renders the "not set" hint); a list → its string elements (non-binary
+  # elements degrade to inspect/1 so an invalid config can never crash the
+  # render); any other non-nil value (e.g. a single string from an invalid
+  # config.toml) → a one-element list so the user can see and correct it.
+  defp list_entries(nil), do: nil
+  defp list_entries(value) when is_list(value), do: Enum.map(value, &entry_str/1)
+  defp list_entries(value), do: [entry_str(value)]
+
+  defp entry_str(entry) when is_binary(entry), do: entry
+  defp entry_str(entry), do: inspect(entry)
+
   defp default_label(nil), do: gettext("empty")
+  defp default_label([]), do: gettext("(none)")
+  defp default_label(value) when is_list(value), do: Enum.join(value, ", ")
   defp default_label(value) when is_atom(value), do: to_string(value)
   defp default_label(value), do: to_string(value)
 end

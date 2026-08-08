@@ -5,6 +5,7 @@ defmodule EvoDashWeb.SettingsLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
+  alias EvoDash.SettingsUtils
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
@@ -868,6 +869,68 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("reset_key", params, socket), do: SearchEvents.handle_reset_key(socket, params)
+
+  # ── :list_of_strings list editor (e.g. [sandbox] write_paths) ─────────────
+  #
+  # add_list_entry / remove_list_entry mutate the IN-MEMORY file_config only —
+  # nothing is persisted until the enclosing save_category / save_search form
+  # is submitted (the existing save path). The key_path arrives as a
+  # dot-separated string and is whitelist-validated via parse_key_path (never
+  # String.to_existing_atom on untrusted input); only :list_of_strings schemas
+  # are accepted.
+
+  @impl true
+  def handle_event("add_list_entry", %{"key_path" => key_path_str}, socket) do
+    key_path = ConfigIO.parse_key_path(key_path_str, socket.assigns.schemas_by_category)
+    schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
+
+    if is_nil(key_path) or is_nil(schema) or schema.type != :list_of_strings do
+      {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
+    else
+      entries = get_in(socket.assigns.file_config, key_path)
+      entries = if is_list(entries), do: entries, else: []
+      file_config = SettingsUtils.deep_put(socket.assigns.file_config, key_path, entries ++ [""])
+      {:noreply, assign(socket, :file_config, file_config)}
+    end
+  end
+
+  @impl true
+  def handle_event(
+        "remove_list_entry",
+        %{"key_path" => key_path_str, "index" => index_str},
+        socket
+      ) do
+    key_path = ConfigIO.parse_key_path(key_path_str, socket.assigns.schemas_by_category)
+    schema = ConfigIO.find_schema(key_path, socket.assigns.schemas_by_category)
+
+    if is_nil(key_path) or is_nil(schema) or schema.type != :list_of_strings do
+      {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
+    else
+      entries = get_in(socket.assigns.file_config, key_path)
+      entries = if is_list(entries), do: entries, else: []
+
+      # phx-value-* arrives as a string; Integer.parse (not a bare
+      # String.to_integer) so a malformed index can never crash the LiveView.
+      index =
+        case Integer.parse(index_str) do
+          {int, ""} -> int
+          _ -> -1
+        end
+
+      if index >= 0 and index < length(entries) do
+        file_config =
+          SettingsUtils.deep_put(
+            socket.assigns.file_config,
+            key_path,
+            List.delete_at(entries, index)
+          )
+
+        {:noreply, assign(socket, :file_config, file_config)}
+      else
+        {:noreply, socket}
+      end
+    end
+  end
 
   @impl true
   def handle_event("select_llm_provider", %{"provider_id" => id_str}, socket) do
