@@ -232,7 +232,7 @@ defmodule EvoDashWeb.Layouts do
                   <% end %>
                 </ul>
                 <.link
-                  navigate={~p"/settings"}
+                  navigate={with_node_param(~p"/settings", @current_node_id)}
                   class="text-xs font-medium underline mt-2 inline-block hover:text-amber-700 dark:hover:text-amber-300"
                 >{gettext("Configure now →")}</.link>
               </div>

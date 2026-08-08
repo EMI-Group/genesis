@@ -14,6 +14,8 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   attr(:task, :map, required: true)
   attr(:show_details, :boolean, default: false)
+  attr(:remote?, :boolean, default: false)
+  attr(:current_node_id, :any, default: nil)
 
   def task_card(assigns) do
     ~H"""
@@ -132,9 +134,9 @@ defmodule EvoDashWeb.TaskCardComponents do
               </button>
             <% end %>
 
-            <%= if show_review_button?(@task) do %>
+            <%= if show_review_button?(@task) and not @remote? do %>
               <.link
-                navigate={~p"/review/#{@task.id}"}
+                navigate={with_node_param(~p"/review/#{@task.id}", @current_node_id)}
                 class="btn btn-sm btn-primary rounded-md px-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
               >
                 <.icon name="hero-eye" class="size-4 mr-1" /> {gettext("Review")}
