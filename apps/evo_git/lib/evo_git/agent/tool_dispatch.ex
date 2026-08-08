@@ -59,7 +59,7 @@ defmodule EvoGit.Agent.ToolDispatch do
           AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
         end
 
-      {:error, code, msg} ->
+      {:error, {code, msg}} ->
         raise "Git rev_parse failed (#{code}): #{msg}"
     end
   end
@@ -72,7 +72,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     current_sha =
       case Git.rev_parse(repo_path) do
         {:ok, sha} -> sha
-        {:error, code, msg} -> raise "Git rev_parse failed (#{code}): #{msg}"
+        {:error, {code, msg}} -> raise "Git rev_parse failed (#{code}): #{msg}"
       end
 
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)

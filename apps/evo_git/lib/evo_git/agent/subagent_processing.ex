@@ -521,7 +521,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
             """
         end
 
-      {:conflict, output} ->
+      {:error, {:conflict, output}} ->
         {:ok, files} = Git.conflict_files(repo_path)
 
         conflict_files_list = Enum.join(files, "\n")
@@ -551,7 +551,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
            to subagents.
         """
 
-      {:error, code, output} ->
+      {:error, {code, output}} ->
         """
         System Note: Failed to auto-merge subagent changes (exit code #{code}).#{cross_repo_note}
         Merge output:
@@ -584,7 +584,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
              current_commit: commit_id
            }}
 
-        {:error, _code, msg} ->
+        {:error, {_code, msg}} ->
           {:error,
            "Error: The specified commit ID '#{commit_id}' does not exist in the repository. Please verify the commit SHA is correct and exists in the current repository's git history. Git error: #{msg}"}
       end
