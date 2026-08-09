@@ -27,3 +27,8 @@ config :phoenix_live_view,
 # NOTE: Store and TaskRegistry were migrated from evo_dash to evo_git, so the
 # key must be :evo_git (the Store reads Application.get_env(:evo_git, :data_dir)).
 config :evo_git, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genesis")
+
+# Never open a real wx directory dialog during tests (a modal native dialog
+# would block the suite). test_helper.exs sets the same flag as a
+# belt-and-suspenders fallback; the picker module short-circuits on it.
+config :evo_dash, :directory_picker, enabled: false
