@@ -117,26 +117,28 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
   # ── Series derivation (pure) ─────────────────────────────────────
 
-  @doc "LLM-slot chart series: capacity, in use (running proxy), waiting."
+  @doc "LLM-slot chart series: capacity (static reference line), in use (running proxy), waiting."
   def llm_series(samples) when is_list(samples) do
     [
       %{
         name: gettext("Capacity"),
         color: @capacity_color,
-        values: values(samples, :llm_capacity)
+        values: values(samples, :llm_capacity),
+        static: true
       },
       %{name: gettext("In use"), color: @in_use_color, values: values(samples, :llm_used)},
       %{name: gettext("Waiting"), color: @waiting_color, values: values(samples, :llm_waiting)}
     ]
   end
 
-  @doc "Tool-slot chart series: capacity, in use (running proxy), waiting."
+  @doc "Tool-slot chart series: capacity (static reference line), in use (running proxy), waiting."
   def tool_series(samples) when is_list(samples) do
     [
       %{
         name: gettext("Capacity"),
         color: @capacity_color,
-        values: values(samples, :tool_capacity)
+        values: values(samples, :tool_capacity),
+        static: true
       },
       %{name: gettext("In use"), color: @in_use_tool_color, values: values(samples, :tool_used)},
       %{name: gettext("Waiting"), color: @waiting_color, values: values(samples, :tool_waiting)}
@@ -189,6 +191,16 @@ defmodule EvoDashWeb.SystemLive.Charts do
   end
 
   @doc """
+  Y position for a value within the fixed chart height, clamped to the top at
+  `y_max` (guarded ≥ 1 so the scale can never divide by zero). Used both for
+  polyline points (`path_for/2`) and the static capacity reference line.
+  """
+  def y_for(v, y_max) when is_number(v) and is_number(y_max) do
+    y_max = max(y_max, 1)
+    @height - min(v, y_max) / y_max * @height
+  end
+
+  @doc """
   Converts a series' values into SVG path `d` strings: `:line` is the polyline
   and `:area` the same polyline closed down to the bottom of the chart.
 
@@ -206,7 +218,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
       |> Enum.with_index()
       |> Enum.map(fn {v, i} ->
         x = x_for(i, n)
-        y = @height - min(v, y_max) / y_max * @height
+        y = y_for(v, y_max)
         {num(x), num(y)}
       end)
 
@@ -366,17 +378,31 @@ defmodule EvoDashWeb.SystemLive.Charts do
             />
           <% end %>
           <%= for s <- @series do %>
-            <% path = path_for(s.values, @y_max) %>
-            <path d={path.area} fill={s.color} fill-opacity="0.12" />
-            <path
-              d={path.line}
-              fill="none"
-              stroke={s.color}
-              stroke-width="1.5"
-              vector-effect="non-scaling-stroke"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-            />
+            <%= if s[:static] do %>
+              <% y = y_for(List.last(s.values) || 0, @y_max) %>
+              <line
+                x1="0"
+                x2="300"
+                y1={y}
+                y2={y}
+                stroke={s.color}
+                stroke-width="1.5"
+                vector-effect="non-scaling-stroke"
+                stroke-dasharray="4 3"
+              />
+            <% else %>
+              <% path = path_for(s.values, @y_max) %>
+              <path d={path.area} fill={s.color} fill-opacity="0.12" />
+              <path
+                d={path.line}
+                fill="none"
+                stroke={s.color}
+                stroke-width="1.5"
+                vector-effect="non-scaling-stroke"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+            <% end %>
           <% end %>
         </svg>
         <div class="mt-1 flex items-center justify-between text-[10px] text-base-content/40">

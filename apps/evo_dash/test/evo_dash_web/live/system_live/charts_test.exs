@@ -155,6 +155,26 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
     end
   end
 
+  describe "llm_series/1 and tool_series/1" do
+    test "capacity series is marked static and keeps per-sample values" do
+      samples = [
+        Charts.build_sample([%{status: :running}], %{llm_capacity: 4, tool_capacity: 2})
+      ]
+
+      # gettext returns the source string "Capacity" in the default locale
+      llm_capacity = Enum.find(Charts.llm_series(samples), &(&1.name == "Capacity"))
+      assert llm_capacity.static == true
+      assert llm_capacity.values == [4]
+
+      tool_capacity = Enum.find(Charts.tool_series(samples), &(&1.name == "Capacity"))
+      assert tool_capacity.static == true
+      assert tool_capacity.values == [2]
+
+      # Non-capacity series stay dynamic (no static marker)
+      refute Enum.any?(Charts.llm_series(samples), &(&1.name != "Capacity" and &1[:static]))
+    end
+  end
+
   describe "y_max/1" do
     test "has a floor of 4 so the scale can never be zero" do
       assert Charts.y_max([]) == 4
@@ -293,6 +313,52 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
       # Footer
       assert html =~ "Scale 0–"
       assert html =~ "Last 3 minutes"
+    end
+
+    test "renders the static capacity series as a dashed horizontal line, not a path" do
+      samples = [
+        Charts.build_sample([%{status: :running}, %{status: :blocked}], %{
+          llm_capacity: 4,
+          tool_capacity: 2
+        }),
+        Charts.build_sample([%{status: :running}, %{status: :running}], %{
+          llm_capacity: 4,
+          tool_capacity: 2
+        })
+      ]
+
+      series = Charts.llm_series(samples)
+
+      html =
+        render_component(&Charts.chart_card/1,
+          title: "LLM Slots",
+          icon: "hero-sparkles",
+          description: "desc",
+          samples: samples,
+          series: series,
+          y_max: Charts.y_max(series)
+        )
+
+      doc = Floki.parse_document!(html)
+
+      # Static capacity: ONE full-width horizontal dashed line (y1 == y2),
+      # stroked with the capacity color
+      [line] = Floki.find(doc, "line[stroke-dasharray='4 3']")
+      assert Floki.attribute(line, "x1") == ["0"]
+      assert Floki.attribute(line, "x2") == ["300"]
+      [y1] = Floki.attribute(line, "y1")
+      [y2] = Floki.attribute(line, "y2")
+      assert y1 == y2
+      assert Floki.attribute(line, "stroke") == ["#94a3b8"]
+
+      # No path is rendered for the capacity series: only the 2 non-static
+      # series (in use, waiting) each render an area + line path
+      assert length(Floki.find(doc, "path")) == 4
+      refute Enum.any?(Floki.find(doc, "path"), &(Floki.attribute(&1, "stroke") == ["#94a3b8"]))
+
+      # The capacity color appears only in the legend dot and the static line
+      assert length(Floki.find(doc, ~s([style*="#94a3b8"]))) == 1
+      assert length(Floki.find(doc, ~s(line[stroke="#94a3b8"]))) == 1
     end
   end
 end
