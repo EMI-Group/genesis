@@ -5,7 +5,8 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   One card contains the objective textarea AND the controls row (mode select,
   Launch button, model select) as its last element. The layout is
-  server-driven via `layout_for/1`:
+  server-seeded at render time via `layout_for/1` and client-updated while
+  typing by the AdaptiveInput JS hook (which mirrors the same thresholds):
 
     * Layout A (`data-layout="compact"`) — unified objective box: the controls
       row is the card's last line.
@@ -16,8 +17,13 @@ defmodule EvoDashWeb.TaskFormComponents do
   (order-2, centered via mx-auto) | model (order-3); only the textarea size
   differs.
 
-  The AdaptiveInput JS hook only autogrows the textarea; the compact/expanded
-  decision lives in `layout_for/1` (@short_objective_threshold / line count).
+  There is NO per-keystroke server round trip: the textarea sends no
+  `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
+  switches `data-layout` between compact/expanded client-side, mirroring
+  `layout_for/1`'s thresholds (@short_objective_threshold / line count).
+  `layout_for/1` only seeds the initial `data-layout` attribute at render
+  time (SSR first paint + after restore/submit). Prompt draft persistence is
+  purely client-side (the StatePersistence input watcher in app.js).
 
   The top bar (Zone 1) and the collapsible Project Settings / Advanced Options
   panels live OUTSIDE this component in the dashboard layout.
@@ -33,6 +39,11 @@ defmodule EvoDashWeb.TaskFormComponents do
   Layout decision for the task form: `:compact` (Layout A — unified box) vs
   `:expanded` (Layout B — split). Threshold: objective length > 600 graphemes
   OR > 16 explicit lines.
+
+  This seeds the initial `data-layout` attribute at render time (SSR first
+  paint + after restore/submit). While typing, the AdaptiveInput JS hook
+  switches the layout client-side using the same thresholds — there is no
+  per-keystroke server event.
   """
   def layout_for(prompt) when is_binary(prompt) do
     if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 16,
@@ -49,10 +60,12 @@ defmodule EvoDashWeb.TaskFormComponents do
   #
   # The <.form id="task-form"> wraps the whole card: the textarea AND the
   # controls row (mode / Launch / model) as the card's last element. The
-  # compact/expanded layout is server-driven via layout_for/1 (data-layout).
-  # The top-bar controls (Build System select, Archive checkbox, Advanced
-  # Options inputs) are rendered OUTSIDE this form element in the dashboard,
-  # so they MUST carry form="task-form" to associate with it.
+  # compact/expanded layout is server-seeded at render via layout_for/1
+  # (data-layout) and client-updated while typing by the AdaptiveInput hook
+  # (no per-keystroke server event). The top-bar controls (Build System
+  # select, Archive checkbox, Advanced Options inputs) are rendered OUTSIDE
+  # this form element in the dashboard, so they MUST carry form="task-form"
+  # to associate with it.
   # ---------------------------------------------------------------------------
 
   attr(:prompt, :string, default: "")
@@ -83,16 +96,17 @@ defmodule EvoDashWeb.TaskFormComponents do
       ]}>
         <% layout = layout_for(@prompt) %>
         <!-- Single-card, two-layout objective editor.
-             data-layout is SERVER-DRIVED via layout_for/1 (threshold:
-             @short_objective_threshold chars or 16+ lines):
+             data-layout is server-seeded at render time via layout_for/1
+             (threshold: @short_objective_threshold chars or 16+ lines) and
+             client-updated while typing by the AdaptiveInput JS hook
+             (mirroring the same thresholds — no per-keystroke server event):
                "compact"  → Layout A — unified box: controls row is the card's
                             last line (mode | Launch | model, launch centered).
                "expanded" → Layout B — large objective area with an in-flow
                             launch panel below (mode | Launch | model).
              Both layouts share the same visual order — mode (order-1) |
              Launch (order-2, centered via mx-auto) | model (order-3); only
-             the textarea size differs.
-             The AdaptiveInput JS hook only autogrows the textarea now. -->
+             the textarea size differs. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
           data-layout={layout}
@@ -104,8 +118,6 @@ defmodule EvoDashWeb.TaskFormComponents do
               id="prompt"
               phx-update="ignore"
               phx-hook="AdaptiveInput"
-              phx-change="task_prompt_change"
-              phx-debounce="200"
               class="input-prompt w-full p-4 text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors"
               placeholder={
                 cond do

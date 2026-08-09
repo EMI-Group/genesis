@@ -21,8 +21,8 @@ None — leaf directory (four module files: `state_persistence.ex`, `project.ex`
 
 ## Notes
 
-- **Server-driven task-form layout**: The task-form layout (compact vs expanded) is computed server-side from prompt length via `TaskFormComponents.layout_for/1` (threshold 300 chars / 8 lines). `DashboardLive` tracks the prompt as the user types via the `task_prompt_change` event (`%{"prompt" => prompt}`, debounced 200ms) — required because the textarea is `phx-update="ignore"`, so the server's `@task_prompt` must mirror the visible text itself.
-- **Post-submit prompt preservation**: After a successful `task_submit`, `assign_form_defaults/1` resets `task_prompt: ""` but the visible textarea keeps the submitted text — so `task_submit` re-assigns `:task_prompt` to the submitted prompt to keep the server-side layout in sync (side effect: the draft prompt now survives reloads via localStorage, intentional).
+- **Task-form layout — server-seeded + client-driven**: The task-form layout (compact vs expanded) is seeded server-side at render from prompt length via `TaskFormComponents.layout_for/1` (threshold > 600 graphemes OR > 16 lines) and updated client-side while typing by the AdaptiveInput JS hook (mirrors the same thresholds). There is no per-keystroke prompt-change event — the textarea has no `phx-change`, so `@task_prompt` is updated only by `restore_state` and `task_submit` (single, non-keystroke events). Prompt draft persistence is purely client-side (the StatePersistence input watcher in app.js).
+- **Post-submit prompt preservation**: After a successful `task_submit`, `assign_form_defaults/1` resets `task_prompt: ""` but the visible textarea keeps the submitted text — so `task_submit` re-assigns `:task_prompt` to the submitted prompt to keep the server-seeded layout in sync (side effect: the draft prompt now survives reloads via localStorage, intentional).
 
 ## Constraints
 

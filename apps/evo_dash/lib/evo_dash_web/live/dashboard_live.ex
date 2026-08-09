@@ -152,9 +152,11 @@ defmodule EvoDashWeb.DashboardLive do
                          literal <link>/<script> strings) without HTML injection.
                          The prefill button sets the prompt textarea's .value
                          (never innerHTML) and dispatches a bubbling `input`
-                         event, which drives the AdaptiveInput autogrow AND the
-                         task_prompt_change phx-change (debounced) — syncing
-                         @task_prompt and switching the layout to expanded. --%>
+                         event, which drives the AdaptiveInput hook (autogrow
+                         + client-side layout switch — the example exceeds the
+                         600-grapheme threshold, so the layout flips to
+                         expanded). No server event is involved; @task_prompt
+                         is only updated by restore_state / task_submit. --%>
                     <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
                       <details
                         class="group rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
@@ -785,14 +787,6 @@ defmodule EvoDashWeb.DashboardLive do
      |> StatePersistence.maybe_persist_state()}
   end
 
-  @impl true
-  def handle_event("task_prompt_change", %{"prompt" => prompt}, socket) do
-    {:noreply,
-     socket
-     |> assign(:task_prompt, prompt)
-     |> StatePersistence.maybe_persist_state()}
-  end
-
   # Flash acknowledgement for the ClipboardCopy hook (example task copy button)
   @impl true
   def handle_event("copied", _params, socket) do
@@ -984,9 +978,10 @@ defmodule EvoDashWeb.DashboardLive do
            )
            |> Assigns.assign_running_and_pending_tasks()
            # The textarea keeps its text (`phx-update="ignore"`), so @task_prompt
-           # must mirror the visible content or the server-side layout computation
-           # (from prompt length) desyncs. Side effect: the draft prompt now
-           # survives reloads via localStorage — intentional improvement.
+           # must mirror the visible content or the server-seeded layout
+           # computation (from prompt length) desyncs. Side effect: the draft
+           # prompt now survives reloads via localStorage — intentional
+           # improvement.
            |> Assigns.assign_form_defaults()
            |> assign(:task_prompt, prompt)
            |> StatePersistence.maybe_persist_state()}
