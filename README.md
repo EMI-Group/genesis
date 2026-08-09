@@ -3,10 +3,6 @@
 </h1>
 
 <p align="center">
-  The recursive agentic <strong>system</strong> for autonomous software evolution.
-</p>
-
-<p align="center">
   👉 <strong>Home &amp; docs:</strong> <a href="https://genesis.evox.group">genesis.evox.group</a>
 </p>
 
