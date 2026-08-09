@@ -88,3 +88,7 @@ Mobile state is tracked independently from desktop collapse state via
 - **`SetLocale` is NOT a JS hook** — it is a server-side Elixir LiveView on-mount hook
   (`EvoDashWeb.LiveHooks.SetLocale` in `lib/evo_dash_web/live_hooks/set_locale.ex`).
   Do not look for it in JS assets.
+
+## Known Issues
+
+- **MutationObserver fires on same-value attribute sets — the `AdaptiveInput` equality guard is MANDATORY.** Chrome fires `MutationObserver` callbacks even when an attribute is set to the value it already holds (e.g. `el.dataset.layout = 'compact'` when it is already `'compact'`). `AdaptiveInput` has a MutationObserver on `.input-layout` (`attributeFilter: ['data-layout']`) whose callback runs `_apply()`. If `applyLayout()` writes `data-layout` unconditionally, every write re-triggers the observer → `observer → write → observer` **infinite synchronous microtask loop** that pegs the CPU and blocks the page (regression d19f413e, fixed in ac0104ee). The equality guard (`if (layoutEl.dataset.layout !== layout) layoutEl.dataset.layout = layout;`) is what makes the observer→write cycle terminate in ≤2 firings. NEVER "simplify" it away; it is load-bearing. Same rule applies to any future observer+write pattern: never mutate an observed property inside its own observer without an equality guard.
