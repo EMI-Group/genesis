@@ -52,6 +52,19 @@ const AdaptiveInput = {
     // restore a saved prompt into the textarea on mount, so measure even
     // before any user input.
     requestAnimationFrame(() => this._apply());
+
+    // Server-triggered clear after a successful task launch: the textarea sits
+    // inside phx-update="ignore", so morphdom never empties it — the server
+    // only resets @task_prompt (which re-seeds data-layout="compact"). This
+    // handler empties the visible value, re-asserts autogrow + the layout
+    // (converges: applyLayout only writes the attribute when the computed
+    // value differs, so the MutationObserver settles in one step), and drops
+    // the persisted draft so a reload can't resurrect the submitted prompt.
+    this.handleEvent("clear_prompt", () => {
+      this.el.value = '';
+      this._apply();
+      this._clearPersistedDraft();
+    });
   },
 
   updated() {
@@ -105,6 +118,19 @@ const AdaptiveInput = {
     ta.style.flex = prevFlex;
     ta.style.minHeight = prevMinHeight;
     ta.style.maxHeight = prevMaxHeight;
+  },
+
+  // Clears only the draft prompt inside the persisted state blob so a reload
+  // cannot resurrect a submitted prompt while the rest of the form state
+  // (project, mode, model, advanced fields) survives. Mirrors the
+  // StatePersistence hook's restore gate (mounted() only restores a truthy
+  // state.task_prompt), so '' is equivalent to removing the field.
+  _clearPersistedDraft() {
+    try {
+      const existing = JSON.parse(sessionStorage.getItem('dashboard_state') || '{}');
+      existing.task_prompt = '';
+      sessionStorage.setItem('dashboard_state', JSON.stringify(existing));
+    } catch (e) {}
   }
 };
 

@@ -1001,14 +1001,15 @@ defmodule EvoDashWeb.DashboardLive do
              )
            )
            |> Assigns.assign_running_and_pending_tasks()
-           # The textarea keeps its text (`phx-update="ignore"`), so @task_prompt
-           # must mirror the visible content or the server-seeded layout
-           # computation (from prompt length) desyncs. Side effect: the draft
-           # prompt now survives reloads via localStorage — intentional
-           # improvement.
+           # The prompt is intentionally cleared after a successful launch.
+           # assign_form_defaults/1 resets @task_prompt to "" (so the server
+           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
+           # empties the visible textarea — which morphdom skips under
+           # phx-update="ignore" — and removes the persisted draft, so neither
+           # the DOM nor a reload can resurrect the submitted prompt.
            |> Assigns.assign_form_defaults()
-           |> assign(:task_prompt, prompt)
-           |> StatePersistence.maybe_persist_state()}
+           |> StatePersistence.maybe_persist_state()
+           |> push_event("clear_prompt", %{})}
 
         {:error, reason} ->
           {:noreply,

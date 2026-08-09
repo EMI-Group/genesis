@@ -232,7 +232,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
       # The per-keystroke server round-trip was removed — layout switching is
       # client-side (AdaptiveInput hook) and @task_prompt is only updated via
-      # the restore_state event and task_submit.
+      # the restore_state event (and cleared by task_submit after launch).
       refute html =~ ~s(phx-change="task_prompt_change")
       refute html =~ ~s(phx-debounce="200")
     end

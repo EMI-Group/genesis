@@ -994,6 +994,81 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
   end
 
+  describe "task_submit clears the prompt" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "clears the prompt assign and pushes the clear_prompt event on launch", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # Open a project via the palette (open-path mode)
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Seed the prompt the way the client does (restore_state is the
+      # still-supported way to set the persisted prompt).
+      render_change(view, "restore_state", %{"task_prompt" => "build me a thing"})
+      assert assigns(view)[:task_prompt] == "build me a thing"
+
+      # Launch an evolve task with a nonexistent node_path. The task still
+      # launches successfully (start_task returns {:ok, task}), but the
+      # spawned worker fails fast in EvoGit.Runtime.Evolution (invalid node
+      # path is validated BEFORE any agent dispatch) — no LLM calls, no
+      # worktrees, nothing that can leak into the shared test runtime.
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+
+      # The server-side prompt assign is reset to "" after a successful
+      # launch, so the next render seeds the compact layout (the visible
+      # textarea itself is cleared client-side — morphdom skips it under
+      # phx-update="ignore").
+      assert assigns(view)[:task_prompt] == ""
+
+      # The client-side clear event is pushed: it empties the textarea and
+      # removes the persisted draft so a reload can't resurrect the prompt.
+      assert_push_event(view, "clear_prompt", %{})
+
+      # The launch spawned a real task (which fails fast on the invalid node
+      # path); cancel and delete it so it never leaks into other tests sharing
+      # the SQLite store.
+      [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.cancel_task(id)
+        rescue
+          _ -> :ok
+        end
+
+        try do
+          EvoGit.TaskRegistry.delete_task(id)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      EvoGit.TaskRegistry.cancel_task(id)
+    end
+  end
+
   describe "remote node contexts" do
     setup do
       clear_recent_projects()
