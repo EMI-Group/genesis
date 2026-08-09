@@ -33,13 +33,20 @@ defmodule EvoDashWeb.SystemLive.Charts do
   @height 100
 
   # Series colors (Tailwind palette hex values)
-  @capacity_color "#94a3b8"       # slate-400
-  @in_use_color "#10b981"         # emerald-500
-  @in_use_tool_color "#0ea5e9"    # sky-500
-  @waiting_color "#f59e0b"        # amber-500
-  @total_color "#6366f1"          # indigo-500
-  @agents_waiting_color "#8b5cf6" # violet-500
-  @agents_pending_color "#94a3b8" # slate-400
+  # slate-400
+  @capacity_color "#94a3b8"
+  # emerald-500
+  @in_use_color "#10b981"
+  # sky-500
+  @in_use_tool_color "#0ea5e9"
+  # amber-500
+  @waiting_color "#f59e0b"
+  # indigo-500
+  @total_color "#6366f1"
+  # violet-500
+  @agents_waiting_color "#8b5cf6"
+  # slate-400
+  @agents_pending_color "#94a3b8"
 
   # ── Ring buffer ──────────────────────────────────────────────────
 
@@ -113,7 +120,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
   @doc "LLM-slot chart series: capacity, in use (running proxy), waiting."
   def llm_series(samples) when is_list(samples) do
     [
-      %{name: gettext("Capacity"), color: @capacity_color, values: values(samples, :llm_capacity)},
+      %{
+        name: gettext("Capacity"),
+        color: @capacity_color,
+        values: values(samples, :llm_capacity)
+      },
       %{name: gettext("In use"), color: @in_use_color, values: values(samples, :llm_used)},
       %{name: gettext("Waiting"), color: @waiting_color, values: values(samples, :llm_waiting)}
     ]
@@ -122,7 +133,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
   @doc "Tool-slot chart series: capacity, in use (running proxy), waiting."
   def tool_series(samples) when is_list(samples) do
     [
-      %{name: gettext("Capacity"), color: @capacity_color, values: values(samples, :tool_capacity)},
+      %{
+        name: gettext("Capacity"),
+        color: @capacity_color,
+        values: values(samples, :tool_capacity)
+      },
       %{name: gettext("In use"), color: @in_use_tool_color, values: values(samples, :tool_used)},
       %{name: gettext("Waiting"), color: @waiting_color, values: values(samples, :tool_waiting)}
     ]
@@ -138,13 +153,21 @@ defmodule EvoDashWeb.SystemLive.Charts do
         area: true
       },
       %{name: gettext("Running"), color: @in_use_color, values: values(samples, :agents_running)},
-      %{name: gettext("Blocked"), color: @waiting_color, values: values(samples, :agents_blocked)},
+      %{
+        name: gettext("Blocked"),
+        color: @waiting_color,
+        values: values(samples, :agents_blocked)
+      },
       %{
         name: gettext("Waiting"),
         color: @agents_waiting_color,
         values: values(samples, :agents_waiting)
       },
-      %{name: gettext("Pending"), color: @agents_pending_color, values: values(samples, :agents_pending)}
+      %{
+        name: gettext("Pending"),
+        color: @agents_pending_color,
+        values: values(samples, :agents_pending)
+      }
     ]
   end
 
@@ -259,7 +282,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
           <% end %>
         </div>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
         <.chart_card
           title={gettext("LLM Slots")}
           icon="hero-sparkles"
