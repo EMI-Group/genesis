@@ -746,6 +746,30 @@ defmodule EvoDashWeb.DashboardLive do
     ProjectFlow.select_project(socket, params)
   end
 
+  # Deletes a recent-project entry from the open-project palette WITHOUT
+  # opening the project. LOCAL-only: recent-project removal is not exposed
+  # over the remote RPC chain, and remote projects are read-only by design —
+  # the delete button only renders in local contexts (palette_menu hides it
+  # when `remote`), so this guard is defensive. `remove_recent_project`
+  # broadcasts {:recent_projects_updated} on PubSub, but we also re-read and
+  # re-assign immediately so the list updates on this render cycle; the
+  # broadcast handler then refreshes it again idempotently. The selected
+  # index resets to 0 so keyboard navigation stays in sync with the
+  # shortened list.
+  @impl true
+  def handle_event("remove_recent_project", %{"path" => path}, socket) do
+    if socket.assigns[:current_node_id] != nil do
+      {:noreply, socket}
+    else
+      TaskRegistry.remove_recent_project(path)
+
+      {:noreply,
+       socket
+       |> assign(:recent_projects, TaskRegistry.list_recent_projects())
+       |> assign(:palette_selected_index, 0)}
+    end
+  end
+
   # --- Remote Node Events ---
 
   # Re-initiates a connection to the currently selected (failed/disconnected)

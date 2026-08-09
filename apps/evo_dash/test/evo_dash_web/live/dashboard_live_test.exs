@@ -606,6 +606,79 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ ~s(phx-value-path="#{project_a}")
     end
 
+    test "palette_menu renders a per-entry remove button wired to the project path", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_a = Path.join(tmp_dir, "my-alpha")
+      File.mkdir_p!(project_a)
+      seed_recent_project(project_a, "my-alpha")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "open_project_palette", %{})
+
+      # The remove button is a SIBLING of the row button (never nested) and
+      # stops propagation, so clicking it can never trigger select_project.
+      assert html =~ ~s(phx-click="remove_recent_project")
+      assert html =~ ~s(phx-value-path="#{project_a}")
+      assert html =~ ~s(phx-stop-propagation)
+      assert html =~ "hero-trash"
+    end
+
+    test "remove_recent_project deletes the entry without activating the project", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_a = Path.join(tmp_dir, "my-alpha")
+      project_b = Path.join(tmp_dir, "my-beta")
+      File.mkdir_p!(project_a)
+      File.mkdir_p!(project_b)
+      seed_recent_project(project_a, "my-alpha")
+      # Seed b LAST so the mount auto-load activates project_b, not project_a
+      seed_recent_project(project_b, "my-beta")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert assigns(view)[:active_project_path] == project_b
+
+      render_click(view, "open_project_palette", %{})
+
+      html = render_click(view, "remove_recent_project", %{"path" => project_a})
+
+      # Removed from the persisted recent list
+      refute Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == project_a))
+      # Removed from the palette UI — no select_project target for it remains
+      refute html =~ ~s(phx-value-path="#{project_a}")
+      refute html =~ "my-alpha"
+      # The row's open-project action did NOT fire — project_b is still active
+      assert assigns(view)[:active_project_path] == project_b
+      # The palette stays open so more entries can be managed
+      assert assigns(view)[:project_palette_open] == true
+    end
+
+    test "remove_recent_project resets the selection index for keyboard nav", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_a = Path.join(tmp_dir, "my-alpha")
+      project_b = Path.join(tmp_dir, "my-beta")
+      File.mkdir_p!(project_a)
+      File.mkdir_p!(project_b)
+      seed_recent_project(project_a, "my-alpha")
+      seed_recent_project(project_b, "my-beta")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
+      assert assigns(view)[:palette_selected_index] == 1
+
+      html = render_click(view, "remove_recent_project", %{"path" => project_a})
+
+      assert assigns(view)[:palette_selected_index] == 0
+      refute html =~ "my-alpha"
+    end
+
     test "palette_menu shows Create New Project and Open by Path actions", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
 
@@ -1019,10 +1092,37 @@ defmodule EvoDashWeb.DashboardLiveTest do
       refute html =~ "hero-rocket-launch"
       refute html =~ "example-task-objective"
 
-      # Remote palette: Open by Path yes, Create New Project hidden
+      # Remote palette: Open by Path yes, Create New Project hidden, and no
+      # remove-from-recents buttons (remote projects are read-only by design)
       html = render_click(view, "open_project_palette", %{})
       assert html =~ "Open Project by Path"
       refute html =~ "Create New Project"
+      refute html =~ ~s(phx-click="remove_recent_project")
+    end
+
+    test "remove_recent_project event is ignored in remote contexts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      project_a = Path.join(tmp_dir, "my-alpha")
+      File.mkdir_p!(project_a)
+      seed_recent_project(project_a, "my-alpha")
+
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      assert assigns(view)[:remote?] == true
+
+      # Forged/raced event: the guard must reject it and leave the local
+      # recent list untouched
+      render_click(view, "remove_recent_project", %{"path" => project_a})
+
+      assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == project_a))
     end
 
     test "error-phase remote context renders the error gate with actions", %{conn: conn} do

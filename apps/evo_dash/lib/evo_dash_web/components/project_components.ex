@@ -167,19 +167,40 @@ defmodule EvoDashWeb.ProjectComponents do
           {gettext("Recent Projects")}
         </p>
         <%= for {project, i} <- Enum.with_index(filtered) do %>
-          <button
-            type="button"
-            phx-click="select_project"
-            phx-value-path={project.path}
-            data-selected={@palette_selected_index == i}
-            class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
-          >
-            <.icon name="hero-folder" class="size-4 shrink-0" />
-            <div class="min-w-0 flex-1">
-              <div class="text-sm font-medium truncate">{project.name}</div>
-              <div class="text-xs text-base-content/50 font-mono truncate">{project.path}</div>
-            </div>
-          </button>
+          <div class="relative group">
+            <button
+              type="button"
+              phx-click="select_project"
+              phx-value-path={project.path}
+              data-selected={@palette_selected_index == i}
+              class="project-palette-item w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors"
+            >
+              <.icon name="hero-folder" class="size-4 shrink-0" />
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium truncate">{project.name}</div>
+                <div class="text-xs text-base-content/50 font-mono truncate">{project.path}</div>
+              </div>
+            </button>
+            <%= unless @remote do %>
+              <%!-- Remove-from-recents button: a sibling of the row button
+                   (not nested) so clicking it never triggers the row's
+                   select_project action; phx-stop-propagation is defense in
+                   depth. Barely visible by default (opacity-0), appears on
+                   row hover, turns red on its own hover. Local-only —
+                   remote recent projects are read-only by design. --%>
+              <button
+                type="button"
+                phx-click="remove_recent_project"
+                phx-value-path={project.path}
+                phx-stop-propagation
+                aria-label={gettext("Remove %{name} from recent projects", name: project.name)}
+                title={gettext("Remove from recent projects")}
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/40 hover:text-red-500 hover:bg-red-500/10 transition-opacity"
+              >
+                <.icon name="hero-trash" class="size-4" />
+              </button>
+            <% end %>
+          </div>
         <% end %>
       <% end %>
 
