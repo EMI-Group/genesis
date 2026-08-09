@@ -432,7 +432,7 @@ defmodule EvoDashWeb.DashboardLive do
         send(self(), :load_config_status)
       end
 
-      recent_projects = TaskRegistry.list_recent_projects()
+      recent_projects = filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
 
       # Pre-resolve config once and memoize via Process dict so that the
       # deferred :load_config_status handler can reuse this result instead
@@ -544,14 +544,20 @@ defmodule EvoDashWeb.DashboardLive do
           assign(
             socket,
             :recent_projects,
-            EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+            filter_absolute_recent_projects(
+              EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+            )
           )
 
         socket.assigns[:current_node_id] != nil ->
           assign(socket, :recent_projects, [])
 
         true ->
-          assign(socket, :recent_projects, TaskRegistry.list_recent_projects())
+          assign(
+            socket,
+            :recent_projects,
+            filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+          )
       end
 
     project_path = params["project"]
@@ -566,23 +572,33 @@ defmodule EvoDashWeb.DashboardLive do
         # what resets it.
         socket
       else
-        if project_path && project_path != "" do
-          expanded = Path.expand(project_path)
+        if is_binary(project_path) do
+          case ProjectFlow.normalize_project_path(project_path) do
+            {:ok, expanded} ->
+              if File.dir?(expanded) do
+                activate_project(socket, expanded)
+              else
+                # Project path in URL is invalid, clear it
+                socket
+                |> Assigns.assign_running_and_pending_tasks()
+                |> assign(
+                  :notified_task_ids,
+                  Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
+                )
+                |> assign(
+                  active_project: nil,
+                  active_project_path: nil
+                )
+              end
 
-          if File.dir?(expanded) do
-            activate_project(socket, expanded)
-          else
-            # Project path in URL is invalid, clear it
-            socket
-            |> Assigns.assign_running_and_pending_tasks()
-            |> assign(
-              :notified_task_ids,
-              Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
-            )
-            |> assign(
-              active_project: nil,
-              active_project_path: nil
-            )
+            # Relative or blank project params (stale/legacy URLs, or entries
+            # from previously-polluted recents) are silently ignored: never
+            # `Path.expand` against the VM cwd — the Windows desktop backend
+            # inherits the Tauri process cwd, so a relative input would join
+            # against the install dir. handle_params runs on every navigation,
+            # so no flash here; the param just doesn't activate a project.
+            {:error, _reason} ->
+              socket
           end
         else
           # No project in URL — try auto-loading most recent project, or load all tasks
@@ -787,7 +803,10 @@ defmodule EvoDashWeb.DashboardLive do
 
       {:noreply,
        socket
-       |> assign(:recent_projects, TaskRegistry.list_recent_projects())
+       |> assign(
+         :recent_projects,
+         filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+       )
        |> assign(:palette_selected_index, 0)}
     end
   end
@@ -1414,14 +1433,16 @@ defmodule EvoDashWeb.DashboardLive do
       cond do
         socket.assigns.remote? ->
           # Connected remote node — reload the remote node's recents via RPC
-          EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+          filter_absolute_recent_projects(
+            EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
+          )
 
         socket.assigns[:current_node_id] != nil ->
           # Pending/error remote context — never show local recents
           []
 
         true ->
-          TaskRegistry.list_recent_projects()
+          filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
       end
 
     {:noreply, assign(socket, :recent_projects, recent_projects)}
@@ -1533,25 +1554,41 @@ defmodule EvoDashWeb.DashboardLive do
         # remote contexts validate/register on the remote node and carry the
         # `&node=` param so the node context survives the patch)
         project = Enum.at(filtered, index)
-        expanded = Path.expand(project.path)
 
-        if socket.assigns[:current_node_id] != nil do
-          activate_remote_palette_project(socket, project, expanded)
-        else
-          if File.dir?(expanded) do
-            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
-            recent_projects = TaskRegistry.list_recent_projects()
+        # Never `Path.expand` against the VM cwd: recents are absolute-path
+        # filtered at assignment, but a stale/relative entry would cwd-join
+        # on Windows (Tauri install dir). A relative selection just doesn't
+        # open — same UX as a failed open, without the cwd join.
+        case ProjectFlow.normalize_project_path(project.path) do
+          {:ok, expanded} ->
+            if socket.assigns[:current_node_id] != nil do
+              activate_remote_palette_project(socket, project, expanded)
+            else
+              if File.dir?(expanded) do
+                TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
 
-            socket
-            |> assign(:recent_projects, recent_projects)
-            |> assign(:project_palette_open, false)
-            |> assign(:palette_mode, :menu)
-            |> push_patch(to: "/?project=#{URI.encode(expanded)}")
-          else
+                recent_projects =
+                  filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+
+                socket
+                |> assign(:recent_projects, recent_projects)
+                |> assign(:project_palette_open, false)
+                |> assign(:palette_mode, :menu)
+                |> push_patch(to: "/?project=#{URI.encode(expanded)}")
+              else
+                socket
+                |> assign(:project_palette_open, false)
+                |> put_flash(
+                  :error,
+                  gettext("Directory does not exist: %{path}", path: project.path)
+                )
+              end
+            end
+
+          {:error, _reason} ->
             socket
             |> assign(:project_palette_open, false)
             |> put_flash(:error, gettext("Directory does not exist: %{path}", path: project.path))
-          end
         end
 
       index == action_base ->
@@ -1603,7 +1640,9 @@ defmodule EvoDashWeb.DashboardLive do
 
       if EvoDash.NodeContext.dir?(node, expanded) do
         EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
-        recent_projects = EvoDash.NodeContext.list_recent_projects(node)
+
+        recent_projects =
+          filter_absolute_recent_projects(EvoDash.NodeContext.list_recent_projects(node))
 
         socket
         |> assign(:recent_projects, recent_projects)
@@ -1635,6 +1674,17 @@ defmodule EvoDashWeb.DashboardLive do
       )
 
     length(filtered) + if socket.assigns[:current_node_id] != nil, do: 1, else: 2
+  end
+
+  # Filters recent-project entries to absolute paths only. Stale cwd-joined
+  # entries (produced by the pre-fix Windows relative-input bug, which
+  # `Path.expand`ed bare folder names against the Tauri install dir) must
+  # never render in the palette, feed auto-load, or reach path suggestions.
+  # Applied at every `:recent_projects` assignment site in this module.
+  defp filter_absolute_recent_projects(recent_projects) do
+    Enum.filter(recent_projects, fn project ->
+      is_map(project) and is_binary(project[:path]) and Platform.absolute_path?(project[:path])
+    end)
   end
 
   # Builds the dashboard URL for a project path. In a remote context the
