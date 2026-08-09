@@ -51,7 +51,7 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
               register_and_open_project(socket, expanded)
             else
               case File.mkdir_p(expanded) do
-                {:ok, _} ->
+                :ok ->
                   register_and_open_project(socket, expanded)
 
                 {:error, reason} ->
