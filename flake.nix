@@ -106,7 +106,7 @@
 
             echo ""
             echo "  ┌─────────────────────────────────────────────┐"
-            echo "  │  EvoX Genesis — NixOS Development Shell      │"
+            echo "  │  EvoX Genesis — NixOS Development Shell     │"
             echo "  └─────────────────────────────────────────────┘"
             echo ""
             echo "  Quick start:"
