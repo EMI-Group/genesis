@@ -1279,4 +1279,84 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute File.read!(EvoGit.Config.config_path()) =~ "write_paths"
     end
   end
+
+  describe "platform gating" do
+    # SettingsLive filters the :sandbox category per-node-OS via
+    # EvoDashWeb.PlatformInfo.filter_schemas_by_category/2 — in mount AND
+    # again in handle_params (before category resolution). The testable
+    # injection seam is the :platform_os_override app env, which
+    # PlatformInfo.os_for_node/1 checks BEFORE any OS detection — so these
+    # tests are deterministic on ANY host OS. This file is async: false, so
+    # env mutation is safe, but each test still cleans up its own override.
+
+    defp with_os_override(os) do
+      Application.put_env(:evo_dash, :platform_os_override, os)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :platform_os_override)
+      end)
+    end
+
+    test "Windows override hides the Sandbox sidebar entry", %{conn: conn} do
+      with_os_override(:windows)
+
+      {:ok, _view, html} = live(conn, ~p"/settings")
+
+      # The sidebar renders one button per category, each carrying
+      # phx-value-category="<name>" (EvoDashWeb.SettingsComponents.Sidebar).
+      # With :sandbox deleted from schemas_by_category, no such button exists.
+      refute html =~ ~s(phx-value-category="sandbox")
+      # The sandbox content section is not rendered either.
+      refute html =~ ~s(id="category-sandbox")
+      # The default active category is :llm.
+      assert html =~ ~s(id="category-llm")
+    end
+
+    test "Windows override: ?category=sandbox falls back to :llm without crashing", %{conn: conn} do
+      with_os_override(:windows)
+
+      # handle_params re-filters schemas BEFORE resolving the category param,
+      # so "sandbox" is not a known category → falls back to the active
+      # category (:llm). No crash.
+      {:ok, view, html} = live(conn, ~p"/settings?category=sandbox")
+
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-sandbox")
+    end
+
+    test "macOS override keeps sandbox mode + write_paths but drops Linux sub-sections", %{
+      conn: conn
+    } do
+      with_os_override(:macos)
+      # Seed write_paths so the :list_of_strings card renders its named inputs
+      # (an unset/nil value renders only the "Not set" hint, no name attribute).
+      seed_write_paths(["/tmp/a"])
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      assert assigns(view).active_category == :sandbox
+      # sub_category == nil schemas (mode + write_paths) remain.
+      assert html =~ ~s(name="sandbox.mode")
+      assert html =~ ~s(name="sandbox.write_paths")
+      # The Linux-only sub-sections (:resources/:process/:linux) are filtered
+      # out, so their sub-headers never render.
+      refute html =~ "Resources"
+      refute html =~ "Process Limits"
+      refute html =~ "Linux Security"
+    end
+
+    test "Linux override keeps the Linux Security sub-section", %{conn: conn} do
+      with_os_override(:linux)
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      # On Linux the sandbox schemas are unchanged — all sub-sections render.
+      assert html =~ "Linux Security"
+      assert html =~ "Resources"
+      assert html =~ "Process Limits"
+    end
+  end
 end
