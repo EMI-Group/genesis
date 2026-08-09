@@ -24,40 +24,67 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   # Project creation
   # ───────────────────────────────────────────────────────────────────────────
 
-  def create_project(socket, %{"location" => location, "name" => name}) do
-    location = Path.expand(location)
+  # Creates (or opens, if it already exists) a project from a single full
+  # path submitted by the create-new-project palette form. The parent
+  # directory need not exist — `File.mkdir_p/1` creates the whole chain.
+  # LOCAL-only: the palette hides "Create New Project" in remote contexts.
+  def create_project(socket, %{"path" => path}) do
+    trimmed = String.trim(path)
+    expanded = Path.expand(trimmed)
 
     cond do
-      not File.dir?(location) ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Parent directory does not exist: %{path}", path: location)
-         )}
+      # Blank input expands to the cwd (Path.expand("") == cwd) — reject it
+      # before it can register the current directory as a project.
+      trimmed == "" ->
+        {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
       true ->
-        case Project.validate_project_name(name) do
+        # Root-ish input is rejected here too: Path.basename("/") is "/" (and
+        # a Windows root contains "\\"), so validate_project_name/1 fails.
+        case Project.validate_project_name(Path.basename(expanded)) do
           {:error, :invalid_name} ->
             {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
-          {:ok, sanitized} ->
-            full_path = Path.join(location, sanitized)
-            File.mkdir!(full_path)
+          {:ok, _sanitized} ->
+            if File.dir?(expanded) do
+              # Project already exists — register/open it.
+              register_and_open_project(socket, expanded)
+            else
+              case File.mkdir_p(expanded) do
+                {:ok, _} ->
+                  register_and_open_project(socket, expanded)
 
-            TaskRegistry.add_recent_project(full_path, sanitized)
-            recent_projects = TaskRegistry.list_recent_projects()
-
-            socket =
-              socket
-              |> assign(:recent_projects, recent_projects)
-              |> assign(:project_palette_open, false)
-              |> assign(:palette_mode, :menu)
-              |> put_flash(:info, gettext("Project created: %{path}", path: full_path))
-
-            {:noreply, push_patch(socket, to: project_url(socket, full_path))}
+                {:error, reason} ->
+                  {:noreply,
+                   put_flash(
+                     socket,
+                     :error,
+                     gettext("Could not create directory: %{path} (%{reason})",
+                       path: expanded,
+                       reason: inspect(reason)
+                     )
+                   )}
+              end
+            end
         end
     end
+  end
+
+  # Shared success path for create_project: register the path in recent
+  # projects, reload the recents, close the palette, reset it to :menu, flash
+  # info, and push the URL params to persist the project across navigation.
+  defp register_and_open_project(socket, expanded) do
+    TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+    recent_projects = TaskRegistry.list_recent_projects()
+
+    socket =
+      socket
+      |> assign(:recent_projects, recent_projects)
+      |> assign(:project_palette_open, false)
+      |> assign(:palette_mode, :menu)
+      |> put_flash(:info, gettext("Project created: %{path}", path: expanded))
+
+    {:noreply, push_patch(socket, to: project_url(socket, expanded))}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
