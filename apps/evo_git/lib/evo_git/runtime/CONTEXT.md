@@ -190,3 +190,17 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Adapters.Git` | All git CLI operations |
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
+
+## Known Issues — repo_path Resolution vs. BEAM cwd (dashboard Windows path bug, investigation T1-A4)
+
+**Q: Why can a picked folder land under the app's own directory?** All three runtime `run/2` entry points resolve a possibly-relative/name-only `:repo_path` against the **BEAM process cwd**:
+
+- `genesis.ex:20`, `evolution.ex:20`, `skill_extraction.ex:13`: `repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()`
+
+If `opts[:repo_path]` is a bare name or relative path (e.g. `"Test"`), `Path.expand/1` resolves it against the backend cwd. In the desktop app the Tauri sidecar spawns the release launcher with **no `current_dir` set** (`desktop/src-tauri/src/sidecar.rs:147-152`), so the BEAM cwd is inherited from the Tauri process — typically the app install/data dir (Windows: `%LOCALAPPDATA%\genesis-desktop`). Result: `"Test"` → `c:/Users/<user>/AppData/Local/genesis-desktop/Test`. Worse, `Runtime.ensure_repo/1` (`runtime.ex:14-32`) **silently `File.mkdir_p!`s + git-inits** a missing repo dir — a name-only path does not error; it creates a stray repo under the app dir.
+
+**The exact error string "Directory does not exist: <path>" in evo_git is produced ONLY by `Helpers.validate_node_path/2` (`helpers.ex:136`),** called from `evolution.ex:24` (evolve tasks with a `:node_path` opt). The message prints the raw `node_path` (the repo-relative node sub-path), NOT the joined `abs_path`. Note the first branch (`helpers.ex:126-129`) rejects absolute node_paths with a different message ("Node path must be relative..."), so on a Windows host the reported full-path string (`c:/Users/.../Test`) could NOT originate from here via the dashboard's local project-open flow — it comes from the **dashboard-side** flash messages that print the raw submitted path: `apps/evo_dash/lib/evo_dash_web/live/dashboard_live/project_flow.ex:118,145` (open_project/select_project) and `dashboard_live.ex:1553` (palette recents Enter). The dashboard reduces the picked absolute path to its basename only in the JS File System Access API fallback (`apps/evo_dash/assets/js/app.js:171` — `fillInput(handle.name)`), after which `Path.expand/1` (`project_flow.ex:33,98,130`) resolves the bare name against the BEAM cwd.
+
+**No absolute-ness/existence validation of `:path`/`:repo_path` exists anywhere between the dashboard and the runtime.** `TaskRegistry.start_task/2` (`task_registry.ex:51-54`) → `RuntimeOpts.build_common_runtime_opts` (`runtime_opts.ex:17` — `Keyword.fetch!(opts, :path)`, verbatim) → runtime. The only existence checks: `Adapters.Git.run/2` pre-check `File.dir?(cd)` → `{:error, {:enoent, "Repository path does not exist: #{cd}"}}` (`adapters/git.ex:45`) and `validate_node_path/2` (node sub-paths only). `TaskRegistry.add_recent_project/2` (`task_registry.ex:481-494`) stores the path verbatim — no expansion, no validation.
+
+**Fix direction:** validate/expand the project path at the task boundary (TaskRegistry or RuntimeOpts) and reject non-absolute paths; the dashboard's `ProjectFlow` already expands before registering recents, so the runtime should do the same (and/or `Runtime.ensure_repo/1` should require an absolute path).
