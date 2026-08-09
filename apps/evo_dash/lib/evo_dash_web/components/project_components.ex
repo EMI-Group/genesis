@@ -104,13 +104,11 @@ defmodule EvoDashWeb.ProjectComponents do
                 palette_selected_index={@palette_selected_index}
                 remote={@remote}
               />
-
             <% :open_path -> %>
               <.palette_open_path
                 path_suggestions={@path_suggestions}
                 tauri_detected={@tauri_detected}
               />
-
             <% :new_project -> %>
               <.palette_new_project
                 path_suggestions={@path_suggestions}
@@ -159,7 +157,11 @@ defmodule EvoDashWeb.ProjectComponents do
     </div>
 
     <!-- Scrollable list -->
-    <div id="palette-project-list" class="project-palette-list overflow-y-auto flex-1 p-2" phx-hook="PaletteList">
+    <div
+      id="palette-project-list"
+      class="project-palette-list overflow-y-auto flex-1 p-2"
+      phx-hook="PaletteList"
+    >
       <%= if filtered != [] do %>
         <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 px-2 py-1">
           {gettext("Recent Projects")}
