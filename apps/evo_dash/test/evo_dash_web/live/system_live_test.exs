@@ -7,6 +7,49 @@ defmodule EvoDashWeb.SystemLiveTest do
   # state (same pattern as dashboard_live_test.exs / welcome_live_test.exs).
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
+  # Waits until the async self-check task spawned on mount has processed its
+  # real `{:system_checks_result, _}` (i.e. `system_checks_status` leaves
+  # `:checking`). The handler simply assigns, so the LAST such message
+  # processed wins — awaiting the real result first guarantees an injected
+  # result below is deterministically processed last (FIFO mailbox), no matter
+  # how fast/slow the real check completes on the host.
+  defp await_checks_done(view, timeout \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_checks_done(view, deadline)
+  end
+
+  defp do_await_checks_done(view, deadline) do
+    cond do
+      assigns(view)[:system_checks_status] == :done ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("system self-check did not complete within the test timeout")
+
+      true ->
+        Process.sleep(10)
+        do_await_checks_done(view, deadline)
+    end
+  end
+
+  # Injects a system-checks result directly into the LiveView mailbox and
+  # renders. The self-check rows only render once `system_checks_status` leaves
+  # `:checking`; the injected result is processed after the real async one, so
+  # it is what the assertions see (same send+render pattern as the
+  # "LLM Test in Settings link" test, made deterministic by `await_checks_done`).
+  defp render_with_checks(view, result) do
+    await_checks_done(view)
+    send(view.pid, {:system_checks_result, result})
+    render(view)
+  end
+
+  # Builds a full checks result with the given nix check map (all other checks
+  # come from the real host, so the nix row assertions are independent of host
+  # config).
+  defp render_with_nix_check(view, nix_check) do
+    render_with_checks(view, %{EvoGit.SystemCheck.run_all_checks() | nix: nix_check})
+  end
+
   describe "system page" do
     test "renders the system page", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/system")
@@ -216,6 +259,143 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute result_socket.assigns.show_stop_confirm
       # Info flash about remote stop (not an error flash)
       assert %{"info" => _} = result_socket.assigns.flash
+    end
+  end
+
+  describe "platform gating" do
+    # These tests use the `:platform_os_override` injection seam in
+    # `EvoDashWeb.PlatformInfo.os_for_node/1` (checked BEFORE host detection),
+    # which is only safe in `async: false` files. The overrides are cleaned up
+    # via `on_exit`. The injected `{:system_checks_result, _}` messages make the
+    # nix/sandbox row assertions independent of host config.
+    #
+    # NOTE on markers: the HEEx template keeps its HTML comments in the rendered
+    # output (`<!-- Nix Environment Row ... -->`, `<!-- Sandbox Row ... -->`),
+    # so plain "Nix Environment"/"Sandbox" substrings are present even when the
+    # rows are hidden. Assertions therefore use row-only markers: the title span
+    # (`>Nix Environment</span>` / `>Sandbox</span>`) and row-only detail
+    # strings / icons ("flake.nix", "Flake valid", "hero-lock-closed").
+
+    test "Nix Environment row is hidden when nix is disabled in config", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html =
+        render_with_nix_check(view, %{
+          enabled: false,
+          available: true,
+          flake_present: false,
+          dev_env_built: false,
+          error: nil
+        })
+
+      refute html =~ ">Nix Environment</span>"
+      # Row-only detail strings — never rendered when the row is hidden.
+      refute html =~ "flake.nix"
+      refute html =~ "Flake valid"
+    end
+
+    test "Nix Environment row is hidden when the nix binary is unavailable", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html =
+        render_with_nix_check(view, %{
+          enabled: true,
+          available: false,
+          flake_present: false,
+          dev_env_built: false,
+          error: nil
+        })
+
+      refute html =~ ">Nix Environment</span>"
+      refute html =~ "flake.nix"
+      refute html =~ "Flake valid"
+    end
+
+    test "Nix Environment row is shown when nix is enabled and the binary is available", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html =
+        render_with_nix_check(view, %{
+          enabled: true,
+          available: true,
+          flake_present: true,
+          dev_env_built: true,
+          error: nil
+        })
+
+      assert html =~ ">Nix Environment</span>"
+      # Nix-specific detail strings from the row template (the generic
+      # "Enabled"/"Disabled" strings also appear in the Sandbox row, so assert
+      # on strings unique to the Nix row).
+      assert html =~ "flake.nix"
+      assert html =~ "Flake valid"
+    end
+
+    test "Sandbox row is hidden when the platform is Windows", %{conn: conn} do
+      # `:platform_os_override` is the injection seam for `os_for_node/1`: set
+      # to :windows it gates the Sandbox row off regardless of the host OS (on
+      # CI the host is Linux, which would normally show the row).
+      Application.put_env(:evo_dash, :platform_os_override, :windows)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :platform_os_override)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      assert assigns(view)[:platform_os] == :windows
+
+      # Checks must complete for any row to render at all — inject the real
+      # result so `system_checks_status` leaves `:checking` (same pattern as
+      # the "LLM Test in Settings link" test).
+      html = render_with_checks(view, EvoGit.SystemCheck.run_all_checks())
+
+      # The check grid renders the "Sandbox" row title only when the row is
+      # shown; the `hero-lock-closed` icon is unique to that row.
+      refute html =~ ">Sandbox</span>"
+      refute html =~ "hero-lock-closed"
+    end
+
+    test "Sandbox row is shown when the platform is macOS", %{conn: conn} do
+      Application.put_env(:evo_dash, :platform_os_override, :macos)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :platform_os_override)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      assert assigns(view)[:platform_os] == :macos
+
+      # Core assertion: row visibility. NOTE (behavior-vs-plan discrepancy):
+      # the :macos override only gates row VISIBILITY — the backend badge text
+      # (`Status.format_backend/1`) comes from the REAL host check result, so
+      # on a Linux CI host it shows "systemd-run (Linux)" even under the
+      # override. Only a second injected :sandbox_exec check map makes the
+      # badge deterministic.
+      html = render_with_checks(view, EvoGit.SystemCheck.run_all_checks())
+
+      assert html =~ ">Sandbox</span>"
+      assert html =~ "hero-lock-closed"
+
+      # Deterministic badge assertion: inject a macOS-style sandbox check result
+      # so the "sandbox-exec (macOS)" badge does not depend on the host OS.
+      html =
+        render_with_checks(view, %{
+          EvoGit.SystemCheck.run_all_checks()
+          | sandbox: %{
+              backend: :sandbox_exec,
+              enabled: true,
+              capabilities: %{filesystem_isolation: true, resource_limits: false},
+              sandbox_exec_available: true,
+              systemd_available: false
+            }
+        })
+
+      assert html =~ ">Sandbox</span>"
+      assert html =~ "sandbox-exec (macOS)"
     end
   end
 end
