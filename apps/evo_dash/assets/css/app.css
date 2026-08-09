@@ -984,7 +984,9 @@ button, a, input, textarea, select, summary,
   .animate-toast-enter,
   .animate-toast-exit,
   .animate-history-appear,
-  .agent-card-running {
+  .agent-card-running,
+  .no-project-overlay,
+  .dashboard-topbar[data-no-project="true"] {
     animation: none;
     opacity: 1;
     transform: none;
@@ -1312,6 +1314,104 @@ button, a, input, textarea, select, summary,
     color-mix(in oklab, var(--color-base-100) 80%, transparent)
   );
   border-color: color-mix(in oklab, var(--color-info) 40%, transparent);
+}
+
+/* === No-Project Hint (overlay + topbar variant) ===
+   "No project open" UX: when the dashboard is local, no active project is
+   open, and the hint hasn't been dismissed, the server renders a full-page
+   dim overlay (.no-project-overlay, a sibling of the top bar in the page
+   body) plus a hint pill (.no-project-hint) inside the top bar, and tags the
+   top bar with data-no-project="true".
+
+   Layering: the overlay sits at z-index 20 — above main content, BELOW the
+   topbar's z-30 (the topbar stays bright) and below the sidebar's z-50.
+   The overlay is pure decoration: pointer-events: none so clicks pass
+   through, and it is NOT inside the topbar, so backdrop-filter is safe here
+   (the "no containing block on .dashboard-topbar" rule — Known Issue (ii) —
+   only constrains the topbar itself and its descendants).
+
+   Constraint compliance (Known Issues (i)/(ii)): only --color-base-* /
+   --color-primary / --color-base-content via color-mix (never
+   oklch(var(--x) / a)); the topbar variant animates box-shadow ONLY — no
+   backdrop-filter / filter / transform / overflow changes on the topbar. */
+.no-project-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: color-mix(in oklab, var(--color-base-100) 55%, transparent);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  pointer-events: none;
+  animation: no-project-overlay-fade-in 0.25s ease-out;
+}
+
+@keyframes no-project-overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Topbar "no project" state: grows slightly (py-3 = 0.75rem → 0.875rem) and
+   pulses an accent ring via box-shadow. The keyframes REPEAT the base
+   .dashboard-topbar elevation (0 4px 24px -6px oklch(0% 0 0 / 0.2)) so the
+   bar never loses its shadow mid-pulse. Box-shadow does not create a
+   containing block, so the command palette stays un-trapped (Known Issue (ii)). */
+.dashboard-topbar[data-no-project="true"] {
+  padding-block: 0.875rem;
+  border-color: color-mix(in oklch, var(--color-primary) 45%, transparent);
+  animation: no-project-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes no-project-pulse {
+  0%, 100% {
+    box-shadow:
+      0 4px 24px -6px oklch(0% 0 0 / 0.2),
+      0 0 0 0 color-mix(in oklch, var(--color-primary) 0%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 4px 24px -6px oklch(0% 0 0 / 0.2),
+      0 0 0 4px color-mix(in oklch, var(--color-primary) 22%, transparent);
+  }
+}
+
+/* The hint pill rendered inside the top bar — compact, theme-aware accent.
+   The markup agent may use Tailwind utilities for layout; these rules only
+   add what utilities can't express (accent tint, hover depth, pill shape). */
+.no-project-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid color-mix(in oklch, var(--color-primary) 35%, transparent);
+  background: color-mix(in oklch, var(--color-primary) 12%, transparent);
+  padding: 0.375rem 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--color-base-content);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.no-project-hint:hover {
+  background: color-mix(in oklch, var(--color-primary) 20%, transparent);
+  border-color: color-mix(in oklch, var(--color-primary) 55%, transparent);
+}
+
+/* Dismiss X — visually quiet by default, more visible on hover. Works both
+   with a plain button and with btn/btn-ghost/btn-xs utilities (the utility
+   classes can still carry sizing/rounding; this layers the muted color). */
+.no-project-hint .no-project-hint-dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+  transition: color 0.2s ease, background 0.2s ease;
+}
+
+.no-project-hint .no-project-hint-dismiss:hover {
+  color: var(--color-base-content);
+  background: color-mix(in oklab, var(--color-base-content) 10%, transparent);
 }
 
 /* === Command Palette (Project Omnibox) === */

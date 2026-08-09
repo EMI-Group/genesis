@@ -173,11 +173,11 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
-  # New-project Location path input autocomplete wiring: the input carries the
-  # PathAutocomplete hook, the `new_project_location_input` change event
+  # New-project path input autocomplete wiring: the input carries the
+  # PathAutocomplete hook, the `new_project_path_input` change event
   # (debounced 150ms), and a datalist fed by `@path_suggestions` — mirroring
   # the open-path palette input and the foreign-repo form.
-  describe "new project location input autocomplete" do
+  describe "new project path input autocomplete" do
     test "input carries hook/list/change/debounce attributes and a datalist" do
       html =
         render_component(&ProjectComponents.project_omnibox/1,
@@ -186,24 +186,55 @@ defmodule EvoDashWeb.ProjectComponentsTest do
           path_suggestions: ["/tmp/alpha", "/tmp/beta"]
         )
 
-      assert attribute(html, "#new-project-location-input", "phx-hook") == [
-               "PathAutocomplete"
+      assert attribute(html, "#new-project-path-input", "phx-hook") == ["PathAutocomplete"]
+
+      assert attribute(html, "#new-project-path-input", "list") == [
+               "new-project-path-suggestions"
              ]
 
-      assert attribute(html, "#new-project-location-input", "list") == [
-               "new-project-location-suggestions"
+      assert attribute(html, "#new-project-path-input", "phx-change") == [
+               "new_project_path_input"
              ]
 
-      assert attribute(html, "#new-project-location-input", "phx-change") == [
-               "new_project_location_input"
-             ]
+      assert attribute(html, "#new-project-path-input", "phx-debounce") == ["150"]
 
-      assert attribute(html, "#new-project-location-input", "phx-debounce") == ["150"]
+      # The single path input carries a neutral placeholder and label — the old
+      # two-field form (Location + Project name) is gone.
+      assert attribute(html, "#new-project-path-input", "placeholder") == ["Project path"]
+      assert html =~ "Project path"
+      refute html =~ "Project name"
 
       # The datalist renders one <option> per suggestion
-      assert html =~ ~s(<datalist id="new-project-location-suggestions">)
+      assert html =~ ~s(<datalist id="new-project-path-suggestions">)
       assert html =~ ~s(<option value="/tmp/alpha"></option>)
       assert html =~ ~s(<option value="/tmp/beta"></option>)
+    end
+  end
+
+  # Placeholder neutrality: the palette path inputs (open-path and new-project)
+  # use the neutral "Project path" placeholder — no example paths like
+  # "/home/user/my-project" baked into the UI.
+  describe "neutral placeholders" do
+    test "open-path and new-project inputs use the neutral Project path placeholder" do
+      open_html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :open_path
+        )
+
+      assert attribute(open_html, "#project-path-input", "placeholder") == ["Project path"]
+      refute open_html =~ "/home/user"
+      refute open_html =~ "my-project"
+
+      new_html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :new_project
+        )
+
+      assert attribute(new_html, "#new-project-path-input", "placeholder") == ["Project path"]
+      refute new_html =~ "/home/user"
+      refute new_html =~ "my-project"
     end
   end
 

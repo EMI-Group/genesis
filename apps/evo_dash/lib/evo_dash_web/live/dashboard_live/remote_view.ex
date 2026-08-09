@@ -64,12 +64,17 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
   attr(:remote, :boolean, default: false)
   attr(:current_node_name, :string, default: "Local")
   attr(:hide_palette, :boolean, default: false)
+  attr(:no_project_hint_dismissed, :boolean, default: false)
 
   def top_bar(assigns) do
     ~H"""
+    <% show_hint =
+      !@remote and !@hide_palette and is_nil(@active_project) and
+        !@no_project_hint_dismissed %>
     <div
       class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-3 px-4 py-3"
       data-remote={@remote}
+      data-no-project={show_hint}
     >
       <!-- LEFT: command palette project control. When hide_palette is set
            (pending/failed remote gate states) a muted non-interactive
@@ -95,6 +100,35 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
           />
         <% end %>
       </div>
+
+      <!-- MIDDLE: no-project hint pill — clickable (opens the palette),
+           dismissible. Only in local non-gate renders with no project open
+           and the hint not dismissed. Styling (accent border/ring, pulse) is
+           pure CSS on [data-no-project="true"] / .no-project-hint — the
+           topbar must NOT get backdrop-filter/filter/transform (a containing
+           block would trap the palette's fixed-position backdrop). -->
+      <%= if show_hint do %>
+        <div
+          class="no-project-hint shrink-0 cursor-pointer flex items-center gap-1.5"
+          phx-click="open_project_palette"
+          role="button"
+          title={gettext("Open or create a project")}
+        >
+          <.icon name="hero-folder-plus" class="size-4" />
+          <span class="text-sm font-medium whitespace-nowrap">
+            {gettext("Open or create a project")}
+          </span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs btn-square shrink-0"
+            phx-click="dismiss_no_project_hint"
+            phx-stop-propagation
+            title={gettext("Dismiss")}
+          >
+            <.icon name="hero-x-mark" class="size-3.5" />
+          </button>
+        </div>
+      <% end %>
 
       <!-- RIGHT: remote target badge (Configure dropdown is local-only) -->
       <%= if @remote do %>

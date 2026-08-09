@@ -272,12 +272,15 @@ const DirectoryPicker = {
     const input = this.pickerInput();
     if (onlyIfEmpty && input && input.value) return false;
     this.fillInput(selected);
-    // Tauri native picks return a full path — auto-confirm the project picker
-    // by submitting the enclosing open_project form directly. (The browse
-    // button lives inside that form; browser-API picks are NOT auto-confirmed
-    // because showDirectoryPicker yields only the folder name, and the other
-    // pickers still need manual input.)
-    if (autoSubmit && this.el.dataset.pickerId === "project") {
+    // Tauri native picks return a full path — auto-confirm the project and
+    // new-project pickers by submitting the enclosing form directly. (The
+    // browse button lives inside that form; browser-API picks are NOT
+    // auto-confirmed because showDirectoryPicker yields only the folder
+    // name, and the foreign-repo picker is a settings form field that still
+    // needs manual input.)
+    if (autoSubmit &&
+        (this.el.dataset.pickerId === "project" ||
+         this.el.dataset.pickerId === "new-project")) {
       this.el.closest("form")?.requestSubmit();
     }
     return true;

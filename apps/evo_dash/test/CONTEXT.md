@@ -41,6 +41,10 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
 - `error_html_test.exs` — `EvoDashWeb.ErrorHTMLTest` — Validates HTML error templates (404 → "Not Found", 500 → "Internal Server Error").
 - `error_json_test.exs` — `EvoDashWeb.ErrorJSONTest` — Validates JSON error responses (404/500 with appropriate `%{errors: %{detail: ...}}` shape).
 
+## Known Issues
+
+- **`create_project` mkdir path — `File.mkdir_p` returns plain `:ok`** (RESOLVED, commit `c4add001`): during the single-path new-project rework (commit `8f652ec7`), `EvoDashWeb.DashboardLive.ProjectFlow.create_project/2` initially matched only `{:ok, _}` from `File.mkdir_p/1`, but Elixir returns plain `:ok` (verified on the pinned Elixir 1.20.2/OTP 29) → `CaseClauseError` on every create-at-non-existent-path submission. Fixed by matching plain `:ok`. **Gotcha for future agents**: `File.mkdir_p/1` returns `:ok | {:error, reason}` — never `{:ok, _}`. The dashboard_live_test cases "creates and activates a new project" (:890) and "creates a fully non-existent nested path recursively" (:922) pin this behavior.
+
 ## Constraints
 - Follow standard Phoenix test conventions: mirror the `lib/` directory structure under `test/`.
 - All connection-based tests must `use EvoDashWeb.ConnCase`.

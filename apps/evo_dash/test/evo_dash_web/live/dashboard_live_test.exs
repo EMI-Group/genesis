@@ -693,7 +693,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       render_click(view, "open_project_palette", %{})
 
       html = render_click(view, "palette_mode", %{"mode" => "new_project"})
-      assert html =~ ~s(id="new-project-location-input")
+      assert html =~ ~s(id="new-project-path-input")
     end
 
     test "palette_search filters recent projects by name", %{conn: conn, tmp_dir: tmp_dir} do
@@ -829,7 +829,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
   end
 
-  describe "new project location input suggestions" do
+  describe "new project path input suggestions" do
     test "input carries autocomplete wiring and recomputes suggestions on change", %{
       conn: conn,
       tmp_dir: tmp_dir
@@ -840,18 +840,18 @@ defmodule EvoDashWeb.DashboardLiveTest do
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "new_project"})
 
-      # Typing into the Location input fires the phx-change handler, which
+      # Typing into the path input fires the phx-change handler, which
       # recomputes `@path_suggestions` for the typed parent directory (the
       # create-new-project palette is local-only, so these resolve against the
       # local filesystem).
-      html = render_change(view, "new_project_location_input", %{"location" => tmp_dir})
+      html = render_change(view, "new_project_path_input", %{"path" => tmp_dir})
 
-      assert html =~ ~s(id="new-project-location-input")
+      assert html =~ ~s(id="new-project-path-input")
       assert html =~ ~s(phx-hook="PathAutocomplete")
-      assert html =~ ~s(list="new-project-location-suggestions")
-      assert html =~ ~s(phx-change="new_project_location_input")
+      assert html =~ ~s(list="new-project-path-suggestions")
+      assert html =~ ~s(phx-change="new_project_path_input")
       assert html =~ ~s(phx-debounce="150")
-      assert html =~ ~s(<datalist id="new-project-location-suggestions">)
+      assert html =~ ~s(<datalist id="new-project-path-suggestions">)
 
       # tmp_dir exists on disk, so it must appear among the recomputed suggestions
       assert Enum.member?(assigns(view)[:path_suggestions], tmp_dir)
@@ -907,7 +907,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       html =
         view
         |> element("form[phx-submit='create_project']")
-        |> render_submit(%{location: tmp_dir, name: "my-brand-new-project"})
+        |> render_submit(%{path: full_path})
 
       # Flash confirms creation
       assert html =~ "Project created"
@@ -915,6 +915,118 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ "my-brand-new-project"
       # The new project is registered in the recent list
       assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == full_path))
+      # The palette closes after successful creation
+      assert assigns(view)[:project_palette_open] == false
+    end
+
+    test "creates a fully non-existent nested path recursively", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "new_project"})
+
+      full_path = Path.join(tmp_dir, "new/nested/project")
+
+      # None of the intermediate directories exist yet
+      assert File.dir?(full_path) == false
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.remove_recent_project(full_path)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      html =
+        view
+        |> element("form[phx-submit='create_project']")
+        |> render_submit(%{path: full_path})
+
+      # The whole parent chain was created
+      assert File.dir?(full_path) == true
+      # Flash confirms creation
+      assert html =~ "Project created"
+      # The new project is registered in the recent list
+      assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == full_path))
+      # The palette closes after successful creation
+      assert assigns(view)[:project_palette_open] == false
+    end
+
+    test "opens and activates an existing directory", %{conn: conn, tmp_dir: tmp_dir} do
+      existing = Path.join(tmp_dir, "existing-project")
+      File.mkdir_p!(existing)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.remove_recent_project(existing)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "new_project"})
+
+      html =
+        view
+        |> element("form[phx-submit='create_project']")
+        |> render_submit(%{path: existing})
+
+      # Opening an existing directory follows the same success path
+      assert html =~ "Project created"
+      refute html =~ "Could not create directory"
+      refute html =~ "Invalid project name"
+      # The existing project is registered in the recent list
+      assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == existing))
+      # The palette closes after successful creation
+      assert assigns(view)[:project_palette_open] == false
+    end
+  end
+
+  describe "no-project hint" do
+    setup do
+      clear_recent_projects()
+    end
+
+    test "renders the hint pill, dim overlay, and wiring when no project is active", %{
+      conn: conn
+    } do
+      {:ok, _view, html} = live(conn, ~p"/")
+
+      # The hint pill (clickable, dismissible)
+      assert html =~ ~s(class="no-project-hint)
+      assert html =~ "Open or create a project"
+      assert html =~ ~s(phx-click="open_project_palette")
+      assert html =~ ~s(phx-click="dismiss_no_project_hint")
+      assert html =~ ~s(phx-stop-propagation)
+      # The topbar carries the CSS hook flag
+      assert html =~ ~s(data-no-project="true")
+      # The page-dim overlay
+      assert html =~ ~s(class="no-project-overlay" aria-hidden="true")
+    end
+
+    test "dismissing the hint hides the pill and lifts the overlay", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "dismiss_no_project_hint", %{})
+
+      refute html =~ ~s(class="no-project-hint)
+      refute html =~ "no-project-overlay"
+
+      # The topbar's data-no-project attribute is gone when the hint is
+      # dismissed (a plain `refute html =~ "data-no-project=\"true\""` would
+      # false-positive on the source comment in remote_view.ex, which is
+      # rendered verbatim into the HTML).
+      assert Floki.find(Floki.parse_document!(html), "[data-no-project]") == []
+      assert assigns(view)[:no_project_hint_dismissed] == true
     end
   end
 
