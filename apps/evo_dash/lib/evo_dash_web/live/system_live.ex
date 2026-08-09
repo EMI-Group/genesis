@@ -13,6 +13,9 @@ defmodule EvoDashWeb.SystemLive do
   #   Genesis → 启元
   #   Context Tree → 上下文树
   #   LLM Provider → 服务商
+  #   Configuration → 配置
+  #   Required Tools → 必需工具
+  #   Nix Environment → Nix 环境
 
   use EvoDashWeb, :live_view
 
@@ -136,6 +139,54 @@ defmodule EvoDashWeb.SystemLive do
             </button>
           </div>
 
+          <!-- Overall health banner: merges all checks into one status light -->
+          <% health = Status.overall_health(health_checks(assigns)) %>
+          <div
+            class={"rounded-lg border p-4 mb-4 flex items-start gap-3 #{health_banner_class(health.status)}"}
+          >
+            <%= case health.status do %>
+              <% :ok -> %>
+                <.icon name="hero-check-circle-solid" class="size-6 text-success shrink-0" />
+              <% :warning -> %>
+                <.icon name="hero-exclamation-triangle-solid" class="size-6 text-warning shrink-0" />
+              <% :error -> %>
+                <.icon name="hero-x-circle-solid" class="size-6 text-error shrink-0" />
+              <% :loading -> %>
+                <.icon name="hero-arrow-path" class="size-6 text-base-content/40 animate-spin shrink-0" />
+            <% end %>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-bold text-sm">
+                <%= case health.status do %>
+                  <% :ok -> %>
+                    {gettext("System running correctly")}
+                  <% :warning -> %>
+                    {gettext("System running, but needs attention")}
+                  <% :error -> %>
+                    {gettext("System needs attention")}
+                  <% :loading -> %>
+                    {gettext("Checking system health...")}
+                <% end %>
+              </h3>
+              <%= if health.reasons != [] do %>
+                <ul class="mt-1.5 space-y-1 text-sm">
+                  <%= for reason <- health.reasons do %>
+                    <li class="flex items-start gap-1.5 text-base-content/70">
+                      <.icon
+                        name="hero-exclamation-circle"
+                        class="size-3.5 text-base-content/50 shrink-0 mt-0.5"
+                      />
+                      <span>{reason}</span>
+                    </li>
+                  <% end %>
+                </ul>
+              <% else %>
+                <%= if health.status == :ok do %>
+                  <p class="text-sm text-base-content/60">{gettext("All self-checks passed.")}</p>
+                <% end %>
+              <% end %>
+            </div>
+          </div>
+
           <div class="space-y-3">
             <%= if @system_checks_status == :checking do %>
               <div class="flex items-center gap-3 py-6 justify-center">
@@ -143,156 +194,192 @@ defmodule EvoDashWeb.SystemLive do
                 <span class="text-sm text-base-content/60">{gettext("Checking system status...")}</span>
               </div>
             <% else %>
-              <!-- Config Status Row -->
-              <.system_check_row
-                title={gettext("Configuration")}
-                icon="hero-cog-6-tooth"
-                status={if Status.config_ok?(@config_status), do: :ok, else: :error}
-              >
-                <:details>
-                  <%= if Status.config_ok?(@config_status) do %>
-                    <span class="text-sm text-success">{gettext("All configured")}</span>
-                  <% else %>
-                    <div class="flex flex-wrap gap-1.5">
-                      <%= for item <- (@config_status[:missing] || []) do %>
-                        <span class="badge badge-warning badge-sm gap-1">
-                          <.icon name="hero-x-mark" class="size-3" />
-                          {Status.format_config_item(item)}
-                        </span>
-                      <% end %>
-                    </div>
-                  <% end %>
-                  <%= if @config_status != nil and @config_status[:validation_errors] not in [[], nil] do %>
-                    <div class="mt-1 text-xs text-warning">
-                      {ngettext(
-                        "%{count} validation warning",
-                        "%{count} validation warnings",
-                        length(@config_status.validation_errors)
+              <!-- Check terms in a responsive 2D grid -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <!-- Configuration cell -->
+                <.check_cell
+                  title={gettext("Configuration")}
+                  icon="hero-cog-6-tooth"
+                  status={if Status.config_ok?(@config_status), do: :ok, else: :error}
+                >
+                  <:details>
+                    <p class="text-xs text-base-content/60 mb-2">
+                      {gettext(
+                        "Verifies that the required settings — LLM provider, model, and API key — are configured."
                       )}
-                    </div>
-                  <% end %>
-                </:details>
-              </.system_check_row>
-
-              <!-- Tools Row -->
-              <.system_check_row
-                title={gettext("Required Tools")}
-                icon="brand-git"
-                status={Status.tools_status(@tool_check)}
-              >
-                <:details>
-                  <div class="flex flex-wrap gap-3">
-                    <.tool_badge name="git" check={@tool_check.git} />
-                    <.tool_badge name="rg (ripgrep)" check={@tool_check.rg} />
-                  </div>
-                </:details>
-              </.system_check_row>
-
-              <!-- Sandbox Row (hidden on Windows/unknown platforms) -->
-              <% # zh_CN: "沙箱" %>
-              <%= if EvoDashWeb.PlatformInfo.show_sandbox?(@platform_os) do %>
-                <.system_check_row
-                  title={gettext("Sandbox")}
-                  icon="hero-lock-closed"
-                  status={Status.sandbox_status(@sandbox_check)}
-                >
-                  <:details>
-                    <div class="flex flex-wrap gap-2 items-center">
-                      <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
-                        {Status.format_backend(@sandbox_check.backend)}
-                      </span>
-                      <span class="text-sm text-base-content/60">
-                        {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
-                      </span>
-                      <%= if @sandbox_check.backend != :none do %>
-                        <span class="text-xs text-base-content/40">
-                          {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
-                            do: "✓",
-                            else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
-                            do: "✓",
-                            else: "✗"}
-                        </span>
-                      <% end %>
-                    </div>
-                  </:details>
-                </.system_check_row>
-              <% end %>
-
-              <!-- Supervisor Row -->
-              <.system_check_row
-                title={gettext("Genesis Process Tree")}
-                icon="hero-server-stack"
-                status={if Status.supervisor_healthy?(@supervisor_check), do: :ok, else: :error}
-              >
-                <:details>
-                  <div class="space-y-1">
-                    <.supervisor_status
-                      label={gettext("EvoGit")}
-                      children={@supervisor_check.evo_git}
-                    />
-                    <.supervisor_status
-                      label={gettext("EvoDash")}
-                      children={@supervisor_check.evo_dash}
-                    />
-                  </div>
-                </:details>
-              </.system_check_row>
-
-              <!-- Nix Environment Row (gated on nix enabled in config AND binary available) -->
-              <%= if @nix_check != nil and @nix_check.enabled and @nix_check.available do %>
-                <.system_check_row
-                  title={gettext("Nix Environment")}
-                  icon="brand-nix"
-                  status={Status.nix_status(@nix_check)}
-                >
-                  <:details>
-                    <div class="flex flex-wrap gap-2 items-center">
-                      <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
-                        {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
-                      </span>
-                      <span class="text-sm text-base-content/60">
-                        {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
-                      </span>
-                      <span class="text-sm text-base-content/60">
-                        {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
-                      </span>
-                      <%= if @nix_check.flake_present do %>
-                        <span class="text-xs text-base-content/40">
-                          {gettext("Flake valid")}: {if @nix_check.dev_env_built, do: "✓", else: "✗"}
-                        </span>
-                      <% end %>
-                    </div>
-                    <%= if @nix_check[:error] do %>
-                      <div class="mt-1 text-xs text-error/80">
-                        <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
-                        {@nix_check.error}
+                    </p>
+                    <%= if Status.config_ok?(@config_status) do %>
+                      <span class="text-sm text-success">{gettext("All configured")}</span>
+                    <% else %>
+                      <div class="flex flex-wrap gap-1.5">
+                        <%= for item <- (@config_status[:missing] || []) do %>
+                          <span class="badge badge-warning badge-sm gap-1">
+                            <.icon name="hero-x-mark" class="size-3" />
+                            {Status.format_config_item(item)}
+                          </span>
+                        <% end %>
+                      </div>
+                    <% end %>
+                    <%= if @config_status != nil and @config_status[:validation_errors] not in [[], nil] do %>
+                      <div class="mt-1 text-xs text-warning">
+                        {ngettext(
+                          "%{count} validation warning",
+                          "%{count} validation warnings",
+                          length(@config_status.validation_errors)
+                        )}
                       </div>
                     <% end %>
                   </:details>
-                </.system_check_row>
-              <% end %>
-
-              <!-- LLM Test Row -->
-              <.system_check_row
-                title={gettext("LLM Connection")}
-                icon="hero-chat-bubble-left-right"
-                status={:info}
-              >
-                <:details>
-                  <div class="flex items-center gap-3">
-                    <span class="text-sm text-base-content/60">{gettext(
-                      "LLM connection testing is now available on the Settings page."
-                    )}</span>
+                  <:fix>
+                    {gettext("Fix the missing or invalid settings in Settings.")}
                     <.link
-                      navigate={~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"}
-                      class="btn btn-primary btn-sm gap-2"
+                      navigate={with_node_param(~p"/settings", @current_node_id)}
+                      class="link link-primary ml-1"
                     >
-                      <.icon name="hero-sparkles" class="size-4" />
-                      {gettext("Test in Settings")}
+                      {gettext("Open Settings")}
                     </.link>
-                  </div>
-                </:details>
-              </.system_check_row>
+                  </:fix>
+                </.check_cell>
+
+                <!-- Required Tools cell -->
+                <.check_cell
+                  title={gettext("Required Tools")}
+                  icon="brand-git"
+                  status={Status.tools_status(@tool_check)}
+                >
+                  <:details>
+                    <p class="text-xs text-base-content/60 mb-2">
+                      {gettext(
+                        "Checks that the git and ripgrep command-line tools are installed and available on your PATH."
+                      )}
+                    </p>
+                    <div class="flex flex-wrap gap-3">
+                      <.tool_badge name="git" check={@tool_check.git} />
+                      <.tool_badge name="rg (ripgrep)" check={@tool_check.rg} />
+                    </div>
+                  </:details>
+                  <:fix>
+                    <%= if @tool_check.git.available == false do %>
+                      <div>{gettext("Install git and make sure it is available on your PATH.")}</div>
+                    <% end %>
+                    <%= if @tool_check.rg.available == false do %>
+                      <div>{gettext("Install ripgrep and make sure it is available on your PATH.")}</div>
+                    <% end %>
+                  </:fix>
+                </.check_cell>
+
+                <!-- Sandbox cell (hidden on Windows/unknown platforms) -->
+                <% # zh_CN: "沙箱" %>
+                <%= if EvoDashWeb.PlatformInfo.show_sandbox?(@platform_os) do %>
+                  <.check_cell
+                    title={gettext("Sandbox")}
+                    icon="hero-lock-closed"
+                    status={Status.sandbox_status(@sandbox_check)}
+                  >
+                    <:details>
+                      <p class="text-xs text-base-content/60 mb-2">
+                        {gettext(
+                          "Checks that agent commands can be isolated in a sandbox to protect your system."
+                        )}
+                      </p>
+                      <div class="flex flex-wrap gap-2 items-center">
+                        <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
+                          {Status.format_backend(@sandbox_check.backend)}
+                        </span>
+                        <span class="text-sm text-base-content/60">
+                          {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
+                        </span>
+                        <%= if @sandbox_check.backend != :none do %>
+                          <span class="text-xs text-base-content/40">
+                            {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
+                              do: "✓",
+                              else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
+                              do: "✓",
+                              else: "✗"}
+                          </span>
+                        <% end %>
+                      </div>
+                    </:details>
+                    <:fix>
+                      <%= case @sandbox_check.backend do %>
+                        <% :systemd_run -> %>
+                          {gettext("Enable or install systemd-run. Sandboxing requires a systemd user session.")}
+                        <% :sandbox_exec -> %>
+                          {gettext("Sandbox-exec sandboxing is unavailable on this system.")}
+                        <% _ -> %>
+                          {gettext("No sandbox backend is available on this system.")}
+                      <% end %>
+                    </:fix>
+                  </.check_cell>
+                <% end %>
+
+                <!-- Nix Environment cell (gated on nix enabled in config AND binary available) -->
+                <%= if @nix_check != nil and @nix_check.enabled and @nix_check.available do %>
+                  <.check_cell
+                    title={gettext("Nix Environment")}
+                    icon="brand-nix"
+                    status={Status.nix_status(@nix_check)}
+                  >
+                    <:details>
+                      <p class="text-xs text-base-content/60 mb-2">
+                        {gettext("Checks the Nix development environment used for reproducible builds.")}
+                      </p>
+                      <div class="flex flex-wrap gap-2 items-center">
+                        <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
+                          {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
+                        </span>
+                        <span class="text-sm text-base-content/60">
+                          {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
+                        </span>
+                        <span class="text-sm text-base-content/60">
+                          {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
+                        </span>
+                        <%= if @nix_check.flake_present do %>
+                          <span class="text-xs text-base-content/40">
+                            {gettext("Flake valid")}: {if @nix_check.dev_env_built, do: "✓", else: "✗"}
+                          </span>
+                        <% end %>
+                      </div>
+                      <%= if @nix_check[:error] do %>
+                        <div class="mt-1 text-xs text-error/80">
+                          <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
+                          {@nix_check.error}
+                        </div>
+                      <% end %>
+                    </:details>
+                    <:fix>
+                      {gettext(
+                        "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
+                      )}
+                    </:fix>
+                  </.check_cell>
+                <% end %>
+
+                <!-- LLM Connection cell -->
+                <.check_cell
+                  title={gettext("LLM Connection")}
+                  icon="hero-chat-bubble-left-right"
+                  status={:info}
+                >
+                  <:details>
+                    <p class="text-xs text-base-content/60 mb-2">
+                      {gettext("Check that your LLM provider is reachable with the configured API key.")}
+                    </p>
+                    <div class="flex items-center gap-3">
+                      <span class="text-sm text-base-content/60">{gettext(
+                        "LLM connection testing is now available on the Settings page."
+                      )}</span>
+                      <.link
+                        navigate={~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"}
+                        class="btn btn-primary btn-sm gap-2"
+                      >
+                        <.icon name="hero-sparkles" class="size-4" />
+                        {gettext("Test in Settings")}
+                      </.link>
+                    </div>
+                  </:details>
+                </.check_cell>
+              </div>
             <% end %>
           </div>
         </div>
@@ -714,29 +801,48 @@ defmodule EvoDashWeb.SystemLive do
   attr(:icon, :string, required: true)
   attr(:status, :atom, default: :ok)
   slot(:details, required: true)
+  slot(:fix)
 
-  defp system_check_row(assigns) do
+  # A self-check term rendered as a card in the responsive 2D grid. The
+  # `<details>` disclosure expands to show what was checked and the detected
+  # values; the `:fix` slot renders a how-to-fix hint when the term is
+  # failing (any status other than :ok/:info).
+  defp check_cell(assigns) do
     ~H"""
-    <div class="flex items-start gap-3 py-3 border-b border-base-200/40 last:border-0">
-      <div class={"p-2 rounded-md #{status_bg(@status)}"}>
-        <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
-      </div>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 mb-1">
-          <span class="font-semibold text-sm">{@title}</span>
-          <%= case @status do %>
-            <% :ok -> %>
-              <.icon name="hero-check-circle-solid" class="size-4 text-success" />
-            <% :error -> %>
-              <.icon name="hero-x-circle-solid" class="size-4 text-error" />
-            <% :info -> %>
-              <.icon name="hero-information-circle-solid" class="size-4 text-info" />
-            <% :warning -> %>
-              <.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
+    <div class="rounded-lg border border-base-200 bg-base-100">
+      <details class="group">
+        <summary class="flex items-center gap-3 p-4 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <div class={"p-2 rounded-md #{status_bg(@status)}"}>
+            <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
+          </div>
+          <div class="flex-1 min-w-0 flex items-center gap-2">
+            <span class="font-semibold text-sm">{@title}</span>
+            <%= case @status do %>
+              <% :ok -> %>
+                <.icon name="hero-check-circle-solid" class="size-4 text-success" />
+              <% :error -> %>
+                <.icon name="hero-x-circle-solid" class="size-4 text-error" />
+              <% :info -> %>
+                <.icon name="hero-information-circle-solid" class="size-4 text-info" />
+              <% :warning -> %>
+                <.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
+            <% end %>
+          </div>
+          <.icon
+            name="hero-chevron-down"
+            class="size-4 text-base-content/30 transition-transform group-open:rotate-180 shrink-0"
+          />
+        </summary>
+        <div class="px-4 pb-4 text-sm">
+          {render_slot(@details)}
+          <%= if @status not in [:ok, :info] and @fix != [] do %>
+            <div class="mt-3 pt-3 border-t border-base-200/60 flex items-start gap-2 text-xs text-base-content/70">
+              <.icon name="hero-light-bulb" class="size-3.5 text-warning shrink-0 mt-0.5" />
+              <div class="min-w-0">{render_slot(@fix)}</div>
+            </div>
           <% end %>
         </div>
-        {render_slot(@details)}
-      </div>
+      </details>
     </div>
     """
   end
@@ -760,39 +866,38 @@ defmodule EvoDashWeb.SystemLive do
     """
   end
 
-  attr(:label, :string, required: true)
-  attr(:children, :list, required: true)
-
-  defp supervisor_status(assigns) do
-    ~H"""
-    <div class="flex items-center gap-2 text-sm">
-      <span class="font-medium text-base-content/70">{@label}:</span>
-      <div class="flex flex-wrap gap-1.5">
-        <%= if Enum.empty?(@children) || Enum.all?(@children, &(&1.status == :running)) do %>
-          <span class="text-xs text-base-content/40">{gettext("All healthy")}</span>
-        <% else %>
-          <%= for child <- @children, child.status != :running do %>
-            <span class="badge badge-sm badge-error">
-              <.icon name="hero-x-mark" class="size-3" />
-              {child.id}
-            </span>
-          <% end %>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
   # --- Private Helper Functions ---
 
-  # Status background colors for system_check_row
+  # Builds the checks map consumed by `Status.overall_health/1`. The shown-flags
+  # mirror the cell gating in the template, so sandbox/nix only count toward the
+  # health light when their cells are actually rendered.
+  defp health_checks(assigns) do
+    %{
+      supervisor: assigns.supervisor_check,
+      config: assigns.config_status,
+      tools: assigns.tool_check,
+      sandbox: assigns.sandbox_check,
+      nix: assigns.nix_check,
+      sandbox_shown: EvoDashWeb.PlatformInfo.show_sandbox?(assigns.platform_os),
+      nix_shown:
+        assigns.nix_check != nil and assigns.nix_check.enabled and assigns.nix_check.available
+    }
+  end
+
+  # Border/background classes for the overall health banner.
+  defp health_banner_class(:ok), do: "border-success/40 bg-success/10"
+  defp health_banner_class(:warning), do: "border-warning/40 bg-warning/10"
+  defp health_banner_class(:error), do: "border-error/40 bg-error/10"
+  defp health_banner_class(:loading), do: "border-base-200 bg-base-100"
+
+  # Status background colors for check_cell
   defp status_bg(:ok), do: "bg-success/10"
   defp status_bg(:error), do: "bg-error/10"
   defp status_bg(:info), do: "bg-info/10"
   defp status_bg(:warning), do: "bg-warning/10"
   defp status_bg(_), do: "bg-base-200/50"
 
-  # Status text colors for system_check_row icon
+  # Status text colors for check_cell icon
   defp status_text(:ok), do: "text-success"
   defp status_text(:error), do: "text-error"
   defp status_text(:info), do: "text-info"
