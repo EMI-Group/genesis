@@ -85,14 +85,48 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 
   describe "LLM quick setup API key detection (credentials.toml)" do
-
     # The credentials.toml file is written under the test's isolated XDG dir
     # (see the file-level `setup` block), so EvoGit.Config.credentials_path/0
     # resolves to a path we can control. Each test cleans up after itself so no
     # state leaks between tests.
     defp creds_file, do: EvoGit.Config.credentials_path()
 
-    test "Case A — key present in credentials.toml only", %{conn: conn} do
+    # Derive provider/model strings from the catalog — never hardcode model ids
+    # or display names (they change as the catalog evolves). Provider ids
+    # (deepseek/google/anthropic/alibaba) are stable fixtures.
+    defp provider(id), do: Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == id))
+
+    defp model_string(id, variant_id \\ nil) do
+      p = provider(id)
+      atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(id, variant_id)
+      "#{atom}:#{hd(p.models).id}"
+    end
+
+    test "after provider selection alone, model shortcuts render but the API key form is gated",
+         %{
+           conn: conn
+         } do
+      # Ensure no credentials.toml exists.
+      File.rm(creds_file())
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      assert provider(:deepseek).models != []
+
+      # The API key form is gated on model selection — the hint shows instead.
+      assert html =~ "Select a model above to configure credentials."
+      refute html =~ ~s(name="api_key")
+      refute html =~ "Enter your API key"
+      refute html =~ "Save Model"
+      refute html =~ "API key is already set"
+
+      # Model shortcut buttons ARE present, carrying the derived model_string.
+      assert html =~ "Quick-select a model:"
+      assert html =~ ~s(phx-value-model_string="#{model_string(:deepseek)}")
+    end
+
+    test "Case A — key present in credentials.toml", %{conn: conn} do
       # Write a credentials.toml with the key. credentials.toml is a flat
       # key=value TOML; string keys map directly into the parsed map.
       creds = creds_file()
@@ -104,8 +138,15 @@ defmodule EvoDashWeb.SettingsLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/settings")
-      # The API key input only renders once a provider is selected.
+      # The API key form only renders once a model is selected.
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      # Before a model is selected, the key status is not surfaced.
+      assert html =~ "Select a model above to configure credentials."
+      refute html =~ "API key is already set"
+
+      # Selecting a model reveals the API key form; the key is detected.
+      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
 
       # When key_is_set is true the placeholder is "API key is already set".
       assert html =~ "API key is already set"
@@ -117,12 +158,96 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm(creds_file())
 
       {:ok, view, _html} = live(conn, ~p"/settings")
-      # The API key input only renders once a provider is selected.
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      assert html =~ "Select a model above to configure credentials."
 
-      # When the key is NOT set, the placeholder is "Enter your API key".
+      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+
+      # When the key is NOT set, the hint paragraph reads "Enter your API key".
+      # (deepseek has a prefix hint "sk-..." so the input placeholder itself is
+      # "sk-...", but the hint paragraph below renders "Enter your API key. It
+      # should start with sk-...".)
       assert html =~ "Enter your API key"
       refute html =~ "API key is already set"
+    end
+
+    test "model selection highlights the button and enables the Save Model form", %{conn: conn} do
+      File.rm(creds_file())
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+
+      # The Save Model form renders with its hidden inputs.
+      assert html =~ "Save Model"
+      assert html =~ ~s(phx-submit="save_quick_setup")
+      assert html =~ ~s(name="model_string")
+
+      # The selected model button carries the active styling. The provider
+      # button ALSO uses btn-primary shadow-md, so scope the assertion to the
+      # model button element via its phx-value-model_string attribute.
+      doc = Floki.parse_document!(html)
+      [model_button] = Floki.find(doc, ~s([phx-value-model_string="#{model_string(:deepseek)}"]))
+      classes = model_button |> Floki.attribute("class") |> Enum.join(" ")
+      assert classes =~ "btn-primary"
+      assert classes =~ "shadow-md"
+    end
+
+    test "save_quick_setup persists the selected profile", %{conn: conn} do
+      File.rm(creds_file())
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
+
+      html =
+        render_hook(view, "save_quick_setup", %{
+          "model_string" => model_string(:deepseek),
+          "provider_id" => "deepseek",
+          "variant_id" => "",
+          "base_url" => ""
+        })
+
+      assert html =~ "Model selected and saved."
+
+      # The profile is persisted; after the TOML round-trip the model is the
+      # normalized "provider:model" string.
+      models = get_in(assigns(view).file_config, [:llm, :models]) || []
+      assert Enum.any?(models, &(&1.model == model_string(:deepseek)))
+    end
+
+    test "changing provider resets the selected model", %{conn: conn} do
+      File.rm(creds_file())
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "google"})
+
+      assert provider(:google).models != []
+      html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:google)})
+      assert html =~ "Save Model"
+
+      # Switching provider invalidates any previously chosen model.
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+      refute html =~ "Save Model"
+      assert html =~ "Select a model above to configure credentials."
+      assert assigns(view).selected_model_string == nil
+    end
+
+    test "unknown model_string clears the selection instead of crashing", %{conn: conn} do
+      File.rm(creds_file())
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
+
+      html =
+        render_hook(view, "select_llm_model", %{"model_string" => "deepseek:nonexistent-model"})
+
+      # Whitelist safety: unknown model strings clear the selection (nil) and
+      # never crash; the hint stays visible and the Save Model form stays hidden.
+      assert assigns(view).selected_model_string == nil
+      refute html =~ "Save Model"
+      assert html =~ "Select a model above to configure credentials."
     end
   end
 
@@ -243,7 +368,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # openai_compatible catalog entry resolves to the canonical :openai atom.
       # With base_url, the model has overrides → normalized to a map spec.
       models = current_models(view)
-      assert hd(models).model == %{provider: :openai, id: "my-model", base_url: "https://api.example.com/v1"}
+
+      assert hd(models).model == %{
+               provider: :openai,
+               id: "my-model",
+               base_url: "https://api.example.com/v1"
+             }
     end
 
     test "rejects empty model name", %{conn: conn} do
@@ -646,7 +776,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
-      assert profile.model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+
+      assert profile.model == %{
+               provider: :openai,
+               id: "gpt-4o",
+               base_url: "https://my-proxy.com/v1"
+             }
     end
 
     test "save_model_profile rejects empty model id", %{conn: conn} do
@@ -757,7 +892,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Custom model saved."
       models = current_models(view)
-      assert hd(models).model == %{provider: :openai, id: "gpt-4o", base_url: "https://my-proxy.com/v1"}
+
+      assert hd(models).model == %{
+               provider: :openai,
+               id: "gpt-4o",
+               base_url: "https://my-proxy.com/v1"
+             }
     end
 
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
@@ -825,8 +965,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # a result with a MAP model — the exact shape that crashed before the fix.
       # `render/1` synchronously processes pending messages for the LiveView
       # process, so the info message is handled before the HTML is produced.
-      send(view.pid, {:llm_test_result,
-       {:ok, %{response: "hello", model: %{id: "deepseek-v4-pro", provider: :deepseek}}}})
+      send(
+        view.pid,
+        {:llm_test_result,
+         {:ok, %{response: "hello", model: %{id: "deepseek-v4-pro", provider: :deepseek}}}}
+      )
 
       html = render(view)
 
@@ -883,7 +1026,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       file_config =
         EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [%{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}])
+        |> put_in([:llm, :models], [
+          %{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}
+        ])
 
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
@@ -911,7 +1056,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       file_config =
         EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
-        |> put_in([:llm, :models], [%{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}])
+        |> put_in([:llm, :models], [
+          %{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}
+        ])
 
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
