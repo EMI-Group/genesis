@@ -541,16 +541,27 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ ~s(grid grid-cols-1 md:grid-cols-2 gap-3)
     end
 
-    test "check terms are expandable details cards with fix hints on failure", %{conn: conn} do
+    test "check terms render details inline with no disclosure and fix hints on failure", %{
+      conn: conn
+    } do
       set_windows_platform()
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      # Every term renders as a <details>/<summary> disclosure card.
+      # Every term's detail content is ALWAYS rendered — the old
+      # <details>/<summary> disclosure cards were removed. Scope the assertions
+      # to the check grid with Floki: the app layout's sidebar theme dropdown
+      # (layouts.ex) legitimately renders its own <details>/<summary>, so a
+      # bare refute on the full page would be vacuous.
       html = render_with_checks(view, all_ok_checks())
+      grid = check_grid(html)
 
-      assert html =~ "<details"
-      assert html =~ "<summary"
+      assert Floki.find(grid, "details") == []
+      assert Floki.find(grid, "summary") == []
+
+      # A check-cell description string is present in the scoped grid — proof
+      # the detail content renders unconditionally, with no disclosure to open.
+      assert Floki.text(grid) =~ "Checks that the git and ripgrep command-line tools"
 
       # Failing rg → the Required Tools cell shows the per-tool fix hint
       # ("Install git ..." is NOT shown because git is still available).
@@ -581,6 +592,55 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ "Fix the missing or invalid settings in Settings."
       assert html =~ "Open Settings"
     end
+  end
+
+  describe "scheduler status charts" do
+    test "renders the Scheduler Status section with placeholder cards on initial render", %{
+      conn: conn
+    } do
+      {:ok, _view, html} = live(conn, ~p"/system")
+
+      assert html =~ "Scheduler Status"
+      assert html =~ ~s(<h3 class="font-semibold text-sm">LLM Slots</h3>)
+      assert html =~ ~s(<h3 class="font-semibold text-sm">Tool Slots</h3>)
+      assert html =~ ~s(<h3 class="font-semibold text-sm">Agents</h3>)
+      # The static mount has no samples yet — every card shows the
+      # collecting-data placeholder and no SVG chart (the only <svg> elements
+      # on the page come from the chart cards' SVG branch).
+      assert html =~ "Collecting data…"
+      refute html =~ "<svg"
+    end
+
+    test "system_chart_tick samples safely and the section keeps rendering", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Safe in the test env: local-node sampling is gated by a liveness check
+      # (scheduler process/ETS) and config fetch goes through NodeContext, which
+      # the existing tests already exercise (mount's `scheduler_paused`).
+      send(view.pid, :system_chart_tick)
+      html = render(view)
+
+      assert assigns(view)[:chart_tick_count] == 1
+      # One sample exists → the SVG charts render in place of the placeholder.
+      assert html =~ "Scheduler Status"
+      assert html =~ "<svg"
+      refute html =~ "Collecting data…"
+    end
+  end
+
+  # Floki-scopes the self-check term grid so disclosure assertions never see
+  # the app layout's sidebar `<details>` theme dropdown (layouts.ex). The grid
+  # container is `<div class="grid grid-cols-1 md:grid-cols-2 gap-3">`
+  # (system_live.ex); the charts grid uses the same classes plus `p-4`, so the
+  # exact-match attribute selector matches only the check grid.
+  defp check_grid(html) do
+    [grid] =
+      Floki.find(
+        Floki.parse_document!(html),
+        ~s(div[class="grid grid-cols-1 md:grid-cols-2 gap-3"])
+      )
+
+    grid
   end
 end
 
