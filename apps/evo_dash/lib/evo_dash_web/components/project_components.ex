@@ -627,17 +627,6 @@ defmodule EvoDashWeb.ProjectComponents do
                 <.tip text={gettext("Absolute path to the repository root on this machine")} /></span>
               </label>
               <div class="flex items-center gap-2">
-                <%= if @tauri_detected do %>
-                  <button
-                    type="button"
-                    id="foreign-repo-path-browse-button"
-                    class="btn btn-sm btn-ghost gap-1 shrink-0 transition hover:ring-2 hover:ring-(--project-ring-accent)/50"
-                    phx-hook="DirectoryPicker"
-                    data-picker-id="foreign-repo"
-                  >
-                    <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
-                  </button>
-                <% end %>
                 <div class="picker-container relative flex-1">
                   <input
                     type="text"
@@ -658,6 +647,17 @@ defmodule EvoDashWeb.ProjectComponents do
                     <% end %>
                   </datalist>
                 </div>
+                <%= if @tauri_detected do %>
+                  <button
+                    type="button"
+                    id="foreign-repo-path-browse-button"
+                    class="btn btn-sm btn-ghost gap-1 shrink-0 transition hover:ring-2 hover:ring-(--project-ring-accent)/50"
+                    phx-hook="DirectoryPicker"
+                    data-picker-id="foreign-repo"
+                  >
+                    <.icon name="hero-folder-open" class="size-4" /> {gettext("Browse")}
+                  </button>
+                <% end %>
               </div>
             </div>
             <div>
