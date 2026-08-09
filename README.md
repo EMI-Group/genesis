@@ -10,6 +10,7 @@
   <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.9.4-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <a href="https://genesis.evox.group/getting-started/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
+  <a href="https://genesis.evox.group/genesis_paper_preprint.pdf"><img src="https://img.shields.io/badge/paper-preprint-8b5cf6" alt="Paper"></a>
 </p>
 
 ---
@@ -211,6 +212,8 @@ More package managers will be added over time. Contributions are welcome — see
 Genesis is being studied under the working title:
 
 > **Persistent recursive worlds enable autonomous software evolution**
+
+The paper describing Genesis is available as a preprint: [Persistent recursive worlds enable autonomous software evolution (preprint)](https://genesis.evox.group/genesis_paper_preprint.pdf)
 
 The current evidence supports three system-level capabilities:
 
