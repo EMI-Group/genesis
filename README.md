@@ -40,6 +40,7 @@ Three regimes. One developmental principle.
 
 Genesis used **DeepSeek V4 Flash** to develop a Rust-based C compiler from a repository containing no compiler implementation code.
 
+**Repository:** [github.com/EMI-Group/genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc)  
 **Scope:** implementation-empty repository → **248,989-line C compiler**  
 **Run:** **123.4 h · 1,019 archived agent episodes · US$44.38**  
 **Validation:** **220/220** c-testsuite · **32/36** LLVM · **93/93** executed Csmith · **2,904** Rust tests · **106/106** internal cases  
@@ -53,6 +54,7 @@ Genesis used **DeepSeek V4 Flash** to develop a Rust-based C compiler from a rep
 
 Genesis continued the same accepted compiler world independently with **GLM 5.2** and **DeepSeek V4 Flash**.
 
+**Repository:** [github.com/EMI-Group/genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc)  
 **Scope:** one accepted compiler world → two independent continuation trajectories  
 **Run:** GLM 5.2: **21.99 h · 98 agents** · DeepSeek V4 Flash: **17.10 h · 178 agents**  
 **Validation:** GLM 5.2: **1,445/1,448** · DeepSeek V4 Flash: **1,820/1,820** retained LLVM SingleSource cases  
@@ -66,6 +68,7 @@ Genesis continued the same accepted compiler world independently with **GLM 5.2*
 
 Genesis redeveloped a selected chain of **13 MESA Fortran modules** into corresponding Rust crates.
 
+**Repository:** [github.com/EMI-Group/genesis-demo-mesa-rs](https://github.com/EMI-Group/genesis-demo-mesa-rs)  
 **Scope:** **139,414 Fortran lines → 89,946-line Rust workspace**  
 **Run:** **33.22 h · 272 agents · US$10.64**  
 **Validation:** **1,052 tests · 0 failures** · **2 bit-exact** workloads · remaining relative checksum differences ≤ **3.1 × 10⁻⁹**  
