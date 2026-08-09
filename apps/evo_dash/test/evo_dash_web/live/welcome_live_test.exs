@@ -39,6 +39,53 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   # live view socket assigns directly via the process dictionary state.
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Catalog-derived fixtures — NEVER hardcode model ids/display names. The
+  # LLMCatalog is maintained by a parallel effort and model ids/names WILL
+  # change (e.g. gemini-3.5-flash may disappear). Provider ids are stable.
+  # ───────────────────────────────────────────────────────────────────────────
+
+  defp provider(id), do: Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == id))
+
+  defp model_string(id, variant_id \\ nil) do
+    p = provider(id)
+    atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(id, variant_id)
+    "#{atom}:#{hd(p.models).id}"
+  end
+
+  defp model_string_at(id, variant_id, index) do
+    p = provider(id)
+    atom = EvoGit.Config.LLMCatalog.resolve_provider_atom(id, variant_id)
+    "#{atom}:#{Enum.at(p.models, index).id}"
+  end
+
+  # Finds a search needle that matches exactly one of the models' display
+  # names (case-insensitive), plus the matching and a non-matching model —
+  # for provider-scoped filtering tests. Falls back to the first model's full
+  # display name when no unique word exists.
+  defp filter_triple(models) do
+    lower = Enum.map(models, &String.downcase(&1.display_name))
+
+    needle =
+      Enum.find_value(models, fn m ->
+        Enum.find_value(String.split(m.display_name), fn word ->
+          w = String.downcase(word)
+
+          if Enum.count(lower, &String.contains?(&1, w)) == 1, do: word
+        end)
+      end) || hd(models).display_name
+
+    needle_lower = String.downcase(needle)
+
+    matched =
+      Enum.find(models, &String.contains?(String.downcase(&1.display_name), needle_lower))
+
+    unmatched =
+      Enum.find(models, &(not String.contains?(String.downcase(&1.display_name), needle_lower)))
+
+    {needle, matched, unmatched}
+  end
+
   describe "welcome page rendering" do
     test "renders welcome message and version display", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/welcome")
@@ -49,59 +96,66 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert html =~ version
     end
 
-    test "flat model list shows models from multiple providers", %{conn: conn} do
+    test "provider grid shows all preset providers alphabetically", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/welcome")
 
-      # Anthropic model
-      assert html =~ "Claude Sonnet 5"
-      assert html =~ "Anthropic"
-      # Google model
-      assert html =~ "Gemini 3.5 Flash"
-      assert html =~ "Google"
-      # OpenAI model
-      assert html =~ "GPT-5.5"
-      assert html =~ "OpenAI"
+      preset =
+        EvoGit.Config.LLMCatalog.providers()
+        |> Enum.reject(&(&1[:custom_model] == true))
+        |> Enum.sort_by(fn p -> String.downcase(p.display_name) end)
+
+      assert length(preset) >= 3
+
+      # Every preset provider renders as a card
+      for p <- preset do
+        assert html =~ p.display_name
+      end
+
+      # Sorted case-insensitively: each provider appears before the next one
+      positions =
+        Enum.map(preset, fn p ->
+          html |> String.split(p.display_name) |> List.first() |> String.length()
+        end)
+
+      positions
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.each(fn [a, b] ->
+        assert a < b, "provider cards out of alphabetical order"
+      end)
     end
 
-    test "flat list shows provider+model together in single grid", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/welcome")
-
-      # Each model button carries the model_string in the format provider:model
-      # so save_welcome_setup can be driven from it.
-      html = element(view, "[phx-click='select_welcome_model']", "Gemini 3.5 Flash") |> render()
-      assert html =~ "google:gemini-3.5-flash"
-    end
-
-    test "variants are expanded as separate entries", %{conn: conn} do
+    test "custom-model providers are not in the grid", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/welcome")
 
-      # Alibaba has Global and CN variants; both should appear with their variant suffix
-      assert html =~ "Global"
-      assert html =~ "CN"
-      # Alibaba models appear (twice — once per variant)
-      assert html =~ "Qwen 3.7 Max"
+      custom =
+        Enum.filter(EvoGit.Config.LLMCatalog.providers(), &(&1[:custom_model] == true))
+
+      assert custom != []
+
+      for p <- custom do
+        refute html =~ p.display_name
+      end
     end
 
-    test "providers are sorted alphabetically (case-insensitive)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/welcome")
+    test "initial mount shows only the provider step", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/welcome")
 
-      html = render(view)
+      assert html =~ "Add your first LLM"
+      assert html =~ "Choose a provider:"
 
-      # Find the position of provider header names in the rendered HTML.
-      # "Alibaba" should appear before "Anthropic" (alphabetical sort).
-      alibaba_pos = String.split(html, "Alibaba Cloud") |> List.first() |> String.length()
-      anthropic_pos = String.split(html, "Anthropic") |> List.first() |> String.length()
+      assert html =~
+               "Pick a provider, choose a model, then enter your API key. Keys are stored locally, never sent anywhere."
 
-      assert alibaba_pos < anthropic_pos,
-             "expected \"Alibaba\" to appear before \"Anthropic\" in the model grid"
+      # Credentials placeholder (no model selected yet)
+      assert html =~ "Select a provider and a model above to enter your API key."
 
-      # DeepSeek before Google before OpenAI
-      deepseek_pos = String.split(html, "DeepSeek") |> List.first() |> String.length()
-      google_pos = String.split(html, "Google") |> List.first() |> String.length()
-      openai_pos = String.split(html, "OpenAI") |> List.first() |> String.length()
-
-      assert deepseek_pos < google_pos, "expected \"DeepSeek\" before \"Google\""
-      assert google_pos < openai_pos, "expected \"Google\" before \"OpenAI\""
+      # Model step is hidden until a provider is selected
+      refute html =~ "Choose a model:"
+      refute html =~ "Search models"
+      refute html =~ "Select a variant:"
+      # No API key form
+      refute html =~ ~s(name="api_key")
+      refute html =~ "Enter your API key"
     end
 
     test "renders the example task teaching section with copy button", %{conn: conn} do
@@ -114,18 +168,79 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end
   end
 
-  describe "model selection + merged save flow" do
-    test "selecting a model shows the API key field with correct credential key", %{conn: conn} do
+  describe "provider selection" do
+    test "selecting a provider shows its models and the search box", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      g = provider(:google)
+      assert g.models != []
+      assert provider(:anthropic).models != []
+
+      html = render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
+
+      # Model step + search box appear
+      assert html =~ "Choose a model:"
+      assert html =~ "Search models"
+      assert html =~ ~s(phx-change="search_models")
+      assert html =~ ~s(name="search_query")
+
+      for m <- g.models do
+        assert html =~ m.display_name
+      end
+
+      # Other providers' models are absent
+      refute html =~ hd(provider(:anthropic).models).display_name
+
+      # Credentials still placeholder-only — no API key form until a model is
+      # selected
+      assert html =~ "Select a provider and a model above to enter your API key."
+      refute html =~ ~s(name="api_key")
+      refute html =~ "Enter your API key"
+    end
+
+    test "selecting a different provider switches the model list", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      g = provider(:google)
+      a = provider(:anthropic)
+      assert g.models != []
+      assert a.models != []
+
+      html = render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
+      assert html =~ hd(g.models).display_name
+      refute html =~ hd(a.models).display_name
+
+      html = render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      assert html =~ hd(a.models).display_name
+      refute html =~ hd(g.models).display_name
+    end
+  end
+
+  describe "model selection + merged save flow" do
+    test "selecting a model shows the API key form with the credential key", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      a = provider(:anthropic)
+      assert a.models != []
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
 
       html =
         render_click(view, "select_welcome_model", %{
-          "model_string" => "anthropic:claude-sonnet-5"
+          "model_string" => model_string(:anthropic)
         })
 
       # The credential_key label appears (mirrors settings_components pattern)
-      assert html =~ "anthropic_api_key"
+      assert html =~ a.credential_key
       assert html =~ "Enter your API key"
+      assert html =~ "Enter your API key for #{a.display_name}."
+      assert html =~ "Save &amp; Use this model"
+
+      # Hidden form fields carry the selection through the merged save
+      assert html =~ ~s(name="credential_key")
+      assert html =~ ~s(name="model_string")
+      assert html =~ ~s(name="provider_id")
+      assert html =~ ~s(name="variant_id")
     end
 
     test "merged save persists API key and model profile, then shows success", %{conn: conn} do
@@ -133,14 +248,17 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       # Initially in setup state (no model profiles)
       refute assigns(view).has_model?
+      a = provider(:anthropic)
+      ms = model_string(:anthropic)
 
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => ms})
 
       html =
         render_submit(view, "save_welcome_setup", %{
-          "credential_key" => "anthropic_api_key",
+          "credential_key" => a.credential_key,
           "api_key" => "sk-ant-test-123",
-          "model_string" => "anthropic:claude-sonnet-5",
+          "model_string" => ms,
           "provider_id" => "anthropic",
           "variant_id" => ""
         })
@@ -150,7 +268,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       # The credential is persisted to credentials.toml
       creds = EvoGit.Config.credentials()
-      assert Map.get(creds, "anthropic_api_key") == "sk-ant-test-123"
+      assert Map.get(creds, a.credential_key) == "sk-ant-test-123"
 
       # After saving, a model profile exists
       models = get_in(assigns(view).file_config, [:llm, :models]) || []
@@ -160,51 +278,26 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       assert assigns(view).has_model? == true
       # HEEx escapes the apostrophe in "You're" to &#39;
       assert html =~ "You&#39;re All Set!"
-    end
-
-    test "merged save with variant resolves correct provider atom", %{conn: conn} do
-      # Write a pre-existing credential BEFORE mounting so the socket's cached
-      # credentials contain the key (the save proceeds without needing a new key).
-      creds = creds_file()
-      File.mkdir_p!(Path.dirname(creds))
-      File.write!(creds, ~s(alibaba_cn_api_key = "sk-test-cn"\n))
-      on_exit(fn -> File.rm(creds_file()) end)
-
-      {:ok, view, _html} = live(conn, ~p"/welcome")
-
-      html =
-        render_click(view, "save_welcome_setup", %{
-          "credential_key" => "alibaba_cn_api_key",
-          "api_key" => "",
-          "model_string" => "alibaba:qwen-3.7-max",
-          "provider_id" => "alibaba",
-          "variant_id" => "cn"
-        })
-
-      assert html =~ "Model and API key saved."
-
-      models = get_in(assigns(view).file_config, [:llm, :models]) || []
-      assert length(models) == 1
-      # The CN variant resolves to the :alibaba_cn provider atom
-      model = hd(models).model
-      assert model == "alibaba_cn:qwen-3.7-max"
+      assert html =~ "Go to Dashboard"
+      assert html =~ "Open Settings"
+      refute html =~ "Add your first LLM"
     end
 
     test "merged save button is disabled when no key entered and no key set", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
-
-      html = render(view)
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
 
       # The submit button should be disabled (no key typed, no existing key)
-      assert html =~ ~s(disabled="")
+      assert render(view) =~ ~s(disabled="")
     end
 
     test "merged save button is enabled when a key is typed", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
 
       # Type a key via phx-change
       render_change(view, "api_key_changed", %{"api_key" => "sk-ant-typed"})
@@ -216,139 +309,285 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute html =~ ~s(disabled="")
     end
 
-    test "server-side guard: empty key with no existing key shows error", %{conn: conn} do
+    test "server-side guard: blank key with no existing key shows an error", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      a = provider(:anthropic)
+      ms = model_string(:anthropic)
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => ms})
 
       html =
         render_submit(view, "save_welcome_setup", %{
-          "credential_key" => "anthropic_api_key",
+          "credential_key" => a.credential_key,
           "api_key" => "   ",
-          "model_string" => "anthropic:claude-sonnet-5",
+          "model_string" => ms,
           "provider_id" => "anthropic",
           "variant_id" => ""
         })
 
       assert html =~ "Please enter your API key first."
     end
+  end
 
-    test "selecting different models updates the credential key", %{conn: conn} do
+  describe "variant flow" do
+    test "variant providers show chips and default to the first variant", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      # Anthropic uses anthropic_api_key
-      html1 =
-        render_click(view, "select_welcome_model", %{
-          "model_string" => "anthropic:claude-sonnet-5"
+      a = provider(:alibaba)
+      assert a.models != []
+      assert a.variants != []
+
+      html = render_click(view, "select_welcome_provider", %{"provider_id" => "alibaba"})
+
+      assert html =~ "Select a variant:"
+
+      for v <- a.variants do
+        assert html =~ ~s(phx-value-variant_id="#{v.id}")
+      end
+
+      # Default variant is the FIRST one (global) — canonical atom model strings
+      assert html =~ model_string(:alibaba)
+      refute html =~ "alibaba_cn:"
+    end
+
+    test "selecting a variant changes the model strings", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      a = provider(:alibaba)
+      assert a.models != []
+      assert a.variants != []
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "alibaba"})
+
+      html = render_click(view, "select_welcome_variant", %{"variant_id" => "cn"})
+
+      assert html =~ "alibaba_cn:#{hd(a.models).id}"
+      assert html =~ " · CN"
+      refute html =~ "alibaba:#{hd(a.models).id}"
+    end
+
+    test "merged save with the CN variant resolves the correct provider atom", %{conn: conn} do
+      # Write a pre-existing credential BEFORE mounting so the socket's cached
+      # credentials contain the key (the save proceeds without needing a new key).
+      creds = creds_file()
+      File.mkdir_p!(Path.dirname(creds))
+      File.write!(creds, ~s(alibaba_cn_api_key = "sk-test-cn"\n))
+      on_exit(fn -> File.rm(creds_file()) end)
+
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      a = provider(:alibaba)
+      assert a.models != []
+      cn_model_string = model_string(:alibaba, :cn)
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "alibaba"})
+      render_click(view, "select_welcome_variant", %{"variant_id" => "cn"})
+      render_click(view, "select_welcome_model", %{"model_string" => cn_model_string})
+
+      html =
+        render_submit(view, "save_welcome_setup", %{
+          "credential_key" => "alibaba_cn_api_key",
+          "api_key" => "",
+          "model_string" => cn_model_string,
+          "provider_id" => "alibaba",
+          "variant_id" => "cn"
         })
 
-      assert html1 =~ "anthropic_api_key"
+      assert html =~ "Model and API key saved."
 
-      # Google uses google_api_key
-      html2 =
-        render_click(view, "select_welcome_model", %{"model_string" => "google:gemini-3.5-flash"})
-
-      assert html2 =~ "google_api_key"
-      refute html2 =~ "anthropic_api_key"
+      models = get_in(assigns(view).file_config, [:llm, :models]) || []
+      assert length(models) == 1
+      # The CN variant resolves to the :alibaba_cn provider atom (round-tripped
+      # through TOML normalization to the "provider:model" string form)
+      assert hd(models).model == cn_model_string
     end
   end
 
-  describe "search filtering" do
-    test "search filters models by model display name", %{conn: conn} do
+  describe "search scoped to selected provider" do
+    test "search is scoped to the selected provider", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      # Type a search query for a specific model
-      render_change(view, "search_models", %{"search_query" => "Gemini"})
+      g = provider(:google)
+      a = provider(:anthropic)
+      assert g.models != []
+      assert a.models != []
 
-      html = render(view)
+      render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
-      # Gemini should still be visible
-      assert html =~ "Gemini 3.5 Flash"
-      # A model that doesn't match should be hidden
-      refute html =~ "Claude Sonnet 5"
+      # A model of ANOTHER provider matches nothing
+      html = render_change(view, "search_models", %{"search_query" => hd(a.models).display_name})
+      assert html =~ "No models match your search."
+
+      # Clearing restores the selected provider's models
+      html = render_change(view, "search_models", %{"search_query" => ""})
+      assert html =~ hd(g.models).display_name
+      refute html =~ "No models match your search."
     end
 
-    test "search filters models by provider display name", %{conn: conn} do
+    test "search filters models within the provider", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_change(view, "search_models", %{"search_query" => "Anthropic"})
+      g = provider(:google)
+      a = provider(:anthropic)
 
-      html = render(view)
+      provider_id =
+        if length(g.models) >= 2 do
+          :google
+        else
+          assert a.models != []
+          :anthropic
+        end
 
-      # Anthropic's model visible
-      assert html =~ "Claude Sonnet 5"
-      assert html =~ "Anthropic"
-      # Google model hidden
-      refute html =~ "Gemini 3.5 Flash"
-    end
+      p = provider(provider_id)
+      {needle, matched, unmatched} = filter_triple(p.models)
 
-    test "search filters by variant display name", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/welcome")
+      render_click(view, "select_welcome_provider", %{
+        "provider_id" => Atom.to_string(provider_id)
+      })
 
-      render_change(view, "search_models", %{"search_query" => "Global"})
+      html = render_change(view, "search_models", %{"search_query" => needle})
 
-      html = render(view)
-
-      # Alibaba Global variant visible
-      assert html =~ "Global"
-      assert html =~ "Qwen 3.7 Max"
-      # CN variant model is in a separate group — "CN" suffix should not appear
-      # when filtering for "Global". (The variant suffix " · CN" is part of the
-      # button text, so filtering it out confirms group-level filtering.)
-      refute html =~ "· CN"
+      assert html =~ matched.display_name
+      refute html =~ unmatched.display_name
     end
 
     test "search is case-insensitive", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_change(view, "search_models", %{"search_query" => "anthropic"})
+      g = provider(:google)
+      assert g.models != []
 
-      html = render(view)
+      render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
-      assert html =~ "Claude Sonnet 5"
+      html = render_change(view, "search_models", %{"search_query" => "gemini"})
+
+      for m <- g.models do
+        assert html =~ m.display_name
+      end
     end
 
-    test "search with no matches shows zero-results message", %{conn: conn} do
+    test "search with no matches shows the zero-results message", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_change(view, "search_models", %{"search_query" => "zzznonexistentzzz"})
+      render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
-      html = render(view)
+      html = render_change(view, "search_models", %{"search_query" => "zzznonexistentzzz"})
 
       assert html =~ "No models match your search."
     end
 
-    test "clearing search restores all models", %{conn: conn} do
+    test "clearing search restores all of the provider's models", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_change(view, "search_models", %{"search_query" => "Gemini"})
-      render_change(view, "search_models", %{"search_query" => ""})
+      g = provider(:google)
+      assert g.models != []
+      assert length(g.models) >= 2
 
-      html = render(view)
+      render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
-      # Both Gemini and Claude are back
-      assert html =~ "Gemini 3.5 Flash"
-      assert html =~ "Claude Sonnet 5"
+      render_change(view, "search_models", %{"search_query" => hd(g.models).display_name})
+      html = render_change(view, "search_models", %{"search_query" => ""})
+
+      for m <- g.models do
+        assert html =~ m.display_name
+      end
+    end
+
+    test "search matches the variant display name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      a = provider(:alibaba)
+      assert a.models != []
+      assert a.variants != []
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "alibaba"})
+
+      html =
+        render_change(view, "search_models", %{
+          "search_query" => hd(a.variants).display_name
+        })
+
+      assert html =~ hd(a.models).display_name
     end
   end
 
   describe "end-of-list guidance" do
-    test "shows Settings link guidance at end of model list", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/welcome")
+    test "shows Settings link guidance when a provider is selected", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      html = render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
       assert html =~ "Settings page"
       assert html =~ ~p"/settings"
     end
 
+    test "guidance is not rendered at initial mount", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/welcome")
+      refute html =~ "Settings page"
+    end
+
     test "zero-results still shows Settings guidance", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_change(view, "search_models", %{"search_query" => "zzznonexistentzzz"})
+      render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
-      html = render(view)
+      html = render_change(view, "search_models", %{"search_query" => "zzznonexistentzzz"})
 
       assert html =~ "No models match your search."
       assert html =~ "Settings page"
+    end
+  end
+
+  describe "base_url handling" do
+    test "normal preset providers render only a hidden base_url input", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      a = provider(:anthropic)
+      assert a.models != []
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+
+      html =
+        render_click(view, "select_welcome_model", %{
+          "model_string" => model_string(:anthropic)
+        })
+
+      # No VISIBLE Base URL field for a provider that doesn't require one —
+      # the label, required marker, and hint only render in the
+      # requires_base_url? branch. (The literal "Base URL" text appears in an
+      # HTML comment in the template, so assert on the field markers instead.)
+      refute html =~ "Required for this provider."
+      refute html =~ ~s(placeholder="https://...")
+      # ...but the hidden input is always submitted with the form
+      assert html =~ ~s(type="hidden" name="base_url")
+    end
+
+    test "save_welcome_setup accepts an extra base_url param without breaking", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      a = provider(:anthropic)
+      ms = model_string(:anthropic)
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => ms})
+
+      html =
+        render_submit(view, "save_welcome_setup", %{
+          "credential_key" => a.credential_key,
+          "api_key" => "sk-ant-test-123",
+          "model_string" => ms,
+          "provider_id" => "anthropic",
+          "variant_id" => "",
+          "base_url" => "https://x/v1"
+        })
+
+      assert html =~ "Model and API key saved."
+
+      models = get_in(assigns(view).file_config, [:llm, :models]) || []
+      assert length(models) == 1
+      assert assigns(view).has_model?
     end
   end
 
@@ -372,6 +611,7 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       # Shows the all-set state (HEEx escapes the apostrophe in "You're")
       assert html =~ "You&#39;re All Set!"
       assert html =~ "Go to Dashboard"
+      assert html =~ "Open Settings"
       # Does NOT show the setup grid
       refute html =~ "Add your first LLM"
       refute html =~ "Choose a model:"
@@ -434,13 +674,15 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+
       html =
         render_click(view, "select_welcome_model", %{
-          "model_string" => "anthropic:claude-sonnet-5"
+          "model_string" => model_string(:anthropic)
         })
 
       assert html =~ "API key is already set"
-      assert html =~ "Set"
+      assert html =~ "✓ Set"
     end
 
     test "button enabled when existing key is set (no new key needed)", %{conn: conn} do
@@ -452,7 +694,8 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
 
       html = render(view)
 
@@ -494,7 +737,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     test "test connection button renders only when a model is selected", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
       refute render(view) =~ "Test Connection"
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
+
       html = render(view)
       assert html =~ "Test Connection"
       assert html =~ "hero-signal"
@@ -502,7 +748,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
     test "testing state renders the spinner", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
+
       # The event render (status :testing) is produced before the spawned task's
       # result message is processed (FIFO mailbox), so the returned HTML is
       # deterministic — the spinner, not a raced error state.
@@ -513,41 +762,74 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
     test "ok result renders Connected with the model name", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
 
-      send(
-        view.pid,
-        {:llm_test_result, {:ok, %{model: "anthropic:claude-sonnet-5", response: "hello"}}}
-      )
+      a = provider(:anthropic)
+      assert a.models != []
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
+
+      send(view.pid, {:llm_test_result, {:ok, %{model: "x", response: "hello"}}})
 
       html = render(view)
       assert html =~ "Connected"
-      assert html =~ "Claude Sonnet 5"
+      assert html =~ hd(a.models).display_name
+      assert html =~ "Retest"
     end
 
     test "error result renders the reason", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
+
       send(view.pid, {:llm_test_result, {:error, "Invalid API key"}})
+
       html = render(view)
       assert html =~ "Invalid API key"
       assert html =~ "hero-x-circle"
+      assert html =~ "Retry"
     end
 
     test "selecting a different model resets the connection test status", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
 
-      send(
-        view.pid,
-        {:llm_test_result, {:ok, %{model: "anthropic:claude-sonnet-5", response: "hi"}}}
-      )
+      a = provider(:anthropic)
+      assert length(a.models) >= 2
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
+
+      send(view.pid, {:llm_test_result, {:ok, %{model: "x", response: "hi"}}})
 
       assert render(view) =~ "Connected"
-      render_click(view, "select_welcome_model", %{"model_string" => "google:gemini-3.5-flash"})
-      html = render(view)
+
+      html =
+        render_click(view, "select_welcome_model", %{
+          "model_string" => model_string_at(:anthropic, nil, 1)
+        })
+
       refute html =~ "Connected"
       assert html =~ "Test Connection"
+    end
+
+    test "switching provider also resets the connection test status", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/welcome")
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
+
+      send(view.pid, {:llm_test_result, {:ok, %{model: "x", response: "hi"}}})
+
+      assert render(view) =~ "Connected"
+
+      # Provider switch resets ALL downstream state: the connection-test status
+      # AND the selected model, so the credentials section reverts to the
+      # no-model placeholder (no "Test Connection" button at all).
+      html = render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
+      refute html =~ "Connected"
+      refute html =~ "Test Connection"
+      assert html =~ "Select a provider and a model above to enter your API key."
     end
 
     test "test_llm handler starts the test (unit-style)", %{conn: _conn} do
@@ -559,13 +841,14 @@ defmodule EvoDashWeb.WelcomeLiveTest do
           flash: %{},
           selected_entry: %{
             provider_id: :anthropic,
-            model_string: "anthropic:claude-sonnet-5",
+            model_string: model_string(:anthropic),
             variant_id: nil,
             credential_key: "anthropic_api_key",
-            model_display_name: "Claude Sonnet 5"
+            model_display_name: hd(provider(:anthropic).models).display_name
           },
           credentials: %{},
           api_key_input: "",
+          base_url_input: "",
           llm_test_status: :idle
         }
       }
@@ -576,9 +859,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
     test "typed API key is saved before the connection test runs", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/welcome")
-      render_click(view, "select_welcome_model", %{"model_string" => "anthropic:claude-sonnet-5"})
+
+      render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
+      render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
       render_change(view, "api_key_changed", %{"api_key" => "sk-ant-typed"})
       render_click(view, "test_llm", %{})
+
       assert Map.get(EvoGit.Config.credentials(), "anthropic_api_key") == "sk-ant-typed"
       assert assigns(view).api_key_input == ""
       assert assigns(view).llm_test_status == :testing
