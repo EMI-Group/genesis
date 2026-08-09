@@ -188,33 +188,35 @@ defmodule EvoDashWeb.SystemLive do
                 </:details>
               </.system_check_row>
 
-              <!-- Sandbox Row -->
+              <!-- Sandbox Row (hidden on Windows/unknown platforms) -->
               <% # zh_CN: "沙箱" %>
-              <.system_check_row
-                title={gettext("Sandbox")}
-                icon="hero-lock-closed"
-                status={Status.sandbox_status(@sandbox_check)}
-              >
-                <:details>
-                  <div class="flex flex-wrap gap-2 items-center">
-                    <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
-                      {Status.format_backend(@sandbox_check.backend)}
-                    </span>
-                    <span class="text-sm text-base-content/60">
-                      {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
-                    </span>
-                    <%= if @sandbox_check.backend != :none do %>
-                      <span class="text-xs text-base-content/40">
-                        {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
-                          do: "✓",
-                          else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
-                          do: "✓",
-                          else: "✗"}
+              <%= if EvoDashWeb.PlatformInfo.show_sandbox?(@platform_os) do %>
+                <.system_check_row
+                  title={gettext("Sandbox")}
+                  icon="hero-lock-closed"
+                  status={Status.sandbox_status(@sandbox_check)}
+                >
+                  <:details>
+                    <div class="flex flex-wrap gap-2 items-center">
+                      <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
+                        {Status.format_backend(@sandbox_check.backend)}
                       </span>
-                    <% end %>
-                  </div>
-                </:details>
-              </.system_check_row>
+                      <span class="text-sm text-base-content/60">
+                        {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
+                      </span>
+                      <%= if @sandbox_check.backend != :none do %>
+                        <span class="text-xs text-base-content/40">
+                          {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
+                            do: "✓",
+                            else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
+                            do: "✓",
+                            else: "✗"}
+                        </span>
+                      <% end %>
+                    </div>
+                  </:details>
+                </.system_check_row>
+              <% end %>
 
               <!-- Supervisor Row -->
               <.system_check_row
@@ -236,37 +238,39 @@ defmodule EvoDashWeb.SystemLive do
                 </:details>
               </.system_check_row>
 
-              <!-- Nix Environment Row -->
-              <.system_check_row
-                title={gettext("Nix Environment")}
-                icon="brand-nix"
-                status={Status.nix_status(@nix_check)}
-              >
-                <:details>
-                  <div class="flex flex-wrap gap-2 items-center">
-                    <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
-                      {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
-                    </span>
-                    <span class="text-sm text-base-content/60">
-                      {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
-                    </span>
-                    <span class="text-sm text-base-content/60">
-                      {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
-                    </span>
-                    <%= if @nix_check.flake_present do %>
-                      <span class="text-xs text-base-content/40">
-                        {gettext("Flake valid")}: {if @nix_check.dev_env_built, do: "✓", else: "✗"}
+              <!-- Nix Environment Row (gated on nix enabled in config AND binary available) -->
+              <%= if @nix_check != nil and @nix_check.enabled and @nix_check.available do %>
+                <.system_check_row
+                  title={gettext("Nix Environment")}
+                  icon="brand-nix"
+                  status={Status.nix_status(@nix_check)}
+                >
+                  <:details>
+                    <div class="flex flex-wrap gap-2 items-center">
+                      <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
+                        {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
                       </span>
-                    <% end %>
-                  </div>
-                  <%= if @nix_check[:error] do %>
-                    <div class="mt-1 text-xs text-error/80">
-                      <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
-                      {@nix_check.error}
+                      <span class="text-sm text-base-content/60">
+                        {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
+                      </span>
+                      <span class="text-sm text-base-content/60">
+                        {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
+                      </span>
+                      <%= if @nix_check.flake_present do %>
+                        <span class="text-xs text-base-content/40">
+                          {gettext("Flake valid")}: {if @nix_check.dev_env_built, do: "✓", else: "✗"}
+                        </span>
+                      <% end %>
                     </div>
-                  <% end %>
-                </:details>
-              </.system_check_row>
+                    <%= if @nix_check[:error] do %>
+                      <div class="mt-1 text-xs text-error/80">
+                        <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
+                        {@nix_check.error}
+                      </div>
+                    <% end %>
+                  </:details>
+                </.system_check_row>
+              <% end %>
 
               <!-- LLM Test Row -->
               <.system_check_row
@@ -422,7 +426,8 @@ defmodule EvoDashWeb.SystemLive do
         tool_check: nil,
         sandbox_check: nil,
         supervisor_check: nil,
-        nix_check: nil
+        nix_check: nil,
+        platform_os: EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node])
       )
 
     {:ok, socket}
@@ -445,6 +450,14 @@ defmodule EvoDashWeb.SystemLive do
     socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
     socket = assign(socket, :current_path, ~p"/system")
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
+    # Recompute the platform OS for the (possibly remote) node AFTER assign_node
+    # so sandbox/nix row gating reflects the node being viewed.
+    socket =
+      assign(
+        socket,
+        :platform_os,
+        EvoDashWeb.PlatformInfo.os_for_node(socket.assigns.current_node)
+      )
 
     socket =
       assign(socket, :scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))

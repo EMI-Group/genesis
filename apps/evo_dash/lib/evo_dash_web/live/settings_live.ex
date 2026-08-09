@@ -464,7 +464,7 @@ defmodule EvoDashWeb.SettingsLive do
                 schemas={Map.get(@schemas_by_category, @active_category, [])}
                 file_config={@file_config}
                 errors={Map.get(@per_category_errors, @active_category, [])}
-                sandbox_backend={@scheduler_config[:sandbox_backend]}
+                sandbox_backend={sandbox_backend(assigns)}
                 sandbox_mode={get_in(@file_config, [:sandbox, :mode])}
                 llm_providers={@llm_providers}
                 selected_provider_id={@selected_provider_id}
@@ -503,9 +503,20 @@ defmodule EvoDashWeb.SettingsLive do
 
     schemas_by_category = Map.put(schemas_by_category, :remote_connections, [])
 
+    # Platform-aware schema filtering: hide the sandbox category (or its
+    # Linux-only sub-sections) on platforms where they don't apply. This is
+    # BOTH the display mechanism and the save round-trip protection —
+    # save_category only processes schemas present in this filtered list, so
+    # hidden fields can never clobber saved sandbox config.
+    platform_os = EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node])
+
+    schemas_by_category =
+      EvoDashWeb.PlatformInfo.filter_schemas_by_category(schemas_by_category, platform_os)
+
     socket =
       assign(socket,
         schemas_by_category: schemas_by_category,
+        platform_os: platform_os,
         active_category: :llm,
         search_text: "",
         per_category_errors: %{},
@@ -541,6 +552,19 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:current_path, ~p"/settings")
       |> load_node_config()
 
+    # Platform-aware schema filtering for the (possibly remote) node. Must be
+    # re-filtered BEFORE category_str_to_atom is built below so
+    # `?category=sandbox` resolves to nil on Windows/unknown (falls back).
+    os = EvoDashWeb.PlatformInfo.os_for_node(socket.assigns.current_node)
+
+    socket =
+      socket
+      |> assign(:platform_os, os)
+      |> assign(
+        :schemas_by_category,
+        EvoDashWeb.PlatformInfo.filter_schemas_by_category(socket.assigns.schemas_by_category, os)
+      )
+
     # Map the raw query param to a known category atom via a whitelist lookup
     # built from the existing schemas_by_category map (atom keys). Stringify
     # the keys so we compare string-to-string — no String.to_existing_atom on
@@ -556,6 +580,18 @@ defmodule EvoDashWeb.SettingsLive do
 
     # Fall back to active_category for unknown/missing input
     category = category || socket.assigns.active_category
+
+    # Edge case: the resolved category (or the persisted active_category) is
+    # :sandbox but the platform-filtered schemas no longer contain it
+    # (Windows/unknown) — fall back to the safe :llm default instead of
+    # rendering an empty section.
+    category =
+      if category == :sandbox and
+           not Map.has_key?(socket.assigns.schemas_by_category, :sandbox) do
+        :llm
+      else
+        category
+      end
 
     socket =
       if category != socket.assigns.active_category do
@@ -1334,6 +1370,21 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Node-aware config loading
   # ───────────────────────────────────────────────────────────────────────────
+
+  # The sandbox backend banner to show for the currently-viewed node.
+  #
+  # Local node: `scheduler_config[:sandbox_backend]` is accurate (it reflects
+  # the actual binary availability on this VM). Remote node: `scheduler_config`
+  # is loaded from the LOCAL scheduler only (`ConfigIO.load_scheduler_config()`
+  # in mount/1), so it would show the wrong platform's banner — derive the
+  # backend from the remote node's detected OS instead.
+  defp sandbox_backend(assigns) do
+    if assigns.current_node in [nil, node()] do
+      assigns.scheduler_config[:sandbox_backend]
+    else
+      EvoDashWeb.PlatformInfo.sandbox_backend_for(assigns.platform_os)
+    end
+  end
 
   # Loads the config to display based on the current node context.
   #
