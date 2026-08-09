@@ -214,6 +214,103 @@ defmodule EvoDashWeb.HelpersTest do
     end
   end
 
+  describe "tool_call_is_shell?/1" do
+    test "returns true for run_bash and run_powershell" do
+      assert tool_call_is_shell?(%{function: %{name: "run_bash"}})
+      assert tool_call_is_shell?(%{"function" => %{"name" => "run_powershell"}})
+
+      assert tool_call_is_shell?(%ReqLLM.ToolCall{
+               id: "call_1",
+               function: %{name: "run_bash", arguments: "{}"}
+             })
+    end
+
+    test "returns false for other tools and unknown shapes" do
+      refute tool_call_is_shell?(%{function: %{name: "read_file"}})
+      refute tool_call_is_shell?(%{"function" => %{"name" => "search"}})
+      refute tool_call_is_shell?(%{})
+      refute tool_call_is_shell?(nil)
+    end
+  end
+
+  describe "tool_call_command/1" do
+    test "extracts command from run_bash arguments (atom-key map)" do
+      call = %{function: %{name: "run_bash", arguments: ~s({"command":"ls -la","timeout":30})}}
+      assert tool_call_command(call) == "ls -la"
+    end
+
+    test "extracts command from run_powershell arguments (string-key map)" do
+      call =
+        %{
+          "function" => %{
+            "name" => "run_powershell",
+            "arguments" => ~s({"command":"Get-Process","timeout":60})
+          }
+        }
+
+      assert tool_call_command(call) == "Get-Process"
+    end
+
+    test "extracts command from a ReqLLM.ToolCall struct" do
+      call =
+        %ReqLLM.ToolCall{
+          id: "call_1",
+          function: %{name: "run_bash", arguments: ~s({"command":"echo hi"})}
+        }
+
+      assert tool_call_command(call) == "echo hi"
+    end
+
+    test "falls back to the raw arguments string when JSON cannot be decoded" do
+      call = %{function: %{name: "run_bash", arguments: "not-json"}}
+      assert tool_call_command(call) == "not-json"
+    end
+
+    test "falls back to the raw string when the command field is missing" do
+      call = %{function: %{name: "run_bash", arguments: ~s({"timeout":30})}}
+      assert tool_call_command(call) == ~s({"timeout":30})
+    end
+
+    test "falls back to {} for missing/malformed arguments" do
+      assert tool_call_command(%{}) == "{}"
+      assert tool_call_command(nil) == "{}"
+    end
+  end
+
+  describe "tool_call_arguments_pretty/1" do
+    test "pretty-prints decodable JSON arguments" do
+      call = %{function: %{name: "read_file", arguments: ~s({"path":"./x","limit":10})}}
+      assert tool_call_arguments_pretty(call) == "{\n  \"limit\": 10,\n  \"path\": \"./x\"\n}"
+    end
+
+    test "returns the raw string for undecodable arguments" do
+      call = %{function: %{name: "read_file", arguments: "not-json"}}
+      assert tool_call_arguments_pretty(call) == "not-json"
+    end
+
+    test "returns {} for missing arguments" do
+      assert tool_call_arguments_pretty(%{}) == "{}"
+      assert tool_call_arguments_pretty(nil) == "{}"
+    end
+  end
+
+  describe "tool_call_display/1" do
+    test "returns {Shell call, command} for shell calls" do
+      call = %{function: %{name: "run_bash", arguments: ~s({"command":"mix test"})}}
+      assert tool_call_display(call) == {"Shell call", "mix test"}
+    end
+
+    test "returns {name, pretty arguments} for other calls" do
+      call = %{function: %{name: "read_file", arguments: ~s({"path":"./x"})}}
+      assert tool_call_display(call) == {"read_file", "{\n  \"path\": \"./x\"\n}"}
+    end
+
+    test "never crashes on unknown shapes" do
+      assert tool_call_display(%{}) == {"unknown", "{}"}
+      assert tool_call_display(nil) == {"unknown", "{}"}
+    end
+  end
+
   describe "format_reasoning_details/1" do
     test "returns nil for nil input" do
       assert format_reasoning_details(nil) == nil

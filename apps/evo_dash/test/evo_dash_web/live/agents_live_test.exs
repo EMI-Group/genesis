@@ -148,6 +148,57 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "inline tool call rendering in agent detail panel" do
+    alias EvoGit.AgentSpec
+    alias EvoGit.AgentScheduler.AgentState
+    alias EvoGit.AgentScheduler.SchedMeta
+    alias EvoGit.Core.ContextNode
+    alias EvoGit.Core.PhyloGraphNode
+
+    setup do
+      on_exit(fn ->
+        # Clean up only the rows this file seeds; the tables themselves are
+        # owned by the :evo_git application process (survive the test process).
+        if :ets.whereis(:evogit_sched_meta) != :undefined,
+          do: :ets.delete(:evogit_sched_meta, 1)
+
+        if :ets.whereis(:evogit_agent_state) != :undefined,
+          do: :ets.delete(:evogit_agent_state, 1)
+      end)
+    end
+
+    test "renders shell tool call command and non-shell arguments inline", %{conn: conn} do
+      seed_agent(1, [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [],
+          metadata: %{turn: 1},
+          tool_calls: [
+            %ReqLLM.ToolCall{
+              id: "call_1",
+              function: %{name: "run_bash", arguments: ~s({"command":"ls -la","timeout":30})}
+            },
+            %ReqLLM.ToolCall{
+              id: "call_2",
+              function: %{name: "read_file", arguments: ~s({"path":"./README.md"})}
+            }
+          ]
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      html = view |> element("#agent-card-1") |> render_click()
+
+      # Shell call: context label + command rendered inline (no expansion needed)
+      assert html =~ "Shell call"
+      assert html =~ "ls -la"
+
+      # Non-shell call: function name + (pretty) arguments inline
+      assert html =~ "read_file"
+      assert html =~ "./README.md"
+    end
+  end
+
   describe "safe_text/1" do
     # BUG fix: message content / tool-call arguments that are Maps (not strings)
     # crashed the LiveView with Protocol.UndefinedError: protocol

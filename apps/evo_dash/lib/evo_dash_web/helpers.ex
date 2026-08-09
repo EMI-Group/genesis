@@ -354,6 +354,72 @@ defmodule EvoDashWeb.Helpers do
 
   def tool_call_arguments(_), do: "{}"
 
+  # Shell-execution tool names (core `EvoGit.Agent.Tools`: `run_bash` on
+  # non-Windows, `run_powershell` on Windows). Their arguments JSON carries a
+  # `"command"` field (plus an optional `"timeout"`).
+  @shell_tool_names ["run_bash", "run_powershell"]
+
+  @doc """
+  Returns `true` when the tool call is a shell-execution call
+  (`run_bash` / `run_powershell`).
+  """
+  def tool_call_is_shell?(call) do
+    tool_call_name(call) in @shell_tool_names
+  end
+
+  @doc """
+  Extracts the `"command"` field from a shell tool call's arguments JSON.
+  Falls back to the raw arguments string when the JSON cannot be decoded or
+  carries no `"command"` field (never crashes, never raises).
+  """
+  def tool_call_command(call) do
+    raw = tool_call_arguments(call)
+
+    case Jason.decode(raw) do
+      {:ok, decoded} when is_map(decoded) ->
+        case Map.get(decoded, "command") do
+          command when is_binary(command) and command != "" -> command
+          _ -> raw
+        end
+
+      _ ->
+        raw
+    end
+  end
+
+  @doc """
+  Pretty-prints a tool call's arguments JSON (2-space indent). Falls back to
+  the raw arguments string when they are not decodable JSON.
+  """
+  def tool_call_arguments_pretty(call) do
+    raw = tool_call_arguments(call)
+
+    case Jason.decode(raw) do
+      {:ok, decoded} ->
+        case Jason.encode(decoded, pretty: true) do
+          {:ok, pretty} -> pretty
+          _ -> raw
+        end
+
+      _ ->
+        raw
+    end
+  end
+
+  @doc """
+  Returns `{context_label, content}` for inline display of a tool call
+  request inside an assistant message:
+  - shell calls → `{"Shell call", <command>}`
+  - other calls → `{<function name>, <pretty-printed arguments>}`
+  """
+  def tool_call_display(call) do
+    if tool_call_is_shell?(call) do
+      {gettext("Shell call"), tool_call_command(call)}
+    else
+      {tool_call_name(call), tool_call_arguments_pretty(call)}
+    end
+  end
+
   @doc """
   Extracts and joins reasoning text from a list of ReasoningDetails structs.
   Returns `nil` if the list is empty or contains no text.

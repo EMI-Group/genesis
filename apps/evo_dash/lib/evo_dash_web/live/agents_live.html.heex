@@ -457,8 +457,10 @@
                                       <div class="font-semibold mb-1"><%= gettext("Tool Calls (%{count})", count: length(entry.data.tool_calls)) %></div>
                                       <div class="space-y-1">
                                         <%= for call <- entry.data.tool_calls do %>
-                                          <div class="flex items-center gap-2">
-                                            <span class="font-mono">{tool_call_name(call)}</span>
+                                          <% {call_label, call_content} = tool_call_display(call) %>
+                                          <div class="flex items-start gap-2">
+                                            <span class="font-mono font-semibold shrink-0">{call_label}</span>
+                                            <span class="font-mono whitespace-pre-wrap break-all min-w-0">{safe_text(call_content)}</span>
                                           </div>
                                         <% end %>
                                       </div>
@@ -569,9 +571,10 @@
                     <h4 class="font-semibold text-secondary mb-2"><%= gettext("Tool Calls") %></h4>
                     <div class="space-y-2">
                       <%= for call <- @selected_history_entry.data.tool_calls do %>
+                        <% {call_label, call_content} = tool_call_display(call) %>
                         <div class="bg-secondary/10 p-3 rounded">
-                          <div class="font-mono font-semibold mb-1">{tool_call_name(call)}</div>
-                          <pre class="text-xs overflow-x-auto"><%= safe_text(tool_call_arguments(call)) %></pre>
+                          <div class="font-mono font-semibold mb-1">{call_label}</div>
+                          <pre class="text-xs whitespace-pre-wrap overflow-x-auto"><%= safe_text(call_content) %></pre>
                         </div>
                       <% end %>
                     </div>
