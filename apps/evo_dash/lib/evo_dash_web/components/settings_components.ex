@@ -51,6 +51,7 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:selected_provider_id, :atom, default: nil)
   attr(:selected_provider_models, :list, default: [])
   attr(:selected_variant_id, :atom, default: nil)
+  attr(:selected_model_string, :string, default: nil)
   attr(:llm_test_status, :any, default: :idle)
   attr(:model_profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
@@ -156,78 +157,96 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- Model shortcuts (show only if no variants needed, or variant selected, and not a custom-model provider) --%>
                 <%= if show_model_buttons do %>
-                  <form phx-submit="save_quick_setup" class="mb-5 space-y-4">
-                    <input type="hidden" name="provider_id" value={@selected_provider_id} />
-                    <input type="hidden" name="variant_id" value={@selected_variant_id || ""} />
+                  <% resolved_atom =
+                    EvoGit.Config.LLMCatalog.resolve_provider_atom(
+                      @selected_provider_id,
+                      @selected_variant_id
+                    ) %>
+                  <div class="mb-5 space-y-4">
                     <div>
                       <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
                         {gettext("Quick-select a model:")}
                       </p>
                       <div class="flex flex-wrap gap-2">
                         <%= for model <- @selected_provider_models do %>
-                          <% resolved_atom =
-                            EvoGit.Config.LLMCatalog.resolve_provider_atom(
-                              @selected_provider_id,
-                              @selected_variant_id
-                            ) %>
                           <% model_string = "#{resolved_atom}:#{model.id}" %>
                           <button
-                            type="submit"
-                            name="model_string"
-                            value={model_string}
+                            type="button"
+                            phx-click="select_llm_model"
+                            phx-value-model_string={model_string}
                             class={[
                               "btn btn-sm rounded-xl font-medium transition-all duration-200",
-                              current_model == model_string && "btn-primary shadow-md",
-                              current_model != model_string &&
+                              @selected_model_string == model_string && "btn-primary shadow-md",
+                              @selected_model_string != model_string &&
                                 "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
                             ]}
                           >
+                            <%= if current_model == model_string do %>
+                              <.icon name="hero-check-circle" class="size-4 text-success" />
+                            <% end %>
                             {model.display_name}
                           </button>
                         <% end %>
                       </div>
                     </div>
 
-                    <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
-                    <% shortcut_prefill_base_url =
-                      cond do
-                        is_map(current_model) ->
-                          to_string(current_model[:base_url] || current_model["base_url"] || "")
-                        is_tuple(current_model) and tuple_size(current_model) == 2 ->
-                          opts = elem(current_model, 1)
-                          if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
-                        true ->
-                          ""
-                      end %>
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text font-bold text-sm mb-2 block">
-                          {gettext("Base URL")}
-                          <%= if requires_base_url do %>
-                            <span class="text-error">*</span>
-                          <% end %>
-                        </span>
-                      </label>
-                      <input
-                        type="text"
-                        name="base_url"
-                        value={shortcut_prefill_base_url}
-                        placeholder="https://..."
-                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
-                      />
-                      <p class="text-xs text-base-content/70 leading-relaxed mt-1">
+                    <%!-- Credentials/save step: only after a model is selected.
+                         The base_url input renders only for providers that require
+                         it (catalog function, not the dead struct field). --%>
+                    <%= if @selected_model_string != nil do %>
+                      <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
+                      <% shortcut_prefill_base_url =
+                        cond do
+                          is_map(current_model) ->
+                            to_string(current_model[:base_url] || current_model["base_url"] || "")
+                          is_tuple(current_model) and tuple_size(current_model) == 2 ->
+                            opts = elem(current_model, 1)
+                            if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+                          true ->
+                            ""
+                        end %>
+                      <% selected_model_display =
+                        Enum.find_value(@selected_provider_models, fn model ->
+                          if "#{resolved_atom}:#{model.id}" == @selected_model_string,
+                            do: model.display_name
+                        end) %>
+                      <form phx-submit="save_quick_setup" class="space-y-4">
+                        <input type="hidden" name="provider_id" value={@selected_provider_id} />
+                        <input type="hidden" name="variant_id" value={@selected_variant_id || ""} />
+                        <input type="hidden" name="model_string" value={@selected_model_string} />
                         <%= if requires_base_url do %>
-                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                            "Required for OpenAI-compatible providers."
-                          )}
-                        <% else %>
-                          <%!-- zh_CN: provider → "服务商" --%>{gettext(
-                            "Leave empty to use the default provider endpoint."
-                          )}
+                          <div class="form-control">
+                            <label class="label">
+                              <span class="label-text font-bold text-sm mb-2 block">
+                                {gettext("Base URL")}
+                                <span class="text-error">*</span>
+                              </span>
+                            </label>
+                            <input
+                              type="text"
+                              name="base_url"
+                              value={shortcut_prefill_base_url}
+                              placeholder="https://..."
+                              class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                            />
+                            <p class="text-xs text-base-content/70 leading-relaxed mt-1">
+                              <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                                "Required for OpenAI-compatible providers."
+                              )}
+                            </p>
+                          </div>
                         <% end %>
-                      </p>
-                    </div>
-                  </form>
+                        <div class="flex items-center gap-3">
+                          <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                            {gettext("Save Model")}
+                          </button>
+                          <%= if selected_model_display do %>
+                            <span class="text-sm text-base-content/70">{selected_model_display}</span>
+                          <% end %>
+                        </div>
+                      </form>
+                    <% end %>
+                  </div>
                 <% end %>
 
                 <%!-- Custom model input (for providers with custom_model: true, e.g. OpenRouter / OpenAI-Compatible) --%>
@@ -320,49 +339,58 @@ defmodule EvoDashWeb.SettingsComponents do
                   </form>
                 <% end %>
 
-                <%!-- API Key input --%>
-                <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
-                <form phx-submit="save_api_key" class="pt-6 pb-4">
-                  <input type="hidden" name="credential_key" value={credential_key} />
-                  <label class="label">
-                    <span class="label-text font-semibold text-sm">{credential_key}</span>
-                    <%= if key_is_set do %>
-                      <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
-                    <% end %>
-                  </label>
-                  <div class="flex items-stretch gap-3">
-                    <input
-                      type="password"
-                      name="api_key"
-                      placeholder={
-                        if key_is_set,
-                          do: gettext("API key is already set"),
-                          else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
-                      }
-                      class={[
-                        "input input-bordered flex-1 rounded-xl shadow-sm bg-base-50",
-                        key_is_set && "input-success"
-                      ]}
-                    />
-                    <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                      {gettext("Save Key")}
-                    </button>
-                  </div>
-                  <%= if key_is_set do %>
-                    <p class="text-[11px] text-success/70 mt-1.5 font-medium">
-                      ✓ {gettext("Your API key is configured and ready to use.")}
-                    </p>
-                  <% else %>
-                    <p class="text-[11px] text-base-content/70 mt-1.5">
-                      <%= if prefix = api_key_prefix_hint(provider.id) do %>
-                        {gettext("Enter your API key. It should start with")}
-                        <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
-                      <% else %>
-                        {gettext("Enter your API key.")}
+                <%!-- API Key input — gated on model selection for preset-model
+                     providers; always visible for custom-model providers (their
+                     save_custom_model form is the model-selection step). --%>
+                <% show_credentials = show_custom_input or @selected_model_string != nil %>
+                <%= if show_credentials do %>
+                  <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
+                  <form phx-submit="save_api_key" class="pt-6 pb-4">
+                    <input type="hidden" name="credential_key" value={credential_key} />
+                    <label class="label">
+                      <span class="label-text font-semibold text-sm">{credential_key}</span>
+                      <%= if key_is_set do %>
+                        <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
                       <% end %>
-                    </p>
-                  <% end %>
-                </form>
+                    </label>
+                    <div class="flex items-stretch gap-3">
+                      <input
+                        type="password"
+                        name="api_key"
+                        placeholder={
+                          if key_is_set,
+                            do: gettext("API key is already set"),
+                            else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
+                        }
+                        class={[
+                          "input input-bordered flex-1 rounded-xl shadow-sm bg-base-50",
+                          key_is_set && "input-success"
+                        ]}
+                      />
+                      <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                        {gettext("Save Key")}
+                      </button>
+                    </div>
+                    <%= if key_is_set do %>
+                      <p class="text-[11px] text-success/70 mt-1.5 font-medium">
+                        ✓ {gettext("Your API key is configured and ready to use.")}
+                      </p>
+                    <% else %>
+                      <p class="text-[11px] text-base-content/70 mt-1.5">
+                        <%= if prefix = api_key_prefix_hint(provider.id) do %>
+                          {gettext("Enter your API key. It should start with")}
+                          <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
+                        <% else %>
+                          {gettext("Enter your API key.")}
+                        <% end %>
+                      </p>
+                    <% end %>
+                  </form>
+                <% else %>
+                  <p class="text-sm text-base-content/70 italic pt-6 pb-4">
+                    {gettext("Select a model above to configure credentials.")}
+                  </p>
+                <% end %>
               <% end %>
             </div>
 

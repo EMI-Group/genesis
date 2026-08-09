@@ -470,6 +470,7 @@ defmodule EvoDashWeb.SettingsLive do
                 selected_provider_id={@selected_provider_id}
                 selected_provider_models={@selected_provider_models}
                 selected_variant_id={@selected_variant_id}
+                selected_model_string={@selected_model_string}
                 llm_test_status={@llm_test_status}
                 model_profiles={@file_config[:llm][:models] || []}
                 editing_profile_id={@editing_profile_id}
@@ -518,6 +519,7 @@ defmodule EvoDashWeb.SettingsLive do
         selected_provider_id: nil,
         selected_provider_models: [],
         selected_variant_id: nil,
+        selected_model_string: nil,
         llm_test_status: :idle,
         editing_profile_id: nil,
         test_profile_id: test_profile_id,
@@ -965,6 +967,8 @@ defmodule EvoDashWeb.SettingsLive do
         |> assign(:selected_provider_id, provider_id)
         |> assign(:selected_provider_models, models)
         |> assign(:selected_variant_id, nil)
+        # Changing provider invalidates any previously chosen model.
+        |> assign(:selected_model_string, nil)
 
       {:noreply, socket}
     else
@@ -974,6 +978,7 @@ defmodule EvoDashWeb.SettingsLive do
        |> assign(:selected_provider_id, nil)
        |> assign(:selected_provider_models, [])
        |> assign(:selected_variant_id, nil)
+       |> assign(:selected_model_string, nil)
        |> put_flash(:error, gettext("Unknown provider."))}
     end
   end
@@ -989,7 +994,23 @@ defmodule EvoDashWeb.SettingsLive do
         provider_atom -> Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
       end
 
-    {:noreply, assign(socket, :selected_variant_id, variant_id)}
+    # Changing variant invalidates any previously chosen model.
+    {:noreply,
+     socket
+     |> assign(:selected_variant_id, variant_id)
+     |> assign(:selected_model_string, nil)}
+  end
+
+  @impl true
+  def handle_event("select_llm_model", %{"model_string" => model_string}, socket) do
+    # Whitelist validation: accept only model strings that match one of the
+    # model shortcut buttons currently rendered for the selected provider
+    # (same provider/variant resolution and render gate as the template).
+    # Unknown or out-of-context values clear the selection instead of crashing.
+    selected_model_string =
+      if llm_model_string_known?(socket, model_string), do: model_string, else: nil
+
+    {:noreply, assign(socket, :selected_model_string, selected_model_string)}
   end
 
   @impl true
@@ -1514,4 +1535,32 @@ defmodule EvoDashWeb.SettingsLive do
       _ -> gettext("Unknown")
     end
   end
+
+  # Whitelist validation for the select_llm_model event: the model_string must
+  # match a model shortcut button that is actually rendered for the currently
+  # selected provider (same provider/variant resolution and render gate as the
+  # template in settings_components.ex). Malformed or out-of-context values
+  # return false so the handler clears the selection instead of crashing.
+  defp llm_model_string_known?(socket, model_string) when is_binary(model_string) do
+    provider_id = socket.assigns.selected_provider_id
+    variant_id = socket.assigns.selected_variant_id
+    models = socket.assigns.selected_provider_models
+
+    provider = Enum.find(EvoGit.Config.LLMCatalog.providers(), &(&1.id == provider_id))
+    variants = provider && provider[:variants]
+    has_variants = is_list(variants) and length(variants) > 0
+    custom_model = provider && provider[:custom_model] == true
+
+    # Model shortcut buttons only render when no variants are needed (or a
+    # variant is selected) and the provider is not a custom-model provider.
+    provider != nil and (not has_variants or variant_id != nil) and not custom_model and
+      Enum.any?(models, fn model ->
+        resolved_atom =
+          EvoGit.Config.LLMCatalog.resolve_provider_atom(provider_id, variant_id)
+
+        "#{resolved_atom}:#{model.id}" == model_string
+      end)
+  end
+
+  defp llm_model_string_known?(_socket, _model_string), do: false
 end
