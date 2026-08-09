@@ -193,6 +193,20 @@ fn run_headless() {
 
 fn run_gui() {
     tauri::Builder::default()
+        // MUST be the first plugin: plugins run in registration order, and this
+        // plugin's setup is what makes a second instance exit. Registering it
+        // before our own `setup` closure guarantees the second instance exits
+        // before it could spawn its own backend sidecar.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // A second instance was launched. It exits during the plugin's own
+            // setup (before this process's `setup` closure runs), so it never
+            // spawns its own backend. Restore + focus the existing window.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![commands::pick_directory])
