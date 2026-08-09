@@ -86,3 +86,7 @@ cd desktop/src-tauri && cargo tauri build
 ```
 
 The Tauri config references the release directory at `resources: ["resources/genesis-backend"]`. Tauri bundles the entire directory tree as an application resource, accessible at runtime via `app.path().resource_dir()`.
+
+## Known Issues
+
+- **Windows console window on backend launch (fixed — don't regress)**: On Windows the backend launcher is `genesis_desktop.bat`. `CreateProcess` cannot run a `.bat` directly, so Rust std retries through `cmd.exe /c <bat>`. Because the Tauri app is a GUI-subsystem process (`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` in `src-tauri/src/main.rs`) with no console, that `cmd.exe` gets a brand-new **visible** console window persisting for the backend's lifetime — closing it kills the backend. Fixed in `src-tauri/src/sidecar.rs` via the shared `launcher_command/1` helper, which applies the `CREATE_NO_WINDOW` creation flag (`0x08000000`) through `std::os::windows::process::CommandExt::creation_flags` under `#[cfg(windows)]`. Both spawn sites use it: GUI mode (`sidecar::start`) and `--headless` mode (`main.rs::run_headless`). **Never spawn the launcher with a plain `Command::new` on Windows** or the console-window bug regresses. git/ripgrep/erl.exe spawned inside the Elixir backend inherit the (now hidden) console — no action needed.

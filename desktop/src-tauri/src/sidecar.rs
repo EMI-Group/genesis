@@ -32,6 +32,46 @@ const LAUNCHER_NAME: &str = "genesis_desktop.bat";
 #[cfg(not(windows))]
 const LAUNCHER_NAME: &str = "genesis_desktop";
 
+/// `CREATE_NO_WINDOW` creation flag for `CreateProcess` (Windows only).
+///
+/// Instructs Windows not to create a new console window for the spawned
+/// process. Without it, a console-subsystem child (like `cmd.exe` running a
+/// `.bat`) whose parent has no console gets a brand-new, visible console
+/// window.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Builds the [`std::process::Command`] that launches the Elixir release
+/// launcher script.
+///
+/// On Windows the launcher is a `.bat` file, which [`std::process::Command`]
+/// cannot execute directly via `CreateProcess` and therefore retries through
+/// `cmd.exe /c <bat>`. `cmd.exe` is a console-subsystem process: spawned from
+/// the GUI-subsystem Tauri app (which has no console), it gets a brand-new,
+/// **visible** console window that persists for the backend's lifetime — and
+/// closing that window kills `cmd.exe`, the batch script, and the BEAM
+/// backend. The `CREATE_NO_WINDOW` creation flag suppresses the new console
+/// window. The flag is a no-op on other platforms (the attribute-gated call is
+/// compiled out entirely).
+pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
+    let cmd = std::process::Command::new(launcher);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Shadow as mutable: `creation_flags` needs `&mut self`, but on
+        // non-Windows builds the whole block (and the `mut`) is compiled out.
+        let mut cmd = cmd;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
+    }
+
+    #[cfg(not(windows))]
+    {
+        cmd
+    }
+}
+
 /// Environment variables passed to the sidecar process.
 ///
 /// These configure the Phoenix backend to run as a local, single-user
@@ -104,7 +144,7 @@ fn launcher_path(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error::Er
 pub fn start(app: &App) -> Result<std::process::Child, Box<dyn std::error::Error>> {
     let launcher = launcher_path(app)?;
 
-    let mut child = std::process::Command::new(&launcher)
+    let mut child = launcher_command(&launcher)
         .arg("start")
         .envs(sidecar_env())
         .stdout(std::process::Stdio::piped())
