@@ -461,7 +461,7 @@
                                           <div class="flex items-start gap-2">
                                             <span class="font-mono font-semibold shrink-0">{display.label}</span>
                                             <%= if display.kind == :structured do %>
-                                              <div class="min-w-0 flex-1 max-h-40 overflow-y-auto rounded bg-base-100/40 p-1.5 space-y-0.5">
+                                              <div class="min-w-0 flex-1 max-h-12 overflow-y-auto p-1.5 space-y-0.5">
                                                 <%= for {key, value} <- display.rows do %>
                                                   <div class="flex items-start gap-1.5">
                                                     <span class="font-mono text-[10px] uppercase tracking-wide text-base-content/50 shrink-0 w-20 pt-0.5">{key}</span>
@@ -586,7 +586,7 @@
                         <div class="bg-secondary/10 p-3 rounded">
                           <div class="font-mono font-semibold mb-1">{display.label}</div>
                           <%= if display.kind == :structured do %>
-                            <div class="max-h-60 overflow-y-auto space-y-1 bg-base-100/40 rounded p-2">
+                            <div class="max-h-60 overflow-y-auto space-y-1 p-2">
                               <%= for {key, value} <- display.rows do %>
                                 <div class="flex items-start gap-1.5">
                                   <span class="font-mono text-[10px] uppercase tracking-wide text-base-content/50 shrink-0 w-20 pt-0.5">{key}</span>
