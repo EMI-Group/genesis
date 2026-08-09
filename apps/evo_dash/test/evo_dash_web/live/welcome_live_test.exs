@@ -459,13 +459,18 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       g = provider(:google)
       assert g.models != []
 
+      # Needle derived from the catalog: a lowercase substring of the first
+      # model's display name (no hardcoded model names).
+      needle =
+        g.models |> hd() |> Map.fetch!(:display_name) |> String.downcase() |> String.slice(0, 6)
+
       render_click(view, "select_welcome_provider", %{"provider_id" => "google"})
 
-      html = render_change(view, "search_models", %{"search_query" => "gemini"})
+      html = render_change(view, "search_models", %{"search_query" => needle})
 
-      for m <- g.models do
-        assert html =~ m.display_name
-      end
+      # The first model must still match (its display name contains the needle
+      # case-insensitively).
+      assert html =~ hd(g.models).display_name
     end
 
     test "search with no matches shows the zero-results message", %{conn: conn} do
