@@ -11,7 +11,7 @@ JS object with lifecycle callbacks (`mounted`, `updated`, `destroyed`) registere
 ### Hook Registration
 
 All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks:` map
-(line ~485):
+(line ~591):
 
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
