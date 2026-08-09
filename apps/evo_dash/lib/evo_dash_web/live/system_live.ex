@@ -19,6 +19,7 @@ defmodule EvoDashWeb.SystemLive do
 
   use EvoDashWeb, :live_view
 
+  alias EvoDashWeb.SystemLive.Charts
   alias EvoDashWeb.SystemLive.Status
 
   @impl true
@@ -385,6 +386,9 @@ defmodule EvoDashWeb.SystemLive do
         </div>
       </div>
 
+      <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib) -->
+      <Charts.charts_section samples={@chart_samples} paused={@scheduler_paused} />
+
       <!-- System Dashboard -->
       <div class="mt-4">
         <.link navigate={with_node_param(~p"/dashboard", @current_node_id)} class="block">
@@ -500,6 +504,7 @@ defmodule EvoDashWeb.SystemLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "scheduler_config")
       spawn_system_checks(socket)
+      Process.send_after(self(), :system_chart_tick, 3000)
     end
 
     socket =
@@ -514,7 +519,11 @@ defmodule EvoDashWeb.SystemLive do
         sandbox_check: nil,
         supervisor_check: nil,
         nix_check: nil,
-        platform_os: EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node])
+        platform_os: EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node]),
+        chart_samples: [],
+        chart_node: nil,
+        chart_config_cache: nil,
+        chart_tick_count: 0
       )
 
     {:ok, socket}
@@ -549,6 +558,18 @@ defmodule EvoDashWeb.SystemLive do
     socket =
       assign(socket, :scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
 
+    # Reset the chart ring buffer + config cache when the node context changes
+    # so charts never mix samples from different nodes.
+    socket =
+      if socket.assigns[:chart_node] != socket.assigns.current_node do
+        socket
+        |> assign(:chart_node, socket.assigns.current_node)
+        |> assign(:chart_samples, [])
+        |> assign(:chart_config_cache, nil)
+        |> assign(:chart_tick_count, 0)
+      else
+        socket
+      end
     socket =
       if previous_remote? != nil and previous_remote? != socket.assigns.remote? do
         # Node context changed — clear stale confirm flags.
@@ -766,6 +787,21 @@ defmodule EvoDashWeb.SystemLive do
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
   end
 
+  @impl true
+  def handle_info(:system_chart_tick, socket) do
+    # Sampling tick for the scheduler-status charts. Reschedule only while
+    # connected; the timer dies with the LiveView process when the tab closes.
+    socket =
+      if connected?(socket) do
+        Process.send_after(self(), :system_chart_tick, 3000)
+        do_chart_tick(socket)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   # --- Private Helpers ---
 
   defp spawn_system_checks(socket) do
@@ -795,6 +831,53 @@ defmodule EvoDashWeb.SystemLive do
     Map.get(EvoGit.AgentScheduler.get_config(), :paused, false)
   end
 
+  # Samples scheduler status into the chart ring buffer. Per tick: agent
+  # summaries via NodeContext (RPC-safe: `[]` on failure), config totals
+  # (cached per node, refreshed every 10th tick ≈ 30s — config changes rarely
+  # and a remote re-fetch is an :erpc round-trip).
+  defp do_chart_tick(socket) do
+    node = socket.assigns.current_node
+    tick = socket.assigns.chart_tick_count + 1
+
+    {agents, totals, socket} =
+      if scheduler_alive?(node) do
+        agents = EvoDash.NodeContext.list_agents(node)
+        {totals, socket} = chart_totals(socket, node, tick)
+        {agents, totals, socket}
+      else
+        {[], %{llm_capacity: 0, tool_capacity: 0}, socket}
+      end
+
+    samples = Charts.push(socket.assigns.chart_samples, Charts.build_sample(agents, totals))
+
+    socket
+    |> assign(:chart_samples, samples)
+    |> assign(:chart_tick_count, tick)
+  end
+
+  # Resolved config totals, cached per node and refreshed every 10th tick.
+  defp chart_totals(socket, node, tick) do
+    case socket.assigns.chart_config_cache do
+      {^node, totals} when rem(tick, 10) != 1 ->
+        {totals, socket}
+
+      _ ->
+        totals = Charts.config_totals(EvoDash.NodeContext.get_remote_config(node))
+        {totals, assign(socket, :chart_config_cache, {node, totals})}
+    end
+  end
+
+  # Remote nodes: NodeContext RPC degrades to []/%{}/false on failure, so no
+  # gate is needed. Local node: the scheduler may not be started (fresh boot,
+  # dashboard-only runs), and a GenServer.call to a missing process raises
+  # :noproc — use a non-crashing liveness check before sampling instead of a
+  # try/rescue around the calls (project policy).
+  defp scheduler_alive?(node) when node != node(), do: true
+
+  defp scheduler_alive?(_node) do
+    Process.whereis(EvoGit.AgentScheduler) != nil or :ets.info(:evogit_sched_meta) != :undefined
+  end
+
   # --- Private Components ---
 
   attr(:title, :string, required: true)
@@ -804,45 +887,39 @@ defmodule EvoDashWeb.SystemLive do
   slot(:fix)
 
   # A self-check term rendered as a card in the responsive 2D grid. The
-  # `<details>` disclosure expands to show what was checked and the detected
-  # values; the `:fix` slot renders a how-to-fix hint when the term is
-  # failing (any status other than :ok/:info).
+  # details (what was checked and the detected values) are ALWAYS rendered —
+  # there is no `<details>` disclosure; the `:fix` slot renders a how-to-fix
+  # hint when the term is failing (any status other than :ok/:info).
   defp check_cell(assigns) do
     ~H"""
     <div class="rounded-lg border border-base-200 bg-base-100">
-      <details class="group">
-        <summary class="flex items-center gap-3 p-4 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
-          <div class={"p-2 rounded-md #{status_bg(@status)}"}>
-            <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
-          </div>
-          <div class="flex-1 min-w-0 flex items-center gap-2">
-            <span class="font-semibold text-sm">{@title}</span>
-            <%= case @status do %>
-              <% :ok -> %>
-                <.icon name="hero-check-circle-solid" class="size-4 text-success" />
-              <% :error -> %>
-                <.icon name="hero-x-circle-solid" class="size-4 text-error" />
-              <% :info -> %>
-                <.icon name="hero-information-circle-solid" class="size-4 text-info" />
-              <% :warning -> %>
-                <.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
-            <% end %>
-          </div>
-          <.icon
-            name="hero-chevron-down"
-            class="size-4 text-base-content/30 transition-transform group-open:rotate-180 shrink-0"
-          />
-        </summary>
-        <div class="px-4 pb-4 text-sm">
-          {render_slot(@details)}
-          <%= if @status not in [:ok, :info] and @fix != [] do %>
-            <div class="mt-3 pt-3 border-t border-base-200/60 flex items-start gap-2 text-xs text-base-content/70">
-              <.icon name="hero-light-bulb" class="size-3.5 text-warning shrink-0 mt-0.5" />
-              <div class="min-w-0">{render_slot(@fix)}</div>
-            </div>
+      <div class="flex items-center gap-3 p-4">
+        <div class={"p-2 rounded-md #{status_bg(@status)}"}>
+          <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
+        </div>
+        <div class="flex-1 min-w-0 flex items-center gap-2">
+          <span class="font-semibold text-sm">{@title}</span>
+          <%= case @status do %>
+            <% :ok -> %>
+              <.icon name="hero-check-circle-solid" class="size-4 text-success" />
+            <% :error -> %>
+              <.icon name="hero-x-circle-solid" class="size-4 text-error" />
+            <% :info -> %>
+              <.icon name="hero-information-circle-solid" class="size-4 text-info" />
+            <% :warning -> %>
+              <.icon name="hero-exclamation-triangle-solid" class="size-4 text-warning" />
           <% end %>
         </div>
-      </details>
+      </div>
+      <div class="px-4 pb-4 text-sm">
+        {render_slot(@details)}
+        <%= if @status not in [:ok, :info] and @fix != [] do %>
+          <div class="mt-3 pt-3 border-t border-base-200/60 flex items-start gap-2 text-xs text-base-content/70">
+            <.icon name="hero-light-bulb" class="size-3.5 text-warning shrink-0 mt-0.5" />
+            <div class="min-w-0">{render_slot(@fix)}</div>
+          </div>
+        <% end %>
+      </div>
     </div>
     """
   end
