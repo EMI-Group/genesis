@@ -195,8 +195,8 @@ defmodule EvoDashWeb.SystemLive do
                 <span class="text-sm text-base-content/60">{gettext("Checking system status...")}</span>
               </div>
             <% else %>
-              <!-- Check terms in a responsive 2D grid -->
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <!-- Check terms in a responsive grid (1 col mobile → 3 cols wide) -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 <!-- Configuration cell -->
                 <.check_cell
                   title={gettext("Configuration")}
@@ -570,6 +570,7 @@ defmodule EvoDashWeb.SystemLive do
       else
         socket
       end
+
     socket =
       if previous_remote? != nil and previous_remote? != socket.assigns.remote? do
         # Node context changed — clear stale confirm flags.
@@ -886,7 +887,7 @@ defmodule EvoDashWeb.SystemLive do
   slot(:details, required: true)
   slot(:fix)
 
-  # A self-check term rendered as a card in the responsive 2D grid. The
+  # A self-check term rendered as a card in the responsive grid. The
   # details (what was checked and the detected values) are ALWAYS rendered —
   # there is no `<details>` disclosure; the `:fix` slot renders a how-to-fix
   # hint when the term is failing (any status other than :ok/:info).
