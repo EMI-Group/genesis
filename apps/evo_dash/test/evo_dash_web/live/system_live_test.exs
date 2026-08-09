@@ -50,6 +50,50 @@ defmodule EvoDashWeb.SystemLiveTest do
     render_with_checks(view, %{EvoGit.SystemCheck.run_all_checks() | nix: nix_check})
   end
 
+  # Deterministic all-OK checks map for the self-check grid/banner assertions.
+  # Every check passes, so the merged health light is green regardless of the
+  # host (a real `run_all_checks/0` on CI may legitimately report failing
+  # tools/config/sandbox). The sandbox map is a safe `:none` backend — with the
+  # :windows platform override the cell is hidden and the map is never read by
+  # the template, but supplying it keeps the assign well-formed.
+  defp all_ok_checks do
+    %{
+      config: %{ok?: true, missing: [], warnings: [], validation_errors: []},
+      tools: %{
+        git: %{available: true, path: "/usr/bin/git", version: "git version 2.0.0", error: nil},
+        rg: %{available: true, path: "/usr/bin/rg", version: "ripgrep 14.1.0", error: nil}
+      },
+      sandbox: %{
+        backend: :none,
+        enabled: false,
+        capabilities: %{filesystem_isolation: false, resource_limits: false, backend: :none},
+        systemd_available: false,
+        sandbox_exec_available: false
+      },
+      supervisor: %{healthy: true, evo_git: [], evo_dash: []},
+      nix: %{
+        enabled: false,
+        available: false,
+        flake_present: false,
+        dev_env_built: false,
+        error: nil
+      }
+    }
+  end
+
+  # `:platform_os_override` is the injection seam for `os_for_node/1` (checked
+  # BEFORE host detection): set to :windows it hides the Sandbox cell, so the
+  # merged health banner never depends on the host's sandbox state (on Linux CI
+  # the real sandbox check can be :error, which would hard-fail the banner).
+  # Safe only in `async: false` files; cleaned up via `on_exit`.
+  defp set_windows_platform do
+    Application.put_env(:evo_dash, :platform_os_override, :windows)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :platform_os_override)
+    end)
+  end
+
   describe "system page" do
     test "renders the system page", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/system")
@@ -396,6 +440,146 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       assert html =~ ">Sandbox</span>"
       assert html =~ "sandbox-exec (macOS)"
+    end
+  end
+
+  describe "system self-check" do
+    # The self-check grid/banner tests inject a deterministic
+    # `{:system_checks_result, _}` via `render_with_checks/2` after the real
+    # async check completes (see the helper's comment for the send+render
+    # determinism pattern). All tests set the :windows platform override via
+    # `set_windows_platform/0` so the Sandbox cell is hidden and the banner
+    # depends only on the injected checks.
+
+    test "Genesis Process Tree row markers are no longer rendered", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html = render_with_checks(view, all_ok_checks())
+
+      # The health-banner redesign removed the old "Genesis Process Tree" row
+      # and its `supervisor_status/1` component entirely: the row title, the
+      # "All healthy" fallback, and the `EvoGit:` / `EvoDash:` sub-status
+      # labels (`<span ...>EvoGit:</span>`) must never reappear.
+      refute html =~ "Genesis Process Tree"
+      refute html =~ "All healthy"
+      refute html =~ ">EvoGit:</span>"
+      refute html =~ ">EvoDash:</span>"
+    end
+
+    test "merged health light is green when every check passes", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html = render_with_checks(view, all_ok_checks())
+
+      assert html =~ "System running correctly"
+      assert html =~ "All self-checks passed."
+    end
+
+    test "merged health light is red with a config failure reason", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html =
+        render_with_checks(view, %{
+          all_ok_checks()
+          | config: %{ok?: false, missing: [:llm_model], warnings: [], validation_errors: []}
+        })
+
+      assert html =~ "System needs attention"
+      assert html =~ "Required settings are missing or invalid"
+    end
+
+    test "merged health light is red with a missing-tool reason", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html =
+        render_with_checks(view, %{
+          all_ok_checks()
+          | tools: %{
+              git: %{available: false, path: nil, version: nil, error: "not found"},
+              rg: %{available: true, path: "/usr/bin/rg", version: "ripgrep 14.1.0", error: nil}
+            }
+        })
+
+      assert html =~ "System needs attention"
+      assert html =~ "A required tool (git or ripgrep) is missing"
+    end
+
+    test "merged health light is red with a supervisor failure reason", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html =
+        render_with_checks(view, %{
+          all_ok_checks()
+          | supervisor: %{
+              healthy: false,
+              evo_git: [%{id: :evo_git, status: :error, pid: nil}],
+              evo_dash: []
+            }
+        })
+
+      assert html =~ "System needs attention"
+      assert html =~ "System processes are not running correctly"
+    end
+
+    test "check terms render in the responsive 2D grid", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html = render_with_checks(view, all_ok_checks())
+
+      assert html =~ ~s(grid grid-cols-1 md:grid-cols-2 gap-3)
+    end
+
+    test "check terms are expandable details cards with fix hints on failure", %{conn: conn} do
+      set_windows_platform()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Every term renders as a <details>/<summary> disclosure card.
+      html = render_with_checks(view, all_ok_checks())
+
+      assert html =~ "<details"
+      assert html =~ "<summary"
+
+      # Failing rg → the Required Tools cell shows the per-tool fix hint
+      # ("Install git ..." is NOT shown because git is still available).
+      html =
+        render_with_checks(view, %{
+          all_ok_checks()
+          | tools: %{
+              git: %{
+                available: true,
+                path: "/usr/bin/git",
+                version: "git version 2.0.0",
+                error: nil
+              },
+              rg: %{available: false, path: nil, version: nil, error: "not found"}
+            }
+        })
+
+      assert html =~ "Install ripgrep and make sure it is available on your PATH."
+
+      # Failing config → the Configuration cell shows the Settings fix hint
+      # with its "Open Settings" link.
+      html =
+        render_with_checks(view, %{
+          all_ok_checks()
+          | config: %{ok?: false, missing: [:llm_model], warnings: [], validation_errors: []}
+        })
+
+      assert html =~ "Fix the missing or invalid settings in Settings."
+      assert html =~ "Open Settings"
     end
   end
 end
