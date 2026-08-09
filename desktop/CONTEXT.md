@@ -59,6 +59,30 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 3. The WebView window opens, pointing to `http://localhost:9999`
 4. Closing the window hides it to the system tray (backend keeps running); the "Quit" tray menu item kills the backend process and exits
 
+## Single-Instance Detection
+
+**Design decision:** The GUI app prevents multiple concurrent instances via the **`tauri-plugin-single-instance` crate v2.4.3** (resolved from `"2"` in `src-tauri/Cargo.toml`; requires tauri ≥ 2.10 and Rust ≥ 1.77.2 — we use tauri 2.11.3 / Rust 1.97). Implemented in `src-tauri/src/main.rs::run_gui()`, commit `5d3e5368`.
+
+**Mechanism:** The plugin is registered as the **FIRST** plugin in the builder — this ordering is load-bearing. Plugins run their `setup` hooks in registration order, and the plugin's setup is what detects an existing instance and terminates the new one. On a second launch:
+
+1. The second process's plugin setup detects the existing instance (see per-platform mechanisms below), **notifies** it (which fires the callback below on the FIRST instance), then calls `std::process::exit(0)` — the second instance never creates a window and **never reaches our `setup` closure, so it never spawns a second backend sidecar**. No extra sidecar guard is needed; do not add one (a guard would be dead code and the plugin ordering is the canonical design).
+2. On the first instance, the callback runs: `app.get_webview_window("main")` → `unminimize()` → `show()` → `set_focus()`, restoring/focusing the existing window (including from the system tray, since close-to-tray just hides the window).
+
+**Per-platform mechanisms (handled internally by the plugin):**
+- **Linux**: session-bus D-Bus name ownership — `<identifier>.SingleInstance` (`com.genesis.desktop.SingleInstance`), via `zbus`. The second instance calls the first's `ExecuteCallback` D-Bus method, then exits. Requires a session bus (standard on desktop Linux). Flatpak/Snap caveat: if the Tauri identifier doesn't match the package id, use the plugin builder's `dbus_id()`; we do NOT set it (regular packaging).
+- **macOS**: a Unix domain socket in `/tmp` (path derived from the bundle identifier); the second instance connects, notifies the first, and exits; the first instance listens via tokio.
+- **Windows**: a named mutex (`CreateMutexW`) plus a hidden window receiving `WM_COPYDATA` (message `1542`); the second instance signals the first's hidden window, then exits.
+
+**Caveats / known limits:**
+- **Simultaneous-launch race**: two instances launched at (nearly) the same instant can both pass the check on macOS (socket not yet bound) and, in theory, Linux (D-Bus name acquisition is atomic so Linux is safe; Windows mutex is atomic too). The macOS race window is small and pre-existing plugin behavior — not mitigated.
+- **macOS focus nuance**: `set_focus()` makes the window key but may not bring the app to the foreground if the app is inactive (no `activate` API in tauri 2.11.3). In practice the second launch typically activates the app via LaunchServices first, so restore+focus works; if focus regressions are reported, evaluate `NSApplication activate` via objc2 in the callback.
+- **`--headless` mode is NOT covered**: `run_headless()` bypasses the Tauri builder entirely (no plugin, no window). Two headless instances would collide on backend port 9999; this is a dev/debug utility and is deliberately out of scope.
+- The callback may fire while the first instance's `setup` is still blocked polling the backend (up to 30s) — the callback runs off the main thread (D-Bus thread / message-loop thread / tokio task), so it is queued and applied once the window exists; window calls are thread-safe in Tauri.
+
+**Build note:** `cargo check` in `src-tauri` requires `resources/genesis-backend/` to exist (tauri-build validates `bundle.resources` paths at compile time). The dir is gitignored (root `.gitignore` line 51, placeholder removed from git in `c8b6195c` for the nix build) — create it locally with `mkdir -p desktop/src-tauri/resources/genesis-backend` before building/checking. Also note the host shell may lack glib/gtk dev files (pkg-config `glib-2.0` not found); use the repo's `nix develop` devShell for desktop Rust builds.
+
+**Verification status:** `cargo check` passes (in `nix develop`, zero errors). Runtime single-instance behavior (second launch focuses existing window + exits without second backend) requires manual per-platform verification on Linux/macOS/Windows — not covered by CI.
+
 ## Regenerating Icons
 
 The Tauri icon set (`src-tauri/icons/`: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo. Source SVGs (sibling app, read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light variant — the one used) and `logo-alt.svg` (white + red, dark variant — reserved for a possible dark-tray icon). Transparent background, matching the old placeholder set's style.
