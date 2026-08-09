@@ -12,13 +12,20 @@ defmodule EvoGit.Umbrella.MixProject do
         genesis: [
           applications: [
             evo_git: :permanent,
-            evo_dash: :permanent
+            evo_dash: :permanent,
+            # wx is bundled with OTP but is not a dependency of any app — it
+            # must be listed explicitly so the dashboard's native directory
+            # picker (EvoDash.DirectoryPicker, wxDirDialog) works in releases.
+            wx: :load
           ]
         ],
         genesis_desktop: [
           applications: [
             evo_git: :permanent,
-            evo_dash: :permanent
+            evo_dash: :permanent,
+            # wx for the native directory picker (EvoDash.DirectoryPicker) —
+            # see the `genesis` release note above.
+            wx: :load
           ],
           # Bake a compile-time desktop flag into sys.config so that the
           # backend reliably detects desktop mode at runtime.
