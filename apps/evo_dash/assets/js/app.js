@@ -110,206 +110,91 @@ const PathAutocomplete = {
   }
 };
 
-// DirectoryPicker hook: native directory picker via Tauri dialog, browser API, or fallback
+// DirectoryPicker hook: native directory picker via a server-side wx dialog
 //
-// macOS gotcha: the Tauri dialog plugin (tauri-plugin-dialog 2.7.1 → rfd 0.16.0)
-// presents NSOpenPanel as a *sheet* attached to the parent window
-// (beginSheetModalForWindow:completionHandler:). On macOS the sheet can
-// silently fail to appear (window not visible / app not active — e.g. after the
-// desktop shell re-shows a close-to-tray hidden window) or rfd can panic while
-// resolving the parent window handle; either way the `plugin:dialog|open`
-// invoke either rejects or never settles. The old `catch (_err) {}` swallowed
-// both, so on macOS the Browse button was a silent dead click (WKWebView also
-// lacks showDirectoryPicker, so the fallback branch was a no-op too). This hook
-// now: (1) logs genuine errors to the console (user-cancel stays quiet),
-// (2) times out a hung Tauri invoke and falls through to the File System
-// Access API, then to manual entry, and (3) marks the picker row with
-// data-picker-error="manual" + focuses the path input (styled in css/app.css)
-// so the user can type the path instead of being stuck.
-const DIRECTORY_PICK_TIMEOUT_MS = 15000;
-const DIRECTORY_PICK_TIMEOUT = Symbol("directory-pick-timeout");
-
+// The picker buttons ("Browse" on the project, new-project, and foreign-repo
+// pickers) carry phx-hook="DirectoryPicker". Clicking a button pushes a
+// "directory_pick" event to the server (DashboardLive), which — when the
+// current node is local — runs a native wx directory dialog
+// (EvoDash.DirectoryPicker GenServer, wxDirDialog) and pushes the result back
+// to the client as a "picker_result:<picker_id>" event. Payloads:
+//
+//   {path: "/absolute/path"} → a directory was picked (wx returns absolute
+//                              paths only)
+//   {cancelled: true}        → the user dismissed the dialog — no-op
+//   {unavailable: true}      → wx is unavailable (headless server, remote
+//                              node, OTP built without wx) — fall back to
+//                              manual entry
+//
+// There is deliberately NO JS-side timeout: the native dialog may legitimately
+// stay open for minutes while the user navigates the filesystem, and the
+// server owns the dialog lifecycle. On a successful pick the path is filled
+// into the adjacent input; the project and new-project pickers additionally
+// auto-submit their enclosing form (the server validates via Path.expand +
+// File.dir?, so auto-submitting a stale/bad selection is safe), while the
+// foreign-repo picker only fills the input (a settings form field). wx picks
+// are always absolute; the absolute-path guard below is defense in depth — a
+// non-absolute result is never fed into the input (the server would cwd-join
+// it) and routes to the manual-entry fallback instead.
 const DirectoryPicker = {
   mounted() {
-    // Detect if browser is on the same machine as the server
-    const hostname = window.location.hostname;
-    this.el.dataset.isLocal =
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "[::1]"
-        ? "true"
-        : "false";
-
-    this.el.addEventListener("click", async () => {
-      // Re-entrancy guard: the native panel is modal, so a second click while
-      // a pick is in flight would stack another sheet / invoke.
+    this.el.addEventListener("click", () => {
+      // Re-entrancy guard: the native wx dialog is modal, so a second click
+      // while a pick is in flight would stack another dialog. The result
+      // handler (or a reconnect, see reconnected()) re-arms the button.
       if (this._picking) return;
       this._picking = true;
-      try {
-        await this.pickDirectory();
-      } finally {
-        this._picking = false;
-      }
+      this.pushEvent("directory_pick", {picker_id: this.el.dataset.pickerId});
     });
-  },
 
-  // Try, in order: Tauri native dialog → File System Access API → manual-entry
-  // fallback hint. Never throws.
-  async pickDirectory() {
-    if (this.tauriInvokeAvailable()) {
-      const result = await this.pickWithTauri();
-      // "picked" = a directory was filled; "cancelled" = the user dismissed the
-      // native panel — neither should fall through to another picker. Only a
-      // genuine failure ("failed": invoke rejected or timed out) continues.
-      if (result !== "failed") return;
-    }
+    // Register in mounted() (not only on connect) so the listener survives
+    // reconnects: handleEvent listeners live until the hook is destroyed, and
+    // mounted() re-runs whenever the hook is re-created.
+    this.handleEvent("picker_result:" + this.el.dataset.pickerId, ({path, cancelled, unavailable}) => {
+      this._picking = false; // the dialog is closed — re-arm the button
 
-    // Browser File System Access API (Chromium only — WKWebView/Safari lack it)
-    if (typeof window.showDirectoryPicker === "function") {
-      try {
-        const handle = await window.showDirectoryPicker();
-        // Browser/WebView2 pickers only expose the folder NAME (handle.name),
-        // never a full path. Filling the input with a bare name would make the
-        // server cwd-join it via Path.expand/1 (e.g. a Windows pick of `Test`
-        // becomes `<app-cwd>/Test`), so never fill it — warn and route to the
-        // manual-entry fallback instead. Never auto-submit from this branch.
-        console.warn(
-          "[DirectoryPicker] Browser folder pickers only expose the folder name (got \"" + handle.name + "\"), not a full path — please type the full path."
-        );
+      if (unavailable) {
+        // Headless server, remote node, or OTP built without wx — never leave
+        // the user with a silent dead click.
         this.markManualFallback();
         return;
-      } catch (err) {
-        // AbortError = user cancelled the browser picker — quiet, not a failure
-        if (err && err.name === "AbortError") return;
-        console.error("[DirectoryPicker] File System Access API failed", err);
       }
-    }
+      if (cancelled) return; // user dismissed the native dialog — not an error
 
-    // Nothing worked — never leave the user with a silent dead click.
-    this.markManualFallback();
-  },
-
-  // Tauri detection, consistent with the TauriDetect hook (window.__TAURI__
-  // or window.__TAURI_OS_INTERNALS__), but additionally require the exact
-  // function we call and log the injection-race case where only the internals
-  // marker is present (e.g. withGlobalTauri not injected into the webview).
-  tauriInvokeAvailable() {
-    if (window.__TAURI__?.core?.invoke) return true;
-    if (window.__TAURI__ || window.__TAURI_OS_INTERNALS__) {
-      console.warn(
-        "[DirectoryPicker] Tauri globals detected but window.__TAURI__.core.invoke is missing (withGlobalTauri injection race?)"
-      );
-    }
-    return false;
-  },
-
-  // Custom `pick_directory` command (new desktop builds): a plain invoke with
-  // no args returning Option<String> — a directory path string, or null on
-  // cancel. It avoids the dialog plugin's macOS NSOpenPanel sheet hang
-  // entirely. Older desktop builds reject the invoke (unknown command); that
-  // is not a user-visible error, so log a warning and let the caller fall
-  // through to the plugin dialog.
-  async pickWithCustomCommand() {
-    let invokePromise;
-    try {
-      invokePromise = window.__TAURI__.core.invoke('pick_directory');
-      // Race it against the same timeout as the plugin dialog below, so a
-      // hung command can't leave the UI stuck.
-      const result = await this.withTimeout(invokePromise, DIRECTORY_PICK_TIMEOUT_MS);
-      return this.applyTauriResult(result, {autoSubmit: true}) ? "picked" : "cancelled";
-    } catch (err) {
-      console.warn(
-        "[DirectoryPicker] custom pick_directory unavailable, falling back to plugin dialog",
-        err
-      );
-      return "failed";
-    }
-  },
-
-  // Tauri native dialog (desktop app). In Tauri v2 with withGlobalTauri: true,
-  // window.__TAURI__ exposes the core API but NOT plugin-specific JS APIs (the
-  // @tauri-apps/plugin-dialog JS package is not bundled in a Phoenix-served
-  // app). So we always invoke the dialog plugin's Rust command directly via
-  // core.invoke. The open command expects the options wrapped under an
-  // "options" key (the same shape the official guest-js wrapper sends).
-  async pickWithTauri() {
-    // Prefer the custom `pick_directory` command (new desktop builds). Only a
-    // genuine failure (invoke rejected or timed out) falls through to the
-    // plugin dialog below; "picked" and "cancelled" both stop here.
-    const custom = await this.pickWithCustomCommand();
-    if (custom !== "failed") return custom;
-
-    let invokePromise;
-    try {
-      invokePromise = window.__TAURI__.core.invoke('plugin:dialog|open', {
-        options: {directory: true, multiple: false, title: "Select Directory"}
-      });
-      // A macOS sheet that never appears leaves the invoke pending forever —
-      // race it against a timeout so the UI can fall through instead of hanging.
-      const result = await this.withTimeout(invokePromise, DIRECTORY_PICK_TIMEOUT_MS);
-      return this.applyTauriResult(result, {autoSubmit: true}) ? "picked" : "cancelled";
-    } catch (err) {
-      if (err === DIRECTORY_PICK_TIMEOUT) {
-        console.warn(
-          `[DirectoryPicker] Tauri dialog did not respond within ${DIRECTORY_PICK_TIMEOUT_MS}ms (macOS NSOpenPanel sheet may not have appeared) — falling back`
-        );
-        // Keep observing the original promise: if the panel does appear very
-        // late and the user picks a folder, still fill the input — but only
-        // when the user hasn't typed a path manually in the meantime, and
-        // never auto-submit (the fallback hint may already be showing).
-        invokePromise
-          .then((result) =>
-            this.applyTauriResult(result, {autoSubmit: false, onlyIfEmpty: true})
-          )
-          .catch(() => {}); // already logged above via the race
-      } else {
-        console.error("[DirectoryPicker] Tauri dialog invoke failed", err);
+      if (path) {
+        // Defense-in-depth: wx picks are always absolute, but never feed a
+        // non-absolute result into the input (the server would cwd-join it) —
+        // warn and fall through to the manual-entry fallback instead.
+        if (!/^[a-zA-Z]:[\\/]|^[\\/]|^\\\\/.test(path)) {
+          console.warn(
+            "[DirectoryPicker] Picker returned a non-absolute path (\"" + path + "\") — please type the full path."
+          );
+          this.markManualFallback();
+          return;
+        }
+        this.fillInput(path);
+        // wx picks return a full absolute path — auto-confirm the project and
+        // new-project pickers by submitting the enclosing form directly. (The
+        // browse button lives inside that form; the foreign-repo picker is a
+        // settings form field that still needs manual input.)
+        if (this.el.dataset.pickerId === "project" ||
+            this.el.dataset.pickerId === "new-project") {
+          this.el.closest("form")?.requestSubmit();
+        }
+        return;
       }
-      return "failed";
-    }
-  },
 
-  // Applies a resolved Tauri `open` result to the input. Returns true when a
-  // directory was filled. A null/empty result means the user cancelled the
-  // native panel — that is not an error and does NOT fall through to another
-  // picker.
-  applyTauriResult(result, {autoSubmit, onlyIfEmpty}) {
-    // result is a string path (or array of paths when multiple: true)
-    const selected = Array.isArray(result) ? result[0] : result;
-    if (!selected) return false;
-    const input = this.pickerInput();
-    if (onlyIfEmpty && input && input.value) return false;
-    // Defense-in-depth: Tauri picks are always absolute, but never feed a
-    // non-absolute result into the input (the server would cwd-join it) —
-    // warn and fall through to the manual-entry fallback instead.
-    if (!/^[a-zA-Z]:[\\/]|^[\\/]|^\\\\/.test(selected)) {
-      console.warn(
-        "[DirectoryPicker] Picker returned a non-absolute path (\"" + selected + "\") — please type the full path."
-      );
+      // Defensive: a result with no path and no flags is unusable — fall back
+      // to manual entry rather than silently doing nothing.
       this.markManualFallback();
-      return false;
-    }
-    this.fillInput(selected);
-    // Tauri native picks return a full path — auto-confirm the project and
-    // new-project pickers by submitting the enclosing form directly. (The
-    // browse button lives inside that form; browser-API picks are NOT
-    // auto-confirmed because showDirectoryPicker yields only the folder
-    // name, and the foreign-repo picker is a settings form field that still
-    // needs manual input.)
-    if (autoSubmit &&
-        (this.el.dataset.pickerId === "project" ||
-         this.el.dataset.pickerId === "new-project")) {
-      this.el.closest("form")?.requestSubmit();
-    }
-    return true;
+    });
   },
 
-  withTimeout(promise, ms) {
-    let timer;
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(DIRECTORY_PICK_TIMEOUT), ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  // If the connection drops while the native dialog is open, the server-side
+  // pick is gone — re-arm the button so the user can try again once the
+  // reconnect completes.
+  reconnected() {
+    this._picking = false;
   },
 
   // Resolves the container element that wraps the browse button + path input
@@ -348,7 +233,7 @@ const DirectoryPicker = {
       this.el.dataset.pickerError = "manual";
     }
     console.warn(
-      "[DirectoryPicker] Native and browser pickers unavailable — the path input remains editable for manual entry"
+      "[DirectoryPicker] Native picker unavailable — the path input remains editable for manual entry"
     );
   },
 
