@@ -140,7 +140,7 @@ fn run_headless() {
         std::process::exit(1);
     });
 
-    let mut child = std::process::Command::new(&sidecar_path)
+    let mut child = sidecar::launcher_command(&sidecar_path)
         .arg("start")
         .envs(headless_sidecar_env())
         .stdout(std::process::Stdio::inherit())
