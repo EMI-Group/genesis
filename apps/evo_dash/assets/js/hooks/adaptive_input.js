@@ -19,9 +19,10 @@
 // MutationObserver on the `.input-layout` element. Because the textarea sits
 // inside phx-update="ignore", morphdom skips it and `updated()` never fires
 // on those re-renders; the observer catches the re-seed and flips the layout
-// back if needed. applyLayout only writes the attribute when the computed
-// value differs, so the observer converges with no loop and no per-keystroke
-// server event. This hook does not position any floating controls panel (the
+// back if needed. applyLayout writes the attribute only when the computed
+// value differs from the current DOM value (an equality guard), so the
+// observer converges with no loop and no per-keystroke server event. This
+// hook does not position any floating controls panel (the
 // old --input-layout-center logic is gone — Layout B's controls row is
 // in-flow below the textarea).
 const AdaptiveInput = {
@@ -35,9 +36,10 @@ const AdaptiveInput = {
     // and re-seeds data-layout from the possibly-stale @task_prompt. The
     // textarea is inside phx-update="ignore", so morphdom skips it and
     // updated() never fires — the observer catches the re-seed and re-applies
-    // the client-computed layout immediately. applyLayout only writes the
-    // attribute when the computed value differs, so re-asserting through the
-    // observer converges without a loop.
+    // the client-computed layout immediately. applyLayout writes the
+    // attribute only when the computed value differs from the current DOM
+    // value (an equality guard), so re-asserting through the observer
+    // converges without a loop.
     const layoutEl = this.el.closest('.input-layout');
     if (layoutEl) {
       this._layoutObserver = new MutationObserver(() => this._apply());
@@ -95,7 +97,10 @@ const AdaptiveInput = {
     const value = this.el.value || '';
     const charCount = Array.from(value).length;
     const lineCount = value.split('\n').length;
-    layoutEl.dataset.layout = (charCount > 600 || lineCount > 16) ? 'expanded' : 'compact';
+    const layout = (charCount > 600 || lineCount > 16) ? 'expanded' : 'compact';
+    // Equality guard: writing the attribute even when it already equals the
+    // computed value would re-trigger the MutationObserver and loop forever.
+    if (layoutEl.dataset.layout !== layout) layoutEl.dataset.layout = layout;
   },
 
   measureAndApply() {
@@ -109,12 +114,15 @@ const AdaptiveInput = {
     const prevFlex = ta.style.flex;
     const prevMinHeight = ta.style.minHeight;
     const prevMaxHeight = ta.style.maxHeight;
+    const prevHeight = ta.style.height;
     ta.style.flex = "0 0 auto";
     ta.style.minHeight = "0";
     ta.style.maxHeight = "none";
     ta.style.height = "auto";
     const scrollHeight = ta.scrollHeight;
-    ta.style.height = scrollHeight + "px";
+    // Only write when the height actually changed (steady-state repeated
+    // calls then write nothing — hygiene, since height is not observed).
+    if (scrollHeight + "px" !== prevHeight) ta.style.height = scrollHeight + "px";
     ta.style.flex = prevFlex;
     ta.style.minHeight = prevMinHeight;
     ta.style.maxHeight = prevMaxHeight;
