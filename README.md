@@ -38,13 +38,12 @@ Three regimes. One developmental principle.
 
 #### C compiler from an implementation-empty repository
 
-Using **DeepSeek V4 Flash**, Genesis developed a Rust-based C compiler from a repository containing no compiler implementation code.
+Genesis used **DeepSeek V4 Flash** to develop a Rust-based C compiler from a repository containing no compiler implementation code.
 
-> **248,989 lines · 1,019 archived agent episodes · 123.4 h · US$44.38**
-
-**Validation:** 220/220 c-testsuite · 32/36 LLVM · 93/93 executed Csmith · 2,904 Rust tests · 106/106 internal cases
-
-**Development:** observed recursive depth 5 · 327 first-parent commits
+**Scope:** implementation-empty repository → **248,989-line C compiler**  
+**Run:** **123.4 h · 1,019 archived agent episodes · US$44.38**  
+**Validation:** **220/220** c-testsuite · **32/36** LLVM · **93/93** executed Csmith · **2,904** Rust tests · **106/106** internal cases  
+**Development:** observed recursive depth **5** · **327** first-parent commits
 
 ---
 
@@ -52,12 +51,12 @@ Using **DeepSeek V4 Flash**, Genesis developed a Rust-based C compiler from a re
 
 #### The model changed. Development continued.
 
-A separate compiler world originally developed with **GLM 5.2** was independently continued by both GLM 5.2 and **DeepSeek V4 Flash**.
+Genesis continued the same accepted compiler world independently with **GLM 5.2** and **DeepSeek V4 Flash**.
 
-> **DeepSeek: 1,820/1,820 retained LLVM SingleSource cases**  
-> **GLM 5.2: 1,445/1,448**
-
-**Both:** 220/220 c-testsuite · 4/4 LZ4
+**Scope:** one accepted compiler world → two independent continuation trajectories  
+**Run:** GLM 5.2: **21.99 h · 98 agents** · DeepSeek V4 Flash: **17.10 h · 178 agents**  
+**Validation:** GLM 5.2: **1,445/1,448** · DeepSeek V4 Flash: **1,820/1,820** retained LLVM SingleSource cases  
+**Development:** both retained **220/220** c-testsuite and **4/4** LZ4 · observed recursive depths **4** and **8**
 
 ---
 
@@ -67,11 +66,10 @@ A separate compiler world originally developed with **GLM 5.2** was independentl
 
 Genesis redeveloped a selected chain of **13 MESA Fortran modules** into corresponding Rust crates.
 
-> **139,414 Fortran lines → 89,946-line Rust workspace**
-
-**Run:** 33.22 h · 272 agents · US$10.64  
-**Validation:** 1,052 tests · 0 failures  
-**Numerics:** 2 bit-exact workloads · remaining relative checksum differences ≤ 3.1 × 10⁻⁹ · median speedups **1.55×–6.87×**
+**Scope:** **139,414 Fortran lines → 89,946-line Rust workspace**  
+**Run:** **33.22 h · 272 agents · US$10.64**  
+**Validation:** **1,052 tests · 0 failures** · **2 bit-exact** workloads · remaining relative checksum differences ≤ **3.1 × 10⁻⁹**  
+**Development:** observed recursive depth **4** · median runtime speedups **1.55×–6.87×**
 
 <sub>
 Reported dollar amounts are foundation-model token charges only. Compiler formation, continuation and MESA redevelopment are observed system-level results, not normalized model-comparison benchmarks. The MESA result covers the audited 13-module scope, not the full application.
