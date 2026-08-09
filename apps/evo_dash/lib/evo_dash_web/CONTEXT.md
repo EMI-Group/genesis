@@ -37,6 +37,8 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 | Route | LiveView | Purpose |
 |-------|----------|---------|
 | `GET /` | `DashboardLive` | Unified dashboard — project selector, task form, project settings, task history. URL-based project state via `?project=<path>` query param. |
+| `GET /welcome` | `WelcomeLive` | Onboarding page — stepwise first-LLM quick setup (provider → variant → model → credentials); `skip`/`get_started` redirect to `/welcome/complete`. |
+| `GET /welcome/complete` | `WelcomeCompleteLive` | Onboarding completion page — example task (copyable demo objective via the `ClipboardCopy` hook) + "Go to Dashboard" button that completes onboarding and navigates to `/`. |
 | `GET /review/:task_id` | `ReviewLive` (`:show`) | Code review page — diff viewer with expandable context, commit list, merge/reject/continue actions. Supports post-merge re-review via persisted SHAs. |
 | `GET /review/:task_id/commit/:commit_sha` | `ReviewLive` (`:commit`) | Single-commit inspection — reuses the shared diff viewer component to show changes for one commit. |
 | `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
