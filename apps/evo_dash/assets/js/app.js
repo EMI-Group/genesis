@@ -168,7 +168,15 @@ const DirectoryPicker = {
     if (typeof window.showDirectoryPicker === "function") {
       try {
         const handle = await window.showDirectoryPicker();
-        this.fillInput(handle.name);
+        // Browser/WebView2 pickers only expose the folder NAME (handle.name),
+        // never a full path. Filling the input with a bare name would make the
+        // server cwd-join it via Path.expand/1 (e.g. a Windows pick of `Test`
+        // becomes `<app-cwd>/Test`), so never fill it — warn and route to the
+        // manual-entry fallback instead. Never auto-submit from this branch.
+        console.warn(
+          "[DirectoryPicker] Browser folder pickers only expose the folder name (got \"" + handle.name + "\"), not a full path — please type the full path."
+        );
+        this.markManualFallback();
         return;
       } catch (err) {
         // AbortError = user cancelled the browser picker — quiet, not a failure
@@ -271,6 +279,16 @@ const DirectoryPicker = {
     if (!selected) return false;
     const input = this.pickerInput();
     if (onlyIfEmpty && input && input.value) return false;
+    // Defense-in-depth: Tauri picks are always absolute, but never feed a
+    // non-absolute result into the input (the server would cwd-join it) —
+    // warn and fall through to the manual-entry fallback instead.
+    if (!/^[a-zA-Z]:[\\/]|^[\\/]|^\\\\/.test(selected)) {
+      console.warn(
+        "[DirectoryPicker] Picker returned a non-absolute path (\"" + selected + "\") — please type the full path."
+      );
+      this.markManualFallback();
+      return false;
+    }
     this.fillInput(selected);
     // Tauri native picks return a full path — auto-confirm the project and
     // new-project pickers by submitting the enclosing form directly. (The

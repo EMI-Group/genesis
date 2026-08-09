@@ -991,6 +991,139 @@ defmodule EvoDashWeb.DashboardLiveTest do
     end
   end
 
+  describe "project path normalization regression" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "create_project rejects relative paths without creating a directory or registering recents",
+         %{
+           conn: conn
+         } do
+      # Unique bare name so the File.dir? assertions can never collide with a
+      # pre-existing directory in the BEAM cwd.
+      relative = "Test#{System.unique_integer([:positive])}"
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "new_project"})
+
+      html =
+        view
+        |> element("form[phx-submit='create_project']")
+        |> render_submit(%{path: relative})
+
+      # Error flash: relative input is rejected with the full-path hint
+      assert html =~ "Enter a full path"
+
+      # No directory created — neither relative to the palette cwd nor
+      # cwd-joined against the BEAM cwd (the old Path.expand behavior)
+      refute File.dir?(relative)
+      refute File.dir?(Path.join(File.cwd!(), relative))
+
+      # No recent-project registration for the bogus path (bare or cwd-joined)
+      recents = EvoGit.TaskRegistry.list_recent_projects()
+      refute Enum.any?(recents, &(&1.path == relative))
+      refute Enum.any?(recents, &(&1.path == Path.join(File.cwd!(), relative)))
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test
+        # failures. Defensive: if the code regresses to cwd-joining, this
+        # removes the created directory and recents entry so they can't leak.
+        try do
+          EvoGit.TaskRegistry.remove_recent_project(Path.join(File.cwd!(), relative))
+        rescue
+          _ -> :ok
+        end
+
+        File.rm_rf(Path.join(File.cwd!(), relative))
+      end)
+    end
+
+    test "open_project rejects relative paths with the full-path hint", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      html =
+        view
+        |> element("form[phx-submit='open_project']")
+        |> render_submit(%{path: "Test"})
+
+      # Relative input is REJECTED up front — never reaches the directory check
+      assert html =~ "Enter a full path"
+      refute html =~ "Directory does not exist"
+    end
+
+    test "select_project rejects relative paths with the full-path hint", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html = render_click(view, "select_project", %{"path" => "Test"})
+
+      assert html =~ "Enter a full path"
+      refute html =~ "Directory does not exist"
+    end
+
+    test "open_project with an absolute-but-missing directory still flashes the not-found error",
+         %{
+           conn: conn
+         } do
+      missing =
+        Path.join(System.tmp_dir!(), "genesis_nonexistent_#{System.unique_integer([:positive])}")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      html =
+        view
+        |> element("form[phx-submit='open_project']")
+        |> render_submit(%{path: missing})
+
+      # Absolute-but-missing is still the "Directory does not exist" path —
+      # only RELATIVE input got the new full-path hint
+      assert html =~ "Directory does not exist"
+      refute html =~ "Enter a full path"
+      refute File.dir?(missing)
+    end
+
+    test "relative ?project= URL param is silently ignored", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/?project=Test")
+
+      # No crash; the page renders in the no-project empty state
+      assert html =~ "Open a project to get started"
+      refute html =~ "hero-rocket-launch"
+
+      # No project becomes active
+      assert assigns(view)[:active_project] == nil
+      assert assigns(view)[:active_project_path] == nil
+
+      # Relative/blank params are silently ignored — no flash at all
+      refute html =~ "Enter a full path"
+      refute html =~ "Invalid project name"
+    end
+
+    test "create_project with a blank path still flashes Invalid project name", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "new_project"})
+
+      html =
+        view
+        |> element("form[phx-submit='create_project']")
+        |> render_submit(%{path: "   "})
+
+      # Blank input keeps the pre-existing "Invalid project name" behavior
+      assert html =~ "Invalid project name"
+      refute html =~ "Enter a full path"
+    end
+  end
+
   describe "no-project hint" do
     setup do
       clear_recent_projects()
