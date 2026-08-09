@@ -457,10 +457,21 @@
                                       <div class="font-semibold mb-1"><%= gettext("Tool Calls (%{count})", count: length(entry.data.tool_calls)) %></div>
                                       <div class="space-y-1">
                                         <%= for call <- entry.data.tool_calls do %>
-                                          <% {call_label, call_content} = tool_call_display(call) %>
+                                          <% display = ToolCallDisplay.display(call) %>
                                           <div class="flex items-start gap-2">
-                                            <span class="font-mono font-semibold shrink-0">{call_label}</span>
-                                            <span class="font-mono whitespace-pre-wrap break-all min-w-0">{safe_text(call_content)}</span>
+                                            <span class="font-mono font-semibold shrink-0">{display.label}</span>
+                                            <%= if display.kind == :structured do %>
+                                              <div class="min-w-0 flex-1 max-h-40 overflow-y-auto rounded bg-base-100/40 p-1.5 space-y-0.5">
+                                                <%= for {key, value} <- display.rows do %>
+                                                  <div class="flex items-start gap-1.5">
+                                                    <span class="font-mono text-[10px] uppercase tracking-wide text-base-content/50 shrink-0 w-20 pt-0.5">{key}</span>
+                                                    <span class="font-mono text-xs whitespace-pre-wrap break-all min-w-0">{safe_text(value)}</span>
+                                                  </div>
+                                                <% end %>
+                                              </div>
+                                            <% else %>
+                                              <span class="font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis min-w-0">{safe_text(display.summary)}</span>
+                                            <% end %>
                                           </div>
                                         <% end %>
                                       </div>
@@ -571,10 +582,21 @@
                     <h4 class="font-semibold text-secondary mb-2"><%= gettext("Tool Calls") %></h4>
                     <div class="space-y-2">
                       <%= for call <- @selected_history_entry.data.tool_calls do %>
-                        <% {call_label, call_content} = tool_call_display(call) %>
+                        <% display = ToolCallDisplay.display(call) %>
                         <div class="bg-secondary/10 p-3 rounded">
-                          <div class="font-mono font-semibold mb-1">{call_label}</div>
-                          <pre class="text-xs whitespace-pre-wrap overflow-x-auto"><%= safe_text(call_content) %></pre>
+                          <div class="font-mono font-semibold mb-1">{display.label}</div>
+                          <%= if display.kind == :structured do %>
+                            <div class="max-h-60 overflow-y-auto space-y-1 bg-base-100/40 rounded p-2">
+                              <%= for {key, value} <- display.rows do %>
+                                <div class="flex items-start gap-1.5">
+                                  <span class="font-mono text-[10px] uppercase tracking-wide text-base-content/50 shrink-0 w-20 pt-0.5">{key}</span>
+                                  <span class="font-mono text-xs whitespace-pre-wrap break-all min-w-0">{safe_text(value)}</span>
+                                </div>
+                              <% end %>
+                            </div>
+                          <% else %>
+                            <div class="font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis">{safe_text(display.summary)}</div>
+                          <% end %>
                         </div>
                       <% end %>
                     </div>
