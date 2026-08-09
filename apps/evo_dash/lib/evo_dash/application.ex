@@ -15,6 +15,9 @@ defmodule EvoDash.Application do
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
+      # Serializes native :wx directory-dialog usage (Browse buttons). Starts no
+      # wx server at boot — wx is initialized lazily on the first pick.
+      EvoDash.DirectoryPicker,
       EvoDashWeb.Endpoint
     ]
 
