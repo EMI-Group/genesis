@@ -16,7 +16,7 @@ None — leaf directory (four module files: `state_persistence.ex`, `project.ex`
 |--------|---------|
 | `StatePersistence` | Session persistence helpers (serialize/restore LiveView state to browser localStorage) |
 | `Project` | Project-related pure functions (mode detection, path suggestions, config loading, model profiles) |
-| `ProjectFlow` | Event handler implementations for project creation/opening (create_project, open_project, select_project) — extracted from DashboardLive (commit `b86ae86e`). The old `toggle_open_project_form`/`toggle_new_project_form` handlers were removed when the address bar was replaced by the command palette. |
+| `ProjectFlow` | Event handler implementations for project creation/opening (create_project, open_project, select_project) — extracted from DashboardLive (commit `b86ae86e`). The old `toggle_open_project_form`/`toggle_new_project_form` handlers were removed when the address bar was replaced by the command palette. `create_project/2` (reworked in commit `8f652ec7`) accepts a single full path `%{"path" => path}` from the palette's single-input form: blank → "Invalid project name"; `Path.basename` validated via `Project.validate_project_name/1` (rejects root-ish input); existing dir → opened as-is; missing dir → `File.mkdir_p/1` (recursive; **returns plain `:ok`, never `{:ok, _}`** — see test/CONTEXT.md Known Issues) then opened; mkdir failure → error flash. Success path shared via private `register_and_open_project/2`. Local-only (palette hides Create New Project when remote). |
 | `Assigns` | Assign-building helpers (task categorization, form defaults) |
 
 ## Notes
