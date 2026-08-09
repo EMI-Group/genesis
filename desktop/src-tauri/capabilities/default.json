@@ -1,13 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the Genesis desktop shell: shell access for the Phoenix backend sidecar and the dialog directory picker.",
+  "description": "Default capabilities for the Genesis desktop shell: shell access for the Phoenix backend sidecar.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "shell:allow-execute",
-    "shell:allow-spawn",
-    "dialog:allow-open",
-    "dialog:default"
+    "shell:allow-spawn"
   ]
 }

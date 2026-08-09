@@ -17,9 +17,9 @@ This is the native application layer — it contains NO Elixir code. The actual 
 |------|---------|
 | `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns backend, opens window, intercepts close-to-tray |
 | `src-tauri/src/sidecar.rs` | Backend lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
-| `src-tauri/Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-dialog, reqwest) |
+| `src-tauri/Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
 | `src-tauri/tauri.conf.json` | Tauri config: window settings, trayIcon config, resource bundle reference, bundle metadata |
-| `src-tauri/capabilities/default.json` | Tauri v2 permissions: dialog (directory picker) |
+| `src-tauri/capabilities/default.json` | Tauri v2 permissions: shell (release launcher) |
 | `src-tauri/resources/genesis-backend/` | Placeholder directory where the built Elixir release (`_build/prod/rel/genesis_desktop/`) is placed before `cargo tauri build` |
 
 ## Constraints
@@ -29,6 +29,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 - **System tray support**: closing the window hides it to the tray (via `WindowEvent::CloseRequested` → `api.prevent_close()` + `window.hide()`). The tray icon has "Show Window" and "Quit" menu items; left-clicking the tray icon also shows the window. "Quit" kills the backend process and exits.
 - **Configurable binding address**: the backend binds to `127.0.0.1` (localhost) by default. Set `EVOGIT_BIND=0.0.0.0` before launching for remote access. The `PORT` env var (default 9999) controls the backend port. The WebView always connects via `localhost` regardless of bind address.
 - The desktop shell contains NO Elixir code — only Rust
+- **No native directory picker in Tauri**: the dashboard's Browse buttons use a picker implemented on the Elixir backend via Erlang `:wx` (`EvoDash.DirectoryPicker`, LiveView `directory_pick` event → `picker_result:<picker_id>` push — see root `CONTEXT.md` → "Native Directory Picker (wx backend)"). The former Tauri `pick_directory` command (`src-tauri/src/commands.rs`) and the `tauri-plugin-dialog` dependency were **removed** — they were unstable (Windows invoke failed after picking; macOS NSOpenPanel never presented when the app was inactive/hidden to tray).
 - `withGlobalTauri: true` — the webview gets `window.__TAURI__` API without npm imports
 - Requires Rust toolchain to build
 - The Elixir release directory must be placed at `src-tauri/resources/genesis-backend/` before `cargo tauri build`

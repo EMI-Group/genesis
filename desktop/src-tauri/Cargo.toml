@@ -12,28 +12,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["devtools", "tray-icon"] }
 tauri-plugin-shell = "2"
-tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
-
-# Direct ObjC bindings for the macOS folder picker (see src/commands.rs — rfd's
-# macOS backend cannot present the panel when the app is inactive, so the panel
-# is built directly). Versions/features match what is already in Cargo.lock via
-# rfd; features are unioned at build time.
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = [
-    "std",
-    "NSApplication",
-    "NSOpenPanel",
-    "NSPanel",
-    "NSResponder",
-    "NSRunningApplication",
-    "NSSavePanel",
-    "NSWindow",
-] }
 
 [[bin]]
 name = "genesis-desktop"
