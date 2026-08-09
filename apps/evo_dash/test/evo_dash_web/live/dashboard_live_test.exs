@@ -947,7 +947,9 @@ defmodule EvoDashWeb.DashboardLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      render_change(view, "task_prompt_change", %{"prompt" => "some objective"})
+      # task_prompt_change no longer exists (per-keystroke server event removed);
+      # restore_state is the still-supported way to set the persisted prompt.
+      render_change(view, "restore_state", %{"task_prompt" => "some objective"})
       render_click(view, "toggle_advanced", %{})
 
       assert assigns(view)[:task_prompt] == "some objective"

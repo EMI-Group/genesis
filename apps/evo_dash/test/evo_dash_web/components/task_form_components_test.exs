@@ -224,12 +224,17 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert button_attr(html, "data-mode") == "evolve_simple"
     end
 
-    test "textarea carries the task_prompt_change event and keeps AdaptiveInput" do
+    test "textarea keeps AdaptiveInput + phx-update=ignore with no per-keystroke server event" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
-      assert html =~ ~s(phx-change="task_prompt_change")
       assert html =~ ~s(phx-hook="AdaptiveInput")
       assert html =~ ~s(phx-update="ignore")
+
+      # The per-keystroke server round-trip was removed — layout switching is
+      # client-side (AdaptiveInput hook) and @task_prompt is only updated via
+      # the restore_state event and task_submit.
+      refute html =~ ~s(phx-change="task_prompt_change")
+      refute html =~ ~s(phx-debounce="200")
     end
   end
 
