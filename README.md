@@ -14,175 +14,118 @@
 
 ---
 
-## Describe what you want. Genesis recursively develops the software.
+<h2 align="center">One objective in. A software world unfolds.</h2>
 
-**EvoX Genesis** is a system for long-horizon autonomous software development.
+<p align="center">
+  Describe what the software should become. Genesis recursively develops it.
+</p>
 
-Give Genesis a high-level software objective and its constraints. You do **not** need to hand-design an agent team, manually construct a task tree, or keep one coding session alive for the lifetime of the project.
+**EvoX Genesis** turns a high-level software objective into a continuously developing software world.
 
-Genesis recursively unfolds the work as development proceeds: managers decompose objectives, delegate local responsibilities, and judge returned contributions; executors implement concrete changes at the leaves. Accepted results become part of the evolving software world, and later agents continue from that world.
+You do not hand-design an agent team, pre-build a task tree, or keep one coding session alive. Genesis recursively creates local responsibilities, instantiates agents where needed, validates returned contributions, and carries accepted results forward.
 
 > **You specify what the software should become. Genesis unfolds how to build it.**
 
 > **Agents come and go. The software world persists.**
 
-Genesis is built around a simple principle: long-horizon development does not have to be carried by one persistent intelligent agent. It can instead be carried by a **persistent recursive software world** whose accepted artifacts, context, constraints, validation evidence, and lineage remain available as local agents are created, replaced, and terminated.
+---
 
-## 🚀 What Genesis has already done
+## Built with Genesis
 
-Genesis has been exercised across three distinct forms of long-horizon software development:
+### C compiler — 248,989 lines from an implementation-empty repository
 
-**formation · continuation · redevelopment**
+Using **DeepSeek V4 Flash**, Genesis developed a Rust-based C compiler from a repository containing no compiler implementation code.
 
-### 🧱 A C compiler from an implementation-empty repository
+**248,989 lines · 1,019 archived agent episodes · 123.4 h · US$44.38**
 
-Using **DeepSeek V4 Flash** as the foundation model, Genesis developed `jcc`, a C compiler written in Rust, starting from a repository containing only `.gitignore` and `genesis.toml` and **no compiler implementation code**.
+Validation: **220/220 c-testsuite · 32/36 LLVM · 93/93 executed Csmith · 2,904 Rust tests · 106/106 internal cases**
 
-The task supplied the target, constraints, toolchain requirements, and validation sources, but no compiler implementation or concrete repository decomposition. Genesis recursively organized and implemented the resulting system.
+Observed recursive depth: **5** · First-parent commits: **327**
 
-**248,989 physical lines · 1,019 archived agent episodes · 123.4 hours · US$44.38 model-token cost**
+### Model-switchable continuation — development survives the handoff
 
-Final recorded validation included:
+A separate compiler world originally developed with **GLM 5.2** was continued independently by both GLM 5.2 and **DeepSeek V4 Flash**.
 
-- **220 / 220** c-testsuite cases
-- **32 / 36** evaluated LLVM cases
-- **93 / 93** executed Csmith programs
-- **2,904** Rust workspace tests passed
-- **106 / 106** internal compiler cases
-- recorded LZ4 and SQLite validation completed
+**DeepSeek: 1,820/1,820 retained LLVM SingleSource cases**  
+**GLM 5.2: 1,445/1,448**
 
-The accepted development lineage reached an observed recursive delegation depth of **5** and accumulated **327 first-parent commits**.
+Both retained **220/220 c-testsuite** and **4/4 LZ4** results.
 
-### 🔄 Development continues after the foundation model changes
+> **The model changed. Development continued.**
 
-Genesis was also tested on a separate completed compiler world originally developed with **GLM 5.2**.
+### MESA → Rust — scientific behaviour preserved
 
-The same accepted compiler world was independently continued by:
+Genesis redeveloped a selected chain of **13 MESA Fortran modules** into corresponding Rust crates.
 
-- **GLM 5.2**
-- **DeepSeek V4 Flash**
+**139,414 Fortran lines → 89,946-line Rust workspace**  
+**33.22 h · 272 agents · US$10.64 · 1,052 tests · 0 failures**
 
-Both branches continued development through repeated turnover of finite-lived agents.
+Across six audited numerical workloads:
 
-The DeepSeek V4 Flash continuation reached:
-
-**1,820 / 1,820 retained LLVM SingleSource cases**
-
-The GLM 5.2 continuation reached:
-
-**1,445 / 1,448 retained LLVM SingleSource cases**
-
-Both also reported **220 / 220 c-testsuite** cases and **4 / 4 LZ4** files at completion.
-
-The two continuations followed different developmental trajectories — different agent counts, recursion depths, commit histories, code churn, and final code footprints — while both advanced the inherited compiler world.
-
-> **The proposal process can change. Development can continue.**
-
-This demonstrates **model-switchable continuation** of an accepted software world. It is not a controlled comparison of model quality, and the present experiment does not isolate the causal contribution of non-executable developmental records beyond the source artifact alone.
-
-### 🔬 Redeveloping scientific software while preserving numerical behaviour
-
-Genesis redeveloped a selected chain of **13 Fortran-based modules** from [MESA](https://github.com/MESAHub/mesa), the open-source *Modules for Experiments in Stellar Astrophysics* software suite, into corresponding Rust crates.
-
-**139,414 physical Fortran lines → 89,946-line Rust workspace**
-
-**33.22 hours · 272 spawned agents · US$10.64 model-token cost**
-
-The resulting Rust workspace passed:
-
-**1,052 tests · 0 failures · 18 ignored**
-
-Numerical preservation was audited across six scientific workloads:
-
-| Workload | Median speedup | Numerical agreement |
-| --- | ---: | --- |
-| End-to-end burn | **1.55×** | relative checksum difference `3.1 × 10⁻⁹` |
-| EOS lookup | **1.60×** | **bit-exact** |
-| Opacity lookup | **1.98×** | relative checksum difference `1.3 × 10⁻¹³` |
-| 2D interpolation | **1.58×** | relative checksum difference `4.9 × 10⁻¹²` |
-| ROS2 integration | **5.30×** | relative checksum difference `5.1 × 10⁻¹⁵` |
-| Newton solve | **6.87×** | **bit-exact** |
-
-A separate 40-run end-to-end validation retained the same recorded integrator counters and showed a **1.23× median speedup**.
+- **2 bit-exact**
+- remaining relative checksum differences ≤ **3.1 × 10⁻⁹**
+- median speedups: **1.55×–6.87×**
 
 > **Genesis does not only create software. It can inherit and transform it.**
 
-The reported MESA result applies to the audited 13-module scope and tested workloads; it is not a claim of complete replacement of the full MESA application.
+<sub>
+Reported dollar amounts are foundation-model token charges only. Compiler formation, continuation and MESA redevelopment are reported as observed system-level results; they are not normalized model-comparison benchmarks. The MESA result covers the audited 13-module scope, not the full application.
+</sub>
 
-> **Note on costs:** all dollar amounts above are recorded foundation-model token charges only. They do not include local compute, storage, orchestration, networking, or human labour.
+---
 
-## 🌍 How Genesis works
+## Why Genesis is different
 
-Genesis does not treat a project as one long agent conversation.
+**One objective, not a workflow.**  
+The user specifies the goal and constraints; Genesis decides how development should recursively unfold.
 
-It represents development as a **persistent recursive software world**.
+**Recursive organization emerges during development.**  
+Managers decompose, delegate and judge returned work. Executors implement concrete changes at the leaves.
 
-A local software world is situated by:
+**The world persists; agents do not.**
 
 ```text
 world = (accepted version, repository path)
 ```
 
-The **accepted version** determines what currently exists and what history can be inherited. The **path** determines where local agency is situated: its context, responsibility, and modification scope.
+The accepted version determines **what exists and can be inherited**. The path determines **where agency is situated**.
 
-An agent can inspect the complete accepted project, but it begins from a particular path and objective.
-
-### Recursive development
-
-At the theoretical level, Genesis needs only two functional agent roles:
-
-- **Manager** — decomposes objectives, delegates work, and judges returned contributions.
-- **Executor** — directly modifies the artifact at a leaf task and returns a candidate contribution.
-
-Managers can recursively instantiate new managers at more specific paths. The resulting development hierarchy is therefore **not a fixed hand-written agent workflow**: it unfolds from the current objective and software world as development proceeds.
-
-### Accepted consequences, not persistent conversations
-
-Every local agent is finite-lived.
-
-An agent may use a conversation, scratch state, tools, and an isolated workspace during its episode, but that private episode state is not the accepted software lineage.
-
-Agent actions are proposals.
-
-Only accepted consequences advance the persistent version history.
+**Only accepted consequences become history.**  
+Agent outputs are proposals. Only accepted results advance the persistent version lineage.
 
 > **Agent does not persist. Its validated consequences do.**
 
-This allows later work to resume from the accepted software world rather than requiring the previous agent identity to remain alive.
-
-## ✨ Highlights
-
-- 💬 **Objective in, recursive development out** — Give Genesis a high-level software objective and constraints; Genesis unfolds the development hierarchy as it works.
-- 🌳 **Self-unfolding organization** — Managers recursively decompose, delegate, and validate work. You do not need to hand-design the complete agent tree.
-- 🌍 **Persistent worlds, transient agents** — Agents are finite-lived; accepted artifacts, context, constraints, evidence, and lineage persist.
-- 🔄 **Development across handoffs** — Accepted software worlds can continue developing through repeated agent turnover and even foundation-model replacement.
-- ✅ **Only accepted consequences persist** — Agent outputs are proposals; parent-level judgement and validation determine what enters the software lineage.
-- 🧭 **Path-situated local agency** — Agents work from bounded local responsibilities while retaining visibility of the accepted project.
-- 🔒 **Sandboxed by default** — Candidate work runs in isolated, scoped workspaces with platform-specific execution controls before accepted changes enter project history.
-- 🖥️ **A real GUI** — A native desktop dashboard to launch tasks, watch the agent tree, review diffs, and tune settings in real time.
-- 🧬 **Formation, continuation, and redevelopment** — Genesis is designed for software that keeps developing rather than for a single bounded generation step.
+---
 
 ## ⚡ Start with a requirement
 
 Open Genesis and describe the software you want to build or evolve.
 
-For example, the compiler experiment began from a high-level constrained objective of this form:
+For example:
 
 > Build a clean-room C compiler in Rust for LLVM-centric workflows, with C11 as the primary language target, x86/x86-64 back ends, standard toolchain interoperability, and external compiler validation.
 
-Genesis then recursively develops the project: it creates local responsibilities, instantiates agents where needed, integrates accepted contributions, and continues from the resulting software world.
+Genesis takes it from there.
 
-The important separation is:
+---
 
-> **The user specifies what the software should become. Genesis determines how development unfolds.**
+## 🖥️ Product
+
+- **Native desktop app** for launching and supervising development
+- **Recursive agent tree** visible as work unfolds
+- **Scoped local workspaces** for isolated candidate changes
+- **Cross-platform** support for macOS, Linux and Windows
+- **Native sandboxing** where supported by the platform
+
+---
 
 ## 📦 Install
 
 Genesis ships as a native desktop app.
 
-💡 **Prefer a guided download?** Visit [genesis.evox.group/#download](https://genesis.evox.group/#download) — it detects your platform automatically and points you to the right installer, so you don't have to pick through the GitHub release artifacts.
+💡 **Prefer a guided download?** Visit [genesis.evox.group/#download](https://genesis.evox.group/#download) — it detects your platform automatically and points you to the right installer.
 
-Grab the installer for your platform from the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** page:
+Or use the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** page:
 
 | Platform                          | Download                          |
 | --------------------------------- | --------------------------------- |
@@ -191,45 +134,47 @@ Grab the installer for your platform from the **[GitHub Releases](https://github
 | **Windows**                       | `.msi` or `.exe` installer        |
 | **FreeBSD**                       | From source                       |
 
-Download, run the installer, and launch **Genesis**. That's it.
+Download, install, and launch **Genesis**.
 
 ### For AI agents
 
 #### Install the app
 
-To fetch and install the latest release programmatically:
-
 ```bash
-# Download the installer for your platform (permanent links — always the latest release):
-#   macOS (Apple Silicon): https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg
-#   Linux x86_64:          https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_x64.AppImage  (or .deb / .rpm / .tar.gz)
-#   Linux ARM64:           https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_arm64.deb     (or .rpm)
-#   Windows x86_64:        https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_windows_x64.msi     (or .exe)
+# Permanent links — always the latest release:
+# macOS (Apple Silicon):
+# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg
+#
+# Linux x86_64:
+# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_x64.AppImage
+#
+# Linux ARM64:
+# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_arm64.deb
+#
+# Windows x86_64:
+# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_windows_x64.msi
 
 curl -LO "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg"
 
-# Install based on your platform:
-#   macOS:   open <file>.dmg
-#   Linux:   sudo rpm -i <file>.rpm   OR   tar xzf <file>.tar.gz
-#   Windows: msiexec /i <file>.msi
+# Install:
+# macOS:   open <file>.dmg
+# Linux:   sudo rpm -i <file>.rpm   OR   tar xzf <file>.tar.gz
+# Windows: msiexec /i <file>.msi
 ```
 
 #### Run from source
-
-To clone and run Genesis from source:
 
 ```bash
 # Prerequisites: Elixir ~> 1.18 and Erlang/OTP 29
 
 # Install Elixir and Erlang (choose one):
-#   - asdf:    https://asdf-vm.com  →  asdf plugin add erlang && asdf plugin add elixir
-#   - mise:    https://mise.jdx.dev →  mise use erlang@29 elixir@1.20
+#   - asdf:    https://asdf-vm.com
+#   - mise:    https://mise.jdx.dev
 #   - Official: https://elixir-lang.org/install.html
-#   - Or via your system package manager:
-#       macOS (Homebrew):  brew install elixir
-#       Ubuntu/Debian:     sudo apt install elixir erlang-dev
-#       Arch:              sudo pacman -S elixir
-#       Fedora:            sudo dnf install elixir
+#   - macOS:   brew install elixir
+#   - Ubuntu:  sudo apt install elixir erlang-dev
+#   - Arch:    sudo pacman -S elixir
+#   - Fedora:  sudo dnf install elixir
 
 git clone https://github.com/EMI-Group/genesis.git
 cd genesis
@@ -238,11 +183,11 @@ mix assets.setup
 mix phx.server
 ```
 
-Then open [http://localhost:4100](http://localhost:4100) in your browser.
+Then open [http://localhost:4100](http://localhost:4100).
+
+---
 
 ## 📦 Distribution via Package Managers
-
-We're working to make Genesis available through popular package managers so you can install and update it with the tools you already use. Planned targets include:
 
 | Package Manager | Platform      | Status  |
 | --------------- | ------------- | ------- |
@@ -250,37 +195,39 @@ We're working to make Genesis available through popular package managers so you 
 | **Homebrew**    | macOS / Linux | Planned |
 | **Nix**         | NixOS / macOS | Planned |
 
-More package managers will be added over time. If you'd like to help package Genesis for your preferred platform, please see [CONTRIBUTING.md](./CONTRIBUTING.md) — contributions are very welcome!
+More package managers will be added over time. Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-Stay tuned — we'll update this section as packages become available.
+---
 
 ## 🔬 Research
 
-Genesis is being studied as a different computational organization for long-horizon software development:
+Genesis is being studied under the working title:
 
 > **Persistent recursive worlds enable autonomous software evolution**
 
-The current experiments investigate three complementary capabilities:
+The current evidence supports three system-level capabilities:
 
-| Capability | Evidence |
-| --- | --- |
-| **Formation** | implementation-empty repository → 248,989-line C compiler |
-| **Continuation** | inherited compiler world → continued development across foundation-model replacement |
-| **Redevelopment** | selected MESA Fortran modules → Rust while preserving audited numerical behaviour |
+**formation · model-switchable continuation · behaviour-preserving scientific-software redevelopment**
 
-The current evidence establishes these as **system-level capabilities** of the reported Genesis organization. Stronger mechanism-level questions — including how much continuity is caused specifically by non-executable developmental organization beyond source code alone — remain active research questions.
+Stronger mechanism-level questions — including how much continuity is caused specifically by non-executable developmental organization beyond source code alone — remain open research questions.
 
 Project website: **[genesis.evox.group](https://genesis.evox.group/)**
+
+---
 
 ## 🙏 Acknowledgements
 
 Genesis was born out of the [EvoGit](https://github.com/EMI-Group/evogit) project and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
 
+---
+
 ## 🤝 Contributing
 
-We welcome contributions! All contributors are required to sign an Individual Contributor License Agreement (CLA) — our CLA assistant bot handles this automatically when you open your first pull request.
+We welcome contributions. All contributors are required to sign an Individual Contributor License Agreement (CLA); our CLA assistant bot handles this automatically on your first pull request.
 
-For full details on the CLA, development setup, and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+For development setup, CLA details and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+---
 
 ## 📄 License
 
