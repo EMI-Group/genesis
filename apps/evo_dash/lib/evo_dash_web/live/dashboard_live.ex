@@ -1683,7 +1683,10 @@ defmodule EvoDashWeb.DashboardLive do
   # Applied at every `:recent_projects` assignment site in this module.
   defp filter_absolute_recent_projects(recent_projects) do
     Enum.filter(recent_projects, fn project ->
-      is_map(project) and is_binary(project[:path]) and Platform.absolute_path?(project[:path])
+      case project do
+        %{path: path} when is_binary(path) -> Platform.absolute_path?(path)
+        _ -> false
+      end
     end)
   end
 
