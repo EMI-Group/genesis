@@ -64,7 +64,7 @@ let
     src = src + "/desktop/src-tauri";
 
     # Update this hash when Cargo.lock changes.
-    cargoHash = "sha256-st8uXR5GqC3ToSRJGWQNZu1I4mX/Stbz2WCVqx8ADoY=";
+    cargoHash = "sha256-rhoAmDyJgqvBuo7krYm56Yzc7jMzYUtDcRSB4TExMaM=";
 
     nativeBuildInputs = [
       pkg-config
