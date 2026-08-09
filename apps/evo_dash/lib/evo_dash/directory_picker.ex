@@ -13,6 +13,14 @@ defmodule EvoDash.DirectoryPicker do
   keeping headless dev servers clean. `:wx.new/0` prints harmless GTK
   `dconf-CRITICAL` warnings to stderr; ignore them.
 
+  wx commands are delivered per-process: every wx call reads the calling
+  process's environment from its process dictionary (a `#wx_env{}` installed by
+  `:wx.new/0`/`:wx.set_env/1`), and calling a wx function without it raises
+  `{wx, :unknown_env}`. Each pick runs in a fresh Task process, so the
+  `#wx_env{}` is stored in GenServer state on the first pick and every pick Task
+  adopts it via `:wx.set_env/1` before touching wx (the wx server itself is a
+  singleton, started once and never stopped).
+
   Result protocol: the caller receives
   `{:directory_picker_result, picker_id, result}` where `result` is
   `{:ok, path} | :cancelled | :unavailable`.
@@ -86,8 +94,11 @@ defmodule EvoDash.DirectoryPicker do
 
   @impl true
   def init(_opts) do
-    # wx_ref stays nil until the first pick succeeds — never auto-start wx at boot.
-    {:ok, %{wx_ref: nil, busy: false}}
+    # wx_ref/wx_env stay nil until the first pick succeeds — never auto-start wx
+    # at boot. The env is the `#wx_env{}` record installed in the first pick
+    # Task's process dictionary by `:wx.new/0`; later pick Tasks adopt it via
+    # `:wx.set_env/1` (see moduledoc).
+    {:ok, %{wx_ref: nil, wx_env: nil, busy: false}}
   end
 
   @impl true
@@ -100,19 +111,19 @@ defmodule EvoDash.DirectoryPicker do
     gen_server = self()
 
     # Run the dialog in a separate Task (NOT this GenServer, NOT the caller):
-    # `show_modal/1` blocks until the user responds, and the GenServer must keep
+    # `showModal/1` blocks until the user responds, and the GenServer must keep
     # serving other calls while the LiveView stays responsive.
-    Task.start(fn -> run_pick(gen_server, state.wx_ref, reply_to, picker_id) end)
+    Task.start(fn -> run_pick(gen_server, state.wx_ref, state.wx_env, reply_to, picker_id) end)
 
     {:reply, :ok, %{state | busy: true}}
   end
 
   @impl true
-  def handle_info({:wx_ref_ready, ref}, state) do
-    # The first pick succeeded in starting the wx server; reuse the ref for
-    # subsequent picks (the wx server is a singleton — no `:wx.stop/0`, we keep
-    # the ref alive and never stop it).
-    {:noreply, %{state | wx_ref: ref}}
+  def handle_info({:wx_ref_ready, ref, env}, state) do
+    # The first pick succeeded in starting the wx server; reuse the ref AND the
+    # `#wx_env{}` for subsequent picks (the wx server is a singleton — no
+    # `:wx.stop/0`, we keep both alive and never stop it).
+    {:noreply, %{state | wx_ref: ref, wx_env: env}}
   end
 
   def handle_info({:pick_done, _task_pid}, state) do
@@ -134,12 +145,12 @@ defmodule EvoDash.DirectoryPicker do
   # ALL wx interaction is wrapped in try/rescue: wx can fail in headless
   # environments (no display server, GTK errors, ...), and a picker crash must
   # never crash the LiveView — every failure path degrades to `:unavailable`.
-  defp run_pick(gen_server, wx_ref, reply_to, picker_id) do
+  defp run_pick(gen_server, wx_ref, wx_env, reply_to, picker_id) do
     result =
       try do
-        case ensure_wx_ref(gen_server, wx_ref, reply_to, picker_id) do
+        case ensure_wx_ref(gen_server, wx_ref, wx_env, reply_to, picker_id) do
           nil -> :unavailable
-          ref -> show_dialog(ref)
+          {ref, env} -> show_dialog(ref, env)
         end
       rescue
         _ -> :unavailable
@@ -151,14 +162,19 @@ defmodule EvoDash.DirectoryPicker do
   end
 
   # Lazily starts the wx server on the first pick. On success notifies the
-  # GenServer to store the ref (`{:wx_ref_ready, ref}`) so later picks reuse it.
-  # On failure returns nil — `run_pick/4` reports the single `:unavailable`
-  # result to `reply_to` (exactly one result message per pick).
-  defp ensure_wx_ref(gen_server, nil, _reply_to, _picker_id) do
+  # GenServer to store the ref AND the `#wx_env{}` (`{:wx_ref_ready, ref, env}`)
+  # so later picks reuse them. On failure returns nil — `run_pick/5` reports the
+  # single `:unavailable` result to `reply_to` (exactly one result message per
+  # pick).
+  defp ensure_wx_ref(gen_server, nil, _wx_env, _reply_to, _picker_id) do
     case :wx.new() do
       {:wx_ref, _, _, _} = ref ->
-        send(gen_server, {:wx_ref_ready, ref})
-        ref
+        # `:wx.new/0` installs the env in THIS process's dictionary; capture it
+        # so subsequent pick Tasks (fresh processes) can adopt it via
+        # `:wx.set_env/1` — without it every wx call raises `{wx, :unknown_env}`.
+        env = :wx.get_env()
+        send(gen_server, {:wx_ref_ready, ref, env})
+        {ref, env}
 
       # `:wx.new/0` can return `{:error, reason}` (e.g. no display available).
       {:error, _} ->
@@ -166,9 +182,15 @@ defmodule EvoDash.DirectoryPicker do
     end
   end
 
-  defp ensure_wx_ref(_gen_server, ref, _reply_to, _picker_id), do: ref
+  defp ensure_wx_ref(_gen_server, ref, wx_env, _reply_to, _picker_id), do: {ref, wx_env}
 
-  defp show_dialog(wx_ref) do
+  defp show_dialog(wx_ref, wx_env) do
+    # wx commands are delivered per-process: this Task process must adopt the
+    # singleton server's env before any wx call, otherwise `?get_env()` raises
+    # `{wx, :unknown_env}`. Idempotent (also fine on the first pick, where this
+    # Task's own `:wx.new/0` already installed the env).
+    :wx.set_env(wx_env)
+
     # Option names verified from the installed source
     # (`:code.lib_dir(:wx)` → src/gen/wxDirDialog.erl): `new/2` accepts
     # `title`, `defaultPath`, `style`, `pos`, `sz` — NOT `message` (a
@@ -183,10 +205,12 @@ defmodule EvoDash.DirectoryPicker do
     result =
       case dialog do
         {:wx_ref, _, _, _} ->
-          case :wxDirDialog.show_modal(dialog) do
+          case :wxDirDialog.showModal(dialog) do
             @wx_id_ok ->
-              case :wxDirDialog.get_path(dialog) do
-                {:ok, path} -> {:ok, normalize_path(path)}
+              # `getPath/1` returns a plain `unicode:charlist()` (e.g.
+              # `[47,104,111,109,101]`), NOT an `{:ok, path}` tuple.
+              case :wxDirDialog.getPath(dialog) do
+                path when is_list(path) or is_binary(path) -> {:ok, normalize_path(path)}
                 _ -> :unavailable
               end
 
