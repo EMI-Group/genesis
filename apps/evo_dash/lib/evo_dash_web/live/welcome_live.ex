@@ -102,23 +102,23 @@ defmodule EvoDashWeb.WelcomeLive do
                  large screens, page-scrolls on small screens -->
             <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
               <!-- STEP 1: Provider selection -->
-              <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
+              <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-2 shrink-0">
                 {gettext("Choose a provider:")}
               </p>
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+              <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 mb-3">
                 <%= for provider <- welcome_providers(@llm_providers) do %>
                   <% selected = @selected_provider_id == provider.id %>
                   <button
                     phx-click="select_welcome_provider"
                     phx-value-provider_id={provider.id}
                     class={[
-                      "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
+                      "btn btn-xs rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-1.5",
                       selected && "btn-primary shadow-md",
                       !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
                     ]}
                   >
                     <%!-- zh: provider names — see t_provider/1 for Chinese references --%>
-                    <span class="font-semibold text-sm">{t_provider(provider.display_name)}</span>
+                    <span class="font-semibold text-xs">{t_provider(provider.display_name)}</span>
                   </button>
                 <% end %>
               </div>
@@ -131,8 +131,8 @@ defmodule EvoDashWeb.WelcomeLive do
 
                 <%= if is_list(variants) and variants != [] do %>
                   <!-- Variant selector (mirrors the Settings page pattern) -->
-                  <div class="mb-5">
-                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
+                  <div class="mb-4">
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-2">
                       {gettext("Select a variant:")}
                     </p>
                     <div class="flex flex-wrap gap-2">
@@ -156,7 +156,7 @@ defmodule EvoDashWeb.WelcomeLive do
                 <% end %>
 
                 <!-- Search box: scoped to the selected provider's models -->
-                <div class="relative mb-4">
+                <div class="relative mb-3">
                   <.icon
                     name="hero-magnifying-glass"
                     class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -184,7 +184,7 @@ defmodule EvoDashWeb.WelcomeLive do
                   <% end %>
                 </div>
 
-                <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
+                <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-2 shrink-0">
                   {gettext("Choose a model:")}
                 </p>
 
@@ -192,7 +192,7 @@ defmodule EvoDashWeb.WelcomeLive do
                   provider_models(@flat_models, @selected_provider_id, @selected_variant_id) %>
                 <%= if filtered_provider_models(entries, @search_query) == [] do %>
                   <!-- Zero search results -->
-                  <div class="py-10 text-center">
+                  <div class="py-6 text-center">
                     <.icon name="hero-magnifying-glass" class="size-8 text-base-content/30 mx-auto mb-2" />
                     <p class="text-sm text-base-content/50">
                       {gettext("No models match your search.")}
@@ -200,19 +200,19 @@ defmodule EvoDashWeb.WelcomeLive do
                   </div>
                 <% else %>
                   <!-- Models for the chosen provider (+ variant) -->
-                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
                     <%= for entry <- filtered_provider_models(entries, @search_query) do %>
                       <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
                       <button
                         phx-click="select_welcome_model"
                         phx-value-model_string={entry.model_string}
                         class={[
-                          "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
+                          "btn btn-xs rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-1.5",
                           selected && "btn-primary shadow-md",
                           !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
                         ]}
                       >
-                        <span class="font-semibold text-sm">{entry.model_display_name}</span>
+                        <span class="font-semibold text-xs">{entry.model_display_name}</span>
                         <span class={[
                           "text-[11px] leading-tight",
                           selected && "text-primary-content/80",
@@ -226,7 +226,7 @@ defmodule EvoDashWeb.WelcomeLive do
                 <% end %>
 
                 <!-- End-of-list guidance -->
-                <div class="mt-4 mb-2 bg-base-200/50 rounded-xl p-4 text-center">
+                <div class="mt-3 mb-2 bg-base-200/50 rounded-xl p-3 text-center">
                   <p class="text-xs text-base-content/50 leading-relaxed">
                     {gettext(
                       "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
