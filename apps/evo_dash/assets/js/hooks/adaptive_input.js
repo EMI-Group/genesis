@@ -12,14 +12,40 @@
 // (>600 code points or >16 lines → expanded), on every input and on mount/
 // updates. The server only seeds the initial `data-layout` attribute for
 // first paint — the old `task_prompt_change` phx-change event (debounced)
-// that used to drive it server-side has been removed. This hook does not
-// position any floating controls panel (the old --input-layout-center logic
-// is gone — Layout B's controls row is in-flow below the textarea).
+// that used to drive it server-side has been removed. The hook re-asserts
+// the client-computed layout not only while typing/on updates, but also
+// whenever the server re-seeds the `data-layout` attribute from its (possibly
+// stale) `@task_prompt` — e.g. after toggling the mode/model selects — via a
+// MutationObserver on the `.input-layout` element. Because the textarea sits
+// inside phx-update="ignore", morphdom skips it and `updated()` never fires
+// on those re-renders; the observer catches the re-seed and flips the layout
+// back if needed. applyLayout only writes the attribute when the computed
+// value differs, so the observer converges with no loop and no per-keystroke
+// server event. This hook does not position any floating controls panel (the
+// old --input-layout-center logic is gone — Layout B's controls row is
+// in-flow below the textarea).
 const AdaptiveInput = {
   mounted() {
     this._inputHandler = () => this._apply();
 
     this.el.addEventListener("input", this._inputHandler);
+
+    // Watch the layout container for server re-seeds: any control that
+    // triggers a server event (mode/model select, etc.) re-renders the form
+    // and re-seeds data-layout from the possibly-stale @task_prompt. The
+    // textarea is inside phx-update="ignore", so morphdom skips it and
+    // updated() never fires — the observer catches the re-seed and re-applies
+    // the client-computed layout immediately. applyLayout only writes the
+    // attribute when the computed value differs, so re-asserting through the
+    // observer converges without a loop.
+    const layoutEl = this.el.closest('.input-layout');
+    if (layoutEl) {
+      this._layoutObserver = new MutationObserver(() => this._apply());
+      this._layoutObserver.observe(layoutEl, {
+        attributes: true,
+        attributeFilter: ['data-layout']
+      });
+    }
 
     // Defer the initial measurement until after the browser has laid out the
     // element so scrollHeight/lineHeight are accurate. StatePersistence may
@@ -36,6 +62,7 @@ const AdaptiveInput = {
 
   destroyed() {
     this.el.removeEventListener("input", this._inputHandler);
+    if (this._layoutObserver) this._layoutObserver.disconnect();
   },
 
   _apply() {
