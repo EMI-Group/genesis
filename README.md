@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  The recursive agentic <strong>system</strong>.
+  The recursive agentic <strong>system</strong> for autonomous software evolution.
 </p>
 
 <p align="center">
