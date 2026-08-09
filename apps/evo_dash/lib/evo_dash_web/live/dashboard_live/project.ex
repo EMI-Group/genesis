@@ -84,7 +84,9 @@ defmodule EvoDashWeb.DashboardLive.Project do
     recents =
       recent_projects
       |> Enum.map(& &1.path)
-      |> Enum.filter(&(is_binary(&1) and matches_prefix?(&1, value)))
+      |> Enum.filter(
+        &(is_binary(&1) and EvoGit.Platform.absolute_path?(&1) and matches_prefix?(&1, value))
+      )
       |> Enum.take(8)
 
     suggestions =
@@ -105,37 +107,43 @@ defmodule EvoDashWeb.DashboardLive.Project do
 
   defp filesystem_suggestions(value) when value == "" or is_nil(value), do: []
 
+  # Suggestions are produced only for absolute or genuinely tilde-expandable
+  # input (guaranteed by ProjectFlow.normalize_project_path/1); relative input
+  # (bare names, ~foo, off-Windows ~\x) yields []. The old bare-name branch
+  # that anchored suggestions at File.cwd!() is gone — File.cwd!()-anchored
+  # suggestions for relative input can never be produced.
   defp filesystem_suggestions(value) do
-    expanded = Path.expand(value)
-
-    {dir, prefix} =
-      cond do
-        String.ends_with?(expanded, "/") or String.ends_with?(expanded, "\\") ->
-          {expanded, ""}
-
-        String.contains?(expanded, "/") or String.contains?(expanded, "\\") ->
-          dir = Path.dirname(expanded)
-          base = Path.basename(expanded)
-          {dir, base}
-
-        true ->
-          {File.cwd!(), expanded}
-      end
-
-    case File.ls(dir) do
-      {:ok, entries} ->
-        entries
-        |> Enum.filter(fn entry ->
-          String.starts_with?(String.downcase(entry), String.downcase(prefix))
-        end)
-        |> Enum.sort_by(fn entry ->
-          {not File.dir?(Path.join(dir, entry)), String.downcase(entry)}
-        end)
-        |> Enum.take(15)
-        |> Enum.map(fn entry -> Path.join(dir, entry) end)
-
+    case EvoDashWeb.DashboardLive.ProjectFlow.normalize_project_path(value) do
       {:error, _} ->
         []
+
+      {:ok, expanded} ->
+        {dir, prefix} =
+          cond do
+            String.ends_with?(expanded, "/") or String.ends_with?(expanded, "\\") ->
+              {expanded, ""}
+
+            true ->
+              dir = Path.dirname(expanded)
+              base = Path.basename(expanded)
+              {dir, base}
+          end
+
+        case File.ls(dir) do
+          {:ok, entries} ->
+            entries
+            |> Enum.filter(fn entry ->
+              String.starts_with?(String.downcase(entry), String.downcase(prefix))
+            end)
+            |> Enum.sort_by(fn entry ->
+              {not File.dir?(Path.join(dir, entry)), String.downcase(entry)}
+            end)
+            |> Enum.take(15)
+            |> Enum.map(fn entry -> Path.join(dir, entry) end)
+
+          {:error, _} ->
+            []
+        end
     end
   end
 
