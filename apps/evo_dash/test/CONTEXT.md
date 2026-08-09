@@ -41,6 +41,10 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
 - `error_html_test.exs` — `EvoDashWeb.ErrorHTMLTest` — Validates HTML error templates (404 → "Not Found", 500 → "Internal Server Error").
 - `error_json_test.exs` — `EvoDashWeb.ErrorJSONTest` — Validates JSON error responses (404/500 with appropriate `%{errors: %{detail: ...}}` shape).
 
+## Known Issues
+
+- **`create_project` mkdir path crashes on Elixir ≥ 1.18** (dashboard_live_test.exs:890 "creates and activates a new project" + :922 "creates a fully non-existent nested path recursively"): `EvoDashWeb.DashboardLive.ProjectFlow.create_project/2` (`apps/evo_dash/lib/evo_dash_web/live/dashboard_live/project_flow.ex:53`) only matches `{:ok, _}` from `File.mkdir_p/1`, but Elixir 1.18+ returns plain `:ok` (verified on the pinned Elixir 1.20.2/OTP 29). Every create-project-via-palette submission with a non-existent target dir crashes the LiveView with `CaseClauseError` — the "Create New Project" feature is broken on this toolchain. Fix pending (out of the test node's write scope): add an `:ok ->` clause alongside `{:ok, _}`. Every other `File.mkdir_p` call site in the codebase already matches `:ok` (`with :ok <- ...` in config.ex, remote_connections.ex, version_state.ex, nix.ex). The `File.dir?` branch (opening an existing directory) works fine — only the mkdir branch is affected.
+
 ## Constraints
 - Follow standard Phoenix test conventions: mirror the `lib/` directory structure under `test/`.
 - All connection-based tests must `use EvoDashWeb.ConnCase`.
