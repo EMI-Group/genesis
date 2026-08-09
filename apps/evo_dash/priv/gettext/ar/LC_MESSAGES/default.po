@@ -1196,8 +1196,6 @@ msgstr "معايير التوليد"
 #: lib/evo_dash_web/components/layouts.ex:99
 #: lib/evo_dash_web/components/layouts.ex:103
 #: lib/evo_dash_web/components/layouts/root.html.heex:12
-#: lib/evo_dash_web/components/layouts/root.html.heex:14
-#: lib/evo_dash_web/components/layouts/root.html.heex:14
 #, elixir-autogen, elixir-format
 msgid "Genesis"
 msgstr "جينيسيس"
@@ -3863,3 +3861,8 @@ msgstr "مثال: ~/.cache/genesis"
 #, elixir-autogen, elixir-format
 msgid "https://..."
 msgstr "https://..."
+
+#: lib/evo_dash_web/components/layouts/root.html.heex:14
+#, elixir-autogen, elixir-format
+msgid "EvoX Genesis"
+msgstr ""

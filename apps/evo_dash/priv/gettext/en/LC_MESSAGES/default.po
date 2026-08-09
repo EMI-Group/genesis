@@ -1240,8 +1240,6 @@ msgstr ""
 #: lib/evo_dash_web/components/layouts.ex:87
 #: lib/evo_dash_web/components/layouts.ex:91
 #: lib/evo_dash_web/components/layouts/root.html.heex:12
-#: lib/evo_dash_web/components/layouts/root.html.heex:14
-#: lib/evo_dash_web/components/layouts/root.html.heex:14
 #, elixir-autogen, elixir-format
 msgid "Genesis"
 msgstr ""
@@ -3527,3 +3525,8 @@ msgstr ""
 #, elixir-autogen, elixir-format, fuzzy
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr ""
+
+#: lib/evo_dash_web/components/layouts/root.html.heex:14
+#, elixir-autogen, elixir-format
+msgid "EvoX Genesis"
+msgstr "EvoX Genesis"

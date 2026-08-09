@@ -36,6 +36,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "نافذة السياق", # TODO: verify
       "Evolve" => "تطوّر", # TODO: verify
       "Genesis" => "جينيسيس", # TODO: verify
+      "EvoX Genesis" => "EvoX Genesis", # TODO: verify
       "Genesis (command)" => "إنشاء", # TODO: verify
       "Graceful restart" => "إعادة تشغيل سلسة", # TODO: verify
       "Prompt" => "موجّه", # TODO: verify
@@ -58,6 +59,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "Kontextfenster",
       "Evolve" => "Evolution", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "Genesis", # TODO: verify
       "Graceful restart" => "sanfter Neustart",
       "Prompt" => "Prompt",
@@ -80,6 +82,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "ventana de contexto",
       "Evolve" => "evolucionar", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "génesis", # TODO: verify
       "Graceful restart" => "reinicio controlado",
       "Prompt" => "prompt",
@@ -102,6 +105,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "fenêtre de contexte",
       "Evolve" => "évolution", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "genèse", # TODO: verify
       "Graceful restart" => "redémarrage en douceur",
       "Prompt" => "prompt",
@@ -124,6 +128,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "jendela konteks", # TODO: verify
       "Evolve" => "evolusi", # TODO: verify
       "Genesis" => "Genesis", # TODO: verify
+      "EvoX Genesis" => "EvoX Genesis", # TODO: verify
       "Genesis (command)" => "genesis", # TODO: verify
       "Graceful restart" => "mulai ulang halus", # TODO: verify
       "Prompt" => "prompt", # TODO: verify
@@ -146,6 +151,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "finestra di contesto",
       "Evolve" => "evoluzione", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "genesi", # TODO: verify
       "Graceful restart" => "riavvio controllato",
       "Prompt" => "prompt",
@@ -168,6 +174,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "コンテキストウィンドウ",
       "Evolve" => "進化", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "生成", # TODO: verify
       "Graceful restart" => "グレースフルリスタート",
       "Prompt" => "プロンプト",
@@ -190,6 +197,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "컨텍스트 윈도우",
       "Evolve" => "진화", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "생성", # TODO: verify
       "Graceful restart" => "정상 재시작", # TODO: verify
       "Prompt" => "프롬프트",
@@ -212,6 +220,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "janela de contexto",
       "Evolve" => "evoluir", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "gênese", # TODO: verify
       "Graceful restart" => "reinicialização controlada",
       "Prompt" => "prompt",
@@ -234,6 +243,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "контекстное окно",
       "Evolve" => "развитие", # TODO: verify
       "Genesis" => "Genesis",
+      "EvoX Genesis" => "EvoX Genesis",
       "Genesis (command)" => "создание", # TODO: verify
       "Graceful restart" => "плавный перезапуск",
       "Prompt" => "промпт",
@@ -256,6 +266,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "หน้าต่างบริบท", # TODO: verify
       "Evolve" => "วิวัฒนาการ", # TODO: verify
       "Genesis" => "Genesis", # TODO: verify
+      "EvoX Genesis" => "EvoX Genesis", # TODO: verify
       "Genesis (command)" => "การสร้าง", # TODO: verify
       "Graceful restart" => "การรีสตาร์ทแบบนุ่มนวล", # TODO: verify
       "Prompt" => "พรอมต์", # TODO: verify
@@ -278,6 +289,7 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "cửa sổ ngữ cảnh", # TODO: verify
       "Evolve" => "tiến hóa", # TODO: verify
       "Genesis" => "Genesis", # TODO: verify
+      "EvoX Genesis" => "EvoX Genesis", # TODO: verify
       "Genesis (command)" => "khởi tạo", # TODO: verify
       "Graceful restart" => "khởi động lại nhẹ nhàng", # TODO: verify
       "Prompt" => "lời nhắc", # TODO: verify
@@ -293,6 +305,7 @@ defmodule Mix.Tasks.Translate do
     "zh_CN" => %{
       # Brand
       "Genesis" => "启元",
+      "EvoX Genesis" => "天演 · 启元",
       # AI/Agent
       "Agent" => "智能体",
       "Token" => "词元",
@@ -320,6 +333,7 @@ defmodule Mix.Tasks.Translate do
     "zh_HK" => %{
       # Brand
       "Genesis" => "啟元",
+      "EvoX Genesis" => "天演 · 啟元",
       # AI/Agent
       "Agent" => "智能體",
       "Token" => "詞元",
