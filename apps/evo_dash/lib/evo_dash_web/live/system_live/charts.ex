@@ -298,9 +298,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
         <.chart_card
           title={gettext("LLM Slots")}
           icon="hero-sparkles"
-          description={gettext(
-            "Capacity: total model-profile concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
-          )}
+          description={
+            gettext(
+              "Capacity: total model-profile concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
+            )
+          }
           samples={@samples}
           series={@llm}
           y_max={@llm_max}
@@ -308,9 +310,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
         <.chart_card
           title={gettext("Tool Slots")}
           icon="hero-wrench-screwdriver"
-          description={gettext(
-            "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
-          )}
+          description={
+            gettext(
+              "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
+            )
+          }
           samples={@samples}
           series={@tools}
           y_max={@tools_max}
@@ -318,9 +322,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
         <.chart_card
           title={gettext("Agents")}
           icon="hero-user-group"
-          description={gettext(
-            "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
-          )}
+          description={
+            gettext(
+              "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
+            )
+          }
           samples={@samples}
           series={@agents}
           y_max={@agents_max}
