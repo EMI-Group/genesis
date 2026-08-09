@@ -108,14 +108,12 @@ defmodule EvoDashWeb.ProjectComponents do
             <% :open_path -> %>
               <.palette_open_path
                 path_suggestions={@path_suggestions}
-                platform={@platform}
                 tauri_detected={@tauri_detected}
               />
 
             <% :new_project -> %>
               <.palette_new_project
                 path_suggestions={@path_suggestions}
-                platform={@platform}
                 tauri_detected={@tauri_detected}
               />
           <% end %>
@@ -254,7 +252,6 @@ defmodule EvoDashWeb.ProjectComponents do
   # ---------------------------------------------------------------------------
 
   attr(:path_suggestions, :list, default: [])
-  attr(:platform, :string, default: "linux")
   attr(:tauri_detected, :boolean, default: false)
 
   defp palette_open_path(assigns) do
@@ -292,7 +289,7 @@ defmodule EvoDashWeb.ProjectComponents do
               type="text"
               name="path"
               class="input input-bordered input-sm w-full pr-8 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
-              placeholder={platform_placeholder(@platform)}
+              placeholder={gettext("Project path")}
               autofocus
               phx-hook="PathAutocomplete"
               phx-change="path_input"
@@ -323,7 +320,6 @@ defmodule EvoDashWeb.ProjectComponents do
   # ---------------------------------------------------------------------------
 
   attr(:path_suggestions, :list, default: [])
-  attr(:platform, :string, default: "linux")
   attr(:tauri_detected, :boolean, default: false)
 
   defp palette_new_project(assigns) do
@@ -344,12 +340,10 @@ defmodule EvoDashWeb.ProjectComponents do
     <!-- New project form -->
     <div class="p-3">
       <.form for={%{}} phx-submit="create_project" class="flex flex-col gap-2">
-        <!-- Location (parent directory) -->
+        <!-- Project path -->
         <div>
           <label class="label py-1">
-            <span class="label-text text-xs font-medium">
-              {gettext("Location (parent directory)")}
-            </span>
+            <span class="label-text text-xs font-medium">{gettext("Project path")}</span>
           </label>
           <div class="flex items-center gap-2">
             <%= if @tauri_detected do %>
@@ -366,35 +360,22 @@ defmodule EvoDashWeb.ProjectComponents do
             <div class="picker-container flex-1">
               <input
                 type="text"
-                name="location"
+                name="path"
                 class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
-                placeholder={platform_parent_placeholder(@platform)}
-                id="new-project-location-input"
+                placeholder={gettext("Project path")}
+                id="new-project-path-input"
                 phx-hook="PathAutocomplete"
-                phx-change="new_project_location_input"
+                phx-change="new_project_path_input"
                 phx-debounce="150"
-                list="new-project-location-suggestions"
+                list="new-project-path-suggestions"
               />
-              <datalist id="new-project-location-suggestions">
+              <datalist id="new-project-path-suggestions">
                 <%= for suggestion <- @path_suggestions do %>
                   <option value={suggestion}></option>
                 <% end %>
               </datalist>
             </div>
           </div>
-        </div>
-
-        <!-- Project name -->
-        <div>
-          <label class="label py-1">
-            <span class="label-text text-xs font-medium">{gettext("Project name")}</span>
-          </label>
-          <input
-            type="text"
-            name="name"
-            class="input input-bordered input-sm w-full font-mono text-sm"
-            placeholder="my-new-project"
-          />
         </div>
 
         <div class="flex gap-2">
@@ -698,11 +679,5 @@ defmodule EvoDashWeb.ProjectComponents do
     """
   end
 
-  defp platform_placeholder("mac"), do: "/Users/username/my-project"
-  defp platform_placeholder("windows"), do: "C:\\Users\\username\\my-project"
-  defp platform_placeholder(_), do: "/home/user/my-project"
-
-  defp platform_parent_placeholder("mac"), do: "/Users/username/projects"
-  defp platform_parent_placeholder("windows"), do: "C:\\Users\\username\\projects"
-  defp platform_parent_placeholder(_), do: "/home/user/projects"
+  defp platform_placeholder(_platform), do: gettext("Project path")
 end

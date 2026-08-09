@@ -96,6 +96,7 @@ defmodule EvoDashWeb.DashboardLive do
                   <RemoteView.top_bar
                     active_project={@active_project}
                     active_project_path={@active_project_path}
+                    no_project_hint_dismissed={@no_project_hint_dismissed}
                     recent_projects={@recent_projects}
                     palette_open={@project_palette_open}
                     palette_search={@palette_search}
@@ -124,6 +125,14 @@ defmodule EvoDashWeb.DashboardLive do
                     disabled={is_nil(@active_project)}
                     show_configure_dropdown={@show_configure_dropdown}
                   />
+
+                  <%!-- No-project page dim: purely visual (position: fixed,
+                       pointer-events: none — CSS in app.css), tied to the same
+                       flag as the top-bar hint pill so dismissing the hint
+                       also lifts the dim. --%>
+                  <%= if is_nil(@active_project) and !@no_project_hint_dismissed do %>
+                    <div class="no-project-overlay" aria-hidden="true"></div>
+                  <% end %>
 
                   <!-- Zone 2 (textarea, flex-1) + Zone 3 (floating bottom launcher) -->
                   <EvoDashWeb.TaskFormComponents.task_form
@@ -221,6 +230,7 @@ defmodule EvoDashWeb.DashboardLive do
                   current_node_name={@current_node_name}
                   active_project={@active_project}
                   active_project_path={@active_project_path}
+                  no_project_hint_dismissed={@no_project_hint_dismissed}
                   recent_projects={@recent_projects}
                   palette_open={@project_palette_open}
                   palette_search={@palette_search}
@@ -334,6 +344,7 @@ defmodule EvoDashWeb.DashboardLive do
                   current_node_name={@current_node_name}
                   active_project={@active_project}
                   active_project_path={@active_project_path}
+                  no_project_hint_dismissed={@no_project_hint_dismissed}
                   recent_projects={@recent_projects}
                   palette_open={@project_palette_open}
                   palette_search={@palette_search}
@@ -353,6 +364,7 @@ defmodule EvoDashWeb.DashboardLive do
                   current_node_name={@current_node_name}
                   active_project={@active_project}
                   active_project_path={@active_project_path}
+                  no_project_hint_dismissed={@no_project_hint_dismissed}
                   recent_projects={@recent_projects}
                   palette_open={@project_palette_open}
                   palette_search={@palette_search}
@@ -440,6 +452,7 @@ defmodule EvoDashWeb.DashboardLive do
         assign(socket,
           active_project: nil,
           active_project_path: nil,
+          no_project_hint_dismissed: false,
           project_palette_open: false,
           palette_search: "",
           palette_mode: :menu,
@@ -663,6 +676,14 @@ defmodule EvoDashWeb.DashboardLive do
      |> assign(:palette_mode, :menu)
      |> assign(:palette_search, "")
      |> assign(:palette_selected_index, 0)}
+  end
+
+  # Dismisses the "Open or create a project" hint pill in the top bar (the
+  # no-project page dim overlay is tied to the same flag). The hint returns
+  # for future no-project sessions — activate_project/2 resets the flag.
+  @impl true
+  def handle_event("dismiss_no_project_hint", _params, socket) do
+    {:noreply, assign(socket, :no_project_hint_dismissed, true)}
   end
 
   @impl true
@@ -1199,10 +1220,11 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("new_project_location_input", %{"location" => value}, socket) do
-    # The create-new-project palette form is local-only (hidden in remote
-    # contexts), but suggestions resolve node-aware like `path_input` for
-    # consistency with the shared `@path_suggestions` assign.
+  def handle_event("new_project_path_input", %{"path" => value}, socket) do
+    # The create-new-project palette form submits a single full project path
+    # and is local-only (hidden in remote contexts), but suggestions resolve
+    # node-aware like `path_input` for consistency with the shared
+    # `@path_suggestions` assign.
     suggestions =
       Project.path_suggestions(
         socket.assigns.current_node,
@@ -1651,6 +1673,9 @@ defmodule EvoDashWeb.DashboardLive do
     |> assign(
       active_project: %{path: path, name: name},
       active_project_path: path,
+      # Re-arm the no-project hint so it returns for a future no-project
+      # session (dismissal is per no-project session, not permanent).
+      no_project_hint_dismissed: false,
       notified_task_ids: Assigns.build_notified_task_ids(socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
