@@ -155,9 +155,28 @@ The backend is a **standalone web server** with NO GUI dependencies (no `:deskto
 
 | File | Purpose |
 |------|---------|
-| `favicon.ico` | Browser tab icon |
+| `favicon.ico` | Browser tab icon (also used as the Notification icon in `assets/js/app.js:422`) — **DERIVED from `images/logo.svg`** |
+| `images/favicon.svg` | Apple-touch-icon (`root.html.heex:19`) — **DERIVED from `images/logo.svg`** (square-fitted variant: logo centered on a transparent square canvas, `viewBox="0 0 16002.59 16002.59"` with the logo group translated `translate(0 1513.45)`) |
 | `robots.txt` | Standard web crawler directives (all commented out) |
-| `images/logo.svg` | Default Phoenix logo SVG (not EvoGit-branded) |
+| `images/logo.svg` | **Brand logo** (source of truth for all favicon assets) — dark gray `#373435` + red `#C8383C` on transparent background, non-square (`viewBox="0 0 16002.59 12975.69"`, aspect ≈ 1.2334) |
+| `images/logo-alt.svg` | Brand logo dark-theme variant (white + red); referenced directly as SVG only — no derived assets |
+
+**Regeneration recipe (run whenever `images/logo.svg` changes):**
+
+```bash
+# 1. Render PNGs at nominal widths 16/32/48/64/128/256 — height follows the
+#    logo's aspect ratio (1.2334), transparent background, no distortion:
+for W in 16 32 48 64 128 256; do
+  inkscape --export-type=png --export-filename=favicon-$W.png --export-width=$W priv/static/images/logo.svg
+done
+# 2. Combine into a multi-size ICO with alpha. Prefer PNG-compressed entries
+#    (compact, ~28 KB); a Python one-liner stitching ICONDIR + PNG blobs works,
+#    or ImageMagick: magick favicon-16.png ... favicon-256.png favicon.ico
+#    (note: IM writes uncompressed BMP entries → ~300 KB; PNG entries are better)
+cp favicon.ico priv/static/favicon.ico
+# 3. favicon.svg = square-fitted copy of logo.svg (square viewBox, logo group
+#    centered via transform="translate(0 <(squareH - logoH)/2>)", width/height 180)
+```
 
 ## Internationalization (i18n)
 
