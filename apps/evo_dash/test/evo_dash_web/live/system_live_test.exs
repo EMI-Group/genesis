@@ -531,14 +531,14 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ "System processes are not running correctly"
     end
 
-    test "check terms render in the responsive 2D grid", %{conn: conn} do
+    test "check terms render in the responsive grid", %{conn: conn} do
       set_windows_platform()
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
       html = render_with_checks(view, all_ok_checks())
 
-      assert html =~ ~s(grid grid-cols-1 md:grid-cols-2 gap-3)
+      assert html =~ ~s(grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3)
     end
 
     test "check terms render details inline with no disclosure and fix hints on failure", %{
@@ -630,14 +630,14 @@ defmodule EvoDashWeb.SystemLiveTest do
 
   # Floki-scopes the self-check term grid so disclosure assertions never see
   # the app layout's sidebar `<details>` theme dropdown (layouts.ex). The grid
-  # container is `<div class="grid grid-cols-1 md:grid-cols-2 gap-3">`
+  # container is `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">`
   # (system_live.ex); the charts grid uses the same classes plus `p-4`, so the
   # exact-match attribute selector matches only the check grid.
   defp check_grid(html) do
     [grid] =
       Floki.find(
         Floki.parse_document!(html),
-        ~s(div[class="grid grid-cols-1 md:grid-cols-2 gap-3"])
+        ~s(div[class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"])
       )
 
     grid
