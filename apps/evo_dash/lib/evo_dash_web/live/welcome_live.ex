@@ -2,9 +2,10 @@ defmodule EvoDashWeb.WelcomeLive do
   @moduledoc """
   Onboarding page for new users.
 
-  The primary onboarding action is configuring a first LLM inline: a flat grid
-  of all quick-setup models (across providers), API key entry, and save. When a
-  model profile already exists, the page shows a friendly "you're ready" state.
+  The primary onboarding action is configuring a first LLM inline via a
+  stepwise flow: pick a provider → choose a model → enter credentials, with a
+  merged single-action save. When a model profile already exists, the page
+  shows a friendly "you're ready" state.
   """
 
   use EvoDashWeb, :live_view
@@ -86,118 +87,168 @@ defmodule EvoDashWeb.WelcomeLive do
               </div>
             </div>
           <% else %>
-            <!-- Setup state: flat model grid + API key -->
+            <!-- Setup state: stepwise flow — provider first, then model,
+                 credentials only after a model is chosen -->
             <div class="shrink-0 mb-4">
               <h3 class="text-lg font-bold mb-1">
                 {gettext("Add your first LLM")}
               </h3>
               <p class="text-sm text-base-content/60">
-                {gettext("Pick a model below, then enter your API key. Keys are stored locally, never sent anywhere.")}
+                {gettext("Pick a provider, choose a model, then enter your API key. Keys are stored locally, never sent anywhere.")}
               </p>
             </div>
 
-            <!-- Search box (visible in both desktop and web modes) -->
-            <div class="shrink-0 mb-4">
-              <div class="relative">
-                <.icon
-                  name="hero-magnifying-glass"
-                  class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                />
-                <form id="welcome-search" class="contents" phx-submit="noop">
-                  <input
-                    type="text"
-                    phx-change="search_models"
-                    phx-debounce="150"
-                    name="search_query"
-                    value={@search_query}
-                    placeholder={gettext("Search models or providers…")}
-                    class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all duration-200"
-                  />
-                </form>
-                <%= if @search_query != "" do %>
+            <!-- Steps 1 + 2: provider + model selection — scrolls internally on
+                 large screens, page-scrolls on small screens -->
+            <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
+              <!-- STEP 1: Provider selection -->
+              <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
+                {gettext("Choose a provider:")}
+              </p>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+                <%= for provider <- welcome_providers(@llm_providers) do %>
+                  <% selected = @selected_provider_id == provider.id %>
                   <button
-                    type="button"
-                    phx-click="search_models"
-                    phx-value-search_query=""
-                    class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
+                    phx-click="select_welcome_provider"
+                    phx-value-provider_id={provider.id}
+                    class={[
+                      "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
+                      selected && "btn-primary shadow-md",
+                      !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                    ]}
                   >
-                    <.icon name="hero-x-mark" class="size-4" />
+                    <%!-- zh: provider names — see t_provider/1 for Chinese references --%>
+                    <span class="font-semibold text-sm">{t_provider(provider.display_name)}</span>
                   </button>
                 <% end %>
               </div>
-            </div>
 
-            <!-- Model list: scrolls internally on large screens, page-scrolls on small screens -->
-            <div class="lg:flex-1 lg:overflow-y-auto lg:min-h-0 lg:pr-1">
-              <%!-- The "Choose a model:" heading is rendered inside the scroll region
-                   so it scrolls away when there are many models. --%>
-              <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
-                {gettext("Choose a model:")}
-              </p>
+              <!-- STEP 2: Model selection for the chosen provider -->
+              <%= if @selected_provider_id != nil do %>
+                <% selected_provider =
+                  Enum.find(@llm_providers, &(&1.id == @selected_provider_id)) %>
+                <% variants = selected_provider[:variants] %>
 
-              <%= if filtered_groups(@grouped_models, @search_query) == [] do %>
-                <!-- Zero search results -->
-                <div class="py-10 text-center">
-                  <.icon name="hero-magnifying-glass" class="size-8 text-base-content/30 mx-auto mb-2" />
-                  <p class="text-sm text-base-content/50">
-                    {gettext("No models match your search.")}
-                  </p>
-                </div>
-              <% else %>
-                <!-- Models grouped by provider (alphabetical) -->
-                <%= for group <- filtered_groups(@grouped_models, @search_query) do %>
+                <%= if is_list(variants) and variants != [] do %>
+                  <!-- Variant selector (mirrors the Settings page pattern) -->
                   <div class="mb-5">
-                    <%!-- zh: provider names — see t_provider/1 for Chinese references --%>
-                    <p class="text-sm font-bold text-base-content/70 mb-2.5">
-                      {t_provider(group.provider_display_name)}
+                    <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3">
+                      {gettext("Select a variant:")}
                     </p>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      <%= for entry <- group.models do %>
-                        <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
+                    <div class="flex flex-wrap gap-2">
+                      <%= for variant <- variants do %>
                         <button
-                          phx-click="select_welcome_model"
-                          phx-value-model_string={entry.model_string}
+                          type="button"
+                          phx-click="select_welcome_variant"
+                          phx-value-variant_id={variant.id}
                           class={[
-                            "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
-                            selected && "btn-primary shadow-md",
-                            !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                            "btn btn-xs rounded-xl font-medium transition-all duration-200",
+                            @selected_variant_id == variant.id && "btn-secondary shadow-md",
+                            @selected_variant_id != variant.id &&
+                              "btn-ghost bg-secondary/10 hover:bg-secondary/20 text-secondary"
                           ]}
                         >
-                          <span class="font-semibold text-sm">{entry.model_display_name}</span>
-                          <span class={[
-                            "text-[11px] leading-tight",
-                            selected && "text-primary-content/80",
-                            !selected && "text-base-content/50"
-                          ]}>
-                            {t_provider(entry.provider_display_name)}{variant_suffix(entry)}
-                          </span>
+                          {variant.display_name}
                         </button>
                       <% end %>
                     </div>
                   </div>
                 <% end %>
-              <% end %>
 
-              <!-- End-of-list guidance -->
-              <div class="mt-4 mb-2 bg-base-200/50 rounded-xl p-4 text-center">
-                <p class="text-xs text-base-content/50 leading-relaxed">
-                  {gettext(
-                    "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
-                  )}
-                  <a href={~p"/settings"} class="link link-primary font-semibold">
-                    {gettext("Settings page")}
-                  </a>
-                  .
+                <!-- Search box: scoped to the selected provider's models -->
+                <div class="relative mb-4">
+                  <.icon
+                    name="hero-magnifying-glass"
+                    class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  />
+                  <form id="welcome-search" class="contents" phx-submit="noop">
+                    <input
+                      type="text"
+                      phx-change="search_models"
+                      phx-debounce="150"
+                      name="search_query"
+                      value={@search_query}
+                      placeholder={gettext("Search models…")}
+                      class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all duration-200"
+                    />
+                  </form>
+                  <%= if @search_query != "" do %>
+                    <button
+                      type="button"
+                      phx-click="search_models"
+                      phx-value-search_query=""
+                      class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
+                    >
+                      <.icon name="hero-x-mark" class="size-4" />
+                    </button>
+                  <% end %>
+                </div>
+
+                <p class="text-xs font-bold uppercase tracking-wider text-base-content/70 mb-3 shrink-0">
+                  {gettext("Choose a model:")}
                 </p>
-              </div>
+
+                <% entries =
+                  provider_models(@flat_models, @selected_provider_id, @selected_variant_id) %>
+                <%= if filtered_provider_models(entries, @search_query) == [] do %>
+                  <!-- Zero search results -->
+                  <div class="py-10 text-center">
+                    <.icon name="hero-magnifying-glass" class="size-8 text-base-content/30 mx-auto mb-2" />
+                    <p class="text-sm text-base-content/50">
+                      {gettext("No models match your search.")}
+                    </p>
+                  </div>
+                <% else %>
+                  <!-- Models for the chosen provider (+ variant) -->
+                  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <%= for entry <- filtered_provider_models(entries, @search_query) do %>
+                      <% selected = @selected_entry && @selected_entry.model_string == entry.model_string %>
+                      <button
+                        phx-click="select_welcome_model"
+                        phx-value-model_string={entry.model_string}
+                        class={[
+                          "btn btn-sm rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-2.5",
+                          selected && "btn-primary shadow-md",
+                          !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                        ]}
+                      >
+                        <span class="font-semibold text-sm">{entry.model_display_name}</span>
+                        <span class={[
+                          "text-[11px] leading-tight",
+                          selected && "text-primary-content/80",
+                          !selected && "text-base-content/50"
+                        ]}>
+                          {t_provider(entry.provider_display_name)}{variant_suffix(entry)}
+                        </span>
+                      </button>
+                    <% end %>
+                  </div>
+                <% end %>
+
+                <!-- End-of-list guidance -->
+                <div class="mt-4 mb-2 bg-base-200/50 rounded-xl p-4 text-center">
+                  <p class="text-xs text-base-content/50 leading-relaxed">
+                    {gettext(
+                      "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
+                    )}
+                    <a href={~p"/settings"} class="link link-primary font-semibold">
+                      {gettext("Settings page")}
+                    </a>
+                    .
+                  </p>
+                </div>
+              <% end %>
             </div>
 
-            <!-- Selected model: API key + save (pinned at bottom on large screens) -->
+            <!-- STEP 3: Credentials — rendered ONLY after a model is chosen
+                 (pinned at bottom on large screens) -->
             <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-200">
               <%= if @selected_entry do %>
                 <div class="bg-base-50 rounded-xl border border-base-200 p-5">
                   <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
                   <% can_save = @api_key_input != "" or key_is_set %>
+                  <% requires_base_url =
+                    EvoGit.Config.LLMCatalog.requires_base_url?(@selected_entry.provider_id) %>
 
                   <div class="flex items-center gap-2 mb-4">
                     <.icon name="hero-key" class="size-4 text-primary" />
@@ -248,6 +299,31 @@ defmodule EvoDashWeb.WelcomeLive do
                         provider: t_provider(@selected_entry.provider_display_name)
                       )}
                     </p>
+
+                    <!-- Base URL: shown only for providers that require a custom
+                         endpoint (catalog function, NOT the dead
+                         provider[:requires_base_url] map field). -->
+                    <%= if requires_base_url do %>
+                      <label class="label mt-3">
+                        <span class="label-text font-semibold text-sm">
+                          {gettext("Base URL")}
+                          <span class="text-error">*</span>
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        name="base_url"
+                        phx-change="base_url_changed"
+                        value={@base_url_input}
+                        placeholder={gettext("https://...")}
+                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-100"
+                      />
+                      <p class="text-[11px] text-base-content/70 mt-1.5">
+                        {gettext("Required for this provider.")}
+                      </p>
+                    <% else %>
+                      <input type="hidden" name="base_url" value={@base_url_input} />
+                    <% end %>
 
                     <!-- Single button: saves API key (if entered) AND model profile -->
                     <button
@@ -319,7 +395,7 @@ defmodule EvoDashWeb.WelcomeLive do
                 <div class="bg-base-200/30 rounded-xl border border-dashed border-base-300 p-5 text-center">
                   <.icon name="hero-cursor-arrow-rays" class="size-5 text-base-content/30 mx-auto mb-1" />
                   <p class="text-xs text-base-content/40">
-                    {gettext("Select a model above to enter your API key.")}
+                    {gettext("Select a provider and a model above to enter your API key.")}
                   </p>
                 </div>
               <% end %>
@@ -386,10 +462,12 @@ defmodule EvoDashWeb.WelcomeLive do
         credentials: EvoGit.Config.credentials(),
         llm_providers: llm_providers,
         flat_models: flat_models,
-        grouped_models: group_models_by_provider(flat_models),
         search_query: "",
-        api_key_input: "",
+        selected_provider_id: nil,
+        selected_variant_id: nil,
         selected_entry: nil,
+        api_key_input: "",
+        base_url_input: "",
         llm_test_status: :idle,
         current_version: current_version
       )
@@ -412,6 +490,84 @@ defmodule EvoDashWeb.WelcomeLive do
   end
 
   @impl true
+  def handle_event("base_url_changed", %{"base_url" => url}, socket) do
+    {:noreply, assign(socket, :base_url_input, url || "")}
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Stepwise quick setup: provider → variant → model
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # STEP 1: provider selection. Whitelist lookup against the catalog ids
+  # (never String.to_existing_atom on client input). Switching providers resets
+  # ALL downstream selection state so stale credentials never leak across
+  # providers: selected entry, typed API key, typed base URL, search query, and
+  # any connection-test result.
+  @impl true
+  def handle_event("select_welcome_provider", %{"provider_id" => provider_id_str}, socket) do
+    provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
+
+    if provider do
+      # Variant providers default to their first variant so the model list is
+      # immediately usable; non-variant providers keep nil.
+      variant_id =
+        case provider[:variants] do
+          [first | _] -> first.id
+          _ -> nil
+        end
+
+      {:noreply,
+       assign(socket,
+         selected_provider_id: provider.id,
+         selected_variant_id: variant_id,
+         selected_entry: nil,
+         api_key_input: "",
+         base_url_input: "",
+         search_query: "",
+         llm_test_status: :idle
+       )}
+    else
+      {:noreply,
+       socket
+       |> assign(
+         selected_provider_id: nil,
+         selected_variant_id: nil,
+         selected_entry: nil,
+         api_key_input: "",
+         base_url_input: "",
+         search_query: "",
+         llm_test_status: :idle
+       )
+       |> put_flash(:error, gettext("Unknown provider."))}
+    end
+  end
+
+  # Variant selector (variant providers like Alibaba / Z.ai). Whitelist lookup
+  # against the currently selected provider's variants. Switching the variant
+  # changes every model_string (resolved_atom differs), so the previously
+  # selected model and typed credentials are stale — reset them.
+  @impl true
+  def handle_event("select_welcome_variant", %{"variant_id" => variant_id_str}, socket) do
+    variant_id =
+      case socket.assigns.selected_provider_id do
+        nil -> nil
+        provider_id -> Map.get(ConfigIO.variant_id_by_str(provider_id), variant_id_str)
+      end
+
+    {:noreply,
+     assign(socket,
+       selected_variant_id: variant_id,
+       selected_entry: nil,
+       api_key_input: "",
+       base_url_input: "",
+       llm_test_status: :idle
+     )}
+  end
+
+  # STEP 2: model selection (existing event; entry comes from the canonical
+  # flat_models list). Resets the typed key/base URL and any stale
+  # connection-test result — the credential_key context changes per model.
+  @impl true
   def handle_event("select_welcome_model", params, socket) do
     model_string = params["model_string"]
 
@@ -420,10 +576,13 @@ defmodule EvoDashWeb.WelcomeLive do
         e.model_string == model_string
       end)
 
-    # Reset the typed key input when switching models — the credential_key
-    # context changes. Also reset any stale connection-test result (it would
-    # refer to the previously selected model).
-    {:noreply, assign(socket, selected_entry: entry, api_key_input: "", llm_test_status: :idle)}
+    {:noreply,
+     assign(socket,
+       selected_entry: entry,
+       api_key_input: "",
+       base_url_input: "",
+       llm_test_status: :idle
+     )}
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -439,9 +598,10 @@ defmodule EvoDashWeb.WelcomeLive do
           "model_string" => model_string,
           "provider_id" => provider_id_str,
           "variant_id" => variant_id_str
-        },
+        } = params,
         socket
       ) do
+    base_url = Map.get(params, "base_url", "")
     api_key = String.trim(api_key || "")
     key_already_set = Map.get(socket.assigns.credentials, credential_key) not in [nil, ""]
 
@@ -460,7 +620,7 @@ defmodule EvoDashWeb.WelcomeLive do
               |> assign(:credentials, EvoGit.Config.credentials())
               |> assign(:api_key_input, "")
 
-            do_save_model_profile(model_string, provider_id_str, variant_id_str, socket)
+            do_save_model_profile(model_string, provider_id_str, variant_id_str, base_url, socket)
 
           {:error, reason} ->
             {:noreply,
@@ -473,7 +633,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
       # An existing key is already set — skip credential save, just save model.
       true ->
-        do_save_model_profile(model_string, provider_id_str, variant_id_str, socket)
+        do_save_model_profile(model_string, provider_id_str, variant_id_str, base_url, socket)
     end
   end
 
@@ -505,9 +665,15 @@ defmodule EvoDashWeb.WelcomeLive do
     if entry do
       provider_id_str = Atom.to_string(entry.provider_id)
       variant_id_str = if(entry.variant_id, do: Atom.to_string(entry.variant_id), else: "")
+      base_url = socket.assigns.base_url_input
 
       with {:ok, model_value} <-
-             resolve_welcome_model_value(entry.model_string, provider_id_str, variant_id_str),
+             resolve_welcome_model_value(
+               entry.model_string,
+               provider_id_str,
+               variant_id_str,
+               base_url
+             ),
            {:ok, socket} <- save_typed_key_for_test(entry.credential_key, socket) do
         parent = self()
 
@@ -563,9 +729,14 @@ defmodule EvoDashWeb.WelcomeLive do
   end
 
   # Resolves the model value (the exact form the save flow stores) from the
-  # flat-grid entry data. Shared by `save_welcome_setup` and the connection
-  # test so the test verifies precisely what will be configured.
-  defp resolve_welcome_model_value(model_string, provider_id_str, variant_id_str) do
+  # flat-grid entry data + the currently-typed base URL. Shared by
+  # `save_welcome_setup` and the connection test so the test verifies precisely
+  # what will be configured.
+  #
+  # The base_url requirement is validated with the catalog function
+  # (EvoGit.Config.LLMCatalog.requires_base_url?/1) — NOT the dead
+  # provider[:requires_base_url] map field.
+  defp resolve_welcome_model_value(model_string, provider_id_str, variant_id_str, base_url) do
     provider = Map.get(ConfigIO.provider_by_id_str(), provider_id_str)
 
     cond do
@@ -584,11 +755,16 @@ defmodule EvoDashWeb.WelcomeLive do
             model_string
           end
 
-        if EvoGit.Config.LLMCatalog.requires_base_url?(provider.id) do
+        requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(provider.id)
+
+        if requires_base_url and String.trim(base_url || "") == "" do
           {:error, gettext("Base URL cannot be empty.")}
         else
           provider_atom = hd(provider.provider_atoms)
 
+          # Variant resolution: canonical atom + :variant opt (resolve_model_spec
+          # applies the variant internally). Passing a pre-resolved variant atom
+          # (e.g. :alibaba_cn) would be downgraded back to the canonical atom.
           opts =
             if variant_id_str != nil and variant_id_str != "" do
               variant_atom = Map.get(ConfigIO.variant_id_by_str(provider_atom), variant_id_str)
@@ -597,20 +773,24 @@ defmodule EvoDashWeb.WelcomeLive do
               []
             end
 
+          # Include base_url in the saved spec only when non-empty.
+          opts =
+            if String.trim(base_url || "") == "" do
+              opts
+            else
+              Keyword.put(opts, :base_url, String.trim(base_url))
+            end
+
           {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(provider_atom, model_name, opts)}
         end
     end
   end
 
-  # Resolves the model spec from provider + model + variant, then adds the
-  # model profile, mirrors the default, and persists. Shows a combined success
-  # flash. Returns {:noreply, socket}.
-  #
-  # Note: the welcome page does not collect a base_url (custom-model-only
-  # providers with base_url are excluded from the flat grid). If a provider
-  # somehow requires one, an error flash is shown.
-  defp do_save_model_profile(model_string, provider_id_str, variant_id_str, socket) do
-    case resolve_welcome_model_value(model_string, provider_id_str, variant_id_str) do
+  # Resolves the model spec from provider + model + variant + base URL, then
+  # adds the model profile, mirrors the default, and persists. Shows a combined
+  # success flash. Returns {:noreply, socket}.
+  defp do_save_model_profile(model_string, provider_id_str, variant_id_str, base_url, socket) do
+    case resolve_welcome_model_value(model_string, provider_id_str, variant_id_str, base_url) do
       {:error, msg} ->
         {:noreply, put_flash(socket, :error, msg)}
 
@@ -624,6 +804,48 @@ defmodule EvoDashWeb.WelcomeLive do
           socket,
           gettext("Model and API key saved. You're all set!")
         )
+    end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Private: provider / model data helpers
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Preset providers only, sorted alphabetically by display name. Providers
+  # with `custom_model: true` (OpenRouter, OpenAI-Compatible API) have empty
+  # model lists and are excluded — the end-of-list guidance card directs users
+  # to the Settings page for custom needs.
+  defp welcome_providers(providers) do
+    providers
+    |> Enum.reject(&(&1[:custom_model] == true))
+    |> Enum.sort_by(fn p -> String.downcase(p.display_name) end)
+  end
+
+  # Models for the chosen provider (+ variant), from the canonical flat list.
+  # For non-variant providers `variant_id` is nil and every entry matches.
+  defp provider_models(flat_models, provider_id, variant_id) do
+    Enum.filter(flat_models, fn entry ->
+      entry.provider_id == provider_id and
+        (variant_id == nil or entry.variant_id == variant_id)
+    end)
+  end
+
+  # Scoped search: case-insensitive substring match against model display name
+  # or variant display name. The provider-name filter no longer applies — the
+  # list is already provider-scoped.
+  defp filtered_provider_models(entries, query) do
+    trimmed = String.trim(query || "")
+
+    if trimmed == "" do
+      entries
+    else
+      needle = String.downcase(trimmed)
+
+      Enum.filter(entries, fn entry ->
+        String.downcase(entry.model_display_name) =~ needle or
+          (entry.variant_display_name != nil and
+             String.downcase(entry.variant_display_name) =~ needle)
+      end)
     end
   end
 
@@ -642,18 +864,6 @@ defmodule EvoDashWeb.WelcomeLive do
     providers
     |> Enum.reject(&(&1[:custom_model] == true))
     |> Enum.flat_map(&flatten_provider/1)
-  end
-
-  # Groups the flat model list by provider_display_name, sorted alphabetically
-  # (case-insensitive). Returns a list of
-  # `%{provider_display_name: binary(), models: [entry, ...]}` maps. The flat
-  # list is kept as the canonical data source for model lookups.
-  defp group_models_by_provider(flat_models) do
-    grouped = Enum.group_by(flat_models, & &1.provider_display_name)
-
-    grouped
-    |> Enum.sort_by(fn {name, _models} -> String.downcase(name) end)
-    |> Enum.map(fn {name, models} -> %{provider_display_name: name, models: models} end)
   end
 
   defp flatten_provider(provider) do
@@ -694,42 +904,13 @@ defmodule EvoDashWeb.WelcomeLive do
       model_id: model.id,
       model_display_name: model.display_name,
       resolved_atom: resolved_atom,
-      model_string: model_string,
-      requires_base_url: provider[:requires_base_url] == true
+      model_string: model_string
     }
   end
 
   # Renders a subtle suffix for variant providers (e.g. " · Global").
   defp variant_suffix(%{variant_display_name: nil}), do: ""
   defp variant_suffix(%{variant_display_name: name}), do: " · #{name}"
-
-  # Filters the grouped model list by a case-insensitive substring match
-  # against provider display name, model display name, or variant display
-  # name. Returns the filtered list of group maps (preserving alphabetical
-  # order). Groups with no matching models are omitted entirely.
-  defp filtered_groups(grouped_models, query) do
-    trimmed = String.trim(query || "")
-
-    if trimmed == "" do
-      grouped_models
-    else
-      needle = String.downcase(trimmed)
-
-      grouped_models
-      |> Enum.map(fn %{models: models} = group ->
-        matching =
-          Enum.filter(models, fn entry ->
-            String.downcase(entry.model_display_name) =~ needle or
-              String.downcase(entry.provider_display_name) =~ needle or
-              (entry.variant_display_name != nil and
-                 String.downcase(entry.variant_display_name) =~ needle)
-          end)
-
-        %{group | models: matching}
-      end)
-      |> Enum.reject(fn %{models: models} -> models == [] end)
-    end
-  end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Private: provider name i18n
