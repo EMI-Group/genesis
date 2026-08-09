@@ -161,7 +161,7 @@ stdenv.mkDerivation {
   '';
 
   meta = with lib; {
-    description = "Genesis Desktop — Tauri-wrapped native app for the Genesis dashboard";
+    description = "EvoX Genesis — Tauri-wrapped native app for the Genesis dashboard";
     mainProgram = "genesis-desktop";
     platforms = platforms.linux ++ platforms.darwin;
     license = licenses.mit;
