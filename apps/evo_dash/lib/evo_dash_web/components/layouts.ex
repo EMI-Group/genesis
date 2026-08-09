@@ -4,7 +4,7 @@ defmodule EvoDashWeb.Layouts do
   used by your application.
   """
 
-  # zh_CN: Genesis → "启元"
+  # zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元)
 
   use EvoDashWeb, :html
 
@@ -86,21 +86,21 @@ defmodule EvoDashWeb.Layouts do
             navigate={with_node_param(~p"/", @current_node_id)}
             class="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0"
           >
-            <%!-- zh_CN: Genesis → "启元" --%>
+            <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
             <img
               src={~p"/images/logo.svg"}
               class="h-6 w-auto block dark:hidden shrink-0"
-              alt={gettext("Genesis")}
+              alt={gettext("EvoX Genesis")}
             />
-            <%!-- zh_CN: Genesis → "启元" --%>
+            <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
             <img
               src={~p"/images/logo-alt.svg"}
               class="h-6 w-auto hidden dark:block shrink-0"
-              alt={gettext("Genesis")}
+              alt={gettext("EvoX Genesis")}
             />
             <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent truncate sidebar-label">
-              <%!-- zh_CN: Genesis → "启元" --%>
-              {gettext("Genesis")}
+              <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
+              {gettext("EvoX Genesis")}
             </span>
           </.link>
         </div>
