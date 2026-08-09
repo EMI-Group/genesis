@@ -158,13 +158,17 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       refute html =~ "Enter your API key"
     end
 
-    test "renders the example task teaching section with copy button", %{conn: conn} do
+    test "does not render the example task teaching section (moved to /welcome/complete)", %{
+      conn: conn
+    } do
       {:ok, _view, html} = live(conn, ~p"/welcome")
 
-      assert html =~ "Try an example task"
-      assert html =~ "Build a simulated, web-based Windows desktop environment"
-      assert html =~ "Taskbar containing a Start button"
-      assert html =~ "welcome-example-copy"
+      # The example-task teaching card moved to the dedicated completion page
+      # (WelcomeCompleteLive at /welcome/complete) — none of it remains here.
+      refute html =~ "Try an example task"
+      refute html =~ "Build a simulated, web-based Windows desktop environment"
+      refute html =~ "Taskbar containing a Start button"
+      refute html =~ "welcome-example-copy"
     end
   end
 
