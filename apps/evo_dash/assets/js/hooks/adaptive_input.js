@@ -1,21 +1,23 @@
 // AdaptiveInput hook: mounted on the <textarea class="input-prompt"> element.
 //
-// Single responsibility: AUTOGROW — measure the textarea's content height
-// (scrollHeight) and set its height so the box grows smoothly with its
-// content (up to the CSS max-height, beyond which the textarea scrolls
-// internally).
+// Responsibilities: AUTOGROW + CLIENT-SIDE LAYOUT.
 //
-// The compact/expanded layout decision is now SERVER-DRIVEN: the server
+// AUTOGROW — measure the textarea's content height (scrollHeight) and set
+// its height so the box grows smoothly with its content (up to the CSS
+// max-height, beyond which the textarea scrolls internally).
+//
+// LAYOUT — the compact/expanded layout decision is CLIENT-DRIVEN: this hook
 // computes `data-layout` on the closest `.input-layout` ancestor from the
-// prompt length (EvoDashWeb.TaskFormComponents.layout_for/1 — threshold
-// @short_objective_threshold chars or 8+ lines) and the user's typing
-// updates it via the `task_prompt_change` phx-change event (debounced).
-// This hook no longer toggles data-layout and no longer positions any
-// floating controls panel (the old --input-layout-center logic is gone —
-// Layout B's controls row is in-flow below the textarea).
+// textarea value, mirroring EvoDashWeb.TaskFormComponents.layout_for/1
+// (>600 code points or >16 lines → expanded), on every input and on mount/
+// updates. The server only seeds the initial `data-layout` attribute for
+// first paint — the old `task_prompt_change` phx-change event (debounced)
+// that used to drive it server-side has been removed. This hook does not
+// position any floating controls panel (the old --input-layout-center logic
+// is gone — Layout B's controls row is in-flow below the textarea).
 const AdaptiveInput = {
   mounted() {
-    this._inputHandler = () => this.measureAndApply();
+    this._inputHandler = () => this._apply();
 
     this.el.addEventListener("input", this._inputHandler);
 
@@ -23,17 +25,37 @@ const AdaptiveInput = {
     // element so scrollHeight/lineHeight are accurate. StatePersistence may
     // restore a saved prompt into the textarea on mount, so measure even
     // before any user input.
-    requestAnimationFrame(() => this.measureAndApply());
+    requestAnimationFrame(() => this._apply());
   },
 
   updated() {
     // The textarea value may have changed via LiveView morphdom or
-    // StatePersistence restore — re-measure.
-    requestAnimationFrame(() => this.measureAndApply());
+    // StatePersistence restore — re-measure and re-derive the layout.
+    requestAnimationFrame(() => this._apply());
   },
 
   destroyed() {
     this.el.removeEventListener("input", this._inputHandler);
+  },
+
+  _apply() {
+    this.applyLayout();
+    this.measureAndApply();
+  },
+
+  // Compute the compact/expanded layout from the input value, mirroring the
+  // server's layout_for/1 thresholds (>600 code points or >16 lines →
+  // expanded). The server only seeds the initial data-layout attribute; from
+  // then on the DOM value is the source of truth (no per-keystroke server
+  // round-trip). Array.from counts code points — an acceptable stand-in for
+  // the server's grapheme count.
+  applyLayout() {
+    const layoutEl = this.el.closest('.input-layout');
+    if (!layoutEl) return;
+    const value = this.el.value || '';
+    const charCount = Array.from(value).length;
+    const lineCount = value.split('\n').length;
+    layoutEl.dataset.layout = (charCount > 600 || lineCount > 16) ? 'expanded' : 'compact';
   },
 
   measureAndApply() {

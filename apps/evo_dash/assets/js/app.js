@@ -357,6 +357,14 @@ const StatePersistence = {
 
     // Listen for save requests from the server (still needed for task_mode changes, project switches, task starts)
     this.handleEvent("persist_state", (state) => {
+      // The server no longer receives per-keystroke prompt updates (the
+      // task_prompt_change phx-change event was removed), so its task_prompt
+      // in the persist payload can be stale. The DOM is the source of truth
+      // for the prompt — override it before persisting. (The client-side
+      // input watcher below, persistFormState, is the prompt's persistence
+      // path; this override protects it from stale server pushes triggered
+      // by OTHER events, e.g. mode/model select changes.)
+      state.task_prompt = this.el.querySelector('[name="prompt"]')?.value || '';
       sessionStorage.setItem('dashboard_state', JSON.stringify(state));
     });
 
