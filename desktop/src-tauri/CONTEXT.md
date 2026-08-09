@@ -59,15 +59,15 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 
 ## Regenerating Icons
 
-The icon set in `./icons/` (5 files: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo — NOT from the placeholder logo. Source SVGs live in the sibling app (read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light-background variant — the one used for the icons) and `logo-alt.svg` (white `#FEFEFE` + red, dark-background variant). Icons use a transparent background (the old placeholder set was dark-gray + violet on transparent, so the new set keeps the same style).
+The icon set in `./icons/` (5 files: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo — NOT from the placeholder logo. Source SVGs live in the sibling app (read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light-background variant — the one used for the icons) and `logo-alt.svg` (white `#FEFEFE` + red, dark-background variant). Icons use a transparent background (the old placeholder set was dark-gray + violet on transparent, so the new set keeps the same style). Regenerated from the updated brand logo in commit `08ad3110` ("Update logo"; the previous set, from `bacf702c`, was stale — see also commit `282a937e` which fixed the earlier RGB/invalid formats to proper RGBA).
 
-**Gotcha — huge viewBox**: both SVGs declare `viewBox="0 0 98668.67 73192.18"`. Rendering that raw produces a tiny logo on a vast canvas (the artwork fills the entire viewBox edge-to-edge, so plain `-trim` finds nothing to cut). The working recipe — render high-res, then trim-and-fit to ~86% of a 1024x1024 transparent canvas:
+**Gotcha — huge viewBox**: both SVGs declare `viewBox="0 0 16002.59 12975.69"` (aspect ratio ≈ 1.2334). Rendering that raw produces a tiny logo on a vast canvas (the artwork fills the entire viewBox edge-to-edge, so plain `-trim` finds nothing to cut). The working recipe — render high-res, then trim-and-fit to ~86% of a 1024x1024 transparent canvas:
 
 ```bash
 TMP=$TMPDIR/evox_icons; mkdir -p "$TMP"
 # 1. render the SVG at high resolution (rsvg-convert via nixpkgs#librsvg)
 nix shell nixpkgs#librsvg -c rsvg-convert -w 4096 \
-  apps/evo_dash/priv/static/images/logo.svg -o "$TMP/raw.png"     # 4096x3039
+  apps/evo_dash/priv/static/images/logo.svg -o "$TMP/raw.png"     # 4096x3322
 # 2. trim uniform/transparent margins (no-op here), fit long edge to ~880px
 nix shell nixpkgs#imagemagick -c bash -c '
   magick '"$TMP"'/raw.png -fuzz 0% -trim +repage '"$TMP"'/trimmed.png
