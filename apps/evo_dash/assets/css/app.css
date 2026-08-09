@@ -1421,15 +1421,34 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Adaptive Input Layout === */
-/* Single-card, two-layout objective editor.
-   data-layout is SERVER-DRIVEN (EvoDashWeb.TaskFormComponents.layout_for/1):
+/* Single-card, two-layout objective editor. The layout is CLIENT-DRIVEN:
+   the AdaptiveInput JS hook (assets/js/hooks/adaptive_input.js) computes
+   data-layout on this element from the textarea value AND its measured
+   natural content height on every input; the server only SEEDS the initial
+   attribute from EvoDashWeb.TaskFormComponents.layout_for/1 for first paint
+   (and re-seeds it from its possibly-stale @task_prompt on server re-renders,
+   which the hook re-asserts via a MutationObserver — converging with no loop):
      "compact"  → Layout A: unified objective box — the controls row is the
-                  card's last line; Launch button bottom-right.
+                  card's last line; Launch button bottom-right. The box grows
+                  120px → ~8 lines and flips to expanded the INSTANT the
+                  content would exceed the 8-line cap, so it never shows an
+                  internal scrollbar while growing (overflow-y: auto on the
+                  compact textarea is a safety net only).
      "expanded" → Layout B: large objective area with an in-flow launch panel
-                  below the textarea; Launch button in the middle.
-   The AdaptiveInput JS hook (assets/js/hooks/adaptive_input.js) is autogrow-
-   ONLY — it no longer toggles data-layout and no longer positions anything
-   (the --input-layout-center / position: fixed logic is gone). */
+                  below the textarea; Launch button in the middle. The box
+                  grows freely with its content (flex-shrink: 0 on the card
+                  and textarea — see below) and the page's scroll container
+                  (#main-scroll) scrolls instead — never an internal
+                  scrollbar.
+   Flip semantics: compact → expanded when the natural content height exceeds
+   the compact max-height cap (or >600 code points / >16 lines, mirroring
+   layout_for/1 for SSR-seed convergence); expanded → compact only after the
+   height drops ~1 line-height below the cap (hysteresis against boundary
+   flicker while deleting) AND the char/line thresholds are under. The
+   0.35s transitions on .input-layout/.input-card/.input-prompt animate the
+   min-height jump (120px → calc(1.6em * 10)) at the flip. The hook does not
+   position any floating controls panel (the --input-layout-center /
+   position: fixed logic is gone). */
 .input-layout {
   display: flex;
   flex-direction: column;
@@ -1498,9 +1517,15 @@ button, a, input, textarea, select, summary,
   pointer-events: none;
 }
 
-/* Layout B (expanded): taller, fills more space */
+/* Layout B (expanded): taller, fills more space. flex-shrink: 0 forbids the
+   card from being compressed below its content by the flex chain (form →
+   .input-layout → card), so with a very long prompt the card grows with its
+   content and the page's scroll container (#main-scroll) scrolls instead —
+   the textarea never gains an internal scrollbar. flex-grow: 1 keeps the
+   grow-to-fill-available-space behavior on short viewports. (Compact mode's
+   vertical-centering auto margins on .input-card above are untouched.) */
 .input-layout[data-layout="expanded"] .input-card {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   min-height: 0;
 }
 
@@ -1525,16 +1550,26 @@ button, a, input, textarea, select, summary,
   outline: none;
 }
 
-/* Layout A (compact): starts ~4 lines (120px), auto-grows up to ~8 lines */
+/* Layout A (compact): starts ~4 lines (120px), auto-grows up to ~8 lines.
+   overflow-y: auto is a SAFETY NET only — the AdaptiveInput hook flips the
+   layout to expanded the instant the natural content height would exceed
+   this max-height (synchronously, before paint), so the box never renders
+   with an internal scrollbar while growing. */
 .input-layout[data-layout="compact"] .input-prompt {
   min-height: 120px;
   max-height: calc(1.6em * 8);
   overflow-y: auto;
 }
 
-/* Layout B (expanded): much taller, fills available space */
+/* Layout B (expanded): much taller, fills available space. Same
+   flex-shrink: 0 rationale as the expanded card: the textarea must never be
+   compressed below its content by the flex chain (which would produce an
+   internal scrollbar) — the page scrolls instead. flex-grow: 1 preserves
+   grow-to-fill on short viewports. overflow-y: auto is a safety net only
+   (the hook always writes the height to the natural content height, so it
+   never activates). */
 .input-layout[data-layout="expanded"] .input-prompt {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   min-height: calc(1.6em * 10);
   max-height: none;
   overflow-y: auto;
