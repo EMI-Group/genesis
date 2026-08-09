@@ -163,10 +163,19 @@ defmodule EvoGit.Config.LLMCatalogTest do
                %{provider: :anthropic, id: "claude-sonnet-4-6"}
     end
 
+    test "resolves new catalog additions to their ids" do
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.6-flash") ==
+               %{provider: :google, id: "gemini-3.6-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.5-flash-lite") ==
+               %{provider: :google, id: "gemini-3.5-flash-lite"}
+
+      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-opus-5") ==
+               %{provider: :anthropic, id: "claude-opus-5"}
+    end
+
     test "includes base_url when a non-empty value is provided" do
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5",
-               base_url: "https://my.proxy/v1"
-             ) ==
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "https://my.proxy/v1") ==
                %{provider: :openai, id: "gpt-5.5", base_url: "https://my.proxy/v1"}
     end
 
@@ -181,15 +190,15 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
 
     test "includes extra when a non-nil value is provided" do
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro",
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro-preview",
                extra: %{family: "glm"}
              ) ==
-               %{provider: :google, id: "gemini-3.1-pro", extra: %{family: "glm"}}
+               %{provider: :google, id: "gemini-3.1-pro-preview", extra: %{family: "glm"}}
     end
 
     test "omits extra when it is nil" do
       refute Map.has_key?(
-               LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro", extra: nil),
+               LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro-preview", extra: nil),
                :extra
              )
     end
