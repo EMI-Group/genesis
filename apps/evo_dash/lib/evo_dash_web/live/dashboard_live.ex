@@ -1264,8 +1264,32 @@ defmodule EvoDashWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("directory_picked", %{"path" => path, "picker_id" => picker_id}, socket) do
-    {:noreply, push_event(socket, "picker_result:#{picker_id}", %{path: path})}
+  def handle_event("directory_pick", %{"picker_id" => picker_id}, socket) do
+    if socket.assigns.current_node == node() do
+      # wx dialogs must only ever pop on the local node. The picker module is
+      # resolved from the app env so there is no hard compile-time dependency
+      # (the parallel DirectoryPicker work may not be compiled in this tree).
+      module =
+        Application.get_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker)
+
+      if Code.ensure_loaded?(module) do
+        case module.pick(self(), picker_id) do
+          :ok ->
+            # The dialog runs asynchronously; the result arrives later via
+            # {:directory_picker_result, picker_id, result}. NEVER block the
+            # LiveView on the modal dialog.
+            {:noreply, socket}
+
+          {:error, :unavailable} ->
+            {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+        end
+      else
+        {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+      end
+    else
+      # Remote/headless node: never pop a wx dialog there; report unavailable.
+      {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+    end
   end
 
   @impl true
@@ -1339,6 +1363,23 @@ defmodule EvoDashWeb.DashboardLive do
   defp truncate_output(output), do: String.trim(output)
 
   # --- PubSub Handlers ---
+
+  # Results from the async directory picker (EvoDash.DirectoryPicker sends
+  # these to the LiveView pid passed to pick/2).
+  @impl true
+  def handle_info({:directory_picker_result, picker_id, {:ok, path}}, socket) do
+    {:noreply, push_event(socket, "picker_result:#{picker_id}", %{path: path})}
+  end
+
+  @impl true
+  def handle_info({:directory_picker_result, picker_id, :cancelled}, socket) do
+    {:noreply, push_event(socket, "picker_result:#{picker_id}", %{cancelled: true})}
+  end
+
+  @impl true
+  def handle_info({:directory_picker_result, picker_id, :unavailable}, socket) do
+    {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+  end
 
   @impl true
   def handle_info({:node_selected, node_id}, socket) do

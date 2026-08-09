@@ -1734,6 +1734,80 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert html =~ ~s(data-node-id="local")
     end
   end
+
+  describe "directory picker" do
+    # wx-based directory picker flow (EvoDash.DirectoryPicker + the
+    # "directory_pick" event in dashboard_live.ex). These tests must NEVER
+    # invoke real wx — a modal dialog would hang the suite on machines with a
+    # display. Safety comes from: (a) the `enabled: false` flag set in
+    # test_helper.exs (checked first in pick/2), (b) wx being pruned from the
+    # test code path (real picker degrades to unavailable anyway), and (c) the
+    # happy path using the injectable fake module.
+
+    test "directory_pick on a remote node pushes unavailable without any picker involvement", %{
+      conn: conn
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Proves the remote context is active — the remote branch short-circuits
+      # and never touches the picker module (real or fake).
+      assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+
+      render_hook(view, "directory_pick", %{picker_id: "project"})
+      assert_push_event(view, "picker_result:project", %{unavailable: true})
+    end
+
+    test "directory_pick with the picker disabled pushes unavailable", %{conn: conn} do
+      # Explicit and self-documenting (test_helper.exs already sets it, but
+      # state it here so this test reads standalone). The disabled flag is
+      # checked FIRST in EvoDash.DirectoryPicker.pick/2, so this exercises the
+      # real synchronous {:error, :unavailable} path without ever touching wx.
+      original = Application.get_env(:evo_dash, :directory_picker)
+      Application.put_env(:evo_dash, :directory_picker, enabled: false)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "directory_pick", %{picker_id: "new-project"})
+      assert_push_event(view, "picker_result:new-project", %{unavailable: true})
+    end
+
+    test "directory_pick with the fake picker module pushes the picked path", %{conn: conn} do
+      original = Application.get_env(:evo_dash, :directory_picker_module)
+      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker_module, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker_module)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # The fake sends its result synchronously during handle_event; the
+      # handle_info-driven push is delivered to the client afterwards.
+      render_hook(view, "directory_pick", %{picker_id: "foreign-repo"})
+      assert_push_event(view, "picker_result:foreign-repo", %{path: "/fake/picked/dir"})
+    end
+  end
 end
 
 # A minimal GenServer standing in for a real remote connection manager in
