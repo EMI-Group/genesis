@@ -21,6 +21,65 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   alias EvoDashWeb.DashboardLive.Project
 
   # ───────────────────────────────────────────────────────────────────────────
+  # Path normalization
+  # ───────────────────────────────────────────────────────────────────────────
+
+  @doc """
+  Normalizes a user-supplied project path for server-side use.
+
+  Returns `{:ok, expanded}` when the trimmed input is genuinely
+  tilde-expandable (`~`, `~/...`, and — on Windows only — `~\\...`) or an
+  absolute path (Unix `/foo`, Windows `C:\\foo`/`D:/bar`, UNC
+  `\\\\server\\share`), with `Path.expand/1` applied to the result.
+
+  Returns `{:error, :blank}` for empty/whitespace input and
+  `{:error, :relative}` for anything else: bare names, volume-relative
+  (`D:Test`), root-relative (`\\Test`), `~foo`, and `~\\x` off Windows.
+
+  Relative input is REJECTED rather than `Path.expand`-joined against the BEAM
+  VM's cwd — on the Windows desktop app that cwd is the Tauri process's
+  inherited cwd (typically the install dir), so a cwd-join would silently
+  create/register projects in the wrong location.
+  """
+  @spec normalize_project_path(String.t()) ::
+          {:ok, String.t()} | {:error, :blank} | {:error, :relative}
+  def normalize_project_path(input) do
+    trimmed = String.trim(input)
+
+    cond do
+      trimmed == "" ->
+        {:error, :blank}
+
+      expandable_tilde?(trimmed) ->
+        # Tilde expansion is cwd-independent — safe to expand on any platform.
+        {:ok, Path.expand(trimmed)}
+
+      EvoGit.Platform.absolute_path?(trimmed) ->
+        {:ok, Path.expand(trimmed)}
+
+      true ->
+        {:error, :relative}
+    end
+  end
+
+  # Only `~`, `~/...`, and (on Windows) `~\\...` are expanded by Path.expand/1
+  # without cwd-joining. `~foo` NEVER expands on any platform, and `~\\x` does
+  # not expand off Windows — both would be cwd-joined, so they must fall
+  # through to the relative branch above.
+  defp expandable_tilde?(trimmed) do
+    trimmed == "~" or
+      String.starts_with?(trimmed, "~/") or
+      (EvoGit.Platform.windows?() and String.starts_with?(trimmed, "~\\"))
+  end
+
+  # Recent projects offered in the palette must have absolute paths — stale
+  # cwd-joined entries (from the pre-fix Path.expand-against-cwd behavior)
+  # must never render.
+  defp filter_absolute_recent_projects(recent_projects) do
+    Enum.filter(recent_projects, &EvoGit.Platform.absolute_path?(&1.path))
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
   # Project creation
   # ───────────────────────────────────────────────────────────────────────────
 
@@ -29,16 +88,19 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   # directory need not exist — `File.mkdir_p/1` creates the whole chain.
   # LOCAL-only: the palette hides "Create New Project" in remote contexts.
   def create_project(socket, %{"path" => path}) do
-    trimmed = String.trim(path)
-    expanded = Path.expand(trimmed)
-
-    cond do
-      # Blank input expands to the cwd (Path.expand("") == cwd) — reject it
-      # before it can register the current directory as a project.
-      trimmed == "" ->
+    case normalize_project_path(path) do
+      {:error, :blank} ->
         {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
-      true ->
+      {:error, :relative} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
+         )}
+
+      {:ok, expanded} ->
         # Root-ish input is rejected here too: Path.basename("/") is "/" (and
         # a Windows root contains "\\"), so validate_project_name/1 fails.
         case Project.validate_project_name(Path.basename(expanded)) do
@@ -75,7 +137,10 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   # info, and push the URL params to persist the project across navigation.
   defp register_and_open_project(socket, expanded) do
     TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
-    recent_projects = TaskRegistry.list_recent_projects()
+
+    recent_projects =
+      TaskRegistry.list_recent_projects()
+      |> filter_absolute_recent_projects()
 
     socket =
       socket
@@ -95,30 +160,45 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
     if socket.assigns[:current_node_id] != nil do
       activate_remote_project(socket, path)
     else
-      expanded = Path.expand(path)
+      case normalize_project_path(path) do
+        {:error, :blank} ->
+          {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
-      if File.dir?(expanded) do
-        TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
-        recent_projects = TaskRegistry.list_recent_projects()
+        {:error, :relative} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
+           )}
 
-        socket =
-          socket
-          |> assign(:recent_projects, recent_projects)
-          |> assign(:project_palette_open, false)
-          |> assign(:palette_mode, :menu)
+        {:ok, expanded} ->
+          if File.dir?(expanded) do
+            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
 
-        # Push URL params to persist project across navigation
-        {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-      else
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           gettext(
-             "Directory does not exist: %{path}. Create a new project instead?",
-             path: path
-           )
-         )}
+            recent_projects =
+              TaskRegistry.list_recent_projects()
+              |> filter_absolute_recent_projects()
+
+            socket =
+              socket
+              |> assign(:recent_projects, recent_projects)
+              |> assign(:project_palette_open, false)
+              |> assign(:palette_mode, :menu)
+
+            # Push URL params to persist project across navigation
+            {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+          else
+            {:noreply,
+             socket
+             |> put_flash(
+               :error,
+               gettext(
+                 "Directory does not exist: %{path}. Create a new project instead?",
+                 path: path
+               )
+             )}
+          end
       end
     end
   end
@@ -127,22 +207,37 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
     if socket.assigns[:current_node_id] != nil do
       activate_remote_project(socket, path)
     else
-      expanded = Path.expand(path)
+      case normalize_project_path(path) do
+        {:error, :blank} ->
+          {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
-      if File.dir?(expanded) do
-        TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
-        recent_projects = TaskRegistry.list_recent_projects()
+        {:error, :relative} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
+           )}
 
-        socket =
-          socket
-          |> assign(:recent_projects, recent_projects)
-          |> assign(:project_palette_open, false)
-          |> assign(:palette_mode, :menu)
+        {:ok, expanded} ->
+          if File.dir?(expanded) do
+            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
 
-        {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-      else
-        {:noreply,
-         put_flash(socket, :error, gettext("Directory does not exist: %{path}", path: path))}
+            recent_projects =
+              TaskRegistry.list_recent_projects()
+              |> filter_absolute_recent_projects()
+
+            socket =
+              socket
+              |> assign(:recent_projects, recent_projects)
+              |> assign(:project_palette_open, false)
+              |> assign(:palette_mode, :menu)
+
+            {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+          else
+            {:noreply,
+             put_flash(socket, :error, gettext("Directory does not exist: %{path}", path: path))}
+          end
       end
     end
   end
@@ -168,29 +263,45 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
          )
        )}
     else
-      expanded = Path.expand(path)
-      node = socket.assigns[:current_node]
+      case normalize_project_path(path) do
+        {:error, :blank} ->
+          {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
-      if EvoDash.NodeContext.dir?(node, expanded) do
-        EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
-        recent_projects = EvoDash.NodeContext.list_recent_projects(node)
+        {:error, :relative} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject")
+           )}
 
-        socket =
-          socket
-          |> assign(:recent_projects, recent_projects)
-          |> assign(:project_palette_open, false)
-          |> assign(:palette_mode, :menu)
-          |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
-          |> assign(:active_project_path, expanded)
+        {:ok, expanded} ->
+          node = socket.assigns[:current_node]
 
-        {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-      else
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Directory does not exist on the remote node: %{path}", path: path)
-         )}
+          if EvoDash.NodeContext.dir?(node, expanded) do
+            EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+
+            recent_projects =
+              EvoDash.NodeContext.list_recent_projects(node)
+              |> filter_absolute_recent_projects()
+
+            socket =
+              socket
+              |> assign(:recent_projects, recent_projects)
+              |> assign(:project_palette_open, false)
+              |> assign(:palette_mode, :menu)
+              |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
+              |> assign(:active_project_path, expanded)
+
+            {:noreply, push_patch(socket, to: project_url(socket, expanded))}
+          else
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext("Directory does not exist on the remote node: %{path}", path: path)
+             )}
+          end
       end
     end
   end
