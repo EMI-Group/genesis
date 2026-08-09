@@ -5,8 +5,16 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   One card contains the objective textarea AND the controls row (mode select,
   Launch button, model select) as its last element. The layout is
-  server-seeded at render time via `layout_for/1` and client-updated while
-  typing by the AdaptiveInput JS hook (which mirrors the same thresholds):
+  server-seeded at render time via `layout_for/1` and client-driven by the
+  AdaptiveInput JS hook (which mirrors the same thresholds): the hook
+  re-asserts the client-computed layout (a) while typing, on mount/updates,
+  and (b) whenever the server re-seeds `data-layout` from its possibly-stale
+  `@task_prompt` — a MutationObserver on `.input-layout` (attributeFilter:
+  ['data-layout']) re-runs the computation on any server re-render (e.g.
+  toggling mode/model), so the layout can never snap back to compact while a
+  long prompt remains in the box. The observer converges immediately (the
+  hook only writes the attribute when the computed value differs) with zero
+  network events:
 
     * Layout A (`data-layout="compact"`) — unified objective box: the controls
       row is the card's last line.
@@ -20,10 +28,16 @@ defmodule EvoDashWeb.TaskFormComponents do
   There is NO per-keystroke server round trip: the textarea sends no
   `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
   switches `data-layout` between compact/expanded client-side, mirroring
-  `layout_for/1`'s thresholds (@short_objective_threshold / line count).
-  `layout_for/1` only seeds the initial `data-layout` attribute at render
-  time (SSR first paint + after restore/submit). Prompt draft persistence is
-  purely client-side (the StatePersistence input watcher in app.js).
+  `layout_for/1`'s thresholds (@short_objective_threshold / line count). It
+  re-asserts the layout not only while typing but also whenever the server
+  re-seeds the `data-layout` attribute from its stale `@task_prompt` (a
+  MutationObserver on `.input-layout` re-runs the computation after any
+  server re-render, e.g. toggling mode/model; it converges in one step with
+  no loop and zero network events). `layout_for/1` only seeds the initial
+  `data-layout` attribute at render time (SSR first paint + after
+  restore/submit) — the client is authoritative afterwards. Prompt draft
+  persistence is purely client-side (the StatePersistence input watcher in
+  app.js).
 
   The top bar (Zone 1) and the collapsible Project Settings / Advanced Options
   panels live OUTSIDE this component in the dashboard layout.
@@ -41,9 +55,14 @@ defmodule EvoDashWeb.TaskFormComponents do
   OR > 16 explicit lines.
 
   This seeds the initial `data-layout` attribute at render time (SSR first
-  paint + after restore/submit). While typing, the AdaptiveInput JS hook
-  switches the layout client-side using the same thresholds — there is no
-  per-keystroke server event.
+  paint + after restore/submit) — after that the client is authoritative.
+  While typing, the AdaptiveInput JS hook switches the layout client-side
+  using the same thresholds, and it also re-asserts the computed layout
+  whenever the server re-seeds the attribute from its possibly-stale
+  `@task_prompt` (a MutationObserver on `.input-layout` catches any server
+  re-render, e.g. toggling mode/model; it converges immediately since the
+  hook only writes the attribute when the computed value differs, with zero
+  network events) — there is no per-keystroke server event.
   """
   def layout_for(prompt) when is_binary(prompt) do
     if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 16,
@@ -61,8 +80,11 @@ defmodule EvoDashWeb.TaskFormComponents do
   # The <.form id="task-form"> wraps the whole card: the textarea AND the
   # controls row (mode / Launch / model) as the card's last element. The
   # compact/expanded layout is server-seeded at render via layout_for/1
-  # (data-layout) and client-updated while typing by the AdaptiveInput hook
-  # (no per-keystroke server event). The top-bar controls (Build System
+  # (data-layout) and client-driven by the AdaptiveInput hook: it re-asserts
+  # the layout while typing AND whenever the server re-seeds the attribute
+  # from its possibly-stale @task_prompt (a MutationObserver on .input-layout
+  # catches any server re-render, e.g. toggling mode/model, converging with
+  # no loop and zero network events). The top-bar controls (Build System
   # select, Archive checkbox, Advanced Options inputs) are rendered OUTSIDE
   # this form element in the dashboard, so they MUST carry form="task-form"
   # to associate with it.
@@ -98,8 +120,12 @@ defmodule EvoDashWeb.TaskFormComponents do
         <!-- Single-card, two-layout objective editor.
              data-layout is server-seeded at render time via layout_for/1
              (threshold: @short_objective_threshold chars or 16+ lines) and
-             client-updated while typing by the AdaptiveInput JS hook
-             (mirroring the same thresholds — no per-keystroke server event):
+             client-driven by the AdaptiveInput JS hook (mirroring the same
+             thresholds — no per-keystroke server event): the hook re-asserts
+             the computed layout while typing AND whenever the server
+             re-seeds the attribute from its stale @task_prompt (a
+             MutationObserver on .input-layout catches any server re-render,
+             e.g. toggling mode/model, converging with no loop):
                "compact"  → Layout A — unified box: controls row is the card's
                             last line (mode | Launch | model, launch centered).
                "expanded" → Layout B — large objective area with an in-flow
