@@ -138,11 +138,11 @@ When a task is started with the **archive** option enabled (checkbox in the task
 
 ## Desktop Mode (Tauri Shell)
 
-The backend is a **standalone web server** with NO GUI dependencies (no `:desktop`, no `:wx`). Desktop mode is provided externally by a **Tauri shell** (in `./desktop/` at the repository root) that launches this backend as a sidecar process.
+The backend is a **standalone web server** with no desktop-shell dependency (no `:desktop`). Desktop mode is provided externally by a **Tauri shell** (in `./desktop/` at the repository root) that launches this backend as a sidecar process.
 
-- **Directory picking** is handled client-side via the browser File System Access API, or Tauri's native dialog plugin when running in a Tauri webview.
-- The former `EvoDashWeb.NativePicker` module (server-side `:wx` directory dialog) has been removed.
-- There are NO references to `:desktop`, `:wx`, `Desktop.Window`, `desktop_port`, `is_desktop`, `?client=desktop`, `detect_desktop_client`, or `EVOGIT_DESKTOP` in the codebase.
+- **Directory picking is handled SERVER-SIDE by `EvoDash.DirectoryPicker`** (Erlang `:wx` → `wxDirDialog`), NOT via Tauri or the browser File System Access API (both removed). Flow: the JS `DirectoryPicker` hook pushes `directory_pick` → `DashboardLive` (local node only; remote/headless nodes get an immediate `unavailable`) → the picker GenServer runs the modal dialog in a Task → result pushed back to the client as `picker_result:<picker_id>` with `%{path: path}` / `%{cancelled: true}` / `%{unavailable: true}`.
+- The former `EvoDashWeb.NativePicker` module was removed long ago; `EvoDash.DirectoryPicker` (commit `02650185`) is its successor — a GenServer in the supervision tree, lazy-starting wx on the first pick (never at boot).
+- There are NO references to `:desktop`, `Desktop.Window`, `desktop_port`, `is_desktop`, `?client=desktop`, `detect_desktop_client`, or `EVOGIT_DESKTOP` in the codebase. `:wx` IS referenced (only by `EvoDash.DirectoryPicker`) — deliberately NOT an umbrella app dependency: dev/test `mix` runs prune it from the code path (picker degrades to the manual-entry fallback), while the `genesis`/`genesis_desktop` releases load it via `wx: :load` in the root `mix.exs` (`genesis_remote` stays wx-free). Disabled via `config :evo_dash, :directory_picker, enabled: false`.
 
 ### Release Configuration
 
