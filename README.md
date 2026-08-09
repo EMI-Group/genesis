@@ -32,47 +32,53 @@ You do not hand-design an agent team, pre-build a task tree, or keep one coding 
 
 ## Built with Genesis
 
-### C compiler — 248,989 lines from an implementation-empty repository
+Three regimes. One developmental principle.
+
+### 🧱 Formation
+
+#### C compiler from an implementation-empty repository
 
 Using **DeepSeek V4 Flash**, Genesis developed a Rust-based C compiler from a repository containing no compiler implementation code.
 
-**248,989 lines · 1,019 archived agent episodes · 123.4 h · US$44.38**
+> **248,989 lines · 1,019 archived agent episodes · 123.4 h · US$44.38**
 
-Validation: **220/220 c-testsuite · 32/36 LLVM · 93/93 executed Csmith · 2,904 Rust tests · 106/106 internal cases**
+**Validation:** 220/220 c-testsuite · 32/36 LLVM · 93/93 executed Csmith · 2,904 Rust tests · 106/106 internal cases
 
-Observed recursive depth: **5** · First-parent commits: **327**
+**Development:** observed recursive depth 5 · 327 first-parent commits
 
-### Model-switchable continuation — development survives the handoff
+---
 
-A separate compiler world originally developed with **GLM 5.2** was continued independently by both GLM 5.2 and **DeepSeek V4 Flash**.
+### 🔄 Continuation
 
-**DeepSeek: 1,820/1,820 retained LLVM SingleSource cases**  
-**GLM 5.2: 1,445/1,448**
+#### The model changed. Development continued.
 
-Both retained **220/220 c-testsuite** and **4/4 LZ4** results.
+A separate compiler world originally developed with **GLM 5.2** was independently continued by both GLM 5.2 and **DeepSeek V4 Flash**.
 
-> **The model changed. Development continued.**
+> **DeepSeek: 1,820/1,820 retained LLVM SingleSource cases**  
+> **GLM 5.2: 1,445/1,448**
 
-### MESA → Rust — scientific behaviour preserved
+**Both:** 220/220 c-testsuite · 4/4 LZ4
+
+---
+
+### 🔬 Redevelopment
+
+#### MESA → Rust, with numerical behaviour preserved
 
 Genesis redeveloped a selected chain of **13 MESA Fortran modules** into corresponding Rust crates.
 
-**139,414 Fortran lines → 89,946-line Rust workspace**  
-**33.22 h · 272 agents · US$10.64 · 1,052 tests · 0 failures**
+> **139,414 Fortran lines → 89,946-line Rust workspace**
 
-Across six audited numerical workloads:
-
-- **2 bit-exact**
-- remaining relative checksum differences ≤ **3.1 × 10⁻⁹**
-- median speedups: **1.55×–6.87×**
-
-> **Genesis does not only create software. It can inherit and transform it.**
+**Run:** 33.22 h · 272 agents · US$10.64  
+**Validation:** 1,052 tests · 0 failures  
+**Numerics:** 2 bit-exact workloads · remaining relative checksum differences ≤ 3.1 × 10⁻⁹ · median speedups **1.55×–6.87×**
 
 <sub>
-Reported dollar amounts are foundation-model token charges only. Compiler formation, continuation and MESA redevelopment are reported as observed system-level results; they are not normalized model-comparison benchmarks. The MESA result covers the audited 13-module scope, not the full application.
+Reported dollar amounts are foundation-model token charges only. Compiler formation, continuation and MESA redevelopment are observed system-level results, not normalized model-comparison benchmarks. The MESA result covers the audited 13-module scope, not the full application.
 </sub>
 
 ---
+
 
 ## Why Genesis is different
 
