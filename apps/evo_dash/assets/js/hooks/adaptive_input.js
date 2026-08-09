@@ -114,15 +114,23 @@ const AdaptiveInput = {
     const prevFlex = ta.style.flex;
     const prevMinHeight = ta.style.minHeight;
     const prevMaxHeight = ta.style.maxHeight;
-    const prevHeight = ta.style.height;
     ta.style.flex = "0 0 auto";
     ta.style.minHeight = "0";
     ta.style.maxHeight = "none";
     ta.style.height = "auto";
     const scrollHeight = ta.scrollHeight;
-    // Only write when the height actually changed (steady-state repeated
-    // calls then write nothing — hygiene, since height is not observed).
-    if (scrollHeight + "px" !== prevHeight) ta.style.height = scrollHeight + "px";
+    // ALWAYS write the explicit height back — never leave the inline style at
+    // "auto". A "skip the write when the value is unchanged" guard here (added
+    // in ac0104ee alongside the data-layout equality guard) was a regression:
+    // whenever the measured scrollHeight equaled the previous inline height
+    // (e.g. while typing on the same line), the write was skipped and the
+    // inline style stayed "auto", so the CSS min-height collapsed the box to
+    // 120px — content overflowed (scrollbar) — and the next keystroke
+    // restored the taller height: the box oscillated between the two states
+    // on every keystroke. Height is not observed by any MutationObserver
+    // (only data-layout is), so an unconditional write cannot loop, and
+    // writing a value identical to the current one is a rendering no-op.
+    ta.style.height = scrollHeight + "px";
     ta.style.flex = prevFlex;
     ta.style.minHeight = prevMinHeight;
     ta.style.maxHeight = prevMaxHeight;
