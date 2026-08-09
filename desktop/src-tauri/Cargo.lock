@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "genesis-desktop"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "objc2",
  "objc2-app-kit",
