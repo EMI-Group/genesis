@@ -63,13 +63,13 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 
 The Tauri icon set (`src-tauri/icons/`: `icon.png`, `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) is generated from the EVOX brand logo. Source SVGs (sibling app, read-only): `apps/evo_dash/priv/static/images/logo.svg` (dark gray `#373435` + red `#C8383C`, light variant — the one used) and `logo-alt.svg` (white + red, dark variant — reserved for a possible dark-tray icon). Transparent background, matching the old placeholder set's style.
 
-**Gotcha**: both SVGs have a huge viewBox (`98668.67 x 73192.18`) with the artwork filling it edge-to-edge — render high-res, then trim/fit to ~86% of a square 1024x1024 transparent canvas, then:
+**Gotcha**: both SVGs have a large viewBox (`16002.59 x 12975.69` as of the logo update commit `08ad3110`; was `98668.67 x 73192.18` before) with the artwork filling it edge-to-edge — render high-res, then trim/fit to ~86% of a square 1024x1024 transparent canvas, then:
 
 ```bash
 npx --yes @tauri-apps/cli@^2 icon <square-1024.png>   # or: cargo tauri icon <square-1024.png>
 ```
 
-tauri-cli is NOT in nixpkgs (npm route used; `cargo install tauri-cli --version "^2.0"` also works). Delete the generator's extra outputs (`64x64.png`, `128x128@2x.png`, `Square*.png`, `StoreLogo.png`, `android/`, `ios/`) — nothing references them; `bundle.icon` lists only the 4 files above and the tray uses `app.default_window_icon()`. Full recipe (incl. render commands): `src-tauri/CONTEXT.md` → Regenerating Icons. Regenerated from the EVOX logo in commit `bacf702c` (was stale from the placeholder era).
+tauri-cli is NOT in nixpkgs (npm route used; `cargo install tauri-cli --version "^2.0"` also works). Delete the generator's extra outputs (`64x64.png`, `128x128@2x.png`, `Square*.png`, `StoreLogo.png`, `android/`, `ios/`) — nothing references them; `bundle.icon` lists only the 4 files above and the tray uses `app.default_window_icon()`. Full recipe (incl. render commands): `src-tauri/CONTEXT.md` → Regenerating Icons. Regenerated from the EVOX logo in commit `bacf702c` (was stale from the placeholder era) and again from the updated logo in commit `4c13ed4b` (was stale from the old logo).
 
 ## Build Process
 
