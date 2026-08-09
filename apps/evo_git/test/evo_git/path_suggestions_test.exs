@@ -8,9 +8,41 @@ defmodule EvoGit.PathSuggestionsTest do
   alias EvoGit.PathSuggestions
 
   describe "suggest/1" do
-    test "returns [] for nil and empty values" do
+    test "returns [] for nil, empty, and blank values" do
       assert PathSuggestions.suggest(nil) == []
       assert PathSuggestions.suggest("") == []
+      assert PathSuggestions.suggest("   ") == []
+    end
+
+    test "returns [] for relative input — never cwd-anchored" do
+      cwd = File.cwd!()
+
+      # Bare names are not expanded against File.cwd!() anymore.
+      assert PathSuggestions.suggest("Test") == []
+      assert PathSuggestions.suggest("test") == []
+
+      # Relative paths with separators.
+      assert PathSuggestions.suggest("foo/bar") == []
+      assert PathSuggestions.suggest("foo\\bar") == []
+
+      # Volume-relative (drive letter without a separator) → [].
+      assert PathSuggestions.suggest("D:Test") == []
+
+      # Root-relative (leading backslash without a share) → [].
+      assert PathSuggestions.suggest("\\Test") == []
+
+      # Bare tilde-username forms are NOT tilde paths → [].
+      assert PathSuggestions.suggest("~bogus") == []
+
+      # Nothing relative may ever produce cwd-anchored suggestions.
+      refute Enum.any?(
+               PathSuggestions.suggest("Test") ++
+                 PathSuggestions.suggest("foo/bar") ++
+                 PathSuggestions.suggest("D:Test") ++
+                 PathSuggestions.suggest("\\Test") ++
+                 PathSuggestions.suggest("~bogus"),
+               &String.starts_with?(&1, cwd)
+             )
     end
 
     test "lists entries from a temp dir: dirs first, then case-insensitive names" do
@@ -53,6 +85,35 @@ defmodule EvoGit.PathSuggestionsTest do
 
       # No match → [].
       assert PathSuggestions.suggest(base <> "/zzz") == []
+    end
+
+    test "absolute partial input lists from that base" do
+      # "/tm" → dirname "/" filtered by "tm"; "/tmp" exists on POSIX hosts.
+      assert PathSuggestions.suggest("/tm") == ["/tmp"]
+
+      # Windows-style absolute partials never crash and never anchor to cwd.
+      # On POSIX hosts the drive/UNC root does not exist, so the listing
+      # fails and the result is [] (on Windows these resolve to the drive).
+      for input <- ["D:\\Pro", "C:/Us", "\\\\server\\share"] do
+        assert PathSuggestions.suggest(input) == []
+      end
+    end
+
+    test "tilde input is home-anchored" do
+      home = System.user_home!()
+
+      # "~" alone lists the home directory itself.
+      results = PathSuggestions.suggest("~")
+      assert results != []
+      assert Enum.all?(results, &String.starts_with?(&1, home))
+
+      # "~/x" prefixes within the home directory (may be [] — no crash).
+      tilde_x = PathSuggestions.suggest("~/x")
+      assert is_list(tilde_x)
+      assert Enum.all?(tilde_x, &String.starts_with?(&1, home))
+
+      # Trailing-separator tilde forms list the home itself too.
+      assert PathSuggestions.suggest("~/") == results
     end
 
     test "returns [] for a non-existent dir" do
