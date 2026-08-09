@@ -155,7 +155,8 @@ defmodule EvoDashWeb.DashboardLive do
                          event, which drives the AdaptiveInput hook (autogrow
                          + client-side layout switch — the example exceeds the
                          600-grapheme threshold, so the layout flips to
-                         expanded). No server event is involved; @task_prompt
+                         expanded; the flip can also be height-driven). No
+                         server event is involved; @task_prompt
                          is only updated by restore_state / task_submit. --%>
                     <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
                       <details

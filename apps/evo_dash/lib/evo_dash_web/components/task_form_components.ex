@@ -6,7 +6,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   One card contains the objective textarea AND the controls row (mode select,
   Launch button, model select) as its last element. The layout is
   server-seeded at render time via `layout_for/1` and client-driven by the
-  AdaptiveInput JS hook (which mirrors the same thresholds): the hook
+  AdaptiveInput JS hook (which adds a height-based trigger on top of the
+  server thresholds): the hook
   re-asserts the client-computed layout (a) while typing, on mount/updates,
   and (b) whenever the server re-seeds `data-layout` from its possibly-stale
   `@task_prompt` — a MutationObserver on `.input-layout` (attributeFilter:
@@ -27,8 +28,10 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   There is NO per-keystroke server round trip: the textarea sends no
   `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
-  switches `data-layout` between compact/expanded client-side, mirroring
-  `layout_for/1`'s thresholds (@short_objective_threshold / line count). It
+  switches `data-layout` between compact/expanded client-side, flipping to
+  expanded when the content would exceed the compact max-height cap (~8
+  wrapped lines) OR on `layout_for/1`'s thresholds (@short_objective_threshold
+  / line count), with hysteresis when flipping back to compact. It
   re-asserts the layout not only while typing but also whenever the server
   re-seeds the `data-layout` attribute from its stale `@task_prompt` (a
   MutationObserver on `.input-layout` re-runs the computation after any
@@ -56,8 +59,10 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   This seeds the initial `data-layout` attribute at render time (SSR first
   paint + after restore/submit) — after that the client is authoritative.
-  While typing, the AdaptiveInput JS hook switches the layout client-side
-  using the same thresholds, and it also re-asserts the computed layout
+  While typing, the AdaptiveInput JS hook switches the layout client-side —
+  flipping to expanded when the content would exceed the compact max-height
+  cap (~8 wrapped lines) OR on these thresholds, with hysteresis when
+  flipping back — and it also re-asserts the computed layout
   whenever the server re-seeds the attribute from its possibly-stale
   `@task_prompt` (a MutationObserver on `.input-layout` catches any server
   re-render, e.g. toggling mode/model; it converges immediately since the
@@ -80,8 +85,11 @@ defmodule EvoDashWeb.TaskFormComponents do
   # The <.form id="task-form"> wraps the whole card: the textarea AND the
   # controls row (mode / Launch / model) as the card's last element. The
   # compact/expanded layout is server-seeded at render via layout_for/1
-  # (data-layout) and client-driven by the AdaptiveInput hook: it re-asserts
-  # the layout while typing AND whenever the server re-seeds the attribute
+  # (data-layout) and client-driven by the AdaptiveInput hook (adds a
+  # height-based trigger — flips to expanded when the content exceeds the
+  # compact max-height cap ~8 wrapped lines or the char/line thresholds,
+  # with hysteresis): it re-asserts the layout while typing AND whenever the
+  # server re-seeds the attribute
   # from its possibly-stale @task_prompt (a MutationObserver on .input-layout
   # catches any server re-render, e.g. toggling mode/model, converging with
   # no loop and zero network events). The top-bar controls (Build System
@@ -120,9 +128,11 @@ defmodule EvoDashWeb.TaskFormComponents do
         <!-- Single-card, two-layout objective editor.
              data-layout is server-seeded at render time via layout_for/1
              (threshold: @short_objective_threshold chars or 16+ lines) and
-             client-driven by the AdaptiveInput JS hook (mirroring the same
-             thresholds — no per-keystroke server event): the hook re-asserts
-             the computed layout while typing AND whenever the server
+             client-driven by the AdaptiveInput JS hook (flips to expanded
+             when the content exceeds the compact max-height cap ~8 wrapped
+             lines or the char/line thresholds, with hysteresis — no
+             per-keystroke server event): the hook re-asserts the computed
+             layout while typing AND whenever the server
              re-seeds the attribute from its stale @task_prompt (a
              MutationObserver on .input-layout catches any server re-render,
              e.g. toggling mode/model, converging with no loop):
