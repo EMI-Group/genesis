@@ -62,12 +62,19 @@ defmodule EvoGit.Platform do
   Returns the shell arguments to execute a command string.
 
   - Linux/macOS: `["-c", command]`
-  - Windows: `["-Command", command]`
+  - Windows: PowerShell `-EncodedCommand` arguments via
+    `EvoGit.Powershell.invoke_args/1`.
+
+  On Windows the script is base64-encoded as UTF-16LE and passed via
+  `-EncodedCommand`, which eliminates PowerShell's `-Command` command-line
+  re-parsing (broken by construction when spawned from Erlang) and its
+  interactive-mode fallback on lost arguments, and forces UTF-8 output.
+  See `EvoGit.Powershell` for details.
   """
   @spec shell_args(String.t()) :: [String.t()]
   def shell_args(command) do
     case os() do
-      :windows -> ["-Command", command]
+      :windows -> EvoGit.Powershell.invoke_args(command)
       _ -> ["-c", command]
     end
   end

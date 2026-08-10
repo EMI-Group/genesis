@@ -53,7 +53,7 @@ Tracks the last-seen Genesis version in `version_state.toml` (in the config dir)
 | `config_dir/1` | Platform-specific config dir (XDG/Linux, Application Support/macOS, APPDATA/Windows) |
 | `data_dir/1` | Platform-specific data dir |
 | `shell/0` | Returns `"bash"` or `"powershell"` |
-| `shell_args/1` | Returns `["-c", cmd]` or `["-Command", cmd]` |
+| `shell_args/1` | Returns `["-c", cmd]` (Unix) or PowerShell `-EncodedCommand` args (Windows, via EvoGit.Powershell) |
 | `systemd_available?/0` | Returns true on Linux with systemd |
 | `nix_available?/0` | Returns true when the `nix` binary is found in PATH (Linux and macOS) |
 
