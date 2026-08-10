@@ -580,6 +580,85 @@ defmodule EvoGit.RemoteNode do
     end
   end
 
+  @doc """
+  Starts a task on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.start_task/2`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `{:ok, %EvoGit.TaskInfo{}}` on success or `{:error, reason}` on failure
+  (including RPC failures such as node down or timeout).
+  """
+  @spec start_task(node(), atom(), keyword()) :: {:ok, EvoGit.TaskInfo.t()} | {:error, term()}
+  def start_task(node, task_type, opts) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.start_task(task_type, opts)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :start_task, [task_type, opts]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Checks whether a file exists on the given node's filesystem.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.file_exists?/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `false` if the remote call fails.
+  """
+  @spec file_exists?(node(), String.t()) :: boolean()
+  def file_exists?(node, path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.file_exists?(path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :file_exists?, [path]) do
+        {:ok, bool} when is_boolean(bool) -> bool
+        {:ok, _other} -> false
+        {:error, _reason} -> false
+      end
+    end
+  end
+
+  @doc """
+  Lists files and directories in a given path on the given node's filesystem.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.ls/1` directly.
+  On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `{:error, :rpc_failed}` if the remote call fails.
+  """
+  @spec ls(node(), String.t()) :: {:ok, [String.t()]} | {:error, atom()}
+  def ls(node, path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.ls(path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :ls, [path]) do
+        {:ok, result} -> result
+        {:error, _reason} -> {:error, :rpc_failed}
+      end
+    end
+  end
+
+  @doc """
+  Reads and parses the `genesis.toml` project config on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.read_project_config/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  Returns `nil` if the remote call fails or the config file does not exist.
+  """
+  @spec read_project_config(node(), String.t()) :: map() | nil
+  def read_project_config(node, path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.read_project_config(path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :read_project_config, [path]) do
+        {:ok, result} -> result
+        {:error, _reason} -> nil
+      end
+    end
+  end
+
   # Safe degraded config-status map returned when a remote config-status RPC
   # fails. Matches the shape of EvoGit.Config.config_status/0 so callers see a
   # well-formed (but unhealthy) status rather than a crash.

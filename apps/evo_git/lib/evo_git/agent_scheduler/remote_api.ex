@@ -427,6 +427,59 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     EvoGit.TaskRegistry.add_recent_project(path, name)
   end
 
+  @doc """
+  Starts a task on the remote node.
+
+  Delegates to `EvoGit.TaskRegistry.start_task/2` (a `GenServer.call`).
+  `task_type` is an atom (`:genesis` or `:evolve`), `opts` is a keyword list.
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `{:ok, %EvoGit.TaskInfo{}}` on success or `{:error, reason}` on failure.
+  """
+  @spec start_task(atom(), keyword()) :: {:ok, EvoGit.TaskInfo.t()} | {:error, term()}
+  def start_task(task_type, opts) do
+    EvoGit.TaskRegistry.start_task(task_type, opts)
+  end
+
+  @doc """
+  Checks whether a file exists on the remote node's filesystem.
+
+  Delegates to `File.exists?/1`. `path` is an absolute path string. This runs
+  on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns a boolean.
+  """
+  @spec file_exists?(String.t()) :: boolean()
+  def file_exists?(path) do
+    File.exists?(path)
+  end
+
+  @doc """
+  Lists files and directories in a given path on the remote node's filesystem.
+
+  Delegates to `File.ls/1`. `path` is an absolute path string. This runs on the
+  REMOTE node when called via `:erpc.call/5`.
+
+  Returns `{:ok, [String.t()]}` on success or `{:error, atom()}` on failure.
+  """
+  @spec ls(String.t()) :: {:ok, [String.t()]} | {:error, atom()}
+  def ls(path) do
+    File.ls(path)
+  end
+
+  @doc """
+  Reads and parses the `genesis.toml` project config from the given project root.
+
+  Delegates to `EvoGit.ProjectConfig.read/1`. `path` is the absolute project
+  root path string. This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns the parsed config map or `nil` if the config file does not exist.
+  """
+  @spec read_project_config(String.t()) :: map() | nil
+  def read_project_config(path) do
+    EvoGit.ProjectConfig.read(path)
+  end
+
   # ── Private: ETS access ────────────────────────────────────────────
 
   # Reads all `{key, value}` pairs from a named ETS table.
