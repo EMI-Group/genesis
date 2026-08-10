@@ -111,7 +111,11 @@ defmodule EvoGitTest do
     test "shell_args/1 returns a list with the command" do
       args = EvoGit.Platform.shell_args("echo hello")
       assert is_list(args)
-      assert "echo hello" in args
+
+      case EvoGit.Platform.os() do
+        :windows -> assert args == EvoGit.Powershell.invoke_args("echo hello")
+        _ -> assert args == ["-c", "echo hello"]
+      end
     end
 
     test "tmp_paths/0 returns a non-empty list of strings" do
