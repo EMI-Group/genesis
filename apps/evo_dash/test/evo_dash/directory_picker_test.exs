@@ -5,9 +5,9 @@ defmodule EvoDash.DirectoryPickerTest do
   alias EvoDash.DirectoryPicker.Wx.Fake, as: FakeWx
 
   setup do
-    # Reset the fake's mode/gate (the fake server pid is deliberately kept —
-    # the app-started picker GenServer caches its wx env across tests and the
-    # fake server must stay consistent with it).
+    # Reset the fake's mode/gate. The fake server pid is deliberately kept —
+    # picks now init wx fresh in each Task, so the cached server pid is stale
+    # but harmless (FakeWx.new/0 retires it).
     FakeWx.reset()
 
     original_enabled = Application.get_env(:evo_dash, :directory_picker)
@@ -41,7 +41,7 @@ defmodule EvoDash.DirectoryPickerTest do
       assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}}, 1000
     end
 
-    test "re-uses the wx connection between picks (server stays alive)" do
+    test "subsequent picks after first pick work correctly" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, 1000
 
@@ -49,16 +49,15 @@ defmodule EvoDash.DirectoryPickerTest do
       assert_receive {:directory_picker_result, "picker-2", {:ok, _}}, 1000
     end
 
-    test "self-heals when the wxe_server died between picks" do
+    test "picks work even after the wx server was killed between picks" do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, 1000
 
       # Simulate OTP's wxe_server stopping itself when its last registered user
-      # exits (the exact bug: the server is not a permanent singleton).
+      # exits. Since each pick now inits wx fresh in its Task, the next pick
+      # creates a brand-new server and works without issue.
       FakeWx.kill_server()
 
-      # The picker's Process.alive?/1 check detects the dead server, re-runs
-      # :wx.new/0, and recovers — no crash, no stuck busy.
       wait_until_pick_ok("picker-2")
       assert_receive {:directory_picker_result, "picker-2", {:ok, "/fake/picked/dir"}}, 1000
     end
@@ -67,9 +66,8 @@ defmodule EvoDash.DirectoryPickerTest do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       assert_receive {:directory_picker_result, "picker-1", {:ok, _}}, 1000
 
-      # Server dies between the picker's alive-check and the pick Task's
-      # :wx.set_env/1 — the Task's register_me gen_server:call exits with
-      # {:noproc, ...}, which must NOT crash the picker.
+      # Server dies between wx init and set_env/1 in the pick Task — the Task's
+      # wx call exits with {:noproc, ...}, which must NOT crash the picker.
       FakeWx.set_mode(:server_dead)
 
       assert DirectoryPicker.pick(self(), "picker-2") == :ok
@@ -83,15 +81,15 @@ defmodule EvoDash.DirectoryPickerTest do
       assert_receive {:directory_picker_result, "picker-3", {:ok, _}}, 1000
     end
 
-    test "wx init failure returns {:error, :unavailable} and does not wedge the picker" do
-      # Force the picker to re-initialize (its cached env's server is dead) and
-      # make :wx.new/0 fail like on a headless machine.
-      FakeWx.kill_server()
+    test "wx init failure in Task degrades to :unavailable and clears busy" do
+      # Make :wx.new/0 fail like on a headless machine.
       FakeWx.set_mode(:init_fails)
 
-      assert DirectoryPicker.pick(self(), "picker-1") == {:error, :unavailable}
-      # No async result message for a synchronous failure.
-      refute_receive {:directory_picker_result, _, _}, 50
+      # With wx init in the Task, the failure is ASYNCHRONOUS — pick/2 returns
+      # :ok because the Task was spawned successfully.
+      assert DirectoryPicker.pick(self(), "picker-1") == :ok
+      assert_receive {:directory_picker_result, "picker-1", :unavailable}, 1000
+      refute_receive {:directory_picker_result, "picker-1", _}, 50
 
       # The picker is NOT stuck busy: once wx recovers, picks work again.
       FakeWx.set_mode(:normal)
