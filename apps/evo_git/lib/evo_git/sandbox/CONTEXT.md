@@ -47,7 +47,7 @@ The exact SBPL `limit` parameter syntax (`(limit number N)` vs `(limit (number N
 - SSH literal allows vs deny-precedence: if strict deny-precedence shadows `known_hosts`/`config` literals, git-over-SSH host verification fails (then move the literals outside the `.ssh` deny-read subpath)
 - `/tmp` → `/private/tmp` symlink aliasing (existing rules use literal `/tmp`/`/var/tmp`)
 
-## Known Issue — macOS deny-by-default READS break Homebrew (ARM) git → CONTEXT.md commits fail (verified root cause, 2026-08, HEAD)
+## Known Issue — macOS deny-by-default READS break Homebrew (ARM) git → CONTEXT.md commits fail (FIXED 2026-08; root-cause analysis kept for reference)
 
 **Symptom:** with `[sandbox] mode = :enabled` (or `:auto` + sandbox-exec present), Genesis Mode A (ContextExtractor) on a multi-level project leaves ONLY the root CONTEXT.md committed; all subdirectory CONTEXT.md files are lost. Agents can read files fine; `write_context`/`edit_context` commits fail.
 
