@@ -17,7 +17,7 @@
 //! fallback logic. Keeping this in one place prevents the GUI and headless
 //! resolvers from drifting apart.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Path, relative to a candidate base directory, of the launcher script.
 const LAUNCHER_REL: &str = "resources/genesis-backend/bin";
@@ -26,7 +26,7 @@ const LAUNCHER_REL: &str = "resources/genesis-backend/bin";
 ///
 /// For each base directory in `candidate_dirs` the candidate
 /// `<dir>/resources/genesis-backend/bin/<launcher_name>` is tested with
-/// [`Path::exists`]. The first existing one is returned. If none exist, an
+/// [`std::path::Path::exists`]. The first existing one is returned. If none exist, an
 /// error listing every candidate tried is returned — resolution never silently
 /// continues past a missing launcher.
 pub fn resolve_launcher(
@@ -57,6 +57,7 @@ pub fn resolve_launcher(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     /// Create a unique, empty temporary directory for a test.
     fn unique_temp_dir(tag: &str) -> PathBuf {
