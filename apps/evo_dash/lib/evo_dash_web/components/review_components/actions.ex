@@ -51,7 +51,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
                 disabled={@loading}
               >
                 <.icon name="hero-check" class="size-4.5" />
-                {gettext("Merge Changes")}
+                {gettext("Merge")}
               </button>
             </form>
           <% else %>
@@ -62,7 +62,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
               disabled={@loading}
             >
               <.icon name="hero-check" class="size-4.5" />
-              {gettext("Merge Changes")}
+              {gettext("Merge")}
             </button>
           <% end %>
           <button
@@ -72,7 +72,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             disabled={@loading}
           >
             <.icon name="hero-x-mark" class="size-4.5" />
-            {gettext("Reject Changes")}
+            {gettext("Reject")}
           </button>
           <button
             class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
@@ -80,7 +80,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             disabled={@loading}
           >
             <.icon name="hero-arrow-path" class="size-4.5" />
-            {gettext("Continue from Here")}
+            {gettext("Continue")}
           </button>
           <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50">
           </div>
@@ -92,7 +92,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             disabled={@loading}
           >
             <.icon name="hero-arrow-top-right-on-square" class="size-4.5" />
-            {gettext("Create GitHub PR")}
+            {gettext("Create PR")}
           </button>
         <% end %>
         <%= if @has_pr and @pr_url do %>
@@ -102,7 +102,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             class="btn btn-outline btn-success rounded-full px-6 gap-2"
           >
             <.icon name="hero-arrow-top-right-on-square" class="size-4.5" />
-            {gettext("View GitHub PR")}
+            {gettext("View PR")}
           </a>
         <% end %>
         <%= if @branch_exists do %>
@@ -154,7 +154,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             disabled={@loading}
           >
             <.icon name="hero-arrow-path" class="size-4.5" />
-            {gettext("Continue from Here")}
+            {gettext("Continue")}
           </button>
         <% end %>
         <button
