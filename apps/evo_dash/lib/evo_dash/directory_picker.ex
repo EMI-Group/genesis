@@ -1,13 +1,22 @@
 defmodule EvoDash.DirectoryPicker do
   @moduledoc """
-  Serializes native `:wx` directory-dialog usage for the dashboard's Browse buttons.
+  Native directory-dialog picker for the dashboard's Browse buttons.
+
+  ## Platform-specific backends
+
+  * **macOS** — uses `osascript` to invoke the native `choose folder` dialog.
+    This avoids the Erlang dock icon that `:wx.new/0` creates (wx registers as a
+    GUI application on macOS, showing the Erlang icon in the dock even after the
+    dialog closes). The native dialog has no dock icon and no Erlang branding.
+
+  * **Linux / Windows** — uses Erlang's `:wx` module (`wxDirDialog`).
 
   Only one native dialog can be open at a time: this GenServer marks itself
   busy during a pick and rejects concurrent picks with `{:error, :unavailable}`.
   The blocking dialog itself runs in a separate Task process (never the
   GenServer, never the LiveView), so a modal dialog stalls neither.
 
-  ## wx ownership (important)
+  ## wx ownership (Linux/Windows only — important)
 
   The GenServer itself owns the wx connection. OTP's `wxe_server` is **NOT a
   permanent singleton**: every process that calls `:wx.new/0` or `:wx.set_env/1`
@@ -91,7 +100,8 @@ defmodule EvoDash.DirectoryPicker do
 
       # 2. wx backend unavailable (default: OTP built without wx —
       #    `:code.which/1` returns the atom `:non_existing`, never `nil`).
-      not wx_backend().available?() ->
+      #    On macOS the picker uses osascript (native dialog), not wx — skip.
+      not macos?() and not wx_backend().available?() ->
         {:error, :unavailable}
 
       # 3. GenServer not running. Guarded with `whereis` AND a try/catch around
@@ -133,32 +143,43 @@ defmodule EvoDash.DirectoryPicker do
   end
 
   def handle_call({:pick, reply_to, picker_id}, _from, %{busy: false} = state) do
-    # Make sure we have a live wx connection BEFORE spawning the pick Task.
-    # `ensure_wx/1` runs synchronously in the GenServer so the GenServer is the
-    # process that calls `:wx.new/0` and thus the long-lived registered wx user
-    # (see moduledoc). On a cold start this blocks the caller for the duration
-    # of wx init — sub-second in practice; if the default 5s `GenServer.call`
-    # timeout in `pick/2` is exceeded the caller degrades to `:unavailable`
-    # without crashing anything.
-    case ensure_wx(state) do
-      {:ok, ref, env} ->
+    cond do
+      # macOS: use osascript (native `choose folder` dialog) — no wx needed,
+      # no Erlang dock icon.
+      macos?() ->
         gen_server = self()
+        Task.start(fn -> run_pick_macos(gen_server, reply_to, picker_id) end)
+        {:reply, :ok, %{state | busy: true}}
 
-        # Run the dialog in a separate Task (NOT this GenServer, NOT the
-        # caller): `showModal/1` blocks until the user responds, and the
-        # GenServer must keep serving other calls while the LiveView stays
-        # responsive. `Task.start/1` spawns via `:erlang.spawn/1` — it either
-        # returns `{:ok, pid}` or raises (process limit); a raise here crashes
-        # the GenServer and the supervisor restarts it with a fresh
-        # `busy: false` state, so the picker is never wedged.
-        Task.start(fn -> run_pick(gen_server, ref, env, reply_to, picker_id) end)
-        {:reply, :ok, %{state | wx_ref: ref, wx_env: env, busy: true}}
+      # Linux / Windows: use wx (wxDirDialog).
+      true ->
+        # Make sure we have a live wx connection BEFORE spawning the pick Task.
+        # `ensure_wx/1` runs synchronously in the GenServer so the GenServer is the
+        # process that calls `:wx.new/0` and thus the long-lived registered wx user
+        # (see moduledoc). On a cold start this blocks the caller for the duration
+        # of wx init — sub-second in practice; if the default 5s `GenServer.call`
+        # timeout in `pick/2` is exceeded the caller degrades to `:unavailable`
+        # without crashing anything.
+        case ensure_wx(state) do
+          {:ok, ref, env} ->
+            gen_server = self()
 
-      {:error, :unavailable} ->
-        # wx init failed (e.g. headless machine with no display): report
-        # unavailable synchronously and do NOT set busy — the picker stays
-        # usable for the next attempt.
-        {:reply, {:error, :unavailable}, state}
+            # Run the dialog in a separate Task (NOT this GenServer, NOT the
+            # caller): `showModal/1` blocks until the user responds, and the
+            # GenServer must keep serving other calls while the LiveView stays
+            # responsive. `Task.start/1` spawns via `:erlang.spawn/1` — it either
+            # returns `{:ok, pid}` or raises (process limit); a raise here crashes
+            # the GenServer and the supervisor restarts it with a fresh
+            # `busy: false` state, so the picker is never wedged.
+            Task.start(fn -> run_pick(gen_server, ref, env, reply_to, picker_id) end)
+            {:reply, :ok, %{state | wx_ref: ref, wx_env: env, busy: true}}
+
+          {:error, :unavailable} ->
+            # wx init failed (e.g. headless machine with no display): report
+            # unavailable synchronously and do NOT set busy — the picker stays
+            # usable for the next attempt.
+            {:reply, {:error, :unavailable}, state}
+        end
     end
   end
 
@@ -174,6 +195,61 @@ defmodule EvoDash.DirectoryPicker do
   defp enabled? do
     Application.get_env(:evo_dash, :directory_picker, [])
     |> Keyword.get(:enabled, true)
+  end
+
+  defp macos? do
+    EvoGit.Platform.macos?()
+  end
+
+  # Runs one macOS-native pick outside the GenServer process. Always reports a
+  # result to `reply_to` and clears the busy flag via `:pick_done`. Mirrors the
+  # structure of `run_pick/6` for the wx path.
+  #
+  # The entire osascript interaction is wrapped in try/catch/rescue: every
+  # failure path degrades to `:unavailable` so a picker crash can never crash
+  # the LiveView.
+  defp run_pick_macos(gen_server, reply_to, picker_id) do
+    result =
+      try do
+        show_dialog_macos()
+      rescue
+        _ -> :unavailable
+      catch
+        :exit, _ -> :unavailable
+        :throw, _ -> :unavailable
+      end
+
+    # Sending to a possibly-dead `reply_to` pid is harmless (plain send). These
+    # two sends run on EVERY path — a failed pick must never wedge the picker
+    # (otherwise `busy: true` would stick forever).
+    send(reply_to, {:directory_picker_result, picker_id, result})
+    send(gen_server, {:pick_done, self()})
+  end
+
+  # Invokes the native macOS folder picker via `osascript` (`choose folder`).
+  # This shows a proper macOS-native dialog with no dock icon and no Erlang
+  # branding — unlike wx, which registers as a GUI app and shows the Erlang icon
+  # in the dock.
+  #
+  # Returns `{:ok, path}` on selection, `:cancelled` on cancel or error.
+  defp show_dialog_macos do
+    default_path = System.user_home() || "/"
+    script =
+      ~s[POSIX path of (choose folder with prompt "Select Directory" default location (POSIX file "#{default_path}"))]
+
+    case System.cmd("osascript", ["-e", script], stderr_to_stdout: true) do
+      {path, 0} ->
+        path = String.trim(path)
+
+        if path != "" do
+          {:ok, path}
+        else
+          :cancelled
+        end
+
+      {_, _} ->
+        :cancelled
+    end
   end
 
   # The wx backend is injectable via the app env so tests can substitute a
