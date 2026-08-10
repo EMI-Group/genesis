@@ -132,6 +132,111 @@ defmodule EvoDashWeb.ProjectComponentsTest do
     end
   end
 
+  # Browse buttons are gated on `tauri_detected and !remote`: the native
+  # directory picker runs on the LOCAL dashboard machine (a wx dialog on the
+  # local display), so the buttons must not render while viewing a remote node
+  # even when the dashboard itself runs inside the Tauri desktop shell. The
+  # manual path inputs stay rendered in both contexts.
+  describe "browse buttons in remote contexts" do
+    test "open-path palette hides the browse button on a remote node but keeps the input" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :open_path,
+          tauri_detected: true,
+          remote: true
+        )
+
+      assert Floki.find(parse(html), "#project-path-browse-button") == []
+      assert attribute(html, "#project-path-input", "placeholder") == ["Project path"]
+    end
+
+    test "open-path palette keeps the browse button on the local node" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :open_path,
+          tauri_detected: true,
+          remote: false
+        )
+
+      assert attribute(html, "#project-path-browse-button", "phx-hook") == ["DirectoryPicker"]
+      assert attribute(html, "#project-path-input", "placeholder") == ["Project path"]
+    end
+
+    test "new-project palette hides the browse button on a remote node but keeps the input" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :new_project,
+          tauri_detected: true,
+          remote: true
+        )
+
+      assert Floki.find(parse(html), "#new-project-location-browse-button") == []
+      assert attribute(html, "#new-project-path-input", "placeholder") == ["Project path"]
+    end
+
+    test "new-project palette keeps the browse button on the local node" do
+      html =
+        render_component(&ProjectComponents.project_omnibox/1,
+          palette_open: true,
+          palette_mode: :new_project,
+          tauri_detected: true,
+          remote: false
+        )
+
+      assert attribute(html, "#new-project-location-browse-button", "phx-hook") == [
+               "DirectoryPicker"
+             ]
+
+      assert attribute(html, "#new-project-path-input", "placeholder") == ["Project path"]
+    end
+
+    test "foreign-repo form hides the browse button on a remote node but keeps the input" do
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo: true,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: true,
+          remote: true,
+          platform: "linux"
+        )
+
+      assert Floki.find(parse(html), "#foreign-repo-path-browse-button") == []
+      assert attribute(html, "#foreign-repo-path-input", "phx-hook") == ["PathAutocomplete"]
+    end
+
+    test "foreign-repo form keeps the browse button on the local node" do
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo: true,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: true,
+          remote: false,
+          platform: "linux"
+        )
+
+      assert attribute(html, "#foreign-repo-path-browse-button", "phx-hook") == [
+               "DirectoryPicker"
+             ]
+    end
+  end
+
   # Foreign-repo path input autocomplete wiring: the input carries the
   # PathAutocomplete hook, the `foreign_repo_path_input` change event (debounced
   # 150ms), and a datalist fed by `@foreign_repo_path_suggestions` (local-only

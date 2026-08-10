@@ -108,11 +108,13 @@ defmodule EvoDashWeb.ProjectComponents do
               <.palette_open_path
                 path_suggestions={@path_suggestions}
                 tauri_detected={@tauri_detected}
+                remote={@remote}
               />
             <% :new_project -> %>
               <.palette_new_project
                 path_suggestions={@path_suggestions}
                 tauri_detected={@tauri_detected}
+                remote={@remote}
               />
           <% end %>
         </div>
@@ -255,6 +257,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
+  attr(:remote, :boolean, default: false)
 
   defp palette_open_path(assigns) do
     ~H"""
@@ -275,7 +278,7 @@ defmodule EvoDashWeb.ProjectComponents do
     <div class="p-3">
       <.form for={%{}} phx-submit="open_project" class="flex flex-col gap-2">
         <div class="flex items-center gap-2">
-          <%= if @tauri_detected do %>
+          <%= if @tauri_detected and !@remote do %>
             <button
               type="button"
               id="project-path-browse-button"
@@ -323,6 +326,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
   attr(:path_suggestions, :list, default: [])
   attr(:tauri_detected, :boolean, default: false)
+  attr(:remote, :boolean, default: false)
 
   defp palette_new_project(assigns) do
     ~H"""
@@ -348,7 +352,7 @@ defmodule EvoDashWeb.ProjectComponents do
             <span class="label-text text-xs font-medium">{gettext("Project path")}</span>
           </label>
           <div class="flex items-center gap-2">
-            <%= if @tauri_detected do %>
+            <%= if @tauri_detected and !@remote do %>
               <button
                 type="button"
                 id="new-project-location-browse-button"
@@ -412,6 +416,7 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:new_repo_description, :string, default: "")
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
+  attr(:remote, :boolean, default: false)
 
   def project_settings_panel(assigns) do
     ~H"""
@@ -463,6 +468,7 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:new_repo_description, :string, default: "")
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
+  attr(:remote, :boolean, default: false)
 
   def project_settings_tab(assigns) do
     ~H"""
@@ -473,6 +479,8 @@ defmodule EvoDashWeb.ProjectComponents do
   end
 
   # Shared body content for both the legacy panel and the dropdown tab.
+  attr(:remote, :boolean, default: false)
+
   defp project_settings_body(assigns) do
     ~H"""
     <!-- Config status -->
@@ -630,7 +638,7 @@ defmodule EvoDashWeb.ProjectComponents do
                     <% end %>
                   </datalist>
                 </div>
-                <%= if @tauri_detected do %>
+                <%= if @tauri_detected and !@remote do %>
                   <button
                     type="button"
                     id="foreign-repo-path-browse-button"

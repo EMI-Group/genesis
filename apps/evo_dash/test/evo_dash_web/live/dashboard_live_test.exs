@@ -1764,6 +1764,31 @@ defmodule EvoDashWeb.DashboardLiveTest do
       assert_push_event(view, "picker_result:project", %{unavailable: true})
     end
 
+    test "remote render never shows the browse button even when tauri is detected", %{
+      conn: conn
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Tauri-shell detection is orthogonal to the node context: the desktop
+      # app can view a remote node, but the native picker runs on the LOCAL
+      # machine, so the open-path palette must hide its browse button (the
+      # manual path input stays rendered).
+      render_hook(view, "tauri_detected", %{"tauri" => true})
+      render_click(view, "open_project_palette", %{})
+      html = render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+      refute html =~ "project-path-browse-button"
+      assert html =~ ~s(id="project-path-input")
+    end
+
     test "directory_pick with the picker disabled pushes unavailable", %{conn: conn} do
       # Explicit and self-documenting (test_helper.exs already sets it, but
       # state it here so this test reads standalone). The disabled flag is
