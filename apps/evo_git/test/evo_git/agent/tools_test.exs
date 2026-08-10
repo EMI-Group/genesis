@@ -364,15 +364,17 @@ defmodule EvoGit.Agent.ToolsTest do
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
     end
 
-    test "returns error if directory does not exist", %{tmp_dir: tmp_dir} do
+    test "auto-creates a missing directory", %{tmp_dir: tmp_dir} do
       result =
         Tools.execute(
           "write_context",
-          %{"dir_path" => "missing", "content" => "context"},
+          %{"dir_path" => "missing", "content" => "context", "commit" => false},
           tmp_dir
         )
 
       assert result =~ "Successfully updated CONTEXT.md"
+
+      assert File.read!(Path.join(tmp_dir, "missing/CONTEXT.md")) == "context"
     end
 
     test "returns error if path is a file", %{tmp_dir: tmp_dir} do
