@@ -22,7 +22,7 @@ None — leaf directory (modules: `sandbox.ex`, `behaviour.ex`, `helpers.ex`, `l
 `generate_profile/2` (`macos.ex`) previously emitted `(deny default)` followed by a **global `(allow file-read*)`** — sandboxed agents could read ANY file the user could (including `~/.ssh/id_rsa`, `~/.gnupg`, etc.); the sensitive-dir rules were deny-WRITE only. Since 3741c66c the profile is deny-by-default for READS too. Emitted rule groups, in order:
 
 1. `(version 1)` / `(deny default)`
-2. **System read paths**: `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/etc`, `/private/etc`, `/private/var`, `/dev` (binaries, dyld, system libs, certs, device nodes — bash/toolchain startup needs)
+2. **System read paths**: `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/etc`, `/private/etc`, `/private/var`, `/dev`, `/opt/homebrew` (binaries, dyld, system libs, certs, device nodes — bash/toolchain startup needs; `/opt/homebrew` = Apple Silicon Homebrew git + dylibs, added in the 2026-08 fix)
 3. **Nix** (only when `Nix.enabled?()`): read + write for `/nix/store`, `/nix/var`
 4. **Repo**: read+write on `cwd` (worktree) and `<repo_root>/.git`
 5. **Tmp**: read+write on `Platform.tmp_paths()` (`/tmp`, `/var/tmp`)
