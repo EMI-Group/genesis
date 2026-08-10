@@ -206,24 +206,6 @@ More package managers will be added over time. Contributions are welcome — see
 
 ---
 
-## 🔬 Research
-
-Genesis is being studied under the working title:
-
-> **Persistent recursive worlds enable autonomous software evolution**
-
-The paper describing Genesis is available as a preprint: [Persistent recursive worlds enable autonomous software evolution (preprint)](https://genesis.evox.group/genesis_paper_preprint.pdf)
-
-The current evidence supports three system-level capabilities:
-
-**formation · model-switchable continuation · behaviour-preserving scientific-software redevelopment**
-
-Stronger mechanism-level questions — including how much continuity is caused specifically by non-executable developmental organization beyond source code alone — remain open research questions.
-
-Project website: **[genesis.evox.group](https://genesis.evox.group/)**
-
----
-
 ## 🙏 Acknowledgements
 
 Genesis was born out of the [EvoGit](https://github.com/EMI-Group/evogit) project and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
