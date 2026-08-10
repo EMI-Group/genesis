@@ -151,7 +151,10 @@ defmodule EvoGit.Sandbox.MacOS do
   # Reads are granted only for: system paths, nix (when enabled), the repo
   # worktree (cwd + repo_root/.git), tmp paths, the genesis config/data dirs,
   # the host $TMPDIR (pre-sandbox temp files), and the home directory minus a
-  # deny-read list of sensitive dirs. In Apple's SBPL, deny rules take
+  # deny-read list of sensitive dirs. The git metadata rule resolves
+  # linked-worktree `gitdir:` pointers so the per-worktree metadata dir
+  # (objects/refs/index) is covered even when the caller passes a worktree
+  # root or nil repo_root. In Apple's SBPL, deny rules take
   # precedence over allow rules — so the deny-read list wins over the home
   # read allow below. Writes are restricted to the worktree, tmp paths,
   # genesis dirs, and package-manager/toolchain cache dirs, with deny-write
@@ -179,7 +182,12 @@ defmodule EvoGit.Sandbox.MacOS do
       "/etc",
       "/private/etc",
       "/private/var",
-      "/dev"
+      "/dev",
+      # Homebrew on Apple Silicon installs git + its dylibs + libexec/git-core
+      # + share/git-core/templates + /opt/homebrew/etc/gitconfig here; without
+      # this the deny-by-default profile blocks `git` exec entirely. Kept
+      # minimal — deliberately NOT `/opt` wholesale.
+      "/opt/homebrew"
     ]
 
     system_read_rules =
@@ -206,15 +214,41 @@ defmodule EvoGit.Sandbox.MacOS do
       end
 
     # Repo access: the worktree (cwd) plus the git metadata dir. cwd is
-    # emitted here with the read allow; the write allow follows below.
-    git_rules =
-      if repo_root do
-        git_path = Path.join(repo_root, ".git")
+    # emitted here with the read allow; the write allow follows below. The
+    # metadata dir is resolved via `git_metadata_dir/2`, which follows
+    # linked-worktree `gitdir:` pointer files so the common git dir is
+    # covered even when the caller passes a worktree root or nil repo_root.
+    git_metadata_rule =
+      case git_metadata_dir(cwd, repo_root) do
+        nil ->
+          ""
 
-        ~s{(allow file-read* (subpath "#{git_path}"))\n    (allow file-write* (subpath "#{git_path}"))}
-      else
-        ""
+        git_path ->
+          ~s{(allow file-read* (subpath "#{git_path}"))\n    (allow file-write* (subpath "#{git_path}"))}
       end
+
+    # Vendored git (desktop bundle): when git is NOT on PATH,
+    # `Executable.resolve("git")` returns the absolute path of the bundled
+    # binary (`<app_dir>/priv/vendor/macos-<arch>/git`). Its directory is not
+    # covered by the system read paths above, so emit an explicit read rule
+    # for the binary's dirname (vendored binaries are self-contained — the
+    # dirname subpath is the minimal targeted rule). When git IS on PATH,
+    # resolve returns the bare name "git" and no rule is emitted (Homebrew
+    # `/opt/homebrew`, Intel `/usr/local`, and CLT `/Library` are covered by
+    # the system paths).
+    git_binary_read_rule =
+      case EvoGit.Executable.resolve("git") do
+        "git" ->
+          ""
+
+        binary when is_binary(binary) ->
+          ~s{(allow file-read* (subpath "#{Path.dirname(binary)}"))}
+      end
+
+    git_rules =
+      [git_metadata_rule, git_binary_read_rule]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n    ")
 
     # Tmp paths: read-write — processes create temp files and read them back.
     tmp_paths = Platform.tmp_paths()
@@ -375,6 +409,76 @@ defmodule EvoGit.Sandbox.MacOS do
     """
     |> String.replace(~r/\n{3,}/, "\n\n")
     |> String.trim()
+  end
+
+  # Resolves the git metadata directory the sandbox must grant read+write
+  # access to. Returns nil when no git metadata dir should be exposed.
+  #
+  # - `base = repo_root || cwd`; `literal = Path.join(base, ".git")`.
+  # - If `literal` is a FILE, it is a linked-worktree pointer (a
+  #   `gitdir: <path>` line as produced by `git worktree add`). The pointer
+  #   target is the per-worktree metadata dir (`<common>/worktrees/<name>`);
+  #   git also needs the COMMON dir (objects/refs/logs/packed-refs/config),
+  #   so the prefix before the LAST "/worktrees/" segment is returned (a
+  #   subpath rule on the common dir covers the per-worktree dir inside it).
+  #   A pointer without a "/worktrees/" segment resolves to itself.
+  # - Otherwise (`.git` is a real directory, or missing):
+  #   - repo_root given → the literal `<repo_root>/.git` (unchanged behavior).
+  #   - repo_root nil → nil, UNLESS the literal is an existing directory
+  #     (cwd IS a repo with a real `.git` — e.g. the skills executor passing
+  #     cwd = worktree and repo_root = nil).
+  defp git_metadata_dir(cwd, repo_root) do
+    base = repo_root || cwd
+    literal = Path.join(base, ".git")
+
+    case File.read(literal) do
+      {:ok, content} -> parse_gitdir_pointer(content, base, literal)
+      {:error, _} -> if repo_root || File.dir?(literal), do: literal, else: nil
+    end
+  end
+
+  # Parses a linked-worktree `.git` pointer file. Finds the first line
+  # starting with "gitdir:", strips the prefix, trims whitespace; empty or
+  # missing → unparseable → falls back to `literal`. The resolved target is
+  # expanded relative to `base` when not absolute, then reduced to the common
+  # git dir (prefix before the last "/worktrees/" segment — `binary_part` on
+  # the last match start, NOT `String.split` with parts: 2, which is wrong
+  # when the repo path itself contains "/worktrees/").
+  defp parse_gitdir_pointer(content, base, literal) do
+    target =
+      content
+      |> String.split("\n")
+      |> Enum.find(&String.starts_with?(&1, "gitdir:"))
+      |> case do
+        nil -> nil
+        line -> line |> String.replace_prefix("gitdir:", "") |> String.trim()
+      end
+
+    case target do
+      nil ->
+        literal
+
+      "" ->
+        literal
+
+      pointer ->
+        resolved = Path.expand(pointer, base)
+
+        case :binary.matches(resolved, "/worktrees/") do
+          [] ->
+            resolved
+
+          matches ->
+            {start, _len} = List.last(matches)
+
+            case :binary.part(resolved, 0, start) do
+              # Pathological: common dir at filesystem root — never emit a
+              # broken empty-subpath rule; use the resolved target itself.
+              "" -> resolved
+              common -> common
+            end
+        end
+    end
   end
 
   # Removes the `(limit ...)` line from a generated SBPL profile, preserving
