@@ -193,6 +193,33 @@ jobs:
             libayatana-appindicator3-dev libdbus-1-dev librsvg2-dev \
             libssl-dev libwebkit2gtk-4.1-dev libxdo-dev wget
 
+      - name: Install wxWidgets 3.2 runtime (AppImage bundling)
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          # The genesis_desktop release bundles OTP's wx app (`wx: :load` in the
+          # root mix.exs) for the wx-based directory picker. Its NIFs
+          # (lib/wx-*/priv/wxe_driver.so, erl_gl.so) link against wxWidgets 3.2
+          # sonames that jammy (ubuntu-22.04) does not ship (only wxWidgets 3.0).
+          # linuxdeploy hard-fails on unresolvable NEEDED entries when bundling
+          # the AppImage; tauri-bundler hides its stderr, so the CI error is the
+          # generic "failed to run linuxdeploy" (full diagnosis in
+          # desktop/src-tauri/CONTEXT.md -> Known Issues). Installing the runtime
+          # libs lets linuxdeploy bundle the wxWidgets closure INTO the AppImage
+          # (self-contained directory picker).
+          sudo add-apt-repository -y ppa:wxformbuilder/wxwidgets3.2
+          sudo apt-get update
+          if apt-cache show libwxgtk3.2-1 >/dev/null 2>&1; then
+            sudo apt-get install -y libwxbase3.2-1 libwxgtk3.2-1 libwxgtk-gl3.2-1 libwxgtk-webview3.2-1 libglu1-mesa
+          else
+            # Ubuntu's t64 transition renamed the packages with a -t64 suffix.
+            sudo apt-get install -y libwxbase3.2-1t64 libwxgtk3.2-1t64 libwxgtk-gl3.2-1t64 libwxgtk-webview3.2-1t64 libglu1-mesa
+          fi
+          # Fail fast if the PPA does not provide the sonames the NIFs need.
+          ldconfig -p | grep -q 'libwx_baseu-3.2.so.0' || { echo "wxWidgets 3.2 base lib missing after install"; exit 1; }
+          ldconfig -p | grep -q 'libwx_gtk3u_core-3.2.so.0' || { echo "wxWidgets 3.2 gtk lib missing after install"; exit 1; }
+          ldconfig -p | grep -q 'libGLU.so.1' || { echo "libGLU.so.1 missing after install"; exit 1; }
+
       - name: Setup Elixir and assets
         uses: ./.github/actions/setup-mix
         with:
