@@ -130,7 +130,8 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
         </div>
       <% end %>
 
-      <!-- RIGHT: remote target badge (Configure dropdown is local-only) -->
+      <!-- RIGHT: remote target badge (always shown when on a remote node),
+           plus Configure dropdown for BOTH local and remote. -->
       <%= if @remote do %>
         <div class="flex items-center gap-2 shrink-0">
           <span class="badge badge-info gap-1.5">
@@ -138,76 +139,75 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
             {@current_node_name}
           </span>
         </div>
-      <% else %>
-        <!-- RIGHT: Configure dropdown — server-managed open state -->
-        <div class="relative shrink-0">
-          <button
-            type="button"
-            class="btn btn-md btn-ghost gap-2"
-            title={gettext("Configure")}
-            phx-click="toggle_configure_dropdown"
-          >
-            <.icon name="hero-adjustments-horizontal" class="size-4" />
-            <span class="hidden sm:inline">{gettext("Configure")}</span>
-          </button>
+      <% end %>
+      <!-- RIGHT: Configure dropdown — server-managed open state -->
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          class="btn btn-md btn-ghost gap-2"
+          title={gettext("Configure")}
+          phx-click="toggle_configure_dropdown"
+        >
+          <.icon name="hero-adjustments-horizontal" class="size-4" />
+          <span class="hidden sm:inline">{gettext("Configure")}</span>
+        </button>
 
-          <%= if @show_configure_dropdown do %>
-            <!-- Full-screen invisible click-catcher overlay -->
-            <div class="fixed inset-0 z-40" phx-click="close_configure_dropdown"></div>
-          <% end %>
+        <%= if @show_configure_dropdown do %>
+          <!-- Full-screen invisible click-catcher overlay -->
+          <div class="fixed inset-0 z-40" phx-click="close_configure_dropdown"></div>
+        <% end %>
 
-          <!-- Dropdown content — always in DOM, hidden when closed.
-               Using class-based toggling (not conditional render) so content
-               stays in the DOM and phx events inside still work reliably. -->
-          <div class={[
-            "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
-            !@show_configure_dropdown && "hidden"
-          ]}>
-            <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
-              <!-- Section 1: Task Options -->
-              <div>
+        <!-- Dropdown content — always in DOM, hidden when closed.
+             Using class-based toggling (not conditional render) so content
+             stays in the DOM and phx events inside still work reliably. -->
+        <div class={[
+          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
+          !@show_configure_dropdown && "hidden"
+        ]}>
+          <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
+            <!-- Section 1: Task Options -->
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+                {gettext("Task Options")}
+              </p>
+              <EvoDashWeb.TaskFormComponents.task_options_tab
+                mode={@task_mode}
+                node_path={@task_node_path}
+                starting_commit={@task_starting_commit}
+                resume_from={@task_resume_from}
+                archive={@task_archive}
+                build_systems={@build_systems}
+                selected_build_system={@task_build_system}
+                disabled={@disabled}
+              />
+            </div>
+
+            <!-- Section 2: Project Settings (only when a project is active) -->
+            <%= if @active_project != nil do %>
+              <div class="mt-4 pt-4 border-t border-base-200">
                 <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
-                  {gettext("Task Options")}
+                  {gettext("Project Settings")}
                 </p>
-                <EvoDashWeb.TaskFormComponents.task_options_tab
-                  mode={@task_mode}
-                  node_path={@task_node_path}
-                  starting_commit={@task_starting_commit}
-                  resume_from={@task_resume_from}
-                  archive={@task_archive}
-                  build_systems={@build_systems}
-                  selected_build_system={@task_build_system}
-                  disabled={@disabled}
+                <EvoDashWeb.ProjectComponents.project_settings_tab
+                  remote={@remote}
+                  active_project={@active_project_path}
+                  project_config={@project_config}
+                  worktree_script={@worktree_script}
+                  commands={@commands}
+                  foreign_repos={@foreign_repos}
+                  foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+                  show_add_foreign_repo={@show_add_foreign_repo_form}
+                  new_repo_id={@new_repo_id}
+                  new_repo_path={@new_repo_path}
+                  new_repo_description={@new_repo_description}
+                  tauri_detected={@tauri_detected}
+                  platform={@platform}
                 />
               </div>
-
-              <!-- Section 2: Project Settings (only when a project is active) -->
-              <%= if @active_project != nil do %>
-                <div class="mt-4 pt-4 border-t border-base-200">
-                  <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
-                    {gettext("Project Settings")}
-                  </p>
-                  <EvoDashWeb.ProjectComponents.project_settings_tab
-                    remote={@remote}
-                    active_project={@active_project_path}
-                    project_config={@project_config}
-                    worktree_script={@worktree_script}
-                    commands={@commands}
-                    foreign_repos={@foreign_repos}
-                    foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
-                    show_add_foreign_repo={@show_add_foreign_repo_form}
-                    new_repo_id={@new_repo_id}
-                    new_repo_path={@new_repo_path}
-                    new_repo_description={@new_repo_description}
-                    tauri_detected={@tauri_detected}
-                    platform={@platform}
-                  />
-                </div>
-              <% end %>
-            </div>
+            <% end %>
           </div>
         </div>
-      <% end %>
+      </div>
     </div>
     """
   end
