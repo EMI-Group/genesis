@@ -16,6 +16,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.WorktreeManager
   alias EvoGit.Platform
+  alias EvoGit.Powershell
   alias EvoGit.ProjectConfig
 
   # --- Initialization ---
@@ -213,10 +214,18 @@ defmodule EvoGit.AgentScheduler.Worktrees do
             """
           end
 
-        case System.cmd(shell, extra_args ++ Platform.shell_args(cmd),
-               cd: repo_root,
-               stderr_to_stdout: true
-             ) do
+        {raw_output, exit_code} =
+          System.cmd(shell, extra_args ++ Platform.shell_args(cmd),
+            cd: repo_root,
+            stderr_to_stdout: true
+          )
+
+        # Host PowerShell may emit UTF-16LE-with-BOM output; decode once so
+        # both log branches show readable text (idempotent, passthrough on
+        # Unix).
+        output = Powershell.decode_output(raw_output)
+
+        case {output, exit_code} do
           {output, 0} ->
             if output != "" do
               Logger.info("AgentScheduler: Worktree init script output:\n#{output}")
