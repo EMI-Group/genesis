@@ -155,7 +155,7 @@ msgstr "ID「%{id}」のプロファイルは既に存在します。"
 msgid "A unique identifier for this profile"
 msgstr "このプロファイルの一意な識別子"
 
-#: lib/evo_dash_web/components/project_components.ex:595
+#: lib/evo_dash_web/components/project_components.ex:603
 #, elixir-autogen, elixir-format
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "このリポジトリを識別する一意のID（例：「original」「upstream」）"
@@ -182,7 +182,7 @@ msgstr "APIキーは設定済みです"
 msgid "API key saved successfully."
 msgstr "APIキーが保存されました。"
 
-#: lib/evo_dash_web/components/project_components.ex:610
+#: lib/evo_dash_web/components/project_components.ex:618
 #, elixir-autogen, elixir-format
 msgid "Absolute path to the repository root on this machine"
 msgstr "このマシン上のリポジトリルートへの絶対パス"
@@ -202,7 +202,7 @@ msgstr "アクティブなタスク"
 msgid "Active filters:"
 msgstr "アクティブフィルター:"
 
-#: lib/evo_dash_web/components/project_components.ex:660
+#: lib/evo_dash_web/components/project_components.ex:668
 #: lib/evo_dash_web/live/settings_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Add"
@@ -214,7 +214,7 @@ msgstr "追加"
 msgid "Add Connection"
 msgstr "接続を追加"
 
-#: lib/evo_dash_web/components/project_components.ex:677
+#: lib/evo_dash_web/components/project_components.ex:685
 #, elixir-autogen, elixir-format
 msgid "Add Foreign Repo"
 msgstr "外部リポジトリを追加"
@@ -451,9 +451,9 @@ msgstr "ブートストラップ"
 msgid "Branch"
 msgstr "ブランチ"
 
-#: lib/evo_dash_web/components/project_components.ex:286
-#: lib/evo_dash_web/components/project_components.ex:359
-#: lib/evo_dash_web/components/project_components.ex:641
+#: lib/evo_dash_web/components/project_components.ex:289
+#: lib/evo_dash_web/components/project_components.ex:363
+#: lib/evo_dash_web/components/project_components.ex:649
 #, elixir-autogen, elixir-format
 msgid "Browse"
 msgstr "参照"
@@ -485,7 +485,7 @@ msgstr "キャッシュヒット率"
 msgid "Cached Tokens"
 msgstr "キャッシュ済みトークン"
 
-#: lib/evo_dash_web/components/project_components.ex:667
+#: lib/evo_dash_web/components/project_components.ex:675
 #: lib/evo_dash_web/components/review_components/actions.ex:229
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:397
 #: lib/evo_dash_web/components/task_card_components.ex:133
@@ -557,7 +557,7 @@ msgstr "履歴をクリア"
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "完了したタスクの履歴をすべてクリアしますか？この操作は元に戻せません。"
 
-#: lib/evo_dash_web/components/project_components.ex:247
+#: lib/evo_dash_web/components/project_components.ex:249
 #: lib/evo_dash_web/helpers.ex:601
 #: lib/evo_dash_web/live/agents_live.html.heex:622
 #: lib/evo_dash_web/live/agents_live.html.heex:646
@@ -731,12 +731,6 @@ msgstr "コンテキストパス"
 msgid "Context tree detected — Evolution mode selected"
 msgstr "コンテキストツリーを検出 — 進化モード選択"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
-#: lib/evo_dash_web/components/review_components/actions.ex:157
-#, elixir-autogen, elixir-format
-msgid "Continue from Here"
-msgstr "ここから続行"
-
 #: lib/evo_dash_web/helpers.ex:118
 #: lib/evo_dash_web/live/tasks_live.ex:103
 #: lib/evo_dash_web/live/tasks_live.ex:173
@@ -785,15 +779,10 @@ msgstr "差分データを読み込めませんでした。ブランチが外部
 msgid "Crashed"
 msgstr "クラッシュ"
 
-#: lib/evo_dash_web/components/project_components.ex:385
+#: lib/evo_dash_web/components/project_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Create"
 msgstr "作成"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:95
-#, elixir-autogen, elixir-format
-msgid "Create GitHub PR"
-msgstr "GitHub PRを作成"
 
 #: lib/evo_dash_web/helpers.ex:658
 #, elixir-autogen, elixir-format
@@ -820,7 +809,7 @@ msgstr "ダークテーマ"
 msgid "Default"
 msgstr "デフォルト"
 
-#: lib/evo_dash_web/components/project_components.ex:434
+#: lib/evo_dash_web/components/project_components.ex:439
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "デフォルト"
@@ -859,7 +848,7 @@ msgstr "作成したいコードベースを説明してください..."
 msgid "Describe what you want to change or improve..."
 msgstr "変更または改善したい内容を説明してください..."
 
-#: lib/evo_dash_web/components/project_components.ex:648
+#: lib/evo_dash_web/components/project_components.ex:656
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr "説明（任意）"
@@ -874,7 +863,7 @@ msgstr "詳細"
 msgid "Detecting OS"
 msgstr "OSを検出中"
 
-#: lib/evo_dash_web/components/project_components.ex:516
+#: lib/evo_dash_web/components/project_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Dev Commands"
 msgstr "開発コマンド"
@@ -1126,7 +1115,7 @@ msgstr "プロキシ/アグリゲーターエンドポイント用です。標�
 msgid "For proxy/aggregator endpoints; leave empty for standard providers."
 msgstr "プロキシ／アグリゲーターエンドポイント用。標準プロバイダーの場合は空のままにしてください。"
 
-#: lib/evo_dash_web/components/project_components.ex:538
+#: lib/evo_dash_web/components/project_components.ex:546
 #, elixir-autogen, elixir-format
 msgid "Foreign Repositories"
 msgstr "外部リポジトリ"
@@ -1141,7 +1130,7 @@ msgstr "外部リポジトリ「%{repo_id}」を登録しました。"
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "外部リポジトリ「%{repo_id}」を削除しました。"
 
-#: lib/evo_dash_web/components/project_components.ex:542
+#: lib/evo_dash_web/components/project_components.ex:550
 #, elixir-autogen, elixir-format
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "外部リポジトリとは、タスク実行中にエージェントがアクセスできる追加のコードベースです。元のコードや関連プロジェクトを参照する際に便利です。"
@@ -1333,12 +1322,6 @@ msgstr "サンドボックスの分離、リソース制限、プロセス制約
 msgid "Max Tokens"
 msgstr "最大トークン数"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:54
-#: lib/evo_dash_web/components/review_components/actions.ex:65
-#, elixir-autogen, elixir-format
-msgid "Merge Changes"
-msgstr "変更をマージ"
-
 #: lib/evo_dash_web/live/review_live.ex:478
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
@@ -1492,12 +1475,12 @@ msgstr "このタスクのアーカイブ済みエージェントデータはあ
 msgid "No diff data available for this review."
 msgstr "このレビューで利用可能な差分データはありません。"
 
-#: lib/evo_dash_web/components/project_components.ex:551
+#: lib/evo_dash_web/components/project_components.ex:559
 #, elixir-autogen, elixir-format
 msgid "No foreign repositories registered"
 msgstr "登録された外部リポジトリはありません"
 
-#: lib/evo_dash_web/components/project_components.ex:488
+#: lib/evo_dash_web/components/project_components.ex:496
 #, elixir-autogen, elixir-format
 msgid "No genesis.toml — using global defaults"
 msgstr "genesis.toml がありません — グローバルデフォルトを使用"
@@ -1585,7 +1568,7 @@ msgstr "並行LLMリクエストスロット数"
 msgid "Objective"
 msgstr "目的"
 
-#: lib/evo_dash_web/components/project_components.ex:313
+#: lib/evo_dash_web/components/project_components.ex:316
 #: lib/evo_dash_web/helpers.ex:115
 #, elixir-autogen, elixir-format
 msgid "Open"
@@ -1632,7 +1615,7 @@ msgstr "%{total}ページ中 %{current}ページ"
 msgid "Parent"
 msgstr "親エージェント"
 
-#: lib/evo_dash_web/components/project_components.ex:609
+#: lib/evo_dash_web/components/project_components.ex:617
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:55
 #, elixir-autogen, elixir-format
 msgid "Path"
@@ -1694,12 +1677,12 @@ msgstr "プロファイルID"
 msgid "Profile id cannot be empty."
 msgstr "プロファイルIDは空にできません。"
 
-#: lib/evo_dash_web/components/project_components.ex:498
+#: lib/evo_dash_web/components/project_components.ex:506
 #, elixir-autogen, elixir-format
 msgid "Project Root"
 msgstr "プロジェクトルート"
 
-#: lib/evo_dash_web/components/project_components.ex:426
+#: lib/evo_dash_web/components/project_components.ex:431
 #: lib/evo_dash_web/live/dashboard_live/remote_view.ex:188
 #, elixir-autogen, elixir-format
 msgid "Project Settings"
@@ -1735,7 +1718,7 @@ msgstr "プルリクエストを作成しました: %{title}"
 msgid "Quick Setup"
 msgstr "クイックセットアップ"
 
-#: lib/evo_dash_web/components/project_components.ex:518
+#: lib/evo_dash_web/components/project_components.ex:526
 #, elixir-autogen, elixir-format
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "よく使う開発コマンドのクイックショートカット。「実行」をクリックして起動します。"
@@ -1754,11 +1737,6 @@ msgstr "再確認"
 #, elixir-autogen, elixir-format
 msgid "Reasoning Effort"
 msgstr "思考の度合い"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:75
-#, elixir-autogen, elixir-format
-msgid "Reject Changes"
-msgstr "変更を却下"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:71
 #, elixir-autogen, elixir-format
@@ -1803,7 +1781,7 @@ msgstr "リポジトリ「%{id}」はすでに登録されています。"
 msgid "Repo '%{id}' not found."
 msgstr "リポジトリ「%{id}」が見つかりません。"
 
-#: lib/evo_dash_web/components/project_components.ex:593
+#: lib/evo_dash_web/components/project_components.ex:601
 #, elixir-autogen, elixir-format
 msgid "Repo ID"
 msgstr "リポジトリID"
@@ -1910,7 +1888,7 @@ msgstr "リトライ"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:86
 #: lib/evo_dash_web/components/settings_components.ex:519
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:261
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:262
 #: lib/evo_dash_web/live/welcome_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Retry"
@@ -1947,7 +1925,7 @@ msgstr "レビューを利用できません"
 msgid "Review ignored and dismissed."
 msgstr "レビューは無視され、却下されました。"
 
-#: lib/evo_dash_web/components/project_components.ex:527
+#: lib/evo_dash_web/components/project_components.ex:535
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "実行"
@@ -2095,7 +2073,7 @@ msgstr "パーミッションを設定中"
 msgid "Settings"
 msgstr "設定"
 
-#: lib/evo_dash_web/components/project_components.ex:654
+#: lib/evo_dash_web/components/project_components.ex:662
 #, elixir-autogen, elixir-format
 msgid "Short description of what this repo does"
 msgstr "このリポジトリの簡単な説明"
@@ -2504,10 +2482,6 @@ msgid "View Full Objective"
 msgstr "全体目標を表示"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:105
-#, elixir-autogen, elixir-format
-msgid "View GitHub PR"
-msgstr "GitHub PRを表示"
-
 #: lib/evo_dash_web/components/task_card_components.ex:669
 #: lib/evo_dash_web/components/task_card_components.ex:717
 #, elixir-autogen, elixir-format
@@ -2542,7 +2516,7 @@ msgstr "インターネットに接続できません"
 msgid "Worktree"
 msgstr "ワークツリー"
 
-#: lib/evo_dash_web/components/project_components.ex:506
+#: lib/evo_dash_web/components/project_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Worktree Init Script"
 msgstr "ワークツリー初期化スクリプト"
@@ -2638,12 +2612,12 @@ msgstr "flake.nix"
 msgid "freq_penalty"
 msgstr "freq_penalty"
 
-#: lib/evo_dash_web/components/project_components.ex:430
+#: lib/evo_dash_web/components/project_components.ex:435
 #, elixir-autogen, elixir-format
 msgid "genesis.toml"
 msgstr "genesis.toml"
 
-#: lib/evo_dash_web/components/project_components.ex:482
+#: lib/evo_dash_web/components/project_components.ex:490
 #, elixir-autogen, elixir-format
 msgid "genesis.toml found — using project settings"
 msgstr "genesis.toml が見つかりました — プロジェクト設定を使用"
@@ -3133,7 +3107,7 @@ msgstr "LLM APIに渡されるプロバイダー固有のオプションです�
 msgid "Ready to build!"
 msgstr "構築の準備完了！"
 
-#: lib/evo_dash_web/components/project_components.ex:167
+#: lib/evo_dash_web/components/project_components.ex:169
 #, elixir-autogen, elixir-format
 msgid "Recent Projects"
 msgstr "最近のプロジェクト"
@@ -3367,8 +3341,8 @@ msgstr "設定"
 msgid "Copying config"
 msgstr "設定をコピー中"
 
-#: lib/evo_dash_web/components/project_components.ex:232
-#: lib/evo_dash_web/components/project_components.ex:339
+#: lib/evo_dash_web/components/project_components.ex:234
+#: lib/evo_dash_web/components/project_components.ex:343
 #, elixir-autogen, elixir-format
 msgid "Create New Project"
 msgstr "新しいプロジェクトを作成"
@@ -3403,18 +3377,18 @@ msgstr "起動"
 msgid "Leave blank to auto-download the release on the remote"
 msgstr "空欄にするとリモートでリリースを自動ダウンロードします"
 
-#: lib/evo_dash_web/components/project_components.ex:245
+#: lib/evo_dash_web/components/project_components.ex:247
 #, elixir-autogen, elixir-format
 msgid "Navigate"
 msgstr "ナビゲート"
 
-#: lib/evo_dash_web/components/project_components.ex:238
+#: lib/evo_dash_web/components/project_components.ex:240
 #, elixir-autogen, elixir-format
 msgid "No matching projects"
 msgstr "一致するプロジェクトがありません"
 
-#: lib/evo_dash_web/components/project_components.ex:220
-#: lib/evo_dash_web/components/project_components.ex:271
+#: lib/evo_dash_web/components/project_components.ex:222
+#: lib/evo_dash_web/components/project_components.ex:274
 #, elixir-autogen, elixir-format
 msgid "Open Project by Path"
 msgstr "パスでプロジェクトを開く"
@@ -3439,12 +3413,12 @@ msgstr "プラットフォーム（任意）"
 msgid "Probing platform"
 msgstr "プラットフォームを調査中"
 
-#: lib/evo_dash_web/components/project_components.ex:153
+#: lib/evo_dash_web/components/project_components.ex:155
 #, elixir-autogen, elixir-format
 msgid "Search projects..."
 msgstr "プロジェクトを検索..."
 
-#: lib/evo_dash_web/components/project_components.ex:246
+#: lib/evo_dash_web/components/project_components.ex:248
 #, elixir-autogen, elixir-format
 msgid "Select"
 msgstr "選択"
@@ -3475,7 +3449,7 @@ msgid "All self-checks passed."
 msgstr "すべてのセルフチェックに合格しました。"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:77
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:248
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:249
 #, elixir-autogen, elixir-format
 msgid "Cannot connect to %{name}"
 msgstr "%{name}に接続できません"
@@ -3548,13 +3522,13 @@ msgid "Command"
 msgstr "コマンド"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:66
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:226
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:227
 #, elixir-autogen, elixir-format
 msgid "Connecting to %{name}…"
 msgstr "%{name}に接続中…"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:80
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:250
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:251
 #, elixir-autogen, elixir-format
 msgid "Connection lost or failed"
 msgstr "接続が切断または失敗しました"
@@ -3618,7 +3592,7 @@ msgid "Last 3 minutes"
 msgstr "直近3分"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:92
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:265
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:266
 #, elixir-autogen, elixir-format
 msgid "Manage Connections"
 msgstr "接続を管理"
@@ -3668,7 +3642,7 @@ msgstr "プロバイダーを選び、モデルを選択して、APIキーを入
 msgid "Project control unavailable"
 msgstr "プロジェクト制御は利用できません"
 
-#: lib/evo_dash_web/components/project_components.ex:196
+#: lib/evo_dash_web/components/project_components.ex:198
 #, elixir-autogen, elixir-format
 msgid "Remove %{name} from recent projects"
 msgstr "%{name} を最近のプロジェクトから削除"
@@ -3678,7 +3652,7 @@ msgstr "%{name} を最近のプロジェクトから削除"
 msgid "Remove entry"
 msgstr "エントリを削除"
 
-#: lib/evo_dash_web/components/project_components.ex:197
+#: lib/evo_dash_web/components/project_components.ex:199
 #, elixir-autogen, elixir-format
 msgid "Remove from recent projects"
 msgstr "最近のプロジェクトから削除"
@@ -3750,7 +3724,7 @@ msgid "Show example"
 msgstr "例を表示"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:95
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:269
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:270
 #, elixir-autogen, elixir-format
 msgid "Switch to Local"
 msgstr "ローカルに切り替え"
@@ -3862,10 +3836,10 @@ msgstr "完全なパスを入力してください（例: D:\\Projects\\myprojec
 msgid "Open or create a project"
 msgstr "プロジェクトを開くまたは作成"
 
-#: lib/evo_dash_web/components/project_components.ex:294
-#: lib/evo_dash_web/components/project_components.ex:348
-#: lib/evo_dash_web/components/project_components.ex:367
-#: lib/evo_dash_web/components/project_components.ex:684
+#: lib/evo_dash_web/components/project_components.ex:297
+#: lib/evo_dash_web/components/project_components.ex:352
+#: lib/evo_dash_web/components/project_components.ex:371
+#: lib/evo_dash_web/components/project_components.ex:692
 #, elixir-autogen, elixir-format
 msgid "Project path"
 msgstr "プロジェクトパス"
@@ -3879,3 +3853,25 @@ msgstr "Genesisでは、高水準のプロンプトだけを書きます。最�
 #, elixir-autogen, elixir-format
 msgid "Write high-level prompts, not code"
 msgstr "コードではなく、高水準のプロンプトを書く"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:157
+#, elixir-autogen, elixir-format
+msgid "Continue"
+msgstr "続行"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:95
+#, elixir-autogen, elixir-format
+msgid "Create PR"
+msgstr "PRを作成"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:54
+#: lib/evo_dash_web/components/review_components/actions.ex:65
+#, elixir-autogen, elixir-format
+msgid "Merge"
+msgstr "マージ"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:75
+#, elixir-autogen, elixir-format
+msgid "Reject"
+msgstr "拒否"

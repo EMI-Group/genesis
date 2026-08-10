@@ -155,7 +155,7 @@ msgstr "Profil dengan id \"%{id}\" sudah ada."
 msgid "A unique identifier for this profile"
 msgstr "Pengidentifikasi unik untuk profil ini"
 
-#: lib/evo_dash_web/components/project_components.ex:595
+#: lib/evo_dash_web/components/project_components.ex:603
 #, elixir-autogen, elixir-format
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "Pengidentifikasi unik untuk repositori ini (misalnya: 'original', 'upstream')"
@@ -182,7 +182,7 @@ msgstr "Kunci API sudah diatur"
 msgid "API key saved successfully."
 msgstr "Kunci API berhasil disimpan."
 
-#: lib/evo_dash_web/components/project_components.ex:610
+#: lib/evo_dash_web/components/project_components.ex:618
 #, elixir-autogen, elixir-format
 msgid "Absolute path to the repository root on this machine"
 msgstr "Jalur absolut menuju root repositori di mesin ini"
@@ -202,7 +202,7 @@ msgstr "Tugas Aktif"
 msgid "Active filters:"
 msgstr "Filter aktif:"
 
-#: lib/evo_dash_web/components/project_components.ex:660
+#: lib/evo_dash_web/components/project_components.ex:668
 #: lib/evo_dash_web/live/settings_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Add"
@@ -214,7 +214,7 @@ msgstr "Tambah"
 msgid "Add Connection"
 msgstr "Tambah Koneksi"
 
-#: lib/evo_dash_web/components/project_components.ex:677
+#: lib/evo_dash_web/components/project_components.ex:685
 #, elixir-autogen, elixir-format
 msgid "Add Foreign Repo"
 msgstr "Tambah Repo Eksternal"
@@ -451,9 +451,9 @@ msgstr "Bootstrap"
 msgid "Branch"
 msgstr "cabang"
 
-#: lib/evo_dash_web/components/project_components.ex:286
-#: lib/evo_dash_web/components/project_components.ex:359
-#: lib/evo_dash_web/components/project_components.ex:641
+#: lib/evo_dash_web/components/project_components.ex:289
+#: lib/evo_dash_web/components/project_components.ex:363
+#: lib/evo_dash_web/components/project_components.ex:649
 #, elixir-autogen, elixir-format
 msgid "Browse"
 msgstr "Jelajahi"
@@ -485,7 +485,7 @@ msgstr "Rasio Cache Hit"
 msgid "Cached Tokens"
 msgstr "Token yang Di-cache"
 
-#: lib/evo_dash_web/components/project_components.ex:667
+#: lib/evo_dash_web/components/project_components.ex:675
 #: lib/evo_dash_web/components/review_components/actions.ex:229
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:397
 #: lib/evo_dash_web/components/task_card_components.ex:133
@@ -557,7 +557,7 @@ msgstr "Hapus Riwayat"
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "Hapus semua riwayat tugas yang selesai? Tindakan ini tidak dapat dibatalkan."
 
-#: lib/evo_dash_web/components/project_components.ex:247
+#: lib/evo_dash_web/components/project_components.ex:249
 #: lib/evo_dash_web/helpers.ex:601
 #: lib/evo_dash_web/live/agents_live.html.heex:622
 #: lib/evo_dash_web/live/agents_live.html.heex:646
@@ -731,12 +731,6 @@ msgstr "Jalur Konteks"
 msgid "Context tree detected — Evolution mode selected"
 msgstr "Pohon konteks terdeteksi — Mode evolusi dipilih"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
-#: lib/evo_dash_web/components/review_components/actions.ex:157
-#, elixir-autogen, elixir-format
-msgid "Continue from Here"
-msgstr "Lanjutkan dari Sini"
-
 #: lib/evo_dash_web/helpers.ex:118
 #: lib/evo_dash_web/live/tasks_live.ex:103
 #: lib/evo_dash_web/live/tasks_live.ex:173
@@ -785,15 +779,10 @@ msgstr "Tidak dapat memuat data diff. Mungkin cabang telah diubah secara ekstern
 msgid "Crashed"
 msgstr "Gagal"
 
-#: lib/evo_dash_web/components/project_components.ex:385
+#: lib/evo_dash_web/components/project_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Create"
 msgstr "Buat"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:95
-#, elixir-autogen, elixir-format
-msgid "Create GitHub PR"
-msgstr "Buat GitHub PR"
 
 #: lib/evo_dash_web/helpers.ex:658
 #, elixir-autogen, elixir-format
@@ -820,7 +809,7 @@ msgstr "Tema gelap"
 msgid "Default"
 msgstr "Standar"
 
-#: lib/evo_dash_web/components/project_components.ex:434
+#: lib/evo_dash_web/components/project_components.ex:439
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "Default"
@@ -859,7 +848,7 @@ msgstr "Jelaskan basis kode yang ingin Anda buat..."
 msgid "Describe what you want to change or improve..."
 msgstr "Jelaskan apa yang ingin Anda ubah atau tingkatkan..."
 
-#: lib/evo_dash_web/components/project_components.ex:648
+#: lib/evo_dash_web/components/project_components.ex:656
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr "Deskripsi (opsional)"
@@ -874,7 +863,7 @@ msgstr "Detail"
 msgid "Detecting OS"
 msgstr "Mendeteksi OS"
 
-#: lib/evo_dash_web/components/project_components.ex:516
+#: lib/evo_dash_web/components/project_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Dev Commands"
 msgstr "Perintah Pengembangan"
@@ -1126,7 +1115,7 @@ msgstr "Untuk titik akhir proxy/aggregator. Kosongkan untuk titik akhir penyedia
 msgid "For proxy/aggregator endpoints; leave empty for standard providers."
 msgstr "Untuk endpoint proxy/aggregator; biarkan kosong untuk penyedia standar."
 
-#: lib/evo_dash_web/components/project_components.ex:538
+#: lib/evo_dash_web/components/project_components.ex:546
 #, elixir-autogen, elixir-format
 msgid "Foreign Repositories"
 msgstr "Repositori Eksternal"
@@ -1141,7 +1130,7 @@ msgstr "Repositori asing '%{repo_id}' berhasil didaftarkan."
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Repositori asing '%{repo_id}' berhasil dihapus."
 
-#: lib/evo_dash_web/components/project_components.ex:542
+#: lib/evo_dash_web/components/project_components.ex:550
 #, elixir-autogen, elixir-format
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "Repo eksternal adalah basis kode tambahan yang dapat diakses oleh agen selama eksekusi tugas. Berguna untuk merujuk kode asli atau proyek terkait."
@@ -1333,12 +1322,6 @@ msgstr "Kelola isolasi kotak pasir, batas sumber daya, dan batasan proses."
 msgid "Max Tokens"
 msgstr "Token Maksimum"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:54
-#: lib/evo_dash_web/components/review_components/actions.ex:65
-#, elixir-autogen, elixir-format
-msgid "Merge Changes"
-msgstr "Gabung Perubahan"
-
 #: lib/evo_dash_web/live/review_live.ex:478
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
@@ -1492,12 +1475,12 @@ msgstr "Tidak ada data agen yang diarsipkan untuk tugas ini."
 msgid "No diff data available for this review."
 msgstr "Tidak ada data diff yang tersedia untuk tinjauan ini."
 
-#: lib/evo_dash_web/components/project_components.ex:551
+#: lib/evo_dash_web/components/project_components.ex:559
 #, elixir-autogen, elixir-format
 msgid "No foreign repositories registered"
 msgstr "Belum ada repositori eksternal yang didaftarkan"
 
-#: lib/evo_dash_web/components/project_components.ex:488
+#: lib/evo_dash_web/components/project_components.ex:496
 #, elixir-autogen, elixir-format
 msgid "No genesis.toml — using global defaults"
 msgstr "Tidak ada genesis.toml — menggunakan default global"
@@ -1585,7 +1568,7 @@ msgstr "Jumlah slot permintaan LLM paralel"
 msgid "Objective"
 msgstr "Tujuan"
 
-#: lib/evo_dash_web/components/project_components.ex:313
+#: lib/evo_dash_web/components/project_components.ex:316
 #: lib/evo_dash_web/helpers.ex:115
 #, elixir-autogen, elixir-format
 msgid "Open"
@@ -1632,7 +1615,7 @@ msgstr "Halaman %{current} dari %{total}"
 msgid "Parent"
 msgstr "Induk"
 
-#: lib/evo_dash_web/components/project_components.ex:609
+#: lib/evo_dash_web/components/project_components.ex:617
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:55
 #, elixir-autogen, elixir-format
 msgid "Path"
@@ -1694,12 +1677,12 @@ msgstr "ID Profil"
 msgid "Profile id cannot be empty."
 msgstr "ID profil tidak boleh kosong."
 
-#: lib/evo_dash_web/components/project_components.ex:498
+#: lib/evo_dash_web/components/project_components.ex:506
 #, elixir-autogen, elixir-format
 msgid "Project Root"
 msgstr "Root Proyek"
 
-#: lib/evo_dash_web/components/project_components.ex:426
+#: lib/evo_dash_web/components/project_components.ex:431
 #: lib/evo_dash_web/live/dashboard_live/remote_view.ex:188
 #, elixir-autogen, elixir-format
 msgid "Project Settings"
@@ -1735,7 +1718,7 @@ msgstr "Pull request dibuat: %{title}"
 msgid "Quick Setup"
 msgstr "Pengaturan Cepat"
 
-#: lib/evo_dash_web/components/project_components.ex:518
+#: lib/evo_dash_web/components/project_components.ex:526
 #, elixir-autogen, elixir-format
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "Pintasan cepat untuk perintah pengembangan umum. Klik Jalankan untuk menjalankan."
@@ -1754,11 +1737,6 @@ msgstr "Periksa Ulang"
 #, elixir-autogen, elixir-format
 msgid "Reasoning Effort"
 msgstr "Upaya Penalaran"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:75
-#, elixir-autogen, elixir-format
-msgid "Reject Changes"
-msgstr "Tolak Perubahan"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:71
 #, elixir-autogen, elixir-format
@@ -1803,7 +1781,7 @@ msgstr "Repositori '%{id}' sudah terdaftar."
 msgid "Repo '%{id}' not found."
 msgstr "Repositori '%{id}' tidak ditemukan."
 
-#: lib/evo_dash_web/components/project_components.ex:593
+#: lib/evo_dash_web/components/project_components.ex:601
 #, elixir-autogen, elixir-format
 msgid "Repo ID"
 msgstr "ID Repo"
@@ -1910,7 +1888,7 @@ msgstr "Percobaan Ulang"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:86
 #: lib/evo_dash_web/components/settings_components.ex:519
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:261
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:262
 #: lib/evo_dash_web/live/welcome_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Retry"
@@ -1947,7 +1925,7 @@ msgstr "Tinjauan Tidak Tersedia"
 msgid "Review ignored and dismissed."
 msgstr "Tinjauan diabaikan dan ditutup."
 
-#: lib/evo_dash_web/components/project_components.ex:527
+#: lib/evo_dash_web/components/project_components.ex:535
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "Jalankan"
@@ -2095,7 +2073,7 @@ msgstr "Mengatur izin"
 msgid "Settings"
 msgstr "Pengaturan"
 
-#: lib/evo_dash_web/components/project_components.ex:654
+#: lib/evo_dash_web/components/project_components.ex:662
 #, elixir-autogen, elixir-format
 msgid "Short description of what this repo does"
 msgstr "Deskripsi singkat tentang fungsi repositori ini"
@@ -2504,10 +2482,6 @@ msgid "View Full Objective"
 msgstr "Lihat Objektif Penuh"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:105
-#, elixir-autogen, elixir-format
-msgid "View GitHub PR"
-msgstr "Lihat GitHub PR"
-
 #: lib/evo_dash_web/components/task_card_components.ex:669
 #: lib/evo_dash_web/components/task_card_components.ex:717
 #, elixir-autogen, elixir-format
@@ -2542,7 +2516,7 @@ msgstr "Kami tidak dapat menemukan internet"
 msgid "Worktree"
 msgstr "Pohon Kerja"
 
-#: lib/evo_dash_web/components/project_components.ex:506
+#: lib/evo_dash_web/components/project_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Worktree Init Script"
 msgstr "Skrip Inisialisasi Pohon Kerja"
@@ -2638,12 +2612,12 @@ msgstr "flake.nix"
 msgid "freq_penalty"
 msgstr "freq_penalty"
 
-#: lib/evo_dash_web/components/project_components.ex:430
+#: lib/evo_dash_web/components/project_components.ex:435
 #, elixir-autogen, elixir-format
 msgid "genesis.toml"
 msgstr "genesis.toml"
 
-#: lib/evo_dash_web/components/project_components.ex:482
+#: lib/evo_dash_web/components/project_components.ex:490
 #, elixir-autogen, elixir-format
 msgid "genesis.toml found — using project settings"
 msgstr "genesis.toml ditemukan — menggunakan pengaturan proyek"
@@ -3133,7 +3107,7 @@ msgstr "Opsi khusus penyedia yang diteruskan ke API LLM. Untuk OpenAI, 'store' o
 msgid "Ready to build!"
 msgstr "Siap membangun!"
 
-#: lib/evo_dash_web/components/project_components.ex:167
+#: lib/evo_dash_web/components/project_components.ex:169
 #, elixir-autogen, elixir-format
 msgid "Recent Projects"
 msgstr "Proyek Terbaru"
@@ -3367,8 +3341,8 @@ msgstr "Konfigurasi"
 msgid "Copying config"
 msgstr "Menyalin konfigurasi"
 
-#: lib/evo_dash_web/components/project_components.ex:232
-#: lib/evo_dash_web/components/project_components.ex:339
+#: lib/evo_dash_web/components/project_components.ex:234
+#: lib/evo_dash_web/components/project_components.ex:343
 #, elixir-autogen, elixir-format
 msgid "Create New Project"
 msgstr "Buat Proyek Baru"
@@ -3403,18 +3377,18 @@ msgstr "Jalankan"
 msgid "Leave blank to auto-download the release on the remote"
 msgstr "Kosongkan untuk mengunduh rilis secara otomatis di remote"
 
-#: lib/evo_dash_web/components/project_components.ex:245
+#: lib/evo_dash_web/components/project_components.ex:247
 #, elixir-autogen, elixir-format
 msgid "Navigate"
 msgstr "Navigasi"
 
-#: lib/evo_dash_web/components/project_components.ex:238
+#: lib/evo_dash_web/components/project_components.ex:240
 #, elixir-autogen, elixir-format
 msgid "No matching projects"
 msgstr "Tidak ada proyek yang cocok"
 
-#: lib/evo_dash_web/components/project_components.ex:220
-#: lib/evo_dash_web/components/project_components.ex:271
+#: lib/evo_dash_web/components/project_components.ex:222
+#: lib/evo_dash_web/components/project_components.ex:274
 #, elixir-autogen, elixir-format
 msgid "Open Project by Path"
 msgstr "Buka Proyek berdasarkan Jalur"
@@ -3439,12 +3413,12 @@ msgstr "Platform (opsional)"
 msgid "Probing platform"
 msgstr "Mendeteksi platform"
 
-#: lib/evo_dash_web/components/project_components.ex:153
+#: lib/evo_dash_web/components/project_components.ex:155
 #, elixir-autogen, elixir-format
 msgid "Search projects..."
 msgstr "Cari proyek..."
 
-#: lib/evo_dash_web/components/project_components.ex:246
+#: lib/evo_dash_web/components/project_components.ex:248
 #, elixir-autogen, elixir-format
 msgid "Select"
 msgstr "Pilih"
@@ -3475,7 +3449,7 @@ msgid "All self-checks passed."
 msgstr "Semua pemeriksaan mandiri berhasil."
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:77
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:248
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:249
 #, elixir-autogen, elixir-format
 msgid "Cannot connect to %{name}"
 msgstr "Tidak dapat terhubung ke %{name}"
@@ -3548,13 +3522,13 @@ msgid "Command"
 msgstr "Perintah"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:66
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:226
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:227
 #, elixir-autogen, elixir-format
 msgid "Connecting to %{name}…"
 msgstr "Menghubungkan ke %{name}…"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:80
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:250
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:251
 #, elixir-autogen, elixir-format
 msgid "Connection lost or failed"
 msgstr "Koneksi terputus atau gagal"
@@ -3618,7 +3592,7 @@ msgid "Last 3 minutes"
 msgstr "3 menit terakhir"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:92
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:265
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:266
 #, elixir-autogen, elixir-format
 msgid "Manage Connections"
 msgstr "Kelola Koneksi"
@@ -3668,7 +3642,7 @@ msgstr "Pilih penyedia, lalu model, kemudian masukkan kunci API Anda. Kunci disi
 msgid "Project control unavailable"
 msgstr "Kontrol proyek tidak tersedia"
 
-#: lib/evo_dash_web/components/project_components.ex:196
+#: lib/evo_dash_web/components/project_components.ex:198
 #, elixir-autogen, elixir-format
 msgid "Remove %{name} from recent projects"
 msgstr "Hapus %{name} dari proyek terbaru"
@@ -3678,7 +3652,7 @@ msgstr "Hapus %{name} dari proyek terbaru"
 msgid "Remove entry"
 msgstr "Hapus entri"
 
-#: lib/evo_dash_web/components/project_components.ex:197
+#: lib/evo_dash_web/components/project_components.ex:199
 #, elixir-autogen, elixir-format
 msgid "Remove from recent projects"
 msgstr "Hapus dari proyek terbaru"
@@ -3750,7 +3724,7 @@ msgid "Show example"
 msgstr "Tampilkan contoh"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:95
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:269
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:270
 #, elixir-autogen, elixir-format
 msgid "Switch to Local"
 msgstr "Beralih ke Lokal"
@@ -3862,10 +3836,10 @@ msgstr "Masukkan jalur lengkap, misalnya D:\\Projects\\myproject atau /home/user
 msgid "Open or create a project"
 msgstr "Buka atau buat proyek"
 
-#: lib/evo_dash_web/components/project_components.ex:294
-#: lib/evo_dash_web/components/project_components.ex:348
-#: lib/evo_dash_web/components/project_components.ex:367
-#: lib/evo_dash_web/components/project_components.ex:684
+#: lib/evo_dash_web/components/project_components.ex:297
+#: lib/evo_dash_web/components/project_components.ex:352
+#: lib/evo_dash_web/components/project_components.ex:371
+#: lib/evo_dash_web/components/project_components.ex:692
 #, elixir-autogen, elixir-format
 msgid "Project path"
 msgstr "Jalur proyek"
@@ -3879,3 +3853,25 @@ msgstr "Di Genesis Anda hanya menulis prompt tingkat tinggi: jelaskan tujuan akh
 #, elixir-autogen, elixir-format
 msgid "Write high-level prompts, not code"
 msgstr "Tulis prompt tingkat tinggi, bukan kode"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:157
+#, elixir-autogen, elixir-format
+msgid "Continue"
+msgstr "Lanjutkan"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:95
+#, elixir-autogen, elixir-format
+msgid "Create PR"
+msgstr "Buat PR"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:54
+#: lib/evo_dash_web/components/review_components/actions.ex:65
+#, elixir-autogen, elixir-format
+msgid "Merge"
+msgstr "Gabungkan"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:75
+#, elixir-autogen, elixir-format
+msgid "Reject"
+msgstr "Tolak"

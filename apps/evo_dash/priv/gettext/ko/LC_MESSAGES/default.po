@@ -155,7 +155,7 @@ msgstr "ID가 \"%{id}\"인 프로필이 이미 존재합니다."
 msgid "A unique identifier for this profile"
 msgstr "이 프로필의 고유 식별자"
 
-#: lib/evo_dash_web/components/project_components.ex:595
+#: lib/evo_dash_web/components/project_components.ex:603
 #, elixir-autogen, elixir-format
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "이 저장소의 고유 식별자 (예: 'original', 'upstream')"
@@ -182,7 +182,7 @@ msgstr "API 키가 이미 설정됨"
 msgid "API key saved successfully."
 msgstr "API 키가 성공적으로 저장되었습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:610
+#: lib/evo_dash_web/components/project_components.ex:618
 #, elixir-autogen, elixir-format
 msgid "Absolute path to the repository root on this machine"
 msgstr "이 컴퓨터에서 저장소 루트의 절대 경로"
@@ -202,7 +202,7 @@ msgstr "활성 작업"
 msgid "Active filters:"
 msgstr "활성 필터:"
 
-#: lib/evo_dash_web/components/project_components.ex:660
+#: lib/evo_dash_web/components/project_components.ex:668
 #: lib/evo_dash_web/live/settings_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Add"
@@ -214,7 +214,7 @@ msgstr "추가"
 msgid "Add Connection"
 msgstr "연결 추가"
 
-#: lib/evo_dash_web/components/project_components.ex:677
+#: lib/evo_dash_web/components/project_components.ex:685
 #, elixir-autogen, elixir-format
 msgid "Add Foreign Repo"
 msgstr "외부 저장소 추가"
@@ -451,9 +451,9 @@ msgstr "부트스트랩"
 msgid "Branch"
 msgstr "브랜치"
 
-#: lib/evo_dash_web/components/project_components.ex:286
-#: lib/evo_dash_web/components/project_components.ex:359
-#: lib/evo_dash_web/components/project_components.ex:641
+#: lib/evo_dash_web/components/project_components.ex:289
+#: lib/evo_dash_web/components/project_components.ex:363
+#: lib/evo_dash_web/components/project_components.ex:649
 #, elixir-autogen, elixir-format
 msgid "Browse"
 msgstr "찾아보기"
@@ -485,7 +485,7 @@ msgstr "캐시 적중률"
 msgid "Cached Tokens"
 msgstr "캐시된 토큰"
 
-#: lib/evo_dash_web/components/project_components.ex:667
+#: lib/evo_dash_web/components/project_components.ex:675
 #: lib/evo_dash_web/components/review_components/actions.ex:229
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:397
 #: lib/evo_dash_web/components/task_card_components.ex:133
@@ -557,7 +557,7 @@ msgstr "기록 지우기"
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "완료된 작업 기록을 모두 지우시겠습니까? 이 작업은 되돌릴 수 없습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:247
+#: lib/evo_dash_web/components/project_components.ex:249
 #: lib/evo_dash_web/helpers.ex:601
 #: lib/evo_dash_web/live/agents_live.html.heex:622
 #: lib/evo_dash_web/live/agents_live.html.heex:646
@@ -731,12 +731,6 @@ msgstr "컨텍스트 경로"
 msgid "Context tree detected — Evolution mode selected"
 msgstr "컨텍스트 트리 감지 — 진화 모드 선택됨"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
-#: lib/evo_dash_web/components/review_components/actions.ex:157
-#, elixir-autogen, elixir-format
-msgid "Continue from Here"
-msgstr "여기서부터 계속"
-
 #: lib/evo_dash_web/helpers.ex:118
 #: lib/evo_dash_web/live/tasks_live.ex:103
 #: lib/evo_dash_web/live/tasks_live.ex:173
@@ -785,15 +779,10 @@ msgstr "차이(diff) 데이터를 불러올 수 없습니다. 브랜치가 외�
 msgid "Crashed"
 msgstr "충돌"
 
-#: lib/evo_dash_web/components/project_components.ex:385
+#: lib/evo_dash_web/components/project_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Create"
 msgstr "만들기"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:95
-#, elixir-autogen, elixir-format
-msgid "Create GitHub PR"
-msgstr "GitHub PR 생성"
 
 #: lib/evo_dash_web/helpers.ex:658
 #, elixir-autogen, elixir-format
@@ -820,7 +809,7 @@ msgstr "어두운 테마"
 msgid "Default"
 msgstr "기본값"
 
-#: lib/evo_dash_web/components/project_components.ex:434
+#: lib/evo_dash_web/components/project_components.ex:439
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "기본값"
@@ -859,7 +848,7 @@ msgstr "생성할 코드베이스를 설명하세요..."
 msgid "Describe what you want to change or improve..."
 msgstr "변경하거나 개선할 내용을 설명하세요..."
 
-#: lib/evo_dash_web/components/project_components.ex:648
+#: lib/evo_dash_web/components/project_components.ex:656
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr "설명 (선택 사항)"
@@ -874,7 +863,7 @@ msgstr "상세 정보"
 msgid "Detecting OS"
 msgstr "운영체제 감지 중"
 
-#: lib/evo_dash_web/components/project_components.ex:516
+#: lib/evo_dash_web/components/project_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Dev Commands"
 msgstr "개발 명령어"
@@ -1126,7 +1115,7 @@ msgstr "프록시/집계 엔드포인트용입니다. 표준 제공자 엔드포
 msgid "For proxy/aggregator endpoints; leave empty for standard providers."
 msgstr "프록시/집계 엔드포인트용입니다. 표준 제공자는 비워두세요."
 
-#: lib/evo_dash_web/components/project_components.ex:538
+#: lib/evo_dash_web/components/project_components.ex:546
 #, elixir-autogen, elixir-format
 msgid "Foreign Repositories"
 msgstr "외부 저장소"
@@ -1141,7 +1130,7 @@ msgstr "외부 저장소 '%{repo_id}'가 성공적으로 등록되었습니다."
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "외부 저장소 '%{repo_id}'가 성공적으로 제거되었습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:542
+#: lib/evo_dash_web/components/project_components.ex:550
 #, elixir-autogen, elixir-format
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "외부 저장소는 작업 실행 중 에이전트가 접근할 수 있는 추가 코드베이스입니다. 원본 코드나 관련 프로젝트를 참조할 때 유용합니다."
@@ -1333,12 +1322,6 @@ msgstr "샌드박스 격리, 리소스 제한 및 프로세스 제약을 관리�
 msgid "Max Tokens"
 msgstr "최대 토큰"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:54
-#: lib/evo_dash_web/components/review_components/actions.ex:65
-#, elixir-autogen, elixir-format
-msgid "Merge Changes"
-msgstr "변경 사항 병합"
-
 #: lib/evo_dash_web/live/review_live.ex:478
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
@@ -1492,12 +1475,12 @@ msgstr "이 태스크에 대한 보관된 에이전트 데이터가 없습니다
 msgid "No diff data available for this review."
 msgstr "이 검토에 대한 diff 데이터가 없습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:551
+#: lib/evo_dash_web/components/project_components.ex:559
 #, elixir-autogen, elixir-format
 msgid "No foreign repositories registered"
 msgstr "등록된 외부 저장소가 없습니다"
 
-#: lib/evo_dash_web/components/project_components.ex:488
+#: lib/evo_dash_web/components/project_components.ex:496
 #, elixir-autogen, elixir-format
 msgid "No genesis.toml — using global defaults"
 msgstr "genesis.toml 없음 — 전역 기본값 사용 중"
@@ -1585,7 +1568,7 @@ msgstr "병렬 LLM 요청 슬롯 수"
 msgid "Objective"
 msgstr "목표"
 
-#: lib/evo_dash_web/components/project_components.ex:313
+#: lib/evo_dash_web/components/project_components.ex:316
 #: lib/evo_dash_web/helpers.ex:115
 #, elixir-autogen, elixir-format
 msgid "Open"
@@ -1632,7 +1615,7 @@ msgstr "%{total}페이지 중 %{current}페이지"
 msgid "Parent"
 msgstr "상위"
 
-#: lib/evo_dash_web/components/project_components.ex:609
+#: lib/evo_dash_web/components/project_components.ex:617
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:55
 #, elixir-autogen, elixir-format
 msgid "Path"
@@ -1694,12 +1677,12 @@ msgstr "프로필 ID"
 msgid "Profile id cannot be empty."
 msgstr "프로필 ID는 비워둘 수 없습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:498
+#: lib/evo_dash_web/components/project_components.ex:506
 #, elixir-autogen, elixir-format
 msgid "Project Root"
 msgstr "프로젝트 루트"
 
-#: lib/evo_dash_web/components/project_components.ex:426
+#: lib/evo_dash_web/components/project_components.ex:431
 #: lib/evo_dash_web/live/dashboard_live/remote_view.ex:188
 #, elixir-autogen, elixir-format
 msgid "Project Settings"
@@ -1735,7 +1718,7 @@ msgstr "풀 리퀘스트 생성됨: %{title}"
 msgid "Quick Setup"
 msgstr "빠른 설정"
 
-#: lib/evo_dash_web/components/project_components.ex:518
+#: lib/evo_dash_web/components/project_components.ex:526
 #, elixir-autogen, elixir-format
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "일반적인 개발 명령어의 빠른 바로가기입니다. 실행하려면 실행을 클릭하세요."
@@ -1754,11 +1737,6 @@ msgstr "재확인"
 #, elixir-autogen, elixir-format
 msgid "Reasoning Effort"
 msgstr "추론 노력"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:75
-#, elixir-autogen, elixir-format
-msgid "Reject Changes"
-msgstr "변경 사항 거절"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:71
 #, elixir-autogen, elixir-format
@@ -1803,7 +1781,7 @@ msgstr "저장소 '%{id}'는 이미 등록되어 있습니다."
 msgid "Repo '%{id}' not found."
 msgstr "저장소 '%{id}'를 찾을 수 없습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:593
+#: lib/evo_dash_web/components/project_components.ex:601
 #, elixir-autogen, elixir-format
 msgid "Repo ID"
 msgstr "저장소 ID"
@@ -1910,7 +1888,7 @@ msgstr "재시도"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:86
 #: lib/evo_dash_web/components/settings_components.ex:519
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:261
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:262
 #: lib/evo_dash_web/live/welcome_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Retry"
@@ -1947,7 +1925,7 @@ msgstr "검토 불가"
 msgid "Review ignored and dismissed."
 msgstr "검토가 무시되고 종료되었습니다."
 
-#: lib/evo_dash_web/components/project_components.ex:527
+#: lib/evo_dash_web/components/project_components.ex:535
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "실행"
@@ -2095,7 +2073,7 @@ msgstr "권한 설정 중"
 msgid "Settings"
 msgstr "설정"
 
-#: lib/evo_dash_web/components/project_components.ex:654
+#: lib/evo_dash_web/components/project_components.ex:662
 #, elixir-autogen, elixir-format
 msgid "Short description of what this repo does"
 msgstr "이 저장소가做什么 작업을 하는지에 대한 간단한 설명"
@@ -2504,10 +2482,6 @@ msgid "View Full Objective"
 msgstr "전체 목표 보기"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:105
-#, elixir-autogen, elixir-format
-msgid "View GitHub PR"
-msgstr "GitHub PR 보기"
-
 #: lib/evo_dash_web/components/task_card_components.ex:669
 #: lib/evo_dash_web/components/task_card_components.ex:717
 #, elixir-autogen, elixir-format
@@ -2542,7 +2516,7 @@ msgstr "인터넷에 연결할 수 없습니다"
 msgid "Worktree"
 msgstr "작업 트리"
 
-#: lib/evo_dash_web/components/project_components.ex:506
+#: lib/evo_dash_web/components/project_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Worktree Init Script"
 msgstr "작업 트리 초기화 스크립트"
@@ -2638,12 +2612,12 @@ msgstr "flake.nix"
 msgid "freq_penalty"
 msgstr "freq_penalty"
 
-#: lib/evo_dash_web/components/project_components.ex:430
+#: lib/evo_dash_web/components/project_components.ex:435
 #, elixir-autogen, elixir-format
 msgid "genesis.toml"
 msgstr "genesis.toml"
 
-#: lib/evo_dash_web/components/project_components.ex:482
+#: lib/evo_dash_web/components/project_components.ex:490
 #, elixir-autogen, elixir-format
 msgid "genesis.toml found — using project settings"
 msgstr "genesis.toml 발견 — 프로젝트 설정 사용 중"
@@ -3133,7 +3107,7 @@ msgstr "LLM API에 전달되는 제공자별 옵션입니다. OpenAI의 경우 '
 msgid "Ready to build!"
 msgstr "빌드할 준비 완료!"
 
-#: lib/evo_dash_web/components/project_components.ex:167
+#: lib/evo_dash_web/components/project_components.ex:169
 #, elixir-autogen, elixir-format
 msgid "Recent Projects"
 msgstr "최근 프로젝트"
@@ -3367,8 +3341,8 @@ msgstr "구성"
 msgid "Copying config"
 msgstr "구성 복사 중"
 
-#: lib/evo_dash_web/components/project_components.ex:232
-#: lib/evo_dash_web/components/project_components.ex:339
+#: lib/evo_dash_web/components/project_components.ex:234
+#: lib/evo_dash_web/components/project_components.ex:343
 #, elixir-autogen, elixir-format
 msgid "Create New Project"
 msgstr "새 프로젝트 만들기"
@@ -3403,18 +3377,18 @@ msgstr "실행"
 msgid "Leave blank to auto-download the release on the remote"
 msgstr "비워 두면 원격에서 릴리스를 자동으로 다운로드합니다"
 
-#: lib/evo_dash_web/components/project_components.ex:245
+#: lib/evo_dash_web/components/project_components.ex:247
 #, elixir-autogen, elixir-format
 msgid "Navigate"
 msgstr "이동"
 
-#: lib/evo_dash_web/components/project_components.ex:238
+#: lib/evo_dash_web/components/project_components.ex:240
 #, elixir-autogen, elixir-format
 msgid "No matching projects"
 msgstr "일치하는 프로젝트 없음"
 
-#: lib/evo_dash_web/components/project_components.ex:220
-#: lib/evo_dash_web/components/project_components.ex:271
+#: lib/evo_dash_web/components/project_components.ex:222
+#: lib/evo_dash_web/components/project_components.ex:274
 #, elixir-autogen, elixir-format
 msgid "Open Project by Path"
 msgstr "경로로 프로젝트 열기"
@@ -3439,12 +3413,12 @@ msgstr "플랫폼 (선택 사항)"
 msgid "Probing platform"
 msgstr "플랫폼 감지 중"
 
-#: lib/evo_dash_web/components/project_components.ex:153
+#: lib/evo_dash_web/components/project_components.ex:155
 #, elixir-autogen, elixir-format
 msgid "Search projects..."
 msgstr "프로젝트 검색..."
 
-#: lib/evo_dash_web/components/project_components.ex:246
+#: lib/evo_dash_web/components/project_components.ex:248
 #, elixir-autogen, elixir-format
 msgid "Select"
 msgstr "선택"
@@ -3475,7 +3449,7 @@ msgid "All self-checks passed."
 msgstr "모든 자체 점검이 통과되었습니다."
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:77
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:248
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:249
 #, elixir-autogen, elixir-format
 msgid "Cannot connect to %{name}"
 msgstr "%{name}에 연결할 수 없습니다"
@@ -3548,13 +3522,13 @@ msgid "Command"
 msgstr "명령"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:66
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:226
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:227
 #, elixir-autogen, elixir-format
 msgid "Connecting to %{name}…"
 msgstr "%{name}에 연결하는 중…"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:80
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:250
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:251
 #, elixir-autogen, elixir-format
 msgid "Connection lost or failed"
 msgstr "연결이 끊겼거나 실패했습니다"
@@ -3618,7 +3592,7 @@ msgid "Last 3 minutes"
 msgstr "지난 3분"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:92
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:265
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:266
 #, elixir-autogen, elixir-format
 msgid "Manage Connections"
 msgstr "연결 관리"
@@ -3668,7 +3642,7 @@ msgstr "제공자를 선택하고 모델을 고른 다음 API 키를 입력하�
 msgid "Project control unavailable"
 msgstr "프로젝트 제어를 사용할 수 없음"
 
-#: lib/evo_dash_web/components/project_components.ex:196
+#: lib/evo_dash_web/components/project_components.ex:198
 #, elixir-autogen, elixir-format
 msgid "Remove %{name} from recent projects"
 msgstr "최근 프로젝트에서 %{name} 제거"
@@ -3678,7 +3652,7 @@ msgstr "최근 프로젝트에서 %{name} 제거"
 msgid "Remove entry"
 msgstr "항목 제거"
 
-#: lib/evo_dash_web/components/project_components.ex:197
+#: lib/evo_dash_web/components/project_components.ex:199
 #, elixir-autogen, elixir-format
 msgid "Remove from recent projects"
 msgstr "최근 프로젝트에서 제거"
@@ -3750,7 +3724,7 @@ msgid "Show example"
 msgstr "예시 보기"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:95
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:269
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:270
 #, elixir-autogen, elixir-format
 msgid "Switch to Local"
 msgstr "로컬로 전환"
@@ -3862,10 +3836,10 @@ msgstr "전체 경로를 입력하세요. 예: D:\\Projects\\myproject 또는 /h
 msgid "Open or create a project"
 msgstr "프로젝트 열기 또는 만들기"
 
-#: lib/evo_dash_web/components/project_components.ex:294
-#: lib/evo_dash_web/components/project_components.ex:348
-#: lib/evo_dash_web/components/project_components.ex:367
-#: lib/evo_dash_web/components/project_components.ex:684
+#: lib/evo_dash_web/components/project_components.ex:297
+#: lib/evo_dash_web/components/project_components.ex:352
+#: lib/evo_dash_web/components/project_components.ex:371
+#: lib/evo_dash_web/components/project_components.ex:692
 #, elixir-autogen, elixir-format
 msgid "Project path"
 msgstr "프로젝트 경로"
@@ -3879,3 +3853,25 @@ msgstr "Genesis에서는 최종 목표, 원하는 기능, 사용할 프레임워
 #, elixir-autogen, elixir-format
 msgid "Write high-level prompts, not code"
 msgstr "코드 대신 고수준 프롬프트를 작성하세요"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:157
+#, elixir-autogen, elixir-format
+msgid "Continue"
+msgstr "계속"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:95
+#, elixir-autogen, elixir-format
+msgid "Create PR"
+msgstr "PR 생성"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:54
+#: lib/evo_dash_web/components/review_components/actions.ex:65
+#, elixir-autogen, elixir-format
+msgid "Merge"
+msgstr "병합"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:75
+#, elixir-autogen, elixir-format
+msgid "Reject"
+msgstr "거부"

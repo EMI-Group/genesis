@@ -155,7 +155,7 @@ msgstr "โปรไฟล์ที่มีรหัส \"%{id}\" มีอย�
 msgid "A unique identifier for this profile"
 msgstr "ตัวระบุที่ไม่ซ้ำสำหรับโปรไฟล์นี้"
 
-#: lib/evo_dash_web/components/project_components.ex:595
+#: lib/evo_dash_web/components/project_components.ex:603
 #, elixir-autogen, elixir-format
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "รหัสเฉพาะสำหรับระบุพื้นที่เก็บข้อมูลนี้ (เช่น 'original', 'upstream')"
@@ -182,7 +182,7 @@ msgstr "คีย์ API ถูกตั้งค่าไว้แล้ว"
 msgid "API key saved successfully."
 msgstr "บันทึกคีย์ API สำเร็จแล้ว"
 
-#: lib/evo_dash_web/components/project_components.ex:610
+#: lib/evo_dash_web/components/project_components.ex:618
 #, elixir-autogen, elixir-format
 msgid "Absolute path to the repository root on this machine"
 msgstr "พาธแบบสัมบูรณ์ไปยังโฟลเดอร์รากของพื้นที่เก็บข้อมูลบนเครื่องนี้"
@@ -202,7 +202,7 @@ msgstr "งานที่กำลังทำงาน"
 msgid "Active filters:"
 msgstr "ตัวกรองที่ใช้งานอยู่:"
 
-#: lib/evo_dash_web/components/project_components.ex:660
+#: lib/evo_dash_web/components/project_components.ex:668
 #: lib/evo_dash_web/live/settings_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Add"
@@ -214,7 +214,7 @@ msgstr "เพิ่ม"
 msgid "Add Connection"
 msgstr "เพิ่มการเชื่อมต่อ"
 
-#: lib/evo_dash_web/components/project_components.ex:677
+#: lib/evo_dash_web/components/project_components.ex:685
 #, elixir-autogen, elixir-format
 msgid "Add Foreign Repo"
 msgstr "เพิ่มพื้นที่เก็บข้อมูลภายนอก"
@@ -451,9 +451,9 @@ msgstr "บูตสแตรป"
 msgid "Branch"
 msgstr "แบรนช์"
 
-#: lib/evo_dash_web/components/project_components.ex:286
-#: lib/evo_dash_web/components/project_components.ex:359
-#: lib/evo_dash_web/components/project_components.ex:641
+#: lib/evo_dash_web/components/project_components.ex:289
+#: lib/evo_dash_web/components/project_components.ex:363
+#: lib/evo_dash_web/components/project_components.ex:649
 #, elixir-autogen, elixir-format
 msgid "Browse"
 msgstr "เรียกดู"
@@ -485,7 +485,7 @@ msgstr "อัตราการชนแคช"
 msgid "Cached Tokens"
 msgstr "โทเค็นที่แคชไว้"
 
-#: lib/evo_dash_web/components/project_components.ex:667
+#: lib/evo_dash_web/components/project_components.ex:675
 #: lib/evo_dash_web/components/review_components/actions.ex:229
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:397
 #: lib/evo_dash_web/components/task_card_components.ex:133
@@ -557,7 +557,7 @@ msgstr "ล้างประวัติ"
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "ล้างประวัติงานที่เสร็จสิ้นทั้งหมด? การกระทำนี้ไม่สามารถยกเลิกได้"
 
-#: lib/evo_dash_web/components/project_components.ex:247
+#: lib/evo_dash_web/components/project_components.ex:249
 #: lib/evo_dash_web/helpers.ex:601
 #: lib/evo_dash_web/live/agents_live.html.heex:622
 #: lib/evo_dash_web/live/agents_live.html.heex:646
@@ -731,12 +731,6 @@ msgstr "เส้นทางบริบท"
 msgid "Context tree detected — Evolution mode selected"
 msgstr "ตรวจพบต้นไม้บริบท — เลือกโหมดวิวัฒนาการ"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
-#: lib/evo_dash_web/components/review_components/actions.ex:157
-#, elixir-autogen, elixir-format
-msgid "Continue from Here"
-msgstr "ดำเนินการต่อจากนี้"
-
 #: lib/evo_dash_web/helpers.ex:118
 #: lib/evo_dash_web/live/tasks_live.ex:103
 #: lib/evo_dash_web/live/tasks_live.ex:173
@@ -785,15 +779,10 @@ msgstr "ไม่สามารถโหลดข้อมูล diff ได้
 msgid "Crashed"
 msgstr "ขัดข้อง"
 
-#: lib/evo_dash_web/components/project_components.ex:385
+#: lib/evo_dash_web/components/project_components.ex:389
 #, elixir-autogen, elixir-format
 msgid "Create"
 msgstr "สร้าง"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:95
-#, elixir-autogen, elixir-format
-msgid "Create GitHub PR"
-msgstr "สร้าง GitHub PR"
 
 #: lib/evo_dash_web/helpers.ex:658
 #, elixir-autogen, elixir-format
@@ -820,7 +809,7 @@ msgstr "ธีมมืด"
 msgid "Default"
 msgstr "ค่าเริ่มต้น"
 
-#: lib/evo_dash_web/components/project_components.ex:434
+#: lib/evo_dash_web/components/project_components.ex:439
 #, elixir-autogen, elixir-format
 msgid "Defaults"
 msgstr "ค่าเริ่มต้น"
@@ -859,7 +848,7 @@ msgstr "อธิบายโค้ดเบสที่คุณต้องก
 msgid "Describe what you want to change or improve..."
 msgstr "อธิบายสิ่งที่คุณต้องการเปลี่ยนแปลงหรือปรับปรุง..."
 
-#: lib/evo_dash_web/components/project_components.ex:648
+#: lib/evo_dash_web/components/project_components.ex:656
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr "คำอธิบาย (ไม่บังคับ)"
@@ -874,7 +863,7 @@ msgstr "รายละเอียด"
 msgid "Detecting OS"
 msgstr "กำลังตรวจจับระบบปฏิบัติการ"
 
-#: lib/evo_dash_web/components/project_components.ex:516
+#: lib/evo_dash_web/components/project_components.ex:524
 #, elixir-autogen, elixir-format
 msgid "Dev Commands"
 msgstr "คำสั่งสำหรับนักพัฒนา"
@@ -1126,7 +1115,7 @@ msgstr "สำหรับปลายทางพร็อกซี/ตัว�
 msgid "For proxy/aggregator endpoints; leave empty for standard providers."
 msgstr "สำหรับเอนด์พอยต์พร็อกซี/ผู้รวบรวม เว้นว่างไว้สำหรับผู้ให้บริการมาตรฐาน"
 
-#: lib/evo_dash_web/components/project_components.ex:538
+#: lib/evo_dash_web/components/project_components.ex:546
 #, elixir-autogen, elixir-format
 msgid "Foreign Repositories"
 msgstr "พื้นที่เก็บข้อมูลภายนอก"
@@ -1141,7 +1130,7 @@ msgstr "รีโมทที่เก็บ '%{repo_id}' ลงทะเบี�
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "รีโมทที่เก็บ '%{repo_id}' ลบออกสำเร็จแล้ว"
 
-#: lib/evo_dash_web/components/project_components.ex:542
+#: lib/evo_dash_web/components/project_components.ex:550
 #, elixir-autogen, elixir-format
 msgid "Foreign repos are additional codebases accessible to agents during task execution. Useful for referencing original code or related projects."
 msgstr "พื้นที่เก็บข้อมูลภายนอกคือฐานโค้ดเพิ่มเติมที่เอเจนต์สามารถเข้าถึงได้ระหว่างการทำงาน เหมาะสำหรับใช้อ้างอิงโค้ดต้นฉบับหรือโปรเจกต์ที่เกี่ยวข้อง"
@@ -1333,12 +1322,6 @@ msgstr "จัดการการแยกแซนด์บ็อกซ์ �
 msgid "Max Tokens"
 msgstr "โทเค็นสูงสุด"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:54
-#: lib/evo_dash_web/components/review_components/actions.ex:65
-#, elixir-autogen, elixir-format
-msgid "Merge Changes"
-msgstr "รวมการเปลี่ยนแปลง"
-
 #: lib/evo_dash_web/live/review_live.ex:478
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
@@ -1492,12 +1475,12 @@ msgstr "ไม่มีข้อมูลเอเจนต์ที่เก็
 msgid "No diff data available for this review."
 msgstr "ไม่มีข้อมูล diff สำหรับการตรวจสอบนี้"
 
-#: lib/evo_dash_web/components/project_components.ex:551
+#: lib/evo_dash_web/components/project_components.ex:559
 #, elixir-autogen, elixir-format
 msgid "No foreign repositories registered"
 msgstr "ยังไม่มีพื้นที่เก็บข้อมูลภายนอกที่ลงทะเบียน"
 
-#: lib/evo_dash_web/components/project_components.ex:488
+#: lib/evo_dash_web/components/project_components.ex:496
 #, elixir-autogen, elixir-format
 msgid "No genesis.toml — using global defaults"
 msgstr "ไม่มี genesis.toml — ใช้ค่าเริ่มต้นจากส่วนกลาง"
@@ -1585,7 +1568,7 @@ msgstr "จำนวนช่องคำขอ LLM แบบขนาน"
 msgid "Objective"
 msgstr "วัตถุประสงค์"
 
-#: lib/evo_dash_web/components/project_components.ex:313
+#: lib/evo_dash_web/components/project_components.ex:316
 #: lib/evo_dash_web/helpers.ex:115
 #, elixir-autogen, elixir-format
 msgid "Open"
@@ -1632,7 +1615,7 @@ msgstr "หน้า %{current} จาก %{total}"
 msgid "Parent"
 msgstr "แม่"
 
-#: lib/evo_dash_web/components/project_components.ex:609
+#: lib/evo_dash_web/components/project_components.ex:617
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:55
 #, elixir-autogen, elixir-format
 msgid "Path"
@@ -1694,12 +1677,12 @@ msgstr "รหัสโปรไฟล์"
 msgid "Profile id cannot be empty."
 msgstr "รหัสโปรไฟล์ต้องไม่เว้นว่าง"
 
-#: lib/evo_dash_web/components/project_components.ex:498
+#: lib/evo_dash_web/components/project_components.ex:506
 #, elixir-autogen, elixir-format
 msgid "Project Root"
 msgstr "โฟลเดอร์รากของโปรเจกต์"
 
-#: lib/evo_dash_web/components/project_components.ex:426
+#: lib/evo_dash_web/components/project_components.ex:431
 #: lib/evo_dash_web/live/dashboard_live/remote_view.ex:188
 #, elixir-autogen, elixir-format
 msgid "Project Settings"
@@ -1735,7 +1718,7 @@ msgstr "สร้าง pull request แล้ว: %{title}"
 msgid "Quick Setup"
 msgstr "ตั้งค่าด่วน"
 
-#: lib/evo_dash_web/components/project_components.ex:518
+#: lib/evo_dash_web/components/project_components.ex:526
 #, elixir-autogen, elixir-format
 msgid "Quick shortcuts for common development commands. Click Run to execute."
 msgstr "ทางลัดสำหรับคำสั่งพัฒนาทั่วไป คลิก 'เรียกใช้' เพื่อดำเนินการ"
@@ -1754,11 +1737,6 @@ msgstr "ตรวจสอบอีกครั้ง"
 #, elixir-autogen, elixir-format
 msgid "Reasoning Effort"
 msgstr "ระดับการใช้เหตุผล"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:75
-#, elixir-autogen, elixir-format
-msgid "Reject Changes"
-msgstr "ปฏิเสธการเปลี่ยนแปลง"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:71
 #, elixir-autogen, elixir-format
@@ -1803,7 +1781,7 @@ msgstr "ที่เก็บ '%{id}' ลงทะเบียนไว้แล
 msgid "Repo '%{id}' not found."
 msgstr "ไม่พบที่เก็บ '%{id}'"
 
-#: lib/evo_dash_web/components/project_components.ex:593
+#: lib/evo_dash_web/components/project_components.ex:601
 #, elixir-autogen, elixir-format
 msgid "Repo ID"
 msgstr "รหัสพื้นที่เก็บข้อมูล"
@@ -1910,7 +1888,7 @@ msgstr "การลองใหม่"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:86
 #: lib/evo_dash_web/components/settings_components.ex:519
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:261
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:262
 #: lib/evo_dash_web/live/welcome_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Retry"
@@ -1947,7 +1925,7 @@ msgstr "ไม่สามารถตรวจสอบได้"
 msgid "Review ignored and dismissed."
 msgstr "การตรวจสอบถูกเพิกเฉยและยกเลิกแล้ว"
 
-#: lib/evo_dash_web/components/project_components.ex:527
+#: lib/evo_dash_web/components/project_components.ex:535
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "เรียกใช้"
@@ -2095,7 +2073,7 @@ msgstr "กำลังตั้งค่าสิทธิ์"
 msgid "Settings"
 msgstr "การตั้งค่า"
 
-#: lib/evo_dash_web/components/project_components.ex:654
+#: lib/evo_dash_web/components/project_components.ex:662
 #, elixir-autogen, elixir-format
 msgid "Short description of what this repo does"
 msgstr "คำอธิบายสั้น ๆ ว่าพื้นที่เก็บข้อมูลนี้ทำหน้าที่อะไร"
@@ -2504,10 +2482,6 @@ msgid "View Full Objective"
 msgstr "ดูวัตถุประสงค์เต็ม"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:105
-#, elixir-autogen, elixir-format
-msgid "View GitHub PR"
-msgstr "ดู GitHub PR"
-
 #: lib/evo_dash_web/components/task_card_components.ex:669
 #: lib/evo_dash_web/components/task_card_components.ex:717
 #, elixir-autogen, elixir-format
@@ -2542,7 +2516,7 @@ msgstr "ไม่พบการเชื่อมต่ออินเทอร
 msgid "Worktree"
 msgstr "เวิร์กทรี"
 
-#: lib/evo_dash_web/components/project_components.ex:506
+#: lib/evo_dash_web/components/project_components.ex:514
 #, elixir-autogen, elixir-format
 msgid "Worktree Init Script"
 msgstr "สคริปต์เริ่มต้นเวิร์กทรี"
@@ -2638,12 +2612,12 @@ msgstr "flake.nix"
 msgid "freq_penalty"
 msgstr "freq_penalty"
 
-#: lib/evo_dash_web/components/project_components.ex:430
+#: lib/evo_dash_web/components/project_components.ex:435
 #, elixir-autogen, elixir-format
 msgid "genesis.toml"
 msgstr "genesis.toml"
 
-#: lib/evo_dash_web/components/project_components.ex:482
+#: lib/evo_dash_web/components/project_components.ex:490
 #, elixir-autogen, elixir-format
 msgid "genesis.toml found — using project settings"
 msgstr "พบ genesis.toml — ใช้การตั้งค่าของโปรเจกต์"
@@ -3133,7 +3107,7 @@ msgstr "ตัวเลือกเฉพาะผู้ให้บริกา
 msgid "Ready to build!"
 msgstr "พร้อมที่จะสร้างแล้ว!"
 
-#: lib/evo_dash_web/components/project_components.ex:167
+#: lib/evo_dash_web/components/project_components.ex:169
 #, elixir-autogen, elixir-format
 msgid "Recent Projects"
 msgstr "โปรเจกต์ล่าสุด"
@@ -3367,8 +3341,8 @@ msgstr "กำหนดค่า"
 msgid "Copying config"
 msgstr "กำลังคัดลอกการตั้งค่า"
 
-#: lib/evo_dash_web/components/project_components.ex:232
-#: lib/evo_dash_web/components/project_components.ex:339
+#: lib/evo_dash_web/components/project_components.ex:234
+#: lib/evo_dash_web/components/project_components.ex:343
 #, elixir-autogen, elixir-format
 msgid "Create New Project"
 msgstr "สร้างโปรเจกต์ใหม่"
@@ -3403,18 +3377,18 @@ msgstr "เปิดใช้งาน"
 msgid "Leave blank to auto-download the release on the remote"
 msgstr "เว้นว่างเพื่อดาวน์โหลดรีลีสบนเครื่องระยะไกลโดยอัตโนมัติ"
 
-#: lib/evo_dash_web/components/project_components.ex:245
+#: lib/evo_dash_web/components/project_components.ex:247
 #, elixir-autogen, elixir-format
 msgid "Navigate"
 msgstr "นำทาง"
 
-#: lib/evo_dash_web/components/project_components.ex:238
+#: lib/evo_dash_web/components/project_components.ex:240
 #, elixir-autogen, elixir-format
 msgid "No matching projects"
 msgstr "ไม่พบโปรเจกต์ที่ตรงกัน"
 
-#: lib/evo_dash_web/components/project_components.ex:220
-#: lib/evo_dash_web/components/project_components.ex:271
+#: lib/evo_dash_web/components/project_components.ex:222
+#: lib/evo_dash_web/components/project_components.ex:274
 #, elixir-autogen, elixir-format
 msgid "Open Project by Path"
 msgstr "เปิดโปรเจกต์ด้วยพาธ"
@@ -3439,12 +3413,12 @@ msgstr "แพลตฟอร์ม (ไม่บังคับ)"
 msgid "Probing platform"
 msgstr "กำลังตรวจสอบแพลตฟอร์ม"
 
-#: lib/evo_dash_web/components/project_components.ex:153
+#: lib/evo_dash_web/components/project_components.ex:155
 #, elixir-autogen, elixir-format
 msgid "Search projects..."
 msgstr "ค้นหาโปรเจกต์..."
 
-#: lib/evo_dash_web/components/project_components.ex:246
+#: lib/evo_dash_web/components/project_components.ex:248
 #, elixir-autogen, elixir-format
 msgid "Select"
 msgstr "เลือก"
@@ -3475,7 +3449,7 @@ msgid "All self-checks passed."
 msgstr "การตรวจสอบตนเองทั้งหมดผ่านแล้ว"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:77
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:248
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:249
 #, elixir-autogen, elixir-format
 msgid "Cannot connect to %{name}"
 msgstr "ไม่สามารถเชื่อมต่อไปยัง %{name} ได้"
@@ -3548,13 +3522,13 @@ msgid "Command"
 msgstr "คำสั่ง"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:66
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:226
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:227
 #, elixir-autogen, elixir-format
 msgid "Connecting to %{name}…"
 msgstr "กำลังเชื่อมต่อไปยัง %{name}…"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:80
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:250
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:251
 #, elixir-autogen, elixir-format
 msgid "Connection lost or failed"
 msgstr "การเชื่อมต่อขาดหายหรือล้มเหลว"
@@ -3618,7 +3592,7 @@ msgid "Last 3 minutes"
 msgstr "3 นาทีที่ผ่านมา"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:92
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:265
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:266
 #, elixir-autogen, elixir-format
 msgid "Manage Connections"
 msgstr "จัดการการเชื่อมต่อ"
@@ -3668,7 +3642,7 @@ msgstr "เลือกผู้ให้บริการ เลือกโ�
 msgid "Project control unavailable"
 msgstr "ไม่สามารถควบคุมโปรเจกต์ได้"
 
-#: lib/evo_dash_web/components/project_components.ex:196
+#: lib/evo_dash_web/components/project_components.ex:198
 #, elixir-autogen, elixir-format
 msgid "Remove %{name} from recent projects"
 msgstr "ลบ %{name} ออกจากโปรเจกต์ล่าสุด"
@@ -3678,7 +3652,7 @@ msgstr "ลบ %{name} ออกจากโปรเจกต์ล่าสุ
 msgid "Remove entry"
 msgstr "ลบรายการ"
 
-#: lib/evo_dash_web/components/project_components.ex:197
+#: lib/evo_dash_web/components/project_components.ex:199
 #, elixir-autogen, elixir-format
 msgid "Remove from recent projects"
 msgstr "ลบออกจากโปรเจกต์ล่าสุด"
@@ -3750,7 +3724,7 @@ msgid "Show example"
 msgstr "แสดงตัวอย่าง"
 
 #: lib/evo_dash_web/components/remote_gate_components.ex:95
-#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:269
+#: lib/evo_dash_web/live/dashboard_live/remote_view.ex:270
 #, elixir-autogen, elixir-format
 msgid "Switch to Local"
 msgstr "สลับเป็นโหมดท้องถิ่น"
@@ -3862,10 +3836,10 @@ msgstr "กรอกพาธแบบเต็ม เช่น D:\\Projects\\my
 msgid "Open or create a project"
 msgstr "เปิดหรือสร้างโปรเจกต์"
 
-#: lib/evo_dash_web/components/project_components.ex:294
-#: lib/evo_dash_web/components/project_components.ex:348
-#: lib/evo_dash_web/components/project_components.ex:367
-#: lib/evo_dash_web/components/project_components.ex:684
+#: lib/evo_dash_web/components/project_components.ex:297
+#: lib/evo_dash_web/components/project_components.ex:352
+#: lib/evo_dash_web/components/project_components.ex:371
+#: lib/evo_dash_web/components/project_components.ex:692
 #, elixir-autogen, elixir-format
 msgid "Project path"
 msgstr "เส้นทางโปรเจกต์"
@@ -3879,3 +3853,25 @@ msgstr "ใน Genesis คุณเพียงแค่เขียนพรอ
 #, elixir-autogen, elixir-format
 msgid "Write high-level prompts, not code"
 msgstr "เขียนพรอมต์ระดับสูง ไม่ใช่โค้ด"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:157
+#, elixir-autogen, elixir-format
+msgid "Continue"
+msgstr "ดำเนินการต่อ"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:95
+#, elixir-autogen, elixir-format
+msgid "Create PR"
+msgstr "สร้าง PR"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:54
+#: lib/evo_dash_web/components/review_components/actions.ex:65
+#, elixir-autogen, elixir-format
+msgid "Merge"
+msgstr "รวม"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:75
+#, elixir-autogen, elixir-format
+msgid "Reject"
+msgstr "ปฏิเสธ"
