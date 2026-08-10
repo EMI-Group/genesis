@@ -37,6 +37,56 @@ defmodule EvoGit.Sandbox.NoneTest do
     # is tested separately.
   end
 
+  describe "resolve_executable/1" do
+    # Regression for a Windows crash: the old run_with_partial_windows path
+    # called raw `:os.find_executable/1` with a binary (Elixir string), which
+    # raises ArgumentError on OTP 27+ (internally it does `Name ++ ".exe"` — a
+    # binary ++ charlist). resolve_executable/1 normalizes input to a string
+    # and must NEVER raise for binary or charlist input.
+    test "accepts binary (Elixir string) input without raising ArgumentError" do
+      # The essential regression assertion: binary input must not raise.
+      # Whether "sh" resolves depends on the environment (the test env runs
+      # under Nix where System.find_executable("sh") resolves); guard on it.
+      result = None.resolve_executable("sh")
+
+      if System.find_executable("sh") do
+        assert is_binary(result)
+        assert result == System.find_executable("sh")
+      else
+        assert result == nil
+      end
+    end
+
+    test "accepts charlist input" do
+      result = None.resolve_executable(~c"sh")
+
+      if System.find_executable("sh") do
+        assert is_binary(result)
+        assert result == System.find_executable("sh")
+      else
+        assert result == nil
+      end
+    end
+
+    test "returns nil for a missing executable without raising" do
+      assert None.resolve_executable("genesis_definitely_missing_executable_xyz123") == nil
+      assert None.resolve_executable(~c"genesis_definitely_missing_executable_xyz123") == nil
+    end
+
+    test "returns an existing absolute path unchanged" do
+      case System.find_executable("sh") do
+        nil ->
+          # No reliably present absolute executable in this environment.
+          :ok
+
+        path when is_binary(path) ->
+          if Path.type(path) == :absolute do
+            assert None.resolve_executable(path) == path
+          end
+      end
+    end
+  end
+
   describe "run/4 — stdin redirection" do
     test "disables stdin so commands that read stdin don't hang" do
       # `cat` with no args reads from stdin. With stdin redirected from /dev/null,
@@ -59,7 +109,10 @@ defmodule EvoGit.Sandbox.NoneTest do
   describe "run/4 — GIT_EDITOR injection for git commands" do
     setup do
       tmp_dir =
-        Path.join(System.tmp_dir!(), "evo_git_none_git_test_" <> to_string(System.unique_integer()))
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_none_git_test_" <> to_string(System.unique_integer())
+        )
 
       File.mkdir_p!(tmp_dir)
       {_, 0} = System.cmd("git", ["init"], cd: tmp_dir)
@@ -80,7 +133,9 @@ defmodule EvoGit.Sandbox.NoneTest do
       assert String.ends_with?(String.trim(output), "true")
     end
 
-    test "sets LC_ALL=C so git output is locale-independent for a git command", %{tmp_dir: tmp_dir} do
+    test "sets LC_ALL=C so git output is locale-independent for a git command", %{
+      tmp_dir: tmp_dir
+    } do
       # `git var GIT_EDITOR` exit 0 confirms the process ran. The LC_ALL=C
       # value is exercised indirectly; a direct check is that a git command
       # runs successfully (the env list is accepted by System.cmd).
