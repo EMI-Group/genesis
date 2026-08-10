@@ -47,7 +47,7 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 **Platform-specific quirks**:
 - **ARM64 ImageOS fix**: GitHub ARM partner runners report unrecognized `ImageOS` values; the workflow sets `ImageOS=ubuntu24` via `$GITHUB_ENV` before `erlef/setup-beam`.
 - **Windows**: Uses `robocopy` (not `cp -a`) for release copy; `pwsh` for shell steps.
-- **Linux x86_64**: Downloads musl-linked ripgrep (static binary).
+- **Linux x86_64**: Downloads musl-linked ripgrep (static binary). AppImage bundling requires the wxWidgets 3.2 runtime (installed from the wxformbuilder/wxwidgets3.2 PPA + libglu1-mesa in the "Install wxWidgets 3.2 runtime (AppImage bundling)" step, gated to x64) because the desktop release's wx NIFs link against 3.2 sonames absent from jammy — linuxdeploy fails with the generic "failed to run linuxdeploy" otherwise (see desktop/src-tauri/CONTEXT.md → Known Issues).
 - **Nix environment variable** (`NIX_PATH`): passed through to release build steps.
 
 **Cache layers**: Mix deps (`deps/`), Mix build (`_build/`), Rust target (`Swatinem/rust-cache@v2`), Tauri CLI. The CLI is installed from npm `@tauri-apps/cli` (prebuilt binaries for all platforms, including linux-arm64-gnu) and cached in `~/tauri-cli` (POSIX) / `%APPDATA%\npm` (Windows); the `tauri` bin dir is appended to PATH unconditionally so a cache hit still yields a working CLI.
