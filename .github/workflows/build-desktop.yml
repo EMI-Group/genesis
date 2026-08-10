@@ -51,7 +51,7 @@ permissions:
 #
 # Jobs:
 #   prepare             publish flag, release tag, linux matrix JSON
-#   build-linux         ubuntu-22.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
+#   build-linux         ubuntu-24.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
 #   build-macos-arm64   macos-15 — dmg, app.zip (signed + notarized)
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
 #   publish-release     single writer for GitHub Release assets
@@ -136,7 +136,7 @@ jobs:
           if os.environ["LINUX_X64"] == "1":
               rows.append({
                   "arch": "x64",
-                  "runner": "ubuntu-22.04",
+                  "runner": "ubuntu-24.04",
                   "vendor_platform": "linux-x86_64",
                   "rg_target": "x86_64-unknown-linux-musl",
                   "rg_sha256": "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
@@ -148,14 +148,14 @@ jobs:
           if os.environ["LINUX_ARM64"] == "1":
               rows.append({
                   "arch": "arm64",
-                  "runner": "ubuntu-22.04-arm",
+                  "runner": "ubuntu-24.04-arm",
                   "vendor_platform": "linux-arm64",
                   "rg_target": "aarch64-unknown-linux-gnu",
                   "rg_sha256": "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e",
                   "rust_target": "aarch64-unknown-linux-gnu",
                   "bundles": "deb,rpm",
                   "portable": False,
-                  "image_os": "ubuntu22",
+                  "image_os": "ubuntu24",
               })
           print(json.dumps(rows))
           PY
@@ -200,22 +200,20 @@ jobs:
           # The genesis_desktop release bundles OTP's wx app (`wx: :load` in the
           # root mix.exs) for the wx-based directory picker. Its NIFs
           # (lib/wx-*/priv/wxe_driver.so, erl_gl.so) link against wxWidgets 3.2
-          # sonames that jammy (ubuntu-22.04) does not ship (only wxWidgets 3.0).
-          # linuxdeploy hard-fails on unresolvable NEEDED entries when bundling
-          # the AppImage; tauri-bundler hides its stderr, so the CI error is the
-          # generic "failed to run linuxdeploy" (full diagnosis in
+          # sonames that jammy (22.04) does not ship (only wxWidgets 3.0),
+          # so the old fix installed them from the wxformbuilder/wxwidgets3.2 PPA.
+          # That PPA no longer exists (add-apt-repository fails with
+          # "ppa 'wxformbuilder/wxwidgets3.2' not found" — HTTP 404 on launchpad).
+          # The runners are now ubuntu-24.04 (noble), which ships wxWidgets 3.2.4
+          # in its default repos, so the runtime libs are installed directly with
+          # no PPA. linuxdeploy hard-fails on unresolvable NEEDED entries when
+          # bundling the AppImage; tauri-bundler hides its stderr, so the CI
+          # error is the generic "failed to run linuxdeploy" (full diagnosis in
           # desktop/src-tauri/CONTEXT.md -> Known Issues). Installing the runtime
           # libs lets linuxdeploy bundle the wxWidgets closure INTO the AppImage
           # (self-contained directory picker).
-          sudo add-apt-repository -y ppa:wxformbuilder/wxwidgets3.2
-          sudo apt-get update
-          if apt-cache show libwxgtk3.2-1 >/dev/null 2>&1; then
-            sudo apt-get install -y libwxbase3.2-1 libwxgtk3.2-1 libwxgtk-gl3.2-1 libwxgtk-webview3.2-1 libglu1-mesa
-          else
-            # Ubuntu's t64 transition renamed the packages with a -t64 suffix.
-            sudo apt-get install -y libwxbase3.2-1t64 libwxgtk3.2-1t64 libwxgtk-gl3.2-1t64 libwxgtk-webview3.2-1t64 libglu1-mesa
-          fi
-          # Fail fast if the PPA does not provide the sonames the NIFs need.
+          sudo apt-get install -y libwxbase3.2-1t64 libwxgtk3.2-1t64 libwxgtk-gl3.2-1t64 libwxgtk-webview3.2-1t64 libglu1-mesa
+          # Fail fast if the default repos do not provide the sonames the NIFs need.
           ldconfig -p | grep -q 'libwx_baseu-3.2.so.0' || { echo "wxWidgets 3.2 base lib missing after install"; exit 1; }
           ldconfig -p | grep -q 'libwx_gtk3u_core-3.2.so.0' || { echo "wxWidgets 3.2 gtk lib missing after install"; exit 1; }
           ldconfig -p | grep -q 'libGLU.so.1' || { echo "libGLU.so.1 missing after install"; exit 1; }
