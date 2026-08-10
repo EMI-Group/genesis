@@ -72,15 +72,31 @@ defmodule EvoGit.Sandbox.None do
     # so we call the executable directly without a shell wrapper. This avoids the
     # need for shell escaping and avoids PowerShell's lack of input redirection
     # (the `<` operator is reserved and throws a parser error).
-    if EvoGit.GitEnv.git_command?(executable) do
-      System.cmd(executable, args,
-        cd: cwd,
-        stderr_to_stdout: true,
-        env: EvoGit.GitEnv.git_env_list(cwd)
-      )
-    else
-      System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
-    end
+    #
+    # Defense-in-depth: legacy direct callers may still pass `["-Command", cmd]`
+    # to powershell/pwsh; transform to the canonical `-EncodedCommand` invocation
+    # (see EvoGit.Powershell). Already-encoded args and non-PowerShell
+    # executables (bash/git) pass through unchanged — never double-transformed.
+    args =
+      case EvoGit.Powershell.transform_args(executable, args) do
+        {:ok, new_args} -> new_args
+        :error -> args
+      end
+
+    {output, exit_code} =
+      if EvoGit.GitEnv.git_command?(executable) do
+        System.cmd(executable, args,
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: EvoGit.GitEnv.git_env_list(cwd)
+        )
+      else
+        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
+      end
+
+    # Defensive BOM-aware decode — idempotent, passthrough-safe for
+    # UTF-8/ASCII/binary output.
+    {EvoGit.Powershell.decode_output(output), exit_code}
   end
 
   @doc """
@@ -239,6 +255,17 @@ defmodule EvoGit.Sandbox.None do
     # args, cd, env). Direct port ownership lets us read the OS PID and, on
     # timeout, kill the WHOLE process tree via `taskkill /T /F` — Windows'
     # built-in tree killer — before returning the partial output.
+    #
+    # Defense-in-depth: legacy direct callers may still pass `["-Command", cmd]`
+    # to powershell/pwsh; transform to the canonical `-EncodedCommand` invocation
+    # (see EvoGit.Powershell). Already-encoded args (from Platform.shell_args/1)
+    # and non-PowerShell executables (bash/git) pass through unchanged.
+    args =
+      case EvoGit.Powershell.transform_args(executable, args) do
+        {:ok, new_args} -> new_args
+        :error -> args
+      end
+
     is_git = EvoGit.GitEnv.git_command?(executable)
     git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
@@ -294,7 +321,12 @@ defmodule EvoGit.Sandbox.None do
         collect_windows_output(port, [data | acc], timeout, max_bytes, os_pid)
 
       {^port, {:exit_status, exit_code}} ->
-        output = acc |> Enum.reverse() |> IO.iodata_to_binary()
+        output =
+          acc
+          |> Enum.reverse()
+          |> IO.iodata_to_binary()
+          |> EvoGit.Powershell.decode_output()
+
         {:ok, Helpers.truncate_output(output, max_bytes), exit_code}
     after
       timeout ->
@@ -302,7 +334,11 @@ defmodule EvoGit.Sandbox.None do
         Port.close(port)
         drain_port_messages(port)
 
-        partial = acc |> Enum.reverse() |> IO.iodata_to_binary()
+        partial =
+          acc
+          |> Enum.reverse()
+          |> IO.iodata_to_binary()
+          |> EvoGit.Powershell.decode_output()
 
         {:timeout, Helpers.truncate_output(partial, max_bytes) <> "\n[TRUNCATED due to timeout]"}
     end
