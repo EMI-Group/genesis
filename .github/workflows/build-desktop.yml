@@ -245,8 +245,8 @@ jobs:
 
       - name: Build Elixir releases
         run: |
-          MIX_ENV=prod mix release genesis_desktop
-          MIX_ENV=prod mix release genesis_remote
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
 
       - name: Place desktop release in Tauri resources
         run: |
@@ -343,8 +343,8 @@ jobs:
 
       - name: Build Elixir releases
         run: |
-          MIX_ENV=prod mix release genesis_desktop
-          MIX_ENV=prod mix release genesis_remote
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
 
       - name: Place desktop release in Tauri resources
         run: |
@@ -531,8 +531,8 @@ jobs:
 
       - name: Build Elixir releases
         run: |
-          MIX_ENV=prod mix release genesis_desktop
-          MIX_ENV=prod mix release genesis_remote
+          MIX_ENV=prod mix release genesis_desktop --overwrite
+          MIX_ENV=prod mix release genesis_remote --overwrite
 
       - name: Place desktop release in Tauri resources
         shell: pwsh
