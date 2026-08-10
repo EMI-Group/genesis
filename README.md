@@ -46,6 +46,10 @@ Genesis used **DeepSeek V4 Flash** to develop a Rust-based C compiler from a rep
 **Validation:** **220/220** c-testsuite · **32/36** LLVM · **93/93** executed Csmith · **2,904** Rust tests · **106/106** internal cases  
 **Development:** observed recursive depth **5** · **327** first-parent commits
 
+<p align="center">
+  <img src="docs/images/experiments/formation.jpg" alt="Formation experiment: compiler development trajectory, validation results, agent activity and time allocation">
+</p>
+
 ---
 
 ### 🔄 Continuation
@@ -60,6 +64,10 @@ Genesis continued the same accepted compiler world independently with **GLM 5.2*
 **Validation:** GLM 5.2: **1,445/1,448** · DeepSeek V4 Flash: **1,820/1,820** retained LLVM SingleSource cases  
 **Development:** both retained **220/220** c-testsuite and **4/4** LZ4 · observed recursive depths **4** and **8**
 
+<p align="center">
+  <img src="docs/images/experiments/continuation.jpg" alt="Continuation experiment: independent GLM 5.2 and DeepSeek V4 Flash development trajectories">
+</p>
+
 ---
 
 ### 🔬 Redevelopment
@@ -73,6 +81,10 @@ Genesis redeveloped a selected chain of **13 MESA Fortran modules** into corresp
 **Run:** **33.22 h · 272 agents · US$10.64**  
 **Validation:** **1,052 tests · 0 failures** · **2 bit-exact** workloads · remaining relative checksum differences ≤ **3.1 × 10⁻⁹**  
 **Development:** observed recursive depth **4** · median runtime speedups **1.55×–6.87×**
+
+<p align="center">
+  <img src="docs/images/experiments/redevelopment.jpg" alt="Redevelopment experiment: MESA-to-Rust progress, cache behavior, module coverage and runtime validation">
+</p>
 
 <sub>
 Reported dollar amounts are foundation-model token charges only. Compiler formation, continuation and MESA redevelopment are observed system-level results, not normalized model-comparison benchmarks. The MESA result covers the audited 13-module scope, not the full application.
