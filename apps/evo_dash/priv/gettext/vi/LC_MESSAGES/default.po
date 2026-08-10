@@ -424,7 +424,7 @@ msgstr "URL cơ sở"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:58
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:132
-#: lib/evo_dash_web/live/welcome_live.ex:761
+#: lib/evo_dash_web/live/welcome_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "URL gốc không được để trống."
@@ -565,17 +565,17 @@ msgstr "Xóa toàn bộ lịch sử tác vụ đã hoàn thành? Hành động n
 msgid "Close"
 msgstr "Đóng"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1306
+#: lib/evo_dash_web/live/dashboard_live.ex:1330
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Lệnh '%{command}' đã hoàn thành:\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1314
+#: lib/evo_dash_web/live/dashboard_live.ex:1338
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Lệnh '%{command}' thất bại (mã thoát %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1279
+#: lib/evo_dash_web/live/dashboard_live.ex:1303
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Không tìm thấy lệnh: %{command}"
@@ -879,8 +879,8 @@ msgstr "Đang phát hiện hệ điều hành"
 msgid "Dev Commands"
 msgstr "Lệnh phát triển"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1583
-#: lib/evo_dash_web/live/dashboard_live.ex:1591
+#: lib/evo_dash_web/live/dashboard_live.ex:1624
+#: lib/evo_dash_web/live/dashboard_live.ex:1632
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:239
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
@@ -979,7 +979,7 @@ msgstr "Nhập khóa API của bạn. Khóa phải bắt đầu bằng"
 msgid "Error"
 msgstr "Lỗi"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1325
+#: lib/evo_dash_web/live/dashboard_live.ex:1349
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Lỗi khi chạy '%{command}': %{error}"
@@ -1051,8 +1051,8 @@ msgid "Failed to reset key: %{reason}"
 msgstr "Không thể đặt lại khóa: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:1136
-#: lib/evo_dash_web/live/welcome_live.ex:630
-#: lib/evo_dash_web/live/welcome_live.ex:726
+#: lib/evo_dash_web/live/welcome_live.ex:606
+#: lib/evo_dash_web/live/welcome_live.ex:695
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "Không thể lưu khóa API: %{reason}"
@@ -1060,7 +1060,7 @@ msgstr "Không thể lưu khóa API: %{reason}"
 #: lib/evo_dash_web/live/settings_live.ex:814
 #: lib/evo_dash_web/live/settings_live.ex:905
 #: lib/evo_dash_web/live/settings_live.ex:1365
-#: lib/evo_dash_web/live/welcome_live.ex:978
+#: lib/evo_dash_web/live/welcome_live.ex:947
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "Không thể lưu cấu hình: %{reason}"
@@ -1403,7 +1403,7 @@ msgstr "Hồ sơ Mô hình"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:43
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:99
-#: lib/evo_dash_web/live/welcome_live.ex:747
+#: lib/evo_dash_web/live/welcome_live.ex:716
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "Tên mô hình không được để trống."
@@ -2110,7 +2110,7 @@ msgstr "Hiển thị %{start}–%{end} trên tổng số %{total} tác vụ"
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "Đã bắt đầu tác vụ trích xuất kỹ năng. Bạn có thể theo dõi tiến trình trên bảng điều khiển."
 
-#: lib/evo_dash_web/live/welcome_live.ex:435
+#: lib/evo_dash_web/live/welcome_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "Bỏ qua"
@@ -2456,8 +2456,8 @@ msgstr "Repo không xác định"
 #: lib/evo_dash_web/live/settings_live.ex:1018
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:40
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:96
-#: lib/evo_dash_web/live/welcome_live.ex:541
-#: lib/evo_dash_web/live/welcome_live.ex:744
+#: lib/evo_dash_web/live/welcome_live.ex:517
+#: lib/evo_dash_web/live/welcome_live.ex:713
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "Nhà cung cấp không xác định."
@@ -3060,7 +3060,7 @@ msgstr "Cấu hình bổ sung phải là một đối tượng JSON (map)."
 msgid "Extra Config must be valid JSON."
 msgstr "Cấu hình bổ sung phải là JSON hợp lệ."
 
-#: lib/evo_dash_web/live/welcome_live.ex:441
+#: lib/evo_dash_web/live/welcome_live.ex:417
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "Genesis %{version}"
@@ -3070,6 +3070,7 @@ msgstr "Genesis %{version}"
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "Genesis là một framework phát triển phần mềm sử dụng AI. Hãy thiết lập LLM đầu tiên của bạn để bắt đầu."
 
+#: lib/evo_dash_web/live/welcome_complete_live.ex:70
 #: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
@@ -3210,7 +3211,7 @@ msgstr "Báo cáo Tác tử"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:858
 #: lib/evo_dash_web/live/review_live.ex:320
-#: lib/evo_dash_web/live/welcome_live.ex:654
+#: lib/evo_dash_web/live/welcome_complete_live.ex:86
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
 msgstr "Đã sao chép vào bộ nhớ tạm"
@@ -3235,37 +3236,37 @@ msgstr "Văn bản thô"
 msgid "Rendered Markdown"
 msgstr "Markdown đã hiển thị"
 
-#: lib/evo_dash_web/live/welcome_live.ex:936
+#: lib/evo_dash_web/live/welcome_live.ex:905
 #, elixir-autogen, elixir-format
 msgid "Alibaba Cloud (Qwen)"
 msgstr "Alibaba Cloud (Qwen)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:930
+#: lib/evo_dash_web/live/welcome_live.ex:899
 #, elixir-autogen, elixir-format
 msgid "Anthropic"
 msgstr "Anthropic"
 
-#: lib/evo_dash_web/live/welcome_live.ex:934
+#: lib/evo_dash_web/live/welcome_live.ex:903
 #, elixir-autogen, elixir-format
 msgid "DeepSeek"
 msgstr "DeepSeek"
 
-#: lib/evo_dash_web/live/welcome_live.ex:932
+#: lib/evo_dash_web/live/welcome_live.ex:901
 #, elixir-autogen, elixir-format
 msgid "Google"
 msgstr "Google"
 
-#: lib/evo_dash_web/live/welcome_live.ex:940
+#: lib/evo_dash_web/live/welcome_live.ex:909
 #, elixir-autogen, elixir-format
 msgid "MiniMax"
 msgstr "MiniMax"
 
-#: lib/evo_dash_web/live/welcome_live.ex:805
+#: lib/evo_dash_web/live/welcome_live.ex:774
 #, elixir-autogen, elixir-format
 msgid "Model and API key saved. You're all set!"
 msgstr "Đã lưu mô hình và khóa API. Mọi thứ đã sẵn sàng!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:942
+#: lib/evo_dash_web/live/welcome_live.ex:911
 #, elixir-autogen, elixir-format
 msgid "Moonshot AI (Kimi)"
 msgstr "Moonshot AI (Kimi)"
@@ -3280,22 +3281,22 @@ msgstr "Cần mô hình khác, URL gốc API tùy chỉnh hoặc cài đặt nâ
 msgid "No models match your search."
 msgstr "Không có mô hình nào phù hợp với tìm kiếm của bạn."
 
-#: lib/evo_dash_web/live/welcome_live.ex:947
+#: lib/evo_dash_web/live/welcome_live.ex:916
 #, elixir-autogen, elixir-format
 msgid "OpenAI"
 msgstr "OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:946
+#: lib/evo_dash_web/live/welcome_live.ex:915
 #, elixir-autogen, elixir-format
 msgid "OpenAI-Compatible API"
 msgstr "API tương thích OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:944
+#: lib/evo_dash_web/live/welcome_live.ex:913
 #, elixir-autogen, elixir-format
 msgid "OpenRouter"
 msgstr "OpenRouter"
 
-#: lib/evo_dash_web/live/welcome_live.ex:612
+#: lib/evo_dash_web/live/welcome_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "Please enter your API key first."
 msgstr "Vui lòng nhập khóa API trước."
@@ -3310,12 +3311,12 @@ msgstr "Lưu và sử dụng mô hình này"
 msgid "Settings page"
 msgstr "trang Cài đặt"
 
-#: lib/evo_dash_web/live/welcome_live.ex:938
+#: lib/evo_dash_web/live/welcome_live.ex:907
 #, elixir-autogen, elixir-format
 msgid "Z.ai (Zhipu AI)"
 msgstr "Z.ai (Zhipu AI)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:943
+#: lib/evo_dash_web/live/welcome_live.ex:912
 #, elixir-autogen, elixir-format
 msgid "xAI"
 msgstr "xAI"
@@ -3479,7 +3480,7 @@ msgstr "Tất cả các kiểm tra tự động đều đạt."
 msgid "Cannot connect to %{name}"
 msgstr "Không thể kết nối đến %{name}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1633
+#: lib/evo_dash_web/live/dashboard_live.ex:1674
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:260
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
@@ -3559,12 +3560,12 @@ msgid "Connection lost or failed"
 msgstr "Kết nối bị mất hoặc thất bại"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:196
-#: lib/evo_dash_web/live/welcome_live.ex:416
+#: lib/evo_dash_web/live/welcome_complete_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "Copy"
 msgstr "Sao chép"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1659
+#: lib/evo_dash_web/live/dashboard_live.ex:1700
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:302
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
@@ -3794,7 +3795,7 @@ msgstr "Tổng"
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "Tổng số tác tử với số lượng đang chạy, bị chặn (đang chờ slot), đang chờ và đang chờ xử lý."
 
-#: lib/evo_dash_web/live/welcome_live.ex:409
+#: lib/evo_dash_web/live/welcome_complete_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Try an example task"
 msgstr "Thử một tác vụ ví dụ"
@@ -3814,7 +3815,7 @@ msgstr "Sử dụng ví dụ này"
 msgid "Verifies that the required settings — LLM provider, model, and API key — are configured."
 msgstr "Xác minh rằng các cài đặt bắt buộc — nhà cung cấp LLM, mô hình và API key — đã được cấu hình."
 
-#: lib/evo_dash_web/live/welcome_live.ex:422
+#: lib/evo_dash_web/live/welcome_complete_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr "Bạn chỉ cần mô tả mục tiêu cuối cùng như thế này — Genesis sẽ tự tìm ra kiến trúc, phân công các tác tử và viết mã."
@@ -3868,3 +3869,13 @@ msgstr "Mở hoặc tạo dự án"
 #, elixir-autogen, elixir-format
 msgid "Project path"
 msgstr "Đường dẫn dự án"
+
+#: lib/evo_dash_web/live/welcome_complete_live.ex:34
+#, elixir-autogen, elixir-format
+msgid "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
+msgstr "Trong Genesis, bạn chỉ cần viết những lời nhắc cấp cao: mô tả mục tiêu cuối cùng, các tính năng bạn muốn và framework cần sử dụng. Genesis sẽ tự tìm ra kiến trúc, phân công các tác tử và viết mã."
+
+#: lib/evo_dash_web/live/welcome_complete_live.ex:31
+#, elixir-autogen, elixir-format
+msgid "Write high-level prompts, not code"
+msgstr "Viết lời nhắc cấp cao, không phải mã"

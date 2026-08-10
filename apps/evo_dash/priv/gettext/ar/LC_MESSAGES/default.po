@@ -444,7 +444,7 @@ msgstr "الرابط الأساسي"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:58
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:132
-#: lib/evo_dash_web/live/welcome_live.ex:761
+#: lib/evo_dash_web/live/welcome_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "لا يمكن أن يكون عنوان URL الأساسي فارغاً."
@@ -585,17 +585,17 @@ msgstr "مسح جميع سجلات المهام المكتملة؟ لا يمكن
 msgid "Close"
 msgstr "إغلاق"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1306
+#: lib/evo_dash_web/live/dashboard_live.ex:1330
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "اكتمل الأمر '%{command}':\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1314
+#: lib/evo_dash_web/live/dashboard_live.ex:1338
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "فشل الأمر '%{command}' (رمز الخروج %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1279
+#: lib/evo_dash_web/live/dashboard_live.ex:1303
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "الأمر غير موجود: %{command}"
@@ -899,8 +899,8 @@ msgstr "جارٍ اكتشاف نظام التشغيل"
 msgid "Dev Commands"
 msgstr "أوامر التطوير"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1583
-#: lib/evo_dash_web/live/dashboard_live.ex:1591
+#: lib/evo_dash_web/live/dashboard_live.ex:1624
+#: lib/evo_dash_web/live/dashboard_live.ex:1632
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:239
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
@@ -999,7 +999,7 @@ msgstr "أدخل مفتاح API الخاص بك. يجب أن يبدأ بـ"
 msgid "Error"
 msgstr "خطأ"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1325
+#: lib/evo_dash_web/live/dashboard_live.ex:1349
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "خطأ أثناء تشغيل '%{command}': %{error}"
@@ -1071,8 +1071,8 @@ msgid "Failed to reset key: %{reason}"
 msgstr "فشل إعادة تعيين المفتاح: %{reason}"
 
 #: lib/evo_dash_web/live/settings_live.ex:1136
-#: lib/evo_dash_web/live/welcome_live.ex:630
-#: lib/evo_dash_web/live/welcome_live.ex:726
+#: lib/evo_dash_web/live/welcome_live.ex:606
+#: lib/evo_dash_web/live/welcome_live.ex:695
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "فشل حفظ مفتاح API: %{reason}"
@@ -1080,7 +1080,7 @@ msgstr "فشل حفظ مفتاح API: %{reason}"
 #: lib/evo_dash_web/live/settings_live.ex:814
 #: lib/evo_dash_web/live/settings_live.ex:905
 #: lib/evo_dash_web/live/settings_live.ex:1365
-#: lib/evo_dash_web/live/welcome_live.ex:978
+#: lib/evo_dash_web/live/welcome_live.ex:947
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "فشل حفظ الإعدادات: %{reason}"
@@ -1423,7 +1423,7 @@ msgstr "ملفات تعريفيّة للنماذج"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:43
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:99
-#: lib/evo_dash_web/live/welcome_live.ex:747
+#: lib/evo_dash_web/live/welcome_live.ex:716
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "لا يمكن أن يكون اسم النموذج فارغاً."
@@ -2130,7 +2130,7 @@ msgstr "عرض المهام %{start}–%{end} من أصل %{total}"
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "بدأت مهمة استخراج المهارة. يمكنك متابعة تقدمها من لوحة التحكم."
 
-#: lib/evo_dash_web/live/welcome_live.ex:435
+#: lib/evo_dash_web/live/welcome_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "تخطّي"
@@ -2476,8 +2476,8 @@ msgstr "مستودع غير معروف"
 #: lib/evo_dash_web/live/settings_live.ex:1018
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:40
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:96
-#: lib/evo_dash_web/live/welcome_live.ex:541
-#: lib/evo_dash_web/live/welcome_live.ex:744
+#: lib/evo_dash_web/live/welcome_live.ex:517
+#: lib/evo_dash_web/live/welcome_live.ex:713
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "مزوّد غير معروف."
@@ -3080,7 +3080,7 @@ msgstr "يجب أن يكون التكوين الإضافي كائن JSON (خري
 msgid "Extra Config must be valid JSON."
 msgstr "يجب أن يكون التكوين الإضافي JSON صالحًا."
 
-#: lib/evo_dash_web/live/welcome_live.ex:441
+#: lib/evo_dash_web/live/welcome_live.ex:417
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "جينيسيس %{version}"
@@ -3090,6 +3090,7 @@ msgstr "جينيسيس %{version}"
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "جينيسيس هو إطار عمل لتطوير البرمجيات مدعوم بالذكاء الاصطناعي. لنقم بإعداد أول نموذج LLM لك للبدء."
 
+#: lib/evo_dash_web/live/welcome_complete_live.ex:70
 #: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
@@ -3230,7 +3231,7 @@ msgstr "تقرير الوكيل"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:858
 #: lib/evo_dash_web/live/review_live.ex:320
-#: lib/evo_dash_web/live/welcome_live.ex:654
+#: lib/evo_dash_web/live/welcome_complete_live.ex:86
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
 msgstr "تم النسخ إلى الحافظة"
@@ -3255,37 +3256,37 @@ msgstr "نص خام"
 msgid "Rendered Markdown"
 msgstr "ماركدون معروض"
 
-#: lib/evo_dash_web/live/welcome_live.ex:936
+#: lib/evo_dash_web/live/welcome_live.ex:905
 #, elixir-autogen, elixir-format
 msgid "Alibaba Cloud (Qwen)"
 msgstr "Alibaba Cloud (Qwen)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:930
+#: lib/evo_dash_web/live/welcome_live.ex:899
 #, elixir-autogen, elixir-format
 msgid "Anthropic"
 msgstr "Anthropic"
 
-#: lib/evo_dash_web/live/welcome_live.ex:934
+#: lib/evo_dash_web/live/welcome_live.ex:903
 #, elixir-autogen, elixir-format
 msgid "DeepSeek"
 msgstr "DeepSeek"
 
-#: lib/evo_dash_web/live/welcome_live.ex:932
+#: lib/evo_dash_web/live/welcome_live.ex:901
 #, elixir-autogen, elixir-format
 msgid "Google"
 msgstr "Google"
 
-#: lib/evo_dash_web/live/welcome_live.ex:940
+#: lib/evo_dash_web/live/welcome_live.ex:909
 #, elixir-autogen, elixir-format
 msgid "MiniMax"
 msgstr "MiniMax"
 
-#: lib/evo_dash_web/live/welcome_live.ex:805
+#: lib/evo_dash_web/live/welcome_live.ex:774
 #, elixir-autogen, elixir-format
 msgid "Model and API key saved. You're all set!"
 msgstr "تم حفظ الموديل ومفتاح API. كل شيء جاهز!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:942
+#: lib/evo_dash_web/live/welcome_live.ex:911
 #, elixir-autogen, elixir-format
 msgid "Moonshot AI (Kimi)"
 msgstr "Moonshot AI (Kimi)"
@@ -3300,22 +3301,22 @@ msgstr "هل تحتاج إلى موديل مختلف، أو رابط API أسا�
 msgid "No models match your search."
 msgstr "لا توجد موديلات تطابق بحثك."
 
-#: lib/evo_dash_web/live/welcome_live.ex:947
+#: lib/evo_dash_web/live/welcome_live.ex:916
 #, elixir-autogen, elixir-format
 msgid "OpenAI"
 msgstr "OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:946
+#: lib/evo_dash_web/live/welcome_live.ex:915
 #, elixir-autogen, elixir-format
 msgid "OpenAI-Compatible API"
 msgstr "API متوافق مع OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:944
+#: lib/evo_dash_web/live/welcome_live.ex:913
 #, elixir-autogen, elixir-format
 msgid "OpenRouter"
 msgstr "OpenRouter"
 
-#: lib/evo_dash_web/live/welcome_live.ex:612
+#: lib/evo_dash_web/live/welcome_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "Please enter your API key first."
 msgstr "يرجى إدخال مفتاح API أولاً."
@@ -3330,12 +3331,12 @@ msgstr "حفظ واستخدام هذا الموديل"
 msgid "Settings page"
 msgstr "صفحة الإعدادات"
 
-#: lib/evo_dash_web/live/welcome_live.ex:938
+#: lib/evo_dash_web/live/welcome_live.ex:907
 #, elixir-autogen, elixir-format
 msgid "Z.ai (Zhipu AI)"
 msgstr "Z.ai (Zhipu AI)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:943
+#: lib/evo_dash_web/live/welcome_live.ex:912
 #, elixir-autogen, elixir-format
 msgid "xAI"
 msgstr "xAI"
@@ -3499,7 +3500,7 @@ msgstr "اجتازت جميع الفحوصات الذاتية."
 msgid "Cannot connect to %{name}"
 msgstr "تعذّر الاتصال بـ %{name}"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1633
+#: lib/evo_dash_web/live/dashboard_live.ex:1674
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:260
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
@@ -3579,12 +3580,12 @@ msgid "Connection lost or failed"
 msgstr "انقطع الاتصال أو فشل"
 
 #: lib/evo_dash_web/live/dashboard_live.ex:196
-#: lib/evo_dash_web/live/welcome_live.ex:416
+#: lib/evo_dash_web/live/welcome_complete_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "Copy"
 msgstr "نسخ"
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1659
+#: lib/evo_dash_web/live/dashboard_live.ex:1700
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:302
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
@@ -3814,7 +3815,7 @@ msgstr "الإجمالي"
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "إجمالي الوكلاء مع عدد قيد التشغيل، والمحظورين (بانتظار فتحة)، والمنتظرين، والمعلقين."
 
-#: lib/evo_dash_web/live/welcome_live.ex:409
+#: lib/evo_dash_web/live/welcome_complete_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Try an example task"
 msgstr "جرّب مهمة مثال"
@@ -3834,7 +3835,7 @@ msgstr "استخدم هذا المثال"
 msgid "Verifies that the required settings — LLM provider, model, and API key — are configured."
 msgstr "يتحقق من تهيئة الإعدادات المطلوبة — مزوّد نموذج اللغة الكبير والطراز ومفتاح API."
 
-#: lib/evo_dash_web/live/welcome_live.ex:422
+#: lib/evo_dash_web/live/welcome_complete_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr "كل ما عليك هو وصف الهدف النهائي بهذه الطريقة — جينيسيس يحدد البنية، ويُفوّض الوكلاء، ويكتب الكود."
@@ -3888,3 +3889,13 @@ msgstr "افتح مشروعًا أو أنشئه"
 #, elixir-autogen, elixir-format
 msgid "Project path"
 msgstr "مسار المشروع"
+
+#: lib/evo_dash_web/live/welcome_complete_live.ex:34
+#, elixir-autogen, elixir-format
+msgid "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
+msgstr "في جينيسيس تكتب موجّهات عالية المستوى فقط: صِف الهدف النهائي والميزات التي تريدها والإطار الذي تريد استخدامه. جينيسيس يحدد البنية المعمارية ويوكل الوكلاء ويكتب الكود."
+
+#: lib/evo_dash_web/live/welcome_complete_live.ex:31
+#, elixir-autogen, elixir-format
+msgid "Write high-level prompts, not code"
+msgstr "اكتب موجّهات عالية المستوى، وليس كودًا"

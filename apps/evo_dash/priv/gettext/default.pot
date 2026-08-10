@@ -434,7 +434,7 @@ msgstr ""
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:58
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:132
-#: lib/evo_dash_web/live/welcome_live.ex:761
+#: lib/evo_dash_web/live/welcome_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr ""
@@ -575,17 +575,17 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1306
+#: lib/evo_dash_web/live/dashboard_live.ex:1330
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1314
+#: lib/evo_dash_web/live/dashboard_live.ex:1338
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1279
+#: lib/evo_dash_web/live/dashboard_live.ex:1303
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr ""
@@ -889,8 +889,8 @@ msgstr ""
 msgid "Dev Commands"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1583
-#: lib/evo_dash_web/live/dashboard_live.ex:1591
+#: lib/evo_dash_web/live/dashboard_live.ex:1624
+#: lib/evo_dash_web/live/dashboard_live.ex:1632
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:239
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
@@ -989,7 +989,7 @@ msgstr ""
 msgid "Error"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1325
+#: lib/evo_dash_web/live/dashboard_live.ex:1349
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr ""
@@ -1061,8 +1061,8 @@ msgid "Failed to reset key: %{reason}"
 msgstr ""
 
 #: lib/evo_dash_web/live/settings_live.ex:1136
-#: lib/evo_dash_web/live/welcome_live.ex:630
-#: lib/evo_dash_web/live/welcome_live.ex:726
+#: lib/evo_dash_web/live/welcome_live.ex:606
+#: lib/evo_dash_web/live/welcome_live.ex:695
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr ""
@@ -1070,7 +1070,7 @@ msgstr ""
 #: lib/evo_dash_web/live/settings_live.ex:814
 #: lib/evo_dash_web/live/settings_live.ex:905
 #: lib/evo_dash_web/live/settings_live.ex:1365
-#: lib/evo_dash_web/live/welcome_live.ex:978
+#: lib/evo_dash_web/live/welcome_live.ex:947
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr ""
@@ -1413,7 +1413,7 @@ msgstr ""
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:43
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:99
-#: lib/evo_dash_web/live/welcome_live.ex:747
+#: lib/evo_dash_web/live/welcome_live.ex:716
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr ""
@@ -2120,7 +2120,7 @@ msgstr ""
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:435
+#: lib/evo_dash_web/live/welcome_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr ""
@@ -2466,8 +2466,8 @@ msgstr ""
 #: lib/evo_dash_web/live/settings_live.ex:1018
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:40
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:96
-#: lib/evo_dash_web/live/welcome_live.ex:541
-#: lib/evo_dash_web/live/welcome_live.ex:744
+#: lib/evo_dash_web/live/welcome_live.ex:517
+#: lib/evo_dash_web/live/welcome_live.ex:713
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr ""
@@ -3070,7 +3070,7 @@ msgstr ""
 msgid "Extra Config must be valid JSON."
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:441
+#: lib/evo_dash_web/live/welcome_live.ex:417
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr ""
@@ -3080,6 +3080,7 @@ msgstr ""
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr ""
 
+#: lib/evo_dash_web/live/welcome_complete_live.ex:70
 #: lib/evo_dash_web/live/welcome_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
@@ -3220,7 +3221,7 @@ msgstr ""
 
 #: lib/evo_dash_web/live/dashboard_live.ex:858
 #: lib/evo_dash_web/live/review_live.ex:320
-#: lib/evo_dash_web/live/welcome_live.ex:654
+#: lib/evo_dash_web/live/welcome_complete_live.ex:86
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
 msgstr ""
@@ -3245,37 +3246,37 @@ msgstr ""
 msgid "Rendered Markdown"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:936
+#: lib/evo_dash_web/live/welcome_live.ex:905
 #, elixir-autogen, elixir-format
 msgid "Alibaba Cloud (Qwen)"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:930
+#: lib/evo_dash_web/live/welcome_live.ex:899
 #, elixir-autogen, elixir-format
 msgid "Anthropic"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:934
+#: lib/evo_dash_web/live/welcome_live.ex:903
 #, elixir-autogen, elixir-format
 msgid "DeepSeek"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:932
+#: lib/evo_dash_web/live/welcome_live.ex:901
 #, elixir-autogen, elixir-format
 msgid "Google"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:940
+#: lib/evo_dash_web/live/welcome_live.ex:909
 #, elixir-autogen, elixir-format
 msgid "MiniMax"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:805
+#: lib/evo_dash_web/live/welcome_live.ex:774
 #, elixir-autogen, elixir-format
 msgid "Model and API key saved. You're all set!"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:942
+#: lib/evo_dash_web/live/welcome_live.ex:911
 #, elixir-autogen, elixir-format
 msgid "Moonshot AI (Kimi)"
 msgstr ""
@@ -3290,22 +3291,22 @@ msgstr ""
 msgid "No models match your search."
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:947
+#: lib/evo_dash_web/live/welcome_live.ex:916
 #, elixir-autogen, elixir-format
 msgid "OpenAI"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:946
+#: lib/evo_dash_web/live/welcome_live.ex:915
 #, elixir-autogen, elixir-format
 msgid "OpenAI-Compatible API"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:944
+#: lib/evo_dash_web/live/welcome_live.ex:913
 #, elixir-autogen, elixir-format
 msgid "OpenRouter"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:612
+#: lib/evo_dash_web/live/welcome_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "Please enter your API key first."
 msgstr ""
@@ -3320,12 +3321,12 @@ msgstr ""
 msgid "Settings page"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:938
+#: lib/evo_dash_web/live/welcome_live.ex:907
 #, elixir-autogen, elixir-format
 msgid "Z.ai (Zhipu AI)"
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:943
+#: lib/evo_dash_web/live/welcome_live.ex:912
 #, elixir-autogen, elixir-format
 msgid "xAI"
 msgstr ""
@@ -3489,7 +3490,7 @@ msgstr ""
 msgid "Cannot connect to %{name}"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1633
+#: lib/evo_dash_web/live/dashboard_live.ex:1674
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:260
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
@@ -3569,12 +3570,12 @@ msgid "Connection lost or failed"
 msgstr ""
 
 #: lib/evo_dash_web/live/dashboard_live.ex:196
-#: lib/evo_dash_web/live/welcome_live.ex:416
+#: lib/evo_dash_web/live/welcome_complete_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "Copy"
 msgstr ""
 
-#: lib/evo_dash_web/live/dashboard_live.ex:1659
+#: lib/evo_dash_web/live/dashboard_live.ex:1700
 #: lib/evo_dash_web/live/dashboard_live/project_flow.ex:302
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
@@ -3804,7 +3805,7 @@ msgstr ""
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:409
+#: lib/evo_dash_web/live/welcome_complete_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Try an example task"
 msgstr ""
@@ -3824,7 +3825,7 @@ msgstr ""
 msgid "Verifies that the required settings — LLM provider, model, and API key — are configured."
 msgstr ""
 
-#: lib/evo_dash_web/live/welcome_live.ex:422
+#: lib/evo_dash_web/live/welcome_complete_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr ""
@@ -3877,4 +3878,14 @@ msgstr ""
 #: lib/evo_dash_web/components/project_components.ex:684
 #, elixir-autogen, elixir-format
 msgid "Project path"
+msgstr ""
+
+#: lib/evo_dash_web/live/welcome_complete_live.ex:34
+#, elixir-autogen, elixir-format
+msgid "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
+msgstr ""
+
+#: lib/evo_dash_web/live/welcome_complete_live.ex:31
+#, elixir-autogen, elixir-format
+msgid "Write high-level prompts, not code"
 msgstr ""
