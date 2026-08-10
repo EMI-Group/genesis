@@ -1369,7 +1369,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       refute html =~ "Recent Projects"
     end
 
-    test "connected remote view renders remote chrome and no local task form", %{
+    test "connected remote view renders remote chrome with task form and configure dropdown", %{
       conn: conn
     } do
       id = save_target!()
@@ -1393,23 +1393,23 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
       # Remote top bar: data-remote present (boolean attrs serialize as a bare
       # attribute via the test DOM) + target-name badge; the Configure dropdown
-      # and its toggle button are local-only
+      # is now shown for remote nodes too (task management is available remotely).
       assert html =~ ~s(class="dashboard-topbar)
       assert html =~ "data-remote"
       assert html =~ "Test Target"
-      refute html =~ ~s(phx-click="toggle_configure_dropdown")
+      assert html =~ ~s(phx-click="toggle_configure_dropdown")
 
-      # Connected-remote info banner; the error gate is gone
-      assert html =~ "Remote Node"
-      assert html =~ "Active Agents"
+      # Connected-remote info banner (encouraging text); the error gate is gone
+      assert html =~ "remote node"
       refute html =~ "Cannot connect"
 
       # data-node-id on the root element
       assert html =~ ~s(data-node-id="#{id}")
 
-      # No local task form, launch button, or example-task block
-      refute html =~ ~s(id="prompt")
-      refute html =~ "hero-rocket-launch"
+      # Task form IS now shown for remote nodes (task launching works remotely)
+      assert html =~ ~s(id="prompt")
+
+      # No example-task block (local-only)
       refute html =~ "example-task-objective"
 
       # Remote palette: Open by Path yes, Create New Project hidden, and no
