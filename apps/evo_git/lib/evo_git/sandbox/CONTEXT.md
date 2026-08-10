@@ -17,7 +17,7 @@ None — leaf directory (modules: `sandbox.ex`, `behaviour.ex`, `helpers.ex`, `l
 | `EvoGit.Sandbox.None` | Passthrough backend (`@behaviour EvoGit.Sandbox.Behaviour`) — no OS-level isolation on Windows/unsupported platforms; `run_with_partial` Windows clause kills the WHOLE process tree on timeout via `taskkill /T /F` (see "Windows gap" below). Public `resolve_executable/1` — binary-safe executable resolution for direct port spawning (input normalized via `to_string/1`; absolute paths used as-is when regular files; PATH/PATHEXT lookup via `System.find_executable/1`; Windows known-location fallback for `powershell`/`pwsh`; returns `nil` when not found) |
 | `EvoGit.Nix` | Shared helper for running commands inside a cached Nix dev environment — builds the dev env ONCE via `nix print-dev-env`, caches the bash script to `<data_dir>/nix-dev-env.sh`, and sources it per call via `bash -c "source <path>; exec <cmd>"`. Gate: `active?/0` (enabled + dev-env build not failed); `enabled?/0` is the static capability check |
 
-## macOS SBPL Profile — Hardened Deny-by-Default Policy (commits 3741c66c + f4f3f49c)
+## macOS SBPL Profile — Hardened Deny-by-Default Policy (commits ad9d0bc9 + 1bf52435 — the SHAs 3741c66c/f4f3f49c previously cited here are stale)
 
 `generate_profile/2` (`macos.ex`) previously emitted `(deny default)` followed by a **global `(allow file-read*)`** — sandboxed agents could read ANY file the user could (including `~/.ssh/id_rsa`, `~/.gnupg`, etc.); the sensitive-dir rules were deny-WRITE only. Since 3741c66c the profile is deny-by-default for READS too. Emitted rule groups, in order:
 
