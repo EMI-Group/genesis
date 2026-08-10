@@ -188,6 +188,7 @@ defmodule EvoDashWeb.DashboardLive.RemoteView do
                     {gettext("Project Settings")}
                   </p>
                   <EvoDashWeb.ProjectComponents.project_settings_tab
+                    remote={@remote}
                     active_project={@active_project_path}
                     project_config={@project_config}
                     worktree_script={@worktree_script}
