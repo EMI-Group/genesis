@@ -10,6 +10,7 @@ defmodule EvoDashWeb.DashboardLive.Project do
   alias EvoGit.Config.Schema
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.ProjectConfig
+  alias EvoDash.NodeContext
   import Phoenix.LiveView, only: [put_flash: 3]
 
   require Logger
@@ -47,6 +48,22 @@ defmodule EvoDashWeb.DashboardLive.Project do
   end
 
   @doc """
+  Node-aware variant of `detect_mode/1`. When `node == node()`, delegates to
+  the local variant. When remote, uses `NodeContext` for filesystem checks.
+  """
+  def detect_mode(node, path) do
+    if node == node() do
+      detect_mode(path)
+    else
+      cond do
+        new_codebase?(node, path) -> "genesis_new"
+        not NodeContext.file_exists?(node, Path.join(path, "CONTEXT.md")) -> "genesis_existing"
+        true -> "evolve_simple"
+      end
+    end
+  end
+
+  @doc """
   Returns `true` if the given path appears to be a new/empty codebase.
   """
   def new_codebase?(path) do
@@ -57,6 +74,23 @@ defmodule EvoDashWeb.DashboardLive.Project do
       end
 
     Enum.empty?(files)
+  end
+
+  @doc """
+  Node-aware variant of `new_codebase?/1`.
+  """
+  def new_codebase?(node, path) do
+    if node == node() do
+      new_codebase?(path)
+    else
+      files =
+        case NodeContext.ls(node, path) do
+          {:ok, items} -> items -- [".git", "README.md", ".genesis", ".gitignore"]
+          _ -> []
+        end
+
+      Enum.empty?(files)
+    end
   end
 
   @doc """
@@ -180,6 +214,35 @@ defmodule EvoDashWeb.DashboardLive.Project do
   end
 
   @doc """
+  Node-aware variant of `load_project_config/2`. When `node == node()`, delegates to
+  the local variant. When remote, uses the config map fetched from the remote node.
+  """
+  def load_project_config(node, path, config) do
+    if node == node() do
+      load_project_config(path, config)
+    else
+      # Remote: config is already parsed from the remote genesis.toml.
+      # Use the same extraction logic as the local variant.
+      worktree_script =
+        case config do
+          %{"worktree" => %{"script" => script}} when is_binary(script) -> script
+          _ -> nil
+        end
+
+      commands =
+        case config do
+          %{"commands" => cmds} when is_map(cmds) ->
+            cmds |> Enum.filter(fn {_k, v} -> is_binary(v) end) |> Map.new()
+
+          _ ->
+            %{}
+        end
+
+      {config, worktree_script, commands}
+    end
+  end
+
+  @doc """
   Loads foreign repos from the project's genesis.toml configuration.
   Returns a sorted list of `ForeignRepo` structs.
   """
@@ -198,6 +261,23 @@ defmodule EvoDashWeb.DashboardLive.Project do
     Enum.sort_by(repos, fn repo ->
       {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
     end)
+  end
+
+  @doc """
+  Node-aware variant of `load_foreign_repos/2`. When `node == node()`, delegates to
+  the local variant. When remote, extracts foreign repos from the already-parsed config.
+  """
+  def load_foreign_repos(node, repo_path, config) do
+    if node == node() do
+      load_foreign_repos(repo_path, config)
+    else
+      # Remote: extract from the already-parsed config (same logic as local /2 variant)
+      repos = extract_foreign_repos(config)
+
+      Enum.sort_by(repos, fn repo ->
+        {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
+      end)
+    end
   end
 
   @doc """

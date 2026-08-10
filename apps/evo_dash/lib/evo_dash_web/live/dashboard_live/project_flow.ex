@@ -16,8 +16,10 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
   use Gettext, backend: EvoDashWeb.Gettext
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3, push_patch: 2]
+  import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
   alias EvoGit.TaskRegistry
+  alias EvoDash.NodeContext
   alias EvoDashWeb.DashboardLive.Project
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -278,12 +280,18 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
         {:ok, expanded} ->
           node = socket.assigns[:current_node]
 
-          if EvoDash.NodeContext.dir?(node, expanded) do
-            EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+          if NodeContext.dir?(node, expanded) do
+            NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
 
             recent_projects =
-              EvoDash.NodeContext.list_recent_projects(node)
+              NodeContext.list_recent_projects(node)
               |> filter_absolute_recent_projects()
+
+            config = NodeContext.read_project_config(node, expanded)
+            mode = Project.detect_mode(node, expanded)
+            mode_info = mode_info_message(mode)
+            {project_config, worktree_script, commands} = Project.load_project_config(node, expanded, config)
+            foreign_repos = Project.load_foreign_repos(node, expanded, config)
 
             socket =
               socket
@@ -292,6 +300,13 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
               |> assign(:palette_mode, :menu)
               |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
               |> assign(:active_project_path, expanded)
+              |> assign(:task_mode, mode)
+              |> assign(:task_mode_info, mode_info)
+              |> assign(:project_config, project_config)
+              |> assign(:worktree_script, worktree_script)
+              |> assign(:commands, commands)
+              |> assign(:foreign_repos, foreign_repos)
+              |> assign(:show_add_foreign_repo_form, false)
 
             {:noreply, push_patch(socket, to: project_url(socket, expanded))}
           else

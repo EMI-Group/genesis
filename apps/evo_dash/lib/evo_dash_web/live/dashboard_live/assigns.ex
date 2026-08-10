@@ -68,7 +68,11 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   def assign_form_defaults(socket) do
     mode =
       if socket.assigns[:active_project_path] do
-        Project.detect_mode(socket.assigns.active_project_path)
+        if socket.assigns[:remote?] do
+          Project.detect_mode(socket.assigns.current_node, socket.assigns.active_project_path)
+        else
+          Project.detect_mode(socket.assigns.active_project_path)
+        end
       else
         "genesis_new"
       end

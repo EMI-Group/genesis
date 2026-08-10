@@ -13,6 +13,7 @@ defmodule EvoDashWeb.DashboardLive do
   alias EvoDashWeb.ExampleTask
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Platform
+  alias EvoDash.NodeContext
   alias EvoGit.ProjectConfig
 
   @impl true
@@ -220,39 +221,64 @@ defmodule EvoDashWeb.DashboardLive do
                   <% end %>
                 </div>
               <% @remote? -> %>
-                <!-- Connected remote node: remote top bar (target badge,
-                     Configure dropdown hidden) + the remote node's active
-                     agents. The local task list and project management are
-                     LOCAL concerns — the remote daemon runs evo_git only, no
-                     evo_dash (no TaskRegistry/Store). -->
-                <RemoteView.top_bar
-                  remote={true}
-                  current_node_name={@current_node_name}
-                  active_project={@active_project}
-                  active_project_path={@active_project_path}
-                  no_project_hint_dismissed={@no_project_hint_dismissed}
-                  recent_projects={@recent_projects}
-                  palette_open={@project_palette_open}
-                  palette_search={@palette_search}
-                  palette_mode={@palette_mode}
-                  palette_selected_index={@palette_selected_index}
-                  path_suggestions={@path_suggestions}
-                  tauri_detected={@tauri_detected}
-                  platform={@platform}
-                />
+                <div class="flex-1 flex flex-col min-h-0 gap-3">
+                  <RemoteView.top_bar
+                    remote={true}
+                    current_node_name={@current_node_name}
+                    active_project={@active_project}
+                    active_project_path={@active_project_path}
+                    no_project_hint_dismissed={@no_project_hint_dismissed}
+                    recent_projects={@recent_projects}
+                    palette_open={@project_palette_open}
+                    palette_search={@palette_search}
+                    palette_mode={@palette_mode}
+                    palette_selected_index={@palette_selected_index}
+                    path_suggestions={@path_suggestions}
+                    tauri_detected={@tauri_detected}
+                    platform={@platform}
+                    show_project_settings={@show_project_settings}
+                    task_mode={@task_mode}
+                    task_node_path={@task_node_path}
+                    task_starting_commit={@task_starting_commit}
+                    task_resume_from={@task_resume_from}
+                    task_archive={@task_archive}
+                    build_systems={@build_systems}
+                    task_build_system={@task_build_system}
+                    project_config={@project_config}
+                    worktree_script={@worktree_script}
+                    commands={@commands}
+                    foreign_repos={@foreign_repos}
+                    foreign_repo_path_suggestions={@foreign_repo_path_suggestions}
+                    show_add_foreign_repo_form={@show_add_foreign_repo_form}
+                    new_repo_id={@new_repo_id}
+                    new_repo_path={@new_repo_path}
+                    new_repo_description={@new_repo_description}
+                    disabled={is_nil(@active_project)}
+                    show_configure_dropdown={@show_configure_dropdown}
+                  />
 
-                <div class="mt-2 mb-6 rounded-lg border border-info/30 bg-info/5 p-4 flex items-start gap-3">
-                  <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
-                  <div>
-                    <h2 class="font-bold text-sm text-info mb-0.5">
-                      {gettext("Remote Node — Active Agents")}
-                    </h2>
+                  <div class="mt-2 mb-4 rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-2">
+                    <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
                     <p class="text-sm text-base-content/70">
-                      {gettext(
-                        "You are viewing agents running on a remote node. Task launching and project management are local dashboard features."
-                      )}
+                      {gettext("You are viewing a remote node. Tasks launched here will run on the remote machine.")}
                     </p>
                   </div>
+
+                  <EvoDashWeb.TaskFormComponents.task_form
+                    prompt={@task_prompt}
+                    mode={@task_mode}
+                    mode_info={@task_mode_info}
+                    node_path={@task_node_path}
+                    starting_commit={@task_starting_commit}
+                    resume_from={@task_resume_from}
+                    show_advanced={@show_advanced}
+                    disabled={is_nil(@active_project)}
+                    archive={@task_archive}
+                    model_profiles={@model_profiles}
+                    selected_model_id={@selected_model_id}
+                    build_systems={@build_systems}
+                    selected_build_system={@task_build_system}
+                  />
                 </div>
 
                 <%= if @remote_agents == [] do %>
@@ -525,11 +551,34 @@ defmodule EvoDashWeb.DashboardLive do
     # contexts render connecting/error states without agent data).
     socket =
       if socket.assigns.remote? do
-        assign(
-          socket,
-          :remote_agents,
-          EvoDash.NodeContext.list_agents(socket.assigns.current_node)
-        )
+        socket =
+          assign(
+            socket,
+            :remote_agents,
+            NodeContext.list_agents(socket.assigns.current_node)
+          )
+
+        # When a remote project is active, load its config
+        if socket.assigns[:active_project_path] do
+          path = socket.assigns.active_project_path
+          node = socket.assigns.current_node
+
+          config = NodeContext.read_project_config(node, path)
+          {project_config, worktree_script, commands} = Project.load_project_config(node, path, config)
+          foreign_repos = Project.load_foreign_repos(node, path, config)
+          mode = Project.detect_mode(node, path)
+          mode_info = mode_info_message(mode)
+
+          socket
+          |> assign(:project_config, project_config)
+          |> assign(:worktree_script, worktree_script)
+          |> assign(:commands, commands)
+          |> assign(:foreign_repos, foreign_repos)
+          |> assign(:task_mode, mode)
+          |> assign(:task_mode_info, mode_info)
+        else
+          socket
+        end
       else
         socket
       end
@@ -1030,7 +1079,14 @@ defmodule EvoDashWeb.DashboardLive do
           opts
         end
 
-      case TaskRegistry.start_task(task_type, opts) do
+      start_result =
+        if socket.assigns.remote? do
+          NodeContext.start_task(socket.assigns.current_node, task_type, opts)
+        else
+          TaskRegistry.start_task(task_type, opts)
+        end
+
+      case start_result do
         {:ok, task} ->
           {:noreply,
            socket

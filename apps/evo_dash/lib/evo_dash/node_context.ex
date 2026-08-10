@@ -485,6 +485,60 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.dir?(node, path)
   end
 
+  @doc """
+  Starts a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.start_task/3`. Returns `{:ok, task}` on success
+  or `{:error, reason}` on failure.
+  """
+  @spec start_task(node(), atom(), keyword()) :: {:ok, map()} | {:error, term()}
+  def start_task(node, task_type, opts) do
+    EvoGit.RemoteNode.start_task(node, task_type, opts)
+  end
+
+  @doc """
+  Returns whether a file exists at `path` on the given node.
+
+  Delegates to `EvoGit.RemoteNode.file_exists?/2`. Returns `false` if the remote
+  call fails.
+  """
+  @spec file_exists?(node(), String.t()) :: boolean()
+  def file_exists?(node, path) do
+    EvoGit.RemoteNode.file_exists?(node, path)
+  end
+
+  @doc """
+  Lists directory contents at `path` on the given node.
+
+  Delegates to `EvoGit.RemoteNode.ls/2`. Returns `{:ok, [String.t()]} | {:error, term()}`.
+  """
+  @spec ls(node(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  def ls(node, path) do
+    EvoGit.RemoteNode.ls(node, path)
+  end
+
+  @doc """
+  Reads the project configuration (genesis.toml) from the given path on the given node.
+
+  Delegates to `EvoGit.RemoteNode.read_project_config/2`. Returns the parsed
+  config map or `nil` if the file doesn't exist or the remote call fails.
+  """
+  @spec read_project_config(node(), String.t()) :: map() | nil
+  def read_project_config(node, path) do
+    EvoGit.RemoteNode.read_project_config(node, path)
+  end
+
+  @doc """
+  Lists task summaries filtered by project path on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_tasks_summary_by_path/3`. Returns `[]` if
+  the remote call fails.
+  """
+  @spec list_tasks_summary_by_path(node(), String.t(), [atom()]) :: [map()]
+  def list_tasks_summary_by_path(node, path, statuses \\ []) do
+    EvoGit.RemoteNode.list_tasks_summary_by_path(node, path, statuses)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning
