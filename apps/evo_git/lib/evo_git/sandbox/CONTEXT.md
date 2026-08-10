@@ -24,7 +24,7 @@ None — leaf directory (modules: `sandbox.ex`, `behaviour.ex`, `helpers.ex`, `l
 1. `(version 1)` / `(deny default)`
 2. **System read paths**: `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/etc`, `/private/etc`, `/private/var`, `/dev`, `/opt/homebrew` (binaries, dyld, system libs, certs, device nodes — bash/toolchain startup needs; `/opt/homebrew` = Apple Silicon Homebrew git + dylibs, added in the 2026-08 fix)
 3. **Nix** (only when `Nix.enabled?()`): read + write for `/nix/store`, `/nix/var`
-4. **Repo**: read+write on `cwd` (worktree) and `<repo_root>/.git`
+4. **Repo**: read+write on `cwd` (worktree) and `<repo_root>/.git` — the git rule resolves linked-worktree `gitdir:` pointers (`.git`-as-file) to the COMMON git dir (see Known Issue fix below)
 5. **Tmp**: read+write on `Platform.tmp_paths()` (`/tmp`, `/var/tmp`)
 6. **Genesis dirs**: read+write on `Platform.config_dir()` + `Platform.data_dir()` (macOS: `~/Library/Application Support/genesis` — NOT under /tmp or repo)
 7. **Home read allow** `(allow file-read* (subpath home))` — tool configs (`~/.gitconfig`, `~/.npmrc`... wait, `.npmrc` is deny-read now) — then immediately after:
