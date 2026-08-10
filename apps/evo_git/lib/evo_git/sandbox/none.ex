@@ -117,6 +117,72 @@ defmodule EvoGit.Sandbox.None do
     end
   end
 
+  @doc """
+  Resolves an executable path for direct port/process spawning.
+
+  Binary-safe replacement for raw `:os.find_executable/1`, which raises
+  `ArgumentError` on Elixir BINARY input on OTP 27+ (`os.erl:verify_executable/3`
+  does `Name ++ ".exe"` where `".exe"` is a charlist — `binary ++ charlist`
+  fails). `System.find_executable/1` converts to a charlist internally and never
+  hits that bug, so this function is built on it.
+
+  Resolution order:
+    * input normalized to a string (`to_string/1` — handles charlists too);
+    * absolute path → returned as-is when it is a regular file, else `nil`;
+    * Windows → `System.find_executable/1` first, then known PowerShell install
+      locations when the PATH lookup misses for `"powershell"`/`"pwsh"` (they
+      often live outside PATH);
+    * other platforms → `System.find_executable/1` (returns `nil` when not found).
+
+  Returns `nil` when the executable cannot be resolved; callers raise
+  `:enoent` to preserve `System.cmd/3` semantics.
+  """
+  @spec resolve_executable(String.t() | charlist()) :: String.t() | nil
+  def resolve_executable(executable) do
+    name = to_string(executable)
+
+    cond do
+      Path.type(name) == :absolute ->
+        if File.regular?(name), do: name, else: nil
+
+      EvoGit.Platform.windows?() ->
+        resolve_windows_executable(name)
+
+      true ->
+        System.find_executable(name)
+    end
+  end
+
+  # Windows PATH lookup with known-location fallbacks for powershell/pwsh, which
+  # are commonly installed outside PATH (e.g. Windows PowerShell under WINDIR or
+  # PowerShell 7 under ProgramFiles).
+  defp resolve_windows_executable(name) do
+    case System.find_executable(name) do
+      nil when name in ["powershell", "pwsh"] ->
+        powershell_fallback_paths() |> Enum.find(&File.regular?/1)
+
+      result ->
+        result
+    end
+  end
+
+  # Known PowerShell install locations, in priority order. WINDIR/ProgramFiles
+  # may be unset in odd environments; sensible defaults keep the fallback working.
+  defp powershell_fallback_paths do
+    [
+      Path.join(
+        System.get_env("WINDIR", "C:\\Windows"),
+        "System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+      ),
+      Path.join(System.get_env("ProgramFiles", "C:\\Program Files"), "PowerShell\\7\\pwsh.exe"),
+      Path.join(System.get_env("ProgramW6432", "C:\\Program Files"), "PowerShell\\7\\pwsh.exe"),
+      Path.join(
+        System.get_env("ProgramFiles(x86)", "C:\\Program Files (x86)"),
+        "PowerShell\\7\\pwsh.exe"
+      )
+    ]
+  end
+
   defp run_with_partial_unix(cwd, executable, args, timeout, max_bytes) do
     tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
     File.mkdir_p!(tmpdir)
@@ -176,13 +242,20 @@ defmodule EvoGit.Sandbox.None do
     is_git = EvoGit.GitEnv.git_command?(executable)
     git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
-    # Same resolution System.cmd/3 performs: absolute paths are used as-is,
-    # otherwise a PATH/PATHEXT lookup (raises ErlangError(:enoent) when missing).
+    # Resolve the executable with a binary-safe lookup. Raw `:os.find_executable/1`
+    # is deliberately avoided: on OTP 27+ (kernel 11.0.3) it raises ArgumentError
+    # when given an Elixir BINARY — os.erl:verify_executable/3 does
+    # `Name ++ ".exe"` where ".exe" is a charlist, and `binary ++ charlist` fails
+    # (e.g. `:erlang.++("c:/Windows/System32/powershell", ~c".exe")`). This crashed
+    # run_with_partial_windows/5 and killed the whole agent task. We use
+    # `System.find_executable/1` instead (it converts to a charlist internally, so
+    # it never hits that bug), plus Windows known-location fallbacks for
+    # powershell/pwsh, which often live outside PATH. Absolute paths are used
+    # as-is; a nil result keeps System.cmd semantics via :erlang.error(:enoent).
     exec =
-      if Path.type(executable) == :absolute do
-        executable
-      else
-        :os.find_executable(executable) || :erlang.error(:enoent, [executable, args, cwd])
+      case resolve_executable(executable) do
+        nil -> :erlang.error(:enoent, [executable, args, cwd])
+        resolved -> resolved
       end
 
     port =
