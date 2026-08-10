@@ -8,8 +8,11 @@
 #   nix build .#desktop   — build the Tauri desktop app
 #   nix run   .#desktop   — launch the Genesis desktop app
 #
-# After updating Cargo.lock, update cargoHash below. Use lib.fakeHash as a
-# placeholder, build, and copy the reported hash.
+# Rust dependencies are vendored from desktop/src-tauri/Cargo.lock (the single
+# source of truth) via cargoLock — the vendor store path is derived purely from
+# the lock file contents, so there is NO hash to update when Cargo.lock changes.
+# The old cargoHash / lib.fakeHash workflow is obsolete; only if git
+# dependencies are ever added must they be declared in cargoLock.outputHashes.
 {
   src,
   beamPackages,
@@ -39,7 +42,9 @@
 }:
 let
   pname = "genesis-desktop";
-  version = "0.8.6";
+  # Version is read from the repo-root VERSION file (single source of truth),
+  # so no manual version bump is needed here.
+  version = lib.trim (lib.fileContents ./VERSION);
 
   # ── Elixir desktop release ─────────────────────────────────────────
   genesisRelease = import ./genesis.nix {
@@ -63,8 +68,11 @@ let
     inherit version;
     src = src + "/desktop/src-tauri";
 
-    # Update this hash when Cargo.lock changes.
-    cargoHash = "sha256-Ia2CXm8GoEPya5taX8CSNxUEm9BY01hwsPlV6XyoBAQ=";
+    # Dependencies are vendored from desktop/src-tauri/Cargo.lock (the single
+    # source of truth): the vendor directory is derived from the lock file, so
+    # no hash needs updating when Cargo.lock changes. If git dependencies are
+    # ever added, they must be declared in cargoLock.outputHashes.
+    cargoLock.lockFile = ./desktop/src-tauri/Cargo.lock;
 
     nativeBuildInputs = [
       pkg-config

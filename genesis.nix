@@ -24,7 +24,9 @@
 let
   # ── App metadata ──────────────────────────────────────────────────
   pname = "genesis";
-  version = "0.8.6";
+  # Version is read from the repo-root VERSION file (single source of truth),
+  # so no manual version bump is needed here.
+  version = lib.trim (lib.fileContents ./VERSION);
 
   # ── Mix dependencies ──────────────────────────────────────────────
   # Lockfile-driven dependency fetch. Update this hash when mix.lock changes.
