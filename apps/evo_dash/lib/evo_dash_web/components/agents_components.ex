@@ -38,11 +38,14 @@ defmodule EvoDashWeb.AgentsComponents do
 
         <!-- This Node's Content Row -->
         <div class="relative z-10 flex flex-col xl:flex-row xl:items-start gap-3 py-1">
+          <%= if length(node.children) > 0 do %>
+            <!-- Vertical trunk from this node's folder down to the children container.
+                 Anchored to the full content row (not the 28px path-info div) so it
+                 reaches the children container without gaps. -->
+            <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
+          <% end %>
           <!-- Path info -->
           <div class="flex items-center gap-2 h-7 shrink-0 relative w-full xl:w-[var(--agent-max-width)]" style={"--agent-max-width: #{@max_width}ch"}>
-            <%= if length(node.children) > 0 do %>
-              <div class="absolute left-2.5 top-[18px] bottom-0 border-l-2 border-base-content/20 z-0 pointer-events-none"></div>
-            <% end %>
             <.icon name="hero-folder" class="size-5 text-base-content/50 shrink-0 relative z-10 bg-base-100/50 rounded" />
             <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
