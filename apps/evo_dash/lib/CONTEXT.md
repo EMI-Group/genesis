@@ -21,7 +21,7 @@ NOTE: The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `Ta
 | Module | Purpose |
 |--------|---------|
 | `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → Endpoint). Store/Registry/TaskRegistry now live in `EvoGit.Application`. |
-| `EvoDash.NodeContext` | Thin client for SSH remote development — wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (connection lifecycle GenServer, graceful degradation), and `EvoGit.RemoteNode` (cross-node RPC helpers — agents, config, paused?). Public API is stable so web files need no changes. |
+| `EvoDash.NodeContext` | Thin client for SSH remote development — wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (connection lifecycle GenServer, graceful degradation), and `EvoGit.RemoteNode` (cross-node RPC helpers — agents, config, paused?, task history, cancellation). Public API is stable so web files need no changes. **Task cancellation model**: `cancel_task/2` = GRACEFUL (`:pending` → immediate `:cancelled`; `:running` → `:cancelling`, agents informed to save + exit, then `:cancelled` with result/archive preserved); `force_kill_task/2` = BRUTAL force kill (kills all agents + wrapper → `:cancelled`, result nil'd; escalation from `:cancelling`). Both delegate to `EvoGit.RemoteNode`. |
 
 ### Web Modules (`./evo_dash_web/`)
 

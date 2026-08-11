@@ -30,9 +30,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   @remote_connections_topic "remote_connections"
   @tasks_topic "tasks"
 
-  # The only statuses that can appear in the sidebar: running/pending/finalizing
-  # tasks and completed tasks (the source of review candidates).
-  @active_statuses [:running, :pending, :finalizing, :completed]
+  # The only statuses that can appear in the sidebar: running/pending/finalizing/
+  # cancelling tasks (cancelling tasks stay visible while they wind down) and
+  # completed tasks (the source of review candidates).
+  @active_statuses [:running, :pending, :finalizing, :cancelling, :completed]
 
   @doc """
   On-mount hook — sets initial node-context assigns and subscribes to
@@ -123,13 +124,14 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   @doc """
   Partitions active-task summaries into `{running, pending}` (PURE — no I/O).
 
-  Running = status in `[:running, :pending, :finalizing]`. Pending (review
-  candidates) = status `:completed`, `review_status` nil, and
+  Running = status in `[:running, :pending, :finalizing, :cancelling]`. Pending
+  (review candidates) = status `:completed`, `review_status` nil, and
   `show_review_button?/1` true, sorted `{:desc, DateTime}` by
   `finished_at || started_at`.
   """
   def partition_active_tasks(summaries) do
-    running_tasks = Enum.filter(summaries, &(&1.status in [:running, :pending, :finalizing]))
+    running_tasks =
+      Enum.filter(summaries, &(&1.status in [:running, :pending, :finalizing, :cancelling]))
 
     pending_tasks =
       summaries

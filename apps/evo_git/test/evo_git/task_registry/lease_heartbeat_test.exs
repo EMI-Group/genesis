@@ -29,6 +29,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
 
       assert found != nil
       assert found.status == :completed
+
       assert found.lease_expires_at == nil,
              "completed task should have lease cleared"
     end
@@ -38,6 +39,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
 
       # Insert a running task with an EXPIRED lease, no pid, not owned.
       expired = System.system_time(:second) - 300
+
       task = %TaskInfo{
         id: "lease_heartbeat_#{unique}",
         type: :genesis,
@@ -98,10 +100,66 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
 
       found = EvoGit.Store.get_task(EvoGit.Store, "lease_sweep_#{unique}")
       assert found != nil
+
       assert found.status == :failed,
              "task with expired lease should be swept to :failed, got #{inspect(found.status)}"
 
       assert found.lease_expires_at == nil
+    end
+
+    test "heartbeat renews the lease of an owned :cancelling task" do
+      unique = System.unique_integer([:positive])
+      task_id = "heartbeat_cancelling_#{unique}"
+      expired = System.system_time(:second) - 300
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :cancelling,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil,
+        lease_expires_at: expired
+      }
+
+      EvoGit.Store.put_task(EvoGit.Store, task)
+
+      # Make the task "owned" (in task_refs) so heartbeat renews its lease —
+      # a long graceful cancel must keep its lease valid while the wrapper
+      # is still alive. The %Task{} content is irrelevant to the heartbeat.
+      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+        %{
+          state
+          | task_refs:
+              Map.put(
+                state.task_refs,
+                task_id,
+                %Task{
+                  pid: self(),
+                  ref: make_ref(),
+                  owner: self(),
+                  mfa: {EvoGit.TaskRegistry.TaskExecutor, :execute_task, [:genesis, [], task_id]}
+                }
+              )
+        }
+      end)
+
+      send(EvoGit.TaskRegistry, :heartbeat)
+
+      # Sync
+      TaskRegistry.list_tasks()
+
+      found = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert found != nil
+
+      assert found.status == :cancelling,
+             "heartbeat must not change the :cancelling status, got #{inspect(found.status)}"
+
+      assert found.lease_expires_at > expired,
+             "heartbeat should renew the lease of an owned :cancelling task, got #{inspect(found.lease_expires_at)}"
     end
   end
 end

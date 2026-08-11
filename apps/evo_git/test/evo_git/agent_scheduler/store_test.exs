@@ -204,4 +204,66 @@ defmodule EvoGit.AgentScheduler.StoreTest do
       assert stored_context(agent_id) == ctx2
     end
   end
+
+  describe "cancel_requested — graceful-cancel flag" do
+    test "set_cancel_requested/1 returns :ok and sets the flag for a live agent" do
+      agent_id = 1
+      Store.put_agent_state(agent_id, agent_state())
+
+      assert :ok = Store.set_cancel_requested(agent_id)
+      assert Store.cancel_requested?(agent_id)
+    end
+
+    test "set_cancel_requested/1 returns {:error, :not_found} for an unknown agent" do
+      assert {:error, :not_found} = Store.set_cancel_requested(999)
+    end
+
+    test "cancel_requested?/1 is false when the agent state is missing" do
+      refute Store.cancel_requested?(999)
+    end
+
+    test "cancel_requested?/1 is false by default and reflects the flag after set/clear" do
+      agent_id = 1
+      Store.put_agent_state(agent_id, agent_state())
+
+      refute Store.cancel_requested?(agent_id)
+
+      assert :ok = Store.set_cancel_requested(agent_id)
+      assert Store.cancel_requested?(agent_id)
+
+      assert :ok = Store.clear_cancel_requested(agent_id)
+      refute Store.cancel_requested?(agent_id)
+    end
+
+    test "clear_cancel_requested/1 returns {:error, :not_found} for an unknown agent" do
+      assert {:error, :not_found} = Store.clear_cancel_requested(999)
+    end
+
+    test "the flag survives a put_agent_state/2 round-trip" do
+      agent_id = 1
+      Store.put_agent_state(agent_id, agent_state())
+      assert :ok = Store.set_cancel_requested(agent_id)
+
+      # Whole-struct write of a state that still carries the flag keeps it.
+      {:ok, state} = Store.get_agent_state(agent_id)
+      assert state.cancel_requested == true
+
+      Store.put_agent_state(agent_id, state)
+
+      {:ok, state2} = Store.get_agent_state(agent_id)
+      assert state2.cancel_requested == true
+    end
+
+    test "the flag survives a batch_update_agent/2 update of an unrelated field" do
+      agent_id = 1
+      Store.put_agent_state(agent_id, agent_state())
+      assert :ok = Store.set_cancel_requested(agent_id)
+
+      assert :ok = Store.batch_update_agent(agent_id, turn: 7)
+
+      {:ok, state} = Store.get_agent_state(agent_id)
+      assert state.turn == 7
+      assert state.cancel_requested == true
+    end
+  end
 end

@@ -24,6 +24,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
   - `pending_user_messages` — list of user messages injected externally (via dashboard/RPC), drained at the top of each turn and appended to context as user-role messages
+  - `cancel_requested` — set to true by the scheduler when the task is being gracefully cancelled; the runner checks/clears it at the top of each turn
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
   - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
   - `archive` — whether task archiving is enabled for this agent (writes git refs + ETS records on completion)
@@ -58,7 +59,8 @@ defmodule EvoGit.AgentScheduler.AgentState do
     repo_id: "primary",
     repo_root: nil,
     foreign_repos: [],
-    pending_user_messages: []
+    pending_user_messages: [],
+    cancel_requested: nil
   ]
 
   @type t :: %__MODULE__{
@@ -82,6 +84,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           compression_count: non_neg_integer(),
           total_tokens: non_neg_integer(),
           foreign_repos: [ForeignRepo.t()],
-          pending_user_messages: [String.t()]
+          pending_user_messages: [String.t()],
+          cancel_requested: boolean() | nil
         }
 end

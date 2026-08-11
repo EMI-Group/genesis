@@ -134,6 +134,25 @@ Handles agent completion and crash recovery:
 2. `cancel_agent/2` — Kills the agent's Task process via `Task.shutdown(meta.task_ref, :brutal_kill)`. The `task_ref` field stores a full `%Task{}` struct (not a bare reference), enabling proper shutdown. The kill fires the WorktreeManager `:DOWN` monitor → worktree reclaim. Replies to blocked callers, deletes ETS entries. Uses `case` to skip ETS deletion if agent_state is missing.
 3. `handle_agent_crash/3` — Retry logic (re-dispatch — crash-retry no longer keeps/reuses the persistent worktree; the retried agent gets a FRESH worktree from WorktreeManager) or permanent failure (ETS cleanup, notify parent/reply error). Both paths resolve `repo_root` from per-agent ETS state; neither calls worktree deletion — cleanup is monitor-driven.
 
+## Graceful Cancellation (cancel_requested + `:evogit_cancelling_tasks` marker)
+
+**`AgentState.cancel_requested`** (`agent_state.ex:27,63,88`) — `boolean() | nil`, default `nil`. Set by the scheduler when the task is being gracefully cancelled; the runner checks/clears it at the top of each turn and enters cancel-grace (save work → `complete_task`). `EvoGit.AgentScheduler.Store` helpers (`store.ex:199-255`): `set_cancel_requested/1` (sets `true`) and `/2` (arbitrary `boolean() | nil`), `cancel_requested?/1` (boolean getter — `false` when the state is missing or the flag is nil/false), `clear_cancel_requested/1` (sets back to `nil`). All return `:ok | {:error, :not_found}` except the getter.
+
+**`AgentScheduler.begin_graceful_cancel/1`** (public `agent_scheduler.ex:400-402`, handler `:700-731`):
+1. Registers `task_id` in the `:evogit_cancelling_tasks` marker — a public `:set` ETS table created in `application.ex:22-27` (owned by the application process, survives scheduler restarts).
+2. Scans `SchedMeta.task_id` (same pattern as `force_kill_task_agents`), and for each live agent appends the cancel message via **`Store.append_pending_user_message/2`** (NOT `send_user_message` — that's a `GenServer.call` to the scheduler itself, which would self-call deadlock) + `Store.set_cancel_requested/1`.
+3. Exact message text in `cancel_message/0` (`agent_scheduler.ex:375-383`): *"The task is being cancelled by the user. Please immediately save your work: commit any uncommitted changes, then call complete_task with a summary of what was accomplished. You are in a grace period and must call complete_task now."*
+
+**`AgentScheduler.clear_cancelling_task/1`** (public `:412-414`, handler `:734-741`) — deletes the task from the marker, idempotent (defensive against a missing table). Called by TaskRegistry's guarded `clear_cancelling_marker/1` at terminal transitions.
+
+**`run_agent` guard** (`agent_scheduler.ex:568-578`) — replies `{:error, :cancelled}` WITHOUT dispatch when the task is in the marker. This blocks Genesis Mode B's second sequential root agent (which shares the first root's `task_id`) from spawning after the first root completes during a cancel.
+
+**New-agent registration guard** in `Dispatch.register_agent` (`dispatch.ex:103-113`) — agents registered while their task is in the marker (subagent spawns, crash-retries, queued agents starting late) immediately get the cancel message + `cancel_requested` flag, so they enter grace at their first loop top.
+
+**Rename:** the old `cancel_task_agents/1` is now **`force_kill_task_agents/1`** (public `agent_scheduler.ex:367-369`, handler `:615-697`) — the brutal reverse-depth `:brutal_kill` cascade (removes refs from `ref_to_agent` first, purges queues, releases slots, `Lifecycle.cancel_agent` deepest-first), called by `TaskRegistry.force_kill_task/1`.
+
+**RPC:** `RemoteAPI.cancel_task/1` (graceful — delegates to `TaskRegistry.cancel_task/1`, `remote_api.ex:374-377`) + `RemoteAPI.force_kill_task/1` (renamed, `:389-392`); `RemoteNode.cancel_task/2` + `RemoteNode.force_kill_task/2` (`remote_node.ex:449-483` — local-direct when `node == node()`, else `:erpc` routing).
+
 ## Constraints
 
 - Data structs are plain data with no behaviour or callbacks.

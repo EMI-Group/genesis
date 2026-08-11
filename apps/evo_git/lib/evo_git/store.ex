@@ -160,10 +160,12 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns the ids of all tasks whose status is NOT running or pending.
+  Returns the ids of all tasks whose status is NOT running, pending, or
+  cancelling.
 
   Used by TaskRegistry.clear_finished_tasks to avoid decoding all tasks just
-  to filter by status — the status filtering happens in SQL.
+  to filter by status — the status filtering happens in SQL. `:cancelling` is
+  excluded so an in-flight graceful cancel is never deleted.
   """
   def select_finished_task_ids(store \\ __MODULE__) do
     GenServer.call(store, :select_finished_task_ids, @call_timeout)
@@ -187,14 +189,16 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns lightweight lease info for running/finalizing tasks:
+  Returns lightweight lease info for running/finalizing/cancelling tasks:
   `%{id, status, lease_expires_at}`. Only the `status` column is decoded (a
   lightweight atom); no heavy JSON fields (logs, result, usage,
   archive_metadata) are touched. The status filter happens in SQL
-  (`WHERE status IN ('running', 'finalizing')`).
+  (`WHERE status IN ('running', 'finalizing', 'cancelling')`).
 
   Used by TaskRegistry.lease_sweep and startup reconciliation to avoid a full
-  decode of all tasks just to check status and lease validity.
+  decode of all tasks just to check status and lease validity. `:cancelling`
+  is included so startup reconciliation can resolve orphaned cancelling
+  tasks; the lease_sweep keeps its `:running`-only Elixir filter.
   """
   def select_running_lease_info(store \\ __MODULE__) do
     GenServer.call(store, :select_running_lease_info, @call_timeout)
@@ -597,12 +601,17 @@ defmodule EvoGit.Store do
 
   # Lightweight query: status filtering in SQL, returns raw id strings.
   # No decode at all.
+  #
+  # The "finished" set is everything EXCEPT :running / :pending / :cancelling.
+  # :cancelling is deliberately excluded — an in-flight graceful cancel must
+  # never be deleted by clear_finished_tasks (its row is still live). Note
+  # :finalizing IS in the finished set (it is a terminal-ish cleanup target).
   @impl true
   def handle_call(:select_finished_task_ids, _from, state) do
     reply =
       case XqliteNIF.query(
              state.conn,
-             "SELECT id FROM tasks WHERE status NOT IN ('running', 'pending')",
+             "SELECT id FROM tasks WHERE status NOT IN ('running', 'pending', 'cancelling')",
              []
            ) do
         {:ok, %{rows: rows}} -> Enum.map(rows, fn [id] -> id end)
@@ -640,14 +649,17 @@ defmodule EvoGit.Store do
   end
 
   # Lightweight query: reads only id, status, lease_expires_at for
-  # running/finalizing tasks (status filtering happens in SQL). The status is
-  # decoded via the non-crashing Codec.decode_atom/1 (returns nil on unknown).
+  # running/finalizing/cancelling tasks (status filtering happens in SQL).
+  # :cancelling is included so startup reconciliation can mark orphaned
+  # cancelling tasks (runtime died mid-cancel) :cancelled, mirroring the
+  # :finalizing → :failed reconciliation. The status is decoded via the
+  # non-crashing Codec.decode_atom/1 (returns nil on unknown).
   @impl true
   def handle_call(:select_running_lease_info, _from, state) do
     reply =
       case XqliteNIF.query(
              state.conn,
-             "SELECT id, status, lease_expires_at FROM tasks WHERE status IN ('running', 'finalizing')",
+             "SELECT id, status, lease_expires_at FROM tasks WHERE status IN ('running', 'finalizing', 'cancelling')",
              []
            ) do
         {:ok, %{rows: rows}} ->

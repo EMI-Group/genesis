@@ -18,6 +18,15 @@ defmodule EvoGit.Agent.Runner do
 
   @complete_tool "complete_task"
 
+  # Grace-turn budget for a user-requested graceful cancellation (cancel-grace).
+  # The agent may wrap up and call `complete_task` for up to this many turns
+  # before the run hard-stops with `{:error, :recovery_failed}`.
+  @cancel_grace_turns 3
+
+  # Grace-turn budget for turn-limit recovery — exactly 1, preserving the
+  # pre-budget behavior (enter grace, one continue attempt → hard-stop).
+  @turn_limit_grace_turns 1
+
   @doc """
   Runs the agent synchronously, blocking until it completes.
 
@@ -178,7 +187,9 @@ defmodule EvoGit.Agent.Runner do
            meta,
            self()
          ) do
-      {:ok, ^worktree_path} -> :ok
+      {:ok, ^worktree_path} ->
+        :ok
+
       {:error, reason} ->
         raise "Failed to create worktree for agent #{agent_id}: #{inspect(reason)}"
     end
@@ -276,62 +287,151 @@ defmodule EvoGit.Agent.Runner do
     # and append them to the context as user-role messages before the next LLM call.
     state = drain_and_inject_user_messages(state)
 
-    cond do
-      EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
-        trigger_recovery(state, "max turns (#{state.max_turns}) exceeded")
+    # Immediately after the drain: check whether a graceful cancellation was
+    # requested for this agent (ETS `cancel_requested` flag, set by the
+    # scheduler when the task is cancelled). If set, the flag is cleared and
+    # the agent enters cancel-grace (budget @cancel_grace_turns, NO extra
+    # recovery message — the cancel message was already injected via the
+    # pending_user_messages drain above).
+    case maybe_enter_cancel_grace(state) do
+      {:cancel_grace, grace_state} ->
+        loop(grace_state)
 
-      true ->
-        do_turn(state)
+      :no_cancel ->
+        cond do
+          EvoGit.Agent.trigger_turn_limit_recovery?(state) ->
+            trigger_recovery(state, "max turns (#{state.max_turns}) exceeded")
+
+          true ->
+            do_turn(state)
+        end
     end
   end
 
   defp trigger_recovery(%LoopState{} = state, reason) do
-    objective =
-      case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
-        {:ok, agent_state}
-        when is_binary(agent_state.objective) and
-               agent_state.objective != "" ->
-          agent_state.objective
+    trigger_recovery(state, reason, [])
+  end
 
-        _ ->
-          nil
-      end
+  defp trigger_recovery(%LoopState{} = state, reason, opts) do
+    loop(enter_grace(state, reason, opts))
+  end
+
+  @doc false
+  # Transitions an agent into a grace period WITHOUT re-entering the loop.
+  #
+  # Runs the best-effort recovery auto-commit FIRST (safety net so uncommitted
+  # work is preserved — fires for BOTH grace kinds; for cancel-grace this is
+  # exactly "save the changes"), then optionally appends a recovery message to
+  # the context, then sets `in_grace_period: true` with the given grace-turn
+  # budget. Returns the updated `%LoopState{}`.
+  #
+  # `opts`:
+  #   - `:message` — `:default` (or omitted) appends the standard hardcoded
+  #     "exceeded the execution limit" recovery message built from `reason` and
+  #     the agent's objective (byte-for-byte identical to the pre-budget
+  #     behavior); `nil` skips the append (cancel-grace — the cancel message
+  #     was already injected via the `pending_user_messages` drain in
+  #     `loop/1`, so a second message would be redundant); a binary appends
+  #     that custom message instead.
+  #   - `:grace_turns` — the grace-turn budget (default `@turn_limit_grace_turns`).
+  def enter_grace(%LoopState{} = state, reason, opts \\ []) do
+    message = Keyword.get(opts, :message, :default)
+    grace_turns = Keyword.get(opts, :grace_turns, @turn_limit_grace_turns)
 
     # Safety net: auto-commit any uncommitted work before entering the grace
     # period, so it is preserved even if the agent fails to commit during its
-    # single recovery turn. We only commit when there are actually changes
+    # recovery turns. We only commit when there are actually changes
     # (non-empty porcelain status); a clean workspace is a no-op. Git errors
     # are allowed to propagate (crash) — this is best-effort salvage, not
     # error-masking.
     maybe_recovery_auto_commit(state)
 
-    warning_msg =
-      if objective do
-        """
-        You have exceeded the execution limit (#{reason}).
-        Your priority is to call `#{@complete_tool}` NOW with your best answer.
+    new_context =
+      case message do
+        :default ->
+          objective =
+            case EvoGit.AgentScheduler.get_agent_state(state.agent_id) do
+              {:ok, agent_state}
+              when is_binary(agent_state.objective) and
+                     agent_state.objective != "" ->
+                agent_state.objective
 
-        If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
+              _ ->
+                nil
+            end
 
-        Your original objective was:
-        #{objective}
+          warning_msg = recovery_warning_message(reason, objective)
 
-        Your report MUST summarize the status of this ENTIRE objective, not just your most recent sub-task.
-        """
-      else
-        """
-        You have exceeded the execution limit (#{reason}).
-        Your priority is to call `#{@complete_tool}` NOW with your best answer explaining the situation.
+          recovery_msg =
+            EvoGit.Agent.ContextBuilder.tag_message_turn(user(warning_msg), state.turn)
 
-        If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
-        """
+          ReqLLM.Context.append(state.context, recovery_msg)
+
+        nil ->
+          # Cancel-grace: the cancel message was already injected via the
+          # pending_user_messages drain in `loop/1` — do not append a second
+          # recovery message.
+          state.context
+
+        custom when is_binary(custom) ->
+          recovery_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(custom), state.turn)
+          ReqLLM.Context.append(state.context, recovery_msg)
       end
 
-    recovery_msg = EvoGit.Agent.ContextBuilder.tag_message_turn(user(warning_msg), state.turn)
-    new_context = ReqLLM.Context.append(state.context, recovery_msg)
+    %{
+      state
+      | context: new_context,
+        in_grace_period: true,
+        grace_turns_remaining: grace_turns
+    }
+  end
 
-    state = %{state | context: new_context, in_grace_period: true}
-    loop(state)
+  @doc false
+  # Checks whether a graceful cancellation was requested for this agent via the
+  # ETS `cancel_requested` flag (set by the scheduler when the task is
+  # cancelled).
+  #
+  # If set: clears the flag in ETS and returns `{:cancel_grace, grace_state}`
+  # where `grace_state` has `in_grace_period: true` and
+  # `grace_turns_remaining: @cancel_grace_turns`. No recovery message is
+  # appended — the cancel message was already injected into the context by the
+  # `pending_user_messages` drain at the top of `loop/1`.
+  #
+  # If not set: returns `:no_cancel`.
+  def maybe_enter_cancel_grace(%LoopState{} = state) do
+    if EvoGit.AgentScheduler.Store.cancel_requested?(state.agent_id) do
+      EvoGit.AgentScheduler.Store.clear_cancel_requested(state.agent_id)
+
+      {:cancel_grace,
+       enter_grace(state, "task cancelled", message: nil, grace_turns: @cancel_grace_turns)}
+    else
+      :no_cancel
+    end
+  end
+
+  # The hardcoded "exceeded the execution limit" recovery message appended when
+  # entering a grace period with `message: :default` (turn-limit recovery).
+  defp recovery_warning_message(reason, objective) do
+    if objective do
+      """
+      You have exceeded the execution limit (#{reason}).
+      Your priority is to call `#{@complete_tool}` NOW with your best answer.
+
+      If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
+
+      Your original objective was:
+      #{objective}
+
+      Your report MUST summarize the status of this ENTIRE objective, not just your most recent sub-task.
+      """
+    else
+      """
+      You have exceeded the execution limit (#{reason}).
+      Your priority is to call `#{@complete_tool}` NOW with your best answer explaining the situation.
+
+      If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
+      """
+    end
   end
 
   # Best-effort auto-commit of any uncommitted work just before the grace

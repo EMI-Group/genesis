@@ -196,6 +196,64 @@ defmodule EvoGit.AgentScheduler.Store do
     end
   end
 
+  @doc """
+  Sets the `cancel_requested` flag to `true` on an agent's state.
+
+  Called by the scheduler when a graceful cancel is requested for the agent's
+  task; the runner checks the flag at the top of each turn and clears it when
+  it enters cancel-grace.
+  """
+  @spec set_cancel_requested(pos_integer()) :: :ok | {:error, :not_found}
+  def set_cancel_requested(agent_id) do
+    set_cancel_requested(agent_id, true)
+  end
+
+  @doc """
+  Sets the `cancel_requested` flag on an agent's state to the given value
+  (`true` to request graceful cancellation, `false`/`nil` to clear it).
+
+  Returns `:ok` when the agent exists, `{:error, :not_found}` otherwise.
+  """
+  @spec set_cancel_requested(pos_integer(), boolean() | nil) :: :ok | {:error, :not_found}
+  def set_cancel_requested(agent_id, value) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        put_agent_state(agent_id, %{agent_state | cancel_requested: value})
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Returns whether a graceful cancel has been requested for the agent.
+
+  Returns `false` when the agent state is missing or the flag is `nil`/`false`.
+  """
+  @spec cancel_requested?(pos_integer()) :: boolean()
+  def cancel_requested?(agent_id) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} -> agent_state.cancel_requested == true
+      :error -> false
+    end
+  end
+
+  @doc """
+  Clears the `cancel_requested` flag on an agent's state (sets it back to `nil`).
+
+  Returns `:ok` when the agent exists, `{:error, :not_found}` otherwise.
+  """
+  @spec clear_cancel_requested(pos_integer()) :: :ok | {:error, :not_found}
+  def clear_cancel_requested(agent_id) do
+    case get_agent_state(agent_id) do
+      {:ok, agent_state} ->
+        put_agent_state(agent_id, %{agent_state | cancel_requested: nil})
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Archive Records Table
   # ---------------------------------------------------------------------------

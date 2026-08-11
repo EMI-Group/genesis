@@ -50,6 +50,9 @@ defmodule EvoDashWeb.TasksLive do
                 <option value="pending" selected={@status_filter == "pending"}>
                   {gettext("Pending")}
                 </option>
+                <option value="cancelling" selected={@status_filter == "cancelling"}>
+                  {gettext("Cancelling")}
+                </option>
                 <option value="completed" selected={@status_filter == "completed"}>
                   {gettext("Completed")}
                 </option>
@@ -310,6 +313,78 @@ defmodule EvoDashWeb.TasksLive do
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
         </EvoDashWeb.Helpers.modal>
       <% end %>
+
+      <!-- Cancel Task confirmation modal (graceful: agents save + exit) -->
+      <%= if @confirm_cancel_task_id do %>
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_cancel_modal"></div>
+          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="flex items-center gap-3 mb-4">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
+              <h3 class="text-lg font-bold">{gettext("Cancel Task?")}</h3>
+            </div>
+
+            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+              {gettext(
+                "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
+              )}
+            </p>
+            <p class="text-xs text-base-content/40 mb-5">
+              {gettext("Task: %{task_id}", task_id: @confirm_cancel_task_id)}
+            </p>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="close_cancel_modal">
+                {gettext("Keep Running")}
+              </button>
+              <button
+                type="button"
+                class="btn btn-warning rounded-md px-6 gap-2"
+                phx-click="confirm_cancel_task"
+              >
+                <.icon name="hero-x-mark" class="size-4.5" />
+                {gettext("Cancel Task")}
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Force Kill Task confirmation modal (brutal: immediate, all progress lost) -->
+      <%= if @confirm_force_kill_task_id do %>
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_force_kill_modal"></div>
+          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="flex items-center gap-3 mb-4">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+              <h3 class="text-lg font-bold">{gettext("Force Kill Task?")}</h3>
+            </div>
+
+            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+              {gettext(
+                "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
+              )}
+            </p>
+            <p class="text-xs text-base-content/40 mb-5">
+              {gettext("Task: %{task_id}", task_id: @confirm_force_kill_task_id)}
+            </p>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="close_force_kill_modal">
+                {gettext("Keep Running")}
+              </button>
+              <button
+                type="button"
+                class="btn btn-error rounded-md px-6 gap-2"
+                phx-click="confirm_force_kill_task"
+              >
+                <.icon name="hero-x-circle" class="size-4.5" />
+                {gettext("Force Kill")}
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -342,6 +417,8 @@ defmodule EvoDashWeb.TasksLive do
         expanded_task_ids: MapSet.new(),
         selected_result: nil,
         selected_options: nil,
+        confirm_cancel_task_id: nil,
+        confirm_force_kill_task_id: nil,
         config_status: config_status,
         current_page: 1,
         page_size: @default_page_size,
@@ -359,12 +436,30 @@ defmodule EvoDashWeb.TasksLive do
   def handle_params(params, _url, socket) do
     requested_page = parse_page(params["page"])
 
+    # Capture the node context BEFORE `assign_node/2` so a node switch can clear
+    # stale confirmation modals: a cancel/force-kill modal opened on one node
+    # must not persist (and potentially get confirmed) after switching to
+    # another node. `:tasks_node_loaded` is the dedup-guard assign seeded by
+    # NodeAware.on_mount and updated by assign_node/2 only when the context
+    # tuple `{current_node_id, current_node}` changes — so pagination/filter
+    # push_patches (same node) never clear the modals.
+    previous_node_ctx = socket.assigns[:tasks_node_loaded]
+
     socket =
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
       |> seed_dirty_tracker()
       |> load_page_into_socket(requested_page)
+
+    socket =
+      if previous_node_ctx != nil and previous_node_ctx != socket.assigns[:tasks_node_loaded] do
+        socket
+        |> assign(:confirm_cancel_task_id, nil)
+        |> assign(:confirm_force_kill_task_id, nil)
+      else
+        socket
+      end
 
     current_node = socket.assigns.current_node
 
@@ -627,23 +722,92 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
-  def handle_event("cancel_task", %{"task_id" => task_id}, socket) do
-    case EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id) do
-      :ok ->
-        expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+  def handle_event("open_cancel_modal", %{"task_id" => task_id}, socket) do
+    # Two-step graceful cancel: open the confirmation modal (and close the
+    # force-kill modal if it was somehow open — only one modal at a time).
+    {:noreply,
+     socket
+     |> assign(:confirm_cancel_task_id, task_id)
+     |> assign(:confirm_force_kill_task_id, nil)}
+  end
 
-        {:noreply,
-         socket
-         |> assign(:expanded_task_ids, expanded)
-         |> reload_current_page()}
+  @impl true
+  def handle_event("close_cancel_modal", _params, socket) do
+    {:noreply, assign(socket, :confirm_cancel_task_id, nil)}
+  end
 
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
-         )}
+  @impl true
+  def handle_event("confirm_cancel_task", _params, socket) do
+    case socket.assigns[:confirm_cancel_task_id] do
+      nil ->
+        # Modal was never opened (or already closed) — no-op.
+        {:noreply, socket}
+
+      task_id ->
+        case EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id) do
+          :ok ->
+            expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+
+            {:noreply,
+             socket
+             |> assign(:expanded_task_ids, expanded)
+             |> assign(:confirm_cancel_task_id, nil)
+             |> reload_current_page()}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> assign(:confirm_cancel_task_id, nil)
+             |> put_flash(
+               :error,
+               gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+             )}
+        end
+    end
+  end
+
+  @impl true
+  def handle_event("open_force_kill_modal", %{"task_id" => task_id}, socket) do
+    # Two-step brutal cancel: open the force-kill confirmation modal (and close
+    # the graceful-cancel modal if it was somehow open).
+    {:noreply,
+     socket
+     |> assign(:confirm_force_kill_task_id, task_id)
+     |> assign(:confirm_cancel_task_id, nil)}
+  end
+
+  @impl true
+  def handle_event("close_force_kill_modal", _params, socket) do
+    {:noreply, assign(socket, :confirm_force_kill_task_id, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_force_kill_task", _params, socket) do
+    case socket.assigns[:confirm_force_kill_task_id] do
+      nil ->
+        # Modal was never opened (or already closed) — no-op.
+        {:noreply, socket}
+
+      task_id ->
+        case EvoDash.NodeContext.force_kill_task(socket.assigns.current_node, task_id) do
+          :ok ->
+            expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+
+            {:noreply,
+             socket
+             |> assign(:expanded_task_ids, expanded)
+             |> assign(:confirm_force_kill_task_id, nil)
+             |> reload_current_page()}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> assign(:confirm_force_kill_task_id, nil)
+             |> put_flash(
+               :error,
+               gettext("Failed to force kill task: %{reason}", reason: inspect(reason))
+             )}
+        end
     end
   end
 
