@@ -2684,7 +2684,7 @@ msgstr "top_p"
 msgid "total agents (incl. subagents)"
 msgstr "智能體總數（含子智能體）"
 
-#.key_path: scheduler.max_concurrency
+#.key_path: scheduler.default_llm_max_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
 msgstr "最大並發 LLM API 調用數。控制有多少智能體可以同時發起 API 調用。較低的值可減輕 API 速率限制壓力，但會拖慢整體進度。"
