@@ -7,7 +7,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
-- `./runner.ex` → `EvoGit.Agent.Runner` — shared agent loop runner extracted from the `__using__` macro (run/3, do_run/2, loop/1, do_turn/1, effective_tools/1, trigger_recovery/2, etc.)
+- `./runner.ex` → `EvoGit.Agent.Runner` — shared agent loop runner extracted from the `__using__` macro (run/3, do_run/2, loop/1, do_turn/1, effective_tools/1, trigger_recovery/2, enter_grace/3, maybe_enter_cancel_grace/1, etc.)
 - `./subagent_schemas.ex` → `EvoGit.Agent.SubagentSchemas` — shared subagent tool/schema generation (tools/1, schemas/1), parameterized by agent_module
 - `./context_compression.ex` → Context compression helper (compresses chat history when token threshold exceeded)
 - `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
@@ -52,6 +52,16 @@ The hinting logic is implemented in `EvoGit.Agent.ToolDispatch` and `EvoGit.Agen
 - `extract_child_paths/4` determines the target child directory from write tool arguments
 - `maybe_append_delegation_hint/4` increments counts and appends the hint message
 - Hints are stored in `LoopState.delegation_hints` and threaded through the process dictionary
+
+### Grace Period & Graceful Cancellation (runner-side)
+
+The runner supports two grace kinds, both entered via `Runner.enter_grace/3` (`runner.ex`, `@doc false`), which (1) runs `maybe_recovery_auto_commit/1` FIRST (best-effort auto-commit of uncommitted work — shared by both kinds; for cancel this is exactly "save the changes"), (2) optionally appends a recovery message, (3) sets `in_grace_period: true` + the `grace_turns_remaining` budget, then re-enters `loop/1`.
+
+- **Turn-limit recovery** (`trigger_recovery/2`, unchanged call site `loop/1`: `"max turns (#{max_turns}) exceeded"`): budget **1** — enter grace, one continue attempt → hard-stop. Appends the hardcoded "exceeded the execution limit" warning (`message: :default`), byte-for-byte identical to the pre-budget behavior.
+- **Cancel-grace** (`maybe_enter_cancel_grace/1`, called in `loop/1` immediately AFTER `drain_and_inject_user_messages/1`): when the ETS `cancel_requested` flag is set (scheduler-side graceful cancel), the flag is cleared in ETS and the agent enters grace with budget **3** and `message: nil` — NO extra recovery message is appended because the cancel message was already injected into the context via the `pending_user_messages` drain. The agent gets up to 3 turns to wrap up and call `complete_task`.
+- **Budget semantics**: `LoopState.grace_turns_remaining` defaults to `0` (not in grace). Entering grace sets it to the budget. Each turn that ends WITHOUT `complete_task` decrements it via `consume_grace_turn/1` at the three call sites in `tool_dispatch.ex` (`handle_protocol_violation`, the `process_llm_response` `{:error, :protocol_violation}` branch, and `continue_after_tools`). `grace_period_continue_failed?/1` (`agent.ex`) is budget-aware: `in_grace_period: true, grace_turns_remaining: n` → `n <= 1` (and `in_grace_period: false` → `false`; a grace state with counter 0 — the struct default — hard-stops, preserving legacy one-turn behavior). When it returns `true` the call sites return `{:error, :recovery_failed}` (no new error atom).
+- **complete_task during grace**: `handle_complete_call`'s dirty-workspace check skip (`not state.in_grace_period and ...`) applies to BOTH grace kinds — completing with a dirty workspace is allowed during any grace period.
+- **Turn counts pinned**: cancel-grace budget 3 → first continue 3→2 (allowed), second 2→1 (allowed), third 1 → hard-stop (3 grace turns total). Turn-limit budget 1 → hard-stop on the first continue (1 grace turn), identical to the pre-budget behavior. `trigger_turn_limit_recovery?/1` is unchanged (returns `false` during grace — no re-trigger).
 
 ## Constraints
 - Every agent MUST `use EvoGit.Agent` and implement `system_prompt/0`.

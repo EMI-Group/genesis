@@ -18,6 +18,7 @@ defmodule EvoGit.Agent.LoopState do
   - `turn` — current turn number in the agent loop (starts at 0)
   - `context` — the LLM conversation context (`ReqLLM.Context.t()`)
   - `in_grace_period` — whether the agent is in a grace period after a warning
+  - `grace_turns_remaining` — remaining grace turns; `0` means not in a grace period. Set to the grace budget when entering a grace period: `1` for turn-limit recovery (enter grace, one continue attempt → hard-stop), `3` for cancel-grace (a user-requested graceful cancellation). Decremented at the grace hard-stop call sites (continue-after-tools / protocol-violation paths) each time a turn ends without `complete_task`; when it reaches `1`, the next continue hard-stops with `{:error, :recovery_failed}`.
   - `max_turns` — maximum turns allowed for this agent (from config)
   - `total_tokens` — cumulative token count across all LLM calls
   - `last_warned_level` — last positional warning level emitted (`:none` initially; escalates through `:beginning` → `:end` → `:critical`)
@@ -44,6 +45,7 @@ defmodule EvoGit.Agent.LoopState do
     repo_path: nil,
     turn: 0,
     in_grace_period: false,
+    grace_turns_remaining: 0,
     max_turns: 128,
     total_tokens: 0,
     last_warned_level: :none,
@@ -65,6 +67,7 @@ defmodule EvoGit.Agent.LoopState do
           turn: non_neg_integer(),
           context: ReqLLM.Context.t(),
           in_grace_period: boolean(),
+          grace_turns_remaining: non_neg_integer(),
           max_turns: pos_integer(),
           total_tokens: non_neg_integer(),
           last_warned_level: :beginning | :end | :critical | :none,
@@ -73,7 +76,9 @@ defmodule EvoGit.Agent.LoopState do
           foreign_repos: [ForeignRepo.t()],
           usage: Usage.t(),
           delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}},
-          read_delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}},
+          read_delegation_hints: %{
+            String.t() => %{count: non_neg_integer(), hint_shown: boolean()}
+          },
           delegation_level: :high | :low
         }
 end

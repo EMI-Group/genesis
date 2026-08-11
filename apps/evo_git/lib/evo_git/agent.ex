@@ -54,15 +54,31 @@ defmodule EvoGit.Agent do
   Determines whether a `{:continue, _}` outcome during the grace period should
   fail recovery.
 
-  During the grace period (the recovery turn), the agent gets exactly one turn
-  to call `complete_task`. If it instead calls other tools, recovery has failed
-  and the loop must terminate with `{:error, :recovery_failed}`.
+  Budget-aware: during the grace period the agent gets a bounded number of
+  grace turns (`LoopState.grace_turns_remaining`) to call `complete_task`. If
+  it instead calls other tools (a `{:continue, _}` outcome), the turn ends
+  without completing — the call sites in `EvoGit.Agent.ToolDispatch` check this
+  predicate and, when it returns `false`, decrement `grace_turns_remaining` and
+  allow another turn.
 
-  This bounds the grace period to exactly one turn, guaranteeing the loop can
-  never run indefinitely.
+  - Turn-limit recovery (budget 1): `grace_turns_remaining == 1` → hard-stop
+    immediately — identical to the pre-budget behavior (`in_grace_period: true
+    → true`). The agent gets exactly one recovery turn.
+  - Cancel-grace (budget 3): `grace_turns_remaining` 3 → 2 → 1 → hard-stop —
+    the agent gets up to 3 grace turns total.
+
+  This bounds any grace period, guaranteeing the loop can never run
+  indefinitely.
+
+  A state with `in_grace_period: true` and `grace_turns_remaining == 0` (the
+  struct default, e.g. a state constructed without a budget) also hard-stops —
+  preserving the historical default of "in grace means no more continues".
   """
   @spec grace_period_continue_failed?(LoopState.t()) :: boolean()
-  def grace_period_continue_failed?(%LoopState{in_grace_period: true}), do: true
+  def grace_period_continue_failed?(%LoopState{in_grace_period: true, grace_turns_remaining: n}) do
+    n <= 1
+  end
+
   def grace_period_continue_failed?(%LoopState{in_grace_period: false}), do: false
 
   defmacro __using__(_opts) do

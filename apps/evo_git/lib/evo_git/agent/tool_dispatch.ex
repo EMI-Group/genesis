@@ -113,7 +113,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         process_llm_response(response, state, subagent_modules, loop_fn, trigger_recovery_fn)
 
       {:error, :protocol_violation} ->
-        handle_protocol_violation(state, trigger_recovery_fn)
+        handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
     end
   end
 
@@ -246,13 +246,21 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   # Handles the protocol-violation outcome (no usable tool calls) by either
-  # triggering recovery (when not in the grace period) or returning
-  # :recovery_failed (when already in the grace period).
-  def handle_protocol_violation(%LoopState{} = state, trigger_recovery_fn) do
-    if state.in_grace_period do
-      {:error, :recovery_failed}
-    else
-      trigger_recovery_fn.(state, "agent stopped calling tools")
+  # triggering recovery (when not in the grace period), re-entering the loop
+  # during grace with budget remaining (consuming one grace turn), or returning
+  # :recovery_failed (when the grace budget is exhausted).
+  def handle_protocol_violation(%LoopState{} = state, loop_fn, trigger_recovery_fn) do
+    cond do
+      EvoGit.Agent.grace_period_continue_failed?(state) ->
+        {:error, :recovery_failed}
+
+      state.in_grace_period ->
+        # In grace with budget remaining: consume one grace turn and re-enter
+        # the loop so the LLM gets another chance to produce a valid turn.
+        loop_fn.(consume_grace_turn(state))
+
+      true ->
+        trigger_recovery_fn.(state, "agent stopped calling tools")
     end
   end
 
@@ -391,10 +399,15 @@ defmodule EvoGit.Agent.ToolDispatch do
         )
 
       {:error, :protocol_violation} ->
-        if state.in_grace_period do
-          {:error, :recovery_failed}
-        else
-          trigger_recovery_fn.(state, "agent stopped calling tools")
+        cond do
+          EvoGit.Agent.grace_period_continue_failed?(state) ->
+            {:error, :recovery_failed}
+
+          state.in_grace_period ->
+            loop_fn.(consume_grace_turn(state))
+
+          true ->
+            trigger_recovery_fn.(state, "agent stopped calling tools")
         end
     end
   end
@@ -475,6 +488,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     if EvoGit.Agent.grace_period_continue_failed?(state) do
       {:error, :recovery_failed}
     else
+      # A turn ended without complete_task: if in a grace period, consume one
+      # grace turn (decrement grace_turns_remaining). Outside a grace period
+      # this is a no-op (counter stays at its default 0).
+      state = consume_grace_turn(state)
+
       # Pick up updated delegation hints from tool execution
       updated_hints = Process.get(:delegation_hints, state.delegation_hints)
       Process.delete(:delegation_hints)
@@ -520,6 +538,17 @@ defmodule EvoGit.Agent.ToolDispatch do
       loop_fn.(state)
     end
   end
+
+  # Consumes one grace turn: decrements `grace_turns_remaining` when the agent
+  # is in a grace period (a turn ended without `complete_task`). Outside a
+  # grace period the counter stays at its default 0. Only reached when
+  # `grace_period_continue_failed?/1` returned `false` (i.e. remaining > 1), so
+  # the decremented value is always >= 1.
+  defp consume_grace_turn(%LoopState{in_grace_period: true, grace_turns_remaining: n} = state) do
+    %{state | grace_turns_remaining: n - 1}
+  end
+
+  defp consume_grace_turn(%LoopState{} = state), do: state
 
   # Note: `loop/1` and `trigger_recovery/2` are called via passed function
   # references (loop_fn, trigger_recovery_fn) from the agent's quote block.
