@@ -10,6 +10,7 @@ defmodule EvoDashWeb.AgentsLive do
   """
   use EvoDashWeb, :live_view
 
+  alias EvoDashWeb.AgentsLive.OptimisticMessages
   alias EvoDashWeb.AgentsLive.ToolCallDisplay
   alias EvoGit.Platform
 
@@ -49,7 +50,12 @@ defmodule EvoDashWeb.AgentsLive do
         previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
         new_agent_ids: MapSet.new(),
         changed_status_ids: MapSet.new(),
-        previous_node: current_node
+        previous_node: current_node,
+        # Optimistic user messages keyed by agent_id (agent_id => [%{content,
+        # sent_at}]). Independent of @agents — survives agent/history reloads;
+        # merged into the displayed history at render time and dropped once the
+        # agent's next turn drains the message into context.
+        optimistic_messages: %{}
       )
 
     {:ok, socket}
@@ -88,7 +94,10 @@ defmodule EvoDashWeb.AgentsLive do
           selected_agent_id: nil,
           selected_history_entry: nil,
           selected_objective: nil,
-          previous_node: current_node
+          previous_node: current_node,
+          # Agent ids are per-node; optimistic messages from the previous node
+          # must not leak into a different node's agent list.
+          optimistic_messages: %{}
         )
       else
         assign(socket, :previous_node, current_node)
@@ -484,7 +493,8 @@ defmodule EvoDashWeb.AgentsLive do
         agent
       end
 
-    entry = agent && Enum.at(agent.history || [], index)
+    entry =
+      agent && Enum.at(merged_history(agent, socket.assigns.optimistic_messages), index)
 
     {:noreply, assign(socket, :selected_history_entry, entry)}
   end
@@ -543,20 +553,30 @@ defmodule EvoDashWeb.AgentsLive do
     agent_id = String.to_integer(id)
     node = socket.assigns.current_node
 
+    # Return shapes (verified): success = {:ok, :ok} (local and remote); a
+    # missing agent surfaces as a NESTED {:ok, {:error, :not_found}} on the
+    # local path (RemoteNode wraps the RemoteAPI result in {:ok, _}); erpc
+    # failures surface as {:error, reason}. Only {:ok, :ok} is a real success —
+    # matching the old {:ok, _} falsely reported success for missing agents.
     case EvoDash.NodeContext.send_user_message(node, agent_id, message) do
-      {:ok, _} ->
+      {:ok, :ok} ->
+        optimistic_messages =
+          OptimisticMessages.append(socket.assigns.optimistic_messages, agent_id, message)
+
         {:noreply,
          socket
          |> put_flash(:info, gettext("Message sent to agent"))
-         |> assign(send_message_agent_id: nil, send_message_text: "")}
+         |> assign(
+           send_message_agent_id: nil,
+           send_message_text: "",
+           optimistic_messages: optimistic_messages
+         )}
+
+      {:ok, {:error, reason}} ->
+        {:noreply, send_message_error_flash(socket, reason)}
 
       {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           gettext("Failed to send message: %{reason}", reason: inspect(reason))
-         )}
+        {:noreply, send_message_error_flash(socket, reason)}
     end
   end
 
@@ -1007,5 +1027,23 @@ defmodule EvoDashWeb.AgentsLive do
   defp reload_selected_agent_history(agents, selected_agent_id, node) do
     history = load_agent_history(node, selected_agent_id)
     update_agent_in_list(agents, selected_agent_id, fn agent -> %{agent | history: history} end)
+  end
+
+  # Merges an agent's real history with its pending optimistic user messages
+  # (see OptimisticMessages). Optimistic entries are appended AFTER the real
+  # history (never interleaved), so indices into the base history are unchanged
+  # — callers that look up history entries by index can keep using them.
+  defp merged_history(agent, optimistic_messages) do
+    OptimisticMessages.merge(agent.history || [], Map.get(optimistic_messages || %{}, agent.id))
+  end
+
+  # Shared error flash for failed send attempts (nested {:ok, {:error, _}} on
+  # the local path and {:error, _} erpc failures both land here).
+  defp send_message_error_flash(socket, reason) do
+    put_flash(
+      socket,
+      :error,
+      gettext("Failed to send message: %{reason}", reason: inspect(reason))
+    )
   end
 end
