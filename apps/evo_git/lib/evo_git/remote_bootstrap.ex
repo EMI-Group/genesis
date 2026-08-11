@@ -96,13 +96,17 @@ defmodule EvoGit.RemoteBootstrap do
 
   @doc """
   Returns `true` when the given GitHub asset name is the release tarball for
-  `platform`. Uses a suffix match (`_<platform>.tar.gz`) so versioned asset
-  names (e.g. `genesis_remote_0.1.0_linux_x64.tar.gz`) match, as do
-  unversioned names (`genesis_remote_linux_x64.tar.gz`).
+  `platform`. The match is anchored on the `genesis_remote` project prefix so
+  sibling assets (e.g. `genesis_desktop_*`) are never selected. An optional
+  embedded version segment is tolerated (`genesis_remote_0.1.0_linux_x64.tar.gz`
+  matches), as are unversioned names (`genesis_remote_linux_x64.tar.gz`).
   """
   @spec asset_matches?(String.t(), String.t()) :: boolean()
   def asset_matches?(asset_name, platform) when is_binary(asset_name) do
-    String.ends_with?(asset_name, "_#{platform}.tar.gz")
+    Regex.match?(
+      ~r/^genesis_remote(?:_[^_]+)?_#{Regex.escape(platform)}\.tar\.gz$/,
+      asset_name
+    )
   end
 
   @doc """

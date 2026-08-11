@@ -128,6 +128,14 @@ defmodule EvoGit.RemoteBootstrapTest do
     test "rejects an asset with no platform suffix" do
       refute RemoteBootstrap.asset_matches?("genesis_remote_0.1.0.tar.gz", "linux_x64")
     end
+
+    test "rejects the desktop sibling asset (unversioned)" do
+      refute RemoteBootstrap.asset_matches?("genesis_desktop_linux_x64.tar.gz", "linux_x64")
+    end
+
+    test "rejects the desktop sibling asset (versioned)" do
+      refute RemoteBootstrap.asset_matches?("genesis_desktop_0.1.0_linux_x64.tar.gz", "linux_x64")
+    end
   end
 
   describe "direct_url/1" do
