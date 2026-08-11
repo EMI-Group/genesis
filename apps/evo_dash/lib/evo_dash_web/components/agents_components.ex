@@ -84,7 +84,7 @@ defmodule EvoDashWeb.AgentsComponents do
                       agent_status_color(agent.status),
                       agent_status_bg(agent.status)
                     ]}>
-                      {agent.status}
+                      {agent_status_label(agent.status)}
                     </span>
                   </div>
 

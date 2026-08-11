@@ -19,11 +19,15 @@ defmodule EvoDashWeb.Helpers do
 
   @doc """
   Returns text color class for agent status (`:pending`, `:running`, `:waiting`).
+
+  The frontend merges `:blocked` into the `:pending` presentation — to the
+  user, "blocked" and "pending" both mean the agent is queued / waiting to be
+  scheduled (the scheduler keeps them as distinct states).
   """
   def agent_status_color(:pending), do: "text-base-content/70"
   def agent_status_color(:running), do: "text-success"
   def agent_status_color(:waiting), do: "text-warning"
-  def agent_status_color(:blocked), do: "text-base-content/60"
+  def agent_status_color(:blocked), do: agent_status_color(:pending)
   def agent_status_color(:ready), do: "text-info"
   def agent_status_color(_), do: "text-base-content/70"
 
@@ -33,7 +37,7 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_bg(:pending), do: "bg-base-100"
   def agent_status_bg(:running), do: "bg-success/10"
   def agent_status_bg(:waiting), do: "bg-warning/10"
-  def agent_status_bg(:blocked), do: "bg-base-content/5"
+  def agent_status_bg(:blocked), do: agent_status_bg(:pending)
   def agent_status_bg(:ready), do: "bg-info/10"
   def agent_status_bg(_), do: "bg-base-100"
 
@@ -43,7 +47,7 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_border(:pending), do: "border-base-300"
   def agent_status_border(:running), do: "border-success/30"
   def agent_status_border(:waiting), do: "border-warning/30"
-  def agent_status_border(:blocked), do: "border-base-content/20"
+  def agent_status_border(:blocked), do: agent_status_border(:pending)
   def agent_status_border(:ready), do: "border-info/30"
   def agent_status_border(_), do: "border-base-300"
 
@@ -53,9 +57,31 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_icon(:pending), do: "hero-clock"
   def agent_status_icon(:running), do: "hero-play-circle"
   def agent_status_icon(:waiting), do: "hero-pause-circle"
-  def agent_status_icon(:blocked), do: "hero-queue-list"
+  def agent_status_icon(:blocked), do: agent_status_icon(:pending)
   def agent_status_icon(:ready), do: "hero-arrow-path"
   def agent_status_icon(_), do: "hero-question-mark-circle"
+
+  @doc """
+  Returns the user-facing display label for an agent status.
+
+  The frontend merges `:blocked` and `:pending` into a single "Pending"
+  label — to the user, both mean the agent is queued / waiting to be
+  scheduled — while the backend scheduler keeps them as distinct states.
+  This is the single source of label text for all agent status surfaces.
+
+  Unknown atoms fall back to their capitalized name; non-atom input falls
+  back to "Unknown".
+  """
+  def agent_status_label(:blocked), do: gettext("Pending")
+  def agent_status_label(:pending), do: gettext("Pending")
+  def agent_status_label(:running), do: gettext("Running")
+  def agent_status_label(:waiting), do: gettext("Waiting")
+  def agent_status_label(:ready), do: gettext("Ready")
+
+  def agent_status_label(status) when is_atom(status),
+    do: Gettext.gettext(EvoDashWeb.Gettext, String.capitalize(Atom.to_string(status)))
+
+  def agent_status_label(_), do: gettext("Unknown")
 
   # ---------------------------------------------------------------------------
   # Task Status Helpers

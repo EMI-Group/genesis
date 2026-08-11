@@ -8,8 +8,12 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_color(:pending) == "text-base-content/70"
       assert agent_status_color(:running) == "text-success"
       assert agent_status_color(:waiting) == "text-warning"
-      assert agent_status_color(:blocked) == "text-base-content/60"
+      assert agent_status_color(:blocked) == "text-base-content/70"
       assert agent_status_color(:ready) == "text-info"
+    end
+
+    test "blocked presents identically to pending" do
+      assert agent_status_color(:blocked) == agent_status_color(:pending)
     end
 
     test "falls back to default for unknown status" do
@@ -22,8 +26,12 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_bg(:pending) == "bg-base-100"
       assert agent_status_bg(:running) == "bg-success/10"
       assert agent_status_bg(:waiting) == "bg-warning/10"
-      assert agent_status_bg(:blocked) == "bg-base-content/5"
+      assert agent_status_bg(:blocked) == "bg-base-100"
       assert agent_status_bg(:ready) == "bg-info/10"
+    end
+
+    test "blocked presents identically to pending" do
+      assert agent_status_bg(:blocked) == agent_status_bg(:pending)
     end
 
     test "falls back to default for unknown status" do
@@ -36,8 +44,12 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_border(:pending) == "border-base-300"
       assert agent_status_border(:running) == "border-success/30"
       assert agent_status_border(:waiting) == "border-warning/30"
-      assert agent_status_border(:blocked) == "border-base-content/20"
+      assert agent_status_border(:blocked) == "border-base-300"
       assert agent_status_border(:ready) == "border-info/30"
+    end
+
+    test "blocked presents identically to pending" do
+      assert agent_status_border(:blocked) == agent_status_border(:pending)
     end
 
     test "falls back to default for unknown status" do
@@ -50,12 +62,45 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_icon(:pending) == "hero-clock"
       assert agent_status_icon(:running) == "hero-play-circle"
       assert agent_status_icon(:waiting) == "hero-pause-circle"
-      assert agent_status_icon(:blocked) == "hero-queue-list"
+      assert agent_status_icon(:blocked) == "hero-clock"
       assert agent_status_icon(:ready) == "hero-arrow-path"
+    end
+
+    test "blocked presents identically to pending" do
+      assert agent_status_icon(:blocked) == agent_status_icon(:pending)
     end
 
     test "falls back to question mark for unknown status" do
       assert agent_status_icon(:unknown) == "hero-question-mark-circle"
+    end
+  end
+
+  describe "agent_status_label/1" do
+    test "merges blocked into pending" do
+      assert agent_status_label(:blocked) == "Pending"
+      assert agent_status_label(:pending) == "Pending"
+    end
+
+    test "returns capitalized labels for known statuses" do
+      assert agent_status_label(:running) == "Running"
+      assert agent_status_label(:waiting) == "Waiting"
+      assert agent_status_label(:ready) == "Ready"
+    end
+
+    test "falls back to capitalized name for unknown atoms" do
+      assert agent_status_label(:unknown) == "Unknown"
+      assert agent_status_label(:starting) == "Starting"
+    end
+
+    test "falls back to Unknown for non-atoms" do
+      assert agent_status_label("running") == "Unknown"
+      assert agent_status_label(%{}) == "Unknown"
+    end
+
+    test "treats nil (an atom) via the capitalized-name fallback" do
+      # nil is an atom in Elixir, so it follows the atom fallback (matching
+      # the pre-existing `is_atom` behavior in the projects_live remote panel).
+      assert agent_status_label(nil) == "Nil"
     end
   end
 

@@ -52,7 +52,7 @@
         <div class="card-body p-2">
           <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
             <span class="font-semibold text-base-content/70"><%= gettext("Status Legend") %></span>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is queued and waiting to be scheduled for execution.")}>
+            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is queued, waiting to be scheduled. May be limited by LLM or tool concurrency. Consider increasing concurrency in Settings.")}>
               <span class="w-2.5 h-2.5 rounded-full bg-base-content/20"></span>
               <span><%= gettext("Pending") %></span>
             </div>
@@ -63,10 +63,6 @@
             <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is waiting for subagents to finish. Nothing to do but wait.")}>
               <span class="w-2.5 h-2.5 rounded-full bg-warning"></span>
               <span><%= gettext("Waiting") %></span>
-            </div>
-            <div class="flex items-center gap-2 tooltip" data-tip={gettext("Agent is blocked due to insufficient LLM or tool concurrency. Consider increasing concurrency in Settings.")}>
-              <span class="w-2.5 h-2.5 rounded-full bg-base-content/60"></span>
-              <span><%= gettext("Blocked") %></span>
             </div>
           </div>
         </div>
@@ -88,7 +84,7 @@
                   </h3>
                   <div class={["badge badge-md", agent_status_bg(agent.status)]}>
                     <.icon name={agent_status_icon(agent.status)} class={"size-4 mr-1 #{agent_status_color(agent.status)}"} />
-                    <span class={agent_status_color(agent.status)}>{String.upcase(to_string(agent.status))}</span>
+                    <span class={agent_status_color(agent.status)}>{String.upcase(agent_status_label(agent.status))}</span>
                   </div>
                 </div>
                 <div class="flex items-center gap-1">
