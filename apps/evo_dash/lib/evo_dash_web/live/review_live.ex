@@ -768,7 +768,7 @@ defmodule EvoDashWeb.ReviewLive do
             true -> :open
           end
 
-        is_no_changes = branch_name == nil && task.status == :completed
+        is_no_changes = branch_name == nil && task.status in [:completed, :cancelled]
 
         commit_sha = commit_sha || task.commit_sha
 

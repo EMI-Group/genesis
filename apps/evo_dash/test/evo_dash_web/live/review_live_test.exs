@@ -91,6 +91,74 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "cancelled task review flow" do
+    # A gracefully-cancelled task preserves its result, so it must be
+    # reviewable exactly like a completed task. This task's result references
+    # a branch that does NOT exist in any real repository (repo_path points
+    # nowhere) — the orphaned-branch scenario the Ignore escape hatch is
+    # designed for.
+    setup do
+      task_id = "review_test_cancelled_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :cancelled,
+        opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        review_status: nil,
+        result:
+          {:ok,
+           %{
+             commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+             branch_name: "evogit/test-branch",
+             result: "Agent summary",
+             pr_url: nil,
+             pr_title: nil
+           }}
+      }
+
+      EvoGit.Store.put_task(EvoGit.Store, task)
+
+      on_exit(fn ->
+        TaskRegistry.delete_task(task_id)
+        # Synchronize the deletion cast.
+        TaskRegistry.list_tasks()
+      end)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "review page renders for a cancelled task with action buttons", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+
+      # The page mounts without crashing and shows the review actions
+      # (Ignore) just like a completed task.
+      assert html =~ ~s(phx-click="ignore")
+      assert html =~ "Ignore"
+      assert html =~ "This branch no longer exists"
+    end
+
+    test "clicking ignore on a cancelled task sets review status and navigates", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      view |> element("button[phx-click='ignore']") |> render_click()
+
+      assert_redirect(view, "/")
+
+      assert TaskRegistry.get_task(task_id).review_status == :ignored
+    end
+  end
+
   describe "completed task with nil branch name" do
     # This test guards against an ArgumentError at :erlang.not(nil) that
     # crashed the review page on mount. The bug: when branch_name is nil,
