@@ -23,7 +23,7 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_color(:pending), do: "text-base-content/70"
   def agent_status_color(:running), do: "text-success"
   def agent_status_color(:waiting), do: "text-warning"
-  def agent_status_color(:blocked), do: "text-error"
+  def agent_status_color(:blocked), do: "text-base-content/60"
   def agent_status_color(:ready), do: "text-info"
   def agent_status_color(_), do: "text-base-content/70"
 
@@ -33,7 +33,7 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_bg(:pending), do: "bg-base-100"
   def agent_status_bg(:running), do: "bg-success/10"
   def agent_status_bg(:waiting), do: "bg-warning/10"
-  def agent_status_bg(:blocked), do: "bg-error/10"
+  def agent_status_bg(:blocked), do: "bg-base-content/5"
   def agent_status_bg(:ready), do: "bg-info/10"
   def agent_status_bg(_), do: "bg-base-100"
 
@@ -43,7 +43,7 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_border(:pending), do: "border-base-300"
   def agent_status_border(:running), do: "border-success/30"
   def agent_status_border(:waiting), do: "border-warning/30"
-  def agent_status_border(:blocked), do: "border-error/30"
+  def agent_status_border(:blocked), do: "border-base-content/20"
   def agent_status_border(:ready), do: "border-info/30"
   def agent_status_border(_), do: "border-base-300"
 
@@ -53,7 +53,7 @@ defmodule EvoDashWeb.Helpers do
   def agent_status_icon(:pending), do: "hero-clock"
   def agent_status_icon(:running), do: "hero-play-circle"
   def agent_status_icon(:waiting), do: "hero-pause-circle"
-  def agent_status_icon(:blocked), do: "hero-exclamation-circle"
+  def agent_status_icon(:blocked), do: "hero-queue-list"
   def agent_status_icon(:ready), do: "hero-arrow-path"
   def agent_status_icon(_), do: "hero-question-mark-circle"
 
