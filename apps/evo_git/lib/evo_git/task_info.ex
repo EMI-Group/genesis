@@ -27,7 +27,8 @@ defmodule EvoGit.TaskInfo do
   @type t :: %__MODULE__{
           id: String.t() | nil,
           type: atom() | nil,
-          status: :pending | :running | :finalizing | :completed | :failed | :cancelled,
+          status:
+            :pending | :running | :finalizing | :completed | :failed | :cancelled | :cancelling,
           opts: keyword() | nil,
           ref: Task.t() | nil,
           started_at: DateTime.t() | nil,

@@ -361,16 +361,34 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
-  Cancels a running task by id.
+  Gracefully cancels a running or pending task by id.
 
   Delegates to `EvoGit.TaskRegistry.cancel_task/1` (a `GenServer.call`). This
-  runs on the REMOTE node when called via `:erpc.call/5`.
+  runs on the REMOTE node when called via `:erpc.call/5`. The task enters a
+  `:cancelling` grace period — agents are notified to save their work and
+  finish cleanly; the task is finally persisted `:cancelled` when the wrapper
+  completes.
 
   Returns `:ok` on success or `{:error, reason}` if the task can't be cancelled.
   """
   @spec cancel_task(String.t()) :: :ok | {:error, term()}
   def cancel_task(task_id) do
     EvoGit.TaskRegistry.cancel_task(task_id)
+  end
+
+  @doc """
+  Force-kills a running or cancelling task by id — the BRUTAL cancellation
+  path (no grace period): agents are killed, the wrapper is brutal-killed, and
+  the task is immediately persisted `:cancelled`.
+
+  Delegates to `EvoGit.TaskRegistry.force_kill_task/1` (a `GenServer.call`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` on success or `{:error, reason}` if the task can't be cancelled.
+  """
+  @spec force_kill_task(String.t()) :: :ok | {:error, term()}
+  def force_kill_task(task_id) do
+    EvoGit.TaskRegistry.force_kill_task(task_id)
   end
 
   @doc """

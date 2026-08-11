@@ -72,6 +72,9 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
     if :ets.whereis(:evogit_sched_meta) != :undefined,
       do: :ets.delete_all_objects(:evogit_sched_meta)
+
+    if :ets.whereis(:evogit_cancelling_tasks) != :undefined,
+      do: :ets.delete_all_objects(:evogit_cancelling_tasks)
   end
 
   defp put_sched_meta(agent_id, meta) do
@@ -101,6 +104,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   setup do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
+    create_ets_if_missing(:evogit_cancelling_tasks)
     clear_ets()
     on_exit(fn -> clear_ets() end)
     :ok
@@ -381,7 +385,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
   end
 
-  describe "handle_call({:cancel_task_agents, _}, _, _)" do
+  describe "handle_call({:force_kill_task_agents, _}, _, _)" do
     test "filters cancelled agents from the dispatch queue without crashing" do
       caller_pid = self()
       caller_ref = make_ref()
@@ -461,7 +465,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         # The old (buggy) code raised ArgumentError here because :queue.filter/2
         # was called with the queue as the first argument instead of the function.
         assert {:reply, :ok, new_state} =
-                 AgentScheduler.handle_call({:cancel_task_agents, caller_pid}, from, state)
+                 AgentScheduler.handle_call({:force_kill_task_agents, caller_pid}, from, state)
 
         # Agents 1-3 are removed from the queue; agent 4 (different task) survives.
         assert :queue.to_list(new_state.queue) == [4]
@@ -533,7 +537,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         from = {self(), make_ref()}
 
         assert {:reply, :ok, new_state} =
-                 AgentScheduler.handle_call({:cancel_task_agents, caller_pid}, from, state)
+                 AgentScheduler.handle_call({:force_kill_task_agents, caller_pid}, from, state)
 
         # The cancelled agents must be removed from both holder sets so that
         # the slots are returned to the pool (no permanent leak).
@@ -555,6 +559,154 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           Task.shutdown(task, :brutal_kill)
         end)
       end
+    end
+  end
+
+  describe "graceful cancel — begin_graceful_cancel / clear_cancelling_task / run_agent guard" do
+    test "begin_graceful_cancel registers the task marker and notifies all agents of the task" do
+      task_id = "graceful-42"
+      caller_pid = self()
+
+      # Agent 1: top-level (depth 0); Agent 2: subagent (depth 1) — same task.
+      put_sched_meta(1, %SchedMeta{
+        id: 1,
+        depth: 0,
+        spec: agent_spec(),
+        retries: 0,
+        task_id: task_id,
+        from: {caller_pid, make_ref()}
+      })
+
+      put_sched_meta(2, %SchedMeta{
+        id: 2,
+        depth: 1,
+        spec: agent_spec(),
+        retries: 0,
+        task_id: task_id,
+        parent_id: 1
+      })
+
+      # Agent 3 belongs to a DIFFERENT task — must NOT be notified.
+      put_sched_meta(3, %SchedMeta{
+        id: 3,
+        depth: 0,
+        spec: agent_spec(),
+        retries: 0,
+        task_id: "other",
+        from: {caller_pid, make_ref()}
+      })
+
+      for id <- [1, 2, 3], do: put_agent_state(id, agent_state())
+
+      state = base_state([])
+      from = {self(), make_ref()}
+
+      assert {:reply, :ok, ^state} =
+               AgentScheduler.handle_call({:begin_graceful_cancel, task_id}, from, state)
+
+      # Marker registered.
+      assert :ets.member(:evogit_cancelling_tasks, task_id)
+
+      # Agents 1 & 2 got the cancel message + cancel_requested flag.
+      for id <- [1, 2] do
+        {:ok, st} = get_agent_state(id)
+        assert st.cancel_requested == true, "agent #{id} cancel_requested not set"
+        assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+      end
+
+      # Agent 3 (different task) untouched.
+      {:ok, st3} = get_agent_state(3)
+      assert st3.cancel_requested != true
+      assert st3.pending_user_messages == []
+    end
+
+    test "begin_graceful_cancel with no agents still registers the marker" do
+      task_id = "graceful-empty"
+      state = base_state([])
+      from = {self(), make_ref()}
+
+      assert {:reply, :ok, ^state} =
+               AgentScheduler.handle_call({:begin_graceful_cancel, task_id}, from, state)
+
+      assert :ets.member(:evogit_cancelling_tasks, task_id)
+    end
+
+    test "clear_cancelling_task removes the task from the marker" do
+      task_id = "graceful-clear"
+      :ets.insert(:evogit_cancelling_tasks, {task_id})
+      state = base_state([])
+      from = {self(), make_ref()}
+
+      assert {:reply, :ok, ^state} =
+               AgentScheduler.handle_call({:clear_cancelling_task, task_id}, from, state)
+
+      refute :ets.member(:evogit_cancelling_tasks, task_id)
+
+      # Idempotent — clearing a non-member is a no-op.
+      assert {:reply, :ok, ^state} =
+               AgentScheduler.handle_call({:clear_cancelling_task, task_id}, from, state)
+    end
+
+    test "run_agent replies {:error, :cancelled} immediately for a cancelling task" do
+      task_id = "graceful-blocked"
+      :ets.insert(:evogit_cancelling_tasks, {task_id})
+
+      spec = %{agent_spec() | opts: [task_id: task_id]}
+
+      state = base_state([])
+      from = {self(), make_ref()}
+
+      assert {:reply, {:error, :cancelled}, ^state} =
+               AgentScheduler.handle_call({:run_agent, spec}, from, state)
+
+      # No agent was registered.
+      assert :ets.info(:evogit_sched_meta, :size) == 0
+      assert :ets.info(:evogit_agent_state, :size) == 0
+    end
+
+    test "Dispatch.register_agent puts a newly registered agent of a cancelling task into grace" do
+      task_id = "graceful-reg"
+      :ets.insert(:evogit_cancelling_tasks, {task_id})
+
+      state = base_state([])
+      spec = agent_spec()
+
+      {agent_id, _new_state} =
+        EvoGit.AgentScheduler.Dispatch.register_agent(
+          state,
+          spec,
+          {self(), make_ref()},
+          nil,
+          0,
+          task_id,
+          1
+        )
+
+      {:ok, st} = get_agent_state(agent_id)
+      assert st.cancel_requested == true
+      assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+    end
+
+    test "Dispatch.register_agent does not touch agents of non-cancelling tasks" do
+      task_id = "graceful-reg-other"
+
+      state = base_state([])
+      spec = agent_spec()
+
+      {agent_id, _new_state} =
+        EvoGit.AgentScheduler.Dispatch.register_agent(
+          state,
+          spec,
+          {self(), make_ref()},
+          nil,
+          0,
+          task_id,
+          1
+        )
+
+      {:ok, st} = get_agent_state(agent_id)
+      assert st.cancel_requested != true
+      assert st.pending_user_messages == []
     end
   end
 

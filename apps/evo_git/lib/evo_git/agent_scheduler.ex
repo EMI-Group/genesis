@@ -350,7 +350,7 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
-  Cancels all agents belonging to a task identified by the caller PID.
+  Force-kills all agents belonging to a task identified by the caller PID.
 
   When the EvoDash Task process (which called `run_agent/2`) is killed,
   its PID is used to find the matching top-level agent. All agents sharing
@@ -358,11 +358,60 @@ defmodule EvoGit.AgentScheduler do
   their Task processes are killed, worktrees deleted, ETS entries removed,
   and any blocked callers are replied to with `{:error, :cancelled}`.
 
+  This is the BRUTAL cancellation path (no grace period) — used by
+  `TaskRegistry.force_kill_task/1`. Graceful cancellation is
+  `begin_graceful_cancel/1`.
+
   Returns `:ok` if agents were found and cancelled, or `{:error, :not_found}`.
   """
-  @spec cancel_task_agents(pid()) :: :ok | {:error, :not_found}
-  def cancel_task_agents(caller_pid) when is_pid(caller_pid) do
-    GenServer.call(__MODULE__, {:cancel_task_agents, caller_pid})
+  @spec force_kill_task_agents(pid()) :: :ok | {:error, :not_found}
+  def force_kill_task_agents(caller_pid) when is_pid(caller_pid) do
+    GenServer.call(__MODULE__, {:force_kill_task_agents, caller_pid})
+  end
+
+  # The cancel notification message injected into every agent of a task that
+  # is being gracefully cancelled. The runner drains pending user messages at
+  # the top of each turn, so the agent sees this before its next LLM call.
+  @cancel_message "The task is being cancelled by the user. Please immediately save your work: commit any uncommitted changes, then call complete_task with a summary of what was accomplished. You are in a grace period and must call complete_task now."
+
+  @doc """
+  Returns the cancel notification message text injected into agents of a task
+  that is being gracefully cancelled.
+  """
+  @spec cancel_message() :: String.t()
+  def cancel_message, do: @cancel_message
+
+  @doc """
+  Begins a graceful cancel for the given task.
+
+  Called by `EvoGit.TaskRegistry.cancel_task/1` once the task's status has
+  been set to `:cancelling`. The handler:
+
+  1. Registers the task_id in the `:evogit_cancelling_tasks` marker (so
+     `run_agent` refuses new root agents for the task and newly registered
+     agents are immediately put into cancel-grace).
+  2. Finds every agent of the task (SchedMeta.task_id scan) and, for each
+     agent with a live ETS state, appends the cancel notification message to
+     its pending-user-messages queue and sets `cancel_requested = true` — the
+     runner enters the grace period at the top of its next turn.
+
+  Returns `:ok`.
+  """
+  @spec begin_graceful_cancel(String.t()) :: :ok
+  def begin_graceful_cancel(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:begin_graceful_cancel, task_id})
+  end
+
+  @doc """
+  Removes a task from the `:evogit_cancelling_tasks` marker.
+
+  Called by `EvoGit.TaskRegistry` when a cancelling task reaches a terminal
+  state (`:completed`/`:failed`/`:cancelled`) so the marker doesn't leak.
+  Idempotent — deleting a non-member is a no-op. Returns `:ok`.
+  """
+  @spec clear_cancelling_task(String.t()) :: :ok
+  def clear_cancelling_task(task_id) when is_binary(task_id) do
+    GenServer.call(__MODULE__, {:clear_cancelling_task, task_id})
   end
 
   # --- Server Callbacks ---
@@ -516,41 +565,54 @@ defmodule EvoGit.AgentScheduler do
     task_id =
       spec.opts[:task_id] || :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
-    # Defensive per-task archive reset: any leftover records from a previous run
-    # sharing this task_id (e.g., a crash before the task completed) must not leak
-    # into this run's collected archive.
-    Lifecycle.clear_archive_records(task_id)
-
-    repo_root = Dispatch.resolve_agent_repo_root(spec, state)
-    task_number = Dispatch.next_task_number(repo_root)
-
-    {agent_id, state} =
-      Dispatch.register_agent(
-        state,
-        spec,
-        from,
-        _parent_id = nil,
-        _depth = 0,
-        task_id,
-        task_number
+    # Graceful-cancel guard: if the task is in the cancelling marker, refuse to
+    # spawn the root agent immediately — BEFORE Dispatch.register_agent/dispatch.
+    # This blocks Genesis Mode B's second sequential root agent (which shares
+    # the first root's task_id) from spawning after the first root completes
+    # during a cancel.
+    if cancelling_task?(task_id) do
+      Logger.info(
+        "AgentScheduler: Refusing to spawn root agent for task #{task_id} — task is being cancelled"
       )
 
-    Logger.info(
-      "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
-    )
-
-    if state.paused do
-      # Queue the agent for dispatch when resumed
-      state = %{state | queue: :queue.in(agent_id, state.queue)}
-      {:noreply, state}
+      {:reply, {:error, :cancelled}, state}
     else
-      state = Dispatch.try_dispatch(state, agent_id)
-      {:noreply, state}
+      # Defensive per-task archive reset: any leftover records from a previous run
+      # sharing this task_id (e.g., a crash before the task completed) must not leak
+      # into this run's collected archive.
+      Lifecycle.clear_archive_records(task_id)
+
+      repo_root = Dispatch.resolve_agent_repo_root(spec, state)
+      task_number = Dispatch.next_task_number(repo_root)
+
+      {agent_id, state} =
+        Dispatch.register_agent(
+          state,
+          spec,
+          from,
+          _parent_id = nil,
+          _depth = 0,
+          task_id,
+          task_number
+        )
+
+      Logger.info(
+        "AgentScheduler: Spawning top-level agent #{agent_id} (task #{task_id}, number #{task_number})"
+      )
+
+      if state.paused do
+        # Queue the agent for dispatch when resumed
+        state = %{state | queue: :queue.in(agent_id, state.queue)}
+        {:noreply, state}
+      else
+        state = Dispatch.try_dispatch(state, agent_id)
+        {:noreply, state}
+      end
     end
   end
 
   @impl true
-  def handle_call({:cancel_task_agents, caller_pid}, _from, %State{} = state) do
+  def handle_call({:force_kill_task_agents, caller_pid}, _from, %State{} = state) do
     # 1. Scan :evogit_sched_meta ETS to find top-level agent whose meta.from contains caller_pid
     #    The meta.from is a GenServer.from() tuple: {pid, ref} where pid is the calling process
     top_level_agent =
@@ -632,6 +694,50 @@ defmodule EvoGit.AgentScheduler do
 
         {:reply, :ok, state}
     end
+  end
+
+  @impl true
+  def handle_call({:begin_graceful_cancel, task_id}, _from, %State{} = state) do
+    # 1. Register the task in the cancelling marker so run_agent refuses new
+    #    root agents for it and Dispatch.register_agent immediately puts any
+    #    newly registered agent (subagent spawns, crash-retries, queued agents
+    #    starting late) into cancel-grace.
+    register_cancelling_task(task_id)
+
+    # 2. Find all agents of this task (SchedMeta.task_id scan — same pattern
+    #    as force_kill_task_agents) and put each live agent into cancel-grace:
+    #    append the cancel notification message and set cancel_requested=true.
+    agent_ids =
+      Store.list_sched_meta()
+      |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
+      |> Enum.map(fn {id, _meta} -> id end)
+
+    Enum.each(agent_ids, fn agent_id ->
+      case Store.get_agent_state(agent_id) do
+        {:ok, _agent_state} ->
+          Store.append_pending_user_message(agent_id, cancel_message())
+          Store.set_cancel_requested(agent_id)
+
+        :error ->
+          :ok
+      end
+    end)
+
+    Logger.info(
+      "AgentScheduler: Began graceful cancel for task #{task_id} — #{length(agent_ids)} agent(s) notified"
+    )
+
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:clear_cancelling_task, task_id}, _from, %State{} = state) do
+    case :ets.whereis(:evogit_cancelling_tasks) do
+      :undefined -> :ok
+      _tid -> :ets.delete(:evogit_cancelling_tasks, task_id)
+    end
+
+    {:reply, :ok, state}
   end
 
   @impl true
@@ -877,4 +983,28 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id), do: Store.increment_compression_count(agent_id)
+
+  # --- Graceful-cancel marker helpers ---
+
+  # Returns true when the task_id is registered in the :evogit_cancelling_tasks
+  # marker (a graceful cancel is in flight). Defensive against a missing table
+  # (should not happen — Application.start/2 creates it before the scheduler).
+  defp cancelling_task?(task_id) do
+    case :ets.whereis(:evogit_cancelling_tasks) do
+      :undefined -> false
+      _tid -> :ets.member(:evogit_cancelling_tasks, task_id)
+    end
+  end
+
+  # Registers a task_id in the :evogit_cancelling_tasks marker. The table is a
+  # public :set so the marker is readable from Dispatch.register_agent (which
+  # runs inside scheduler handlers) and from TaskRegistry's guarded cleanup.
+  defp register_cancelling_task(task_id) do
+    case :ets.whereis(:evogit_cancelling_tasks) do
+      :undefined -> :ok
+      _tid -> :ets.insert(:evogit_cancelling_tasks, {task_id})
+    end
+
+    :ok
+  end
 end

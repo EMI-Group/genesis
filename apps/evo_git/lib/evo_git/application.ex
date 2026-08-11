@@ -13,6 +13,19 @@ defmodule EvoGit.Application do
     ensure_ets_table(:evogit_agent_state, [:named_table, :public, :set, read_concurrency: true])
     ensure_ets_table(:evogit_sched_meta, [:named_table, :public, :set, read_concurrency: true])
 
+    # Graceful-cancel marker: task_ids currently in a graceful cancel. The
+    # scheduler registers task_ids here via begin_graceful_cancel/1; run_agent
+    # refuses new root agents for members and Dispatch.register_agent puts
+    # newly registered agents into cancel-grace. TaskRegistry clears entries
+    # when the task reaches a terminal state. Read via :ets.member by the
+    # scheduler handlers (same process) and by Dispatch/TaskRegistry.
+    ensure_ets_table(:evogit_cancelling_tasks, [
+      :named_table,
+      :public,
+      :set,
+      read_concurrency: true
+    ])
+
     # Archive records keyed by {task_id, agent_id} — at most one record per
     # agent per task, so re-writes (e.g. crash-retry double completion) are
     # idempotent overwrites.

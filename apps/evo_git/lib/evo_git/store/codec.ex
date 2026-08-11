@@ -204,7 +204,8 @@ defmodule EvoGit.Store.Codec do
 
   # The complete set of known atom values across the three atom fields:
   #   * type — :genesis, :evolve, :extract_skills
-  #   * status — :pending, :running, :finalizing, :completed, :failed, :cancelled
+  #   * status — :pending, :running, :finalizing, :completed, :failed,
+  #     :cancelled, :cancelling
   #   * review_status — :open, :merged, :rejected, :continued, :ignored, :no_changes
   #
   # Using String.to_atom/1 is SAFE here because the set is closed, bounded, and
@@ -215,7 +216,7 @@ defmodule EvoGit.Store.Codec do
   # outside the whitelist and decode to nil.
   @known_atoms ~w(
     genesis evolve extract_skills
-    pending running finalizing completed failed cancelled
+    pending running finalizing completed failed cancelled cancelling
     open merged rejected continued ignored no_changes
   )a
   @known_atom_strings MapSet.new(@known_atoms, &Atom.to_string/1)
