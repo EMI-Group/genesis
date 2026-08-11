@@ -63,7 +63,7 @@ None — leaf directory (all modules at this level).
 - `:cancelling` → `:ok` idempotent (does NOT re-send the cancel message — agents already hold it).
 - terminal/missing → `{:error, :not_running}` / `{:error, :not_found}`.
 
-**`TaskRegistry.force_kill_task/1`** (public `:110-112`, handler `:389-454`) — the old brutal cancel, renamed: status gate `:running | :cancelling` (escalation path for a hung graceful cancel) → `AgentScheduler.force_kill_task_agents(pid)` (reverse-depth `:brutal_kill` cascade, catch `:exit`) + `Task.shutdown(ref, :brutal_kill)` + direct terminal write (`:cancelled`, finished_at set, lease nil, result nil) + `clear_cancelling_marker(task_id)`.
+**`TaskRegistry.force_kill_task/1`** (public `:110-112`, handler `:389-454`) — the old brutal cancel, renamed: status gate `:running | :cancelling` (escalation path for a hung graceful cancel) → `AgentScheduler.force_kill_task_agents(pid)` (reverse-depth `:brutal_kill` cascade, catch `:exit`) + `Task.shutdown(ref, :brutal_kill)` + direct terminal write (`:failed`, finished_at set, lease nil, result nil — a force-killed task is persisted as `:failed`, never `:cancelled`; "cancelled" now means ONLY graceful cancel) + `clear_cancelling_marker(task_id)`.
 
 **Marker cleanup** — `clear_cancelling_marker/1` (`task_registry.ex:832-858`): prefers `AgentScheduler.clear_cancelling_task/1` (serialized GenServer, can't race `begin_graceful_cancel`), falls back to a direct `:ets.delete(:evogit_cancelling_tasks, task_id)` when the scheduler is down (TaskRegistry starts BEFORE the AgentScheduler in the supervision tree, e.g. during startup reconciliation). Called from every terminal transition (`handle_update_status/6` `:800`, the `{:task_status, ...}` handler `:1001`, and force_kill `:422`).
 

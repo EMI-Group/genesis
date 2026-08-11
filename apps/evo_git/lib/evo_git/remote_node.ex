@@ -461,7 +461,7 @@ defmodule EvoGit.RemoteNode do
   @doc """
   Force-kills a task on the given node — the BRUTAL cancellation path (no
   grace period): agents are killed, the wrapper is brutal-killed, and the task
-  is immediately persisted `:cancelled`. Works from `:running` or `:cancelling`.
+  is immediately persisted `:failed`. Works from `:running` or `:cancelling`.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.force_kill_task/1`
   directly. On a remote node, routes the call through `:erpc` via
