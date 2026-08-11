@@ -7,15 +7,17 @@ defmodule EvoGit.StoreSummaryTest do
   alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
 
-  # The exact 16 keys returned by the summary API (select_tasks_summary/0,1,2,
+  # The exact 15 keys returned by the summary API (select_tasks_summary/0,1,2,
   # select_tasks_summary_by_path/2,3,4 and select_tasks_changed_since/1,2).
+  # `result` is deliberately NOT in the projection — no summary consumer reads
+  # it (the dashboard's review button uses the denormalized `branch_name`
+  # column), and dropping it avoids the heaviest per-row decode.
   # `updated_at` is store-internal bookkeeping — returned as the raw
   # fixed-precision ISO string, NOT a DateTime.
   @summary_keys [
     :id,
     :status,
     :review_status,
-    :result,
     :started_at,
     :finished_at,
     :type,
@@ -107,7 +109,7 @@ defmodule EvoGit.StoreSummaryTest do
   end
 
   describe "select_tasks_summary/1" do
-    test "returns maps with exactly the 16 contract keys and decoded values" do
+    test "returns maps with exactly the 15 contract keys and decoded values" do
       put_task!(
         make_task("sum-1",
           status: :completed,
@@ -130,7 +132,7 @@ defmodule EvoGit.StoreSummaryTest do
       assert summary.status == :completed
       assert summary.review_status == :merged
       assert summary.type == :genesis
-      assert {:ok, %{commit_sha: "abc123"}} = summary.result
+      refute Map.has_key?(summary, :result)
       assert summary.project_path == "/tmp/proj"
       assert summary.opts[:mode] == "simple"
       assert summary.branch_name == "evogit/feature"
@@ -279,7 +281,7 @@ defmodule EvoGit.StoreSummaryTest do
       assert Enum.map(summaries, & &1.id) |> Enum.sort() == ["nil-since-a", "nil-since-b"]
     end
 
-    test "select_tasks_changed_since/2 returns only newer rows with the 16-key projection", %{
+    test "select_tasks_changed_since/2 returns only newer rows with the 15-key projection", %{
       sqlite_path: sqlite_path
     } do
       put_task!(make_task("cs-old", status: :completed))
@@ -331,26 +333,27 @@ defmodule EvoGit.StoreSummaryTest do
     end
   end
 
-  describe "legacy raw-string result skip-and-log" do
+  describe "skip-and-log for undecodable rows in summary reads" do
     test "select_tasks_summary/1 skips the undecodable row and logs a warning", %{
       sqlite_path: sqlite_path
     } do
-      bad_id = "legacy-raw-#{System.unique_integer([:positive])}"
-      good_id = "legacy-raw-good-#{System.unique_integer([:positive])}"
+      bad_id = "legacy-bad-#{System.unique_integer([:positive])}"
+      good_id = "legacy-good-#{System.unique_integer([:positive])}"
 
       put_task!(make_task(bad_id, status: :completed))
       put_task!(make_task(good_id, status: :completed))
 
-      # Overwrite the result column with a legacy raw string (pre-canonical
-      # codec). decode_result/1 raises ArgumentError on it, so the summary read
-      # must skip + log the row instead of crashing.
+      # Overwrite the opts column with a non-object JSON value. decode_opts/1
+      # raises ArgumentError on it, so the summary read must skip + log the row
+      # instead of crashing. (`result` is no longer in the summary projection —
+      # opts is the remaining JSON decode that can raise.)
       {:ok, conn} = Xqlite.open(sqlite_path)
 
       {:ok, _} =
         XqliteNIF.execute(
           conn,
-          "UPDATE tasks SET result = ?1 WHERE id = ?2",
-          ["no-json-here", bad_id]
+          "UPDATE tasks SET opts = ?1 WHERE id = ?2",
+          ["[1,2]", bad_id]
         )
 
       :ok = XqliteNIF.close(conn)
@@ -377,7 +380,7 @@ defmodule EvoGit.StoreSummaryTest do
       sqlite_path: sqlite_path
     } do
       good_id = "cs-good-#{System.unique_integer([:positive])}"
-      bad_id = "cs-legacy-raw-#{System.unique_integer([:positive])}"
+      bad_id = "cs-legacy-bad-#{System.unique_integer([:positive])}"
 
       put_task!(make_task(good_id, status: :completed))
       put_task!(make_task(bad_id, status: :completed))
@@ -387,14 +390,14 @@ defmodule EvoGit.StoreSummaryTest do
       {:ok, _} =
         XqliteNIF.execute(
           conn,
-          "UPDATE tasks SET result = ?1 WHERE id = ?2",
-          ["no-json-here", bad_id]
+          "UPDATE tasks SET opts = ?1 WHERE id = ?2",
+          ["[1,2]", bad_id]
         )
 
       :ok = XqliteNIF.close(conn)
 
       # Both rows are newer than the `since` cutoff, so both are selected by the
-      # SQL — the good row decodes, the legacy raw-string row is skipped + logged.
+      # SQL — the good row decodes, the bad-opts row is skipped + logged.
       set_updated_at!(sqlite_path, good_id, "2026-06-26T08:00:00.000Z")
       set_updated_at!(sqlite_path, bad_id, "2026-06-26T08:30:00.000Z")
 

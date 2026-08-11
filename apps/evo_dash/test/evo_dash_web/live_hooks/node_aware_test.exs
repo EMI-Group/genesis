@@ -44,7 +44,7 @@ defmodule EvoDashWeb.NodeAwareTest do
   defp patch_to(_), do: nil
 
   # Inserts a task directly into the SQLite store so the local
-  # TaskRegistry.list_tasks/0 picks it up.
+  # TaskRegistry.list_tasks_summary/1 picks it up.
   defp insert_fixture!(store, overrides) do
     id = "fixture_#{System.unique_integer([:positive])}"
 
@@ -361,14 +361,15 @@ defmodule EvoDashWeb.NodeAwareTest do
 
   describe "load_running_and_pending_tasks/1 — node-aware source" do
     # These tests verify that the function reads tasks from the correct node:
-    # local `TaskRegistry.list_tasks/0` for the local node, and
-    # `EvoDash.NodeContext.list_tasks/1` (RPC) for a remote node. The remote
-    # path fails fast (noconnection) when the target node doesn't exist, so it
-    # returns `[]` quickly without a timeout.
+    # local `TaskRegistry.list_tasks_summary([:running, :pending, :finalizing,
+    # :completed])` for the local node, and
+    # `EvoDash.NodeContext.list_tasks_summary(node, statuses)` (RPC) for a
+    # remote node. The remote path fails fast (noconnection) when the target
+    # node doesn't exist, so it returns `[]` quickly without a timeout.
 
     setup :setup_isolated_registry
 
-    test "local node: reads from TaskRegistry.list_tasks/0" do
+    test "local node: reads from TaskRegistry.list_tasks_summary/1" do
       # Insert a running task and a completed task with a branch (reviewable)
       insert_fixture!(EvoGit.Store, status: :running)
 
@@ -406,12 +407,12 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert ids == ["f1", "p1", "r1"]
     end
 
-    test "remote node: uses EvoDash.NodeContext.list_tasks/1 (RPC), not local" do
+    test "remote node: uses EvoDash.NodeContext.list_tasks_summary/2 (RPC), not local" do
       # Insert local tasks that should NOT appear when viewing a remote node.
       insert_fixture!(EvoGit.Store, id: "local-only", status: :running)
 
       # A non-existent remote node — :erpc.call fails fast with :noconnection,
-      # so NodeContext.list_tasks/1 returns [] quickly (no 10s timeout).
+      # so NodeContext.list_tasks_summary/2 returns [] quickly (no 10s timeout).
       remote_node = :"nonexistent_remote_test@127.0.0.1"
       sock = socket(%{current_node: remote_node})
 
