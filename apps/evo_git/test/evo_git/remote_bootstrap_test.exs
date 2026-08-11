@@ -107,26 +107,10 @@ defmodule EvoGit.RemoteBootstrapTest do
     end
   end
 
-  describe "asset_name/1 and asset_matches?/2" do
-    test "asset_name/1 builds the tarball name" do
+  describe "asset_name/1" do
+    test "builds the tarball name" do
       assert RemoteBootstrap.asset_name("linux_x64") ==
                "genesis_remote_linux_x64.tar.gz"
-    end
-
-    test "matches an unversioned asset" do
-      assert RemoteBootstrap.asset_matches?("genesis_remote_linux_x64.tar.gz", "linux_x64")
-    end
-
-    test "matches a versioned asset" do
-      assert RemoteBootstrap.asset_matches?("genesis_remote_0.1.0_linux_x64.tar.gz", "linux_x64")
-    end
-
-    test "rejects an asset for a different platform" do
-      refute RemoteBootstrap.asset_matches?("genesis_remote_darwin_arm64.tar.gz", "linux_x64")
-    end
-
-    test "rejects an asset with no platform suffix" do
-      refute RemoteBootstrap.asset_matches?("genesis_remote_0.1.0.tar.gz", "linux_x64")
     end
   end
 
@@ -139,6 +123,35 @@ defmodule EvoGit.RemoteBootstrapTest do
     test "builds the darwin_arm64 direct URL" do
       assert RemoteBootstrap.direct_url("darwin_arm64") ==
                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.gz"
+    end
+  end
+
+  describe "download_url/1" do
+    test "returns the direct linux_x64 URL with the latest version (no network)" do
+      assert RemoteBootstrap.download_url("linux_x64") ==
+               {:ok,
+                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.gz",
+                "latest"}
+    end
+
+    test "returns the direct darwin_arm64 URL with the latest version (no network)" do
+      assert RemoteBootstrap.download_url("darwin_arm64") ==
+               {:ok,
+                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.gz",
+                "latest"}
+    end
+
+    test "version is always latest, keying the local download cache" do
+      assert {:ok, url, "latest"} = RemoteBootstrap.download_url("windows_x64")
+
+      assert RemoteBootstrap.cache_path("windows_x64", "latest") ==
+               Path.join([
+                 EvoGit.Platform.data_dir(),
+                 "remote_binaries",
+                 "windows_x64_latest.tar.gz"
+               ])
+
+      assert String.ends_with?(url, "genesis_remote_windows_x64.tar.gz")
     end
   end
 
