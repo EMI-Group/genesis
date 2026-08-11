@@ -199,6 +199,64 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "send_agent_message optimistic display" do
+    # The optimistic-display flow (commit 04c82f82): sending a user message
+    # appends it to the @optimistic_messages assign and it renders in the
+    # agent's chat history with a pending hint until the agent drains it into
+    # context on its next turn (see EvoDashWeb.AgentsLive.OptimisticMessages).
+    # A missing agent must surface as a failure flash, not a false success.
+
+    setup do
+      on_exit(fn ->
+        # Clean up only the rows this file seeds; the tables themselves are
+        # owned by the :evo_git application process (survive the test process).
+        if :ets.whereis(:evogit_sched_meta) != :undefined,
+          do: :ets.delete(:evogit_sched_meta, 1)
+
+        if :ets.whereis(:evogit_agent_state) != :undefined,
+          do: :ets.delete(:evogit_agent_state, 1)
+      end)
+    end
+
+    test "successfully sent message appears optimistically in the chat history", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+
+      # Select the agent to open its detail panel (renders the chat history).
+      view |> element("#agent-card-1") |> render_click()
+      # Open the send-message modal for the running agent.
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => "1",
+          "message" => "hello optimistic world"
+        })
+
+      # The message text renders in the chat history...
+      assert html =~ "hello optimistic world"
+      # ...with the pending hint (apostrophe is HTML-escaped to &#39; in HEEx).
+      assert html =~ "will be added on the agent&#39;s next turn"
+      # ...and the success flash is shown.
+      assert html =~ "Message sent to agent"
+    end
+
+    test "missing agent shows a failure flash instead of a false success", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => "999",
+          "message" => "hello"
+        })
+
+      assert html =~ "Failed to send message"
+      assert html =~ "not_found"
+      refute html =~ "Message sent to agent"
+    end
+  end
+
   describe "safe_text/1" do
     # BUG fix: message content / tool-call arguments that are Maps (not strings)
     # crashed the LiveView with Protocol.UndefinedError: protocol
