@@ -20,11 +20,16 @@ defmodule EvoDashWeb.TaskFormComponents do
     * Layout A (`data-layout="compact"`) — unified objective box: the controls
       row is the card's last line.
     * Layout B (`data-layout="expanded"`) — large objective area with an
-      in-flow launch panel below.
+      in-flow launch panel below. The textarea fills available space
+      (flex-grow) up to a viewport-derived max-height cap and then scrolls
+      internally (overflow-y: auto), so the launch panel stays visible even
+      with extremely long prompts.
 
   Both layouts share the same control order — mode (order-1) | Launch
   (order-2, centered via mx-auto) | model (order-3); only the textarea size
-  differs.
+  differs. The accent decorations (accent border-color, layered box-shadow
+  glow, top-edge gradient) are defined on the base `.input-card` CSS rule
+  and are shared by both layouts.
 
   There is NO per-keystroke server round trip: the textarea sends no
   `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
