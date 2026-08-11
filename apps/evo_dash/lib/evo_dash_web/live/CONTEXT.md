@@ -180,6 +180,54 @@ SPA push_patch navigation re-runs only `handle_params` (1 summary + 1 task_ids +
 
 **Recommended fixes (in order of impact):** (1) drop `result`/`opts` from `@summary_columns` — re-source `show_review_button?` from the `branch_name` + `review_status` columns (already present); notification text already uses per-id `get_task`. (2) dedupe the sidebar fetch — ProjectsLive.mount:520 + handle_params fallbacks + restore_state should skip when NodeAware already loaded (`tasks_node_loaded` guard) or move the sidebar load entirely into `on_mount`/`assign_node`. (3) async-load the sidebar (assign empty lists first, fill via a Task) so first paint never blocks; skip heavy queries on the dead render (`unless connected?`). (4) move the summary decode off the Store GenServer heap (raw-rows API + decode in the offloaded Task) — store/CONTEXT.md already flags this. Per-support-module detail: `live/projects_live/CONTEXT.md` "Performance Notes".
 
+## Notes for Agents — Active-task query inventory (unification roadmap)
+
+Consolidated map of every place the dashboard queries "active tasks" (running/pending/finalizing/completed) across all pages, produced for the "unify into ONE shared function" refactor (investigator worker_T3_A2). All page-level task queries go through **three store projections**:
+
+| Projection | Store fn | Keys | Decodes result? |
+|---|---|---|---|
+| Summary | `Store.select_tasks_summary/3` (apps/evo_git store.ex:308-310) | 16 keys: id, status, review_status, **result**, started_at, finished_at, type, project_path, **opts**, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at | **YES** — `decode_summary_row` (store.ex:1031-1067) runs `Codec.decode_result` per row (heaviest blob: archive_records + usage) |
+| Id-only | `Store.select_task_ids/1` (store.ex:182, handler 618-637) | id, status, updated_at | No |
+| Full | `safe_select_paginated_tasks/2` | all TaskInfo columns incl. logs/usage/archive_metadata | Yes (full struct) |
+
+RPC chain for all three: LiveView → `EvoDash.NodeContext` (node_context.ex:353/370/382/395) → `EvoGit.RemoteNode` (remote_node.ex:358/381/314/423) → local direct or `:erpc` → `AgentScheduler.RemoteAPI` (remote_api.ex:323/336/296/359) → `TaskRegistry` (task_registry.ex:116-152) → Store. Summary handlers are Task-offloaded (task_registry.ex:416-457) but decode still runs INLINE on the Store GenServer heap; `list_task_ids` replies inline by design (cheap).
+
+**Every LiveView** gets the sidebar Active Tasks via `EvoDashWeb.LiveHooks.NodeAware` on_mount (applied in `evo_dash_web.ex:53`): `on_mount` → `load_running_and_pending_tasks/1` (node_aware.ex:44, 71-110) → statuses-filtered summary `[:running,:pending,:finalizing,:completed]` (local TaskRegistry / remote NodeContext RPC; empty lists in pending-remote contexts, node_aware.ex:74-82). `handle_params` → `assign_node/2` (node_aware.ex:130-184) reloads only when the `:tasks_node_loaded` context changed (dedup guard). Broadcasts → 300ms trailing debounce (`debounce_task_reload/1` node_aware.ex:362-370) → each page's `handle_info(:node_aware_reload_tasks)` → `NodeAware.reload_tasks/1` (or page-specific reload + `clear_task_reload_pending`).
+
+Per-page active-task consumers:
+
+| Page/module | Query | Call sites | Data used |
+|---|---|---|---|
+| `Layouts.app` sidebar (components/layouts.ex) | consumes `@running_tasks`/`@pending_tasks` assigns | render 138-179 | id (agents/review link), status (dot color 284-290, is_running), `opts[:objective]/[:prompt]` (task_label 257-266), started_at/finished_at (elapsed), project_path (grouping 295-329) |
+| ProjectsLive (projects_live.ex) | `Assigns.assign_running_and_pending_tasks/1` — LOCAL-only, duplicates NodeAware | mount:520, handle_params fallbacks 635/665/674, task_submit:1103, cancel_task:1133, clear_task_history:1156, delete_task:1166, activate_project:1846 | sidebar assigns only — 4-7 redundant summary calls per page load (dead render + live mount + handle_params + restore_state, see perf section below) |
+| ProjectsLive remote view | `NodeContext.list_agents/1` | handle_params 552-559 | `@remote_agents` render branch 284-362: id, agent_module, status, objective, model_id, repo_id, usage.total_tokens |
+| TasksLive (tasks_live.ex) | `NodeContext.list_tasks_paginated/2` (FULL TaskInfo) | load_page 696-723 | expandable task cards (need logs/usage/archive_metadata), full-result modal, counts |
+| TasksLive | `NodeContext.get_unique_paths/1` | mount:329, load_page_into_socket:758 | project filter dropdown |
+| TasksLive remote poll | `NodeContext.list_task_ids/1` + `list_tasks_changed_since/2` | seed_dirty_tracker 778-798, :remote_poll 428-474 | DirtyTracker baseline/dirty-check (only updated_at read) |
+| AgentsLive (agents_live.ex) | `NodeContext.list_agents/1` | load_agents:859 (mount/handle_params/full_reload/:remote_poll) | agent tree (id, parent_id, status, depth, context_path, objective, usage...) — scheduler ETS, NOT task store |
+| SystemLive (system_live.ex) | `NodeContext.list_agents/1` | do_chart_tick:845 (3s chart tick) | Charts.build_sample status_counts (running/blocked proxy) |
+| ReviewLive (review_live.ex) | `TaskRegistry.get_task/1` single fetch | ~692 | full TaskInfo for review page; no list queries |
+| ProjectsLive notifications | `TaskRegistry.list_task_ids([:completed,:failed,:cancelled])` + per-new-id `TaskRegistry.get_task/1` | :node_aware_reload_tasks 1491-1523, `Assigns.build_notified_task_ids` 21-26 | id/status/updated_at diff; full row only for new terminal ids → `Project.task_notification_content` (needs opts + result) |
+| WelcomeLive / WelcomeCompleteLive / SettingsLive | none of their own | — | only pass sidebar assigns through |
+
+**Field needs per consumer:** sidebar + pending-candidate derivation need ONLY id, status, opts (label), started_at, finished_at, project_path, branch_name (via `show_review_button?`), review_status. **NO consumer of the summary maps reads `result` directly** — `show_review_button?` (assigns.ex:58-62 / node_aware.ex:112-116, DUPLICATED in both modules) pattern-matches `result: {:ok, %{branch_name: _}}` presence, and `branch_name` is ALREADY a denormalized summary column (codec.ex:85,100-106). TasksLive's full-result modal reads result from the paginated FULL TaskInfo path, not the summary. `list_tasks_changed_since` consumers (DirtyTracker) only read updated_at. **So `result` can be dropped from the summary projection after switching `show_review_button?` to the `branch_name` column** (that decode is the ~25 MB LiveView retention driver). `opts` must STAY in `@summary_columns` — task_label needs it (the earlier "drop result/opts" proposal in store/CONTEXT.md Known Issues was half-right).
+
+**Dead/duplicate code to remove in unification:**
+- `Assigns.assign_running_and_pending_tasks/1` (assigns.ex:36-53) is logic-identical to `NodeAware.load_running_and_pending_tasks/1` (node_aware.ex:71-110) minus node-awareness and the remote-pending empty-list guard — unify on the NodeAware version; route the 8 ProjectsLive call sites through it, or drop the redundant ones (mount:520, handle_params fallbacks 635/665/674, activate_project:1846 are redundant with on_mount/assign_node + broadcast-driven debounced reloads; keep the task_submit/cancel/delete/clear refreshes for immediate UX).
+- `show_review_button?/1` duplicated in assigns.ex:58-62 and node_aware.ex:112-116.
+- `EvoDash.NodeContext.list_tasks/1` (node_context.ex:337-339, full TaskInfo) has NO web-layer callers — dead in the dashboard (keep only if evo_git RemoteAPI consumers need it).
+
+**Proposed unified function** (home: `EvoDashWeb.LiveHooks.NodeAware` — already the shared node-aware sidebar loader applied to all LiveViews; alternatively a new `EvoDashWeb.ActiveTasks` support module under lib/evo_dash_web/live/ following the `TasksLive.DirtyTracker` support-module pattern):
+
+```elixir
+@active_statuses [:running, :pending, :finalizing, :completed]
+def fetch_active_tasks(node) :: {[map()], [map()]}      # {running, pending} — local TaskRegistry / remote NodeContext RPC, [] in pending-remote contexts
+def partition_active_tasks(summaries) :: {[map()], [map()]}  # pure: status filter + review-candidate (branch_name-based) sort
+def assign_active_tasks(socket, node) :: socket          # assigns :running_tasks/:pending_tasks
+```
+
+`pending_tasks` derivation must switch from `result`-matching to `branch_name`-column matching so the evo_git `@summary_columns` can drop `result` (store.ex:58 — "drop result" has been a Known-Issues fix direction since round 1, never implemented).
+
 ## Constraints
 - Each LiveView uses either an inline `render/1` or a companion `.html.heex` template — not both. (Three render inline; `AgentsLive` uses a separate template.)
 - Auto-refresh intervals must be gated behind `connected?/1` to avoid leaking timers.
