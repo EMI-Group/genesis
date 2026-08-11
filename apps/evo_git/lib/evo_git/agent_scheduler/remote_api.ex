@@ -187,7 +187,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   #
   # Follows the same model-profile construction as `AgentScheduler.init/1`:
   # when `[[llm.models]]` is empty/unset, a single legacy "default" profile
-  # is synthesized from the flat `llm.model` / `scheduler.max_concurrency`.
+  # is synthesized from the flat `llm.model` / `scheduler.default_llm_max_concurrency`.
   @spec build_reload_opts(map()) :: keyword()
   def build_reload_opts(config) when is_map(config) do
     scheduler = Map.get(config, :scheduler, %{})

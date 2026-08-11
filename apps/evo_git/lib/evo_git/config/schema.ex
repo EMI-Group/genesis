@@ -146,7 +146,7 @@ defmodule EvoGit.Config.Schema do
   ## Examples
 
       iex> defaults = EvoGit.Config.Schema.defaults()
-      iex> defaults.scheduler.max_concurrency
+      iex> defaults.scheduler.default_llm_max_concurrency
       3
       iex> defaults.sandbox.resources.cpu_quota
       "1000%"

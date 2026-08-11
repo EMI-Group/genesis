@@ -20,7 +20,7 @@ defmodule EvoGit.Config.Schema.Definitions do
     [
       # ── Scheduler ──────────────────────────────────────────────────────
       %{
-        key_path: [:scheduler, :max_concurrency],
+        key_path: [:scheduler, :default_llm_max_concurrency],
         type: :pos_integer,
         default: 3,
         validation: [min: 1],
