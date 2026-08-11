@@ -184,13 +184,21 @@ defmodule EvoGit.Agent.ToolDispatch do
   # failures, rate limits, stream-processing errors). It does NOT retry the "no
   # tool calls" case — that semantic problem is handled by the caller via context
   # nudging. Returns {:ok, response, duration_ms} or {:error, reason}.
+  #
+  # The LLM slot is acquired and released PER ATTEMPT (with_llm_slot sits INSIDE
+  # the retry block), so the exponential-backoff sleep happens BETWEEN attempts
+  # while the agent's slot is FREE. This makes `AgentScheduler.pause/0` effective
+  # for a retrying agent: its next attempt blocks on slot re-acquisition when the
+  # scheduler is paused (and is granted on resume). A raise inside the LLM call
+  # still propagates immediately — with_llm_slot's `after` releases the slot, and
+  # the retry macro only retries `{:error, _}` tuple returns, never raises.
   def call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
-    AgentScheduler.with_llm_slot(agent_id, fn ->
-      retry with:
-              exponential_backoff(1_000)
-              |> randomize()
-              |> cap(60_000)
-              |> Stream.take(max_retries) do
+    retry with:
+            exponential_backoff(1_000)
+            |> randomize()
+            |> cap(60_000)
+            |> Stream.take(max_retries) do
+      AgentScheduler.with_llm_slot(agent_id, fn ->
         with llm_start <- System.monotonic_time(:millisecond),
              {:ok, stream_resp} <-
                ReqLLM.stream_text(
@@ -216,19 +224,19 @@ defmodule EvoGit.Agent.ToolDispatch do
 
             {:error, reason}
         end
-      end
-      |> case do
-        {:ok, _response, _llm_duration} = result ->
-          result
+      end)
+    end
+    |> case do
+      {:ok, _response, _llm_duration} = result ->
+        result
 
-        {:error, reason} ->
-          if EvoGit.Agent.TruncationFeedback.is_rate_limit_error?(reason) do
-            AgentScheduler.report_llm_error(agent_id, :rate_limit)
-          end
+      {:error, reason} ->
+        if EvoGit.Agent.TruncationFeedback.is_rate_limit_error?(reason) do
+          AgentScheduler.report_llm_error(agent_id, :rate_limit)
+        end
 
-          {:error, reason}
-      end
-    end)
+        {:error, reason}
+    end
   end
 
   @doc false
