@@ -9,14 +9,6 @@
 
 FROM elixir:otp-29
 
-ARG GENESIS_VERSION=v0.9.2
-ARG NODE_VERSION=lts-latest
-ARG PYTHON_VERSION=3.12
-ARG RUST_TOOLCHAIN=stable
-
-LABEL org.opencontainers.image.source="https://github.com/EMI-Group/genesis" \
-      org.opencontainers.image.version="${GENESIS_VERSION}"
-
 ENV LANG=C.UTF-8 \
     MIX_ENV=prod \
     HOME=/app \
@@ -67,21 +59,27 @@ WORKDIR /app
 USER genesis:genesis
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+ARG NODE_VERSION=lts-latest
 RUN curl -fsSL https://fnm.vercel.app/install \
         | bash -s -- --install-dir "${HOME}/.local/bin" --skip-shell \
     && fnm install "${NODE_VERSION}" --progress never \
     && fnm default "${NODE_VERSION}" \
     && node --version
 
+ARG PYTHON_VERSION=3.12
 RUN curl -LsSf https://astral.sh/uv/install.sh \
         | env UV_UNMANAGED_INSTALL="${HOME}/.local/bin" sh \
     && uv python install "${PYTHON_VERSION}" --default \
     && python --version
 
+ARG RUST_TOOLCHAIN=stable
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile default --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustc --version
 
+ARG GENESIS_VERSION=v0.9.2
+LABEL org.opencontainers.image.source="https://github.com/EMI-Group/genesis" \
+      org.opencontainers.image.version="${GENESIS_VERSION}"
 ADD --chown=genesis:genesis \
     "https://github.com/EMI-Group/genesis.git#${GENESIS_VERSION}" \
     /app/genesis
