@@ -1,11 +1,24 @@
 defmodule EvoGit.AgentScheduler.WorktreesTest do
-  # async: false — WorktreeManager is a named GenServer (EvoGit.AgentScheduler.WorktreeManager).
-  # With async: true, concurrent tests would conflict on the registered name.
+  # async: false — WorktreeManager is a named GenServer with shared state
+  # across tests (agents/monitors/pending maps), and the tests manipulate the
+  # global named ETS tables (:evogit_agent_state, :evogit_sched_meta).
   # The Application starts the WorktreeManager, so it is available.
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
+  alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.WorktreeManager
   alias EvoGit.AgentScheduler.Worktrees
+  alias EvoGit.AgentSpec
+  alias EvoGit.Core.ContextNode
+  alias EvoGit.Core.PhyloGraphNode
+
+  defmodule DummyAgent do
+    # The create pipeline never calls the agent module — this only needs to
+    # exist so the %AgentSpec{} is well-formed.
+  end
 
   # --------------------------------------------------------------------------
   # Shared temp git-repo setup (mirrors test/evo_git/runtime/helpers_test.exs)
@@ -15,92 +28,373 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       Path.join(System.tmp_dir!(), "evogit_worktrees_" <> to_string(System.unique_integer()))
 
     File.mkdir_p!(tmp_dir)
-    Git.init(tmp_dir)
+    {:ok, _} = Git.init(tmp_dir)
 
     # Create an initial commit so HEAD exists and branches can be created.
     File.write!(Path.join(tmp_dir, "README.md"), "# test")
-    Git.add(tmp_dir, "README.md")
-    Git.commit(tmp_dir, "initial commit")
+    {:ok, _} = Git.add(tmp_dir, "README.md")
+    {:ok, _} = Git.commit(tmp_dir, "initial commit")
+    {:ok, base_sha} = Git.rev_parse(tmp_dir)
+
+    create_ets_if_missing(:evogit_agent_state)
+    create_ets_if_missing(:evogit_sched_meta)
+    clear_ets()
 
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
+      clear_ets()
     end)
 
-    {:ok, %{tmp_dir: tmp_dir}}
+    {:ok, %{tmp_dir: tmp_dir, base_sha: base_sha}}
   end
 
-  # Helper: waits up to 500ms for a branch to be deleted (delete/2 delegates
-  # to WorktreeManager via cast, which is async).
-  defp wait_for_branch_deletion(tmp_dir, branch_name, timeout \\ 500) do
+  # --- ETS helpers (pattern from lifecycle_test.exs) ---
+
+  defp create_ets_if_missing(name) do
+    if :ets.whereis(name) == :undefined do
+      :ets.new(name, [:set, :named_table, :public])
+    end
+  end
+
+  defp clear_ets do
+    if :ets.whereis(:evogit_agent_state) != :undefined,
+      do: :ets.delete_all_objects(:evogit_agent_state)
+
+    if :ets.whereis(:evogit_sched_meta) != :undefined,
+      do: :ets.delete_all_objects(:evogit_sched_meta)
+  end
+
+  # --- Agent registration helpers ---
+
+  defp unique_agent_id, do: :erlang.unique_integer([:positive])
+
+  defp build_spec(tmp_dir, base_sha) do
+    %AgentSpec{
+      context_node: %ContextNode{path: "./", repo: tmp_dir},
+      phylo_node: %PhyloGraphNode{repo: tmp_dir, base_commit: base_sha, current_commit: base_sha},
+      agent_module: DummyAgent,
+      objective: "test",
+      repo_id: "primary"
+    }
+  end
+
+  defp build_meta(agent_id, spec, task_number) do
+    %SchedMeta{id: agent_id, depth: 0, spec: spec, retries: 0, task_number: task_number}
+  end
+
+  defp build_agent_state(tmp_dir, task_local_id) do
+    %AgentState{
+      context_node: %ContextNode{path: "./", repo: tmp_dir},
+      llm_model: "test:model",
+      max_retries: 3,
+      max_depth: 8,
+      repo_root: tmp_dir,
+      task_local_id: task_local_id
+    }
+  end
+
+  # Writes both ETS entries so the WorktreeManager create pipeline can derive
+  # the branch name. Returns {spec, meta} for the create call.
+  defp register_agent(agent_id, tmp_dir, base_sha, opts \\ []) do
+    task_number = Keyword.get(opts, :task_number, 1)
+    task_local_id = Keyword.get(opts, :task_local_id, 1)
+    spec = build_spec(tmp_dir, base_sha)
+    meta = build_meta(agent_id, spec, task_number)
+    Store.put_agent_state(agent_id, build_agent_state(tmp_dir, task_local_id))
+    Store.put_sched_meta(agent_id, meta)
+    {spec, meta}
+  end
+
+  # --- Async-cleanup poll helper ---
+
+  defp wait_until(fun, timeout \\ 5000) do
     deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline)
+  end
 
-    Enum.reduce_while(1..100//1, nil, fn _, _ ->
-      {:ok, branches} = Git.list_branches(tmp_dir)
+  defp do_wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        :ok
 
-      if branch_name in branches do
-        if System.monotonic_time(:millisecond) < deadline do
-          Process.sleep(10)
-          {:cont, nil}
-        else
-          {:halt, nil}
-        end
-      else
-        {:halt, :done}
-      end
-    end)
+      System.monotonic_time(:millisecond) < deadline ->
+        Process.sleep(15)
+        do_wait_until(fun, deadline)
+
+      true ->
+        flunk("wait_until timed out")
+    end
   end
 
   # ==========================================================================
-  # delete/2 — branch-name derivation
-  #
-  # The worktree directory uses underscores (worker_T1_A42) while branches
-  # are created with hyphens (evogit-agent-T1-A42). delete/2 must translate
-  # worker_T<id>_A<local_id> → evogit-agent-T<id>-A<local_id> so that the
-  # correct branch is deleted.
+  # create_worktree_for_agent/6 — the WorktreeManager GenServer
   # ==========================================================================
-  describe "delete/2 branch-name derivation" do
-    test "deletes a branch created with hyphen naming from a worker_T<n>_A<n> dir", %{
-      tmp_dir: tmp_dir
-    } do
-      {:ok, base_sha} = Git.rev_parse(tmp_dir)
+  describe "create_worktree_for_agent/6" do
+    test "creates and prepares a fresh worktree", %{tmp_dir: tmp_dir, base_sha: base_sha} do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
 
-      # Branches are created with hyphens (see dispatch.ex / complete_task.ex).
-      branch_name = "evogit-agent-T1-A42"
-      Git.create_branch(tmp_dir, branch_name, base_sha)
+      assert {:ok, ^wt_path} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id,
+                 tmp_dir,
+                 wt_path,
+                 spec,
+                 meta,
+                 self()
+               )
+
+      # Worktree directory exists, is a real git worktree, and has the
+      # initial commit's file checked out.
+      assert File.dir?(wt_path)
+      assert File.read!(Path.join(wt_path, "README.md")) == "# test"
+
       {:ok, branches} = Git.list_branches(tmp_dir)
-      assert branch_name in branches
+      assert branch in branches
 
-      # Worktree directories use underscores.
-      workers_dir = Path.join(tmp_dir, ".genesis/workers")
-      worktree_path = Path.join(workers_dir, "worker_T1_A42")
-      File.mkdir_p!(worktree_path)
-      File.write!(Path.join(worktree_path, "placeholder"), "")
-
-      Worktrees.delete(worktree_path, tmp_dir)
-
-      # Deletion is async (cast via WorktreeManager). Wait for the branch
-      # to be removed before asserting.
-      wait_for_branch_deletion(tmp_dir, branch_name)
-      {:ok, branches} = Git.list_branches(tmp_dir)
-      refute branch_name in branches
+      # assign_and_prepare_worktree/2 bound phylo_node.repo to the worktree.
+      {:ok, agent_state} = Store.get_agent_state(agent_id)
+      assert agent_state.phylo_node.repo == wt_path
     end
 
-    test "deletes a branch for multi-digit task/local ids", %{tmp_dir: tmp_dir} do
-      {:ok, base_sha} = Git.rev_parse(tmp_dir)
+    test "reclaims the worktree when the agent process exits normally", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
 
-      branch_name = "evogit-agent-T12-A345"
-      Git.create_branch(tmp_dir, branch_name, base_sha)
+      # The monitored pid — exits :normal right after the create returns.
+      spawn(fn ->
+        WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
+      end)
 
-      worktree_path = Path.join(tmp_dir, ".genesis/workers/worker_T12_A345")
-      File.mkdir_p!(worktree_path)
+      wait_until(fn -> File.dir?(wt_path) end)
+      assert Git.branch_exists?(tmp_dir, branch)
 
-      Worktrees.delete(worktree_path, tmp_dir)
+      # Monitor-driven cleanup is async — poll until dir AND branch are gone.
+      wait_until(fn ->
+        not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
+      end)
+    end
 
-      # Deletion is async (cast via WorktreeManager). Wait for the branch
-      # to be removed before asserting.
-      wait_for_branch_deletion(tmp_dir, branch_name)
+    test "reclaims the worktree when the agent process crashes", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      # The monitored pid — exits abnormally right after the create returns.
+      spawn(fn ->
+        WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
+        Process.exit(self(), :boom)
+      end)
+
+      wait_until(fn -> File.dir?(wt_path) end)
+      assert Git.branch_exists?(tmp_dir, branch)
+
+      # Cleanup is identical for abnormal exits — no reuse semantics.
+      wait_until(fn ->
+        not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
+      end)
+    end
+
+    test "destroys a stale real worktree before creating a fresh one", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      # A REAL stale git worktree at the target path, with a marker file
+      # dropped inside it (simulates a leftover from a crashed previous run).
+      File.mkdir_p!(Path.dirname(wt_path))
+      {:ok, _} = Git.add_worktree(tmp_dir, wt_path, base_sha, branch)
+      marker = Path.join(wt_path, "stale-marker.txt")
+      File.write!(marker, "stale")
+      assert File.exists?(marker)
+
+      assert {:ok, ^wt_path} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id,
+                 tmp_dir,
+                 wt_path,
+                 spec,
+                 meta,
+                 self()
+               )
+
+      # The stale marker is gone — replaced by a fresh checkout.
+      refute File.exists?(marker)
+      assert File.read!(Path.join(wt_path, "README.md")) == "# test"
+    end
+
+    test "retry-after-crash gets a fresh worktree", %{tmp_dir: tmp_dir, base_sha: base_sha} do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      parent = self()
+
+      # Proc A creates the worktree, then crashes. The create reply goes to
+      # proc A itself (it passes self() as the monitored agent pid).
+      spawn(fn ->
+        WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
+        Process.exit(self(), :boom)
+      end)
+
+      wait_until(fn -> File.dir?(wt_path) end)
+
+      # IMMEDIATELY re-create for the SAME agent_id — the old agent's :DOWN
+      # has likely not been processed yet (retry-after-crash race). Must
+      # succeed regardless of which manager branch handles it.
+      proc_b =
+        spawn(fn ->
+          result =
+            WorktreeManager.create_worktree_for_agent(
+              agent_id,
+              tmp_dir,
+              wt_path,
+              spec,
+              meta,
+              self()
+            )
+
+          send(parent, {:recreated, result})
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive {:recreated, {:ok, ^wt_path}}, 10_000
+
+      # Exactly one valid worktree exists.
+      assert File.dir?(wt_path)
+      assert File.read!(Path.join(wt_path, "README.md")) == "# test"
       {:ok, branches} = Git.list_branches(tmp_dir)
-      refute branch_name in branches
+      assert branch in branches
+
+      # Kill proc B so the monitor-driven cleanup reclaims the worktree and
+      # the registration does not leak into later tests.
+      Process.exit(proc_b, :kill)
+      wait_until(fn ->
+        not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
+      end)
+    end
+
+    test "defers a re-create request while the previous create is still in flight", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # Deterministic serialization probe: a sleeping worktree init script
+      # keeps the first create in flight long enough to observe the deferral.
+      # The script is a /bin/sh script — skip on Windows.
+      if EvoGit.Platform.windows?() do
+        :ok
+      else
+        agent_id = unique_agent_id()
+        {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+        wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+        branch = "evogit-agent-T1-A1"
+
+        File.write!(
+          Path.join(tmp_dir, "genesis.toml"),
+          "[worktree]\nscript = \"#!/bin/sh\\nsleep 2\"\n"
+        )
+
+        parent = self()
+
+        proc_a =
+          spawn(fn ->
+            result =
+              WorktreeManager.create_worktree_for_agent(
+                agent_id,
+                tmp_dir,
+                wt_path,
+                spec,
+                meta,
+                self()
+              )
+
+            send(parent, {:first_create, result})
+            Process.sleep(:infinity)
+          end)
+
+        # The dir exists once the create task has finished the git part and is
+        # inside the init-script sleep (~2s) — i.e. the create is still in
+        # flight (creating: true in the manager).
+        wait_until(fn -> File.dir?(wt_path) end)
+
+        # Kill the agent mid-create — cleanup is deferred until the create
+        # task finishes.
+        Process.exit(proc_a, :kill)
+
+        # The re-create for the same agent_id must be deferred
+        # (pending_requests) and eventually succeed with one valid worktree.
+        assert {:ok, ^wt_path} =
+                 WorktreeManager.create_worktree_for_agent(
+                   agent_id,
+                   tmp_dir,
+                   wt_path,
+                   spec,
+                   meta,
+                   self()
+                 )
+
+        assert File.dir?(wt_path)
+        assert File.read!(Path.join(wt_path, "README.md")) == "# test"
+        {:ok, branches} = Git.list_branches(tmp_dir)
+        assert branch in branches
+      end
+    end
+
+    test "runs the configured worktree init script on create", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # The init script is a /bin/sh script — skip on Windows.
+      if EvoGit.Platform.windows?() do
+        :ok
+      else
+        agent_id = unique_agent_id()
+        {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+        wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+
+        File.write!(
+          Path.join(tmp_dir, "genesis.toml"),
+          "[worktree]\nscript = \"#!/bin/sh\\ntouch \\\"$TARGET_WORKTREE_PATH/init-marker.txt\\\"\"\n"
+        )
+
+        assert {:ok, ^wt_path} =
+                 WorktreeManager.create_worktree_for_agent(
+                   agent_id,
+                   tmp_dir,
+                   wt_path,
+                   spec,
+                   meta,
+                   self()
+                 )
+
+        assert File.exists?(Path.join(wt_path, "init-marker.txt"))
+      end
+    end
+  end
+
+  # ==========================================================================
+  # Worktrees.branch_name/2 — pure naming helper
+  # ==========================================================================
+  describe "Worktrees.branch_name/2" do
+    test "derives the agent branch name from task number and task-local id" do
+      assert Worktrees.branch_name(1, 42) == "evogit-agent-T1-A42"
+      assert Worktrees.branch_name(12, 345) == "evogit-agent-T12-A345"
     end
   end
 end

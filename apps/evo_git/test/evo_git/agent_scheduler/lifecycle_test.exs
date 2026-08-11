@@ -9,6 +9,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   use ExUnit.Case, async: false
 
+  alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.Lifecycle
