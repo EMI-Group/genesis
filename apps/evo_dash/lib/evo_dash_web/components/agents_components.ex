@@ -57,14 +57,13 @@ defmodule EvoDashWeb.AgentsComponents do
                 <div
                   id={"agent-card-#{agent.id}"}
                   class={[
-                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-all cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
+                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-colors duration-500 motion-reduce:transition-none cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id && "ring-2 ring-primary ring-offset-1",
                     agent.status == :running && "agent-card-running",
                     agent.status == :running && "animate-pulse-glow",
-                    MapSet.member?(@new_agent_ids, agent.id) && "animate-agent-spawn",
-                    MapSet.member?(@changed_status_ids, agent.id) && "animate-status-bounce"
+                    MapSet.member?(@new_agent_ids, agent.id) && "animate-agent-spawn"
                   ]}
                   phx-click="select_agent"
                   phx-value-id={agent.id}
@@ -78,7 +77,7 @@ defmodule EvoDashWeb.AgentsComponents do
                       <span class="font-bold text-sm">#<%= agent.task_local_id || agent.id %></span>
                     </div>
                     <span class={[
-                      "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold",
+                      "text-[10px] px-1.5 py-0.5 rounded uppercase font-bold transition-colors duration-500",
                       agent_status_color(agent.status),
                       agent_status_bg(agent.status)
                     ]}>

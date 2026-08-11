@@ -8,7 +8,7 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_color(:pending) == "text-base-content/70"
       assert agent_status_color(:running) == "text-success"
       assert agent_status_color(:waiting) == "text-warning"
-      assert agent_status_color(:blocked) == "text-error"
+      assert agent_status_color(:blocked) == "text-base-content/60"
       assert agent_status_color(:ready) == "text-info"
     end
 
@@ -22,7 +22,7 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_bg(:pending) == "bg-base-100"
       assert agent_status_bg(:running) == "bg-success/10"
       assert agent_status_bg(:waiting) == "bg-warning/10"
-      assert agent_status_bg(:blocked) == "bg-error/10"
+      assert agent_status_bg(:blocked) == "bg-base-content/5"
       assert agent_status_bg(:ready) == "bg-info/10"
     end
 
@@ -36,7 +36,7 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_border(:pending) == "border-base-300"
       assert agent_status_border(:running) == "border-success/30"
       assert agent_status_border(:waiting) == "border-warning/30"
-      assert agent_status_border(:blocked) == "border-error/30"
+      assert agent_status_border(:blocked) == "border-base-content/20"
       assert agent_status_border(:ready) == "border-info/30"
     end
 
@@ -50,7 +50,7 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_icon(:pending) == "hero-clock"
       assert agent_status_icon(:running) == "hero-play-circle"
       assert agent_status_icon(:waiting) == "hero-pause-circle"
-      assert agent_status_icon(:blocked) == "hero-exclamation-circle"
+      assert agent_status_icon(:blocked) == "hero-queue-list"
       assert agent_status_icon(:ready) == "hero-arrow-path"
     end
 
