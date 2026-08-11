@@ -398,7 +398,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   # advanced_options/1 — (legacy) Extracted Advanced Options panel (evolve modes)
   #
   # Kept for backwards compatibility. The content now lives in task_options_tab/1.
-  # Rendered OUTSIDE the task_form's <.form> element in dashboard_live.ex,
+  # Rendered OUTSIDE the task_form's <.form> element in projects_live.ex,
   # so each input MUST carry form="task-form" to associate with the form.
   # ---------------------------------------------------------------------------
 

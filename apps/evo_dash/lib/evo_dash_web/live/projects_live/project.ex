@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.DashboardLive.Project do
+defmodule EvoDashWeb.ProjectsLive.Project do
   @moduledoc """
   Project-related helpers for the dashboard LiveView.
 
@@ -147,7 +147,7 @@ defmodule EvoDashWeb.DashboardLive.Project do
   # that anchored suggestions at File.cwd!() is gone — File.cwd!()-anchored
   # suggestions for relative input can never be produced.
   defp filesystem_suggestions(value) do
-    case EvoDashWeb.DashboardLive.ProjectFlow.normalize_project_path(value) do
+    case EvoDashWeb.ProjectsLive.ProjectFlow.normalize_project_path(value) do
       {:error, _} ->
         []
 

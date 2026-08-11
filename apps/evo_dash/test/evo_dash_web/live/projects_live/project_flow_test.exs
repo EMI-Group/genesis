@@ -1,11 +1,11 @@
-defmodule EvoDashWeb.DashboardLive.ProjectFlowTest do
+defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
   @moduledoc """
   Pure unit tests for the Windows project-open path fix.
 
-  Covers `EvoDashWeb.DashboardLive.ProjectFlow.normalize_project_path/1` (the
+  Covers `EvoDashWeb.ProjectsLive.ProjectFlow.normalize_project_path/1` (the
   guard that stops relative input from being `Path.expand`-joined against the
   BEAM cwd — on the Windows desktop app that cwd is the Tauri install dir) and
-  the public `EvoDashWeb.DashboardLive.Project.path_suggestions/2,3` (which
+  the public `EvoDashWeb.ProjectsLive.Project.path_suggestions/2,3` (which
   delegates to the private `filesystem_suggestions/1` on the local node).
 
   No LiveView harness or DB setup is required — these are pure functions.
@@ -13,8 +13,8 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlowTest do
 
   use ExUnit.Case, async: true
 
-  alias EvoDashWeb.DashboardLive.Project
-  alias EvoDashWeb.DashboardLive.ProjectFlow
+  alias EvoDashWeb.ProjectsLive.Project
+  alias EvoDashWeb.ProjectsLive.ProjectFlow
 
   describe "normalize_project_path/1" do
     test "rejects blank and whitespace-only input" do
