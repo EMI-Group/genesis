@@ -4,7 +4,7 @@ defmodule EvoDashWeb.SystemLiveTest do
 
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
-  # state (same pattern as dashboard_live_test.exs / welcome_live_test.exs).
+  # state (same pattern as projects_live_test.exs / welcome_live_test.exs).
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
   # Waits until the async self-check task spawned on mount has processed its
@@ -110,7 +110,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # param (parsing it as part of the `category` value), landing the remote
       # user on the LOCAL settings page.
       #
-      # Same pattern as dashboard_live_test.exs: isolate the config dir via
+      # Same pattern as projects_live_test.exs: isolate the config dir via
       # XDG_CONFIG_HOME so the saved target never touches the developer's real
       # ~/.config/genesis/, and register a fake connection manager so the
       # `?node=` param resolves to a connected remote context.
@@ -646,7 +646,7 @@ end
 
 # A minimal GenServer standing in for a real remote connection manager in
 # `EvoGit.RemoteConnection.Registry` (same pattern as
-# EvoDashWeb.DashboardLiveTest.ConnectionManager). Registers a status so
+# EvoDashWeb.ProjectsLiveTest.ConnectionManager). Registers a status so
 # `EvoDash.NodeContext.connection_status/1` resolves the `?node=` param to a
 # connected remote context without any real SSH/distribution machinery. The
 # process dies (and its Registry entry is auto-removed) at test end via

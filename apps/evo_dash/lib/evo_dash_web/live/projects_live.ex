@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.DashboardLive do
+defmodule EvoDashWeb.ProjectsLive do
   @moduledoc """
   Project-based task dashboard for launching and monitoring EvoGit tasks.
 
@@ -8,7 +8,7 @@ defmodule EvoDashWeb.DashboardLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
-  alias EvoDashWeb.DashboardLive.{StatePersistence, Project, Assigns, ProjectFlow, RemoteView}
+  alias EvoDashWeb.ProjectsLive.{StatePersistence, Project, Assigns, ProjectFlow, RemoteView}
   alias EvoDashWeb.ThemeColor
   alias EvoDashWeb.ExampleTask
   alias EvoGit.Core.ForeignRepo
@@ -564,7 +564,10 @@ defmodule EvoDashWeb.DashboardLive do
           node = socket.assigns.current_node
 
           config = NodeContext.read_project_config(node, path)
-          {project_config, worktree_script, commands} = Project.load_project_config(node, path, config)
+
+          {project_config, worktree_script, commands} =
+            Project.load_project_config(node, path, config)
+
           foreign_repos = Project.load_foreign_repos(node, path, config)
           mode = Project.detect_mode(node, path)
           mode_info = mode_info_message(mode)

@@ -34,10 +34,10 @@ hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
 | `NodeSwitchFade` | `./node_switch_fade.js` (own file, ES module default export) | `layouts.ex` `<main id="main-content" phx-hook="NodeSwitchFade" data-node-id=...>` — plays a 0.25s opacity fade when `data-node-id` changes |
 | `PathAutocomplete` | `../app.js` (inline, line ~43) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) |
 | `DirectoryPicker` | `../app.js` (inline, line ~113) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) — click pushes `directory_pick` to the server; listens for `picker_result:<id>` (protocol in `../assets/CONTEXT.md` Notes for Agents) |
-| `StatePersistence` | `../app.js` (inline, line ~170) | `dashboard_live.ex` dashboard root (`phx-hook="StatePersistence"`) |
-| `BrowserNotifications` | `../app.js` (inline, line ~244) | `dashboard_live.ex` (`phx-hook="BrowserNotifications"`) |
-| `TauriDetect` | `../app.js` (inline, line ~435) | `dashboard_live.ex` (`phx-hook="TauriDetect"`) |
-| `PlatformDetect` | `../app.js` (inline, line ~442) | `dashboard_live.ex` (`phx-hook="PlatformDetect"`) |
+| `StatePersistence` | `../app.js` (inline, line ~170) | `projects_live.ex` dashboard root (`phx-hook="StatePersistence"`) |
+| `BrowserNotifications` | `../app.js` (inline, line ~244) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) |
+| `TauriDetect` | `../app.js` (inline, line ~435) | `projects_live.ex` (`phx-hook="TauriDetect"`) |
+| `PlatformDetect` | `../app.js` (inline, line ~442) | `projects_live.ex` (`phx-hook="PlatformDetect"`) |
 | `ClipboardCopy` | `../app.js` (inline, line ~259) | `settings_live.ex`, `review_components/header.ex` |
 | `AutoClearFlash` | `../app.js` (inline, line ~283) | `core_components.ex` flash component |
 | `ScrollToFile` | `../app.js` (inline, line ~300) | `review_components/diff_viewer.ex` (`phx-hook="ScrollToFile"`) |

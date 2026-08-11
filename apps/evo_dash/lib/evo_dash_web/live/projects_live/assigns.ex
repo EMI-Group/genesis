@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.DashboardLive.Assigns do
+defmodule EvoDashWeb.ProjectsLive.Assigns do
   @moduledoc """
   Assign-building helpers for the dashboard LiveView.
 
@@ -7,7 +7,7 @@ defmodule EvoDashWeb.DashboardLive.Assigns do
   """
 
   alias EvoGit.TaskRegistry
-  alias EvoDashWeb.DashboardLive.Project
+  alias EvoDashWeb.ProjectsLive.Project
   import Phoenix.Component, only: [assign: 2, assign: 3]
 
   @doc """

@@ -19,7 +19,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
   # ---------------------------------------------------------------------------
   # filter_projects/2 — Public helper used by both the component (rendering
-  # the filtered list) and DashboardLive (keyboard navigation index math).
+  # the filtered list) and ProjectsLive (keyboard navigation index math).
   # ---------------------------------------------------------------------------
 
   @doc """

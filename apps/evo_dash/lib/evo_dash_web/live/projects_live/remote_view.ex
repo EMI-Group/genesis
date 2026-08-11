@@ -1,9 +1,9 @@
-defmodule EvoDashWeb.DashboardLive.RemoteView do
+defmodule EvoDashWeb.ProjectsLive.RemoteView do
   @moduledoc """
   Remote-node chrome for the dashboard.
 
   `top_bar/1` is the immersive sticky app header with command palette project
-  control (extracted from `EvoDashWeb.DashboardLive` when the dashboard gained
+  control (extracted from `EvoDashWeb.ProjectsLive` when the dashboard gained
   remote-node support). When `remote` is set it shows the target-name badge on
   the right (where the Configure dropdown lives locally) and hides the
   Configure dropdown entirely.

@@ -114,7 +114,7 @@ const PathAutocomplete = {
 //
 // The picker buttons ("Browse" on the project, new-project, and foreign-repo
 // pickers) carry phx-hook="DirectoryPicker". Clicking a button pushes a
-// "directory_pick" event to the server (DashboardLive), which — when the
+// "directory_pick" event to the server (ProjectsLive), which — when the
 // current node is local — runs a native wx directory dialog
 // (EvoDash.DirectoryPicker GenServer, wxDirDialog) and pushes the result back
 // to the client as a "picker_result:<picker_id>" event. Payloads:
