@@ -1678,9 +1678,13 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert :ok = TaskRegistry.force_kill_task(task_id)
 
       fetched = TaskRegistry.get_task(task_id)
-      assert fetched.status == :cancelled
+      # Force-killed tasks are persisted as :failed — "cancelled" now means ONLY
+      # gracefully-cancelled tasks (the :cancelling → :cancelled final mapping).
+      assert fetched.status == :failed
       assert fetched.finished_at != nil
       assert fetched.lease_expires_at == nil
+      # Force-killed tasks have no result.
+      assert fetched.result == nil
 
       state = :sys.get_state(EvoGit.TaskRegistry)
       refute Map.has_key?(state.task_refs, task_id)
@@ -1718,8 +1722,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert :ok = TaskRegistry.force_kill_task(task_id)
 
       fetched = TaskRegistry.get_task(task_id)
-      assert fetched.status == :cancelled
+      # Force-kill persists :failed (NOT :cancelled) with no result — a
+      # force-killed task is never "cancelled" (that is reserved for the
+      # graceful :cancelling → :cancelled path).
+      assert fetched.status == :failed
       assert fetched.finished_at != nil
+      assert fetched.result == nil
 
       # The brutal path cleans up the graceful-cancel marker.
       refute :ets.member(:evogit_cancelling_tasks, task_id)
