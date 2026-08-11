@@ -120,12 +120,12 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         Process.demonitor(old_ref, [:flush])
         state = %{state | monitors: Map.delete(state.monitors, old_ref)}
         state = maybe_init_repo(state, repo_root)
-        start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+        state = start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
         {:noreply, state}
 
       nil ->
         state = maybe_init_repo(state, repo_root)
-        start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+        state = start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
         {:noreply, state}
     end
   end
