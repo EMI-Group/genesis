@@ -31,8 +31,18 @@ defmodule EvoGit.ReqLLMPoolTest do
   end
 
   describe "effective_concurrency/2" do
-    test "sums map values for a non-empty map" do
-      assert ReqLLMPool.effective_concurrency(%{"a" => 3, "b" => 4}, 99) == 7
+    test "sum > default: returns the sum of map values" do
+      assert ReqLLMPool.effective_concurrency(%{"a" => 5, "b" => 3}, 2) == 8
+      assert ReqLLMPool.effective_concurrency(%{"a" => 3, "b" => 4}, 2) == 7
+    end
+
+    test "default > sum: returns the default_concurrency" do
+      assert ReqLLMPool.effective_concurrency(%{"a" => 3}, 8) == 8
+      assert ReqLLMPool.effective_concurrency(%{"a" => 3, "b" => 4}, 99) == 99
+    end
+
+    test "sum == default: returns that value" do
+      assert ReqLLMPool.effective_concurrency(%{"a" => 4}, 4) == 4
     end
 
     test "falls back to default_concurrency for an empty map" do

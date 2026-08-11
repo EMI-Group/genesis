@@ -43,9 +43,12 @@ defmodule EvoGit.ReqLLMPool do
   @doc """
   The desired pool-process count for a given total LLM concurrency.
 
-  Mirrors `config/runtime.exs:54` exactly: `max(total_concurrency + 2, 8)` —
-  a +2 buffer for auxiliary (non-slot-gated) LLM calls on top of the summed
-  per-model concurrency, floored at ReqLLM's default pool count of 8.
+  Single source of truth for the pool-count formula, used at boot
+  (`config/runtime.exs` calls this function) AND at runtime reconciliation
+  (`reconcile/2`): `max(total_concurrency + 2, 8)` — a +2 buffer for auxiliary
+  (non-slot-gated) LLM calls on top of the summed per-model concurrency
+  (`system_check.ex`, `pull_request.ex`), floored at ReqLLM's default pool
+  count of 8.
   """
   @spec desired_count(non_neg_integer()) :: pos_integer()
   def desired_count(total_concurrency) when is_integer(total_concurrency) do
@@ -65,14 +68,25 @@ defmodule EvoGit.ReqLLMPool do
   @doc """
   Effective LLM concurrency from a `%{model_id => concurrency}` map.
 
-  Sums the map values when the map is non-empty; falls back to
-  `default_concurrency` for an empty map or `nil` (e.g. when the scheduler has
-  no per-model concurrency map configured).
+  When the map is non-empty, returns `max(sum of map values,
+  default_concurrency)`; falls back to `default_concurrency` for an empty map
+  or `nil` (e.g. when the scheduler has no per-model concurrency map
+  configured).
+
+  Why the `max`? Each model profile is an **independent** LLM slot pool
+  (see `EvoGit.AgentScheduler.State.concurrency_for/2` and the per-model
+  holder MapSets in `EvoGit.AgentScheduler.Slots`), while unknown model ids
+  (e.g. a `-m` id with no `[[llm.models]]` profile) share the
+  `default_llm_max_concurrency` bucket. Both buckets can be active
+  simultaneously, so the effective concurrency the Finch pool must accommodate
+  is `max(sum of per-profile concurrencies, default_llm_max_concurrency)` —
+  not the sum alone, which would under-size the pool when the default bucket
+  exceeds the profile total.
   """
   @spec effective_concurrency(map() | nil, non_neg_integer()) :: non_neg_integer()
-  def effective_concurrency(model_concurrency_map, _default_concurrency)
+  def effective_concurrency(model_concurrency_map, default_concurrency)
       when is_map(model_concurrency_map) and map_size(model_concurrency_map) > 0 do
-    Enum.sum(Map.values(model_concurrency_map))
+    max(Enum.sum(Map.values(model_concurrency_map)), default_concurrency)
   end
 
   def effective_concurrency(_model_concurrency_map, default_concurrency) do
