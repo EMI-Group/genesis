@@ -845,6 +845,41 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert running.status == :running
       assert running.lease_expires_at == future_lease
     end
+
+    test "restart marks an orphaned :cancelling row :cancelled", %{data_dir: data_dir} do
+      unique = System.unique_integer([:positive])
+      cancelling_id = "startup_cancelling_#{unique}"
+      future_lease = System.system_time(:second) + 300
+
+      stop_supervised(EvoGit.TaskRegistry)
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: cancelling_id,
+          type: :genesis,
+          status: :cancelling,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: future_lease
+        })
+
+      start_supervised(
+        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+      )
+
+      # The runtime died mid-cancel — the orphaned :cancelling row must resolve
+      # to :cancelled (never stay :cancelling forever).
+      fetched = EvoGit.Store.get_task(EvoGit.Store, cancelling_id)
+      assert fetched != nil
+      assert fetched.status == :cancelled
+      assert fetched.finished_at != nil
+      assert fetched.lease_expires_at == nil
+      assert is_binary(fetched.result)
+    end
   end
 
   describe "list_tasks_summary / by_path / changed_since — since filter semantics" do
@@ -1360,7 +1395,389 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     end
   end
 
+  describe "graceful cancel_task / force_kill_task" do
+    test "graceful cancel from :running → :cancelling, agents notified, marker registered" do
+      unique = System.unique_integer([:positive])
+      task_id = "cancel_running_#{unique}"
+      agent_id = System.unique_integer([:positive])
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      # Register one live agent for the task (scheduler ETS) so we can verify
+      # the cancel notification + cancel_requested flag injection.
+      :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
+      :ets.insert(:evogit_agent_state, {agent_id, cancel_test_agent_state()})
+
+      on_exit(fn ->
+        :ets.delete(:evogit_sched_meta, agent_id)
+        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_cancelling_tasks, task_id)
+      end)
+
+      assert :ok = TaskRegistry.cancel_task(task_id)
+
+      # Status transitioned to :cancelling — non-terminal (finished_at stays nil).
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelling
+      assert fetched.finished_at == nil
+
+      # Agent received the cancel message + cancel_requested flag.
+      [{^agent_id, st}] = :ets.lookup(:evogit_agent_state, agent_id)
+      assert st.cancel_requested == true
+      assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
+
+      # Task registered in the graceful-cancel marker.
+      assert :ets.member(:evogit_cancelling_tasks, task_id)
+    end
+
+    test "cancel_task is idempotent on :cancelling — no duplicate messages" do
+      unique = System.unique_integer([:positive])
+      task_id = "cancel_idem_#{unique}"
+      agent_id = System.unique_integer([:positive])
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :cancelling,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
+      :ets.insert(:evogit_agent_state, {agent_id, cancel_test_agent_state()})
+
+      on_exit(fn ->
+        :ets.delete(:evogit_sched_meta, agent_id)
+        :ets.delete(:evogit_agent_state, agent_id)
+        :ets.delete(:evogit_cancelling_tasks, task_id)
+      end)
+
+      # First cancel on an already-:cancelling task is a no-op (:ok, no message
+      # re-send since the agents already hold the cancel message from the
+      # original graceful-cancel request).
+      assert :ok = TaskRegistry.cancel_task(task_id)
+      assert :ok = TaskRegistry.cancel_task(task_id)
+
+      [{^agent_id, st}] = :ets.lookup(:evogit_agent_state, agent_id)
+      assert st.cancel_requested == true
+
+      assert length(st.pending_user_messages) == 0,
+             "idempotent cancel must NOT append the cancel message again, got #{inspect(st.pending_user_messages)}"
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelling
+    end
+
+    test ":pending task is marked :cancelled immediately and start_task refuses it" do
+      unique = System.unique_integer([:positive])
+      task_id = "cancel_pending_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :pending,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      assert :ok = TaskRegistry.cancel_task(task_id)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelled
+      assert fetched.finished_at != nil
+      assert fetched.lease_expires_at == nil
+
+      # start_task guard: a :cancelled (or :cancelling) task must never start.
+      state = :sys.get_state(EvoGit.TaskRegistry)
+
+      assert {:reply, {:error, :cancelled}, ^state} =
+               TaskRegistry.handle_call(
+                 {:start_task, task_id, :genesis, [path: "/tmp/test"]},
+                 {self(), make_ref()},
+                 state
+               )
+
+      # Same guard for a :cancelling task.
+      cancelling_id = "cancel_start_guard_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: cancelling_id,
+          type: :genesis,
+          status: :cancelling,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil
+        })
+
+      assert {:reply, {:error, :cancelled}, ^state} =
+               TaskRegistry.handle_call(
+                 {:start_task, cancelling_id, :genesis, [path: "/tmp/test"]},
+                 {self(), make_ref()},
+                 state
+               )
+    end
+
+    test "cancel_task returns {:error, :not_running} for terminal/:finalizing states and {:error, :not_found} for missing" do
+      unique = System.unique_integer([:positive])
+
+      for {status, idx} <- Enum.with_index([:completed, :failed, :cancelled, :finalizing]) do
+        task_id = "cancel_invalid_#{unique}_#{idx}"
+
+        :ok =
+          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+            id: task_id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/tmp/test"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil
+          })
+
+        assert {:error, :not_running} = TaskRegistry.cancel_task(task_id),
+               "expected :not_running for #{status}"
+      end
+
+      assert {:error, :not_found} = TaskRegistry.cancel_task("cancel_missing_#{unique}")
+    end
+
+    test "a completing :cancelling task persists :cancelled with result preserved" do
+      unique = System.unique_integer([:positive])
+      task_id = "cancel_final_map_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :cancelling,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      # Simulate the marker being registered by the earlier graceful cancel.
+      :ets.insert(:evogit_cancelling_tasks, {task_id})
+      on_exit(fn -> :ets.delete(:evogit_cancelling_tasks, task_id) end)
+
+      # The wrapper completes during the grace period with an intermediate
+      # result — handle_update_status must force-map :completed → :cancelled
+      # while PRESERVING the result.
+      TaskRegistry.update_task_status(task_id, :completed, {:ok, %{branch_name: "feat/x"}})
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+
+      assert fetched.status == :cancelled,
+             "cancelling task must end :cancelled, got #{inspect(fetched.status)}"
+
+      assert fetched.finished_at != nil
+      assert fetched.lease_expires_at == nil
+
+      assert fetched.result == {:ok, %{branch_name: "feat/x"}},
+             "result must be preserved, got #{inspect(fetched.result)}"
+
+      # Terminal state cleaned up the marker.
+      refute :ets.member(:evogit_cancelling_tasks, task_id)
+    end
+
+    test "a :finalizing broadcast does not clobber :cancelling" do
+      unique = System.unique_integer([:positive])
+      task_id = "cancel_finalizing_guard_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :cancelling,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil
+        })
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+
+      assert fetched.status == :cancelling,
+             "a cancelling task reaching phase finalization must keep :cancelling, got #{inspect(fetched.status)}"
+    end
+
+    test "force_kill_task works from :running" do
+      unique = System.unique_integer([:positive])
+      task_id = "forcekill_running_#{unique}"
+      wrapper = spawn(fn -> Process.sleep(:infinity) end)
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      # Make the task "owned": inject a live wrapper into task_refs.
+      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+        %{
+          state
+          | task_refs: Map.put(state.task_refs, task_id, cancel_test_task(wrapper))
+        }
+      end)
+
+      assert :ok = TaskRegistry.force_kill_task(task_id)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelled
+      assert fetched.finished_at != nil
+      assert fetched.lease_expires_at == nil
+
+      state = :sys.get_state(EvoGit.TaskRegistry)
+      refute Map.has_key?(state.task_refs, task_id)
+    end
+
+    test "force_kill_task works from :cancelling (escalation path) and clears the marker" do
+      unique = System.unique_integer([:positive])
+      task_id = "forcekill_cancelling_#{unique}"
+      wrapper = spawn(fn -> Process.sleep(:infinity) end)
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :cancelling,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      :ets.insert(:evogit_cancelling_tasks, {task_id})
+      on_exit(fn -> :ets.delete(:evogit_cancelling_tasks, task_id) end)
+
+      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+        %{
+          state
+          | task_refs: Map.put(state.task_refs, task_id, cancel_test_task(wrapper))
+        }
+      end)
+
+      assert :ok = TaskRegistry.force_kill_task(task_id)
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelled
+      assert fetched.finished_at != nil
+
+      # The brutal path cleans up the graceful-cancel marker.
+      refute :ets.member(:evogit_cancelling_tasks, task_id)
+
+      state = :sys.get_state(EvoGit.TaskRegistry)
+      refute Map.has_key?(state.task_refs, task_id)
+    end
+
+    test "force_kill_task returns {:error, :not_found} for an unknown task" do
+      assert {:error, :not_found} =
+               TaskRegistry.force_kill_task(
+                 "forcekill_missing_#{System.unique_integer([:positive])}"
+               )
+    end
+  end
+
   # --- Helpers ---
+
+  # AgentSpec for the graceful-cancel agent-notification tests.
+  defp cancel_test_agent_spec do
+    %EvoGit.AgentSpec{
+      context_node: %EvoGit.Core.ContextNode{path: "./", repo: "/tmp/test"},
+      phylo_node: %EvoGit.Core.PhyloGraphNode{
+        repo: "/tmp/test",
+        base_commit: "abc",
+        current_commit: "abc"
+      },
+      agent_module: __MODULE__,
+      objective: "test"
+    }
+  end
+
+  # SchedMeta entry for a live agent of the given task.
+  defp cancel_test_sched_meta(agent_id, task_id) do
+    %EvoGit.AgentScheduler.SchedMeta{
+      id: agent_id,
+      depth: 0,
+      spec: cancel_test_agent_spec(),
+      retries: 0,
+      task_id: task_id,
+      from: {self(), make_ref()}
+    }
+  end
+
+  # AgentState entry for a live agent.
+  defp cancel_test_agent_state do
+    %EvoGit.AgentScheduler.AgentState{
+      context_node: %EvoGit.Core.ContextNode{path: "./", repo: "/tmp/test"},
+      llm_model: "test:model",
+      max_retries: 3,
+      max_depth: 8
+    }
+  end
+
+  # A %Task{} wrapper entry for the task_refs map (content beyond pid is
+  # irrelevant to the force-kill/heartbeat paths).
+  defp cancel_test_task(pid) do
+    %Task{
+      pid: pid,
+      ref: make_ref(),
+      owner: self(),
+      mfa: {EvoGit.TaskRegistry.TaskExecutor, :execute_task, [:genesis, [], "test"]}
+    }
+  end
 
   # Overwrites the store-internal updated_at column with a fixed-precision ISO
   # string via a raw connection (the summary `since` filters compare strings).
