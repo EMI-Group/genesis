@@ -609,7 +609,9 @@ defmodule EvoGit.RemoteConnection do
   # scp to the remote temp path. Returns
   # {:ok, state} | {:error, reason, state}.
   defp download_tarball(state, target, ssh_target, platform, remote_tarball) do
-    # download_url/1 always resolves (API failure falls back to the direct URL).
+    # download_url/1 is deterministic — always the direct releases/latest/download
+    # URL (GitHub redirects to the versioned asset); version is always "latest"
+    # and keys the local cache.
     {:ok, url, version} = EvoGit.RemoteBootstrap.download_url(platform)
 
     case download_on_remote(ssh_target, url, remote_tarball) do
