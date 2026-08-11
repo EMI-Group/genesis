@@ -2,17 +2,28 @@ defmodule EvoGit.Sandbox.MacOS do
   @moduledoc """
   macOS sandbox backend using `sandbox-exec`.
 
-  Deny-by-default filesystem policy with an explicit allow list (SBPL):
-  system paths, the repo worktree (cwd + `.git`), tmp paths, the genesis
-  config/data dirs, and build caches are readable; the home directory is
-  readable EXCEPT for a deny-read list of sensitive dirs (`~/.ssh`,
-  `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/sops`, `~/.git-credentials`,
-  `~/.netrc`, `~/.password-store`, `~/Library/Keychains`, `~/.npmrc`,
-  `~/.pypirc`, `~/.docker`, `~/.gem` — credential stores). The host
-  `$TMPDIR` is readable so temp files written before sandbox invocation
-  (e.g. skill scripts) stay usable. Writes are restricted to the worktree,
-  tmp paths, genesis dirs, and package-manager/toolchain cache dirs, with
-  deny-write rules for sensitive dirs as defense in depth.
+  Filesystem policy: WRITES are deny-by-default with an explicit allow list
+  (the repo worktree (cwd + `.git`), tmp paths, genesis config/data dirs,
+  and build caches); READS are allow-by-default at the ROOT —
+  `(allow file-read* (subpath "/"))` makes the whole filesystem readable so
+  agents can use user-installed tools anywhere (Homebrew `/opt/homebrew`,
+  Intel `/usr/local`, `/Applications`, custom `/opt` installs, nix,
+  asdf/mise). Protection for credential stores comes from a deny-read list
+  (SBPL deny rules take precedence over allow rules): home-based sensitive
+  dirs (`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/sops`,
+  `~/.git-credentials`, `~/.netrc`, `~/.password-store`,
+  `~/Library/Keychains`, `~/.npmrc`, `~/.pypirc`, `~/.docker`, `~/.gem`)
+  plus system-level sensitive locations (`/etc/ssh`, `/var/root`,
+  `/etc/master.passwd`, `/var/db/dslocal`, `/var/db/Keychains` — both
+  `/etc`↔`/private/etc` and `/var`↔`/private/var` spellings). This is a
+  deliberate trade-off: sandboxed agents can read any user-readable file,
+  mitigated by the deny list — the pre-hardening read model, restored by
+  user decision because enumerating every legitimate tool path is
+  unmaintainable. The host `$TMPDIR` stays readable so temp files written
+  before sandbox invocation (e.g. skill scripts) remain usable. Writes are
+  restricted to the worktree, tmp paths, genesis dirs, and
+  package-manager/toolchain cache dirs, with deny-write rules for sensitive
+  dirs as defense in depth.
 
   Also enforces a process-count limit (`(limit number N)`, see
   `@max_processes`) and keeps network default-allowed (agents run
@@ -147,18 +158,23 @@ defmodule EvoGit.Sandbox.MacOS do
 
   # Generate an SBPL (Sandbox Policy Language) profile.
   #
-  # Policy: DENY-BY-DEFAULT reads — the global `(allow file-read*)` is gone.
-  # Reads are granted only for: system paths, nix (when enabled), the repo
-  # worktree (cwd + repo_root/.git), tmp paths, the genesis config/data dirs,
-  # the host $TMPDIR (pre-sandbox temp files), and the home directory minus a
-  # deny-read list of sensitive dirs. The git metadata rule resolves
+  # Policy: READS are allow-by-default at the ROOT — `(allow file-read*
+  # (subpath "/"))` makes the whole filesystem readable so agents can use
+  # user-installed tools anywhere (Homebrew /opt/homebrew, Intel /usr/local,
+  # /Applications, custom /opt installs, nix, asdf/mise). The previous
+  # enumerated system-read allow-list proved unmaintainable (the
+  # /opt/homebrew miss already broke Apple Silicon Homebrew git; ANY
+  # user-installed tool outside the enumerated prefixes was unreadable).
+  # Protection comes from the deny-read list below — in Apple's SBPL, deny
+  # rules take precedence over allow rules, so the deny-read list (home-based
+  # credential stores + system-level sensitive locations, both /etc↔/private/etc
+  # and /var↔/private/var spellings) wins over the root read allow. WRITES
+  # are deny-by-default: restricted to the worktree, tmp paths, genesis dirs,
+  # and package-manager/toolchain cache dirs, with deny-write rules for
+  # sensitive dirs as defense in depth. The git metadata rule resolves
   # linked-worktree `gitdir:` pointers so the per-worktree metadata dir
   # (objects/refs/index) is covered even when the caller passes a worktree
-  # root or nil repo_root. In Apple's SBPL, deny rules take
-  # precedence over allow rules — so the deny-read list wins over the home
-  # read allow below. Writes are restricted to the worktree, tmp paths,
-  # genesis dirs, and package-manager/toolchain cache dirs, with deny-write
-  # rules for sensitive dirs as defense in depth.
+  # root or nil repo_root.
   #
   # NOTE: all comments are kept in Elixir source (not emitted into the
   # profile string) because `#` comment support in sandbox-exec could not be
@@ -167,33 +183,24 @@ defmodule EvoGit.Sandbox.MacOS do
   def generate_profile(cwd, repo_root \\ nil) when is_binary(cwd) do
     home = System.user_home!()
 
-    # --- Filesystem READ rules (deny-by-default, explicit allows only) ---
+    # --- Filesystem READ rules ---
+    #
+    # Reads are allow-by-default at the ROOT: `(allow file-read* (subpath "/"))`
+    # makes the entire filesystem readable so agents can use user-installed
+    # tools anywhere (Homebrew /opt/homebrew, Intel /usr/local, /Applications,
+    # custom /opt installs, nix, asdf/mise). This replaces the old enumerated
+    # system_read_paths allow-list — enumerating every legitimate tool path
+    # proved unmaintainable (the /opt/homebrew miss already broke Apple
+    # Silicon Homebrew git). Protection for sensitive locations comes from
+    # the deny-read rules below (SBPL deny precedence: denies win over
+    # allows).
+    system_read_rule = ~s{(allow file-read* (subpath "/"))}
 
-    # System paths: binaries, dyld, system libraries/frameworks, fonts,
-    # certificates, device nodes (/dev/urandom, /dev/null, ...). bash and
-    # every toolchain binary read from these at startup (see the note on
-    # real-macOS validation in the report).
-    system_read_paths = [
-      "/System",
-      "/usr",
-      "/bin",
-      "/sbin",
-      "/Library",
-      "/etc",
-      "/private/etc",
-      "/private/var",
-      "/dev",
-      # Homebrew on Apple Silicon installs git + its dylibs + libexec/git-core
-      # + share/git-core/templates + /opt/homebrew/etc/gitconfig here; without
-      # this the deny-by-default profile blocks `git` exec entirely. Kept
-      # minimal — deliberately NOT `/opt` wholesale.
-      "/opt/homebrew"
-    ]
-
-    system_read_rules =
-      Enum.map_join(system_read_paths, "\n    ", fn path ->
-        ~s{(allow file-read* (subpath "#{path}"))}
-      end)
+    # Belt-and-suspenders: the specific read rules below (nix reads, home,
+    # host $TMPDIR, vendored git, file-read-metadata, ssh literals) are
+    # REDUNDANT under the root-wide read allow but intentionally KEPT — a
+    # safety net if `(subpath "/")` behaves unexpectedly on some macOS
+    # (CI is Linux, so real-macOS validation of the root rule is pending).
 
     # Nix store/var: read (toolchain binaries) + write (build outputs) —
     # only when nix is enabled.
@@ -229,13 +236,12 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # Vendored git (desktop bundle): when git is NOT on PATH,
     # `Executable.resolve("git")` returns the absolute path of the bundled
-    # binary (`<app_dir>/priv/vendor/macos-<arch>/git`). Its directory is not
-    # covered by the system read paths above, so emit an explicit read rule
-    # for the binary's dirname (vendored binaries are self-contained — the
-    # dirname subpath is the minimal targeted rule). When git IS on PATH,
-    # resolve returns the bare name "git" and no rule is emitted (Homebrew
-    # `/opt/homebrew`, Intel `/usr/local`, and CLT `/Library` are covered by
-    # the system paths).
+    # binary (`<app_dir>/priv/vendor/macos-<arch>/git`). An explicit read
+    # rule for the binary's dirname is emitted (vendored binaries are
+    # self-contained — the dirname subpath is the minimal targeted rule).
+    # Redundant under the root-wide read allow but KEPT as belt-and-suspenders.
+    # When git IS on PATH, resolve returns the bare name "git" and no rule is
+    # emitted.
     git_binary_read_rule =
       case EvoGit.Executable.resolve("git") do
         "git" ->
@@ -293,6 +299,30 @@ defmodule EvoGit.Sandbox.MacOS do
     sensitive_read_rules =
       Enum.map_join(sensitive_read_dirs, "\n    ", fn dir ->
         path = Path.join(home, dir)
+        ~s{(deny file-read* (subpath "#{path}"))}
+      end)
+
+    # System-level sensitive locations (defense in depth): under the
+    # root-wide read allow these must be explicitly denied. Most are
+    # root-only-readable anyway, but the deny list guarantees it even if
+    # file permissions are relaxed. Both symlink spellings are covered
+    # (/etc ↔ /private/etc and /var ↔ /private/var), mirroring the pattern
+    # of the home-based list.
+    system_sensitive_read_paths = [
+      "/etc/ssh",
+      "/private/etc/ssh",
+      "/var/root",
+      "/private/var/root",
+      "/etc/master.passwd",
+      "/private/etc/master.passwd",
+      "/var/db/dslocal",
+      "/private/var/db/dslocal",
+      "/var/db/Keychains",
+      "/private/var/db/Keychains"
+    ]
+
+    system_sensitive_read_rules =
+      Enum.map_join(system_sensitive_read_paths, "\n    ", fn path ->
         ~s{(deny file-read* (subpath "#{path}"))}
       end)
 
@@ -364,7 +394,7 @@ defmodule EvoGit.Sandbox.MacOS do
       end)
 
     # --- Assembly (order matters for readability; SBPL deny precedence is
-    # what makes the deny-read list win over the home allow) ---
+    # what makes the deny-read list win over the root read allow) ---
     #
     # Network stays default-allow: agents legitimately run `git fetch/push`,
     # `mix deps.get`, `curl`, and web tools; default-deny network breaks core
@@ -373,14 +403,14 @@ defmodule EvoGit.Sandbox.MacOS do
     # "deny"` TOML key (belongs in config/schema/) could gate the
     # `(allow network*)` rule below.
     #
-    # Real-macOS validation warranted: bash/dyld startup reads (all covered
-    # by the system paths above) and `sandbox-exec -p` acceptance of the
-    # full profile — see report.
+    # Real-macOS validation warranted: `sandbox-exec -p` acceptance of the
+    # root-wide `(allow file-read* (subpath "/"))` rule and the full profile
+    # — see report.
     """
     (version 1)
     (deny default)
 
-    #{system_read_rules}
+    #{system_read_rule}
     #{nix_rules}
     (allow file-read* (subpath "#{cwd}"))
     (allow file-write* (subpath "#{cwd}"))
@@ -389,6 +419,7 @@ defmodule EvoGit.Sandbox.MacOS do
     #{genesis_rw_rules}
     #{home_read_rule}
     #{sensitive_read_rules}
+    #{system_sensitive_read_rules}
     #{ssh_literal_rules}
     #{host_tmpdir_rule}
     #{file_read_metadata_rule}
