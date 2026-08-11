@@ -53,7 +53,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   @doc """
   Loads all tasks and assigns running/pending task lists to the socket. Same
-  logic as DashboardLive.Assigns.assign_running_and_pending_tasks/1.
+  logic as ProjectsLive.Assigns.assign_running_and_pending_tasks/1.
 
   Node-aware: when `@current_node` is the local BEAM node, tasks are read from
   the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched

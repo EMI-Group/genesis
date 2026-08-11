@@ -4,7 +4,7 @@
 # for the full dashboard UX, including the remote-node contexts (node-aware
 # render gate, palette, per-node state persistence) from the `aa4605cc`
 # workstream.
-defmodule EvoDashWeb.DashboardLiveTest do
+defmodule EvoDashWeb.ProjectsLiveTest do
   use EvoDashWeb.ConnCase
   import Phoenix.LiveViewTest
 
@@ -32,7 +32,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
     {:ok, Map.put(context, :tmp_dir, tmp_dir)}
   end
 
-  # The DashboardLive mount redirects first-time users to /welcome via
+  # The ProjectsLive mount redirects first-time users to /welcome via
   # server-based detection (EvoGit.Config.VersionState.onboarding_needed?/0,
   # which is true when no version-state file exists). To keep the dashboard
   # tests deterministic regardless of host state, isolate the config dir to a
@@ -1202,7 +1202,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       send(view.pid, :node_aware_reload_tasks)
       render(view)
 
-      {title, body} = EvoDashWeb.DashboardLive.Project.task_notification_content(new_task)
+      {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
@@ -1327,7 +1327,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
       {:ok, view, _html} = live(conn, ~p"/")
@@ -1375,7 +1375,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
@@ -1431,7 +1431,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
@@ -1449,7 +1449,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :error, last_error: "boom", node: nil}}}
       )
 
@@ -1497,7 +1497,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :error, last_error: "boom", node: nil}}}
       )
 
@@ -1522,7 +1522,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
       {:ok, view, html} = live(conn, "/?node=" <> id)
@@ -1544,7 +1544,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
       {:ok, _view, html} = live(conn, "/?node=" <> id)
@@ -1559,7 +1559,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :error, last_error: "boom", node: nil}}}
       )
 
@@ -1574,7 +1574,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
       {:ok, view, _html} = live(conn, "/?node=" <> id)
@@ -1592,7 +1592,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
       {:ok, view, _html} = live(conn, "/?node=" <> id)
@@ -1614,7 +1614,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
@@ -1710,7 +1710,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
       {:ok, view, _html} = live(conn, "/?node=" <> id)
@@ -1737,7 +1737,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
 
   describe "directory picker" do
     # wx-based directory picker flow (EvoDash.DirectoryPicker + the
-    # "directory_pick" event in dashboard_live.ex). These tests must NEVER
+    # "directory_pick" event in projects_live.ex). These tests must NEVER
     # invoke real wx — a modal dialog would hang the suite on machines with a
     # display. Safety comes from: (a) the `enabled: false` flag set in
     # test_helper.exs (checked first in pick/2), (b) wx being pruned from the
@@ -1750,7 +1750,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
@@ -1770,7 +1770,7 @@ defmodule EvoDashWeb.DashboardLiveTest do
       id = save_target!()
 
       start_supervised!(
-        {EvoDashWeb.DashboardLiveTest.ConnectionManager,
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
@@ -1842,7 +1842,7 @@ end
 # answers with an error so `retry_remote_connection` never starts real SSH
 # machinery. The process dies (and its Registry entry is auto-removed) at test
 # end via `start_supervised!`.
-defmodule EvoDashWeb.DashboardLiveTest.ConnectionManager do
+defmodule EvoDashWeb.ProjectsLiveTest.ConnectionManager do
   use GenServer
 
   def start_link(args) do

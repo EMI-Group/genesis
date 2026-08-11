@@ -1,8 +1,8 @@
-defmodule EvoDashWeb.DashboardLive.ProjectFlow do
+defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   @moduledoc """
   Event handlers for project creation/opening on the dashboard.
 
-  Extracted from DashboardLive to keep the main module focused on task
+  Extracted from ProjectsLive to keep the main module focused on task
   lifecycle management and state persistence.
 
   All project-opening paths are node-aware: in a remote context
@@ -20,7 +20,7 @@ defmodule EvoDashWeb.DashboardLive.ProjectFlow do
 
   alias EvoGit.TaskRegistry
   alias EvoDash.NodeContext
-  alias EvoDashWeb.DashboardLive.Project
+  alias EvoDashWeb.ProjectsLive.Project
 
   # ───────────────────────────────────────────────────────────────────────────
   # Path normalization

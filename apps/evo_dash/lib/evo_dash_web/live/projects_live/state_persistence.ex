@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.DashboardLive.StatePersistence do
+defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   @moduledoc """
   Session persistence helpers for the dashboard LiveView.
 

@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.PageControllerTest do
   use EvoDashWeb.ConnCase
 
-  # DashboardLive redirects first-time users to /welcome via server-based
+  # ProjectsLive redirects first-time users to /welcome via server-based
   # detection (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the
   # config dir to a temp directory and mark onboarding complete so the GET /
   # renders the dashboard instead of redirecting.
