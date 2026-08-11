@@ -435,10 +435,13 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
-  Cancels a task on the given node.
+  Gracefully cancels a task on the given node.
 
-  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.cancel_task/1` directly.
-  On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  The task enters a `:cancelling` grace period: agents are notified to save
+  their work and finish cleanly; the task is finally persisted `:cancelled`
+  when the wrapper completes. On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.cancel_task/1` directly. On a remote node,
+  routes the call through `:erpc` via `call_remote/4`.
 
   Returns `:ok` on success or `{:error, reason}` on failure (including RPC
   failures such as node down or timeout).
@@ -449,6 +452,30 @@ defmodule EvoGit.RemoteNode do
       EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id)
     else
       case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :cancel_task, [task_id]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Force-kills a task on the given node — the BRUTAL cancellation path (no
+  grace period): agents are killed, the wrapper is brutal-killed, and the task
+  is immediately persisted `:cancelled`. Works from `:running` or `:cancelling`.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.force_kill_task/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec force_kill_task(node(), String.t()) :: :ok | {:error, term()}
+  def force_kill_task(node, task_id) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.force_kill_task(task_id)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :force_kill_task, [task_id]) do
         {:ok, result} -> result
         {:error, reason} -> {:error, reason}
       end

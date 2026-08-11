@@ -809,6 +809,70 @@ defmodule EvoGit.StoreTest do
     end
   end
 
+  describe "select_finished_task_ids / select_running_lease_info — :cancelling semantics" do
+    test "select_finished_task_ids excludes :cancelling but includes :finalizing" do
+      unique = System.unique_integer([:positive])
+
+      for {id, status} <- [
+            {"fin-#{unique}", :running},
+            {"fin-#{unique}-pending", :pending},
+            {"fin-#{unique}-cancelling", :cancelling},
+            {"fin-#{unique}-finalizing", :finalizing},
+            {"fin-#{unique}-completed", :completed}
+          ] do
+        :ok =
+          Store.put_task(Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/t"]
+          })
+      end
+
+      ids = Store.select_finished_task_ids(Store)
+
+      # :running / :pending / :cancelling are NOT finished.
+      refute "fin-#{unique}" in ids
+      refute "fin-#{unique}-pending" in ids
+      refute "fin-#{unique}-cancelling" in ids
+
+      # :finalizing and :completed ARE finished.
+      assert "fin-#{unique}-finalizing" in ids
+      assert "fin-#{unique}-completed" in ids
+    end
+
+    test "select_running_lease_info returns :running, :finalizing, and :cancelling rows" do
+      unique = System.unique_integer([:positive])
+
+      for {id, status} <- [
+            {"rl-#{unique}-running", :running},
+            {"rl-#{unique}-finalizing", :finalizing},
+            {"rl-#{unique}-cancelling", :cancelling},
+            {"rl-#{unique}-completed", :completed}
+          ] do
+        :ok =
+          Store.put_task(Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/t"],
+            lease_expires_at: 1_000_000
+          })
+      end
+
+      rows = Store.select_running_lease_info(Store)
+      ids = Enum.map(rows, & &1.id)
+      statuses = Map.new(rows, &{&1.id, &1.status})
+
+      assert "rl-#{unique}-running" in ids
+      assert "rl-#{unique}-finalizing" in ids
+      assert "rl-#{unique}-cancelling" in ids
+      refute "rl-#{unique}-completed" in ids
+
+      assert statuses["rl-#{unique}-cancelling"] == :cancelling
+    end
+  end
+
   describe "safe_select_paginated_tasks" do
     # Helper: inserts a task with a distinct started_at so ordering is
     # deterministic. Index 0 is the oldest.
@@ -1386,7 +1450,15 @@ defmodule EvoGit.StoreTest do
     end
 
     test "status field round-trips as atom for all known values" do
-      for status <- [:pending, :running, :finalizing, :completed, :failed, :cancelled] do
+      for status <- [
+            :pending,
+            :running,
+            :finalizing,
+            :completed,
+            :failed,
+            :cancelled,
+            :cancelling
+          ] do
         task = %TaskInfo{
           id: "status-#{status}",
           type: :genesis,
@@ -1403,6 +1475,13 @@ defmodule EvoGit.StoreTest do
         assert is_atom(fetched.status)
         assert fetched.status == status
       end
+    end
+
+    test "unknown status atom decodes as nil (whitelist safety)" do
+      # Directly exercise the codec: a non-whitelisted atom must decode nil
+      # rather than creating a new atom (avoids atom-table leaks).
+      assert Codec.decode_atom("not_a_real_status") == nil
+      assert Codec.decode_atom("cancelling") == :cancelling
     end
 
     test "review_status field round-trips as atom for all known values" do

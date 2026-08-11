@@ -70,8 +70,19 @@ defmodule EvoGit.RemoteNodeTest do
     end
 
     test "local path delegates to RemoteAPI → TaskRegistry (returns {:error, :not_found})" do
-      # cancel_task on a non-existent task returns {:error, :not_found}.
+      # Graceful cancel_task on a non-existent task returns {:error, :not_found}.
       assert RemoteNode.cancel_task(node(), "abc123") == {:error, :not_found}
+    end
+  end
+
+  describe "force_kill_task/2" do
+    test "returns {:error, _} when the remote node is unreachable" do
+      assert {:error, _} = RemoteNode.force_kill_task(@fake_remote, "abc123")
+    end
+
+    test "local path delegates to RemoteAPI → TaskRegistry (returns {:error, :not_found})" do
+      # force_kill_task on a non-existent task returns {:error, :not_found}.
+      assert RemoteNode.force_kill_task(node(), "abc123") == {:error, :not_found}
     end
   end
 
