@@ -139,6 +139,16 @@ html { scroll-behavior: smooth; }
   -webkit-backdrop-filter: blur(12px);
 }
 
+/* Brand icons (brand-git, brand-nix): the inline SVG must fill the wrapper
+   span exactly so it matches the size-* sizing of the hero mask icons (e.g.
+   size-4 = 16px). The vendor SVGs carry no width/height attributes, so
+   without this rule their rendered size is browser-dependent. */
+.brand-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 /* Smooth transitions for interactive elements only */
 button, a, input, textarea, select, summary,
 .badge, .btn, .glass-card {

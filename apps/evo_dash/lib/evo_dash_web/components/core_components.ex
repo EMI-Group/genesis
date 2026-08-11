@@ -447,7 +447,7 @@ defmodule EvoDashWeb.CoreComponents do
 
   def icon(%{name: "brand-" <> _} = assigns) do
     ~H"""
-    <span class={["inline-block shrink-0", @class]}>
+    <span class={["inline-block shrink-0 brand-icon", @class]}>
       <%= raw(brand_svg_content(@name)) %>
     </span>
     """
