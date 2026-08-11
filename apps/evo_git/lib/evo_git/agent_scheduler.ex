@@ -472,26 +472,36 @@ defmodule EvoGit.AgentScheduler do
     default_llm_max_concurrency =
       Keyword.get(opts, :default_llm_max_concurrency, pool_state.default_llm_max_concurrency)
 
-    {:ok,
-     %State{
-       pool_state
-       | default_llm_max_concurrency: default_llm_max_concurrency,
-         agent_max_retries: agent_max_retries,
-         max_depth: max_depth,
-         llm_model: default_model,
-         llm_generation_params: default_params,
-         max_retries: max_retries,
-         max_turns: max_turns,
-         max_turns_root: max_turns_root,
-         next_agent_id: 1,
-         ref_to_agent: %{},
-         queue: :queue.new(),
-         tool_waiting: :queue.new(),
-         max_tool_concurrency: max_tool_concurrency,
-         sandbox_mode: sandbox_mode,
-         sandbox_resources: sandbox_resources,
-         sandbox_process_resources: sandbox_process_resources
-     }}
+    state = %State{
+      pool_state
+      | default_llm_max_concurrency: default_llm_max_concurrency,
+        agent_max_retries: agent_max_retries,
+        max_depth: max_depth,
+        llm_model: default_model,
+        llm_generation_params: default_params,
+        max_retries: max_retries,
+        max_turns: max_turns,
+        max_turns_root: max_turns_root,
+        next_agent_id: 1,
+        ref_to_agent: %{},
+        queue: :queue.new(),
+        tool_waiting: :queue.new(),
+        max_tool_concurrency: max_tool_concurrency,
+        sandbox_mode: sandbox_mode,
+        sandbox_resources: sandbox_resources,
+        sandbox_process_resources: sandbox_process_resources
+    }
+
+    # Best-effort Finch pool reconciliation at boot (pools are lazy — normally a no-op).
+    total =
+      EvoGit.ReqLLMPool.effective_concurrency(
+        state.model_concurrency,
+        state.default_llm_max_concurrency
+      )
+
+    EvoGit.ReqLLMPool.reconcile(total)
+
+    {:ok, state}
   end
 
   @impl true
@@ -646,10 +656,10 @@ defmodule EvoGit.AgentScheduler do
       unless new_model do
         {:reply, {:error, "llm_model cannot be nil"}, state}
       else
-        State.do_update_config(opts, state)
+        reconcile_pool_after_update(State.do_update_config(opts, state))
       end
     else
-      State.do_update_config(opts, state)
+      reconcile_pool_after_update(State.do_update_config(opts, state))
     end
   end
 
@@ -790,6 +800,22 @@ defmodule EvoGit.AgentScheduler do
         Lifecycle.apply_status_updates(status_updates)
         {:noreply, new_state}
     end
+  end
+
+  # Best-effort ReqLLM Finch pool reconciliation after a successful config
+  # update. `State.do_update_config/2` always returns `{:reply, :ok, new_state}`
+  # (the llm_model-nil error path never reaches it), so reconcile never raises.
+  # Covers ALL config-change routes (RemoteAPI.reload_config, save_user_config,
+  # evo_dash ConfigIO) — they all funnel through update_config.
+  defp reconcile_pool_after_update({:reply, :ok, new_state} = reply) do
+    total =
+      EvoGit.ReqLLMPool.effective_concurrency(
+        new_state.model_concurrency,
+        new_state.default_llm_max_concurrency
+      )
+
+    EvoGit.ReqLLMPool.reconcile(total)
+    reply
   end
 
   @impl true
