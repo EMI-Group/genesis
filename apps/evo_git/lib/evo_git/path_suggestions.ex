@@ -17,7 +17,7 @@ defmodule EvoGit.PathSuggestions do
   input produce suggestions; callers must resolve relative input against the
   intended project root themselves.
 
-  Ported from `EvoDashWeb.DashboardLive.Project.filesystem_suggestions/1` so
+  Ported from `EvoDashWeb.ProjectsLive.Project.filesystem_suggestions/1` so
   the dashboard's path autocomplete can run on a remote `genesis_remote`
   daemon (which runs `:evo_git` only).
   """
