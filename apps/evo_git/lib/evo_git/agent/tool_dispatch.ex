@@ -778,7 +778,6 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Cache conflict files once per batch to avoid repeated git calls
     conflict_files = cached_conflict_files(repo_path)
 
-    # Execute tools sequentially, threading delegation hints through
     ctx = %{
       agent_id: agent_id,
       repo_path: repo_path,
@@ -791,11 +790,38 @@ defmodule EvoGit.Agent.ToolDispatch do
       conflict_files: conflict_files
     }
 
+    # Execute ALL standard tool calls in the batch CONCURRENTLY, bounded only
+    # by the scheduler's tool-slot pool: each parallel task still acquires a
+    # tool slot via `AgentScheduler.with_tool_slot/2` inside
+    # `execute_tool_with_timeout/7` (respecting `max_tool_concurrency`).
+    # `max_concurrency: :infinity` makes the scheduler — not a local cap — the
+    # binding constraint. `ordered: true` keeps results in index order.
+    # `timeout: :infinity` defers timeout enforcement to the per-tool timeout
+    # logic inside `execute_tool_with_timeout/7` (an outer stream timeout would
+    # wrongly kill legitimate long-running tools).
+    tool_outputs =
+      indexed_calls
+      |> Task.async_stream(
+        fn {call, index} -> run_tool_in_parallel(call, index, ctx) end,
+        max_concurrency: :infinity,
+        ordered: true,
+        timeout: :infinity
+      )
+      |> Enum.map(fn
+        {:ok, result} -> result
+        {:exit, {%_{} = exception, stacktrace}} -> reraise(exception, stacktrace)
+        {:exit, reason} -> exit(reason)
+      end)
+
+    # Apply hint tracking in the PARENT process, in index order, so the
+    # process-dictionary-backed delegation-hint maps and the once-per-run
+    # redundant-cd warning accumulate deterministically (running them inside
+    # the parallel tasks would make accumulation racy/non-deterministic).
     {results, final_hints, read_final_hints} =
       Enum.reduce(
-        indexed_calls,
+        tool_outputs,
         {[], initial_hints, read_initial_hints},
-        &execute_indexed_call(&1, &2, ctx)
+        &apply_tool_output_tracking(&1, &2, ctx)
       )
 
     # Store updated hints in process dictionary for do_turn to pick up
@@ -805,12 +831,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     results
   end
 
-  # Executes one indexed tool call, sanitizes its output, and threads the
-  # write/read delegation hints through the batch accumulator.
-  defp execute_indexed_call({call, index}, {acc_results, hints, read_hints}, ctx) do
+  # Runs a single tool call's execution inside the parallel stream, returning
+  # `{index, call, output}`. Only the tool-execution call happens here — hint
+  # tracking and the redundant-cd warning are applied later in the parent
+  # process, in index order (see `apply_tool_output_tracking/3`).
+  defp run_tool_in_parallel(call, index, ctx) do
     name = ReqLLM.ToolCall.name(call)
     args = ReqLLM.ToolCall.args_map(call)
-    tool_call_id = call.id || name || "unknown"
 
     output =
       execute_tool_with_timeout(
@@ -823,7 +850,19 @@ defmodule EvoGit.Agent.ToolDispatch do
         ctx.max_timeout
       )
 
-    output = maybe_append_redundant_cd_warning(output, name, args, ctx.repo_path, ctx.repo_root)
+    {index, call, output}
+  end
+
+  # Applies the redundant-cd warning and write/read delegation hints to one
+  # tool output in the parent process, threading the hint maps through the
+  # batch accumulator (index-ordered, deterministic).
+  defp apply_tool_output_tracking({index, call, output}, {acc_results, hints, read_hints}, ctx) do
+    name = ReqLLM.ToolCall.name(call)
+    args = ReqLLM.ToolCall.args_map(call)
+    tool_call_id = call.id || name || "unknown"
+
+    output =
+      maybe_append_redundant_cd_warning(output, name, args, ctx.repo_path, ctx.repo_root)
 
     # Track delegation hints for write tools (skip during conflict resolution)
     {output, hints} = track_write_delegation_hint(output, hints, name, args, ctx)

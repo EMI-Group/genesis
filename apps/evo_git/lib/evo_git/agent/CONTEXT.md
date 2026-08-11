@@ -48,10 +48,18 @@ The framework tracks TWO independent hinting mechanisms, both following the same
 Both hints are shown only once per child directory (tracked via `hint_shown` flag), and both are suppressed during merge conflict resolution (via `filter_child_paths_if_conflicts/2`).
 
 The hinting logic is implemented in `EvoGit.Agent.ToolDispatch` and `EvoGit.Agent.DelegationHints`:
-- `batch_execute_tools/4` threads `delegation_hints` through sequential tool execution via `Enum.reduce`
+- `batch_execute_tools/4` executes all standard tool calls in a batch **concurrently** (`Task.async_stream` with `max_concurrency: :infinity`), bounded only by the scheduler's tool-slot pool (each parallel task acquires a slot via `AgentScheduler.with_tool_slot/2`, respecting `max_tool_concurrency`). Only the raw tool execution runs in the parallel tasks; the delegation hints are threaded **in index order in the parent process** via `Enum.reduce` (`apply_tool_output_tracking/3`), so hint accumulation stays deterministic — the same holds for the once-per-run redundant-cd warning (`:redundant_cd_warned` process-dictionary flag), which is also applied in the parent.
 - `extract_child_paths/4` determines the target child directory from write tool arguments
 - `maybe_append_delegation_hint/4` increments counts and appends the hint message
 - Hints are stored in `LoopState.delegation_hints` and threaded through the process dictionary
+
+## Design Decisions
+
+### Parallel standard tool call execution (bounded by scheduler tool slots)
+
+Standard (non-subagent) tool calls within a single batch now execute **in parallel**, governed by the scheduler's tool-slot pool (`max_tool_concurrency`, default 2; configurable via `--tool-concurrency` CLI flag / `[scheduler] max_tool_concurrency` TOML). Subagent calls were already parallel (`SubagentProcessing.process_subagent_calls`). `batch_execute_tools/4` uses `Task.async_stream` with `max_concurrency: :infinity` (so the scheduler — not a local cap — is the binding constraint), `ordered: true` (results stay in index order), and `timeout: :infinity` (per-tool timeout enforcement stays inside `execute_tool_with_timeout/7`, which wraps its own `Task.yield(task, tool_timeout) || Task.shutdown(task)` — an outer stream timeout would wrongly kill legitimate long-running tools). Tool-slot acquisition (`AgentScheduler.with_tool_slot/2`) still happens per call inside `execute_tool_with_timeout/7`, unchanged.
+
+**Caveat — parallel committing tools:** `write_context`/`edit_context`/`make_dir` with `commit: true` run git add/commit in the same worktree; when multiple such tools execute in parallel they may contend on git's `index.lock`. The scheduler's `max_tool_concurrency` (default 2) bounds this, but users who see commit contention can lower it via `[scheduler] max_tool_concurrency`.
 
 ## Constraints
 - Every agent MUST `use EvoGit.Agent` and implement `system_prompt/0`.
