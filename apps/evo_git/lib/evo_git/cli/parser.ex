@@ -64,7 +64,7 @@ defmodule EvoGit.CLI.Parser do
   def configure_scheduler(opts) do
     scheduler_opts =
       []
-      |> maybe_put(:max_concurrency, opts[:concurrency])
+      |> maybe_put(:default_llm_max_concurrency, opts[:concurrency])
       |> maybe_put(:max_tool_concurrency, opts[:tool_concurrency])
       |> maybe_put(:max_retries, opts[:retries])
       |> maybe_put(:max_turns, opts[:max_turns])

@@ -211,7 +211,11 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     end
 
     test "includes repo_root, context_path, worktree, commits, and task fields from state" do
-      phylo = %PhyloGraphNode{repo: "/tmp/test", base_commit: "base123", current_commit: "head456"}
+      phylo = %PhyloGraphNode{
+        repo: "/tmp/test",
+        base_commit: "base123",
+        current_commit: "head456"
+      }
 
       meta = %SchedMeta{
         id: 1,
@@ -359,7 +363,11 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
     test "returns multiple messages as native structs" do
       message1 = %ReqLLM.Message{role: :user, content: [ReqLLM.Message.ContentPart.text("one")]}
-      message2 = %ReqLLM.Message{role: :assistant, content: [ReqLLM.Message.ContentPart.text("two")]}
+
+      message2 = %ReqLLM.Message{
+        role: :assistant,
+        content: [ReqLLM.Message.ContentPart.text("two")]
+      }
 
       context = %ReqLLM.Context{messages: [message1, message2]}
       put_agent_state(1, agent_state(context: context))
@@ -510,7 +518,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     test "returns model_profiles + scheduler keys from a populated config" do
       config = %{
         scheduler: %{
-          max_concurrency: 5,
+          default_llm_max_concurrency: 5,
           max_tool_concurrency: 3,
           agent_max_retries: 5,
           max_agent_depth: 10,
@@ -557,7 +565,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
     test "synthesizes legacy default profile when models list is empty" do
       config = %{
-        scheduler: %{max_concurrency: 4},
+        scheduler: %{default_llm_max_concurrency: 4},
         llm: %{model: "google:gemini-2.0-flash-exp"}
       }
 
@@ -573,7 +581,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
     test "synthesizes legacy default profile when llm section is missing" do
       config = %{
-        scheduler: %{max_concurrency: 2}
+        scheduler: %{default_llm_max_concurrency: 2}
       }
 
       opts = RemoteAPI.build_reload_opts(config)

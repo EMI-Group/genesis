@@ -33,9 +33,10 @@ defmodule EvoGit.AgentScheduler do
 
   The scheduler manages two independent slot pools:
 
-  - **LLM slots** (`max_concurrency`) — Controls how many agents can make
-    concurrent LLM calls. Includes a global backoff mechanism for rate limit
-    errors (60-second cooldown).
+  - **LLM slots** (`default_llm_max_concurrency`) — Default per-LLM concurrency:
+    controls how many agents can make concurrent LLM calls (the fallback when a
+    model profile doesn't specify its own). Includes a global backoff mechanism
+    for rate limit errors (60-second cooldown).
 
   - **Tool slots** (`max_tool_concurrency`) — Controls how many agents can
     execute tools concurrently. Simple semaphore without backoff.
@@ -140,7 +141,7 @@ defmodule EvoGit.AgentScheduler do
   Updates scheduler configuration at runtime (session-level override).
 
   This is the highest-priority configuration layer. Accepts a keyword list
-  with any of: `:max_concurrency`, `:max_tool_concurrency`,
+  with any of: `:default_llm_max_concurrency`, `:max_tool_concurrency`,
   `:agent_max_retries`, `:max_depth`, `:max_retries`, `:llm_model`.
   Only provided keys are updated; others remain unchanged.
 
@@ -202,7 +203,7 @@ defmodule EvoGit.AgentScheduler do
 
   ## Example
 
-      AgentScheduler.get_config(:max_concurrency)
+      AgentScheduler.get_config(:default_llm_max_concurrency)
       #=> 3
   """
   @spec get_config(atom()) :: term()
@@ -256,7 +257,7 @@ defmodule EvoGit.AgentScheduler do
 
   @doc """
   Requests an LLM execution slot from the scheduler. Blocks the caller until a slot
-  is available (respects max_concurrency). Returns :ok when granted.
+  is available (respects default_llm_max_concurrency). Returns :ok when granted.
   """
   @spec request_llm_slot(pos_integer(), timeout()) :: :ok
   def request_llm_slot(agent_id, timeout \\ :infinity) do
@@ -401,7 +402,7 @@ defmodule EvoGit.AgentScheduler do
 
     # Load model profiles from config (Step 2: per-model slot pools).
     # Each profile becomes its own slot pool. Falls back to a single
-    # legacy profile derived from the flat llm.model / scheduler.max_concurrency
+    # legacy profile derived from the flat llm.model / scheduler.default_llm_max_concurrency
     # config keys when no [[llm.models]] profiles are configured.
     raw_model_profiles = EvoGit.Config.Schema.model_profiles(config)
 
@@ -467,12 +468,14 @@ defmodule EvoGit.AgentScheduler do
     # Apply flat-config overrides on top of profile-derived state
     default_model = Keyword.get(opts, :llm_model, default_model)
     default_params = Keyword.get(opts, :llm_generation_params, default_params)
-    max_concurrency = Keyword.get(opts, :max_concurrency, pool_state.max_concurrency)
+
+    default_llm_max_concurrency =
+      Keyword.get(opts, :default_llm_max_concurrency, pool_state.default_llm_max_concurrency)
 
     {:ok,
      %State{
        pool_state
-       | max_concurrency: max_concurrency,
+       | default_llm_max_concurrency: default_llm_max_concurrency,
          agent_max_retries: agent_max_retries,
          max_depth: max_depth,
          llm_model: default_model,
@@ -653,7 +656,7 @@ defmodule EvoGit.AgentScheduler do
   @impl true
   def handle_call(:get_config, _from, %State{} = state) do
     config = %{
-      max_concurrency: state.max_concurrency,
+      default_llm_max_concurrency: state.default_llm_max_concurrency,
       max_tool_concurrency: state.max_tool_concurrency,
       agent_max_retries: state.agent_max_retries,
       max_agent_depth: state.max_depth,
@@ -677,7 +680,7 @@ defmodule EvoGit.AgentScheduler do
   def handle_call({:get_config, key}, _from, %State{} = state) do
     value =
       case key do
-        :max_concurrency -> state.max_concurrency
+        :default_llm_max_concurrency -> state.default_llm_max_concurrency
         :max_tool_concurrency -> state.max_tool_concurrency
         :agent_max_retries -> state.agent_max_retries
         :max_agent_depth -> state.max_depth
