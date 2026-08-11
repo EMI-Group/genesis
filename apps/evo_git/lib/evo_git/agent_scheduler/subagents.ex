@@ -326,7 +326,8 @@ defmodule EvoGit.AgentScheduler.Subagents do
             "AgentScheduler: Agent #{parent_id} ready to resume, all subagents completed"
           )
 
-          # Parent always has its persistent worktree - resume immediately
+          # Parent keeps its live worktree while waiting (its process is
+          # still alive, blocked on spawn_sub_agents) — resume immediately
           parent = %{parent | status: :ready}
           Store.put_sched_meta(parent_id, parent)
 
@@ -346,8 +347,10 @@ defmodule EvoGit.AgentScheduler.Subagents do
   end
 
   @doc """
-  Resumes a waiting parent agent. The parent keeps its persistent worktree
-  while waiting, so no worktree assignment is needed.
+  Resumes a waiting parent agent. The parent keeps its LIVE worktree while
+  waiting because its process is still alive (blocked on spawn_sub_agents);
+  WorktreeManager reclaims the worktree only on process exit, so no worktree
+  assignment is needed here.
   """
   @spec dispatch_ready_parent(State.t(), pos_integer(), SchedMeta.t()) :: State.t()
   def dispatch_ready_parent(%State{} = state, agent_id, %SchedMeta{worktree: wt} = meta) do

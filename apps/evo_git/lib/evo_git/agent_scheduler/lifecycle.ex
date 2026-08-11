@@ -12,47 +12,45 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Slots
-  alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentScheduler.Dispatch
   alias EvoGit.AgentScheduler.Subagents
 
   # --- Agent Recycling ---
 
   @doc """
-  Recycles an agent by deleting its worktree and removing both ETS entries.
+  Recycles an agent by removing both ETS entries.
 
   Called on normal completion or when an agent's result has already been sent.
-  Decrements the running count.
+  Decrements the running count. Worktree cleanup is WorktreeManager's job via
+  its process monitor (the agent Task exited).
   """
   @spec recycle_agent(State.t(), pos_integer()) :: State.t()
   def recycle_agent(%State{} = state, agent_id) do
     # Genuine race: the :DOWN completion may race with another cleanup path.
     # If the entry is already gone, return state unchanged.
-    with {:ok, meta} <- Store.get_sched_meta(agent_id),
-         {:ok, %{repo_root: agent_repo_root}} <- Store.get_agent_state(agent_id) do
-      if meta.worktree && agent_repo_root do
-        Worktrees.delete(meta.worktree, agent_repo_root)
-      end
+    case Store.get_sched_meta(agent_id) do
+      {:ok, _meta} ->
+        Store.delete_agent_state(agent_id)
+        Store.delete_sched_meta(agent_id)
+        state
 
-      Store.delete_agent_state(agent_id)
-      Store.delete_sched_meta(agent_id)
-      state
-    else
-      _ ->
+      :error ->
         Logger.info("AgentScheduler: recycle_agent for #{agent_id} — entry already cleaned up")
         state
     end
   end
 
   @doc """
-  Cancels an agent by killing its Task process, replying to blocked callers,
-  cleaning up worktree, and removing ETS entries.
+  Cancels an agent by killing its Task process and replying to blocked callers.
 
   Unlike `recycle_agent/2` (which assumes normal completion), this function:
   - Kills the agent's Task process if still alive (via the stored task_ref)
   - Replies to the top-level `from` caller with `{:error, :cancelled}`
   - Replies to the `sub_agent_from` caller (waiting parent) with `{:error, :cancelled}`
-  - Then performs the same cleanup as recycle_agent (delete worktree, ETS entries, decrement count)
+  - Then removes the ETS entries
+
+  Killing the Task fires the WorktreeManager monitor, which reclaims the
+  worktree.
 
   **Important**: The caller MUST remove the agent's ref from `state.ref_to_agent`
   BEFORE calling this function, otherwise the `:DOWN` handler will attempt to
@@ -76,17 +74,6 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
         # Reply to the sub_agent_from caller (parent waiting for spawn_sub_agents)
         if meta.sub_agent_from do
           GenServer.reply(meta.sub_agent_from, {:error, :cancelled})
-        end
-
-        # Delete worktree — skip if agent_state is already gone (race with cleanup)
-        agent_repo_root =
-          case Store.get_agent_state(agent_id) do
-            {:ok, %{repo_root: root}} -> root
-            :error -> nil
-          end
-
-        if meta.worktree && agent_repo_root do
-          Worktrees.delete(meta.worktree, agent_repo_root)
         end
 
         # Remove ETS entries
@@ -130,9 +117,12 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   @doc """
   Handles an agent crash by either retrying the agent or marking it as permanently failed.
 
-  On retry: keeps the persistent worktree, increments retry count, and re-dispatches.
-  On permanent failure: deletes the worktree, cleans up ETS, and notifies the parent
-  (for subagents) or replies with an error (for top-level agents).
+  On retry: increments retry count and re-dispatches (the retry's Runner
+  requests a FRESH worktree; the crashed agent's worktree is reclaimed by
+  WorktreeManager via its monitor).
+  On permanent failure: removes the ETS entries (worktree cleanup is
+  monitor-driven) and notifies the parent (for subagents) or replies with an
+  error (for top-level agents).
   """
   @spec handle_agent_crash(State.t(), pos_integer(), term()) :: {:noreply, State.t()}
   def handle_agent_crash(%State{} = state, agent_id, reason) do
@@ -156,8 +146,9 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
     end)
 
     if meta.retries < state.agent_max_retries do
-      # On retry, keep the persistent worktree - just update retry count and status
-      # The worktree will be reused on next dispatch (assign_and_prepare_worktree will clean/checkout)
+      # On retry, just update retry count and status. The crashed agent's
+      # worktree is reclaimed by WorktreeManager via its monitor; the retry's
+      # Runner requests a FRESH worktree.
       Store.put_sched_meta(agent_id, %{
         meta
         | retries: meta.retries + 1,
@@ -178,7 +169,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           :ok
       end
 
-      # Re-dispatch the agent (worktree is persistent and reused).
+      # Re-dispatch the agent (the retry's Runner requests a fresh worktree).
       # Note: the crashed task's ref was already popped from ref_to_agent
       # in the :DOWN handler, so the derived running count is correct.
       state =
@@ -196,17 +187,9 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
       Logger.error("AgentScheduler: #{msg}")
 
-      # Delete the agent's persistent worktree on permanent failure
-      agent_repo_root =
-        case Store.get_agent_state(agent_id) do
-          {:ok, %{repo_root: root}} when is_binary(root) -> root
-          _ -> nil
-        end
-
-      if meta.worktree && agent_repo_root do
-        Worktrees.delete(meta.worktree, agent_repo_root)
-      end
-
+      # Cleanup is monitor-driven — WorktreeManager reclaims the crashed
+      # agent's worktree on process exit; the scheduler only removes the ETS
+      # entries.
       Store.delete_agent_state(agent_id)
       Store.delete_sched_meta(agent_id)
 
@@ -289,8 +272,9 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
 
   @doc """
   Handles a :DOWN monitor message for a crashed or completed agent Task process.
-  Releases slots, cleans up worktrees on normal exit, and triggers crash recovery
-  on abnormal exit.
+  Releases slots, recycles/cleans up on normal exit, and triggers crash recovery
+  on abnormal exit. (Worktree reclamation is WorktreeManager's job via its own
+  process monitor on the agent Task.)
   """
   @spec handle_agent_down(reference(), pid(), term(), State.t()) :: {:noreply, State.t()}
   def handle_agent_down(ref, _pid, reason, %State{} = state) do

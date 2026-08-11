@@ -163,17 +163,25 @@ defmodule EvoGit.Agent.Runner do
     Process.put(:evogit_repo_id, repo_id)
     Process.put(:repo_path, worktree_path)
 
-    # Create/prepare worktree and run init script (blocking I/O, runs
-    # concurrently across subagents). If this fails, the task crashes
-    # (caught by the :DOWN handler / crash recovery) rather than the
-    # GenServer — which is the desired behaviour.
-    EvoGit.AgentScheduler.Dispatch.setup_worktree(
-      agent_id,
-      repo_root,
-      worktree_path,
-      spec,
-      meta
-    )
+    # Request a FRESH worktree from WorktreeManager (1h call timeout —
+    # creation I/O runs offloaded in WorktreeManager, which monitors THIS
+    # process: if we die for any reason, the worktree is reclaimed). If this
+    # fails, the task crashes (caught by the :DOWN handler / crash recovery)
+    # rather than the GenServer — which is the desired behaviour: setup
+    # failure triggers scheduler crash-retry, and the retry's Runner requests
+    # another fresh worktree.
+    case EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent(
+           agent_id,
+           repo_root,
+           worktree_path,
+           spec,
+           meta,
+           self()
+         ) do
+      {:ok, ^worktree_path} -> :ok
+      {:error, reason} ->
+        raise "Failed to create worktree for agent #{agent_id}: #{inspect(reason)}"
+    end
 
     if retries > 0 do
       Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")

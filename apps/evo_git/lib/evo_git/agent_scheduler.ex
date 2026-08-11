@@ -1,17 +1,20 @@
 defmodule EvoGit.AgentScheduler do
   @moduledoc """
-  Global agent scheduler managing agent lifecycles and worktree assignments.
+  Global agent scheduler managing agent lifecycles and scheduling.
 
-  The scheduler is the single owner of worktree lifecycle. Callers provide a
+  The scheduler is ONLY responsible for scheduling. Callers provide a
   structured agent specification — spatial state (ContextNode), temporal state
   (PhyloGraphNode), agent module, and objective — and the scheduler handles:
 
-  - Managing the worktree pool (creation, assignment, reclamation)
-  - Preparing worktrees (Git clean/checkout) before agent execution
   - Spawning and tracking agents (both top-level and subagents)
   - Transitioning agents between :pending, :running, :waiting, and :ready states
-  - Lazy reclamation of worktrees from waiting agents when the pool is exhausted
   - LLM and tool execution slot management with concurrency control and backoff
+
+  The scheduler NEVER touches worktree I/O. Worktree lifecycle is owned by
+  `EvoGit.AgentScheduler.WorktreeManager`: the agent Runner requests a fresh
+  worktree (1-hour call timeout; WorktreeManager offloads the I/O to a spawned
+  task), WorktreeManager monitors the agent process and destroys the worktree
+  on exit.
 
   ## ETS Tables
 
@@ -51,7 +54,6 @@ defmodule EvoGit.AgentScheduler do
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.Subagents
-  alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
   alias EvoGit.Core.PhyloGraphNode
 
@@ -470,9 +472,7 @@ defmodule EvoGit.AgentScheduler do
     {:ok,
      %State{
        pool_state
-       | initialized: false,
-         initialized_repos: %{},
-         max_concurrency: max_concurrency,
+       | max_concurrency: max_concurrency,
          agent_max_retries: agent_max_retries,
          max_depth: max_depth,
          llm_model: default_model,
@@ -513,10 +513,6 @@ defmodule EvoGit.AgentScheduler do
   end
 
   def handle_call({:run_agent, spec}, from, %State{} = state) do
-    # Extract repo_path from the spec's phylo_node
-    repo_path = spec.phylo_node.repo
-    state = Worktrees.ensure_initialized(state, repo_path)
-
     task_id =
       spec.opts[:task_id] || :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
@@ -750,7 +746,6 @@ defmodule EvoGit.AgentScheduler do
     if state.paused do
       {:reply, {:error, :scheduler_paused}, state}
     else
-      state = Worktrees.ensure_initialized(state)
       {:ok, parent} = Store.get_sched_meta(parent_id)
 
       Subagents.spawn_validated_subagents(parent_id, parent, specs, from, state)

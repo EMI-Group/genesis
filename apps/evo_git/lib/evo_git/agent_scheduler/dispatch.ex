@@ -146,9 +146,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   The GenServer phase (this function) is fast: it computes the worktree path,
   stores it in sched_meta (so cancel_agent can find the worktree), and spawns
-  the agent Task. All blocking I/O — worktree creation, git clean/checkout,
-  and the init script — runs inside the Task process, allowing multiple
-  subagents to start up concurrently.
+  the agent Task. Worktree creation is requested by the agent's Runner from
+  `EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent/6` (1-hour
+  call timeout; WorktreeManager offloads the I/O to a spawned task and
+  monitors the agent process).
   """
   @spec try_dispatch(State.t(), pos_integer()) :: State.t()
   def try_dispatch(%State{} = state, agent_id) do
@@ -171,8 +172,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
     # Phase 1 — GenServer phase (fast, no blocking I/O):
     # Compute the worktree path and store it in sched_meta BEFORE spawning the
-    # task, so cancel_agent can find the worktree to clean up even if the task
-    # hasn't finished its setup yet.
+    # task, so cancel_agent can find the worktree even if the task hasn't
+    # finished its setup yet.
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
     worktree_path =
@@ -185,8 +186,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     Store.put_sched_meta(agent_id, %{meta | worktree: worktree_path})
 
     # Phase 2 — Task phase (slow, concurrent):
-    # All blocking I/O (worktree creation, preparation, init script) runs
-    # inside the task process, so multiple subagents start in parallel.
+    # Worktree creation does NOT run here. The agent's Runner requests a fresh
+    # worktree from WorktreeManager (1h call timeout) inside `run/2`;
+    # WorktreeManager offloads the I/O to a spawned task, so multiple
+    # subagents create worktrees in parallel.
     dispatch_ctx = [
       agent_id: agent_id,
       depth: meta.depth,
@@ -220,105 +223,6 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       state
       | ref_to_agent: Map.put(state.ref_to_agent, task.ref, agent_id)
     }
-  end
-
-  @doc """
-  Performs worktree setup inside the agent (Task) process. This is the
-  blocking I/O that runs concurrently across subagents:
-    1. Create the worktree if it doesn't exist (Git.add_worktree)
-    2. Prepare it (Git.clean + Git.checkout) via assign_and_prepare_worktree
-    3. Run the init script on first creation (primary repo only)
-
-  Called by the agent's `run/2` when a dispatch context is present.
-  """
-  def setup_worktree(agent_id, agent_repo_root, worktree_path, spec, meta) do
-    task_number = meta.task_number
-    {:ok, agent_state} = Store.get_agent_state(agent_id)
-    task_local_id = agent_state.task_local_id
-
-    # Create the worktree if it doesn't exist (e.g., on first dispatch)
-    newly_created =
-      unless File.exists?(worktree_path) do
-        commit_sha = spec.phylo_node.current_commit
-        branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
-        source_path = resolve_source_path(agent_repo_root, meta)
-
-        # Try CoW-optimized creation first, fall back to standard method
-        cow_result =
-          if EvoGit.Adapters.CowWorktree.enabled?() do
-            EvoGit.Adapters.CowWorktree.create_worktree(
-              agent_repo_root,
-              worktree_path,
-              commit_sha,
-              branch_name,
-              source_path
-            )
-          else
-            {:fallback, :disabled}
-          end
-
-        case cow_result do
-          :ok ->
-            Logger.info(
-              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name} via CoW"
-            )
-
-          {:fallback, reason} ->
-            Logger.debug("AgentScheduler: Falling back to standard worktree creation (#{reason})")
-
-            case Git.add_worktree(agent_repo_root, worktree_path, commit_sha, branch_name) do
-              {:ok, _} ->
-                Logger.info(
-                  "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} (T#{task_number}-A#{task_local_id}) on branch #{branch_name}"
-                )
-
-              {:error, {_, msg}} ->
-                Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
-                raise "Failed to create worktree for agent #{agent_id}"
-            end
-        end
-
-        true
-      else
-        false
-      end
-
-    Worktrees.assign_and_prepare_worktree(agent_id, worktree_path)
-
-    # Run worktree init script on first creation only, and only for the primary repo
-    # (foreign repos are independent and should not inherit the primary repo's init script)
-    if newly_created and spec.repo_id == "primary" do
-      # Resolve parent worktree path for SOURCE_WORKTREE_PATH env var
-      parent_worktree =
-        if meta.parent_id do
-          case Store.get_sched_meta(meta.parent_id) do
-            {:ok, parent_meta} -> parent_meta.worktree
-            :error -> nil
-          end
-        else
-          nil
-        end
-
-      Worktrees.run_init_script(agent_repo_root, worktree_path,
-        source_worktree_path: parent_worktree || agent_repo_root
-      )
-    end
-  end
-
-  defp resolve_source_path(agent_repo_root, meta) do
-    # For subagents: use the parent's worktree path (already has most files at same content)
-    # For top-level agents: use the main repo root
-    if meta.parent_id do
-      case Store.get_sched_meta(meta.parent_id) do
-        {:ok, parent_meta} when parent_meta.worktree != nil ->
-          parent_meta.worktree
-
-        _ ->
-          agent_repo_root
-      end
-    else
-      agent_repo_root
-    end
   end
 
   # --- Auto-Commit Fallback (agent process) ---
@@ -496,7 +400,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
             process_queue(state)
 
           {:ok, _meta} ->
-            # Regular agent - dispatch with its persistent worktree
+            # Regular agent - dispatch with a fresh worktree (WorktreeManager
+            # creates/reclaims it)
             state = try_dispatch(state, agent_id)
             process_queue(state)
 
