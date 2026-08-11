@@ -391,6 +391,35 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "Error creating directory"
       assert result =~ "not a directory"
     end
+
+    test "write_context with hostile dir_path (quotes/angle brackets) commits and round-trips", %{
+      tmp_dir: tmp_dir
+    } do
+      System.cmd("git", ["init"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
+      File.write!(Path.join(tmp_dir, "README.md"), "init")
+      System.cmd("git", ["add", "README.md"], cd: tmp_dir)
+      System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
+
+      hostile_dir = ~s(lib"with">angle)
+      File.mkdir_p!(Path.join(tmp_dir, hostile_dir))
+
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => hostile_dir, "content" => "hostile context", "commit" => true},
+          tmp_dir,
+          tmp_dir
+        )
+
+      assert result =~ "Successfully updated CONTEXT.md for directory '#{hostile_dir}'"
+      assert result =~ "Committed:"
+      assert File.read!(Path.join([tmp_dir, hostile_dir, "CONTEXT.md"])) == "hostile context"
+
+      {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
+      assert log =~ "Update CONTEXT.md for #{hostile_dir}"
+    end
   end
 
   describe "execute/4 - edit_context" do
@@ -583,6 +612,41 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "has been updated successfully"
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello elixir"
     end
+
+    test "edit_context with hostile dir_path (quotes/angle brackets) commits and round-trips", %{
+      tmp_dir: tmp_dir
+    } do
+      System.cmd("git", ["init"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
+      File.write!(Path.join(tmp_dir, "README.md"), "init")
+      System.cmd("git", ["add", "README.md"], cd: tmp_dir)
+      System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
+
+      hostile_dir = ~s(lib"with">angle)
+      File.mkdir_p!(Path.join(tmp_dir, hostile_dir))
+      File.write!(Path.join([tmp_dir, hostile_dir, "CONTEXT.md"]), "old content")
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{
+            "dir_path" => hostile_dir,
+            "old_string" => "old content",
+            "new_string" => "new content",
+            "commit" => true
+          },
+          tmp_dir,
+          tmp_dir
+        )
+
+      assert result =~ "The file #{Path.join(hostile_dir, "CONTEXT.md")} has been updated"
+      assert result =~ "Committed:"
+      assert File.read!(Path.join([tmp_dir, hostile_dir, "CONTEXT.md"])) == "new content"
+
+      {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
+      assert log =~ "Update CONTEXT.md for #{hostile_dir}"
+    end
   end
 
   describe "execute/4 - unknown tool" do
@@ -677,7 +741,8 @@ defmodule EvoGit.Agent.ToolsTest do
         result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test query"}, nil, nil)
         assert result =~ "Error: API key for search provider is not set"
       after
-        if original_reqllm_key, do: Application.put_env(:req_llm, :tavily_api_key, original_reqllm_key)
+        if original_reqllm_key,
+          do: Application.put_env(:req_llm, :tavily_api_key, original_reqllm_key)
       end
     end
 

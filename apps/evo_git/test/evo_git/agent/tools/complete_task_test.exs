@@ -323,6 +323,54 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.delete(:repo_path)
     end
 
+    test "multi-line metadata note with quotes and '>' chars is force-overwritten via the -f fallback",
+         %{
+           tmp_dir: tmp_dir,
+           base_commit: base_commit
+         } do
+      Process.put(:repo_path, tmp_dir)
+
+      # ETS entries for task-scoped naming
+      :ets.insert(:evogit_sched_meta, {"agent_force", %{task_id: "force", task_number: 6}})
+      :ets.insert(:evogit_agent_state, {"agent_force", %{task_local_id: 9}})
+
+      # Hostile content on BOTH completions: double quotes, newlines and '>'
+      # chars flow into the pretty-printed JSON note (Jason.encode! pretty: true
+      # is always multi-line). On Windows, `git notes add -m` with such content
+      # broke with "unknown switch `>'" / "too many arguments" — this pins the
+      # regression end-to-end (the -F <tempfile> adapter fix).
+      first_result = "First result: \"quoted\"\nline2 > done"
+      first_objective = "Objective > with > chars and \"quotes\""
+
+      CompleteTask.complete("agent_force", first_result, base_commit,
+        base_commit: base_commit,
+        objective: first_objective
+      )
+
+      # Second completion on the SAME commit: `git notes add` now fails with
+      # "a note already exists" (exit 1 → {:error, {:conflict, _msg}}), so
+      # add_metadata_note delegates to handle_fallback, which retries with
+      # force: true (git notes add -f). Asserting the SECOND result round-trips
+      # byte-for-byte below IS the assertion that the -f fallback worked — the
+      # first completion's note would otherwise still win.
+      second_result = "Second result: overwritten > \"again\"\nline3"
+
+      CompleteTask.complete("agent_force", second_result, base_commit,
+        base_commit: base_commit,
+        objective: first_objective
+      )
+
+      # Exact match — proves the force-overwrite path preserved the second
+      # content byte-for-byte through pretty-JSON encode → git note → decode.
+      assert {:ok, metadata} = CompleteTask.get_agent_metadata(tmp_dir, base_commit)
+      assert metadata["result"] == second_result
+      assert metadata["objective"] == first_objective
+
+      :ets.delete(:evogit_sched_meta, "agent_force")
+      :ets.delete(:evogit_agent_state, "agent_force")
+      Process.delete(:repo_path)
+    end
+
     test "uses default opts when not provided", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit
@@ -408,7 +456,8 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     end
 
     test "returns error for a commit that doesn't exist" do
-      assert {:error, {:enoent, _}} = CompleteTask.get_agent_metadata("/nonexistent/path", "abc123")
+      assert {:error, {:enoent, _}} =
+               CompleteTask.get_agent_metadata("/nonexistent/path", "abc123")
     end
   end
 

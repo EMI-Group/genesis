@@ -233,15 +233,10 @@ defmodule EvoGit.Agent.Tools.Context do
 
               case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
                 {add_output, 0} ->
-                  case EvoGit.sandbox_run(
+                  case commit_with_message_file(
                          repo_path,
-                         "git",
-                         [
-                           "commit",
-                           "-m",
-                           "Update CONTEXT.md for #{dir_path}#{trailer}"
-                         ],
-                         repo_root
+                         repo_root,
+                         "Update CONTEXT.md for #{dir_path}#{trailer}"
                        ) do
                     {commit_output, 0} ->
                       result <>
@@ -303,15 +298,10 @@ defmodule EvoGit.Agent.Tools.Context do
 
                   case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
                     {add_output, 0} ->
-                      case EvoGit.sandbox_run(
+                      case commit_with_message_file(
                              repo_path,
-                             "git",
-                             [
-                               "commit",
-                               "-m",
-                               "Update CONTEXT.md for #{dir_path}#{trailer}"
-                             ],
-                             repo_root
+                             repo_root,
+                             "Update CONTEXT.md for #{dir_path}#{trailer}"
                            ) do
                         {commit_output, 0} ->
                           result_msg <>
@@ -335,6 +325,40 @@ defmodule EvoGit.Agent.Tools.Context do
 
       {:error, reason} ->
         "Error creating directory '#{dir_path}': #{:file.format_error(reason)}"
+    end
+  end
+
+  # Runs `git commit` with the message read from a temporary file (`-F`) instead
+  # of passing it as a `-m <message>` argv element. Content-bearing git args must
+  # never be passed as argv elements: git-for-Windows re-tokenizes elements
+  # containing double quotes (the Co-Authored-By trailer contains `<>`), which
+  # produced "unknown switch `>'` / "too many arguments" failures under MSYS2.
+  # The temp file lives under `EvoGit.Sandbox.resolve_tmpdir/0` (the sandbox-
+  # readable temp dir), with backslashes normalized to forward slashes on
+  # Windows, and is removed in an `after` block (no rescued errors).
+  defp commit_with_message_file(repo_path, repo_root, message) do
+    temp_path =
+      Path.join(
+        EvoGit.Sandbox.resolve_tmpdir(),
+        "genesis_ctx_msg_#{System.unique_integer([:positive, :monotonic])}.txt"
+      )
+
+    try do
+      case File.write(temp_path, message) do
+        :ok ->
+          normalized =
+            if EvoGit.Platform.windows?(),
+              do: String.replace(temp_path, "\\", "/"),
+              else: temp_path
+
+          EvoGit.sandbox_run(repo_path, "git", ["commit", "-F", normalized], repo_root)
+
+        {:error, reason} ->
+          {"Error: could not write temporary commit message file: #{:file.format_error(reason)}",
+           1}
+      end
+    after
+      File.rm(temp_path)
     end
   end
 end
