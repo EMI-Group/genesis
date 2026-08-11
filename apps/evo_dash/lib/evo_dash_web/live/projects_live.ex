@@ -319,18 +319,15 @@ defmodule EvoDashWeb.ProjectsLive do
                               case Map.get(agent, :status) do
                                 :running -> "badge-success"
                                 :pending -> "badge-warning"
+                                :blocked -> "badge-warning"
                                 :waiting -> "badge-info"
                                 :ready -> "badge-info"
-                                :blocked -> "badge-neutral"
                                 _ -> "badge-ghost"
                               end
                             ]}>
                               {case Map.get(agent, :status) do
                                 s when is_atom(s) ->
-                                  Gettext.gettext(
-                                    EvoDashWeb.Gettext,
-                                    String.capitalize(Atom.to_string(s))
-                                  )
+                                  agent_status_label(s)
 
                                 _ ->
                                   gettext("Unknown")
