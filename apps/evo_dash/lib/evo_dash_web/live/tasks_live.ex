@@ -805,7 +805,7 @@ defmodule EvoDashWeb.TasksLive do
              |> assign(:confirm_force_kill_task_id, nil)
              |> put_flash(
                :error,
-               gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+               gettext("Failed to force kill task: %{reason}", reason: inspect(reason))
              )}
         end
     end
