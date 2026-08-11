@@ -41,8 +41,9 @@ total_concurrency =
   case EvoGit.Config.Schema.model_profiles(resolved) do
     [] ->
       # No model profiles configured (fresh install / legacy single-model
-      # config with flat [llm] fields). Fall back to scheduler.max_concurrency.
-      EvoGit.Config.resolve([:scheduler, :max_concurrency])
+      # config with flat [llm] fields). Fall back to
+      # scheduler.default_llm_max_concurrency.
+      EvoGit.Config.resolve([:scheduler, :default_llm_max_concurrency])
 
     profiles ->
       profiles
