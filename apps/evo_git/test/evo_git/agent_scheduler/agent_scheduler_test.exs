@@ -119,4 +119,29 @@ defmodule EvoGit.AgentSchedulerTest do
       2000
     )
   end
+
+  test "update_config reconciles the LLM pool without crashing" do
+    # Hook A: a successful update_config (with model_profiles) reconciles the
+    # ReqLLM Finch pool. In test env no origins are materialized, so reconcile
+    # no-ops — this pins that the hook never crashes and returns :ok.
+    assert :ok =
+             GenServer.call(
+               EvoGit.AgentScheduler,
+               {:update_config,
+                [model_profiles: [%{id: "default", model: "test:model", concurrency: 3}]]}
+             )
+
+    # The new concurrency took effect. Profile ids are strings, so the
+    # "default" key in model_concurrency is the string "default".
+    assert %{"default" => 3} =
+             GenServer.call(EvoGit.AgentScheduler, {:get_config, :model_concurrency})
+
+    # Fallback path: a default_llm_max_concurrency-only update (no
+    # model_profiles) also returns :ok and reconciles via the fallback total.
+    assert :ok =
+             GenServer.call(
+               EvoGit.AgentScheduler,
+               {:update_config, [default_llm_max_concurrency: 4]}
+             )
+  end
 end

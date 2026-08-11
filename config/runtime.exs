@@ -31,11 +31,28 @@ end
 # This runs before :req_llm starts its Finch pool, so the pool is sized
 # correctly at boot.
 #
-# ReqLLM defaults to stream_pool_count: 8 with HTTP/1-only pools. We add
-# a small buffer (+2) on top of the summed concurrency for auxiliary
-# (non-slot-gated) LLM calls (context compression, evolution synthesis,
-# novelty metrics, etc.).
+# PER-ORIGIN SEMANTICS: Finch materializes one pool per origin
+# (scheme://host:port), lazily, from this single `:default` template — so
+# pool capacity is PER-ORIGIN, not global. Summing the total concurrency is
+# therefore the safe upper bound: requests to origin A only ever use pool A,
+# and any single origin's demand is at most the total concurrency.
+#
+# MAX-WITH-DEFAULT RATIONALE: unknown model ids (per-task `-m` flags that do
+# not match any [[llm.models]] profile) are gated by
+# scheduler.default_llm_max_concurrency as an INDEPENDENT slot bucket — each
+# model profile has its own slot pool, while unknown models share the default
+# bucket. Effective concurrency is therefore max(Σ profile concurrencies,
+# default_llm_max_concurrency), not the plain sum of profiles.
+#
+# The final +2 buffer (for auxiliary non-slot-gated LLM calls — the only such
+# calls today are the LLM self-check (system_check.ex) and PR-title generation
+# (pull_request.ex); context compression IS slot-gated) and the floor-8
+# (ReqLLM's default pool count) live in `EvoGit.ReqLLMPool.desired_count/1` —
+# the single source of truth shared with runtime reconciliation. Do NOT
+# duplicate that formula inline here.
 resolved = EvoGit.Config.resolve()
+
+default_llm_max_concurrency = EvoGit.Config.resolve([:scheduler, :default_llm_max_concurrency])
 
 total_concurrency =
   case EvoGit.Config.Schema.model_profiles(resolved) do
@@ -43,20 +60,38 @@ total_concurrency =
       # No model profiles configured (fresh install / legacy single-model
       # config with flat [llm] fields). Fall back to
       # scheduler.default_llm_max_concurrency.
-      EvoGit.Config.resolve([:scheduler, :default_llm_max_concurrency])
+      default_llm_max_concurrency
 
     profiles ->
       profiles
       |> Enum.map(fn profile -> Map.get(profile, :concurrency, 3) end)
       |> Enum.sum()
+      |> max(default_llm_max_concurrency)
   end
 
-stream_pool_count = max(total_concurrency + 2, 8)
+stream_pool_count = EvoGit.ReqLLMPool.desired_count(total_concurrency)
 
+# The pool is configured via the full `finch:` override form (not the
+# `stream_pool_*` shorthand) so we can set `start_pool_metrics?: true` —
+# required for `Finch.get_pool_status(ReqLLM.Finch, :default)` to enumerate
+# materialized origins. `EvoGit.ReqLLMPool` uses that enumeration to
+# dynamically reconcile the pool size at runtime (on config changes and on
+# the "excess queuing" error path); without the metrics flag the pools never
+# register under `:default` and reconciliation is a silent no-op.
+# `stream_pool_timeout` stays a top-level key because ReqLLM reads it at
+# CALL time (streaming/finch_client.ex:300), not as part of the pool config.
 config :req_llm,
-  stream_pool_count: stream_pool_count,
-  stream_pool_size: 1,
-  stream_pool_protocols: [:http1],
+  finch: [
+    name: ReqLLM.Finch,
+    pools: %{
+      default: [
+        protocols: [:http1],
+        size: 1,
+        count: stream_pool_count,
+        start_pool_metrics?: true
+      ]
+    }
+  ],
   stream_pool_timeout: 120_000
 
 # The genesis_remote release is a headless evo_git-only daemon for SSH remote

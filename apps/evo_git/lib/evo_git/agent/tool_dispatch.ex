@@ -207,6 +207,13 @@ defmodule EvoGit.Agent.ToolDispatch do
               "Agent #{agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
             )
 
+            if EvoGit.ReqLLMPool.excess_queuing_error?(reason) do
+              EvoGit.ReqLLMPool.bump_for_excess_queuing(
+                AgentScheduler.get_config(:model_concurrency),
+                AgentScheduler.get_config(:default_llm_max_concurrency)
+              )
+            end
+
             {:error, reason}
         end
       end
