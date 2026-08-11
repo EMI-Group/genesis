@@ -32,7 +32,7 @@ None — leaf directory (Elixir config files only).
   - `receive_timeout`: 600_000 ms (10 min) — default HTTP response timeout
   - `metadata_timeout`: 600_000 ms — streaming metadata collection timeout
   - `thinking_timeout`: 1_000_000 ms (~17 min) — extended timeout for reasoning models
-- **`req_llm`** Finch streaming pool in `runtime.exs` (lines 23–53) — **dynamically sized** from the **total LLM concurrency across all model profiles** (`[[llm.models]]` → `concurrency` per profile). When no profiles are configured (fresh install / legacy flat `[llm]` config), falls back to `[scheduler] max_concurrency`:
+- **`req_llm`** Finch streaming pool in `runtime.exs` (lines 23–53) — **dynamically sized** from the **total LLM concurrency across all model profiles** (`[[llm.models]]` → `concurrency` per profile). When no profiles are configured (fresh install / legacy flat `[llm]` config), falls back to `[scheduler] default_llm_max_concurrency`:
   - `stream_pool_count`: `max(sum_of_profile_concurrencies + 2, 8)` — number of connections in ReqLLM's Finch streaming pool. For single-model config with default `concurrency=3`, this is `max(3+2, 8) = 8` (ReqLLM's own default). For multi-model configs, the pool grows to accommodate all models running concurrently.
   - `stream_pool_size`: 1 — connections per pool
   - `stream_pool_protocols`: `[:http1]` — HTTP/1 only (no HTTP/2 multiplexing)
@@ -47,7 +47,7 @@ The **3-level configuration system** (resolved at runtime, not via Elixir `Confi
 1. **Application defaults** — Hardcoded in `EvoGit.Config.defaults/0`: scheduler settings, empty `llm`/`user` maps, sandbox `:auto`, evolution parameters, truncation limits. **No default model or username is provided.**
 2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant, cross-platform):
    - `[llm]` → `model = "provider:model"` (e.g. `"anthropic:claude-sonnet-4-20250514"`), `compression_threshold_tokens`
-   - `[scheduler]` → `max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_agent_depth`, `max_retries`
+   - `[scheduler]` → `default_llm_max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_agent_depth`, `max_retries`
    - `[user]` → `github_username`
    - `[sandbox]` → `mode` ("auto"|"enabled"|"disabled")
    - `[evolution]` → evolutionary algorithm parameters

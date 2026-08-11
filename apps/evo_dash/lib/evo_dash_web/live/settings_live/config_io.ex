@@ -33,8 +33,8 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
     updates =
       []
       |> SettingsUtils.maybe_add_kw(
-        :max_concurrency,
-        get_in(file_config, [:scheduler, :max_concurrency])
+        :default_llm_max_concurrency,
+        get_in(file_config, [:scheduler, :default_llm_max_concurrency])
       )
       |> SettingsUtils.maybe_add_kw(
         :max_tool_concurrency,

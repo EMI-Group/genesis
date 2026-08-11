@@ -25,7 +25,7 @@ defmodule EvoGit.AgentScheduler.State do
   ## Fields
 
   ### Configuration
-  - `max_concurrency` — backward-compat default concurrency limit (mirrors the default profile's concurrency)
+  - `default_llm_max_concurrency` — default per-LLM concurrency limit, used as the fallback when a model profile doesn't specify its own (mirrors the default profile's concurrency)
   - `model_concurrency` — `%{model_id => limit}` per-model concurrency limits
   - `model_profiles` — list of model profile maps loaded from config at init
   - `max_tool_concurrency` — maximum concurrent tool executions (tool slot pool size)
@@ -63,7 +63,7 @@ defmodule EvoGit.AgentScheduler.State do
   alias EvoGit.AgentScheduler.Slots
 
   @enforce_keys []
-  defstruct max_concurrency: 3,
+  defstruct default_llm_max_concurrency: 3,
             model_concurrency: %{},
             model_profiles: [],
             agent_max_retries: 3,
@@ -91,7 +91,7 @@ defmodule EvoGit.AgentScheduler.State do
             sandbox_process_resources: nil
 
   @type t :: %__MODULE__{
-          max_concurrency: pos_integer(),
+          default_llm_max_concurrency: pos_integer(),
           model_concurrency: %{String.t() => pos_integer()},
           model_profiles: [map()],
           agent_max_retries: non_neg_integer(),
@@ -189,7 +189,8 @@ defmodule EvoGit.AgentScheduler.State do
       model_concurrency: model_concurrency,
       llm_model: Keyword.get(opts, :llm_model, default_model),
       llm_generation_params: Keyword.get(opts, :llm_generation_params, default_params),
-      max_concurrency: Keyword.get(opts, :max_concurrency, default_concurrency),
+      default_llm_max_concurrency:
+        Keyword.get(opts, :default_llm_max_concurrency, default_concurrency),
       llm_holders: empty_holders,
       llm_waiting: empty_queues,
       llm_backoff_until: empty_pools,
@@ -199,11 +200,11 @@ defmodule EvoGit.AgentScheduler.State do
 
   @doc """
   Returns the concurrency limit for a given model_id, falling back to the
-  state's `max_concurrency` (backward compat) if the model is not in the map.
+  state's `default_llm_max_concurrency` if the model is not in the map.
   """
   @spec concurrency_for(t(), String.t()) :: pos_integer()
   def concurrency_for(%__MODULE__{} = state, model_id) do
-    Map.get(state.model_concurrency, model_id, state.max_concurrency)
+    Map.get(state.model_concurrency, model_id, state.default_llm_max_concurrency)
   end
 
   @doc """
@@ -329,7 +330,7 @@ defmodule EvoGit.AgentScheduler.State do
     # Apply all field updates
     state =
       state
-      |> maybe_update(:max_concurrency, opts)
+      |> maybe_update(:default_llm_max_concurrency, opts)
       |> maybe_update(:agent_max_retries, opts)
       |> maybe_update(:max_depth, opts)
       |> maybe_update(:llm_model, opts)
@@ -365,7 +366,7 @@ defmodule EvoGit.AgentScheduler.State do
     Lifecycle.apply_status_updates(status_updates)
 
     Logger.info(
-      "AgentScheduler: Config updated — max_concurrency: #{state.max_concurrency}, " <>
+      "AgentScheduler: Config updated — default_llm_max_concurrency: #{state.default_llm_max_concurrency}, " <>
         "max_tool_concurrency: #{state.max_tool_concurrency}, " <>
         "agent_max_retries: #{state.agent_max_retries}, max_depth: #{state.max_depth}"
     )

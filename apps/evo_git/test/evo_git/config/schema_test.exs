@@ -13,7 +13,7 @@ defmodule EvoGit.Config.SchemaTest do
       paths = Enum.map(schemas, & &1.key_path)
 
       # Scheduler
-      assert [:scheduler, :max_concurrency] in paths
+      assert [:scheduler, :default_llm_max_concurrency] in paths
       assert [:scheduler, :max_tool_concurrency] in paths
       assert [:scheduler, :agent_max_retries] in paths
       assert [:scheduler, :max_agent_depth] in paths
@@ -130,7 +130,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert is_map(defaults)
 
       # Scheduler
-      assert defaults.scheduler.max_concurrency == 3
+      assert defaults.scheduler.default_llm_max_concurrency == 3
       assert defaults.scheduler.max_tool_concurrency == 2
       assert defaults.scheduler.agent_max_retries == 3
       assert defaults.scheduler.max_agent_depth == 8
@@ -279,17 +279,17 @@ defmodule EvoGit.Config.SchemaTest do
     end
 
     test "catches pos_integer with negative value" do
-      config = put_in(Schema.defaults(), [:scheduler, :max_concurrency], -1)
+      config = put_in(Schema.defaults(), [:scheduler, :default_llm_max_concurrency], -1)
       assert {:error, errors} = Schema.validate(config)
       assert length(errors) > 0
       error = List.first(errors)
-      assert error.key_path == [:scheduler, :max_concurrency]
+      assert error.key_path == [:scheduler, :default_llm_max_concurrency]
       assert error.value == -1
       assert error.rule == :pos_integer
     end
 
     test "catches pos_integer with zero value" do
-      config = put_in(Schema.defaults(), [:scheduler, :max_concurrency], 0)
+      config = put_in(Schema.defaults(), [:scheduler, :default_llm_max_concurrency], 0)
       assert {:error, errors} = Schema.validate(config)
       assert length(errors) > 0
     end
@@ -326,7 +326,9 @@ defmodule EvoGit.Config.SchemaTest do
     end
 
     test "catches string for integer field" do
-      config = put_in(Schema.defaults(), [:scheduler, :max_concurrency], "not_a_number")
+      config =
+        put_in(Schema.defaults(), [:scheduler, :default_llm_max_concurrency], "not_a_number")
+
       assert {:error, _} = Schema.validate(config)
     end
 
@@ -338,7 +340,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "collects multiple errors" do
       config =
         Schema.defaults()
-        |> put_in([:scheduler, :max_concurrency], -1)
+        |> put_in([:scheduler, :default_llm_max_concurrency], -1)
         |> put_in([:sandbox, :resources, :cpu_weight], 20_000)
 
       assert {:error, errors} = Schema.validate(config)
@@ -452,11 +454,11 @@ defmodule EvoGit.Config.SchemaTest do
     end
 
     test "ValidationError has all required fields" do
-      config = put_in(Schema.defaults(), [:scheduler, :max_concurrency], -1)
+      config = put_in(Schema.defaults(), [:scheduler, :default_llm_max_concurrency], -1)
       {:error, [error | _]} = Schema.validate(config)
 
       assert %ValidationError{} = error
-      assert error.key_path == [:scheduler, :max_concurrency]
+      assert error.key_path == [:scheduler, :default_llm_max_concurrency]
       assert is_binary(error.message)
       assert error.value == -1
       assert is_atom(error.rule) or is_tuple(error.rule)

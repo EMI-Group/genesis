@@ -2704,7 +2704,7 @@ msgstr "top_p"
 msgid "total agents (incl. subagents)"
 msgstr "إجمالي الوكلاء (بما فيهم الوكلاء الفرعيين)"
 
-#.key_path: scheduler.max_concurrency
+#.key_path: scheduler.default_llm_max_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
 msgstr "الحد الأقصى لعدد استدعاءات واجهة LLM المتزامنة. يتحكم في عدد الوكلاء الذين يمكنهم إجراء استدعاءات API في وقت واحد. القيم المنخفضة تقلل الضغط على حد معدل API ولكنها تبطئ التقدم الإجمالي."

@@ -7,7 +7,7 @@ defmodule EvoGit.ConfigTest do
     test "returns a map with scheduler defaults" do
       defaults = Config.defaults()
       assert is_map(defaults)
-      assert %{scheduler: %{max_concurrency: 3}} = defaults
+      assert %{scheduler: %{default_llm_max_concurrency: 3}} = defaults
     end
 
     test "has no default llm model" do
@@ -41,7 +41,7 @@ defmodule EvoGit.ConfigTest do
     test "scheduler config has expected keys" do
       config = Config.resolve()
       scheduler = config.scheduler
-      assert Map.has_key?(scheduler, :max_concurrency)
+      assert Map.has_key?(scheduler, :default_llm_max_concurrency)
       assert Map.has_key?(scheduler, :max_tool_concurrency)
       assert Map.has_key?(scheduler, :agent_max_retries)
       assert Map.has_key?(scheduler, :max_agent_depth)
@@ -53,11 +53,11 @@ defmodule EvoGit.ConfigTest do
     test "returns value for single key" do
       scheduler = Config.resolve(:scheduler)
       assert is_map(scheduler)
-      assert Map.has_key?(scheduler, :max_concurrency)
+      assert Map.has_key?(scheduler, :default_llm_max_concurrency)
     end
 
     test "returns value for nested key path" do
-      concurrency = Config.resolve([:scheduler, :max_concurrency])
+      concurrency = Config.resolve([:scheduler, :default_llm_max_concurrency])
       assert is_integer(concurrency)
     end
 
@@ -96,6 +96,7 @@ defmodule EvoGit.ConfigTest do
       # If GOOGLE_API_KEY is set in the environment, credentials/0 should
       # still work without crashing or raising.
       System.put_env("GOOGLE_API_KEY", "test-key-value")
+
       try do
         creds = Config.credentials()
         assert is_map(creds)
@@ -129,14 +130,16 @@ defmodule EvoGit.ConfigTest do
 
   describe "save_user_config/1 validation" do
     test "returns error for invalid config" do
-      invalid = put_in(Config.defaults(), [:scheduler, :max_concurrency], -1)
+      invalid = put_in(Config.defaults(), [:scheduler, :default_llm_max_concurrency], -1)
       assert {:error, errors} = Config.save_user_config(invalid)
       assert is_list(errors)
       assert length(errors) > 0
     end
 
     test "rejects string for integer field" do
-      invalid = put_in(Config.defaults(), [:scheduler, :max_concurrency], "not_a_number")
+      invalid =
+        put_in(Config.defaults(), [:scheduler, :default_llm_max_concurrency], "not_a_number")
+
       assert {:error, _} = Config.save_user_config(invalid)
     end
   end
@@ -281,11 +284,11 @@ defmodule EvoGit.ConfigTest do
       assert profile.temperature == 0.5
     end
 
-    test "flat config migration picks up scheduler max_concurrency" do
+    test "flat config migration picks up scheduler default_llm_max_concurrency" do
       flat_config =
         Config.defaults()
         |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
-        |> put_in([:scheduler, :max_concurrency], 8)
+        |> put_in([:scheduler, :default_llm_max_concurrency], 8)
 
       config =
         flat_config
@@ -489,7 +492,7 @@ defmodule EvoGit.ConfigTest do
     end
 
     test "strip_flat_llm_fields does not crash when llm is absent" do
-      config = %{scheduler: %{max_concurrency: 3}}
+      config = %{scheduler: %{default_llm_max_concurrency: 3}}
 
       stripped = Config.__strip_flat_llm_fields__(config)
 
