@@ -513,6 +513,16 @@ defmodule EvoDashWeb.SettingsLive do
     schemas_by_category =
       EvoDashWeb.PlatformInfo.filter_schemas_by_category(schemas_by_category, platform_os)
 
+    # Hide the Nix category when the nix binary is missing on this node AND
+    # the user hasn't explicitly set `[nix] enabled` in the raw config file
+    # (an explicit true OR false keeps it visible — the schema default of
+    # false alone is not "configured").
+    schemas_by_category =
+      EvoDashWeb.PlatformInfo.filter_nix_category(
+        schemas_by_category,
+        socket.assigns[:current_node]
+      )
+
     socket =
       assign(socket,
         schemas_by_category: schemas_by_category,
@@ -564,6 +574,16 @@ defmodule EvoDashWeb.SettingsLive do
         :schemas_by_category,
         EvoDashWeb.PlatformInfo.filter_schemas_by_category(socket.assigns.schemas_by_category, os)
       )
+      # Hide the Nix category on nodes without the nix binary (unless the user
+      # explicitly configured `[nix] enabled`). MUST run before
+      # category_str_to_atom below so `?category=nix` resolves to nil here.
+      |> assign(
+        :schemas_by_category,
+        EvoDashWeb.PlatformInfo.filter_nix_category(
+          socket.assigns.schemas_by_category,
+          socket.assigns.current_node
+        )
+      )
 
     # Map the raw query param to a known category atom via a whitelist lookup
     # built from the existing schemas_by_category map (atom keys). Stringify
@@ -582,12 +602,13 @@ defmodule EvoDashWeb.SettingsLive do
     category = category || socket.assigns.active_category
 
     # Edge case: the resolved category (or the persisted active_category) is
-    # :sandbox but the platform-filtered schemas no longer contain it
-    # (Windows/unknown) — fall back to the safe :llm default instead of
-    # rendering an empty section.
+    # missing from the platform-filtered schemas map — e.g. :sandbox on
+    # Windows/unknown, or :nix when the category is hidden — fall back to the
+    # safe :llm default instead of rendering an empty section. (category is
+    # always a non-nil atom here; :remote_connections is always in the map, so
+    # it is unaffected.)
     category =
-      if category == :sandbox and
-           not Map.has_key?(socket.assigns.schemas_by_category, :sandbox) do
+      if not Map.has_key?(socket.assigns.schemas_by_category, category) do
         :llm
       else
         category

@@ -29,6 +29,17 @@ defmodule EvoDashWeb.SettingsLiveTest do
       File.rm_rf!(tmp_config)
     end)
 
+    # Force the nix category visible by default so ALL existing tests are
+    # deterministic regardless of whether the host has the `nix` binary (the
+    # boolean field rendering and category-conversion tests select the nix
+    # category). Gating tests below override this to false and clean up via
+    # their own on_exit; the next test's setup re-establishes the default.
+    Application.put_env(:evo_dash, :nix_available_override, true)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :nix_available_override)
+    end)
+
     :ok
   end
 
@@ -1357,6 +1368,119 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Linux Security"
       assert html =~ "Resources"
       assert html =~ "Process Limits"
+    end
+  end
+
+  describe "nix category gating" do
+    # SettingsLive hides the :nix category via
+    # EvoDashWeb.PlatformInfo.filter_nix_category/2 (applied in mount AND in
+    # handle_params before category resolution) when the nix binary is missing
+    # on the node AND the user has NOT explicitly set `[nix] enabled` in the
+    # raw config file. The testable injection seam is the
+    # :nix_available_override app env (checked by
+    # PlatformInfo.nix_available_for_node/1 BEFORE any detection) — so these
+    # tests are deterministic on ANY host. The file-level `setup` defaults the
+    # override to true; each test here overrides it and cleans up via its own
+    # on_exit (LIFO: the test's cleanup runs before setup's re-delete, and the
+    # next test's setup re-establishes the true default).
+
+    defp with_nix_available_override(bool) do
+      Application.put_env(:evo_dash, :nix_available_override, bool)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :nix_available_override)
+      end)
+    end
+
+    # Seed an explicit `[nix] enabled` in the RAW user config file (under the
+    # file-level setup's isolated XDG_CONFIG_HOME dir). Must be called BEFORE
+    # live(conn, ~p"/settings") so mount sees it.
+    defp seed_nix_enabled(bool) do
+      File.mkdir_p!(Path.dirname(EvoGit.Config.config_path()))
+      File.write!(EvoGit.Config.config_path(), "[nix]\nenabled = #{bool}\n")
+    end
+
+    test "nix binary available → nix category shown even with no config", %{conn: conn} do
+      with_nix_available_override(true)
+
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      # Sidebar entry is present on initial load...
+      assert html =~ ~s(phx-value-category="nix")
+      # ...and selecting the category renders its content section (only the
+      # active category's section is rendered, so select first).
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert section_html =~ ~s(id="category-nix")
+    end
+
+    test "no nix binary but explicit [nix] enabled = true → category shown", %{conn: conn} do
+      with_nix_available_override(false)
+      seed_nix_enabled(true)
+
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      assert html =~ ~s(phx-value-category="nix")
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert section_html =~ ~s(id="category-nix")
+    end
+
+    test "no nix binary but explicit [nix] enabled = false → category still shown", %{conn: conn} do
+      with_nix_available_override(false)
+      seed_nix_enabled(false)
+
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      # An explicit false counts as "configured" — the section must stay
+      # editable so the user can turn the feature on.
+      assert html =~ ~s(phx-value-category="nix")
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert section_html =~ ~s(id="category-nix")
+    end
+
+    test "no nix binary and no config → category hidden everywhere (sidebar, section, search)", %{
+      conn: conn
+    } do
+      with_nix_available_override(false)
+
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      # Sidebar entry and content section are both gone.
+      refute html =~ ~s(phx-value-category="nix")
+      refute html =~ ~s(id="category-nix")
+      # The default active category is :llm.
+      assert html =~ ~s(id="category-llm")
+
+      # Selecting the hidden category is a no-op — it is not a known category
+      # in the filtered map, so active_category stays :llm.
+      select_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert assigns(view).active_category == :llm
+      refute select_html =~ ~s(id="category-nix")
+
+      # Search: only the nix schemas ([nix] :enabled / :flake_output) contain
+      # "nix" in key_path/description, so with the category removed from
+      # @schemas_by_category the search finds zero matches.
+      search_html = render_hook(view, "search", %{"value" => "nix"})
+
+      assert search_html =~ "No settings found matching"
+    end
+
+    test "no nix binary and no config: ?category=nix falls back to :llm without crashing", %{
+      conn: conn
+    } do
+      with_nix_available_override(false)
+
+      # handle_params re-filters schemas BEFORE resolving the category param,
+      # so "nix" is not a known category → falls back to the active category
+      # (:llm). No crash.
+      {:ok, view, html} = live(conn, ~p"/settings?category=nix")
+
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-nix")
     end
   end
 end

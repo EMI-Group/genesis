@@ -121,6 +121,99 @@ defmodule EvoDashWeb.PlatformInfoTest do
     end
   end
 
+  describe "nix_available_for_node/1" do
+    test "boolean override wins even for a remote node" do
+      Application.put_env(:evo_dash, :nix_available_override, true)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      assert PlatformInfo.nix_available_for_node(:anything_remote@host)
+    end
+
+    test "false override is honored" do
+      Application.put_env(:evo_dash, :nix_available_override, false)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      refute PlatformInfo.nix_available_for_node(nil)
+    end
+
+    test "non-boolean override is ignored and falls through to detection" do
+      Application.put_env(:evo_dash, :nix_available_override, :bogus)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      # Falls through to EvoGit.Platform.nix_available?/0 on the local node —
+      # the result is whatever the host says, but always a boolean.
+      assert is_boolean(PlatformInfo.nix_available_for_node(nil))
+    end
+
+    test "local node detection matches EvoGit.Platform.nix_available?/0" do
+      assert PlatformInfo.nix_available_for_node(nil) == EvoGit.Platform.nix_available?()
+      assert PlatformInfo.nix_available_for_node(node()) == EvoGit.Platform.nix_available?()
+    end
+
+    test "fake remote node degrades to false without raising" do
+      # call_remote normalizes erpc failures to {:error, _} → conservative false.
+      refute PlatformInfo.nix_available_for_node(:nonexistent@nohost)
+    end
+  end
+
+  describe "nix_enabled_explicitly?/1 (pure)" do
+    test "empty config → false" do
+      refute PlatformInfo.nix_enabled_explicitly?(%{})
+    end
+
+    test "string-keyed raw TOML map with enabled = true → true" do
+      # TomlElixir.decode returns string keys — the real raw-config shape.
+      assert PlatformInfo.nix_enabled_explicitly?(%{"nix" => %{"enabled" => true}})
+    end
+
+    test "string-keyed raw TOML map with enabled = false → true (explicit false counts)" do
+      assert PlatformInfo.nix_enabled_explicitly?(%{"nix" => %{"enabled" => false}})
+    end
+
+    test "atom-keyed map with enabled = true → true" do
+      assert PlatformInfo.nix_enabled_explicitly?(%{nix: %{enabled: true}})
+    end
+
+    test "present [nix] table without enabled key → false" do
+      refute PlatformInfo.nix_enabled_explicitly?(%{"nix" => %{}})
+    end
+  end
+
+  describe "show_nix_category?/1" do
+    test "true override short-circuits without reading config" do
+      Application.put_env(:evo_dash, :nix_available_override, true)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      assert PlatformInfo.show_nix_category?(nil)
+    end
+
+    test "false override + unresponsive remote node → hidden (no local config read)" do
+      Application.put_env(:evo_dash, :nix_available_override, false)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      # The override forces nix_available_for_node to false; the remote RPC to
+      # a nonexistent node fails and nix_enabled_explicitly_for_node degrades
+      # to false. Deterministic — no local host config is ever read.
+      refute PlatformInfo.show_nix_category?(:nonexistent@nohost)
+    end
+
+    test "filter_nix_category removes :nix only when the category is hidden" do
+      schemas = %{nix: [%{key_path: [:nix, :enabled]}], llm: [%{key_path: [:llm, :model]}]}
+
+      # Hidden path: false override + unresponsive remote node → :nix removed.
+      Application.put_env(:evo_dash, :nix_available_override, false)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      assert PlatformInfo.filter_nix_category(schemas, :nonexistent@nohost) == %{llm: schemas.llm}
+
+      # Visible path: true override → map unchanged (short-circuits, no config).
+      Application.put_env(:evo_dash, :nix_available_override, true)
+      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+
+      assert PlatformInfo.filter_nix_category(schemas, nil) == schemas
+    end
+  end
+
   describe "round-trip safety: hidden (filtered-out) schemas are never clobbered" do
     # Mirrors the real macOS-visible sandbox schemas (:sub_category == nil),
     # like the fixtures in config_io_test.exs — only key_path/type/sub_category
