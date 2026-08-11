@@ -329,17 +329,6 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Lists all tasks on the given node.
-
-  Delegates to `EvoGit.RemoteNode.list_tasks/1`. Returns `[]` if the remote
-  call fails.
-  """
-  @spec list_tasks(node()) :: [EvoGit.TaskInfo.t()]
-  def list_tasks(node) do
-    EvoGit.RemoteNode.list_tasks(node)
-  end
-
-  @doc """
   Lists tasks on the given node as lightweight summary maps.
 
   Delegates to `EvoGit.RemoteNode.list_tasks_summary/2`. Returns `[]` if the

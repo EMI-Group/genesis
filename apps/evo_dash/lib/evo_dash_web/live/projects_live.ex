@@ -517,8 +517,6 @@ defmodule EvoDashWeb.ProjectsLive do
           remote_agents: []
         )
 
-      socket = Assigns.assign_running_and_pending_tasks(socket)
-
       {:ok, socket}
     end
   end
@@ -632,7 +630,6 @@ defmodule EvoDashWeb.ProjectsLive do
               else
                 # Project path in URL is invalid, clear it
                 socket
-                |> Assigns.assign_running_and_pending_tasks()
                 |> assign(
                   :notified_task_ids,
                   Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
@@ -662,7 +659,6 @@ defmodule EvoDashWeb.ProjectsLive do
                     activate_project(socket, recent_path)
                   else
                     socket
-                    |> Assigns.assign_running_and_pending_tasks()
                     |> assign(
                       :notified_task_ids,
                       Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
@@ -671,7 +667,6 @@ defmodule EvoDashWeb.ProjectsLive do
 
                 _ ->
                   socket
-                  |> Assigns.assign_running_and_pending_tasks()
                   |> assign(
                     :notified_task_ids,
                     Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
@@ -1100,7 +1095,7 @@ defmodule EvoDashWeb.ProjectsLive do
                id: task.id
              )
            )
-           |> Assigns.assign_running_and_pending_tasks()
+           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
            # The prompt is intentionally cleared after a successful launch.
            # assign_form_defaults/1 resets @task_prompt to "" (so the server
            # re-seeds data-layout="compact"), and the "clear_prompt" push_event
@@ -1130,7 +1125,7 @@ defmodule EvoDashWeb.ProjectsLive do
       :ok ->
         {:noreply,
          socket
-         |> Assigns.assign_running_and_pending_tasks()
+         |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
          |> assign(
            :notified_task_ids,
            MapSet.put(socket.assigns.notified_task_ids, task_id)
@@ -1153,7 +1148,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
     {:noreply,
      socket
-     |> Assigns.assign_running_and_pending_tasks()
+     |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
      |> assign(:notified_task_ids, notified)}
   end
 
@@ -1163,7 +1158,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
     {:noreply,
      socket
-     |> Assigns.assign_running_and_pending_tasks()
+     |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
      |> assign(
        :notified_task_ids,
        MapSet.put(socket.assigns.notified_task_ids, task_id)
@@ -1843,7 +1838,6 @@ defmodule EvoDashWeb.ProjectsLive do
       foreign_repos: foreign_repos,
       show_add_foreign_repo_form: false
     )
-    |> Assigns.assign_running_and_pending_tasks()
     |> Project.maybe_put_flash_mode_info(mode_info)
   end
 end

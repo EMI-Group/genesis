@@ -9,6 +9,18 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   The domain foundation lives in `EvoDash.NodeContext` — this module only calls
   it, never modifies it.
+
+  ## Unified sidebar "Active Tasks" loader
+
+  This module is the SINGLE implementation of the sidebar Active Tasks loading
+  for the whole dashboard (ProjectsLive's old `Assigns.assign_running_and_pending_tasks/1`
+  duplicate was removed): `fetch_active_tasks/1` (node-aware fetch with the
+  pending-remote empty-list guard) → `partition_active_tasks/1` (pure) →
+  `assign_active_tasks/1` (assigns `:running_tasks`/`:pending_tasks`).
+  `load_running_and_pending_tasks/1` is the delegating public entry point used
+  by `on_mount/4`, `assign_node/2`, `reload_tasks/1`, and ProjectsLive's
+  task-mutation event handlers. `show_review_button?/1` is public and
+  column-based (`branch_name`), so summary maps are NEVER read for `result`.
   """
 
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
@@ -18,9 +30,18 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   @remote_connections_topic "remote_connections"
   @tasks_topic "tasks"
 
+  # The only statuses that can appear in the sidebar: running/pending/finalizing
+  # tasks and completed tasks (the source of review candidates).
+  @active_statuses [:running, :pending, :finalizing, :completed]
+
   @doc """
   On-mount hook — sets initial node-context assigns and subscribes to
   connection-status broadcasts when the LiveView socket is connected.
+
+  The sidebar Active Tasks load is gated behind `connected?/1` (dead-render
+  skip): on the dead HTTP render the empty-list assigns seeded by `assign_new`
+  are kept and NO query fires; the connected mount's reload (or the first
+  `handle_params` → `assign_node/2`) fetches the real sidebar data.
   """
   def on_mount(:default, _params, _session, socket) do
     socket =
@@ -35,85 +56,115 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:pending_tasks, fn -> [] end)
       |> assign_new(:tasks_reload_pending, fn -> false end)
 
-    if Phoenix.LiveView.connected?(socket) do
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, @remote_connections_topic)
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, @tasks_topic)
-    end
+    socket =
+      if Phoenix.LiveView.connected?(socket) do
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, @remote_connections_topic)
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, @tasks_topic)
 
-    # Load initial running/pending tasks for all live views
-    socket = load_running_and_pending_tasks(socket)
+        # Load initial running/pending tasks for all live views (connected mount
+        # only — see the dead-render skip note in the doc above).
+        load_running_and_pending_tasks(socket)
+      else
+        socket
+      end
 
     # Seed the node-context dedup guard with the local context so the first
     # `handle_params` → `assign_node/2` call doesn't double-fetch the sidebar
-    # (kills the mount double-fetch: on_mount already loaded local tasks).
+    # (kills the mount double-fetch: on_mount already loaded local tasks on the
+    # connected mount, and on the dead render the skip keeps it query-free).
+    # Seeded on BOTH paths.
     socket = assign(socket, :tasks_node_loaded, {nil, node()})
 
     {:cont, socket}
   end
 
   @doc """
-  Loads all tasks and assigns running/pending task lists to the socket. Same
-  logic as ProjectsLive.Assigns.assign_running_and_pending_tasks/1.
+  Loads active tasks from the current node and assigns them to the socket.
 
-  Node-aware: when `@current_node` is the local BEAM node, tasks are read from
-  the local `EvoGit.TaskRegistry`; when it is a remote node, tasks are fetched
-  via `EvoDash.NodeContext.list_tasks_summary/2` (RPC). The filtering logic is
-  identical either way — only the source of `all_tasks` changes.
-
-  The fetch is statuses-filtered: only `[:running, :pending, :finalizing,
-  :completed]` are loaded (the sidebar shows running/pending tasks and derives
-  `pending_tasks` review candidates from `:completed`), so the SQL query skips
-  finished tasks that can never appear in the sidebar.
-
-  Uses lightweight summary queries that omit heavy JSON fields (logs, usage,
-  archive_metadata) unnecessary for the sidebar display.
+  The single unified entry point for the sidebar "Active Tasks" loading, used
+  by `on_mount/4`, `assign_node/2`, `reload_tasks/1`, and ProjectsLive's
+  task-mutation event handlers. Delegates to `fetch_active_tasks/1` +
+  `assign_active_tasks/1` (see their docs for the node-aware fetch semantics).
   """
-  def load_running_and_pending_tasks(socket) do
+  def load_running_and_pending_tasks(socket), do: assign_active_tasks(socket)
+
+  @doc """
+  Fetches the active-task summaries from the current node as `{running, pending}`.
+
+  Node-aware: reads `socket.assigns[:current_node]` (falling back to `node()`)
+  and `socket.assigns[:current_node_id]`. Local node →
+  `TaskRegistry.list_tasks_summary(@active_statuses)`; remote node →
+  `EvoDash.NodeContext.list_tasks_summary(current_node, @active_statuses)` (RPC).
+
+  Pending-remote guard: when a remote context was requested
+  (`current_node_id != nil`) but `current_node` still points at the local BEAM
+  node (connection pending/connecting/error), returns `{[], []}` — local tasks
+  must NEVER appear in the sidebar while the user is in a remote context.
+
+  The summaries are passed through `partition_active_tasks/1`.
+  """
+  def fetch_active_tasks(socket) do
     current_node = socket.assigns[:current_node] || node()
 
     if socket.assigns[:current_node_id] != nil and current_node == node() do
-      # A remote context was requested (`?node=<id>`) but the connection hasn't
-      # completed yet (pending/connecting/error state) — `@current_node` still
-      # points at the local BEAM node. Local tasks must NEVER appear in the
-      # sidebar while the user is in a remote context, so both lists are empty.
-      socket
-      |> assign(:running_tasks, [])
-      |> assign(:pending_tasks, [])
+      {[], []}
     else
-      all_tasks =
+      summaries =
         if current_node == node() do
-          TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])
+          TaskRegistry.list_tasks_summary(@active_statuses)
         else
-          EvoDash.NodeContext.list_tasks_summary(current_node, [
-            :running,
-            :pending,
-            :finalizing,
-            :completed
-          ])
+          EvoDash.NodeContext.list_tasks_summary(current_node, @active_statuses)
         end
 
-      running_tasks =
-        Enum.filter(all_tasks, &(&1.status in [:running, :pending, :finalizing]))
-
-      pending_tasks =
-        all_tasks
-        |> Enum.filter(fn task ->
-          task.status == :completed and is_nil(task.review_status) and
-            show_review_button?(task)
-        end)
-        |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
-
-      socket
-      |> Phoenix.Component.assign(:running_tasks, running_tasks)
-      |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+      partition_active_tasks(summaries)
     end
   end
 
-  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
-       when is_binary(branch) and branch != "",
-       do: true
+  @doc """
+  Partitions active-task summaries into `{running, pending}` (PURE — no I/O).
 
-  defp show_review_button?(_), do: false
+  Running = status in `[:running, :pending, :finalizing]`. Pending (review
+  candidates) = status `:completed`, `review_status` nil, and
+  `show_review_button?/1` true, sorted `{:desc, DateTime}` by
+  `finished_at || started_at`.
+  """
+  def partition_active_tasks(summaries) do
+    running_tasks = Enum.filter(summaries, &(&1.status in [:running, :pending, :finalizing]))
+
+    pending_tasks =
+      summaries
+      |> Enum.filter(fn task ->
+        task.status == :completed and is_nil(task.review_status) and show_review_button?(task)
+      end)
+      |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
+
+    {running_tasks, pending_tasks}
+  end
+
+  @doc """
+  Assigns `:running_tasks` and `:pending_tasks` on the socket from the current
+  node's active-task summaries (fetched via `fetch_active_tasks/1`).
+  """
+  def assign_active_tasks(socket) do
+    {running_tasks, pending_tasks} = fetch_active_tasks(socket)
+
+    socket
+    |> Phoenix.Component.assign(:running_tasks, running_tasks)
+    |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+  end
+
+  @doc """
+  Returns `true` when the completed task has a branch ready for review.
+
+  Column-based: reads the denormalized `branch_name` summary column (populated
+  at write time from `result.branch_name` by `EvoGit.Store.Codec`). Must NEVER
+  read `result` from summary maps — the summary projection drops it.
+  """
+  def show_review_button?(%{status: :completed, branch_name: branch})
+      when is_binary(branch) and branch != "",
+      do: true
+
+  def show_review_button?(_), do: false
 
   @doc """
   Resolves the `?node=` query param into node-context assigns.
