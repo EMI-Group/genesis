@@ -1462,7 +1462,13 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       :ets.insert(:evogit_sched_meta, {agent_id, cancel_test_sched_meta(agent_id, task_id)})
-      :ets.insert(:evogit_agent_state, {agent_id, cancel_test_agent_state()})
+      # Simulate the ORIGINAL graceful cancel (performed while the task was
+      # :running): the agent already holds the cancel_requested flag. The
+      # idempotent path must preserve it without re-sending any messages.
+      :ets.insert(
+        :evogit_agent_state,
+        {agent_id, %{cancel_test_agent_state() | cancel_requested: true}}
+      )
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
