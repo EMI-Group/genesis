@@ -9,6 +9,7 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
 - `support/` → Shared test support modules (ConnCase for connection based tests)
 - `evo_dash/` → Domain-layer tests (MarkdownRender)
 - `evo_dash_web/` → Web-layer tests (controller tests, error handler tests, component tests under `evo_dash_web/components/`)
+- `evo_dash_web/live_hooks/` → NodeAware live-hook tests (`node_aware_test.exs`)
 
 ## API Surface
 
