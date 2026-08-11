@@ -1534,10 +1534,13 @@ button, a, input, textarea, select, summary,
                   compact textarea is a safety net only).
      "expanded" → Layout B: large objective area with an in-flow launch panel
                   below the textarea; Launch button in the middle. The box
-                  grows freely with its content (flex-shrink: 0 on the card
-                  and textarea — see below) and the page's scroll container
-                  (#main-scroll) scrolls instead — never an internal
-                  scrollbar.
+                  fills the available space (flex: 1 0 auto) but the textarea
+                  CAPS at a viewport-derived max-height
+                  (min(calc(1.6em * 32), calc(100dvh - 12rem)) — see the
+                  expanded .input-prompt rule below for the derivation) and
+                  scrolls INTERNALLY, so an extremely long prompt can never
+                  push the in-flow launch panel (.input-controls) below the
+                  fold of the page's scroll container (#main-scroll).
    Flip semantics: compact → expanded when the natural content height exceeds
    the compact max-height cap (or >600 code points / >16 lines, mirroring
    layout_for/1 for SSR-seed convergence); expanded → compact only after the
@@ -1553,7 +1556,16 @@ button, a, input, textarea, select, summary,
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* --- The single card containing BOTH the textarea and the controls row --- */
+/* --- The single card containing BOTH the textarea and the controls row ---
+   Decoration is UNIFIED on this base rule so both layouts render identically:
+   accent-tinted border + the layered glow box-shadow (base elevation shadow,
+   a FAINT 2px accent ring at low alpha — a subtle hint, not a prominent
+   ring — plus a two-layer glow: a mid glow with negative spread and a wide,
+   very-low-alpha bloom that extends beyond the card, so the accent reads as
+   depth BEHIND the card rather than a ring hugging it) + a 2px accent
+   top-edge gradient via ::before (below). The card has NO overflow: hidden,
+   so nothing clips the ::before — it carries its own border-radius
+   (1rem 1rem 0 0) to follow the card's top corners. */
 .input-card {
   position: relative;
   display: flex;
@@ -1562,41 +1574,20 @@ button, a, input, textarea, select, summary,
   background: color-mix(in oklab, var(--color-base-100) 80%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  border: 1px solid var(--color-base-300);
-  box-shadow: 0 4px 16px -4px oklch(0% 0 0 / 0.15);
-  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Layout A (compact): centered, floating, modest size */
-.input-layout[data-layout="compact"] .input-card {
-  max-width: 48rem;
-  margin-left: auto;
-  margin-right: auto;
-  /* Vertical centering (ChatGPT landing style): auto margins center the card
-     in the flex column. Auto margins collapse to 0 when the content overflows,
-     so a tall card stays reachable from the top. The controls row is INSIDE
-     the card now, so both auto margins live here. */
-  margin-top: auto;
-  margin-bottom: auto;
-  width: 100%;
-  /* Subtle accent border in compact mode */
-  border-color: color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
-  /* Layered background glow: the base card shadow is repeated here so
-     compact keeps the card's normal elevation, then a FAINT 2px accent ring
-     (a subtle hint at low alpha, not a prominent ring) and a two-layer glow —
-     a mid glow with negative spread plus a wide, very-low-alpha bloom that
-     extends beyond the card — so the accent reads as depth BEHIND the card
-     rather than a ring hugging it. Expanded layout intentionally has no
-     ring/glow (see the .input-card base rule). */
+  border: 1px solid color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
   box-shadow:
     0 4px 16px -4px oklch(0% 0 0 / 0.15),
     0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
     0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
     0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Subtle accent top-edge gradient on the input card (compact mode) */
-.input-layout[data-layout="compact"] .input-card::before {
+/* Accent top-edge gradient on the input card (shared by BOTH layouts).
+   position: absolute + top: 0 within the relative card; the card has no
+   overflow: hidden, so the ::before only needs its own border-radius to
+   match the card's top corners — nothing is clipped. */
+.input-card::before {
   content: "";
   position: absolute;
   top: 0;
@@ -1615,13 +1606,31 @@ button, a, input, textarea, select, summary,
   pointer-events: none;
 }
 
-/* Layout B (expanded): taller, fills more space. flex-shrink: 0 forbids the
-   card from being compressed below its content by the flex chain (form →
-   .input-layout → card), so with a very long prompt the card grows with its
-   content and the page's scroll container (#main-scroll) scrolls instead —
-   the textarea never gains an internal scrollbar. flex-grow: 1 keeps the
-   grow-to-fill-available-space behavior on short viewports. (Compact mode's
-   vertical-centering auto margins on .input-card above are untouched.) */
+/* Layout A (compact): centered, floating, modest size. Only sizing and
+   centering live here — the accent border, layered glow, and top-edge
+   gradient are shared on the base .input-card / .input-card::before rules
+   above, so compact and expanded render identically. */
+.input-layout[data-layout="compact"] .input-card {
+  max-width: 48rem;
+  margin-left: auto;
+  margin-right: auto;
+  /* Vertical centering (ChatGPT landing style): auto margins center the card
+     in the flex column. Auto margins collapse to 0 when the content overflows,
+     so a tall card stays reachable from the top. The controls row is INSIDE
+     the card now, so both auto margins live here. */
+  margin-top: auto;
+  margin-bottom: auto;
+  width: 100%;
+}
+
+/* Layout B (expanded): taller, fills more space. flex: 1 0 auto lets the
+   card GROW to fill the available space on short content (flex-grow: 1)
+   while forbidding flex-shrink below its content. The TEXTAREA inside it
+   caps at a viewport-derived max-height and scrolls INTERNALLY (see the
+   expanded .input-prompt rule below), so an extremely long prompt keeps the
+   in-flow launch panel visible instead of growing the card unboundedly.
+   (Compact mode's vertical-centering auto margins on .input-card above are
+   untouched.) */
 .input-layout[data-layout="expanded"] .input-card {
   flex: 1 0 auto;
   min-height: 0;
@@ -1659,18 +1668,46 @@ button, a, input, textarea, select, summary,
   overflow-y: auto;
 }
 
-/* Layout B (expanded): much taller, fills available space. Same
-   flex-shrink: 0 rationale as the expanded card: the textarea must never be
-   compressed below its content by the flex chain (which would produce an
-   internal scrollbar) — the page scrolls instead. flex-grow: 1 preserves
-   grow-to-fill on short viewports. overflow-y: auto is a safety net only
-   (the hook always writes the height to the natural content height, so it
-   never activates). */
+/* Layout B (expanded): much taller, fills available space (flex: 1 0 auto —
+   grow-to-fill on short viewports, no flex-shrink below content). The box
+   CAPS at a viewport-derived max-height and scrolls INTERNALLY (overflow-y:
+   auto), so the in-flow .input-controls row below always stays on-screen.
+
+   Cap derivation — max-height: min(calc(1.6em * 32), calc(100dvh - 12rem)):
+     * calc(1.6em * 32) — line-based ceiling (~32 lines) so the box cannot
+       become absurdly tall on very large monitors.
+     * calc(100dvh - 12rem) — the viewport-derived cap that GUARANTEES the
+       controls row stays visible. The 12rem offset covers, from the top of
+       the viewport: the sticky .dashboard-topbar footprint (~5-5.25rem:
+       margin 0.5rem top + bar ≈ 4rem (py-3 = 1.5rem of padding + tallest
+       child ≈ 2.5rem — the btn-md Configure button / two-line omnibox
+       trigger) + margin 0.5rem bottom; ≈ 4.25rem bar with the no-project
+       taller-padding variant) + main's py-4 top padding (1rem) + the
+       .input-controls row (~3.75rem: 0.625rem × 2 padding + ~2.5rem
+       button/select height) + main's py-4 bottom padding (1rem) + ~1rem
+       breathing buffer. The topbar is a single NON-WRAPPING flex row at
+       every width (no flex-wrap; children shrink/truncate — see
+       RemoteView.top_bar), so the offset is breakpoint-independent: no media
+       query needed; on short viewports the cap simply shrinks (e.g. ~8 lines
+       on a 400px-tall window) while the controls stay visible. Re-derive the
+       12rem if any of these measurements change.
+     * The AdaptiveInput hook neutralizes max-height (sets it to "none")
+       while measuring, then writes the FULL natural content height inline;
+       CSS max-height wins over the inline height, so the box renders capped
+       and scrolls internally. getComputedStyle resolves this min() to a
+       single px in expanded mode, so measureAndApply gates its compact-cap
+       cache on the current layout (caches only while compact) — the expanded
+       cap can never leak into applyLayout's flip decisions (see
+       adaptive_input.js measureAndApply).
+   scrollbar-gutter: stable reserves layout space for a classic (non-overlay)
+   scrollbar so text is never clipped under it; overlay scrollbars (macOS)
+   ignore it. */
 .input-layout[data-layout="expanded"] .input-prompt {
   flex: 1 0 auto;
   min-height: calc(1.6em * 10);
-  max-height: none;
+  max-height: min(calc(1.6em * 32), calc(100dvh - 12rem));
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* --- The controls row (mode / launch / model) ---
