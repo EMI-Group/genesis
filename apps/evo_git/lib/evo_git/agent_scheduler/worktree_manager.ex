@@ -69,7 +69,8 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
           pid()
         ) :: {:ok, String.t()} | {:error, term()}
   def create_worktree_for_agent(agent_id, repo_root, worktree_path, spec, meta, agent_pid) do
-    GenServer.call(__MODULE__,
+    GenServer.call(
+      __MODULE__,
       {:create_worktree_for_agent, agent_id, repo_root, worktree_path, spec, meta, agent_pid},
       @worktree_call_timeout
     )
@@ -107,7 +108,9 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         # race). Defer this request — it will be started when the previous
         # create finishes (the {:create_finished, ...} cast).
         pending_requests =
-          Map.put(state.pending_requests, agent_id,
+          Map.put(
+            state.pending_requests,
+            agent_id,
             {from, {agent_id, repo_root, worktree_path, spec, meta, agent_pid}}
           )
 
@@ -120,12 +123,18 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         Process.demonitor(old_ref, [:flush])
         state = %{state | monitors: Map.delete(state.monitors, old_ref)}
         state = maybe_init_repo(state, repo_root)
-        state = start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+
+        state =
+          start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+
         {:noreply, state}
 
       nil ->
         state = maybe_init_repo(state, repo_root)
-        state = start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+
+        state =
+          start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+
         {:noreply, state}
     end
   end
@@ -281,7 +290,9 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
         Task.start(fn ->
           try do
-            result = Worktrees.prepare_new_worktree(agent_id, repo_root, worktree_path, spec, meta)
+            result =
+              Worktrees.prepare_new_worktree(agent_id, repo_root, worktree_path, spec, meta)
+
             GenServer.reply(from, result)
           after
             GenServer.cast(__MODULE__, {:create_finished, agent_id})
@@ -327,11 +338,11 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
     Git.prune_worktrees(repo_root)
 
-    case Git.delete_branch(repo_root, branch_name) do
-      {:ok, _} ->
+    case Worktrees.delete_branch_tolerant(repo_root, branch_name) do
+      :ok ->
         :ok
 
-      {:error, {_tag, output}} ->
+      {:error, output} ->
         Logger.warning(
           "WorktreeManager: Failed to delete branch #{branch_name}: #{inspect(output)}"
         )
@@ -348,7 +359,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       {:ok, branches} ->
         Enum.each(branches, fn branch ->
           Logger.info("WorktreeManager: Cleaning up orphaned branch #{branch}")
-          Git.delete_branch(repo_root, branch)
+          Worktrees.delete_branch_tolerant(repo_root, branch)
         end)
 
       {:error, {tag, output}} ->
