@@ -329,17 +329,6 @@ button, a, input, textarea, select, summary,
   animation: agent-spawn 0.5s ease-out both;
 }
 
-/* Status change icon bounce */
-@keyframes status-bounce {
-  0%, 100% { transform: scale(1); }
-  30% { transform: scale(1.25); }
-  60% { transform: scale(0.95); }
-}
-
-.animate-status-bounce {
-  animation: status-bounce 0.4s ease-out;
-}
-
 /* Detail panel entrance */
 @keyframes detail-enter {
   0% {
@@ -979,7 +968,6 @@ button, a, input, textarea, select, summary,
   .animate-float,
   .animate-countdown,
   .animate-agent-spawn,
-  .animate-status-bounce,
   .animate-detail-enter,
   .animate-toast-enter,
   .animate-toast-exit,
