@@ -65,12 +65,20 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_badge(:completed) =~ "text-info"
       assert task_status_badge(:failed) =~ "text-error"
       assert task_status_badge(:cancelled) =~ "text-warning"
+
+      assert task_status_badge(:cancelling) ==
+               "bg-violet-500/10 text-violet-500 rounded-full flex items-center justify-center"
     end
 
     test "all badges have rounded-full" do
-      for status <- [:running, :completed, :failed, :cancelled, :unknown] do
+      for status <- [:running, :completed, :failed, :cancelled, :cancelling, :unknown] do
         assert task_status_badge(status) =~ "rounded-full"
       end
+    end
+
+    test "cancelling badge differs from the unknown-status fallback" do
+      refute task_status_badge(:cancelling) =~ "bg-base-200"
+      refute task_status_badge(:cancelling) == task_status_badge(:unknown)
     end
 
     test "falls back to base badge for unknown status" do
