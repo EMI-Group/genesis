@@ -364,4 +364,261 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert state.socket.assigns[:remote_poll_timer] == false
     end
   end
+
+  describe "cancelling status display" do
+    test "renders the Cancelling label with a violet pulsing dot", %{conn: conn} do
+      insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling task"])
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      assert html =~ "cancelling task"
+      # Badge label — gettext("Cancelling…") uses a U+2026 ellipsis; assert the
+      # stable prefix plus the violet pulsing-dot indicator classes.
+      assert html =~ "Cancelling"
+      assert html =~ "bg-violet-500"
+    end
+
+    test "status filter includes a cancelling option and filters to cancelling tasks", %{
+      conn: conn
+    } do
+      insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling one"])
+      insert_fixture!(status: :completed, opts: [prompt: "completed one"])
+
+      {:ok, view, html} = live(conn, ~p"/tasks")
+
+      # The filter <select> offers the :cancelling status with the gettext label.
+      # (The option body renders with newline indentation around the label.)
+      assert html =~ ~r/<option value="cancelling"[^>]*>\s*Cancelling\s*<\/option>/
+
+      filtered = render_hook(view, "filter_tasks", %{"status_filter" => "cancelling"})
+
+      assert filtered =~ "cancelling one"
+      refute filtered =~ "completed one"
+    end
+  end
+
+  describe "cancel task action" do
+    test "Cancel button renders only for pending and running tasks", %{conn: conn} do
+      pending_id =
+        insert_fixture!(status: :pending, finished_at: nil, opts: [prompt: "pending one"])
+
+      running_id =
+        insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running one"])
+
+      completed_id = insert_fixture!(status: :completed, opts: [prompt: "completed one"])
+      cancelled_id = insert_fixture!(status: :cancelled, opts: [prompt: "cancelled one"])
+
+      cancelling_id =
+        insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling one"])
+
+      finalizing_id =
+        insert_fixture!(status: :finalizing, finished_at: nil, opts: [prompt: "finalizing one"])
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      cancel_buttons =
+        html
+        |> then(&Regex.scan(~r/<button[^>]*phx-click="open_cancel_modal"[^>]*>/, &1))
+        |> List.flatten()
+
+      # The visibility guard is @task.status in [:pending, :running] — exactly
+      # two cancel buttons (one per in-flight fixture), none for terminal states.
+      assert length(cancel_buttons) == 2
+      assert Enum.any?(cancel_buttons, &(&1 =~ pending_id))
+      assert Enum.any?(cancel_buttons, &(&1 =~ running_id))
+      refute Enum.any?(cancel_buttons, &(&1 =~ completed_id))
+      refute Enum.any?(cancel_buttons, &(&1 =~ cancelled_id))
+      refute Enum.any?(cancel_buttons, &(&1 =~ cancelling_id))
+      refute Enum.any?(cancel_buttons, &(&1 =~ finalizing_id))
+    end
+
+    test "open_cancel_modal shows the confirmation modal", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_click(view, "open_cancel_modal", %{"task_id" => id})
+
+      assert html =~ "Cancel Task?"
+
+      assert html =~
+               "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
+
+      assert html =~ "Keep Running"
+    end
+
+    test "close_cancel_modal closes the modal without changing the store", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_click(view, "open_cancel_modal", %{"task_id" => id})
+      assert html =~ "Cancel Task?"
+
+      html = render_click(view, "close_cancel_modal", %{})
+      refute html =~ "Cancel Task?"
+
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+    end
+
+    test "confirm_cancel_task on a pending task marks it cancelled immediately", %{conn: conn} do
+      id = insert_fixture!(status: :pending, finished_at: nil, opts: [prompt: "pending task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      render_click(view, "open_cancel_modal", %{"task_id" => id})
+      render_click(view, "confirm_cancel_task", %{})
+
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled
+    end
+
+    test "confirm_cancel_task on a running task transitions it to :cancelling", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      render_click(view, "open_cancel_modal", %{"task_id" => id})
+      render_click(view, "confirm_cancel_task", %{})
+
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelling
+    end
+
+    test "confirm_cancel_task on a completed task flashes an error", %{conn: conn} do
+      id = insert_fixture!(status: :completed, opts: [prompt: "completed task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      render_click(view, "open_cancel_modal", %{"task_id" => id})
+      html = render_click(view, "confirm_cancel_task", %{})
+
+      assert html =~ "Failed to cancel task"
+    end
+
+    test "confirm_cancel_task without opening the modal is a no-op", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_click(view, "confirm_cancel_task", %{})
+
+      assert html =~ "running task"
+      refute html =~ "Failed to cancel task"
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+    end
+  end
+
+  describe "force kill action" do
+    test "dropdown menu is always present; force kill item only for running/cancelling", %{
+      conn: conn
+    } do
+      running_id =
+        insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running one"])
+
+      cancelling_id =
+        insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling one"])
+
+      completed_id = insert_fixture!(status: :completed, opts: [prompt: "completed one"])
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      # The three-dot dropdown <ul> menu is always in the DOM (CSS-hidden).
+      assert html =~ "menu menu-sm dropdown-content"
+
+      force_kill_buttons =
+        html
+        |> then(&Regex.scan(~r/<button[^>]*phx-click="open_force_kill_modal"[^>]*>/, &1))
+        |> List.flatten()
+
+      # Force kill item renders for :running and :cancelling only; the "Danger
+      # zone" divider ships in the same conditional block.
+      assert length(force_kill_buttons) == 2
+      assert Enum.any?(force_kill_buttons, &(&1 =~ running_id))
+      assert Enum.any?(force_kill_buttons, &(&1 =~ cancelling_id))
+      refute Enum.any?(force_kill_buttons, &(&1 =~ completed_id))
+      assert html =~ "Danger zone"
+      assert html =~ "Force kill"
+
+      # The existing Delete item keeps its phx-click + phx-confirm wiring.
+      assert html =~ ~s(phx-click="delete_task")
+      assert html =~ ~s(phx-confirm="Delete this task?")
+    end
+
+    test "open_force_kill_modal shows the confirmation modal", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_click(view, "open_force_kill_modal", %{"task_id" => id})
+
+      assert html =~ "Force Kill Task?"
+      assert html =~ "ALL progress will be completely lost. This cannot be undone."
+      assert html =~ "Force Kill"
+    end
+
+    test "close_force_kill_modal closes the modal without changing the store", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_click(view, "open_force_kill_modal", %{"task_id" => id})
+      assert html =~ "Force Kill Task?"
+
+      html = render_click(view, "close_force_kill_modal", %{})
+      refute html =~ "Force Kill Task?"
+
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+    end
+
+    test "confirm_force_kill_task on a store-only running task flashes an error", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      render_click(view, "open_force_kill_modal", %{"task_id" => id})
+      html = render_click(view, "confirm_force_kill_task", %{})
+
+      # NEW wording ("Failed to force kill task: %{reason}") — a sibling lib
+      # change not yet merged into this worktree. This single assertion may fail
+      # locally until that change lands; it must NOT be weakened to the old
+      # shared msgid ("Failed to cancel task: ...").
+      assert html =~ "Failed to force kill task"
+    end
+
+    test "confirm_force_kill_task on an owned running task force-kills the wrapper", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      wrapper = spawn(fn -> Process.sleep(:infinity) end)
+
+      # Inject the wrapper into the registry's in-memory task_refs so the
+      # force-kill path sees an owned, alive task — store-only fixtures have no
+      # task_refs entry and return {:error, :not_running}. The replace_state fun
+      # runs inside the TaskRegistry process, so self() here IS the owner that
+      # Task.shutdown/2 later validates against.
+      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+        task_ref = %Task{pid: wrapper, ref: make_ref(), owner: self(), mfa: nil}
+
+        %{state | task_refs: Map.put(state.task_refs, id, task_ref)}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      render_click(view, "open_force_kill_modal", %{"task_id" => id})
+      render_click(view, "confirm_force_kill_task", %{})
+
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled
+      refute Process.alive?(wrapper)
+    end
+
+    test "confirm_force_kill_task without opening the modal is a no-op", %{conn: conn} do
+      id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      html = render_click(view, "confirm_force_kill_task", %{})
+
+      assert html =~ "running task"
+      refute html =~ "Failed to force kill task"
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+    end
+  end
 end
