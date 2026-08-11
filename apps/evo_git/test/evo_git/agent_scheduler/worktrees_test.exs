@@ -15,6 +15,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
+  import ExUnit.CaptureLog
+
   defmodule DummyAgent do
     # The create pipeline never calls the agent module — this only needs to
     # exist so the %AgentSpec{} is well-formed.
@@ -159,6 +161,38 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert agent_state.phylo_node.repo == wt_path
     end
 
+    test "first-time create emits no spurious leftover-branch warning", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      # The branch does not exist yet — destroy_leftovers/3 runs before every
+      # create, and its tolerant delete must treat "branch not found" as a
+      # silent no-op instead of logging a spurious warning on every
+      # first-time create.
+      refute Git.branch_exists?(tmp_dir, branch)
+
+      log =
+        capture_log(fn ->
+          assert {:ok, ^wt_path} =
+                   WorktreeManager.create_worktree_for_agent(
+                     agent_id,
+                     tmp_dir,
+                     wt_path,
+                     spec,
+                     meta,
+                     self()
+                   )
+        end)
+
+      refute log =~ "leftover branch"
+      refute log =~ "Failed to delete branch"
+    end
+
     test "reclaims the worktree when the agent process exits normally", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
@@ -285,6 +319,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # Kill proc B so the monitor-driven cleanup reclaims the worktree and
       # the registration does not leak into later tests.
       Process.exit(proc_b, :kill)
+
       wait_until(fn ->
         not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
       end)
@@ -385,6 +420,70 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
         assert File.exists?(Path.join(wt_path, "init-marker.txt"))
       end
+    end
+  end
+
+  # ==========================================================================
+  # Worktrees.delete_branch_tolerant/2 — the tolerant branch-delete helper
+  # ==========================================================================
+  describe "delete_branch_tolerant/2" do
+    test "treats a missing branch as a silent no-op", %{tmp_dir: tmp_dir} do
+      refute Git.branch_exists?(tmp_dir, "evogit-agent-T99-A99")
+
+      # `git branch -D` on a non-existent branch exits 1 with
+      # "error: branch '<name>' not found" — the goal ("branch is gone") is
+      # already met, so the tolerant helper must return :ok, not an error.
+      assert :ok = Worktrees.delete_branch_tolerant(tmp_dir, "evogit-agent-T99-A99")
+    end
+
+    test "returns {:error, output} for a genuine failure (branch checked out)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      File.mkdir_p!(Path.dirname(wt_path))
+      {:ok, _} = Git.add_worktree(tmp_dir, wt_path, base_sha, "evogit-agent-T1-A1")
+
+      # The branch is checked out in a live worktree — `git branch -D` refuses
+      # (wording varies across git versions: "checked out at ..." or "used by
+      # worktree at ..."). The output does NOT contain "not found", so this is
+      # a genuine failure the helper must surface as {:error, output}.
+      assert {:error, output} = Worktrees.delete_branch_tolerant(tmp_dir, "evogit-agent-T1-A1")
+      assert output =~ "branch"
+      refute output =~ "not found"
+    end
+  end
+
+  # ==========================================================================
+  # Worktrees.prepare_new_worktree/5 — genuine delete failure still warns
+  # ==========================================================================
+  describe "prepare_new_worktree/5 leftover cleanup" do
+    test "logs a warning when a genuine branch-deletion failure occurs", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # A live worktree holds the agent branch checked out — deleting it is a
+      # GENUINE failure ("checked out", not "not found"), so the tolerant
+      # helper surfaces {:error, output} and destroy_leftovers/3 must warn.
+      wt1 = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      File.mkdir_p!(Path.dirname(wt1))
+      {:ok, _} = Git.add_worktree(tmp_dir, wt1, base_sha, "evogit-agent-T1-A1")
+
+      # A second agent sharing the same branch name (same task/task-local id)
+      # but a different worktree path — its leftover cleanup targets a branch
+      # that is still checked out in wt1, so the delete genuinely fails.
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt2 = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1_retry")
+
+      log =
+        capture_log(fn ->
+          # The create itself legitimately fails (the branch is still checked
+          # out in wt1) — the assertion that matters is the warning below.
+          assert {:error, _} = Worktrees.prepare_new_worktree(agent_id, tmp_dir, wt2, spec, meta)
+        end)
+
+      assert log =~ "Could not remove leftover branch"
     end
   end
 
