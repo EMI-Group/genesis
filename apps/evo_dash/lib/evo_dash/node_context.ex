@@ -408,6 +408,19 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Force-kills a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.force_kill_task/2`. Immediately stops the
+  task and all of its agents, discarding all progress. Returns `:ok` on
+  success or `{:error, reason}` on failure. Can be used to escalate a task
+  that is already in the `:cancelling` state.
+  """
+  @spec force_kill_task(node(), String.t()) :: :ok | {:error, term()}
+  def force_kill_task(node, task_id) do
+    EvoGit.RemoteNode.force_kill_task(node, task_id)
+  end
+
+  @doc """
   Deletes a task on the given node.
 
   Delegates to `EvoGit.RemoteNode.delete_task/2`. Returns `:ok` on success

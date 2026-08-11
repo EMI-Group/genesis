@@ -63,7 +63,7 @@ defmodule EvoDashWeb.Helpers do
 
   @doc """
   Returns badge class string for task status (`:running`, `:completed`, `:failed`,
-  `:cancelled`, `:pending`).
+  `:cancelled`, `:cancelling`, `:pending`).
   """
   def task_status_badge(:running),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
@@ -79,6 +79,9 @@ defmodule EvoDashWeb.Helpers do
 
   def task_status_badge(:cancelled),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
+  def task_status_badge(:cancelling),
+    do: "bg-violet-500/10 text-violet-500 rounded-full flex items-center justify-center"
 
   def task_status_badge(_),
     do: "bg-base-200 text-base-content/70 rounded-full flex items-center justify-center"

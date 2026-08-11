@@ -152,7 +152,7 @@ defmodule EvoDashWeb.Layouts do
                 </div>
                 <!-- Tasks in this group -->
                 <%= for task <- tasks do %>
-                  <% is_running = task.status in [:running, :pending, :finalizing] %>
+                  <% is_running = task.status in [:running, :pending, :finalizing, :cancelling] %>
                   <.link
                     navigate={if is_running, do: with_node_param(~p"/agents", @current_node_id), else: with_node_param(~p"/review/#{task.id}", @current_node_id)}
                     data-sidebar-task-link
@@ -283,6 +283,7 @@ defmodule EvoDashWeb.Layouts do
   # Returns a Tailwind color class for a task status dot
   defp task_status_dot_color(%{status: :running}), do: "bg-green-500"
   defp task_status_dot_color(%{status: :finalizing}), do: "bg-orange-500"
+  defp task_status_dot_color(%{status: :cancelling}), do: "bg-violet-500"
   defp task_status_dot_color(%{status: :pending}), do: "bg-amber-500"
   defp task_status_dot_color(%{status: :completed}), do: "bg-blue-500"
   defp task_status_dot_color(%{status: :failed}), do: "bg-red-500"
@@ -313,14 +314,14 @@ defmodule EvoDashWeb.Layouts do
     sorted_groups =
       Enum.map(sorted_named, fn {name, tasks} ->
         {running, pending} =
-          Enum.split_with(tasks, &(&1.status in [:running, :pending, :finalizing]))
+          Enum.split_with(tasks, &(&1.status in [:running, :pending, :finalizing, :cancelling]))
 
         {name, running ++ pending}
       end)
 
     if others != [] do
       {running, pending} =
-        Enum.split_with(others, &(&1.status in [:running, :pending, :finalizing]))
+        Enum.split_with(others, &(&1.status in [:running, :pending, :finalizing, :cancelling]))
 
       [{"Other", running ++ pending} | sorted_groups]
     else
