@@ -32,7 +32,7 @@ The "spatial glue" for SSH Remote Development node-aware navigation. Provides on
 **Debounced task reload** (trailing-edge, 300ms): `handle_task_info/2` no longer reloads synchronously on every broadcast — it calls `debounce_task_reload/1`, which coalesces broadcast bursts into a single reload:
 - `debounce_task_reload/1` — if `Map.get(socket.assigns, :tasks_reload_pending, false)` is truthy, the intermediate broadcast is **dropped** (socket returned unchanged); otherwise it schedules `Process.send_after(self(), :node_aware_reload_tasks, 300)` and sets `:tasks_reload_pending` to `true`.
 - `reload_tasks/1` — runs `load_running_and_pending_tasks/1` then clears `:tasks_reload_pending` to `false`. **LiveViews** handle the `:node_aware_reload_tasks` message with a `handle_info(:node_aware_reload_tasks, socket)` clause calling `{:noreply, NodeAware.reload_tasks(socket)}`.
-- `clear_task_reload_pending/1` — clears `:tasks_reload_pending` without reloading (used by DashboardLive at the end of its custom reload clause).
+- `clear_task_reload_pending/1` — clears `:tasks_reload_pending` without reloading (used by ProjectsLive at the end of its custom reload clause).
 
 **`assign_node/2` dedup guard** (`:tasks_node_loaded`): After the node-context `case` assigns `:current_node`/`:current_node_id`/`:current_node_name`, `assign_node/2` computes `context = {socket.assigns[:current_node_id], socket.assigns[:current_node]}`. If `Map.get(socket.assigns, :tasks_node_loaded) == context`, the socket is returned **without** reloading the sidebar; otherwise it reloads (`load_running_and_pending_tasks/1`) AND sets `:tasks_node_loaded` to `context`. Node switches (local↔remote, pending→connected) still reload since the context tuple differs. `on_mount` seeds `:tasks_node_loaded` with `{nil, node()}` (matching the local context that `assign_node/2` computes on first `handle_params`), which kills the previous mount double-fetch.
 
@@ -50,7 +50,7 @@ The "spatial glue" for SSH Remote Development node-aware navigation. Provides on
 | `handle_task_info/2` | Handles task PubSub messages via the trailing-edge 300ms debounce (`debounce_task_reload/1`, message `:node_aware_reload_tasks`). |
 | `debounce_task_reload/1` | Trailing-edge debounce — drops broadcasts while `:tasks_reload_pending` is truthy, otherwise schedules `:node_aware_reload_tasks` after 300ms and sets the flag. |
 | `reload_tasks/1` | Executes the debounced reload (`load_running_and_pending_tasks/1`) and clears `:tasks_reload_pending`. LiveViews call this from their `handle_info(:node_aware_reload_tasks, socket)` clause. |
-| `clear_task_reload_pending/1` | Clears `:tasks_reload_pending` without reloading (DashboardLive uses it at the end of its custom reload clause). |
+| `clear_task_reload_pending/1` | Clears `:tasks_reload_pending` without reloading (ProjectsLive uses it at the end of its custom reload clause). |
 
 ## Constraints
 
