@@ -14,6 +14,7 @@ defmodule EvoGit.Adapters.Git do
   | `:enoent` | the repository path does not exist |
   | `:no_note` | `git notes show` found no note for the object (get_note) |
   | `:invalid_json` | the note content is not valid JSON metadata (get_note) |
+  | `:temp_file` | writing the temporary `-F` content file failed (`add_note/4`, `commit/2`) |
 
   **Documented exceptions** (these are questions or always-successful lookups and
   deliberately keep their own shapes):
@@ -23,6 +24,26 @@ defmodule EvoGit.Adapters.Git do
   * `origin_default_branch/1` always returns `{:ok, branch}` (falls back to `"main"`).
   * `commit/2` treats "nothing to commit, working tree clean" (exit 1) as success
     `{:ok, _}`.
+
+  ## Notes for agents — Windows argv quoting
+
+  Never pass arbitrary user/LLM-generated content (commit messages, note
+  content) as a `-m`-style argv element. On Windows the command line is
+  re-parsed by git-for-Windows' MSYS2 runtime, which mangles embedded double
+  quotes: a quoted argument splits into multiple argv tokens, and a token
+  starting with `>` is then treated as an option switch ("error: unknown
+  switch `>'", "too many arguments"). Observed in production with `git notes
+  add -m <pretty-printed JSON>` (always contains quotes, newlines, and often
+  `>`/`->`).
+
+  `add_note/4` and `commit/2` therefore write their content to a unique
+  temporary file (in `System.tmp_dir!()`, forward-slash path on Windows) and
+  pass `-F <file>` instead of `-m` — both options apply the same
+  `whitespace`-style cleanup for non-edited messages, so semantics are
+  identical. The temp file is always deleted via `try/after` (not
+  `try/rescue` — nothing is swallowed). When hardening other functions, keep
+  this rule in mind: content-bearing args go through `-F`, never through
+  `-m`-style argv.
   """
 
   @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
@@ -117,6 +138,22 @@ defmodule EvoGit.Adapters.Git do
     run(["add", files], path)
   end
 
+  @doc """
+  Commits staged changes with the given message.
+
+  The message (plus the optional co-author trailer) is written to a unique
+  temporary file and passed to git via `-F` instead of `-m` — arbitrary
+  LLM-generated content must never be passed as a `-m` argv element on Windows
+  (MSYS2 re-parsing splits embedded quotes; see the module "## Notes for
+  agents" section). `git commit -F <file>` and `-m <msg>` share the same
+  `whitespace` cleanup for non-edited messages, so semantics are identical.
+
+  Returns `{:ok, output}` on success or `{:error, {tag, output}}` on failure
+  (see the module "## Return contract" section). A
+  `{:error, {:temp_file, reason}}` is returned if the temporary message file
+  cannot be written; the temp file is always deleted (try/after), even on git
+  failure.
+  """
   def commit(path, message) when is_binary(path) and is_binary(message) do
     trailer =
       if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
@@ -124,7 +161,19 @@ defmodule EvoGit.Adapters.Git do
         else: ""
 
     full_message = message <> trailer
-    run(["commit", "-m", full_message], path)
+    temp_path = temp_file_path(".txt")
+
+    try do
+      case File.write(temp_path, full_message) do
+        :ok ->
+          run(["commit", "-F", normalize_temp_path(temp_path)], path)
+
+        {:error, reason} ->
+          {:error, {:temp_file, to_string(:file.format_error(reason))}}
+      end
+    after
+      File.rm(temp_path)
+    end
   end
 
   @doc """
@@ -326,12 +375,40 @@ defmodule EvoGit.Adapters.Git do
   subcommand so that `--ref` is recognised by git.
 
   The force option (if true) adds `-f` after the `add` subcommand.
+
+  The note content is written to a unique temporary file and passed via `-F`
+  instead of `-m` — see the module "## Notes for agents" section for why
+  arbitrary content must never be passed as a `-m` argv element (Windows/MSYS2
+  argv re-parsing). `git notes -F` applies the same cleanup as `-m` (lines
+  starting with `#` and surplus empty lines are stripped).
+
+  Returns `{:ok, output}` on success or `{:error, {tag, output}}` on failure
+  (see the module "## Return contract" section). A
+  `{:error, {:temp_file, reason}}` is returned if the temporary note file
+  cannot be written; the temp file is always deleted (try/after), even on git
+  failure.
   """
   def add_note(path, object, message, args \\ [], force \\ false)
       when is_binary(path) and is_binary(object) and is_binary(message) and
              is_list(args) and is_boolean(force) do
     force_flag = if force, do: ["-f"], else: []
-    run(["notes" | args] ++ ["add" | force_flag] ++ ["-m", message, object], path)
+    temp_path = temp_file_path(".json")
+
+    try do
+      case File.write(temp_path, message) do
+        :ok ->
+          run(
+            ["notes" | args] ++
+              ["add" | force_flag] ++ ["-F", normalize_temp_path(temp_path), object],
+            path
+          )
+
+        {:error, reason} ->
+          {:error, {:temp_file, to_string(:file.format_error(reason))}}
+      end
+    after
+      File.rm(temp_path)
+    end
   end
 
   @doc """
@@ -660,5 +737,22 @@ defmodule EvoGit.Adapters.Git do
       _ ->
         "unknown"
     end
+  end
+
+  # Generates a unique temporary file path for `-F` content files (note
+  # messages, commit messages). Content-bearing args must be passed via a temp
+  # file, never as a `-m`-style argv element (see "## Notes for agents" in the
+  # moduledoc). The file is deleted by the caller's `try/after`.
+  defp temp_file_path(extension) do
+    Path.join(
+      System.tmp_dir!(),
+      "genesis_git_msg_#{System.unique_integer([:positive, :monotonic])}#{extension}"
+    )
+  end
+
+  # MSYS2 (git-for-Windows) mangles backslashes in argv elements; forward
+  # slashes in `C:/Users/...` paths are safe.
+  defp normalize_temp_path(path) do
+    if EvoGit.Platform.windows?(), do: String.replace(path, "\\", "/"), else: path
   end
 end
