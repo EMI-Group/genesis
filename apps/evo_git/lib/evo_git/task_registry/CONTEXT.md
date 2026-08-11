@@ -46,6 +46,27 @@ None — leaf directory (all modules at this level).
 
 **TaskExecutor structure:** `start_task` (`:206-237`) does `Task.Supervisor.async_nolink(EvoGit.TaskSupervisor, TaskExecutor, :execute_task, [task_type, opts, task_id])` (`:208-213`). The wrapper process IS the executor — `TaskExecutor.execute_task/3` (`task_executor.ex:20-71`) registers itself in `EvoGit.TaskRegistry.ProcessRegistry` (`:21,79-81`) and calls the runtime phase directly (Genesis.run `:24`, Evolution.run `:40`, SkillExtraction.run `:70`). **The wrapper never writes statuses** — TaskRegistry's GenServer performs all writes from `{ref, result}` / `:DOWN` / PubSub `{:task_status, ...}` / `update_status` casts; `handle_update_status` (`:483-558`) writes via `EvoGit.Store.update_task_columns` (`:543`) and deletes terminal tasks from `task_refs` (`:545-549`).
 
+## Graceful Cancellation & Force Kill
+
+**New task status `:cancelling`** — the graceful-cancel state, deliberately **NON-terminal**: the `task_refs` entry stays, `finished_at` stays nil, and the lease stays valid (the heartbeat renews it). Touched in:
+- `Store.Codec.@known_atoms` (`store/codec.ex:217-219`) — `:cancelling` is a whitelisted status atom; the `task_info.ex:31` typespec includes it.
+- `Store.select_finished_task_ids` (`store.ex:610-622`) — SQL `status NOT IN ('running','pending','cancelling')`, so `clear_finished_tasks` never deletes an in-flight cancelling task; `:finalizing` still counts as finished (cleanup target).
+- `Store.select_running_lease_info` (`store.ex:658-668`) — SQL `status IN ('running','finalizing','cancelling')`, so startup reconciliation can resolve orphaned cancelling tasks.
+- **Startup reconciliation** (`task_registry.ex:251-288`) — `:cancelling` → `:cancelled` ("Runtime restarted during task cancellation") alongside `:finalizing` → `:failed`, both via synchronous `handle_update_status/6` with `{:startup_reconcile, ...}` caller info (a runtime that died mid-cancel must not leave a task `:cancelling` forever).
+- **Heartbeat lease renewal** (`task_registry.ex:1166-1171`) — `[:running, :pending, :cancelling]`, so a long graceful cancel keeps its lease while the wrapper is still alive.
+- **`{:task_status, :finalizing}` handler** (`task_registry.ex:959-1007`) — a `:cancelling` task ignores phase-finalization broadcasts (keeps the more informative `:cancelling`; the final mapping happens at result time).
+- **`handle_update_status/6` final-result force-mapping** (`task_registry.ex:731-740`) — stored `:cancelling` + incoming `:completed | :failed` → persisted `:cancelled`; result/usage/archive flow through untouched (never nil'd), so the agent's final summary is preserved.
+
+**`TaskRegistry.cancel_task/1` is now GRACEFUL** (public `:92-94`, handler `:457-515`):
+- `:pending` → immediate `:cancelled` write (finished_at set, lease cleared); the `start_task` guard refuses already-`:cancelled`/`:cancelling` tasks with `{:error, :cancelled}` (`:311-351`).
+- `:running` → `handle_update_status(..., :cancelling, ...)` (broadcasts `{:tasks_updated}`; non-terminal so finished_at/lease/task_refs stay) then `AgentScheduler.begin_graceful_cancel(task_id)` (cross-GenServer call, catch `:exit` guarded — a down scheduler leaves the task `:cancelling` for force_kill or restart reconciliation).
+- `:cancelling` → `:ok` idempotent (does NOT re-send the cancel message — agents already hold it).
+- terminal/missing → `{:error, :not_running}` / `{:error, :not_found}`.
+
+**`TaskRegistry.force_kill_task/1`** (public `:110-112`, handler `:389-454`) — the old brutal cancel, renamed: status gate `:running | :cancelling` (escalation path for a hung graceful cancel) → `AgentScheduler.force_kill_task_agents(pid)` (reverse-depth `:brutal_kill` cascade, catch `:exit`) + `Task.shutdown(ref, :brutal_kill)` + direct terminal write (`:cancelled`, finished_at set, lease nil, result nil) + `clear_cancelling_marker(task_id)`.
+
+**Marker cleanup** — `clear_cancelling_marker/1` (`task_registry.ex:832-858`): prefers `AgentScheduler.clear_cancelling_task/1` (serialized GenServer, can't race `begin_graceful_cancel`), falls back to a direct `:ets.delete(:evogit_cancelling_tasks, task_id)` when the scheduler is down (TaskRegistry starts BEFORE the AgentScheduler in the supervision tree, e.g. during startup reconciliation). Called from every terminal transition (`handle_update_status/6` `:800`, the `{:task_status, ...}` handler `:1001`, and force_kill `:422`).
+
 ## SQL-Lowering Opportunities (read-only analysis findings)
 
 **Cleanup (`cleanup.ex`) — the primary opportunity:**
