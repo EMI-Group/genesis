@@ -98,9 +98,10 @@ defmodule EvoGit.TaskRegistry do
 
   Kills every agent of the task (via `AgentScheduler.force_kill_task_agents/1`,
   reverse-depth cascade with `:brutal_kill`), then brutal-kills the wrapper
-  process and persists the task as `:cancelled` with finished_at set and the
-  lease cleared. Works from both `:running` (normal force-kill) and
-  `:cancelling` (escalation path — a graceful cancel that hangs).
+  process and persists the task as `:failed` with finished_at set, the lease
+  cleared, and no result (result nil). Works from both `:running` (normal
+  force-kill) and `:cancelling` (escalation path — a graceful cancel that
+  hangs).
 
   Returns `:ok` on success, `{:error, :not_found}` for an unknown task, or
   `{:error, :not_running}` for other states.
@@ -417,7 +418,7 @@ defmodule EvoGit.TaskRegistry do
                 Task.shutdown(task_ref, :brutal_kill)
 
                 # Clear the graceful-cancel marker (the task is now terminally
-                # :cancelled via this direct write, bypassing
+                # :failed via this direct write, bypassing
                 # handle_update_status's cleanup hook).
                 clear_cancelling_marker(task_id)
 
@@ -425,8 +426,10 @@ defmodule EvoGit.TaskRegistry do
                 # result is always nil (results are written only on terminal
                 # transitions), so writing result: nil preserves the old
                 # put_task semantics. `ref` is runtime-only and never persisted.
+                # A force-killed task is persisted as :failed (never :cancelled)
+                # — "cancelled" means ONLY graceful cancellation.
                 EvoGit.Store.update_task_columns(state.task_store, task_id,
-                  status: :cancelled,
+                  status: :failed,
                   finished_at: DateTime.utc_now(),
                   lease_expires_at: nil,
                   result: nil
