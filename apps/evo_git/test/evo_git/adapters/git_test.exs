@@ -179,6 +179,59 @@ defmodule EvoGit.Adapters.GitTest do
 
       assert {:error, {:no_note, _}} = Git.get_note(tmp_dir, commit_sha)
     end
+
+    test "hostile content round-trips exactly through add_note/get_note", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      # Realistic mini-JSON metadata blob: double quotes, newlines, and `>`
+      # characters — all of which break Windows command-line tokenization when
+      # passed via `git notes add -m <message>` (quoted args get split into
+      # "unknown switch `>'" / "too many arguments").
+      hostile_json =
+        ~S({"agent_id": "a1", "objective": "Fix '>' redirect handling",
+"result": "line one\nline two > done",
+"note": "contains \"quotes\""})
+
+      assert {:ok, _} = Git.add_note(tmp_dir, commit_sha, hostile_json)
+
+      assert {:ok, decoded_map} = Git.get_note(tmp_dir, commit_sha)
+      assert decoded_map == Jason.decode!(hostile_json)
+
+      # show_note returns raw content; be tolerant of a possible trailing
+      # newline (the -F file path may preserve file content as-is).
+      assert {:ok, note_content} = Git.show_note(tmp_dir, commit_sha)
+      assert String.trim(note_content) == String.trim(hostile_json)
+    end
+
+    test "force overwrite with different hostile content", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      hostile_json_1 =
+        ~S({"agent_id": "a1", "objective": "Fix '>' redirect handling",
+"result": "line one\nline two > done",
+"note": "contains \"quotes\""})
+
+      hostile_json_2 =
+        ~S({"agent_id": "a2", "objective": "Handle \"nested\" > redirects",
+"result": "second result\n> done",
+"note": "other \"quotes\""})
+
+      assert {:ok, _} = Git.add_note(tmp_dir, commit_sha, hostile_json_1)
+      assert {:ok, _} = Git.add_note(tmp_dir, commit_sha, hostile_json_2, [], true)
+
+      assert {:ok, decoded_map} = Git.get_note(tmp_dir, commit_sha)
+      assert decoded_map == Jason.decode!(hostile_json_2)
+    end
   end
 
   describe "update_ref/3 and delete_ref/2" do
