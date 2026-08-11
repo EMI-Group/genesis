@@ -102,7 +102,7 @@ name = "Legacy Project"
 ### config.toml Structure
 ```toml
 [scheduler]
-max_concurrency = 3          # Max concurrent LLM calls
+default_llm_max_concurrency = 3   # Default per-LLM concurrency when a model profile doesn't specify its own
 max_tool_concurrency = 2     # Max concurrent tool executions
 agent_max_retries = 3        # Crash-retry limit per agent
 max_agent_depth = 8          # Max subagent recursion depth

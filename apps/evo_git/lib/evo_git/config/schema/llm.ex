@@ -110,7 +110,7 @@ defmodule EvoGit.Config.Schema.LLM do
 
       iex> Schema.LLM.build_legacy_default_profile(%{
       ...>   llm: %{model: "anthropic:claude", temperature: 0.7},
-      ...>   scheduler: %{max_concurrency: 5}
+      ...>   scheduler: %{default_llm_max_concurrency: 5}
       ...> })
       %{id: "default", model: "anthropic:claude", concurrency: 5, temperature: 0.7}
   """
@@ -120,7 +120,7 @@ defmodule EvoGit.Config.Schema.LLM do
     llm = if is_map(raw_llm), do: raw_llm, else: %{}
     raw_scheduler = Map.get(config, :scheduler, %{})
     scheduler = if is_map(raw_scheduler), do: raw_scheduler, else: %{}
-    concurrency = Map.get(scheduler, :max_concurrency, 3)
+    concurrency = Map.get(scheduler, :default_llm_max_concurrency, 3)
 
     %{
       id: "default",
@@ -210,7 +210,10 @@ defmodule EvoGit.Config.Schema.LLM do
     []
     |> maybe_param(:temperature, Map.get(profile, :temperature))
     |> maybe_param(:max_tokens, Map.get(profile, :max_tokens))
-    |> maybe_param(:reasoning_effort, profile |> Map.get(:reasoning_effort) |> convert_reasoning_effort())
+    |> maybe_param(
+      :reasoning_effort,
+      profile |> Map.get(:reasoning_effort) |> convert_reasoning_effort()
+    )
     |> maybe_param(:top_p, Map.get(profile, :top_p))
     |> maybe_param(:top_k, Map.get(profile, :top_k))
     |> maybe_param(:frequency_penalty, Map.get(profile, :frequency_penalty))
