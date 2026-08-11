@@ -42,7 +42,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 
 ## Native Directory Picker — REMOVED (moved to the Elixir backend)
 
-The Tauri-based native directory picker has been **removed** from the desktop shell. The dashboard's Browse buttons now use a native picker implemented **on the Elixir backend with Erlang's `:wx`**: the JS `DirectoryPicker` hook pushes a `"directory_pick"` LiveView event → `DashboardLive` (local node only) → `EvoDash.DirectoryPicker` (a GenServer in `apps/evo_dash` that serializes wx dialog usage) runs `wxDirDialog` → the result is pushed back to the client as `picker_result:<picker_id>`. See root `CONTEXT.md` → "Native Directory Picker (wx backend)" for the full flow.
+The Tauri-based native directory picker has been **removed** from the desktop shell. The dashboard's Browse buttons now use a native picker implemented **on the Elixir backend with Erlang's `:wx`**: the JS `DirectoryPicker` hook pushes a `"directory_pick"` LiveView event → `ProjectsLive` (local node only) → `EvoDash.DirectoryPicker` (a GenServer in `apps/evo_dash` that serializes wx dialog usage) runs `wxDirDialog` → the result is pushed back to the client as `picker_result:<picker_id>`. See root `CONTEXT.md` → "Native Directory Picker (wx backend)" for the full flow.
 
 **Removed in this change:**
 
