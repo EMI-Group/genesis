@@ -397,6 +397,51 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  describe "review button" do
+    test "renders a Review button for a cancelled task with a branch result", %{conn: conn} do
+      id =
+        insert_fixture!(
+          status: :cancelled,
+          result:
+            {:ok,
+             %{
+               branch_name: "evogit/cancelled-branch",
+               commit_sha: "deadbeef",
+               result: "summary"
+             }}
+        )
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      assert html =~ ~s(href="/review/#{id}")
+      assert html =~ "Review"
+    end
+
+    test "renders a Review button for a cancelled task with a no_changes result", %{conn: conn} do
+      id = insert_fixture!(status: :cancelled, result: {:ok, %{no_changes: true}})
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      assert html =~ ~s(href="/review/#{id}")
+      assert html =~ "Review"
+    end
+
+    test "does not render a Review button for failed, cancelling, running, or pending tasks", %{
+      conn: conn
+    } do
+      # The failed task uses the force-killed shape: result nil.
+      insert_fixture!(status: :failed, result: nil, opts: [prompt: "failed one"])
+      insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling one"])
+      insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running one"])
+      insert_fixture!(status: :pending, finished_at: nil, opts: [prompt: "pending one"])
+
+      {:ok, _view, html} = live(conn, ~p"/tasks")
+
+      # No task card may link to the review page.
+      refute html =~ ~r{href="/review/"}
+    end
+  end
+
   describe "cancel task action" do
     test "Cancel button renders only for pending and running tasks", %{conn: conn} do
       pending_id =
@@ -605,7 +650,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "open_force_kill_modal", %{"task_id" => id})
       render_click(view, "confirm_force_kill_task", %{})
 
-      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled
+      # Backend contract: force kill ⇒ :failed with result nil. The evo_git
+      # persistence change lands in a parallel workstream, so this assertion
+      # may fail until then — do NOT revert it.
+      assert EvoGit.Store.get_task(EvoGit.Store, id).status == :failed
       refute Process.alive?(wrapper)
     end
 
