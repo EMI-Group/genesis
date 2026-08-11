@@ -1,25 +1,22 @@
 defmodule EvoGit.AgentScheduler.Worktrees do
   @moduledoc """
-  Worktree lifecycle management for the AgentScheduler.
+  Worktree creation pipeline and preparation helpers.
 
-  Handles worktree creation, preparation, initialization scripts,
-  cleanup, and orphaned branch management. All functions operate
-  on the scheduler state or are pure helpers that take explicit
-  parameters.
+  The I/O pipeline lives here so `EvoGit.AgentScheduler.WorktreeManager` can
+  offload worktree creation to a spawned task (keeping its message loop
+  responsive for `:DOWN`/cleanup messages). Functions are pure helpers that
+  take explicit parameters — no scheduler state is involved.
   """
 
   require Logger
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
-  alias EvoGit.AgentScheduler.SchedMeta
-  alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
-  alias EvoGit.AgentScheduler.WorktreeManager
   alias EvoGit.Platform
   alias EvoGit.Powershell
   alias EvoGit.ProjectConfig
 
-  # --- Initialization ---
+  # --- Paths and Naming ---
 
   @doc """
   Returns the path to the workers directory for a given repo root.
@@ -28,96 +25,157 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   def workers_dir(repo_root), do: Path.join(repo_root, ".genesis/workers")
 
   @doc """
-  Ensures the worktree pool is initialized for the given repo path.
-
-  Handles the following cases:
-  - Already initialized with same repo → no-op
-  - Already initialized with different repo → teardown and reinitialize
-  - Not initialized with no path → raises
-  - Not initialized with path → initialize
+  Single source of truth for the agent branch-name derivation.
   """
-  @spec ensure_initialized(State.t(), String.t() | nil) :: State.t()
+  @spec branch_name(pos_integer(), pos_integer()) :: String.t()
+  def branch_name(task_number, task_local_id),
+    do: "evogit-agent-T#{task_number}-A#{task_local_id}"
 
-  def ensure_initialized(%State{initialized: true} = state), do: state
-
-  def ensure_initialized(%State{initialized: true} = state, new_repo_path)
-      when is_binary(new_repo_path) do
-    new_root = Path.expand(new_repo_path)
-
-    if Map.has_key?(state.initialized_repos, new_root) do
-      state
-    else
-      ensure_initialized_new_repo(state, new_root, new_repo_path)
-    end
-  end
-
-  def ensure_initialized(%State{initialized: true} = state, nil), do: state
-
-  def ensure_initialized(_state, nil) do
-    raise ArgumentError, "repo_path is required for initial AgentScheduler initialization"
-  end
-
-  def ensure_initialized(%State{initialized: false} = state, repo_path) do
-    repo_root = Path.expand(repo_path)
-    do_initialize(state, repo_root)
-  end
-
-  defp ensure_initialized_new_repo(%State{initialized: true} = state, new_root, new_repo_path) do
-    # If agents are still running, don't tear down worktrees — just register
-    # the new repo path in initialized_repos and create the worker directory.
-    # Per-agent repo_root resolution (via Dispatch.resolve_agent_repo_root/2)
-    # derives the correct root from spec data, so we don't need a global
-    # state.repo_root.
-    if map_size(state.ref_to_agent) > 0 do
-      initialized_keys = Map.keys(state.initialized_repos)
-
-      Logger.warning(fn ->
-        "AgentScheduler: Concurrent task targets #{new_root} while " <>
-          "#{map_size(state.ref_to_agent)} agent(s) still running (initialized repos: #{inspect(initialized_keys)}) — " <>
-          "creating worker directory for new repo"
-      end)
-
-      WorktreeManager.init_worktrees(new_root)
-
-      %State{state | initialized_repos: Map.put(state.initialized_repos, new_root, true)}
-    else
-      Logger.info(fn ->
-        "AgentScheduler: Repo path changed (initialized repos: #{inspect(Map.keys(state.initialized_repos))}), reinitializing for #{new_repo_path}..."
-      end)
-
-      state = teardown_worktrees(state, new_root)
-      do_initialize(state, new_root)
-    end
-  end
-
-  defp do_initialize(%State{} = state, repo_root) do
-    worker_base = workers_dir(repo_root)
-
-    Logger.info("AgentScheduler: Initializing worktree directory at #{worker_base}")
-    WorktreeManager.init_worktrees(repo_root)
-
-    %State{
-      state
-      | initialized: true,
-        initialized_repos: Map.put(state.initialized_repos, repo_root, true)
-    }
-  end
+  # --- Worktree Creation Pipeline ---
 
   @doc """
-  Tears down all worktrees, marking the scheduler as uninitialized.
+  Creates a FRESH worktree for an agent and prepares it for execution.
 
-  Removes the worker base directory, prunes worktrees, and resets
-  the initialized flag.
+  Called by `EvoGit.AgentScheduler.WorktreeManager`'s offloaded create task.
+  Every call creates fresh — there is no fast/reuse path, no `File.exists?`
+  check, no `newly_created` flag. Leftovers from a previous run (crash-retry
+  race) are destroyed first.
+
+  Returns `{:ok, worktree_path}` on success or `{:error, reason}`. Git error
+  tuples are handled explicitly — this function never raises.
   """
-  @spec teardown_worktrees(State.t(), String.t()) :: State.t()
+  @spec prepare_new_worktree(
+          pos_integer(),
+          String.t(),
+          String.t(),
+          EvoGit.AgentSpec.t(),
+          EvoGit.AgentScheduler.SchedMeta.t()
+        ) :: {:ok, String.t()} | {:error, term()}
+  def prepare_new_worktree(agent_id, repo_root, worktree_path, spec, meta) do
+    with {:ok, agent_state} <- Store.get_agent_state(agent_id) do
+      branch_name = branch_name(meta.task_number, agent_state.task_local_id)
 
-  def teardown_worktrees(%State{} = state, repo_root) when is_binary(repo_root) do
-    WorktreeManager.teardown_worktrees(repo_root)
-    %State{state | initialized: false}
+      # Destroy leftovers from a previous run (crash-retry race — the old
+      # worktree dir/branch may still exist).
+      destroy_leftovers(worktree_path, repo_root, branch_name)
+
+      # For subagents, use the parent's worktree as the CoW source; for
+      # top-level agents, use the repo root.
+      source_path = resolve_source_path(repo_root, meta)
+
+      with :ok <- create_worktree(agent_id, repo_root, worktree_path, spec, branch_name, source_path),
+           {:ok, _commit_sha} <- assign_and_prepare_worktree(agent_id, worktree_path) do
+        # Run the worktree init script only for the primary repo (foreign
+        # repos are independent and should not inherit the primary repo's
+        # init script).
+        if spec.repo_id == "primary" do
+          run_init_script(repo_root, worktree_path, source_worktree_path: source_path)
+        end
+
+        {:ok, worktree_path}
+      else
+        {:error, {:worktree_create_failed, msg}} ->
+          Logger.error("AgentScheduler: Failed to create worktree #{worktree_path}: #{msg}")
+          {:error, {:worktree_create_failed, msg}}
+
+        {:error, {:worktree_prepare_failed, _} = error} ->
+          Logger.error(
+            "AgentScheduler: Failed to prepare worktree #{worktree_path}: #{inspect(error)}"
+          )
+
+          error
+      end
+    else
+      :error ->
+        {:error, {:agent_state_missing, agent_id}}
+    end
   end
 
-  @spec teardown_worktrees(State.t()) :: State.t()
-  def teardown_worktrees(%State{} = state), do: %State{state | initialized: false}
+  defp create_worktree(agent_id, repo_root, worktree_path, spec, branch_name, source_path) do
+    commit_sha = spec.phylo_node.current_commit
+
+    cow_result =
+      if EvoGit.Adapters.CowWorktree.enabled?() do
+        EvoGit.Adapters.CowWorktree.create_worktree(
+          repo_root,
+          worktree_path,
+          commit_sha,
+          branch_name,
+          source_path
+        )
+      else
+        {:fallback, :disabled}
+      end
+
+    case cow_result do
+      :ok ->
+        Logger.info(
+          "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} " <>
+            "on branch #{branch_name} via CoW"
+        )
+
+        :ok
+
+      {:fallback, reason} ->
+        Logger.debug("AgentScheduler: Falling back to standard worktree creation (#{reason})")
+
+        case Git.add_worktree(repo_root, worktree_path, commit_sha, branch_name) do
+          {:ok, _} ->
+            Logger.info(
+              "AgentScheduler: Created worktree #{worktree_path} for agent #{agent_id} " <>
+                "on branch #{branch_name}"
+            )
+
+            :ok
+
+          {:error, {_tag, msg}} ->
+            {:error, {:worktree_create_failed, msg}}
+        end
+    end
+  end
+
+  defp destroy_leftovers(worktree_path, repo_root, branch_name) do
+    case File.rm_rf(worktree_path) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason, path} ->
+        Logger.warning(
+          "AgentScheduler: Could not remove leftover worktree #{worktree_path}: " <>
+            "#{inspect(reason)} at #{path}"
+        )
+    end
+
+    Git.prune_worktrees(repo_root)
+
+    case Git.delete_branch(repo_root, branch_name) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {_tag, output}} ->
+        Logger.warning(
+          "AgentScheduler: Could not remove leftover branch #{branch_name}: #{inspect(output)}"
+        )
+    end
+
+    :ok
+  end
+
+  defp resolve_source_path(agent_repo_root, meta) do
+    # For subagents: use the parent's worktree path (already has most files
+    # at same content). For top-level agents: use the main repo root.
+    if meta.parent_id do
+      case Store.get_sched_meta(meta.parent_id) do
+        {:ok, parent_meta} when parent_meta.worktree != nil ->
+          parent_meta.worktree
+
+        _ ->
+          agent_repo_root
+      end
+    else
+      agent_repo_root
+    end
+  end
 
   # --- Worktree Assignment and Preparation ---
 
@@ -126,9 +184,12 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   Cleans the worktree, checks out the agent's branch, and updates
   the agent's phylo_node with the worktree-bound repo path.
-  Returns the commit SHA.
+
+  Returns `{:ok, commit_sha}` or `{:error, {:worktree_prepare_failed, ...}}`
+  on git failure.
   """
-  @spec assign_and_prepare_worktree(pos_integer(), String.t()) :: String.t()
+  @spec assign_and_prepare_worktree(pos_integer(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
 
   def assign_and_prepare_worktree(agent_id, wt) do
     {:ok, meta} = Store.get_sched_meta(agent_id)
@@ -136,23 +197,28 @@ defmodule EvoGit.AgentScheduler.Worktrees do
     spec = meta.spec
 
     commit_sha = spec.phylo_node.current_commit
+    branch_name = branch_name(meta.task_number, agent_state.task_local_id)
 
-    Git.clean(wt)
-    task_number = meta.task_number
-    task_local_id = agent_state.task_local_id
-    branch_name = "evogit-agent-T#{task_number}-A#{task_local_id}"
-    Git.checkout(wt, branch_name)
+    with {:ok, _} <- Git.clean(wt),
+         {:ok, _} <- Git.checkout(wt, branch_name) do
+      # Build the worktree-bound phylo_node (repo points to worktree)
+      wt_phylo_node = %EvoGit.Core.PhyloGraphNode{
+        repo: wt,
+        base_commit: spec.phylo_node.base_commit,
+        current_commit: commit_sha
+      }
 
-    # Build the worktree-bound phylo_node (repo points to worktree)
-    wt_phylo_node = %EvoGit.Core.PhyloGraphNode{
-      repo: wt,
-      base_commit: spec.phylo_node.base_commit,
-      current_commit: commit_sha
-    }
+      Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
 
-    Store.put_agent_state(agent_id, %AgentState{agent_state | phylo_node: wt_phylo_node})
+      {:ok, commit_sha}
+    else
+      {:error, {_tag, _output} = error} ->
+        Logger.error(
+          "AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}"
+        )
 
-    commit_sha
+        {:error, {:worktree_prepare_failed, error}}
+    end
   end
 
   @doc """
@@ -240,61 +306,6 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         end
 
         :ok
-    end
-  end
-
-  # --- Worktree Deletion ---
-
-  @doc """
-  Deletes a worktree directory and its associated git branch.
-
-  Extracts the branch name from the directory name by replacing the
-  `worker_` prefix with `evogit-agent-` (e.g., `worker_T1_A42` → `evogit-agent-T1-A42`).
-  """
-  @spec delete(String.t(), String.t()) :: :ok
-
-  def delete(path, repo_root) do
-    Logger.info("AgentScheduler: Requesting worktree deletion for #{path}")
-    WorktreeManager.delete_worktree(path, repo_root)
-  end
-
-  # --- Commit Sync ---
-
-  @doc """
-  Syncs the current commit SHA in both agent state and sched meta.
-
-  Reads the current HEAD SHA from the worktree and updates the
-  `phylo_node.current_commit` in both ETS tables if it has changed.
-  Returns the updated meta.
-  """
-  @spec sync_current_commit(pos_integer(), SchedMeta.t()) ::
-          SchedMeta.t()
-
-  def sync_current_commit(agent_id, %{worktree: wt} = meta) do
-    {:ok, current_sha} = Git.rev_parse(wt)
-    {:ok, agent_state} = Store.get_agent_state(agent_id)
-
-    agent_needs_update? = agent_state.phylo_node.current_commit != current_sha
-    meta_needs_update? = meta.spec.phylo_node.current_commit != current_sha
-
-    if agent_needs_update? do
-      updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-      Store.put_agent_state(agent_id, %{agent_state | phylo_node: updated_phylo})
-    end
-
-    if meta_needs_update? do
-      updated_spec_phylo = %{
-        meta.spec.phylo_node
-        | current_commit: current_sha
-      }
-
-      updated_spec = %{meta.spec | phylo_node: updated_spec_phylo}
-      updated_meta = %{meta | spec: updated_spec}
-      Store.put_sched_meta(agent_id, updated_meta)
-
-      updated_meta
-    else
-      meta
     end
   end
 end

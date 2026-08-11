@@ -24,10 +24,6 @@ defmodule EvoGit.AgentScheduler.State do
 
   ## Fields
 
-  ### Initialization
-  - `initialized` — whether the scheduler has completed initialization
-  - `initialized_repos` — map of absolute repo paths that have been initialized (`%{String.t() => true}`)
-
   ### Configuration
   - `max_concurrency` — backward-compat default concurrency limit (mirrors the default profile's concurrency)
   - `model_concurrency` — `%{model_id => limit}` per-model concurrency limits
@@ -67,9 +63,7 @@ defmodule EvoGit.AgentScheduler.State do
   alias EvoGit.AgentScheduler.Slots
 
   @enforce_keys []
-  defstruct initialized: false,
-            initialized_repos: %{},
-            max_concurrency: 3,
+  defstruct max_concurrency: 3,
             model_concurrency: %{},
             model_profiles: [],
             agent_max_retries: 3,
@@ -97,8 +91,6 @@ defmodule EvoGit.AgentScheduler.State do
             sandbox_process_resources: nil
 
   @type t :: %__MODULE__{
-          initialized: boolean(),
-          initialized_repos: %{String.t() => true},
           max_concurrency: pos_integer(),
           model_concurrency: %{String.t() => pos_integer()},
           model_profiles: [map()],
@@ -310,9 +302,7 @@ defmodule EvoGit.AgentScheduler.State do
         # Merge non-LLM fields from the old state
         %__MODULE__{
           pool_state
-          | initialized: state.initialized,
-            initialized_repos: state.initialized_repos,
-            agent_max_retries: Keyword.get(opts, :agent_max_retries, state.agent_max_retries),
+          | agent_max_retries: Keyword.get(opts, :agent_max_retries, state.agent_max_retries),
             max_depth: Keyword.get(opts, :max_depth, state.max_depth),
             max_retries: Keyword.get(opts, :max_retries, state.max_retries),
             max_turns: Keyword.get(opts, :max_turns, state.max_turns),
