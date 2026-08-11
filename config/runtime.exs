@@ -33,8 +33,9 @@ end
 #
 # ReqLLM defaults to stream_pool_count: 8 with HTTP/1-only pools. We add
 # a small buffer (+2) on top of the summed concurrency for auxiliary
-# (non-slot-gated) LLM calls (context compression, evolution synthesis,
-# novelty metrics, etc.).
+# (non-slot-gated) LLM calls — the only such calls today are the LLM
+# self-check (system_check.ex) and PR-title generation (pull_request.ex);
+# context compression IS slot-gated, so it needs no buffer of its own.
 resolved = EvoGit.Config.resolve()
 
 total_concurrency =
@@ -53,10 +54,27 @@ total_concurrency =
 
 stream_pool_count = max(total_concurrency + 2, 8)
 
+# The pool is configured via the full `finch:` override form (not the
+# `stream_pool_*` shorthand) so we can set `start_pool_metrics?: true` —
+# required for `Finch.get_pool_status(ReqLLM.Finch, :default)` to enumerate
+# materialized origins. `EvoGit.ReqLLMPool` uses that enumeration to
+# dynamically reconcile the pool size at runtime (on config changes and on
+# the "excess queuing" error path); without the metrics flag the pools never
+# register under `:default` and reconciliation is a silent no-op.
+# `stream_pool_timeout` stays a top-level key because ReqLLM reads it at
+# CALL time (streaming/finch_client.ex:300), not as part of the pool config.
 config :req_llm,
-  stream_pool_count: stream_pool_count,
-  stream_pool_size: 1,
-  stream_pool_protocols: [:http1],
+  finch: [
+    name: ReqLLM.Finch,
+    pools: %{
+      default: [
+        protocols: [:http1],
+        size: 1,
+        count: stream_pool_count,
+        start_pool_metrics?: true
+      ]
+    }
+  ],
   stream_pool_timeout: 120_000
 
 # The genesis_remote release is a headless evo_git-only daemon for SSH remote
