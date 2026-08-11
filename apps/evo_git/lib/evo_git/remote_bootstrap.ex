@@ -3,7 +3,7 @@ defmodule EvoGit.RemoteBootstrap do
   Pure platform / asset / download-resolution logic for the SSH remote
   bootstrap flow (`EvoGit.RemoteConnection`).
 
-  `EvoGit.RemoteConnection` owns all ssh/scp/curl command orchestration and
+  `EvoGit.RemoteConnection` owns all ssh/scp/curl/wget command orchestration and
   bootstrap-stage broadcasting; this module owns the decision logic:
 
     * mapping `uname -s` / `uname -m` output to CI platform strings
@@ -19,7 +19,7 @@ defmodule EvoGit.RemoteBootstrap do
   `download_url/1`, which queries the GitHub latest-release API and — when the
   query fails, is rate-limited, or the matching asset is missing — falls back
   to the direct `releases/latest/download` URL (GitHub 302-redirects that to
-  the versioned asset; `curl -L` / Req follow redirects by default).
+  the versioned asset; `curl -L`, `wget`, and Req follow redirects by default).
   """
 
   require Logger
@@ -28,8 +28,8 @@ defmodule EvoGit.RemoteBootstrap do
   @latest_release_api_url "https://api.github.com/repos/#{@github_repo}/releases/latest"
   @latest_download_base_url "https://github.com/#{@github_repo}/releases/latest/download/"
 
-  # GitHub API query timeout (the actual tarball download uses curl and has its
-  # own, much larger timeout in RemoteConnection).
+  # GitHub API query timeout (the actual tarball download uses curl — with a
+  # wget fallback — and has its own, much larger timeout in RemoteConnection).
   @api_timeout_ms 30_000
 
   @valid_os ["linux", "darwin", "windows"]

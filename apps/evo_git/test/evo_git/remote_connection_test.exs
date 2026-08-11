@@ -146,10 +146,10 @@ defmodule EvoGit.RemoteConnectionTest do
       target_id = save_test_target(platform: "linux_x64")
 
       # download_url/1 queries the live GitHub API. With network it resolves
-      # then the remote curl fails at the ssh level ({:download_failed,
-      # {:exit_status, _}}); with no network Req fails fast and the local curl
-      # fallback also fails ({:download_failed, {:local, _}}). Keep the
-      # assertion broad.
+      # then the remote download (curl first, wget fallback) fails at the ssh
+      # level ({:download_failed, {:exit_status, _}}); with no network Req
+      # fails fast and the local curl fallback also fails
+      # ({:download_failed, {:local, _}}). Keep the assertion broad.
       assert {:error, {:download_failed, _}} = EvoGit.RemoteConnection.bootstrap(target_id)
 
       cleanup_connections()

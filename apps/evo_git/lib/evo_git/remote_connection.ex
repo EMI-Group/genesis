@@ -23,7 +23,8 @@ defmodule EvoGit.RemoteConnection do
           (`uname -s && uname -m`, or the target's optional `platform` field
           when set, which skips the probe), resolves the matching release
           tarball from GitHub, and downloads it (curl on the remote host,
-          falling back to a local curl into a data-dir cache followed by
+          falling back to wget on the remote host when curl is missing or
+          fails, then to a local curl into a data-dir cache followed by
           `scp`). It then proceeds with the same extract / chmod / config-copy
           / cookie / launch steps.
 
@@ -37,8 +38,9 @@ defmodule EvoGit.RemoteConnection do
   `:starting_daemon`.
 
   Auto-download path: `:probing_platform` → `:downloading` (→
-  `:downloading_locally` when the remote curl fails and the local fallback
-  kicks in) → `:extracting` → `:setting_permissions` → `:copying_config` →
+  `:downloading_locally` when both the remote curl and wget attempts fail and
+  the local fallback kicks in) → `:extracting` → `:setting_permissions` →
+  `:copying_config` →
   `:generating_cookie` → `:starting_daemon`. The probe/override supplies the
   OS, so `:detecting_os` is skipped.
 
@@ -78,15 +80,16 @@ defmodule EvoGit.RemoteConnection do
   @launch_receive_timeout_ms 5_000
   # 900s — bootstrap now stages the release either by uploading a local tarball
   # (scp) OR by probing the remote platform and downloading the release tarball
-  # (curl on the remote, with a local curl + scp fallback); both can be slow.
+  # (curl then wget on the remote, with a local curl + scp fallback); both can
+  # be slow.
   @bootstrap_call_timeout_ms 900_000
 
   # Default per-command timeout (30s). SCP gets a longer timeout.
   @cmd_timeout_ms 30_000
   @scp_timeout_ms 120_000
 
-  # Timeout for release-tarball downloads (tens of MB) — curl on the remote
-  # host, or the local curl fallback. Generous to handle slow links.
+  # Timeout for release-tarball downloads (tens of MB) — curl then wget on the
+  # remote host, or the local curl fallback. Generous to handle slow links.
   @download_timeout_ms 300_000
 
   # The remote daemon always binds loopback; the SSH tunnel forwards the dist
@@ -513,7 +516,8 @@ defmodule EvoGit.RemoteConnection do
 
   # Auto-download bootstrap path (no usable local_binary_path): probe the
   # remote platform → resolve the GitHub release URL → download the tarball to
-  # the remote temp path (curl on the remote, local curl + scp fallback) →
+  # the remote temp path (curl then wget on the remote, local curl + scp
+  # fallback) →
   # launch via the shared post-staging sequence.
   defp do_bootstrap_auto(%__MODULE__{} = state, target) do
     ssh_target = target.ssh_target
@@ -600,8 +604,9 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Downloads the release tarball for the platform to the remote temp path.
-  # Primary: curl directly on the remote host. Fallback: curl locally into the
-  # data-dir cache, then scp to the remote temp path. Returns
+  # Primary: curl directly on the remote host (with a wget fallback when curl
+  # is missing or fails). Fallback: curl locally into the data-dir cache, then
+  # scp to the remote temp path. Returns
   # {:ok, state} | {:error, reason, state}.
   defp download_tarball(state, target, ssh_target, platform, remote_tarball) do
     # download_url/1 always resolves (API failure falls back to the direct URL).
@@ -613,7 +618,7 @@ defmodule EvoGit.RemoteConnection do
 
       {:error, reason} ->
         Logger.warning(
-          "RemoteConnection: remote curl download failed (#{inspect(reason)}); " <>
+          "RemoteConnection: remote curl/wget download failed (#{inspect(reason)}); " <>
             "falling back to local download + scp."
         )
 
@@ -631,11 +636,29 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Downloads the tarball directly on the remote host via `curl -fL`.
+  # Downloads the tarball directly on the remote host — `curl -fL` first, with
+  # a `wget -O` fallback when curl is missing (default Ubuntu installs ship
+  # without curl) or fails. wget follows redirects by default (matching curl
+  # -L) and exits non-zero on HTTP errors (matching curl -f). Only reports a
+  # download failure when BOTH tools fail on the remote.
   defp download_on_remote(ssh_target, url, remote_tarball) do
-    cmd = "ssh #{ssh_target} 'curl -fL -o #{remote_tarball} #{url}'"
+    case run_remote_download(ssh_target, "curl", "-fL -o #{remote_tarball} #{url}") do
+      :ok ->
+        :ok
 
-    case run_cmd(cmd, @download_timeout_ms) do
+      _ ->
+        Logger.info(
+          "RemoteConnection: remote curl download failed; retrying with wget on the remote host."
+        )
+
+        run_remote_download(ssh_target, "wget", "-O #{remote_tarball} #{url}")
+    end
+  end
+
+  # Runs a single downloader invocation (`curl` or `wget`) on the remote host
+  # via ssh and maps the result to :ok | {:error, {:download_failed, ...}}.
+  defp run_remote_download(ssh_target, tool, args) do
+    case run_cmd("ssh #{ssh_target} '#{tool} #{args}'", @download_timeout_ms) do
       {:ok, _output, 0} -> :ok
       {:ok, _output, status} -> {:error, {:download_failed, {:exit_status, status}}}
       :timeout -> {:error, {:download_failed, :timeout}}
