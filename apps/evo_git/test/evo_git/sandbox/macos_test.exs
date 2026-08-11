@@ -173,6 +173,30 @@ defmodule EvoGit.Sandbox.MacOSTest do
       end
     end
 
+    test "denies reads of system-level sensitive locations (both symlink spellings)" do
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      # Root-wide reads are allowed (see the root-rule test above), so these
+      # deny-reads are what keep system credential stores and user databases
+      # unreadable. Each location is pinned in both its real and /private
+      # symlink spellings, matching the profile policy.
+      for path <- [
+            "/etc/ssh",
+            "/private/etc/ssh",
+            "/var/root",
+            "/private/var/root",
+            "/etc/master.passwd",
+            "/private/etc/master.passwd",
+            "/var/db/dslocal",
+            "/private/var/db/dslocal",
+            "/var/db/Keychains",
+            "/private/var/db/Keychains"
+          ] do
+        assert profile =~ ~s{(deny file-read* (subpath "#{path}"))},
+               "expected a deny-read rule for #{path}"
+      end
+    end
+
     test "grants read-write to the repo worktree, .git, and tmp paths" do
       profile = MacOS.generate_profile("/repo/cwd", "/repo")
 
@@ -267,13 +291,13 @@ defmodule EvoGit.Sandbox.MacOSTest do
       refute profile =~ ~r{subpath "[^"]*/\.git(?:"|/)}
     end
 
-    test "system read paths include /opt/homebrew (Homebrew ARM git)", %{
+    test "root filesystem is readable by default so user-installed tools work anywhere", %{
       main_root: main_root,
       worktree: worktree
     } do
       profile = MacOS.generate_profile(worktree, main_root)
 
-      assert profile =~ ~s{(allow file-read* (subpath "/opt/homebrew"))}
+      assert profile =~ ~s{(allow file-read* (subpath "/"))}
     end
   end
 
