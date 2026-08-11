@@ -389,4 +389,72 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert ReqLLM.ToolCall.args_map(only) == %{"file_path" => "./a.ex"}
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # batch_execute_tools/4 parallel execution
+  # ---------------------------------------------------------------------------
+
+  describe "batch_execute_tools/4 parallel execution" do
+    setup do
+      repo_root =
+        Path.join(
+          System.tmp_dir!(),
+          "tool_dispatch_parallel_#{:erlang.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(repo_root)
+
+      agent_id = 9_990_000 + :erlang.unique_integer([:positive])
+
+      agent_state = %EvoGit.AgentScheduler.AgentState{
+        context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo_root},
+        llm_model: "test:model",
+        max_retries: 1,
+        max_depth: 1
+      }
+
+      :ok = EvoGit.AgentScheduler.Store.put_agent_state(agent_id, agent_state)
+
+      Process.put(:evogit_agent_id, agent_id)
+      Process.put(:repo_path, repo_root)
+      Process.put(:genesis_repo_root, repo_root)
+
+      on_exit(fn ->
+        EvoGit.AgentScheduler.Store.delete_agent_state(agent_id)
+        Process.delete(:evogit_agent_id)
+        Process.delete(:repo_path)
+        Process.delete(:genesis_repo_root)
+        File.rm_rf!(repo_root)
+      end)
+
+      %{agent_id: agent_id, repo_root: repo_root}
+    end
+
+    test "executes two shell tools concurrently, bounded by scheduler tool slots", context do
+      %{repo_root: repo_root} = context
+
+      shell_tool =
+        if EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash"
+
+      cmd1 = "echo start1 >> markers.txt; sleep 1; echo end1 >> markers.txt"
+      cmd2 = "echo start2 >> markers.txt; sleep 1; echo end2 >> markers.txt"
+
+      calls = [
+        {ReqLLM.ToolCall.new("call_1", shell_tool, Jason.encode!(%{"command" => cmd1})), 0},
+        {ReqLLM.ToolCall.new("call_2", shell_tool, Jason.encode!(%{"command" => cmd2})), 1}
+      ]
+
+      started = System.monotonic_time(:millisecond)
+      results = ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :high)
+      elapsed = System.monotonic_time(:millisecond) - started
+
+      assert Enum.map(results, &elem(&1, 0)) == [0, 1]
+      assert Enum.map(results, &elem(&1, 2)) == [shell_tool, shell_tool]
+
+      lines = File.read!(Path.join(repo_root, "markers.txt")) |> String.split("\n", trim: true)
+      assert Enum.sort(lines) == ["end1", "end2", "start1", "start2"]
+      assert Enum.find_index(lines, &(&1 == "start2")) < Enum.find_index(lines, &(&1 == "end1"))
+      assert elapsed < 1_800
+    end
+  end
 end
