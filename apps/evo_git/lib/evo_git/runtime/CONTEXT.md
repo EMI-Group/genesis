@@ -69,7 +69,7 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 1. **PubSub** on topic `"tasks"`: the ONLY emitter is `Helpers.notify_finalizing/1` (`helpers.ex:102` — `notify_finalizing(nil)` is a `:ok` no-op, broadcast at line 105), broadcasting `{:task_status, task_id, :finalizing}`. It is called immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. **Callers (current line refs): `genesis.ex:57` (Mode A success arm), `genesis.ex:216` (Mode B implementation-phase success arm), `genesis.ex:246` (Mode B implementation-phase ERROR arm — partial-success path where the architect's result is merged/reported, so it is NOT strictly success-only), `evolution.ex:55` (success arm), `skill_extraction.ex:34` (success arm).** When the caller passes no `task_id` (e.g. plain CLI path, where `Keyword.get(opts, :task_id)` is nil), the call is a no-op — no broadcast happens; the dashboard path (`TaskExecutor`) always passes `task_id`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the evo_git runtime. (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: `{:agents_updated}` and `{:scheduler_config_updated}`.)
 2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed`.
 
-3. **Finalizing window & `merge_and_report/3` blocking behavior**: the window between the `:finalizing` broadcast and the phase's return contains ONLY: the PubSub broadcast itself, (Mode B success) pure in-memory `Usage.add`/result merging (`genesis.ex:219-236`), and `merge_and_report/3`'s git calls — `Git.rev_parse` (`git rev-parse HEAD`, helpers.ex:16 → git.ex:162-164) and `Git.create_branch` (`git branch <name> <sha>`, helpers.ex:24 → git.ex:409-412). Both go through `Git.run/2` → raw `System.cmd` with **NO timeout option → `:infinity`** (git.ex:18-29) — they can block indefinitely on a slow filesystem (e.g. NFS-mounted home on a remote daemon). `merge_and_report/3` (helpers.ex:11-100) NEVER raises and ALWAYS returns `{:ok, map}`: branch-creation failure and even `rev_parse` failure fall through to success maps with `branch_name: nil` (helpers.ex:43-61, 82-98); `no_changes: true` when base==final SHA. It does NOT create PRs — `pr_url`/`pr_title` are always `nil`; PR creation lives in `PullRequest.try_create/4`, called only from `EvoGit.Review` (review.ex:331), never from the phases. Worktree `File.rm_rf` cleanup is NOT in the window: it is a fire-and-forget cast to `WorktreeManager` (`handle_cast({:delete_worktree, ...})`, worktree_manager.ex:140-168) triggered by `Lifecycle.recycle_agent/2` (lifecycle.ex:28-45) before `run_agent/1` replies.
+3. **Finalizing window & `merge_and_report/3` blocking behavior**: the window between the `:finalizing` broadcast and the phase's return contains ONLY: the PubSub broadcast itself, (Mode B success) pure in-memory `Usage.add`/result merging (`genesis.ex:219-236`), and `merge_and_report/3`'s git calls — `Git.rev_parse` (`git rev-parse HEAD`, helpers.ex:16 → git.ex:162-164) and `Git.create_branch` (`git branch <name> <sha>`, helpers.ex:24 → git.ex:409-412). Both go through `Git.run/2` → raw `System.cmd` with **NO timeout option → `:infinity`** (git.ex:18-29) — they can block indefinitely on a slow filesystem (e.g. NFS-mounted home on a remote daemon). `merge_and_report/3` (helpers.ex:11-100) NEVER raises and ALWAYS returns `{:ok, map}`: branch-creation failure and even `rev_parse` failure fall through to success maps with `branch_name: nil` (helpers.ex:43-61, 82-98); `no_changes: true` when base==final SHA. It does NOT create PRs — `pr_url`/`pr_title` are always `nil`; PR creation lives in `PullRequest.try_create/4`, called only from `EvoGit.Review` (review.ex:331), never from the phases. Worktree cleanup is NOT in the window: `WorktreeManager` reclaims + destroys the worktree via its process monitor on agent process exit (`:DOWN` — `File.rm_rf` worktree dir → `Git.prune_worktrees` → `Git.delete_branch`), so it happens asynchronously in the WorktreeManager GenServer and never blocks the finalizing path (`Lifecycle.recycle_agent/2` before `run_agent/1` replies performs no worktree I/O).
 
 **Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:
 - Top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238).
@@ -104,11 +104,11 @@ AgentSpec.new(context_node, phylo_node, agent_module, objective, opts)
 
 The scheduler (`AgentScheduler`):
 1. Assigns a unique `task_id` (GUID) and `task_number` (short integer), and `agent_id` (format: `T<task_number>_A<task_local_id>`).
-2. Allocates an isolated git worktree (directory: `worker_T<task_number>_A<task_local_id>`).
-3. Prepares the worktree (`git clean` + `git checkout`).
-4. Stores initial state in two ETS tables: `:evogit_agent_state` (agent-owned) and `:evogit_sched_meta` (scheduler-owned).
-5. Spawns a Task process that runs the agent loop.
-6. The agent calls `complete_task` when done → scheduler reclaims worktree, replies to caller.
+2. Computes the worktree path (directory: `worker_T<task_number>_A<task_local_id>`) and stores it in sched_meta — **no worktree I/O here**.
+3. Stores initial state in two ETS tables: `:evogit_agent_state` (agent-owned) and `:evogit_sched_meta` (scheduler-owned).
+4. Spawns a Task process that runs the agent loop.
+5. Inside the agent Task, `Runner.setup_dispatch_context/1` requests a FRESH worktree from `WorktreeManager.create_worktree_for_agent/6` (1-hour call; lazy per-repo init + the create pipeline — `git clean`/checkout/init script — run offloaded inside WorktreeManager).
+6. The agent calls `complete_task` when done (or crashes/is cancelled) → WorktreeManager reclaims the worktree via its `:DOWN` process monitor, scheduler replies to caller.
 
 ### Agent Hierarchy by Phase
 
@@ -153,8 +153,8 @@ Manager (target node)
 Agents call `AgentScheduler.spawn_sub_agents/2` (from within the agent process). The scheduler:
 - Validates depth doesn't exceed `max_agent_depth`.
 - Checks the parent's path isn't git-ignored.
-- Marks parent as `:waiting` (its worktree becomes reclaimable if pool is exhausted).
-- Dispatches each subagent with its own worktree and incremented task-local ID.
+- Marks parent as `:waiting` (parent Task is blocked until subagents complete; its worktree stays alive — reclaim happens only on process exit, via WorktreeManager's `:DOWN` monitor).
+- Dispatches each subagent with its own fresh worktree and incremented task-local ID.
 - Blocks until all subagents complete, returns results in order.
 
 ## Phase Transitions
@@ -179,7 +179,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 |------------|----------------|
 | `EvoGit.Core.PhyloGraphNode` | Temporal state — tracks base_commit and current_commit in the git DAG |
 | `EvoGit.Core.ContextNode` | Spatial state — represents a directory node in the Context Tree |
-| `EvoGit.AgentScheduler` | Lifecycle manager — worktrees, ETS state, slot management, subagent spawning |
+| `EvoGit.AgentScheduler` | Lifecycle manager — scheduling, ETS state, slot management, subagent spawning (worktree lifecycle owned by `EvoGit.AgentScheduler.WorktreeManager`) |
 | `EvoGit.AgentSpec` | Structured specification passed to scheduler (context_node + phylo_node + module + objective) |
 | `EvoGit.Agent.Result` | Structured agent output (result string, commit_sha, tag, branch, base_commit) |
 | `EvoGit.Agents.CodebaseLead` | Genesis Mode B agent — 3-phase: architecture & design → implementation delegation → review & accountability. Accountable for all code in its node path but delegates implementation to Manager subagents. |
