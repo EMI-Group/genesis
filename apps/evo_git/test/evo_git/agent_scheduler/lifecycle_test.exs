@@ -254,6 +254,133 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
   end
 
+  describe "worktree ownership transfer — lifecycle cleanup does NOT delete worktrees" do
+    setup do
+      repo_root =
+        Path.join(System.tmp_dir!(), "lifecycle_own_#{:erlang.unique_integer([:positive])}")
+
+      File.mkdir_p!(repo_root)
+      {:ok, _} = Git.init(repo_root)
+      File.write!(Path.join(repo_root, "README.md"), "initial")
+      {:ok, _} = Git.add(repo_root)
+      {:ok, _} = Git.commit(repo_root, "initial")
+      {:ok, base_sha} = Git.rev_parse(repo_root)
+      on_exit(fn -> File.rm_rf!(repo_root) end)
+      %{repo_root: repo_root, base_sha: base_sha}
+    end
+
+    defp make_worktree(repo_root, base_sha) do
+      branch = "evogit-agent-T1-A1"
+      wt_path = Path.join(repo_root, ".genesis/workers/worker_T1_A1")
+      {:ok, _} = Git.create_branch(repo_root, branch, base_sha)
+      File.mkdir_p!(wt_path)
+      File.write!(Path.join(wt_path, "marker.txt"), "stale")
+      %{branch: branch, wt_path: wt_path}
+    end
+
+    test "recycle_agent removes ETS entries but leaves the worktree dir and branch intact", %{
+      repo_root: repo_root,
+      base_sha: base_sha
+    } do
+      agent_id = :erlang.unique_integer([:positive])
+      %{branch: branch, wt_path: wt_path} = make_worktree(repo_root, base_sha)
+
+      put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        retries: 0,
+        worktree: wt_path
+      })
+
+      put_agent_state(agent_id, %AgentState{
+        agent_state()
+        | repo_root: repo_root,
+          task_local_id: 1
+      })
+
+      state = base_state([])
+      assert Lifecycle.recycle_agent(state, agent_id) == state
+
+      assert get_sched_meta(agent_id) == :missing
+      assert get_agent_state(agent_id) == :missing
+      assert File.dir?(wt_path)
+      assert Git.branch_exists?(repo_root, branch)
+    end
+
+    test "cancel_agent kills the task but leaves the worktree dir and branch intact", %{
+      repo_root: repo_root,
+      base_sha: base_sha
+    } do
+      agent_id = :erlang.unique_integer([:positive])
+      %{branch: branch, wt_path: wt_path} = make_worktree(repo_root, base_sha)
+
+      task = Task.async(fn -> Process.sleep(10_000) end)
+
+      put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        retries: 0,
+        task_ref: task,
+        from: nil,
+        worktree: wt_path
+      })
+
+      put_agent_state(agent_id, %AgentState{
+        agent_state()
+        | repo_root: repo_root,
+          task_local_id: 1
+      })
+
+      state = base_state([])
+      assert Lifecycle.cancel_agent(state, agent_id) == state
+
+      Process.sleep(50)
+      refute Process.alive?(task.pid)
+
+      assert get_sched_meta(agent_id) == :missing
+      assert get_agent_state(agent_id) == :missing
+      assert File.dir?(wt_path)
+      assert Git.branch_exists?(repo_root, branch)
+    end
+
+    test "handle_agent_crash permanent-failure leaves the worktree dir and branch intact", %{
+      repo_root: repo_root,
+      base_sha: base_sha
+    } do
+      agent_id = :erlang.unique_integer([:positive])
+      %{branch: branch, wt_path: wt_path} = make_worktree(repo_root, base_sha)
+
+      ref = make_ref()
+
+      put_sched_meta(agent_id, %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        retries: 3,
+        from: {self(), ref},
+        task_id: "t-own",
+        worktree: wt_path
+      })
+
+      put_agent_state(agent_id, %AgentState{
+        agent_state()
+        | repo_root: repo_root,
+          task_local_id: 1
+      })
+
+      state = base_state(agent_max_retries: 3)
+      assert {:noreply, _} = Lifecycle.handle_agent_crash(state, agent_id, {:error, :final})
+      assert_received {^ref, {:error, :agent_max_retries_exceeded}}
+
+      assert get_sched_meta(agent_id) == :missing
+      assert get_agent_state(agent_id) == :missing
+      assert File.dir?(wt_path)
+      assert Git.branch_exists?(repo_root, branch)
+    end
+  end
+
   describe "handle_call({:cancel_task_agents, _}, _, _)" do
     test "filters cancelled agents from the dispatch queue without crashing" do
       caller_pid = self()
