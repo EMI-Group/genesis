@@ -321,7 +321,7 @@ defmodule EvoDashWeb.ProjectsLive do
                                 :pending -> "badge-warning"
                                 :waiting -> "badge-info"
                                 :ready -> "badge-info"
-                                :blocked -> "badge-error"
+                                :blocked -> "badge-neutral"
                                 _ -> "badge-ghost"
                               end
                             ]}>
