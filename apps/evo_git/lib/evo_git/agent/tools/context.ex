@@ -156,7 +156,16 @@ defmodule EvoGit.Agent.Tools.Context do
          {:ok, replace_all} <- Shared.validate_replace_all(Map.get(args, "replace_all", false)),
          {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
          full_dir = Shared.expand_path(dir_path, repo_path) do
-      do_context_edit(full_dir, dir_path, old_string, new_string, replace_all, commit, repo_path, repo_root)
+      do_context_edit(
+        full_dir,
+        dir_path,
+        old_string,
+        new_string,
+        replace_all,
+        commit,
+        repo_path,
+        repo_root
+      )
     end
   end
 
@@ -179,7 +188,16 @@ defmodule EvoGit.Agent.Tools.Context do
     end
   end
 
-  defp do_context_edit(full_dir, dir_path, old_string, new_string, replace_all, commit, repo_path, repo_root) do
+  defp do_context_edit(
+         full_dir,
+         dir_path,
+         old_string,
+         new_string,
+         replace_all,
+         commit,
+         repo_path,
+         repo_root
+       ) do
     cond do
       not File.exists?(full_dir) ->
         "Error: directory '#{dir_path}' does not exist"
@@ -194,7 +212,15 @@ defmodule EvoGit.Agent.Tools.Context do
           "Error: No CONTEXT.md found in directory '#{dir_path}'"
         else
           relative_path = Path.join(dir_path, "CONTEXT.md")
-          result = Shared.perform_string_replace(context_path, relative_path, old_string, new_string, replace_all)
+
+          result =
+            Shared.perform_string_replace(
+              context_path,
+              relative_path,
+              old_string,
+              new_string,
+              replace_all
+            )
 
           if String.starts_with?(result, "Error:") do
             result
@@ -205,23 +231,29 @@ defmodule EvoGit.Agent.Tools.Context do
                   do: @co_author_trailer,
                   else: ""
 
-              {add_output, _} =
-                EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)
+              case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
+                {add_output, 0} ->
+                  case EvoGit.sandbox_run(
+                         repo_path,
+                         "git",
+                         [
+                           "commit",
+                           "-m",
+                           "Update CONTEXT.md for #{dir_path}#{trailer}"
+                         ],
+                         repo_root
+                       ) do
+                    {commit_output, 0} ->
+                      result <>
+                        "\n\nCommitted:\n#{add_output}#{commit_output}"
 
-              {commit_output, _} =
-                EvoGit.sandbox_run(
-                  repo_path,
-                  "git",
-                  [
-                    "commit",
-                    "-m",
-                    "Update CONTEXT.md for #{dir_path}#{trailer}"
-                  ],
-                  repo_root
-                )
+                    {commit_output, code} ->
+                      "Error: git commit failed (exit #{code}):\n#{commit_output}"
+                  end
 
-              result <>
-                "\n\nCommitted:\n#{add_output}#{commit_output}"
+                {add_output, code} ->
+                  "Error: git add failed (exit #{code}):\n#{add_output}"
+              end
             else
               result
             end
@@ -269,23 +301,29 @@ defmodule EvoGit.Agent.Tools.Context do
 
                   relative_path = Path.join(dir_path, "CONTEXT.md")
 
-                  {add_output, _} =
-                    EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root)
+                  case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
+                    {add_output, 0} ->
+                      case EvoGit.sandbox_run(
+                             repo_path,
+                             "git",
+                             [
+                               "commit",
+                               "-m",
+                               "Update CONTEXT.md for #{dir_path}#{trailer}"
+                             ],
+                             repo_root
+                           ) do
+                        {commit_output, 0} ->
+                          result_msg <>
+                            "\n\nCommitted:\n#{add_output}#{commit_output}"
 
-                  {commit_output, _} =
-                    EvoGit.sandbox_run(
-                      repo_path,
-                      "git",
-                      [
-                        "commit",
-                        "-m",
-                        "Update CONTEXT.md for #{dir_path}#{trailer}"
-                      ],
-                      repo_root
-                    )
+                        {commit_output, code} ->
+                          "Error: git commit failed (exit #{code}):\n#{commit_output}"
+                      end
 
-                  result_msg <>
-                    "\n\nCommitted:\n#{add_output}#{commit_output}"
+                    {add_output, code} ->
+                      "Error: git add failed (exit #{code}):\n#{add_output}"
+                  end
                 else
                   result_msg
                 end
@@ -299,5 +337,4 @@ defmodule EvoGit.Agent.Tools.Context do
         "Error creating directory '#{dir_path}': #{:file.format_error(reason)}"
     end
   end
-
 end

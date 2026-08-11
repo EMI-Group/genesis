@@ -195,6 +195,88 @@ defmodule EvoGit.Sandbox.MacOSTest do
     end
   end
 
+  describe "linked-worktree git metadata resolution" do
+    # Fixtures mirror what `git worktree add` produces: the main repo has a
+    # real `.git` DIRECTORY, and the linked worktree's `.git` is a pointer
+    # FILE containing `gitdir: <absolute path>`.
+    setup do
+      tmp =
+        Path.join(System.tmp_dir!(), "evogit-macos-git-#{System.unique_integer([:positive])}")
+
+      main_root = Path.join(tmp, "main")
+      File.mkdir_p!(Path.join(main_root, ".git/worktrees/wt1"))
+
+      worktree = Path.join(main_root, ".genesis/workers/worker_T1_A1")
+      File.mkdir_p!(worktree)
+
+      File.write!(
+        Path.join(worktree, ".git"),
+        "gitdir: " <> Path.join(main_root, ".git/worktrees/wt1") <> "\n"
+      )
+
+      plain_dir = Path.join(tmp, "plain")
+      File.mkdir_p!(plain_dir)
+
+      on_exit(fn -> File.rm_rf!(tmp) end)
+
+      %{main_root: main_root, worktree: worktree, plain_dir: plain_dir}
+    end
+
+    test "normal repo: .git is a directory -> literal git dir rule", %{
+      main_root: main_root,
+      worktree: worktree
+    } do
+      profile = MacOS.generate_profile(worktree, main_root)
+
+      assert profile =~ ~s{(allow file-read* (subpath "#{Path.join(main_root, ".git")}"))}
+      assert profile =~ ~s{(allow file-write* (subpath "#{Path.join(main_root, ".git")}"))}
+    end
+
+    test "linked worktree: pointer .git file resolves to the common git dir", %{
+      main_root: main_root,
+      worktree: worktree
+    } do
+      profile = MacOS.generate_profile(worktree, worktree)
+
+      assert profile =~ ~s{(allow file-read* (subpath "#{Path.join(main_root, ".git")}"))}
+      assert profile =~ ~s{(allow file-write* (subpath "#{Path.join(main_root, ".git")}"))}
+      refute profile =~ ~s{(subpath "#{Path.join(worktree, ".git")}")}
+    end
+
+    test "nil repo_root with a cwd .git pointer file resolves the common git dir", %{
+      main_root: main_root,
+      worktree: worktree
+    } do
+      profile = MacOS.generate_profile(worktree, nil)
+
+      assert profile =~ ~s{(allow file-read* (subpath "#{Path.join(main_root, ".git")}"))}
+      assert profile =~ ~s{(allow file-write* (subpath "#{Path.join(main_root, ".git")}"))}
+      refute profile =~ ~s{(subpath "#{Path.join(worktree, ".git")}")}
+    end
+
+    test "nil repo_root without any .git emits no git metadata rule", %{
+      plain_dir: plain_dir
+    } do
+      profile = MacOS.generate_profile(plain_dir, nil)
+
+      # NOTE: a plain `String.contains?(profile, ".git")` can never be false —
+      # the deny-read/write rules for `~/.git-credentials` always contain the
+      # substring. Pin the intent instead: no subpath rule pointing INTO a
+      # `.git` dir (the regex matches `.../.git"` and `.../.git/...` but not
+      # `.../.git-credentials"`).
+      refute profile =~ ~r{subpath "[^"]*/\.git(?:"|/)}
+    end
+
+    test "system read paths include /opt/homebrew (Homebrew ARM git)", %{
+      main_root: main_root,
+      worktree: worktree
+    } do
+      profile = MacOS.generate_profile(worktree, main_root)
+
+      assert profile =~ ~s{(allow file-read* (subpath "/opt/homebrew"))}
+    end
+  end
+
   describe "generate_profile/2 — write_paths default cache dirs (unset)" do
     test "emits write rules for all 13 default build-cache dirs when write_paths is unset" do
       # No config.toml is written — the global setup already isolated
