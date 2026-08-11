@@ -194,7 +194,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # The monitored pid — exits abnormally right after the create returns.
       spawn(fn ->
         WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
-        Process.exit(self(), :boom)
+        Process.exit(self(), :kill)
       end)
 
       wait_until(fn -> File.dir?(wt_path) end)
@@ -250,7 +250,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # proc A itself (it passes self() as the monitored agent pid).
       spawn(fn ->
         WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
-        Process.exit(self(), :boom)
+        Process.exit(self(), :kill)
       end)
 
       wait_until(fn -> File.dir?(wt_path) end)
