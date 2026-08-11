@@ -148,17 +148,26 @@ defmodule EvoGit.ReqLLMPool do
   # Shared grow-only apply for reconcile/2 and bump_for_excess_queuing/3.
   # Never raises: every shape from get_pool_status/2 is matched defensively.
   defp grow_pools_to(desired, finch_name) when is_integer(desired) and desired > 0 do
-    case Finch.get_pool_status(finch_name, :default) do
-      {:ok, pools} when is_map(pools) ->
-        Enum.each(pools, fn {pool_id, metrics} ->
-          maybe_grow(finch_name, pool_id, metrics, desired)
-        end)
+    # get_pool_status/2 raises ArgumentError ("unknown registry") when the
+    # Finch instance is not running. ReqLLM.Finch always starts before
+    # :evo_git in the app boot order, but guard anyway to honor the
+    # never-raise contract for any caller that may run pre-boot (e.g. the
+    # scheduler init/1 reconciliation).
+    if Process.whereis(finch_name) do
+      case Finch.get_pool_status(finch_name, :default) do
+        {:ok, pools} when is_map(pools) ->
+          Enum.each(pools, fn {pool_id, metrics} ->
+            maybe_grow(finch_name, pool_id, metrics, desired)
+          end)
 
-        :ok
+          :ok
 
-      # {:error, :not_found} (nothing materialized) or any unexpected shape.
-      _ ->
-        :ok
+        # {:error, :not_found} (nothing materialized) or any unexpected shape.
+        _ ->
+          :ok
+      end
+    else
+      :ok
     end
   end
 

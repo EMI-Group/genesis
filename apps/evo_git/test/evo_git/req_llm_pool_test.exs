@@ -135,6 +135,20 @@ defmodule EvoGit.ReqLLMPoolTest do
       assert :ok = ReqLLMPool.reconcile(10, @fresh_finch)
       assert {:error, :not_found} = Finch.get_pool_status(@fresh_finch, :default)
     end
+
+    test "is a no-op (never raises) when the Finch instance is not running" do
+      # get_pool_status/2 raises ArgumentError for a missing registry, so the
+      # module guards on Process.whereis — honor the never-raise contract even
+      # for callers that may run before :req_llm boots (e.g. scheduler init).
+      assert :ok = ReqLLMPool.reconcile(10, :NoSuchReqLLMPoolTestFinch)
+
+      assert :ok =
+               ReqLLMPool.bump_for_excess_queuing(
+                 %{"default" => 4},
+                 4,
+                 :NoSuchReqLLMPoolTestFinch
+               )
+    end
   end
 
   describe "bump_for_excess_queuing/3 against a real Finch" do
