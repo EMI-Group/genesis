@@ -69,9 +69,20 @@ defmodule EvoDashWeb.TaskCardComponents do
               <%= if @task.status == :finalizing do %>
                 <span class="loading loading-spinner loading-xs mr-2"></span>
               <% end %>
+              <%= if @task.status == :cancelling do %>
+                <span class="relative flex h-2.5 w-2.5 mr-2">
+                  <span
+                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-500 opacity-75"
+                    style="animation-duration: 2s"
+                  ></span>
+                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500"></span>
+                </span>
+              <% end %>
               <%= cond do %>
                 <% @task.status == :finalizing -> %>
                   Finalizing
+                <% @task.status == :cancelling -> %>
+                  {gettext("Cancelling…")}
                 <% true -> %>
                   {@task.status}
               <% end %>
@@ -123,12 +134,11 @@ defmodule EvoDashWeb.TaskCardComponents do
           </div>
 
           <div class="flex items-center gap-2 sm:gap-3">
-            <%= if @task.status in [:running, :finalizing] do %>
+            <%= if @task.status in [:pending, :running] do %>
               <button
-                class="btn btn-sm btn-outline btn-error border-error/30 hover:border-error hover:bg-error/10 hover:text-error rounded-md px-4"
-                phx-click="cancel_task"
+                class="btn btn-sm btn-outline border-base-300 hover:border-info hover:bg-info/10 hover:text-info rounded-md px-4"
+                phx-click="open_cancel_modal"
                 phx-value-task_id={@task.id}
-                phx-confirm={gettext("Are you sure you want to cancel this task?")}
               >
                 <.icon name="hero-x-mark" class="size-4 mr-1" /> {gettext("Cancel")}
               </button>
@@ -163,7 +173,21 @@ defmodule EvoDashWeb.TaskCardComponents do
               <summary class="btn btn-sm btn-ghost btn-circle rounded-md hover:bg-base-200">
                 <.icon name="hero-ellipsis-vertical" class="size-4" />
               </summary>
-              <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-40 border border-base-200">
+              <ul class="menu menu-sm dropdown-content mt-1 z-50 p-2 shadow-lg bg-base-100 rounded-lg w-44 border border-base-200">
+                <%= if @task.status in [:running, :cancelling] do %>
+                  <li>
+                    <button
+                      class="text-error hover:bg-error/10 hover:text-error rounded-md"
+                      phx-click="open_force_kill_modal"
+                      phx-value-task_id={@task.id}
+                    >
+                      <.icon name="hero-bolt" class="size-4 mr-2" /> {gettext("Force kill")}
+                    </button>
+                  </li>
+                  <li class="menu-title px-3 py-1 text-[10px] uppercase tracking-wide text-base-content/40">
+                    {gettext("Danger zone")}
+                  </li>
+                <% end %>
                 <li>
                   <button
                     class="text-error hover:bg-error/10 hover:text-error rounded-md"
@@ -417,6 +441,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   defp status_accent_color(:running), do: "bg-warning"
   defp status_accent_color(:finalizing), do: "bg-orange-500"
+  defp status_accent_color(:cancelling), do: "bg-violet-500"
   defp status_accent_color(:completed), do: "bg-info"
   defp status_accent_color(:failed), do: "bg-error"
   defp status_accent_color(:cancelled), do: "bg-warning"
@@ -446,6 +471,9 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   defp task_card_tint(%{status: :finalizing}),
     do: "bg-orange-500/5 shadow-orange-500/10 border-orange-500/20"
+
+  defp task_card_tint(%{status: :cancelling}),
+    do: "bg-violet-500/5 shadow-violet-500/10 border-violet-500/20"
 
   defp task_card_tint(%{status: :failed}), do: "bg-error/5 shadow-error/10 border-error/20"
   defp task_card_tint(_), do: ""
