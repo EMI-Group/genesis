@@ -63,7 +63,8 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       # top-level agents, use the repo root.
       source_path = resolve_source_path(repo_root, meta)
 
-      with :ok <- create_worktree(agent_id, repo_root, worktree_path, spec, branch_name, source_path),
+      with :ok <-
+             create_worktree(agent_id, repo_root, worktree_path, spec, branch_name, source_path),
            {:ok, _commit_sha} <- assign_and_prepare_worktree(agent_id, worktree_path) do
         # Run the worktree init script only for the primary repo (foreign
         # repos are independent and should not inherit the primary repo's
@@ -148,17 +149,45 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
     Git.prune_worktrees(repo_root)
 
-    case Git.delete_branch(repo_root, branch_name) do
-      {:ok, _} ->
+    case delete_branch_tolerant(repo_root, branch_name) do
+      :ok ->
         :ok
 
-      {:error, {_tag, output}} ->
+      {:error, output} ->
         Logger.warning(
           "AgentScheduler: Could not remove leftover branch #{branch_name}: #{inspect(output)}"
         )
     end
 
     :ok
+  end
+
+  @doc """
+  Deletes a git branch, treating "branch not found" as a silent no-op.
+
+  Destroy operations (leftover cleanup, worktree teardown) have "the branch is
+  gone" as their goal, so a `git branch -D` failing with `error: branch
+  '<name>' not found` means the goal is already met — not a failure. Returns
+  `:ok` for success-or-already-gone and `{:error, output}` for genuine
+  failures so callers can keep their warning logs.
+  """
+  @spec delete_branch_tolerant(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def delete_branch_tolerant(repo_root, branch_name) do
+    case Git.delete_branch(repo_root, branch_name) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {_tag, output}} ->
+        if branch_not_found?(output) do
+          :ok
+        else
+          {:error, output}
+        end
+    end
+  end
+
+  defp branch_not_found?(output) do
+    String.contains?(output, "not found") and String.contains?(output, "branch")
   end
 
   defp resolve_source_path(agent_repo_root, meta) do
@@ -213,9 +242,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
       {:ok, commit_sha}
     else
       {:error, {_tag, _output} = error} ->
-        Logger.error(
-          "AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}"
-        )
+        Logger.error("AgentScheduler: Failed to prepare worktree #{wt}: #{inspect(error)}")
 
         {:error, {:worktree_prepare_failed, error}}
     end
