@@ -136,7 +136,8 @@ defmodule EvoGit.RemoteNodeTest do
       summary = Enum.find(results, &(&1.id == id))
       refute is_nil(summary)
 
-      # The summary projection has exactly the 16 lightweight keys.
+      # The summary projection has exactly the 15 lightweight keys (`result` is
+      # deliberately excluded from the summary projection).
       summary_keys = [
         :agent_count,
         :base_sha,
@@ -148,7 +149,6 @@ defmodule EvoGit.RemoteNodeTest do
         :model_id,
         :opts,
         :project_path,
-        :result,
         :review_status,
         :started_at,
         :status,

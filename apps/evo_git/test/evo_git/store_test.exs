@@ -6,13 +6,13 @@ defmodule EvoGit.StoreTest do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  # The 16 summary keys returned by select_tasks_changed_since/2 (same
-  # projection as select_tasks_summary, plus the raw `updated_at` string).
+  # The 15 summary keys returned by select_tasks_changed_since/2 (same
+  # projection as select_tasks_summary, plus the raw `updated_at` string;
+  # `result` is deliberately excluded — no summary consumer reads it).
   @summary_keys [
     :id,
     :status,
     :review_status,
-    :result,
     :started_at,
     :finished_at,
     :type,
@@ -588,7 +588,7 @@ defmodule EvoGit.StoreTest do
       # Far-future since → empty.
       assert Store.select_tasks_changed_since(Store, "2099-01-01T00:00:00.000Z") == []
 
-      # 16-key summary projection contract, with raw updated_at string.
+      # 15-key summary projection contract, with raw updated_at string.
       [row] = rows
       assert Map.keys(row) |> Enum.sort() == Enum.sort(@summary_keys)
       assert row.updated_at == "2026-01-03T00:00:00.000Z"
