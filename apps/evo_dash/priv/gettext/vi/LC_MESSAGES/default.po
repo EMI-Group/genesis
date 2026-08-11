@@ -2684,7 +2684,7 @@ msgstr "top_p"
 msgid "total agents (incl. subagents)"
 msgstr "tổng số tác tử (bao gồm tác tử con)"
 
-#.key_path: scheduler.max_concurrency
+#.key_path: scheduler.default_llm_max_concurrency
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of concurrent LLM API calls. Controls how many agents can make API calls simultaneously. Lower values reduce API rate-limit pressure but slow down overall progress."
 msgstr "Số lượng tối đa các lời gọi API LLM đồng thời. Kiểm soát số lượng tác tử có thể gọi API cùng lúc. Giá trị thấp hơn giảm áp lực giới hạn tốc độ API nhưng làm chậm tiến độ tổng thể."

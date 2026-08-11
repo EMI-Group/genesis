@@ -156,13 +156,13 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
     end
 
     test "unrelated categories survive the merge" do
-      file_config = %{scheduler: %{max_concurrency: 4}, sandbox: %{mode: :auto}}
+      file_config = %{scheduler: %{default_llm_max_concurrency: 4}, sandbox: %{mode: :auto}}
       params = %{"sandbox.write_paths" => ["/tmp/a"]}
 
       config =
         ConfigIO.build_config_from_category_params(params, :sandbox, [write_paths_schema()], file_config)
 
-      assert get_in(config, [:scheduler, :max_concurrency]) == 4
+      assert get_in(config, [:scheduler, :default_llm_max_concurrency]) == 4
       assert get_in(config, [:sandbox, :write_paths]) == ["/tmp/a"]
     end
   end
