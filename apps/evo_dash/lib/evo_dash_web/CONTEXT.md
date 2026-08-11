@@ -30,6 +30,10 @@ The backend (`:evo_git`, Round 1) provides two cancels: `EvoGit.RemoteNode.cance
 
 Dashboard UX: the task card's inline button is now a graceful **Cancel** (`phx-click="open_cancel_modal"`, visible `[:pending, :running]`) and the three-dot dropdown gained a destructive **Force kill** (`phx-click="open_force_kill_modal"`, visible `[:running, :cancelling]`). TasksLive implements both as two-step server-side confirmation modals (SystemLive warning-modal pattern — see `./live/CONTEXT.md`). The `:cancelling` status is treated as IN-PROGRESS everywhere: violet badge (`Helpers.task_status_badge`), violet pulsing-dot card label (`task_card_components.ex`), violet sidebar dot (`layouts.ex`), included in the sidebar `@active_statuses` + running partition (`NodeAware`), and filterable via the TasksLive status dropdown (`value="cancelling"`, pure SQL string filter).
 
+### Agent Status Display (frontend merges `:blocked` into `:pending`)
+
+The frontend presents `:blocked` and `:pending` agents identically as **"Pending"** on all agent status surfaces — to the user, both mean "queued / waiting to be scheduled" (`Helpers.agent_status_label/1` is the single source of label text; the four `agent_status_*` presentation helpers delegate `:blocked` → the `:pending` clause). The backend scheduler keeps `:blocked` and `:pending` distinct — NO `:evo_git` changes. Note: the SystemLive scheduler charts (`live/system_live/charts.ex`) still consume the raw `:blocked` COUNT as the slot-saturation "waiting" telemetry series — that is scheduler telemetry, not an agent-status display, and stays unchanged.
+
 ### Subdirectories
 | Directory | Purpose |
 |-----------|---------|
