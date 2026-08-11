@@ -359,6 +359,41 @@ defmodule EvoDashWeb.NodeAwareTest do
     end
   end
 
+  describe "partition_active_tasks/1 — pure partitioning" do
+    # Pure function tests (no socket, no store) — partition_active_tasks/1 only
+    # reads `status` for the running filter, and status/review_status/
+    # branch_name for the pending (review-candidate) filter.
+
+    test "a :cancelling summary lands in the running partition" do
+      {running, pending} = NodeAware.partition_active_tasks([%{id: "t1", status: :cancelling}])
+
+      assert Enum.map(running, & &1.id) == ["t1"]
+      assert pending == []
+    end
+
+    test "a :cancelled summary does NOT land in the running partition" do
+      # :cancelled is terminal — it is neither running (not in the in-flight
+      # status list) nor pending (not :completed, so not a review candidate).
+      {running, pending} = NodeAware.partition_active_tasks([%{id: "t2", status: :cancelled}])
+
+      assert running == []
+      assert pending == []
+    end
+
+    test ":running/:pending/:finalizing summaries land in the running partition (regression)" do
+      summaries = [
+        %{id: "r1", status: :running},
+        %{id: "p1", status: :pending},
+        %{id: "f1", status: :finalizing}
+      ]
+
+      {running, pending} = NodeAware.partition_active_tasks(summaries)
+
+      assert Enum.map(running, & &1.id) |> Enum.sort() == ["f1", "p1", "r1"]
+      assert pending == []
+    end
+  end
+
   describe "load_running_and_pending_tasks/1 — node-aware source" do
     # These tests verify that the function reads tasks from the correct node:
     # local `TaskRegistry.list_tasks_summary([:running, :pending, :finalizing,
@@ -405,6 +440,20 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       ids = Enum.map(result.assigns[:running_tasks], & &1.id) |> Enum.sort()
       assert ids == ["f1", "p1", "r1"]
+    end
+
+    test "local node: a :cancelling task shows in running_tasks" do
+      # :cancelling is non-terminal — the task stays visible in the sidebar
+      # while it winds down, so it must land in running_tasks. finished_at must
+      # be nil for in-flight statuses (the fixture helper defaults it to now).
+      insert_fixture!(EvoGit.Store, id: "c1", status: :cancelling, finished_at: nil)
+
+      sock = socket(%{current_node: node(), current_node_id: nil})
+
+      result = NodeAware.load_running_and_pending_tasks(sock)
+
+      assert Enum.any?(result.assigns[:running_tasks], &(&1.id == "c1"))
+      assert hd(result.assigns[:running_tasks]).status == :cancelling
     end
 
     test "remote node: uses EvoDash.NodeContext.list_tasks_summary/2 (RPC), not local" do
