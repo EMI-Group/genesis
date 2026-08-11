@@ -794,16 +794,20 @@ defmodule EvoGit.Agent.ToolDispatch do
     # by the scheduler's tool-slot pool: each parallel task still acquires a
     # tool slot via `AgentScheduler.with_tool_slot/2` inside
     # `execute_tool_with_timeout/7` (respecting `max_tool_concurrency`).
-    # `max_concurrency: :infinity` makes the scheduler — not a local cap — the
-    # binding constraint. `ordered: true` keeps results in index order.
-    # `timeout: :infinity` defers timeout enforcement to the per-tool timeout
-    # logic inside `execute_tool_with_timeout/7` (an outer stream timeout would
-    # wrongly kill legitimate long-running tools).
+    # `max_concurrency` is set to the batch size so every call starts
+    # immediately — Elixir's `max_concurrency` only accepts positive integers
+    # (`:infinity` is valid for `timeout` only) — making the scheduler, not a
+    # local cap, the binding constraint. `ordered: true` keeps results in index
+    # order. `timeout: :infinity` defers timeout enforcement to the per-tool
+    # timeout logic inside `execute_tool_with_timeout/7` (an outer stream
+    # timeout would wrongly kill legitimate long-running tools).
+    concurrency = max(1, length(indexed_calls))
+
     tool_outputs =
       indexed_calls
       |> Task.async_stream(
         fn {call, index} -> run_tool_in_parallel(call, index, ctx) end,
-        max_concurrency: :infinity,
+        max_concurrency: concurrency,
         ordered: true,
         timeout: :infinity
       )
