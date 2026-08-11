@@ -1423,7 +1423,7 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:config_status, config_status())
     else
       # Remote node — fetch the resolved scheduler config via RPC. This returns
-      # a flat map (e.g. %{max_concurrency: 3, llm_model: "...", ...}), which we
+      # a flat map (e.g. %{default_llm_max_concurrency: 3, llm_model: "...", ...}), which we
       # surface as a best-effort nested map so the schema-driven cards display them.
       remote_cfg = EvoDash.NodeContext.get_remote_config(socket.assigns.current_node)
 
@@ -1447,7 +1447,7 @@ defmodule EvoDashWeb.SettingsLive do
   def remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
     scheduler =
       %{}
-      |> maybe_put(:max_concurrency, remote_cfg[:max_concurrency])
+      |> maybe_put(:default_llm_max_concurrency, remote_cfg[:default_llm_max_concurrency])
       |> maybe_put(:max_tool_concurrency, remote_cfg[:max_tool_concurrency])
       |> maybe_put(:agent_max_retries, remote_cfg[:agent_max_retries])
       |> maybe_put(:max_agent_depth, remote_cfg[:max_agent_depth])
