@@ -24,14 +24,14 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 
 ### PromptFragments — Prompt Composition Library
 
-`EvoGit.Agents.PromptFragments` (`prompt_fragments.ex`) is **NOT an agent** — it does not `use EvoGit.Agent` and has no system prompt of its own. It is a library of verbatim shared prompt text that the 8 agent `system_prompt/0` functions compose from (via `~S"""...""" <> PromptFragments.X() <> "..."` concatenation) instead of copy-pasting. It exists to eliminate the 4–7× copy-pasted boilerplate that previously drifted across prompts.
+`EvoGit.Agents.PromptFragments` (`prompt_fragments.ex`) is **NOT an agent** — it does not `use EvoGit.Agent` and has no system prompt of its own. It is a library of verbatim shared prompt text that the 8 agent `system_prompt/0` functions compose from (via `~S"""...""" <> PromptFragments.X() <> "..."` concatenation) instead of copy-pasting. It exists to eliminate the 4–7× copy-pasted boilerplate across prompts — a single source of truth for shared prompt text.
 
 **Invariants:**
-- The composed `system_prompt/0` strings are **byte-identical** (character-for-character) to the pre-refactor prompts — agent behavior depends on exact wording.
+- The composed `system_prompt/0` strings are **byte-identical** (character-for-character) to the prompt text they reproduce — agent behavior depends on exact wording, so any wording change must be deliberate.
 - Fragments carry **NO trailing newline**; callers add `"\n"` explicitly (or mid-line `" "` joiners) so mid-line composition stays exact.
 - Near-duplicates are **deliberate separate functions** (or stay inline in the owning module) — never normalized/merged.
 
-**Function inventory (27 functions, grouped by theme):**
+**Function inventory (28 functions, grouped by theme):**
 
 | Function | First line (verbatim start) | Used by |
 |---|---|---|
