@@ -405,6 +405,46 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Returns a single task by id from the TaskRegistry.
+
+  Delegates to `EvoGit.TaskRegistry.get_task/1` (a `GenServer.call`). This
+  runs on the REMOTE node when called via `:erpc.call/5`, returning a native
+  `%TaskInfo{}` struct.
+
+  Returns `%TaskInfo{}` or `nil` if the task does not exist.
+  """
+  @spec get_task(String.t()) :: EvoGit.TaskInfo.t() | nil
+  def get_task(task_id) do
+    EvoGit.TaskRegistry.get_task(task_id)
+  end
+
+  @doc """
+  Sets the review status for a task.
+
+  Delegates to `EvoGit.TaskRegistry.set_review_status/2` (a `GenServer.cast`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` (fire-and-forget cast).
+  """
+  @spec set_review_status(String.t(), atom()) :: :ok
+  def set_review_status(task_id, status) do
+    EvoGit.TaskRegistry.set_review_status(task_id, status)
+  end
+
+  @doc """
+  Sets the review metadata (base and commit SHAs) for a task.
+
+  Delegates to `EvoGit.TaskRegistry.set_review_metadata/3` (a `GenServer.cast`).
+  This runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `:ok` (fire-and-forget cast).
+  """
+  @spec set_review_metadata(String.t(), String.t(), String.t()) :: :ok
+  def set_review_metadata(task_id, base_sha, commit_sha) do
+    EvoGit.TaskRegistry.set_review_metadata(task_id, base_sha, commit_sha)
+  end
+
+  @doc """
   Clears all finished tasks from the registry.
 
   Delegates to `EvoGit.TaskRegistry.clear_finished_tasks/0` (a `GenServer.call`).
@@ -457,6 +497,276 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec start_task(atom(), keyword()) :: {:ok, EvoGit.TaskInfo.t()} | {:error, term()}
   def start_task(task_type, opts) do
     EvoGit.TaskRegistry.start_task(task_type, opts)
+  end
+
+  # ── Review operations (delegated to EvoGit.Review) ─────────────────
+  #
+  # Function-for-function mirrors of EvoGit.Review's public API. These run
+  # on the REMOTE node when called via `:erpc.call/5`, so review operations
+  # execute inside the remote VM against the remote filesystem. Return
+  # values pass through UNCHANGED — whatever `EvoGit.Review` returns is
+  # returned verbatim.
+
+  @doc """
+  Fetches the full content of a file at a specific commit on the remote node.
+
+  Delegates to `EvoGit.Review.get_file_content/3`. `repo_path` is the absolute
+  path of the repository, `commit_sha` the commit to read from, `file_path`
+  the file within the repository. Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns `{:ok, content}` if the file exists at that commit, or
+  `{:error, {tag, output}}` if not.
+  """
+  @spec get_file_content(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, {atom(), String.t()}}
+  def get_file_content(repo_path, commit_sha, file_path) do
+    EvoGit.Review.get_file_content(repo_path, commit_sha, file_path)
+  end
+
+  @doc """
+  Lists commits between the merge-base and a branch tip on the remote node.
+
+  Delegates to `EvoGit.Review.list_commits/2`. `repo_path` is the absolute
+  path of the repository, `branch_name` the branch whose commits to list.
+  Runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `{:ok, [%EvoGit.Review.CommitInfo{}]}` or `{:error, reason}`.
+  """
+  @spec list_commits(String.t(), String.t()) ::
+          {:ok, [EvoGit.Review.CommitInfo.t()]} | {:error, term()}
+  def list_commits(repo_path, branch_name) do
+    EvoGit.Review.list_commits(repo_path, branch_name)
+  end
+
+  @doc """
+  Loads all review data (diff stat, full diff, parsed files) for a branch on
+  the remote node.
+
+  Delegates to `EvoGit.Review.load_review_data/2`. `repo_path` is the absolute
+  path of the repository, `branch_name` the branch to review. Runs on the
+  REMOTE node when called via `:erpc.call/5`.
+
+  Returns `{:ok, review_data_map}` where the map has `:commit_sha`,
+  `:base_sha`, `:diff_stat`, `:diff`, `:files`, `:changed_files_count`,
+  `:total_additions`, `:total_deletions`, or an error tuple.
+  """
+  @spec load_review_data(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def load_review_data(repo_path, branch_name) do
+    EvoGit.Review.load_review_data(repo_path, branch_name)
+  end
+
+  @doc """
+  Loads review metadata only (file list with counts, no diffs) for a branch
+  on the remote node.
+
+  Delegates to `EvoGit.Review.load_review_metadata/2`. `repo_path` is the
+  absolute path of the repository, `branch_name` the branch to review. Runs
+  on the REMOTE node when called via `:erpc.call/5`.
+
+  Same return shape as `load_review_data/2` but the `:diff` field on each
+  file is `nil` and the top-level `:diff` field is `nil`.
+  """
+  @spec load_review_metadata(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def load_review_metadata(repo_path, branch_name) do
+    EvoGit.Review.load_review_metadata(repo_path, branch_name)
+  end
+
+  @doc """
+  Loads the diff of a single file between two commits on the remote node.
+
+  Delegates to `EvoGit.Review.load_file_diff/4`. `repo_path` is the absolute
+  path of the repository, `base_sha` and `commit_sha` the revision range,
+  `file_path` the file within the repository. Runs on the REMOTE node when
+  called via `:erpc.call/5`.
+
+  Returns the diff result from `EvoGit.Review` verbatim.
+  """
+  @spec load_file_diff(String.t(), String.t(), String.t(), String.t()) :: term()
+  def load_file_diff(repo_path, base_sha, commit_sha, file_path) do
+    EvoGit.Review.load_file_diff(repo_path, base_sha, commit_sha, file_path)
+  end
+
+  @doc """
+  Loads the diff of a single file between two commits on the remote node,
+  with options.
+
+  Delegates to `EvoGit.Review.load_file_diff/5`. `repo_path` is the absolute
+  path of the repository, `base_sha` and `commit_sha` the revision range,
+  `file_path` the file within the repository, `opts` a keyword list of
+  options (e.g. context lines). Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns the diff result from `EvoGit.Review` verbatim.
+  """
+  @spec load_file_diff(String.t(), String.t(), String.t(), String.t(), keyword()) :: term()
+  def load_file_diff(repo_path, base_sha, commit_sha, file_path, opts) when is_list(opts) do
+    EvoGit.Review.load_file_diff(repo_path, base_sha, commit_sha, file_path, opts)
+  end
+
+  @doc """
+  Loads review metadata from explicit base/commit SHAs on the remote node
+  (no branch resolution).
+
+  Delegates to `EvoGit.Review.load_review_metadata_from_shas/3`. `repo_path`
+  is the absolute path of the repository, `base_sha` and `commit_sha` the
+  revision range. Runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns the result from `EvoGit.Review` verbatim.
+  """
+  @spec load_review_metadata_from_shas(String.t(), String.t(), String.t()) :: term()
+  def load_review_metadata_from_shas(repo_path, base_sha, commit_sha) do
+    EvoGit.Review.load_review_metadata_from_shas(repo_path, base_sha, commit_sha)
+  end
+
+  @doc """
+  Lists commits between explicit base/commit SHAs on the remote node (no
+  branch resolution).
+
+  Delegates to `EvoGit.Review.list_commits_from_shas/3`. `repo_path` is the
+  absolute path of the repository, `base_sha` and `commit_sha` the revision
+  range. Runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns the result from `EvoGit.Review` verbatim.
+  """
+  @spec list_commits_from_shas(String.t(), String.t(), String.t()) :: term()
+  def list_commits_from_shas(repo_path, base_sha, commit_sha) do
+    EvoGit.Review.list_commits_from_shas(repo_path, base_sha, commit_sha)
+  end
+
+  @doc """
+  Lists the files changed in a single commit on the remote node.
+
+  Delegates to `EvoGit.Review.load_commit_files/2`. `repo_path` is the
+  absolute path of the repository, `commit_sha` the commit to inspect. Runs
+  on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns the result from `EvoGit.Review` verbatim.
+  """
+  @spec load_commit_files(String.t(), String.t()) :: term()
+  def load_commit_files(repo_path, commit_sha) do
+    EvoGit.Review.load_commit_files(repo_path, commit_sha)
+  end
+
+  @doc """
+  Loads the diff of a single file within a single commit on the remote node.
+
+  Delegates to `EvoGit.Review.load_commit_file_diff/3`. `repo_path` is the
+  absolute path of the repository, `commit_sha` the commit, `file_path` the
+  file within the repository. Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns the result from `EvoGit.Review` verbatim.
+  """
+  @spec load_commit_file_diff(String.t(), String.t(), String.t()) :: term()
+  def load_commit_file_diff(repo_path, commit_sha, file_path) do
+    EvoGit.Review.load_commit_file_diff(repo_path, commit_sha, file_path)
+  end
+
+  @doc """
+  Merges an agent branch into the repository's default merge target on the
+  remote node.
+
+  Delegates to `EvoGit.Review.merge_branch/2`. `repo_path` is the absolute
+  path of the repository, `branch_name` the branch to merge. Runs on the
+  REMOTE node when called via `:erpc.call/5`.
+
+  Returns `{:ok, sha}` on success, `{:conflict, details}` on a merge
+  conflict, or `{:error, reason}` on failure.
+  """
+  @spec merge_branch(String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  def merge_branch(repo_path, branch_name) do
+    EvoGit.Review.merge_branch(repo_path, branch_name)
+  end
+
+  @doc """
+  Merges an agent branch into an explicit target branch on the remote node.
+
+  Delegates to `EvoGit.Review.merge_branch/3`. `repo_path` is the absolute
+  path of the repository, `branch_name` the branch to merge, `target_branch`
+  the branch to merge into. Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns `{:ok, sha}` on success, `{:conflict, details}` on a merge
+  conflict, or `{:error, reason}` on failure.
+  """
+  @spec merge_branch(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  def merge_branch(repo_path, branch_name, target_branch) do
+    EvoGit.Review.merge_branch(repo_path, branch_name, target_branch)
+  end
+
+  @doc """
+  Resolves the default merge target branch for a repository on the remote node.
+
+  Delegates to `EvoGit.Review.default_merge_target/1`. `repo_path` is the
+  absolute path of the repository. Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns the branch name (`main` → `master` → `dev` → `prod` → current →
+  first local branch) or `{:error, :no_branch_found}`.
+  """
+  @spec default_merge_target(String.t()) :: String.t() | {:error, atom()}
+  def default_merge_target(repo_path) do
+    EvoGit.Review.default_merge_target(repo_path)
+  end
+
+  @doc """
+  Lists all local branches in a repository on the remote node.
+
+  Delegates to `EvoGit.Review.list_branches/1`. `repo_path` is the absolute
+  path of the repository. Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns `{:ok, [String.t()]}` or `{:error, {tag, output}}`.
+  """
+  @spec list_branches(String.t()) :: {:ok, [String.t()]} | {:error, {atom(), String.t()}}
+  def list_branches(repo_path) do
+    EvoGit.Review.list_branches(repo_path)
+  end
+
+  @doc """
+  Rejects (deletes) an agent branch in a repository on the remote node.
+
+  Delegates to `EvoGit.Review.reject_branch/2`. `repo_path` is the absolute
+  path of the repository, `branch_name` the branch to reject. Runs on the
+  REMOTE node when called via `:erpc.call/5`.
+
+  Returns the result from `EvoGit.Review` verbatim.
+  """
+  @spec reject_branch(String.t(), String.t()) :: term()
+  def reject_branch(repo_path, branch_name) do
+    EvoGit.Review.reject_branch(repo_path, branch_name)
+  end
+
+  @doc """
+  Creates a GitHub pull request for an agent branch on the remote node.
+
+  Delegates to `EvoGit.Review.create_github_pr/4`. `repo_path` is the
+  absolute path of the repository, `branch_name` the branch to open the PR
+  for, `objective` the task objective string, `result` the task result
+  string. Runs on the REMOTE node when called via `:erpc.call/5`.
+
+  Returns the result from `EvoGit.Review` verbatim.
+  """
+  @spec create_github_pr(String.t(), String.t(), String.t(), String.t()) :: term()
+  def create_github_pr(repo_path, branch_name, objective, result) do
+    EvoGit.Review.create_github_pr(repo_path, branch_name, objective, result)
+  end
+
+  @doc """
+  Checks whether a branch exists in a repository on the remote node.
+
+  Delegates to `EvoGit.Review.branch_exists?/2`. `repo_path` is the absolute
+  path of the repository, `branch_name` the branch to check. Runs on the
+  REMOTE node when called via `:erpc.call/5`.
+
+  Returns a boolean.
+  """
+  @spec branch_exists?(String.t(), String.t()) :: boolean()
+  def branch_exists?(repo_path, branch_name) do
+    EvoGit.Review.branch_exists?(repo_path, branch_name)
   end
 
   @doc """

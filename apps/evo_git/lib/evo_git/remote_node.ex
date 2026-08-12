@@ -504,6 +504,78 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Returns a single task by id on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.get_task/1`
+  directly. On a remote node, routes the call through `:erpc` via
+  `call_remote/4`. Returns `nil` if the remote call fails (or if the task
+  does not exist).
+  """
+  @spec get_task(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
+  def get_task(node, task_id) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.get_task(task_id)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_task, [task_id]) do
+        {:ok, result} -> result
+        {:error, _reason} -> nil
+      end
+    end
+  end
+
+  @doc """
+  Sets the review status for a task on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.set_review_status/2` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec set_review_status(node(), String.t(), atom()) :: :ok | {:error, term()}
+  def set_review_status(node, task_id, status) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.set_review_status(task_id, status)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :set_review_status, [
+             task_id,
+             status
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Sets the review metadata (base and commit SHAs) for a task on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.set_review_metadata/3` directly. On a
+  remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec set_review_metadata(node(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, term()}
+  def set_review_metadata(node, task_id, base_sha, commit_sha) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.set_review_metadata(task_id, base_sha, commit_sha)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :set_review_metadata, [
+             task_id,
+             base_sha,
+             commit_sha
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Clears all finished tasks on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks/0`
@@ -518,6 +590,492 @@ defmodule EvoGit.RemoteNode do
       EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks()
     else
       case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :clear_finished_tasks, []) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Fetches the full content of a file at a specific commit on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.get_file_content/3` directly (which
+  delegates to `EvoGit.Review.get_file_content/3`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the review operation runs
+  inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, content}` if the file exists at that commit, or
+  `{:error, {tag, output}}` if not. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec get_file_content(node(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def get_file_content(node, repo_path, commit_sha, file_path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.get_file_content(repo_path, commit_sha, file_path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_file_content, [
+             repo_path,
+             commit_sha,
+             file_path
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Lists commits between the merge-base and a branch tip on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_commits/2`
+  directly (which delegates to `EvoGit.Review.list_commits/2`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, [%EvoGit.Review.CommitInfo{}]}` or `{:error, reason}`. On
+  RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec list_commits(node(), String.t(), String.t()) ::
+          {:ok, [EvoGit.Review.CommitInfo.t()]} | {:error, term()}
+  def list_commits(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_commits(repo_path, branch_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_commits, [
+             repo_path,
+             branch_name
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Loads all review data (diff stat, full diff, parsed files) for a branch on
+  the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_review_data/2` directly (which
+  delegates to `EvoGit.Review.load_review_data/2`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the review operation runs
+  inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, review_data_map}` or an error tuple. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_review_data(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def load_review_data(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_review_data(repo_path, branch_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_review_data, [
+             repo_path,
+             branch_name
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Loads review metadata only (file list with counts, no diffs) for a branch
+  on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_review_metadata/2` directly (which
+  delegates to `EvoGit.Review.load_review_metadata/2`). On a remote node,
+  routes the call through `:erpc` via `call_remote/4` so the review operation
+  runs inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, review_data_map}` or an error tuple. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_review_metadata(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def load_review_metadata(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_review_metadata(repo_path, branch_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_review_metadata, [
+             repo_path,
+             branch_name
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Loads the diff of a single file between two commits on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_file_diff/4` directly (which
+  delegates to `EvoGit.Review.load_file_diff/4`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the review operation runs
+  inside the remote VM against the remote filesystem.
+
+  Returns the diff result from `EvoGit.Review` verbatim. On RPC failure,
+  returns `{:error, {kind, reason}}`.
+  """
+  @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t()) :: term()
+  def load_file_diff(node, repo_path, base_sha, commit_sha, file_path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_file_diff(repo_path, base_sha, commit_sha, file_path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_file_diff, [
+             repo_path,
+             base_sha,
+             commit_sha,
+             file_path
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Loads the diff of a single file between two commits on the given node,
+  with options.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_file_diff/5` directly (which
+  delegates to `EvoGit.Review.load_file_diff/5`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the review operation runs
+  inside the remote VM against the remote filesystem.
+
+  `opts` is a keyword list of options (e.g. context lines). Returns the diff
+  result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
+          term()
+  def load_file_diff(node, repo_path, base_sha, commit_sha, file_path, opts) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_file_diff(
+        repo_path,
+        base_sha,
+        commit_sha,
+        file_path,
+        opts
+      )
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_file_diff, [
+             repo_path,
+             base_sha,
+             commit_sha,
+             file_path,
+             opts
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Loads review metadata from explicit base/commit SHAs on the given node (no
+  branch resolution).
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_review_metadata_from_shas/3` directly
+  (which delegates to `EvoGit.Review.load_review_metadata_from_shas/3`). On a
+  remote node, routes the call through `:erpc` via `call_remote/4` so the
+  review operation runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_review_metadata_from_shas(node(), String.t(), String.t(), String.t()) :: term()
+  def load_review_metadata_from_shas(node, repo_path, base_sha, commit_sha) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_review_metadata_from_shas(
+        repo_path,
+        base_sha,
+        commit_sha
+      )
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_review_metadata_from_shas, [
+             repo_path,
+             base_sha,
+             commit_sha
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Lists commits between explicit base/commit SHAs on the given node (no
+  branch resolution).
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.list_commits_from_shas/3` directly (which
+  delegates to `EvoGit.Review.list_commits_from_shas/3`). On a remote node,
+  routes the call through `:erpc` via `call_remote/4` so the review operation
+  runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec list_commits_from_shas(node(), String.t(), String.t(), String.t()) :: term()
+  def list_commits_from_shas(node, repo_path, base_sha, commit_sha) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_commits_from_shas(repo_path, base_sha, commit_sha)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_commits_from_shas, [
+             repo_path,
+             base_sha,
+             commit_sha
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Lists the files changed in a single commit on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_commit_files/2` directly (which
+  delegates to `EvoGit.Review.load_commit_files/2`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the review operation runs
+  inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_commit_files(node(), String.t(), String.t()) :: term()
+  def load_commit_files(node, repo_path, commit_sha) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_commit_files(repo_path, commit_sha)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_commit_files, [
+             repo_path,
+             commit_sha
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Loads the diff of a single file within a single commit on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.load_commit_file_diff/3` directly (which
+  delegates to `EvoGit.Review.load_commit_file_diff/3`). On a remote node,
+  routes the call through `:erpc` via `call_remote/4` so the review operation
+  runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_commit_file_diff(node(), String.t(), String.t(), String.t()) :: term()
+  def load_commit_file_diff(node, repo_path, commit_sha, file_path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.load_commit_file_diff(repo_path, commit_sha, file_path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_commit_file_diff, [
+             repo_path,
+             commit_sha,
+             file_path
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Merges an agent branch into the repository's default merge target on the
+  given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.merge_branch/2`
+  directly (which delegates to `EvoGit.Review.merge_branch/2`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, sha}` on success, `{:conflict, details}` on a merge conflict,
+  or `{:error, reason}` on failure. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec merge_branch(node(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  def merge_branch(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :merge_branch, [
+             repo_path,
+             branch_name
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Merges an agent branch into an explicit target branch on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.merge_branch/3`
+  directly (which delegates to `EvoGit.Review.merge_branch/3`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, sha}` on success, `{:conflict, details}` on a merge conflict,
+  or `{:error, reason}` on failure. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec merge_branch(node(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  def merge_branch(node, repo_path, branch_name, target_branch) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name, target_branch)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :merge_branch, [
+             repo_path,
+             branch_name,
+             target_branch
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Resolves the default merge target branch for a repository on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.default_merge_target/1` directly (which
+  delegates to `EvoGit.Review.default_merge_target/1`). On a remote node,
+  routes the call through `:erpc` via `call_remote/4` so the review operation
+  runs inside the remote VM against the remote filesystem.
+
+  Returns the branch name (`main` → `master` → `dev` → `prod` → current →
+  first local branch) or `{:error, :no_branch_found}`. On RPC failure,
+  returns `{:error, {kind, reason}}`.
+  """
+  @spec default_merge_target(node(), String.t()) :: String.t() | {:error, term()}
+  def default_merge_target(node, repo_path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.default_merge_target(repo_path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :default_merge_target, [
+             repo_path
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Lists all local branches in a repository on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_branches/1`
+  directly (which delegates to `EvoGit.Review.list_branches/1`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, [String.t()]}` or `{:error, {tag, output}}`. On RPC failure,
+  returns `{:error, {kind, reason}}`.
+  """
+  @spec list_branches(node(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  def list_branches(node, repo_path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_branches(repo_path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_branches, [repo_path]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Rejects (deletes) an agent branch in a repository on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.reject_branch/2`
+  directly (which delegates to `EvoGit.Review.reject_branch/2`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec reject_branch(node(), String.t(), String.t()) :: term()
+  def reject_branch(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.reject_branch(repo_path, branch_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :reject_branch, [
+             repo_path,
+             branch_name
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Creates a GitHub pull request for an agent branch on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.create_github_pr/4` directly (which
+  delegates to `EvoGit.Review.create_github_pr/4`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the review operation runs
+  inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec create_github_pr(node(), String.t(), String.t(), String.t(), String.t()) :: term()
+  def create_github_pr(node, repo_path, branch_name, objective, result) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.create_github_pr(repo_path, branch_name, objective, result)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :create_github_pr, [
+             repo_path,
+             branch_name,
+             objective,
+             result
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Checks whether a branch exists in a repository on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.branch_exists?/2`
+  directly (which delegates to `EvoGit.Review.branch_exists?/2`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns a boolean. On RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec branch_exists?(node(), String.t(), String.t()) :: boolean() | {:error, term()}
+  def branch_exists?(node, repo_path, branch_name) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.branch_exists?(repo_path, branch_name)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :branch_exists?, [
+             repo_path,
+             branch_name
+           ]) do
         {:ok, result} -> result
         {:error, reason} -> {:error, reason}
       end
