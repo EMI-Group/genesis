@@ -569,6 +569,73 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
     end
   end
 
+  # --- Ghost-model pool release (Fix C regression) ---
+
+  describe "ghost-model pool release (Fix C)" do
+    test "handle_release_llm_slot removes a ghost-model holder" do
+      # Agent 9 holds a slot in pool "ghost" — a key in llm_holders that is
+      # NOT in model_concurrency. There is NO :evogit_agent_state entry for 9,
+      # so the old ETS-based resolve_model_id would resolve to the default
+      # model and delete from the WRONG pool, leaking the "ghost" holder.
+      state =
+        base_state(
+          llm_holders: %{"ghost" => MapSet.new([9])},
+          llm_last_granted: %{"ghost" => %{9 => 1234}}
+        )
+
+      assert {new_state, _status_updates} = Slots.handle_release_llm_slot(9, state)
+
+      refute MapSet.member?(State.holders_for(new_state, "ghost"), 9)
+      refute Map.has_key?(State.last_granted_for(new_state, "ghost"), 9)
+    end
+
+    test "release_agent_slots removes a ghost-model holder on agent death" do
+      state =
+        base_state(
+          llm_holders: %{"ghost" => MapSet.new([9])},
+          llm_last_granted: %{"ghost" => %{9 => 1234}}
+        )
+
+      assert {new_state, _status_updates} = Slots.release_agent_slots(state, 9)
+
+      refute MapSet.member?(State.holders_for(new_state, "ghost"), 9)
+      refute Map.has_key?(State.last_granted_for(new_state, "ghost"), 9)
+    end
+  end
+
+  # --- No-starvation on queued-head death ---
+
+  describe "no-starvation on queued-head death" do
+    test "death of a queued head tool waiter purges it and grants the next" do
+      ref1 = make_ref()
+      from1 = {self(), ref1}
+      ref2 = make_ref()
+      from2 = {self(), ref2}
+      ref3 = make_ref()
+      from3 = {self(), ref3}
+
+      # Agent 1 is the QUEUED head (not a holder) — all of 1/2/3 wait while
+      # the pool is busy. max_tool_concurrency is 2 with one holder, so one
+      # slot frees up after agent 1 dies.
+      state =
+        base_state(
+          tool_holders: MapSet.new([99]),
+          tool_waiting: :queue.from_list([{1, from1}, {2, from2}, {3, from3}])
+        )
+
+      assert {new_state, _status_updates} = Slots.release_agent_slots(state, 1)
+
+      # Agent 1 is purged from the queue; its blocked request gets cancelled.
+      assert_received {^ref1, {:error, :cancelled}}
+
+      # Agent 2 (next in line) is granted; agent 3 is still waiting.
+      assert MapSet.member?(new_state.tool_holders, 2)
+      assert :queue.to_list(new_state.tool_waiting) == [{3, from3}]
+      assert_received {^ref2, :ok}
+      refute_received {^ref3, :ok}
+    end
+  end
+
   # --- Model ID resolution ---
 
   describe "resolve_model_id/2" do
