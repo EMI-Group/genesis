@@ -24,12 +24,13 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Status / query** | `conflict_files/1`, `status/1`, `rev_parse/2`, `check_ignore/2` |
 | **Tree listing** | `ls_tree_names/2` — recursive file list in a git tree |
 | **History** | `log/2`, `file_history/3`, `show/2` |
-| **Diff** | `diff/4`, `file_diff/5`, `diff_stat/3`, `diff_numstat/3`, `diff_name_only/3` — changed file paths between two commits |
+| **Diff** | `diff/4`, `file_diff/5`, `diff_stat/3`, `diff_numstat/3`, `diff_shortstat/3`, `diff_name_only/3` — changed file paths between two commits |
 | **Notes** | `add_note/4`, `remove_note/3`, `show_note/3`, `get_note/4`, `list_notes/2` |
 | **Tags** | `tag/3`, `delete_tag/2` |
+| **Refs** | `update_ref/3`, `delete_ref/2` — archive refs protecting commits from GC |
 | **Branches** | `create_branch/3`, `current_branch/1`, `list_branches/1`, `list_branches/2`, `branch_exists?/2`, `delete_branch/2` |
 | **Init** | `init/1` |
-| **GitHub** | `gh_available?/0`, `create_pull_request/5`, `create_origin_remote/1`, `origin_default_branch/1`, `has_origin_remote?/1` |
+| **GitHub** | `gh_available?/0`, `create_pull_request/5`, `create_origin_remote/1`, `origin_default_branch/1`, `has_origin_remote?/1`, `push_branch/2` |
 
 **Return convention (uniform, single documented shape):**
 Every function returns `{:ok, value}` on success or `{:error, {tag, output}}` on failure, where `output` is a trimmed `String.t` and `tag` is:
