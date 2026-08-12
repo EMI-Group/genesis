@@ -15,7 +15,7 @@ None — leaf directory (four module files).
 The diff viewer highlights code via Tree-sitter (Lumis). It uses a **file-level-primary / hunk-level-fallback** design:
 
 - **File-level (primary):** When the full file content at the new/old commit is available (`FileInfo.full_new_content` / `full_old_content`), the ENTIRE file is highlighted in a single Lumis call per side. Tree-sitter then has full context (imports, function boundaries, multi-line constructs) and produces consistent highlighting. The diff lines are walked hunk-by-hunk; each hunk's `@@` header provides 1-indexed starting line numbers in the old/new files, which are used to index into the full-file highlight arrays (converted to 0-indexed). Context lines prefer `new_hl`, addition lines use `new_hl`, deletion lines use `old_hl`. Out-of-bounds or nil lookups fall back to the raw line content (not empty string).
-- **Hunk-level (fallback):** When full content is unavailable (fetch failed for added/deleted files, the content is binary — detected via null-byte heuristic in the first 8KB, or the file exceeds `@max_full_file_bytes` = 500_000 bytes), the original approach is used: reconstruct clean old/new code strings from each hunk and call Lumis once per hunk code block. This is extracted as `precompute_highlights_hunk_level/2`.
+- **Hunk-level (fallback):** When full content is unavailable (fetch failed for added/deleted files, the content is binary — detected via null-byte heuristic in the first 8KB, or the file exceeds `@max_full_file_bytes` = 500_000 bytes), the hunk-level approach is used: reconstruct clean old/new code strings from each hunk and call Lumis once per hunk code block. This is extracted as `precompute_highlights_hunk_level/2`.
 
 Entry point: `precompute_highlights(lines, language, full_new_content, full_old_content)` dispatches to the appropriate path.
 
@@ -23,7 +23,7 @@ Helpers reused by both paths: `highlight_code_block/2` (single Lumis-call helper
 
 ### Lumis HTML Parsing (Floki-based)
 
-`parse_lumis_lines/1` parses Lumis's `html_multi_themes` formatter output into a map `%{line_number => inner_html}`. It uses **Floki** (configured with the **html5ever** Rust NIF parser via `Application.put_env(:floki, :html_parser, Floki.HTMLParser.Html5ever)` in `EvoDash.Application.start/2`). The previous regex-based approach was replaced because Lumis HTML can contain nested `<div>` tags and multi-line spans that broke regex matching.
+`parse_lumis_lines/1` parses Lumis's `html_multi_themes` formatter output into a map `%{line_number => inner_html}`. It uses **Floki** (configured with the **html5ever** Rust NIF parser via `Application.put_env(:floki, :html_parser, Floki.HTMLParser.Html5ever)` in `EvoDash.Application.start/2`) — a regex-based parser would break because Lumis HTML can contain nested `<div>` tags and multi-line spans.
 
 The parser:
 1. Calls `Floki.parse_document/1` on the raw Lumis HTML (returns `{:ok, document}` or `{:error, _}`)
@@ -54,7 +54,7 @@ Key functions:
 
 ### Merge-target branch selector (`Actions.action_buttons/1`)
 
-The review page's merge action can merge into a user-selectable branch instead of always the repo default. `action_buttons/1` takes `merge_targets` (list of local branch names) and `default_merge_target` (resolved default branch name, or nil). When `merge_targets != []`, the Merge button is wrapped in a `<form phx-submit="merge" class="contents">` alongside a compact `<select name="target_branch">` (DaisyUI `select-sm select-bordered rounded-lg`) pre-selecting `default_merge_target`; the Merge button becomes `type="submit"` (keeping `phx-confirm`). When `merge_targets == []` (branches couldn't be listed), the plain `phx-click="merge"` button renders exactly as before. The event params' `"target_branch"` lands in the `merge` handler. Data sources (all in `EvoGit.Review`, called from `ReviewLive.load_task_data/2` with plain `case` on the tuple returns — no try/rescue): `list_branches/1` (names filtered to non-blank binaries), `default_merge_target/1`, and `merge_branch/3` (merge_branch/2 remains the legacy default-resolving path — do not remove it).
+The review page's merge action can merge into a user-selectable branch instead of always the repo default. `action_buttons/1` takes `merge_targets` (list of local branch names) and `default_merge_target` (resolved default branch name, or nil). When `merge_targets != []`, the Merge button is wrapped in a `<form phx-submit="merge" class="contents">` alongside a compact `<select name="target_branch">` (DaisyUI `select-sm select-bordered rounded-lg`) pre-selecting `default_merge_target`; the Merge button becomes `type="submit"` (keeping `phx-confirm`). When `merge_targets == []` (branches couldn't be listed), the plain `phx-click="merge"` button renders. The event params' `"target_branch"` lands in the `merge` handler. Data sources (all in `EvoGit.Review`, called from `ReviewLive.load_task_data/2` with plain `case` on the tuple returns — no try/rescue): `list_branches/1` (names filtered to non-blank binaries), `default_merge_target/1`, and `merge_branch/3` (merge_branch/2 is the default-resolving path — do not remove it).
 
 ## Constraints
 
