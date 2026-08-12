@@ -81,11 +81,17 @@ pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
 /// Users can override it by setting the `EVOGIT_BIND` environment variable
 /// before launching the desktop app (e.g. `EVOGIT_BIND=0.0.0.0` for remote
 /// access). The value is passed to Phoenix as `PHX_IP`.
-fn sidecar_env() -> Vec<(String, String)> {
+///
+/// The port defaults to 9999 and can be overridden with the `PORT`
+/// environment variable (mirroring the headless mode's `headless_sidecar_env`
+/// in the crate root), so the backend, the WebView URL and the watchdog's
+/// readiness probe all agree on the port.
+pub(crate) fn sidecar_env() -> Vec<(String, String)> {
     let phx_ip = std::env::var("EVOGIT_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("PORT").unwrap_or_else(|_| "9999".to_string());
 
     vec![
-        ("PORT".to_string(), "9999".to_string()),
+        ("PORT".to_string(), port),
         ("PHX_IP".to_string(), phx_ip),
         ("PHX_SERVER".to_string(), "true".to_string()),
         ("SECRET_KEY_BASE".to_string(), SECRET_KEY_BASE.to_string()),
@@ -108,7 +114,7 @@ fn sidecar_env() -> Vec<(String, String)> {
 /// 2. `<resource_dir>/resources/genesis-backend/bin/<launcher>` — macOS
 ///    bundles (`Contents/Resources`) and Linux deb/AppImage (`/usr/lib/<name>`).
 /// 3. `$CARGO_MANIFEST_DIR/resources/genesis-backend/bin/<launcher>` — dev mode.
-fn launcher_path(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+pub(crate) fn launcher_path(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     // 1. <exe_dir>/resources/... — Nix store layout and Windows.
     let exe_dir = std::env::current_exe()
         .ok()
@@ -141,12 +147,17 @@ fn launcher_path(app: &App) -> Result<std::path::PathBuf, Box<dyn std::error::Er
 /// Returns a [`std::process::Child`] handle that can later be used to kill the
 /// process. The child's stdout/stderr are drained on background threads so the
 /// output pipes never block and backend errors are surfaced in the console.
-pub fn start(app: &App) -> Result<std::process::Child, Box<dyn std::error::Error>> {
-    let launcher = launcher_path(app)?;
-
-    let mut child = launcher_command(&launcher)
+///
+/// This is the **only** launcher spawn path in the GUI (initial boot and every
+/// watchdog restart go through it); it always uses [`launcher_command`], so
+/// the Windows `CREATE_NO_WINDOW` handling can never be bypassed.
+pub fn spawn(
+    launcher: &std::path::Path,
+    env: &[(String, String)],
+) -> std::io::Result<std::process::Child> {
+    let mut child = launcher_command(launcher)
         .arg("start")
-        .envs(sidecar_env())
+        .envs(env.iter().cloned())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
@@ -185,13 +196,10 @@ pub fn start(app: &App) -> Result<std::process::Child, Box<dyn std::error::Error
     Ok(child)
 }
 
-/// Polls `url` until it responds with an HTTP status or `timeout_secs` elapses.
-///
-/// Uses a blocking [`reqwest`] client. Returns as soon as the backend answers
-/// (regardless of the status code) and logs a clear error if it never comes up.
-pub fn wait_for_ready(url: &str, timeout_secs: u64) {
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-
+/// One-shot HTTP probe: returns the HTTP status code if `url` responds
+/// within [`POLL_REQUEST_TIMEOUT`], `None` otherwise. Used by the watchdog to
+/// confirm the backend is actually serving (not merely accepting TCP).
+pub fn probe_http(url: &str) -> Option<reqwest::StatusCode> {
     let client = match reqwest::blocking::Client::builder()
         .timeout(POLL_REQUEST_TIMEOUT)
         .build()
@@ -199,24 +207,29 @@ pub fn wait_for_ready(url: &str, timeout_secs: u64) {
         Ok(client) => client,
         Err(err) => {
             eprintln!("[desktop] failed to build HTTP client for readiness probe: {err}");
-            return;
+            return None;
         }
     };
 
+    client.get(url).send().ok().map(|resp| resp.status())
+}
+
+/// Polls `url` until it responds with an HTTP status or `timeout_secs` elapses.
+///
+/// Uses a blocking [`reqwest`] client. Returns as soon as the backend answers
+/// (regardless of the status code) and logs a clear error if it never comes up.
+pub fn wait_for_ready(url: &str, timeout_secs: u64) {
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
     while Instant::now() < deadline {
-        match client.get(url).send() {
-            Ok(resp) => {
-                println!(
-                    "[desktop] backend is ready at {url} (HTTP {})",
-                    resp.status()
-                );
+        match probe_http(url) {
+            Some(status) => {
+                println!("[desktop] backend is ready at {url} (HTTP {status})");
                 return;
             }
-            Err(_) => thread::sleep(POLL_INTERVAL),
+            None => thread::sleep(POLL_INTERVAL),
         }
     }
 
-    eprintln!(
-        "[desktop] backend at {url} did not become ready within {timeout_secs}s"
-    );
+    eprintln!("[desktop] backend at {url} did not become ready within {timeout_secs}s");
 }

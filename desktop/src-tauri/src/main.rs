@@ -1,8 +1,7 @@
 // Prevents an additional console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::process::Child;
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -10,8 +9,11 @@ use tauri::{
     Manager, WindowEvent,
 };
 
+mod backend_watchdog;
 mod sidecar;
 mod sidecar_path;
+
+use backend_watchdog::BackendManager;
 
 /// Default port the Phoenix dashboard backend listens on.
 const DEFAULT_PORT: u16 = 9999;
@@ -27,10 +29,9 @@ const LAUNCHER_NAME: &str = "genesis_desktop.bat";
 #[cfg(not(windows))]
 const LAUNCHER_NAME: &str = "genesis_desktop";
 
-/// Wraps the sidecar process handle so the window-event handler can take
-/// ownership of it (and thereby call the consuming `Child::kill`) when
-/// the user quits via the tray. `None` once the sidecar has been terminated.
-type SidecarHandle = Mutex<Option<Child>>;
+/// Managed handle to the [`BackendManager`], shared between the tray-quit
+/// handler and the watchdog thread.
+type BackendHandle = Arc<BackendManager>;
 
 /// Returns the port the Phoenix backend listens on.
 ///
@@ -57,8 +58,7 @@ fn backend_url() -> String {
 // ---------------------------------------------------------------------------
 
 /// Signal-safe shutdown flag set by the SIGINT / SIGTERM handler.
-static SHUTDOWN_FLAG: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static SHUTDOWN_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(unix)]
 mod signal_handler {
@@ -116,8 +116,7 @@ fn headless_sidecar_env() -> Vec<(String, String)> {
         ("PHX_SERVER".to_string(), "true".to_string()),
         (
             "SECRET_KEY_BASE".to_string(),
-            "GenesisDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890"
-                .to_string(),
+            "GenesisDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890".to_string(),
         ),
         ("RELEASE_DISTRIBUTION".to_string(), "none".to_string()),
         ("EVOGIT_DESKTOP".to_string(), "1".to_string()),
@@ -208,15 +207,36 @@ fn run_gui() {
         }))
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // 1. Launch the Phoenix backend via the Elixir release launcher
-            //    script (`bin/genesis_desktop start`).
-            let child = sidecar::start(app)?;
+            // 1. Resolve the launcher path once and build the backend
+            //    environment. A broken install (missing launcher) stays fatal.
+            let launcher = sidecar::launcher_path(app)?;
+            let env = sidecar::sidecar_env();
+            let port = backend_port();
+            let url = backend_url();
 
-            // 2. Keep the process handle in managed state so we can terminate the
-            //    backend when the user quits via the tray menu.
-            app.manage(SidecarHandle::new(Some(child)));
+            // 2. Create the backend manager and spawn the initial child. A
+            //    spawn failure is NOT fatal: the watchdog treats the missing
+            //    child as a failure and drives the error page + restart cycle.
+            let manager: BackendHandle = Arc::new(BackendManager::new(
+                launcher,
+                env,
+                port,
+                url,
+            ));
+            if let Err(err) = manager.spawn_child() {
+                eprintln!("[desktop] failed to spawn genesis-backend sidecar: {err}");
+            }
+            app.manage(manager.clone());
 
-            // 3. Build the system tray menu with "Show Window" and "Quit" items.
+            // 3. Start the backend watchdog on a dedicated thread. It monitors
+            //    the child process, restarts it with backoff on unexpected
+            //    exit, shows the error page while it is down, and reloads the
+            //    WebView once the backend serves requests again.
+            let app_handle = app.handle().clone();
+            let watchdog_manager = manager.clone();
+            std::thread::spawn(move || watchdog_manager.run_watchdog(app_handle));
+
+            // 4. Build the system tray menu with "Show Window" and "Quit" items.
             let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
@@ -237,13 +257,11 @@ fn run_gui() {
                         }
                     }
                     "quit" => {
-                        if let Some(handle) = app.try_state::<SidecarHandle>() {
-                            if let Ok(mut guard) = handle.lock() {
-                                if let Some(mut child) = guard.take() {
-                                    let _ = child.kill();
-                                    println!("[desktop] genesis-backend sidecar terminated");
-                                }
-                            }
+                        // Flags an intentional shutdown BEFORE killing the
+                        // child, so the watchdog never restarts the backend
+                        // after a quit has begun (double-kill guard).
+                        if let Some(manager) = app.try_state::<BackendHandle>() {
+                            manager.kill_for_quit();
                         }
                         app.exit(0);
                     }
@@ -265,14 +283,26 @@ fn run_gui() {
                 })
                 .build(app)?;
 
-            // 4. Block until the Phoenix backend responds. The poll runs on a
+            // 5. Block until the Phoenix backend responds. The poll runs on a
             //    dedicated OS thread because reqwest's blocking client must not be
             //    driven from inside an async runtime context (which is live here).
             let url = backend_url();
+            let poll_url = url.clone();
             let poll = std::thread::spawn(move || {
-                sidecar::wait_for_ready(&url, BACKEND_READY_TIMEOUT_SECS);
+                sidecar::wait_for_ready(&poll_url, BACKEND_READY_TIMEOUT_SECS);
             });
             let _ = poll.join();
+
+            // 6. If the initial boot never became ready, kill the child: the
+            //    watchdog sees the unexpected exit and takes over with the
+            //    error page + restart cycle (the final probe avoids killing a
+            //    backend that became ready just as the poll timed out).
+            if sidecar::probe_http(&url).is_none() {
+                eprintln!(
+                    "[desktop] initial backend boot did not become ready — handing over to the watchdog"
+                );
+                manager.kill_current_child();
+            }
 
             Ok(())
         })
