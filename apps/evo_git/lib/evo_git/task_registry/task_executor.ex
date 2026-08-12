@@ -7,6 +7,7 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
   actual genesis, evolution, or skill extraction work.
   """
 
+  alias EvoGit.TaskRegistry.MergeContext
   alias EvoGit.TaskRegistry.ResumeContext
   alias EvoGit.TaskRegistry.RuntimeOpts
 
@@ -26,6 +27,27 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
 
   def execute_task(:evolve, opts, task_id) do
     register_task_process(task_id)
+
+    opts =
+      case Keyword.get(opts, :merge_from) do
+        merge_from when is_binary(merge_from) ->
+          trimmed = String.trim(merge_from)
+
+          if trimmed != "" do
+            MergeContext.apply_merge_context(
+              opts,
+              task_id,
+              trimmed,
+              Keyword.get(opts, :merge_target)
+            )
+          else
+            opts
+          end
+
+        _ ->
+          opts
+      end
+
     resume_from = Keyword.get(opts, :resume_from)
 
     {objective, runtime_opts} =
