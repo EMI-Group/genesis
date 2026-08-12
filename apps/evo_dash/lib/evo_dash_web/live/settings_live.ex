@@ -372,7 +372,7 @@ defmodule EvoDashWeb.SettingsLive do
                               type="text"
                               name="local_binary_path"
                               value={@remote_form_target[:local_binary_path]}
-                              placeholder="_build/prod/rel/genesis_remote.tar.gz"
+                              placeholder="_build/prod/rel/genesis_remote.tar.xz"
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                             />
                             <p class="text-xs text-base-content/50 mt-1">
