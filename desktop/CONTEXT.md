@@ -55,10 +55,11 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 
 ## Sidecar Lifecycle
 
-1. Tauri spawns the Elixir release launcher (`bin/genesis_desktop start`) with env vars: `PORT=9999`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`
+1. Tauri spawns the Elixir release launcher (`bin/genesis_desktop start`) with env vars: `PORT=9999`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1` — always via `sidecar::spawn` → `launcher_command` (Windows `CREATE_NO_WINDOW`), the only GUI spawn path (initial boot AND every watchdog restart)
 2. Tauri polls `http://localhost:9999` until the backend responds (up to 30s)
 3. The WebView window opens, pointing to `http://localhost:9999`
 4. Closing the window hides it to the system tray (backend keeps running); the "Quit" tray menu item kills the backend process and exits
+5. **A backend crash watchdog runs for the app's lifetime** (`src-tauri/src/backend_watchdog.rs`, commit `fd3e5871`): it monitors the child process, and on an unexpected exit shows a `data:`-URL error page in the WebView ("backend unavailable — will be restarted automatically" + Retry button), restarts the backend with capped exponential backoff (1s→30s; after 8 consecutive failures it retries every 30s indefinitely — no dead state; success resets the sequence), and once the backend serves again (TCP accepting + HTTP probe) navigates the WebView back to the dashboard (full reload). Tray Quit is the ONLY intentional kill path — `BackendManager::kill_for_quit()` sets an `intentional_shutdown` flag BEFORE killing, and the watchdog never restarts after a quit began. Full design in `src-tauri/CONTEXT.md` → "Backend Crash Watchdog".
 
 ## Single-Instance Detection
 

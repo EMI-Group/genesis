@@ -15,8 +15,9 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 
 | File | Purpose |
 |------|---------|
-| `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns the Elixir release, opens window, intercepts close-to-tray |
-| `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
+| `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns the Elixir release, opens window, intercepts close-to-tray, starts the backend watchdog |
+| `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), shared `spawn(launcher, env)` (the ONLY GUI launcher spawn path, always via `launcher_command`), one-shot `probe_http`, readiness polling, shutdown |
+| `src/backend_watchdog.rs` | Backend crash watchdog: monitors the child process, restarts it with backoff on unexpected exit, shows an error page in the WebView while down, reloads the dashboard on recovery (`RestartPolicy`, `classify_exit`, `tcp_accepting`, `percent_encode`/`error_page_data_url`, `BackendManager`) |
 | `src/sidecar_path.rs` | Shared launcher-path resolution (`resolve_launcher/2`) — first existing candidate wins, descriptive error listing all candidates when none exist; used by both GUI (`sidecar.rs`) and headless (`main.rs`) modes; contains the unit tests |
 | `Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
 | `tauri.conf.json` | Tauri config: window settings, trayIcon config, release resource reference, bundle metadata |
@@ -33,11 +34,24 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 - The desktop shell contains NO Elixir code — only Rust.
 - The release is launched via its `bin/genesis_desktop` launcher script (`bin/genesis_desktop.bat` on Windows) with the `start` command, which is a **foreground** process (blocks until the BEAM VM exits). This gives the Rust parent clean ownership/kill semantics.
 
+## Backend Crash Watchdog
+
+**Design (commit `fd3e5871`):** the GUI mode (`run_gui`) wraps the backend child in a `BackendManager` (managed via `app.manage` as `Arc<BackendManager>`, shared with a dedicated `std::thread` watchdog started in the Tauri setup — the manager is Arc-wrapped so the `'static` thread can own it; the design note "watchdog takes an AppHandle clone" is satisfied too). The watchdog:
+
+1. **Monitors** the current child via `try_wait` (reaps zombies) until it exits; a missing child (failed initial spawn) counts as a failure.
+2. **On unexpected exit**: `RestartPolicy::record_failure` + `next_backoff` (sequence 1s, 2s, 4s, 8s, 16s, 30s, capped at 30s; after `MAX_CONSECUTIVE_FAILURES = 8` consecutive failures it keeps retrying every 30s **indefinitely** — deliberately no give-up state; `record_success` resets counter + index), navigate the WebView to a `data:` error page ("Genesis backend unavailable — it will be restarted automatically" + a "Retry now" button whose inline JS does `window.location.href = '<backend_url>'` — top-level navigation, no Tauri IPC, degrades to static text without JS; built with the pure `percent_encode` helper, unit-tested), interruptible sleep, respawn via the shared `sidecar::spawn`, re-check the quit flag (kill fresh child + stop if quit raced the spawn).
+3. **Recovery gating**: `wait_until_ready` requires ALL of — child still alive, `tcp_accepting(port)` (std `TcpStream::connect_timeout`, polled), and `sidecar::probe_http` success (one-shot HTTP probe) — within 30s; then `record_success` + `window.navigate(backend_url)` (a full reload — never `eval("location.reload()")`). Ready-timeout (child alive but never serving) → kill child → next failure cycle. `show_backend` retries the navigation until the window accepts it (the window only exists after Tauri's setup completes), so a recovery during the initial 30s boot poll still reloads the dashboard once the window appears.
+4. **Crash-vs-intentional**: the ONLY intentional kill path is the tray Quit → `BackendManager::kill_for_quit()` which sets the `intentional_shutdown` `AtomicBool` BEFORE taking+killing the child; the watchdog checks the flag at every stage (monitor, sleep, pre/post-spawn, readiness loop) and returns without ever restarting after a quit began (double-kill guard: killing an already-exited/taken child is a no-op, restarting after quit is not). `classify_exit(intentional, status)` is the pure unit-tested classifier (`Unexpected(Option<i32>)` | `Intentional`).
+
+**Boot flow**: setup resolves the launcher path once (missing launcher stays FATAL — broken install), builds env via `sidecar::sidecar_env()` (now honors `PORT` env like headless mode so backend/WebView/watchdog agree), creates the manager, spawns the initial child (spawn error NON-fatal — watchdog treats the missing child as a failure), starts the watchdog thread, keeps the existing blocking 30s readiness poll, then if the boot never became ready kills the child (final `probe_http` check avoids killing a backend that became ready right at the timeout) so the watchdog takes over with the error page + restart cycle. `--headless` mode is UNCHANGED (no watchdog; exits when the sidecar exits).
+
+**Spawn-path invariant**: GUI initial boot AND every watchdog restart go through `sidecar::spawn` → `launcher_command` (Windows `CREATE_NO_WINDOW`); headless keeps its own `launcher_command` call. Never introduce a plain `Command::new` launcher spawn. No new Cargo deps were added (std net/thread + `tauri::Url` re-export only).
+
 ## System Tray Behavior
 
 - **Close window** → `WindowEvent::CloseRequested` is intercepted (`api.prevent_close()` + `window.hide()`); the window is hidden to the tray and the backend keeps running.
 - **Tray menu "Show Window"** → `window.show()` + `window.set_focus()`
-- **Tray menu "Quit"** → takes ownership of the `SidecarHandle`, calls `child.kill()`, then `app.exit(0)`
+- **Tray menu "Quit"** → `BackendManager::kill_for_quit()` (sets the `intentional_shutdown` flag BEFORE taking and killing the child, so the backend watchdog never restarts after a quit began — double-kill guard), then `app.exit(0)`
 - **Left-click tray icon** → shows and focuses the main window via `.on_tray_icon_event` (matches `Click { Left, Up }`) combined with `.show_menu_on_left_click(false)`. The flag is required on macOS: with a menu attached, the default left-click opens the menu on mouse-down and swallows the `Click(Left, Up)` event, so the window never pops; with the flag set, left-click emits the event (menu stays on right-click).
 
 ## Native Directory Picker — REMOVED (moved to the Elixir backend)

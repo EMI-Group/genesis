@@ -100,7 +100,10 @@ mod tests {
             "genesis_desktop",
         );
 
-        assert_eq!(result, Ok(exe_dir.join(LAUNCHER_REL).join("genesis_desktop")));
+        assert_eq!(
+            result,
+            Ok(exe_dir.join(LAUNCHER_REL).join("genesis_desktop"))
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -155,6 +158,9 @@ mod tests {
     #[test]
     fn empty_candidate_list_still_errors_descriptively() {
         let err = resolve_launcher(&[], "genesis_desktop").expect_err("no candidates, must error");
-        assert!(err.contains("genesis_desktop"), "error should name the launcher: {err}");
+        assert!(
+            err.contains("genesis_desktop"),
+            "error should name the launcher: {err}"
+        );
     }
 }
