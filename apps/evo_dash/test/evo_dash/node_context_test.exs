@@ -69,4 +69,47 @@ defmodule EvoDash.NodeContextTest do
       assert EvoGit.Store.get_task_status(EvoGit.Store, id) == :cancelled
     end
   end
+
+  describe "task-review RPC delegates (local node, real paths)" do
+    test "get_task/2 returns nil for a missing task" do
+      assert EvoDash.NodeContext.get_task(node(), "missing-id") == nil
+    end
+
+    test "get_task/2 returns the stored %TaskInfo{} for an existing task" do
+      id = insert_fixture!(status: :pending)
+
+      assert %EvoGit.TaskInfo{id: ^id} = EvoDash.NodeContext.get_task(node(), id)
+    end
+
+    test "set_review_status/3 and set_review_metadata/4 are fire-and-forget casts (:ok)" do
+      assert EvoDash.NodeContext.set_review_status(node(), "missing-id", :completed) == :ok
+
+      assert EvoDash.NodeContext.set_review_metadata(node(), "missing-id", "base", "commit") ==
+               :ok
+    end
+
+    test "review git wrappers delegate with the node first (shape checks on the local path)" do
+      # These run real EvoGit.Review calls against a nonexistent repo path, so
+      # only the envelope shape is asserted (git fails with an error tuple —
+      # never a raise).
+      assert {:error, _} = EvoDash.NodeContext.default_merge_target(node(), "/nonexistent")
+
+      assert {:error, _} =
+               EvoDash.NodeContext.load_review_metadata(node(), "/nonexistent", "main")
+
+      assert {:error, _} = EvoDash.NodeContext.load_commit_files(node(), "/nonexistent", "abc123")
+    end
+  end
+
+  describe "get_resolved_config/1 (local node, real paths)" do
+    test "returns the full resolved config map with scheduler/llm keys" do
+      assert {:ok, config} = EvoDash.NodeContext.get_resolved_config(node())
+      assert is_map(config[:scheduler])
+      assert is_map(config[:llm])
+      # The full resolved config carries the remaining sections too — this is
+      # what makes the remote Settings page render every category.
+      assert is_map(config[:tools])
+      assert is_map(config[:sandbox])
+    end
+  end
 end

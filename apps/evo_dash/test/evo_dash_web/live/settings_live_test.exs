@@ -1483,4 +1483,88 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ ~s(id="category-nix")
     end
   end
+
+  describe "remote node config loading (config fetch failure)" do
+    # A fake connection manager is registered in the shared
+    # EvoGit.RemoteConnection.Registry under the target id with a :connected
+    # phase, so NodeAware resolves `?node=` to the remote BEAM node atom
+    # "genesis_remote@127.0.0.1" — an unreachable fake node (same seam as
+    # projects_live_test). The subsequent `:erpc` calls fail fast with
+    # :nodedown, exercising load_node_config's error branch: the error banner
+    # renders and the "No LLM Model Configured" box does NOT (the exact bug
+    # being fixed — a spurious unconfigured-model warning on top of a real
+    # fetch failure). There is no seam to inject a successful
+    # get_resolved_config result for a fake node, so the happy path (remote
+    # model profiles rendering) is not covered here.
+    defp save_target! do
+      id = "settings-test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Settings Test Target"
+        })
+
+      on_exit(fn ->
+        EvoGit.RemoteConnections.delete(id)
+      end)
+
+      id
+    end
+
+    test "remote config fetch failure renders the error banner, not the LLM warning", %{
+      conn: conn
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.SettingsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, html} = live(conn, "/settings?node=" <> id)
+
+      # The node context resolved to the (unreachable) remote node.
+      assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+      assert is_binary(assigns(view)[:remote_config_error])
+      # No config was loaded — an empty map, not a misleading subset.
+      assert assigns(view)[:file_config] == %{}
+
+      # The error banner explains the real problem...
+      assert html =~ "Remote Configuration Unavailable"
+      assert html =~ "Could not load configuration from the remote node"
+
+      # ...and the bogus "No LLM Model Configured" box must NOT fire on top of it.
+      refute html =~ "No LLM Model Configured"
+    end
+
+    test "local node keeps remote_config_error nil and shows no error banner", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      assert assigns(view)[:remote_config_error] == nil
+      refute html =~ "Remote Configuration Unavailable"
+    end
+  end
+end
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# EvoDashWeb.ProjectsLiveTest.ConnectionManager). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+defmodule EvoDashWeb.SettingsLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
 end
