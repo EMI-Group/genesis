@@ -321,6 +321,23 @@ defmodule EvoGit.ReviewTest do
     true
   end
 
+  # Returns the `merge_check_*` entries left in `.genesis/` ([] when the
+  # directory does not exist or contains none).
+  defp merge_check_entries(tmp_dir) do
+    genesis_dir = Path.join(tmp_dir, ".genesis")
+
+    if File.dir?(genesis_dir) do
+      File.ls!(genesis_dir) |> Enum.filter(&String.starts_with?(&1, "merge_check_"))
+    else
+      []
+    end
+  end
+
+  defp worktree_list_contains_merge_check?(tmp_dir) do
+    {output, 0} = System.cmd("git", ["worktree", "list"], cd: tmp_dir)
+    String.contains?(output, "merge_check_")
+  end
+
   test "merge_branch/2 merges into the default target (current branch)", %{tmp_dir: tmp_dir} do
     {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
     rename_current_branch(tmp_dir, "main")
@@ -389,6 +406,99 @@ defmodule EvoGit.ReviewTest do
 
     # Repo is back on main despite the conflicted index
     assert {:ok, "main"} = Git.current_branch(tmp_dir)
+  end
+
+  describe "check_merge/3" do
+    test "returns :clean for a non-conflicting merge", %{tmp_dir: tmp_dir} do
+      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      # Feature branch adds a different file than main, so merging is clean.
+      Git.create_branch(tmp_dir, "feature", base_sha)
+      Git.checkout(tmp_dir, "feature")
+      commit_file(tmp_dir, "feature.txt", "feature\n", "Feature change")
+      Git.checkout(tmp_dir, "main")
+      commit_file(tmp_dir, "main.txt", "main\n", "Main change")
+
+      assert {:ok, :clean} = Review.check_merge(tmp_dir, "feature", "main")
+
+      assert merge_check_entries(tmp_dir) == []
+      refute worktree_list_contains_merge_check?(tmp_dir)
+    end
+
+    test "returns {:conflict, files} for a conflicting merge", %{tmp_dir: tmp_dir} do
+      {:ok, base_sha} = commit_file(tmp_dir, "file.txt", "base\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      # main diverges by modifying file.txt...
+      commit_file(tmp_dir, "file.txt", "main change\n", "Main change")
+
+      # ...and the agent branch modifies the same file from the same base.
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+      Git.checkout(tmp_dir, "agent_branch")
+      commit_file(tmp_dir, "file.txt", "agent change\n", "Agent change")
+      Git.checkout(tmp_dir, "main")
+
+      assert {:ok, {:conflict, files}} = Review.check_merge(tmp_dir, "agent_branch", "main")
+      assert "file.txt" in files
+
+      assert merge_check_entries(tmp_dir) == []
+      refute worktree_list_contains_merge_check?(tmp_dir)
+    end
+
+    test "returns :clean when both refs resolve to the same sha", %{tmp_dir: tmp_dir} do
+      {:ok, sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+
+      assert {:ok, :clean} = Review.check_merge(tmp_dir, sha, sha)
+
+      # Short-circuit path never creates a worktree.
+      assert merge_check_entries(tmp_dir) == []
+      refute worktree_list_contains_merge_check?(tmp_dir)
+    end
+
+    test "returns an error for a missing branch or missing target ref", %{tmp_dir: tmp_dir} do
+      {:ok, _} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      assert match?({:error, _}, Review.check_merge(tmp_dir, "nonexistent-branch", "main"))
+      assert match?({:error, _}, Review.check_merge(tmp_dir, "main", "nonexistent-branch"))
+    end
+
+    test "never mutates the repository's HEAD or working tree", %{tmp_dir: tmp_dir} do
+      {:ok, base_sha} = commit_file(tmp_dir, "shared.txt", "base\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      # main modifies shared.txt, so any branch touching it from the same base
+      # conflicts — while a branch adding a different file merges cleanly.
+      commit_file(tmp_dir, "shared.txt", "main change\n", "Main change")
+
+      Git.create_branch(tmp_dir, "clean_branch", base_sha)
+      Git.checkout(tmp_dir, "clean_branch")
+      commit_file(tmp_dir, "clean.txt", "clean\n", "Clean change")
+      Git.checkout(tmp_dir, "main")
+
+      Git.create_branch(tmp_dir, "conflict_branch", base_sha)
+      Git.checkout(tmp_dir, "conflict_branch")
+      commit_file(tmp_dir, "shared.txt", "agent change\n", "Agent change")
+      Git.checkout(tmp_dir, "main")
+
+      {:ok, head_before} = Git.rev_parse(tmp_dir, "HEAD")
+      {:ok, status_before} = Git.status(tmp_dir)
+
+      assert {:ok, :clean} = Review.check_merge(tmp_dir, "clean_branch", "main")
+      assert {:ok, {:conflict, files}} = Review.check_merge(tmp_dir, "conflict_branch", "main")
+      assert "shared.txt" in files
+
+      {:ok, head_after} = Git.rev_parse(tmp_dir, "HEAD")
+      {:ok, status_after} = Git.status(tmp_dir)
+
+      assert head_after == head_before
+      assert status_after == status_before
+      assert {:ok, "main"} = Git.current_branch(tmp_dir)
+
+      assert merge_check_entries(tmp_dir) == []
+      refute worktree_list_contains_merge_check?(tmp_dir)
+    end
   end
 
   test "default_merge_target/1 prefers dev over prod when main and master are absent",
