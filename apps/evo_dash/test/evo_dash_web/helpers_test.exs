@@ -5,10 +5,10 @@ defmodule EvoDashWeb.HelpersTest do
 
   describe "agent_status_color/1" do
     test "returns correct color for known statuses" do
-      assert agent_status_color(:pending) == "text-base-content/70"
+      assert agent_status_color(:pending) == "text-base-content/80"
       assert agent_status_color(:running) == "text-success"
       assert agent_status_color(:waiting) == "text-warning"
-      assert agent_status_color(:blocked) == "text-base-content/70"
+      assert agent_status_color(:blocked) == "text-base-content/80"
       assert agent_status_color(:ready) == "text-info"
     end
 
@@ -17,16 +17,16 @@ defmodule EvoDashWeb.HelpersTest do
     end
 
     test "falls back to default for unknown status" do
-      assert agent_status_color(:unknown) == "text-base-content/70"
+      assert agent_status_color(:unknown) == "text-base-content/80"
     end
   end
 
   describe "agent_status_bg/1" do
     test "returns correct background for known statuses" do
-      assert agent_status_bg(:pending) == "bg-base-100"
+      assert agent_status_bg(:pending) == "bg-base-200/60"
       assert agent_status_bg(:running) == "bg-success/10"
       assert agent_status_bg(:waiting) == "bg-warning/10"
-      assert agent_status_bg(:blocked) == "bg-base-100"
+      assert agent_status_bg(:blocked) == "bg-base-200/60"
       assert agent_status_bg(:ready) == "bg-info/10"
     end
 
@@ -35,16 +35,16 @@ defmodule EvoDashWeb.HelpersTest do
     end
 
     test "falls back to default for unknown status" do
-      assert agent_status_bg(:unknown) == "bg-base-100"
+      assert agent_status_bg(:unknown) == "bg-base-200/60"
     end
   end
 
   describe "agent_status_border/1" do
     test "returns correct border for known statuses" do
-      assert agent_status_border(:pending) == "border-base-300"
+      assert agent_status_border(:pending) == "border-base-content/20"
       assert agent_status_border(:running) == "border-success/30"
       assert agent_status_border(:waiting) == "border-warning/30"
-      assert agent_status_border(:blocked) == "border-base-300"
+      assert agent_status_border(:blocked) == "border-base-content/20"
       assert agent_status_border(:ready) == "border-info/30"
     end
 
@@ -53,7 +53,7 @@ defmodule EvoDashWeb.HelpersTest do
     end
 
     test "falls back to default for unknown status" do
-      assert agent_status_border(:unknown) == "border-base-300"
+      assert agent_status_border(:unknown) == "border-base-content/20"
     end
   end
 
