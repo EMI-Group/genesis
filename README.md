@@ -10,6 +10,7 @@
   <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.10.0-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <a href="https://genesis.evox.group/getting-started/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
+  <a href="https://arxiv.org/abs/2608.10450"><img src="https://img.shields.io/badge/arXiv-2608.10450-b31b1b" alt="arXiv"></a>
 </p>
 
 ---
@@ -22,7 +23,7 @@
 
 **EvoX Genesis** turns a high-level software objective into a continuously developing software world.
 
-You do not hand-design an agent team, pre-build a task tree, or keep one coding session alive. Genesis recursively creates local responsibilities, instantiates agents where needed, validates returned contributions, and carries accepted results forward.
+You do not hand-design an agent team, pre-build a task tree, or keep one coding session alive. Genesis recursively creates local responsibilities, instantiates agents where needed, validates returned contributions, and carries accepted results forward. The approach is described in our paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450).
 
 > **You specify what the software should become. Genesis unfolds how to build it.**
 
