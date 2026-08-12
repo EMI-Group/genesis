@@ -3,14 +3,14 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
-  # action_buttons/1 — Merge, Reject, Continue, Create PR, and Extract Skills
+  # action_buttons/1 — Merge, Reject, Resume, Create PR, and Extract Skills
   # ---------------------------------------------------------------------------
 
   attr(:branch_exists, :boolean, default: true)
   attr(:has_pr, :boolean, default: false)
   attr(:pr_url, :string, default: nil)
   attr(:loading, :boolean, default: false)
-  attr(:can_continue, :boolean, default: false)
+  attr(:can_resume, :boolean, default: false)
   attr(:is_no_changes, :boolean, default: false)
   attr(:merge_targets, :list, default: [])
   attr(:default_merge_target, :string, default: nil)
@@ -76,11 +76,11 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           </button>
           <button
             class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
-            phx-click="continue"
+            phx-click="resume"
             disabled={@loading}
           >
             <.icon name="hero-arrow-path" class="size-4.5" />
-            {gettext("Continue")}
+            {gettext("Resume")}
           </button>
           <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50">
           </div>
@@ -138,7 +138,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
               ]}>
                 <%= if @is_no_changes do %>
                   {gettext(
-                    "The agent completed without making any code changes. You can continue from this investigation or dismiss it."
+                    "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
                   )}
                 <% else %>
                   {gettext("This branch no longer exists. You can dismiss it with Ignore.")}
@@ -147,14 +147,14 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </div>
           </div>
         <% end %>
-        <%= if not @branch_exists and @can_continue do %>
+        <%= if not @branch_exists and @can_resume do %>
           <button
             class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
-            phx-click="continue"
+            phx-click="resume"
             disabled={@loading}
           >
             <.icon name="hero-arrow-path" class="size-4.5" />
-            {gettext("Continue")}
+            {gettext("Resume")}
           </button>
         <% end %>
         <button

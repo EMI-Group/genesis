@@ -49,7 +49,7 @@ Key functions:
 ### Other Modules
 
 - **`Header`** — Review header, task summary, and agent summary.
-- **`Actions`** — Action buttons (merge/reject/continue/create PR) and skills extraction modal.
+- **`Actions`** — Action buttons (merge/reject/resume/create PR) and skills extraction modal.
 - **`Stats`** — Diff stats bar and commit list.
 
 ### Merge-target branch selector (`Actions.action_buttons/1`)

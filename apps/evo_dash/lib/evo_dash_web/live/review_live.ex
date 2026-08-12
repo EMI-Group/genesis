@@ -3,7 +3,7 @@ defmodule EvoDashWeb.ReviewLive do
   Code review page for completed tasks.
 
   Displays agent-produced changes as a GitHub-style diff with merge,
-  reject, and continue actions, plus optional GitHub PR creation.
+  reject, and resume actions, plus optional GitHub PR creation.
   """
   use EvoDashWeb, :live_view
 
@@ -124,7 +124,7 @@ defmodule EvoDashWeb.ReviewLive do
                         <!-- Action Buttons -->
                         <EvoDashWeb.ReviewComponents.action_buttons
                           branch_exists={@branch_exists}
-                          can_continue={@can_continue}
+                          can_resume={@can_resume}
                           has_pr={@has_pr}
                           pr_url={@pr_url}
                           loading={@action_loading}
@@ -240,7 +240,7 @@ defmodule EvoDashWeb.ReviewLive do
         agent_summary: nil,
         review_status: :open,
         branch_exists: false,
-        can_continue: false,
+        can_resume: false,
         is_no_changes: false,
         has_pr: false,
         pr_url: nil,
@@ -534,7 +534,7 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_event("continue", _params, socket) do
+  def handle_event("resume", _params, socket) do
     commit_sha = socket.assigns.commit_sha
     branch_name = socket.assigns.branch_name
     task_id = socket.assigns.task_id
@@ -558,13 +558,13 @@ defmodule EvoDashWeb.ReviewLive do
 
     flash_msg =
       if commit_sha do
-        gettext("Continuing from branch %{branch} at %{sha}",
+        gettext("Resuming from branch %{branch} at %{sha}",
           branch: branch_name,
           sha: String.slice(commit_sha, 0..7)
         )
       else
         gettext(
-          "Continuing from investigation task. A new evolve task form has been prepared for you."
+          "Resuming from investigation task. A new evolve task form has been prepared for you."
         )
       end
 
@@ -799,7 +799,7 @@ defmodule EvoDashWeb.ReviewLive do
           !!(branch_name && repo_available?(socket, repo_path) &&
                branch_exists_on_node?(socket, repo_path, branch_name))
 
-        can_continue =
+        can_resume =
           repo_available?(socket, repo_path) && (commit_sha != nil || branch_name == nil)
 
         rs = task.review_status
@@ -884,7 +884,7 @@ defmodule EvoDashWeb.ReviewLive do
           agent_summary: agent_summary,
           review_status: review_status,
           branch_exists: branch_exists || false,
-          can_continue: can_continue || false,
+          can_resume: can_resume || false,
           is_no_changes: is_no_changes,
           has_pr: pr_url != nil,
           pr_url: pr_url,

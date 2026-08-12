@@ -761,14 +761,19 @@ msgstr ""
 
 #: lib/evo_dash_web/live/review_live.ex:438
 #, elixir-autogen, elixir-format
-msgid "Continuing from branch %{branch} at %{sha}"
+msgid "Resuming from branch %{branch} at %{sha}"
 msgstr ""
 
 #: lib/evo_dash_web/live/review_live.ex:443
 #, elixir-autogen, elixir-format
-msgid "Continuing from investigation task. A new evolve task form has been prepared for you."
+msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr ""
 
+#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:157
+#, elixir-autogen, elixir-format
+msgid "Resume"
+msgstr "Resume"
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:49
 #, elixir-autogen, elixir-format
 msgid "Control agent concurrency, retry behavior, and depth limits."
@@ -2436,7 +2441,7 @@ msgstr ""
 
 #: lib/evo_dash_web/components/review_components/actions.ex:89
 #, elixir-autogen, elixir-format
-msgid "The agent completed without making any code changes. You can continue from this investigation or dismiss it."
+msgid "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
 msgstr ""
 
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:191
