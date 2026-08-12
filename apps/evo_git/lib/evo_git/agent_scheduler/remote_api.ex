@@ -698,6 +698,25 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Checks whether merging a branch or commit into a target branch on the remote
+  node would be clean.
+
+  Delegates to `EvoGit.Review.check_merge/3`. `repo_path` is the absolute path
+  of the repository, `branch_or_sha` the branch or commit SHA to merge,
+  `target_branch` the branch to merge into. Runs on the REMOTE node when
+  called via `:erpc.call/5`.
+
+  Returns `{:ok, :clean}` when the merge would succeed cleanly,
+  `{:ok, {:conflict, files}}` when it would conflict, or `{:error, reason}`
+  on failure.
+  """
+  @spec check_merge(String.t(), String.t(), String.t()) ::
+          {:ok, :clean} | {:ok, {:conflict, list()}} | {:error, term()}
+  def check_merge(repo_path, branch_or_sha, target_branch) do
+    EvoGit.Review.check_merge(repo_path, branch_or_sha, target_branch)
+  end
+
+  @doc """
   Resolves the default merge target branch for a repository on the remote node.
 
   Delegates to `EvoGit.Review.default_merge_target/1`. `repo_path` is the
