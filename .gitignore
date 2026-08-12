@@ -35,6 +35,7 @@ evo_git-*.tar
 
 # Local asdf/mise version pin (dev-only, not versioned)
 .tool-versions
+
 # Local secrets / env (Apple signing, API keys, etc.)
 .env
 .env.*
