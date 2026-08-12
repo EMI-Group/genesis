@@ -22,7 +22,7 @@
 
 **EvoX Genesis** turns a high-level software objective into a continuously developing software world.
 
-You do not hand-design an agent team, pre-build a task tree, or keep one coding session alive. Genesis recursively creates local responsibilities, instantiates agents where needed, validates returned contributions, and carries accepted results forward.
+You do not hand-design an agent team, pre-build a task tree, or keep one coding session alive. Genesis recursively creates local responsibilities, instantiates agents where needed, validates returned contributions, and carries accepted results forward. The approach is described in our paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450).
 
 > **You specify what the software should become. Genesis unfolds how to build it.**
 
