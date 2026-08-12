@@ -1624,22 +1624,18 @@ button, a, input, textarea, select, summary,
   width: 100%;
 }
 
-/* Layout B (expanded): overflow containment (CSS-native, no viewport math).
-   overflow: hidden on the layout container prevents children from expanding
-   it beyond its flex-allocated space — the card is naturally constrained to
-   whatever height the parent allocates. flex: 1 1 auto (flex-shrink: 1) lets
-   the card shrink when content exceeds the allocated space, and overflow:
-   hidden on the card contains the textarea inside it. The TEXTAREA fills the
-   card minus the controls row (flex: 1 1 auto) and scrolls INTERNALLY
+/* Layout B (expanded): the card fills available height via flex: 1
+   (flex-basis: 0% ensures it grows purely from free space distribution,
+   never from content size). Containment is provided by overflow: hidden on
+   the card itself — no overflow: hidden on .input-layout, which avoids
+   clipping the card's box-shadow glow into a rectangle. The TEXTAREA fills
+   the card minus the controls row (flex: 1) and scrolls INTERNALLY
    (overflow-y: auto), so the in-flow launch panel (.input-controls) always
    stays at the bottom of the viewport — no fragile viewport-derived offset.
    (Compact mode's vertical-centering auto margins on .input-card above are
    untouched.) */
-.input-layout[data-layout="expanded"] {
-  overflow: hidden;
-}
 .input-layout[data-layout="expanded"] .input-card {
-  flex: 1 1 auto;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -1676,13 +1672,13 @@ button, a, input, textarea, select, summary,
   overflow-y: auto;
 }
 
-/* Layout B (expanded): fills available card space (flex: 1 1 auto —
+/* Layout B (expanded): fills available card space (flex: 1 —
    grow-to-fill on large viewports, shrink-to-fit on small ones). The card is
    naturally constrained to its flex-allocated height by overflow: hidden on
-   .input-layout and the card itself — no viewport-derived cap is needed for
-   containment. The textarea scrolls INTERNALLY (overflow-y: auto) so the
-   in-flow .input-controls row always stays at the bottom of the viewport
-   regardless of prompt length.
+   the card itself — no viewport-derived cap is needed for containment. The
+   textarea scrolls INTERNALLY (overflow-y: auto) so the in-flow
+   .input-controls row always stays at the bottom of the viewport regardless
+   of prompt length.
 
    Cap derivation:
      * max-height: calc(1.6em * 32) — soft line-based ceiling (~32 lines) so
@@ -1706,7 +1702,7 @@ button, a, input, textarea, select, summary,
    scrollbar so text is never clipped under it; overlay scrollbars (macOS)
    ignore it. */
 .input-layout[data-layout="expanded"] .input-prompt {
-  flex: 1 1 auto;
+  flex: 1;
   min-height: min(calc(1.6em * 10), calc(100dvh - 12rem));
   max-height: calc(1.6em * 32);
   overflow-y: auto;

@@ -10,8 +10,8 @@
 // compact box NEVER shows an internal scrollbar while growing — overflow-y:
 // auto on the compact textarea is a safety net only. In expanded layout the
 // card is naturally constrained to its flex-allocated height by CSS overflow
-// containment (overflow: hidden on .input-layout and .input-card); the
-// textarea fills the remaining card space (flex: 1 1 auto), caps at a soft
+// containment (overflow: hidden on .input-card); the
+// textarea fills the remaining card space (flex: 1), caps at a soft
 // line-based max-height (calc(1.6em * 32)), and scrolls INTERNALLY, so the
 // launch panel always stays at the bottom of the viewport regardless of
 // prompt length. The inline height write below is subject to that CSS cap at
