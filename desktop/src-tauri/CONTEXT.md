@@ -51,7 +51,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 
 - **Close window** → `WindowEvent::CloseRequested` is intercepted (`api.prevent_close()` + `window.hide()`); the window is hidden to the tray and the backend keeps running.
 - **Tray menu "Show Window"** → `window.show()` + `window.set_focus()`
-- **Tray menu "Quit"** → takes ownership of the `SidecarHandle`, calls `child.kill()`, then `app.exit(0)`
+- **Tray menu "Quit"** → `BackendManager::kill_for_quit()` (sets the `intentional_shutdown` flag BEFORE taking and killing the child, so the backend watchdog never restarts after a quit began — double-kill guard), then `app.exit(0)`
 - **Left-click tray icon** → shows and focuses the main window via `.on_tray_icon_event` (matches `Click { Left, Up }`) combined with `.show_menu_on_left_click(false)`. The flag is required on macOS: with a menu attached, the default left-click opens the menu on mouse-down and swallows the `Click(Left, Up)` event, so the window never pops; with the flag set, left-click emits the event (menu stays on right-click).
 
 ## Native Directory Picker — REMOVED (moved to the Elixir backend)
