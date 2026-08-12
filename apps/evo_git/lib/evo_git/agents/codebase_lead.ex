@@ -135,7 +135,9 @@ defmodule EvoGit.Agents.CodebaseLead do
       PromptFragments.delegate_without_investigating_clause() <>
       " Keep these files simple and concise; don't document sub-file details like docstrings or inline comments. The " <>
       PromptFragments.standard_sections_enum() <>
-      " are required; supplementary sections should be added whenever they capture knowledge that would otherwise be lost.\n" <>
+      " are required; supplementary sections should be added whenever they capture knowledge that would otherwise be lost. " <>
+      PromptFragments.context_current_state_clause() <>
+      "\n" <>
       ~S"""
 
       """ <>

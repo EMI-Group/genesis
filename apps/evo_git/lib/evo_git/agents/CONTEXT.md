@@ -62,6 +62,8 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | `context_tree_definition_clause/0` | "spatial, recursive representation of the codebase structure." | CodebaseLead, ContextExtractor |
 | `routing_table_markdown_list_clause/0` | "simple markdown list mapping each area/module/feature to its owning child subdirectory" | CodebaseLead, ContextExtractor |
 | `delegate_without_investigating_clause/0` | "where to delegate work without investigating the subtree." | CodebaseLead, ContextExtractor |
+| **CONTEXT.md = current state, not history** | | |
+| `context_current_state_clause/0` | "CONTEXT.md documents the **current state** of the code — what is TRUE NOW…" | Manager, CodebaseLead, CodebaseInvestigator, ContextExtractor |
 | **Shared canonical phrases** | | |
 | `standard_sections_enum/0` | "standard sections (Intent, API Surface, Constraints, Routing Table)" | CodebaseLead, CodebaseInvestigator |
 | `context_chain_example/0` | "CONTEXT.md chain from `./` → `./src/` → `./src/auth/` → `./src/auth/oauth/`" | Manager, CodebaseLead |

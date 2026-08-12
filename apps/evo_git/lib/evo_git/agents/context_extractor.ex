@@ -57,6 +57,8 @@ defmodule EvoGit.Agents.ContextExtractor do
          
          Not all sections apply to every directory. The goal is to capture knowledge that future agents will need — if a section would save an agent from re-investigating or re-discovering something, include it.
       """ <>
+      PromptFragments.context_current_state_clause() <>
+      "\n" <>
       "2. **Routing Table** — A " <>
       PromptFragments.routing_table_markdown_list_clause() <>
       ". May also include sibling paths for cross-references (e.g., related test directories in another subtree, shared utilities). Sibling entries should include a reminder about the read-only constraint (agents can READ/investigate siblings but can NEVER write to them — escalate writes to the parent). This allows parent agents to quickly determine " <>

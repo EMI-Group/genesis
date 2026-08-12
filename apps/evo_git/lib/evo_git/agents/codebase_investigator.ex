@@ -53,7 +53,9 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
       """ <>
       "5. Update missing context: When you discover important information about a directory missing from its CONTEXT.md, update it to persist your findings for future agents. This includes not only the " <>
       PromptFragments.standard_sections_enum() <>
-      " but also: known issues or gotchas you encounter, design rationale you uncover, test gaps you notice, dependency requirements you discover, or any structural knowledge that would save future agents from re-investigating. Every finding you don't record is a finding the next agent will have to re-discover.\n" <>
+      " but also: known issues or gotchas you encounter, design rationale you uncover, test gaps you notice, dependency requirements you discover, or any structural knowledge that would save future agents from re-investigating. Every finding you don't record is a finding the next agent will have to re-discover. " <>
+      PromptFragments.context_current_state_clause() <>
+      "\n" <>
       ~S"""
       6. Return early if empty: If there is nothing related to the task in your assigned node, return immediately with a short message explaining the situation.
 
