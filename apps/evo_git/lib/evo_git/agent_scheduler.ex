@@ -316,18 +316,26 @@ defmodule EvoGit.AgentScheduler do
   Rate-limit error reporting should be handled by the caller inside the callback,
   before raising — the `after` block runs after any exception.
 
+  A non-`:ok` result from the slot request (e.g. `{:error, :cancelled}` when the
+  agent is purged from the waiting queue during a force-kill) raises instead of
+  proceeding without a slot.
+
   Returns the result of `fun.()`.
   """
   @spec with_llm_slot(pos_integer(), (-> result)) :: result when result: var
   def with_llm_slot(agent_id, fun) when is_function(fun, 0) do
-    request_llm_slot(agent_id)
+    case request_llm_slot(agent_id) do
+      :ok ->
+        # try/after (not rescue) — guarantees slot release even if fun raises.
+        # The exception is NOT swallowed; it's re-raised after cleanup.
+        try do
+          fun.()
+        after
+          release_llm_slot(agent_id)
+        end
 
-    # try/after (not rescue) — guarantees slot release even if fun raises.
-    # The exception is NOT swallowed; it's re-raised after cleanup.
-    try do
-      fun.()
-    after
-      release_llm_slot(agent_id)
+      other ->
+        raise "LLM slot request failed for agent #{agent_id}: #{inspect(other)}"
     end
   end
 
@@ -335,18 +343,26 @@ defmodule EvoGit.AgentScheduler do
   Acquires a tool execution slot, executes the given function, and releases the slot afterward.
   Ensures the slot is released even if the function raises.
 
+  A non-`:ok` result from the slot request (e.g. `{:error, :cancelled}` when the
+  agent is purged from the waiting queue during a force-kill) raises instead of
+  proceeding without a slot.
+
   Returns the result of `fun.()`.
   """
   @spec with_tool_slot(pos_integer(), (-> result)) :: result when result: var
   def with_tool_slot(agent_id, fun) when is_function(fun, 0) do
-    request_tool_slot(agent_id)
+    case request_tool_slot(agent_id) do
+      :ok ->
+        # try/after (not rescue) — guarantees slot release even if fun raises.
+        # The exception is NOT swallowed; it's re-raised after cleanup.
+        try do
+          fun.()
+        after
+          release_tool_slot(agent_id)
+        end
 
-    # try/after (not rescue) — guarantees slot release even if fun raises.
-    # The exception is NOT swallowed; it's re-raised after cleanup.
-    try do
-      fun.()
-    after
-      release_tool_slot(agent_id)
+      other ->
+        raise "Tool slot request failed for agent #{agent_id}: #{inspect(other)}"
     end
   end
 
