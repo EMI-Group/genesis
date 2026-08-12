@@ -254,7 +254,7 @@ defmodule EvoGit.RemoteNodeTest do
 
   describe "set_review_status/3" do
     test "returns {:error, _} when the remote node is unreachable" do
-      assert {:error, _} = RemoteNode.set_review_status(@fake_remote, "abc123", :approved)
+      assert {:error, _} = RemoteNode.set_review_status(@fake_remote, "abc123", :merged)
     end
 
     test "local path returns :ok and persists review_status" do
@@ -274,10 +274,10 @@ defmodule EvoGit.RemoteNodeTest do
 
       :ok = EvoGit.Store.put_task(EvoGit.Store, task)
 
-      assert :ok = RemoteNode.set_review_status(node(), id, :approved)
+      assert :ok = RemoteNode.set_review_status(node(), id, :merged)
 
       assert %TaskInfo{} = result = RemoteNode.get_task(node(), id)
-      assert result.review_status == :approved
+      assert result.review_status == :merged
     end
   end
 

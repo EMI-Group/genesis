@@ -704,10 +704,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       # The cast is issued from this process and the subsequent get_task call
       # is ordered after it, so the write is visible without sleeping.
-      assert :ok = RemoteAPI.set_review_status(id, :approved)
+      assert :ok = RemoteAPI.set_review_status(id, :merged)
 
       assert %TaskInfo{} = task = RemoteAPI.get_task(id)
-      assert task.review_status == :approved
+      assert task.review_status == :merged
     end
   end
 
