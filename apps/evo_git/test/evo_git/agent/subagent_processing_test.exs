@@ -244,14 +244,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     alias EvoGit.Agent.LoopState
     alias EvoGit.AgentSpec
     alias EvoGit.AgentScheduler.AgentState
-    alias EvoGit.Agents.CodebaseInvestigator
+    alias EvoGit.Agents.Investigator
     alias EvoGit.Core.ContextNode
     alias EvoGit.Core.PhyloGraphNode
 
-    # A dummy agent module that lists CodebaseInvestigator as a subagent module,
+    # A dummy agent module that lists Investigator as a subagent module,
     # so subagent_module_for/2 can resolve the tool name.
     defmodule DummyAgentModule do
-      def subagent_modules, do: [CodebaseInvestigator]
+      def subagent_modules, do: [Investigator]
     end
 
     setup do
@@ -265,7 +265,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{repo: "/test/repo", base_commit: "abc123", current_commit: "abc123"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/test/repo",
+          base_commit: "abc123",
+          current_commit: "abc123"
+        },
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
@@ -304,7 +308,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       call =
         ReqLLM.ToolCall.new(
           "call_1",
-          "subagent_codebase_investigator",
+          "subagent_investigator",
           ~s({"path":"./src","objective":"investigate src"})
         )
 
@@ -318,7 +322,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # Override the parent state to use the default model_id
       parent_state = %AgentState{
         context_node: %ContextNode{path: "./", repo: "/test/repo"},
-        phylo_node: %PhyloGraphNode{repo: "/test/repo", base_commit: "abc123", current_commit: "abc123"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/test/repo",
+          base_commit: "abc123",
+          current_commit: "abc123"
+        },
         llm_model: "test-model",
         max_retries: 3,
         max_depth: 5,
@@ -339,7 +347,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       call =
         ReqLLM.ToolCall.new(
           "call_1",
-          "subagent_codebase_investigator",
+          "subagent_investigator",
           ~s({"path":"./lib","objective":"investigate lib"})
         )
 

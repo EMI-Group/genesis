@@ -15,7 +15,7 @@ defmodule EvoGit.Agents.Executor do
   def subagent_tool_name, do: "subagent_executor"
 
   def subagent_modules do
-    [EvoGit.Agents.CodebaseInvestigator, __MODULE__]
+    [EvoGit.Agents.Investigator, __MODULE__]
   end
 
   def subagent_tool_description do
@@ -42,7 +42,7 @@ defmodule EvoGit.Agents.Executor do
       " assigned node or requires broader architectural changes outside your scope, return immediately with a short message.\n" <>
       ~S"""
       - Trust Provided Context: If the objective includes specific file paths, line numbers, function names, or investigation findings from the caller, trust that information and act on it directly. Do NOT re-investigate what has already been discovered. For example, if the objective says "Fix `token_expired?/1` in `src/auth/session.ex:42`", go directly to that file and line — don't spawn an investigator to find it.
-      - Investigate When Genuinely Needed: If critical implementation details are missing from the objective (e.g., you don't know which file to modify, or how functions interact), use `subagent_codebase_investigator` to fill in the gaps. To understand how something worked before recent changes, spawn the investigator with a `commit_id` to explore an earlier commit.
+      - Investigate When Genuinely Needed: If critical implementation details are missing from the objective (e.g., you don't know which file to modify, or how functions interact), use `subagent_investigator` to fill in the gaps. To understand how something worked before recent changes, spawn the investigator with a `commit_id` to explore an earlier commit.
       - Make Targeted Changes: Make minimal, focused changes to satisfy the objective. Follow existing code patterns and style. Avoid unnecessary refactoring, and preserve comments and documentation where appropriate.
       - Commit Your Work: Once the objective is satisfied, commit your changes with a clear commit message.
       - Complete: Call `complete_task` with a brief report of what was modified.

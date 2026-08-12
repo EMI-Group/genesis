@@ -207,7 +207,7 @@ defmodule EvoGit.Agent.DelegationHints do
 
   defp read_hint_message(child_path, count, _threshold) do
     "💡 **Delegation Hint**: You've been reading/investigating files in `#{child_path}` for #{count} turns. " <>
-      "As a high-level agent, investigation of child subtrees should be delegated — spawn a `subagent_codebase_investigator` (or `subagent_manager`) at `#{child_path}` and let it investigate its own domain. " <>
+      "As a high-level agent, investigation of child subtrees should be delegated — spawn a `subagent_investigator` (or `subagent_manager`) at `#{child_path}` and let it investigate its own domain. " <>
       "Your turns are for routing decisions, coordination, and review — not deep investigation."
   end
 
