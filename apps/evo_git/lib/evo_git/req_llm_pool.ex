@@ -3,13 +3,20 @@ defmodule EvoGit.ReqLLMPool do
   Dynamic reconciliation of ReqLLM's Finch HTTP connection pool.
 
   ReqLLM starts a single named Finch (`ReqLLM.Finch`) whose `:default` pool
-  configuration (`stream_pool_count` pool processes, each with
-  `stream_pool_size: 1` → one concurrent HTTP/1 stream per pool process) is
-  read **once at boot** (`config/runtime.exs`). Runtime configuration changes —
-  dashboard model-profile saves, `reload_config`, per-task `-m` model ids —
-  can raise the effective LLM concurrency above the boot-time pool count, at
-  which point `ReqLLM.stream_text/3` calls queue on the fixed-size Finch pool
-  and fail with:
+  configuration (`stream_pool_count` pool processes, each with `size: 2` → up
+  to two concurrent HTTP/1 streams per pool process; connections open lazily
+  on checkout, so per-origin capacity = `stream_pool_count × 2`) is read
+  **once at boot** (`config/runtime.exs`). Shard selection across pool
+  processes is RoundRobin, driven by ReqLLM's top-level `stream_pool_strategy`
+  config key (`{Finch.Pool.Strategy.RoundRobin, round_robin}` — an `:atomics`
+  ref created at config-eval time; read per request as the `pool_strategy` opt
+  at call time, NOT a pool-template key). `stream_pool_timeout` (the Finch
+  checkout/pool-queue wait) is `300_000` and is likewise read at call time.
+  Runtime configuration changes — dashboard model-profile saves,
+  `reload_config`, per-task `-m` model ids — can raise the effective LLM
+  concurrency above the boot-time pool count, at which point
+  `ReqLLM.stream_text/3` calls queue on the fixed-size Finch pool and fail
+  with:
 
       Finch was unable to provide a connection within the timeout due to excess
       queuing for connections...
