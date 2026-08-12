@@ -14,7 +14,6 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   attr(:task, :map, required: true)
   attr(:show_details, :boolean, default: false)
-  attr(:remote?, :boolean, default: false)
   attr(:current_node_id, :any, default: nil)
 
   def task_card(assigns) do
@@ -144,7 +143,10 @@ defmodule EvoDashWeb.TaskCardComponents do
               </button>
             <% end %>
 
-            <%= if show_review_button?(@task) and not @remote? do %>
+            <%!-- The Review button is node-aware: the link below carries ?node=
+                (via with_node_param) so remote-node tasks land on the review
+                page with the correct node context. --%>
+            <%= if show_review_button?(@task) do %>
               <.link
                 navigate={with_node_param(~p"/review/#{@task.id}", @current_node_id)}
                 class="btn btn-sm btn-primary rounded-md px-5 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"

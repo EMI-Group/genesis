@@ -66,7 +66,9 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert is_map(decoded)
 
       assert MapSet.new(Map.keys(decoded)) ==
-               MapSet.new(~w(task_id task_type repo_path status started_at finished_at agent_count usage archive_records))
+               MapSet.new(
+                 ~w(task_id task_type repo_path status started_at finished_at agent_count usage archive_records)
+               )
 
       assert decoded["task_id"] == task_id
       assert decoded["task_type"] == "genesis"
@@ -89,6 +91,70 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       second = Enum.find(records, fn record -> record["agent_id"] == "T2_A1" end)
       assert second["parent_id"] == "T1_A1"
       assert second["objective"] == "Implement module X"
+
+      cleanup_task(task_id)
+    end
+  end
+
+  describe "GET /tasks/:task_id/export with ?node= param" do
+    # The node-aware export resolves `?node=` through EvoGit.RemoteConnections
+    # (a TOML file under the config dir), so XDG_CONFIG_HOME is isolated per
+    # test — same pattern as page_controller_test / settings_live_test.
+    setup do
+      original = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_config =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_test_config_export_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      File.mkdir_p!(tmp_config)
+      System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+      on_exit(fn ->
+        File.rm_rf(tmp_config)
+
+        if original do
+          System.put_env("XDG_CONFIG_HOME", original)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+      end)
+
+      :ok
+    end
+
+    test "returns 404 for an unknown node param", %{conn: conn} do
+      conn = get(conn, "/tasks/nonexistent-task-id/export?node=unknown-target-id")
+
+      assert response(conn, 404) =~ "Task not found"
+    end
+
+    test "returns 404 for a known but disconnected target", %{conn: conn} do
+      id = "export-test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Export Test Target"
+        })
+
+      # No connection manager is registered for the target, so
+      # connection_status/1 degrades to :disconnected → the export must 404
+      # exactly like the local not-found path.
+      conn = get(conn, "/tasks/nonexistent-task-id/export?node=" <> id)
+
+      assert response(conn, 404) =~ "Task not found"
+    end
+
+    test "?node=local keeps the local path working", %{conn: conn} do
+      task_id = seed_completed_task([%{agent_id: "T1_A1", objective: "Build the feature"}])
+
+      conn = get(conn, "/tasks/#{task_id}/export?node=local")
+
+      assert response(conn, 200)
 
       cleanup_task(task_id)
     end

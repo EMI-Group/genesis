@@ -3,7 +3,7 @@ defmodule EvoDashWeb.TaskExportController do
   use Gettext, backend: EvoDashWeb.Gettext
 
   def export(conn, %{"task_id" => task_id}) do
-    case EvoGit.TaskRegistry.get_task(task_id) do
+    case resolve_task(conn, task_id) do
       nil ->
         conn
         |> put_status(:not_found)
@@ -42,6 +42,35 @@ defmodule EvoDashWeb.TaskExportController do
     end
   end
 
+  # Resolves the task on the node the client is viewing. Without a `?node=`
+  # param (or with `?node=local`) the task is fetched from the LOCAL store —
+  # the historical behavior. With a `?node=<id>` param for a connected target,
+  # the task is fetched from the remote daemon via RPC; a missing task or a
+  # failed RPC resolves to nil → 404, exactly like the local not-found path.
+  defp resolve_task(conn, task_id) do
+    case conn.query_params["node"] do
+      nil -> EvoGit.TaskRegistry.get_task(task_id)
+      "local" -> EvoGit.TaskRegistry.get_task(task_id)
+      node_id -> resolve_remote_task(node_id, task_id)
+    end
+  end
+
+  # Resolves a `?node=<id>` param to the connected remote BEAM node and fetches
+  # the task there. Mirrors `EvoDashWeb.LiveHooks.NodeAware.resolve_node_context/1`
+  # (node_aware.ex): the node name comes from the connection manager's status
+  # map and is converted to an atom the same way. Unknown targets, targets that
+  # are not `:connected`, and disconnected/unavailable connection subsystems all
+  # fall through to nil → the caller's 404.
+  defp resolve_remote_task(node_id, task_id) do
+    with {:ok, target} <- EvoDash.NodeContext.get_target(node_id),
+         %{phase: :connected, node: remote_node} when is_binary(remote_node) <-
+           EvoDash.NodeContext.connection_status(target.id) do
+      EvoDash.NodeContext.get_task(String.to_atom(remote_node), task_id)
+    else
+      _ -> nil
+    end
+  end
+
   # Recursively normalize a structure into plain maps/lists/strings/numbers
   # so Jason can encode it. Handles structs (via Map.from_struct/1),
   # DateTimes (via DateTime.to_iso8601/1), and nested maps/lists.
@@ -66,7 +95,8 @@ defmodule EvoDashWeb.TaskExportController do
   end
 
   # Un-serializable terms (PIDs, references, ports, functions) -> string fallback
-  defp normalize_for_json(value) when is_pid(value) or is_reference(value) or is_port(value) or is_function(value) do
+  defp normalize_for_json(value)
+       when is_pid(value) or is_reference(value) or is_port(value) or is_function(value) do
     inspect(value)
   end
 

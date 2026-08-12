@@ -371,6 +371,80 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "remote node review (unreachable node)" do
+    # A remote node that cannot be reached must degrade to the existing
+    # graceful "Review Not Available" state instead of crashing. The seam:
+    # a fake connection manager is registered in the shared
+    # EvoGit.RemoteConnection.Registry under the target id with a :connected
+    # phase, so NodeAware resolves `?node=` to the remote BEAM node atom
+    # "genesis_remote@127.0.0.1" — an unreachable fake node (same pattern as
+    # settings_live_test). The subsequent `:erpc` calls fail fast with
+    # :nodedown, so NodeContext.get_task returns nil → the existing
+    # "Task not found" error state renders.
+    #
+    # XDG_CONFIG_HOME is isolated so the saved target never touches the
+    # developer's real ~/.config/genesis/ (same pattern as settings_live_test).
+    setup do
+      original = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_config =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_test_config_review_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      File.mkdir_p!(tmp_config)
+      System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+      on_exit(fn ->
+        File.rm_rf(tmp_config)
+
+        if original do
+          System.put_env("XDG_CONFIG_HOME", original)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+      end)
+
+      :ok
+    end
+
+    test "unreachable remote node renders the graceful not-available state", %{conn: conn} do
+      id = "review-test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Review Test Target"
+        })
+
+      start_supervised!(
+        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      # The task does not exist on the (unreachable) remote node — the RPC
+      # fails fast with :nodedown, so the page must render the existing
+      # "Review Not Available" error state without crashing.
+      {:ok, _view, html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+
+      assert html =~ "Review Not Available"
+      assert html =~ "Task not found"
+      refute html =~ "ArgumentError"
+    end
+
+    test "unknown node param falls back to local (task not found locally)", %{conn: conn} do
+      # An unknown `?node=` id resolves to the local context (NodeAware
+      # semantics) — the task is not in the local store, so the existing
+      # not-found error state renders.
+      {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id?node=unknown-target-id")
+
+      assert html =~ "Review Not Available"
+      assert html =~ "Task not found"
+    end
+  end
+
   # --- Helpers for the merge-target selector tests ---
 
   # Runs a git command in `repo`, asserting it succeeds.
@@ -491,4 +565,25 @@ defmodule EvoDashWeb.ReviewLiveTest do
         nil
     end
   end
+end
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# EvoDashWeb.SettingsLiveTest.ConnectionManager). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+defmodule EvoDashWeb.ReviewLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
 end
