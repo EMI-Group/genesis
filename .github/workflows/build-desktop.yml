@@ -291,7 +291,7 @@ jobs:
             tar -czf "dist/${PREFIX}.tar.gz" \
               -C "desktop/src-tauri/target/${{ matrix.rust_target }}/release" genesis-desktop
           fi
-          tar -czf "dist/genesis_remote_linux_${{ matrix.arch }}.tar.gz" \
+          tar -cJf "dist/genesis_remote_linux_${{ matrix.arch }}.tar.xz" \
             -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
@@ -464,7 +464,7 @@ jobs:
           mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_darwin_arm64.dmg"
           ditto -c -k --keepParent "${APP_BUNDLES[0]}" \
             "dist/genesis_desktop_darwin_arm64.app.zip"
-          tar -czf "dist/genesis_remote_darwin_arm64.tar.gz" \
+          tar -cJf "dist/genesis_remote_darwin_arm64.tar.xz" \
             -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
@@ -581,7 +581,7 @@ jobs:
           BUNDLE_DIR="desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
           mv "${BUNDLE_DIR}/msi/"*.msi "dist/genesis_desktop_windows_x64.msi"
           mv "${BUNDLE_DIR}/nsis/"*.exe "dist/genesis_desktop_windows_x64.exe"
-          tar -czf "dist/genesis_remote_windows_x64.tar.gz" \
+          tar -cJf "dist/genesis_remote_windows_x64.tar.xz" \
             -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
