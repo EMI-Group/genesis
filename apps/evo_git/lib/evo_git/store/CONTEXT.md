@@ -10,6 +10,7 @@ Contains the `EvoGit.Store` GenServer and its support modules for the SQLite per
 - `./codec.ex` → `EvoGit.Store.Codec` — pure serialization/deserialization functions (no I/O)
 - `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, timestamp normalization
 - `./queries.ex` → `EvoGit.Store.Queries` — SQL builder helpers (WHERE, SET, clamping, column encoding)
+- `./errors.ex` → `EvoGit.Store.Errors` — disk-full error classifier (pure; public `disk_full_error?/1` for testability)
 
 ## API Surface
 
@@ -141,7 +142,60 @@ The quarantine/integrity subsystem (`EvoGit.Store.Quarantine` — `tasks_quarant
 
 ## Known Issues
 
-- **⚠️ Summary queries are the memory-scaling hot spot (dashboard-driven) — `result` decode REMOVED (fix #1 done).** `select_tasks_summary` / `select_tasks_summary_by_path` / `select_tasks_changed_since` (store.ex:755-803) used to full-table-scan ALL rows and decode the heavy `result` JSON per row INLINE in this GenServer: `@summary_columns` (store.ex:58) included `result`, and `decode_summary_row` → `Codec.decode_result` (codec.ex:455-487) parsed the full result blob (embeds `archive_records` + usage — the largest data in the DB, duplicated in `archive_metadata`). **`result` is now dropped from `@summary_columns` + `decode_summary_row`** (15-column projection) — no summary consumer reads it; the dashboard's review button uses the denormalized `branch_name` column (parallel evo_dash change re-sourced `show_review_button?` to it). The remaining per-row JSON decode is `opts` only (much smaller). The decoded list is still retained in this process's heap until the next major GC while the dashboard polls (every task broadcast triggers a re-fetch with a 300 ms debounce; TaskRegistry's summary handlers at task_registry.ex:416-458 ARE Task-offloaded since 1140cc58 — that removes TaskRegistry-side retention, but the decode still runs in THIS process, so Store heap is unchanged). **Remaining fix:** summary decode still runs inline on the Store GenServer; consider a raw-rows API (decode in the caller's Task process) if `opts` decode ever becomes hot. See task_registry/CONTEXT.md "Known Issues" for the full chain.
+- **✅ RESOLVED — Store-side decode retention (heavy SELECT handlers offloaded to short-lived Tasks).** `select_tasks_summary` / `select_tasks_summary_by_path` / `select_tasks_changed_since` (store.ex:843-885) plus `select_all_tasks`, `safe_select_all_tasks`, and `safe_select_paginated_tasks` previously ran the query AND the full decode INLINE on the Store GenServer's heap. The TaskRegistry-side offload (task_registry.ex, since 1140cc58) moved nothing off the Store process — the decode still executed there, so Store heap/GC churn was unchanged on every dashboard poll. **Fixed:** each of these 6 handlers now runs query + decode inside a short-lived linked `Task.start` that replies via `GenServer.reply/2` (`{:noreply, state}` immediately). Cross-process xqlite use is safe — the connection resource is mutex-guarded inside the NIF (`deps/xqlite/native/xqlitenif/src/connection.rs`, `with_conn`/`with_conn_mut`) with NO owner-process constraint, and NIFs are `DirtyIo`-scheduled. The Task is LINKED to the Store: a decode raise (e.g. the `{:ok, %{rows: rows}}` bad match in `do_select_all_tasks`) still crashes the GenServer exactly like the old inline handler — zero behavior change, including for the skip-and-log boundary (`decode_skipping_bad` runs in the Task process) and the `_ -> []` query-failure arms. The caller's 30s `@call_timeout` is unchanged (a slow Task = caller timeout, same as slow-NFS today). Bodies were moved verbatim into `do_*` private helpers (store.ex ~`do_select_all_tasks`/`do_safe_select_paginated_tasks`/`do_safe_select_all_tasks`/`do_select_tasks_summary*`/`do_select_tasks_changed_since`). **Deliberately kept synchronous** (single-row or tiny): `get_task`, `select_task_logs`, `select_task_update_info`, `get_task_status`, `get_project` (single row, no bloat), all id-only projections (`select_task_paths`, `select_finished_task_ids`, `select_task_ids`, `select_running_lease_info`, `select_cleanup_info/1,/3`), `count_tasks`, `count_projects`, `size`, and `select_all_projects`/`safe_select_all_projects` (≤10 rows after trim) — a Task spawn would cost more than the decode.
+
+## Disk-Full Handling
+
+**Contract (added commit 17e27a18):** SQLite's disk-full error class on write paths — `SQLITE_FULL` (13), `SQLITE_IOERR` (10), `SQLITE_READONLY` (8) — is detected at the write boundary and converted to `{:error, :disk_full}` instead of crashing the Store GenServer. Reads keep working; subsequent writes can be retried (a full disk is transient, unlike a corrupt DB). Every other write error keeps the historical failure shape: an identical `MatchError` (constructed via `raise MatchError, term: error` to avoid a statically-impossible pattern warning) crashes the GenServer and the supervisor restarts it.
+
+### xqlite error surfacing (verified in deps/xqlite, v0.10)
+
+- `XqliteNIF.query/3` and `XqliteNIF.execute/3` **RETURN tuples, never raise**: Rust `Result<_, XqliteError>` encodes as `{:ok, _} | {:error, reason}` (`deps/xqlite/native/xqlitenif/src/nif.rs:99-115`). `query` → `{:ok, %{columns, rows, num_rows}}`; `execute` → `{:ok, affected_count}`.
+- Exact disk-full-class shapes (`error.rs` `classify_sqlite_error` + `Encoder` impl):
+  - `{:error, {:sqlite_failure, code, extended_code, message | nil}}` — generic fallback arm (error.rs:746-750, encode :664); **SQLITE_FULL (13) and SQLITE_IOERR (10) land here** (only READONLY/INTERRUPT/BUSY/LOCKED/SCHEMA/AUTH/CONSTRAINT + 4 text-prefix classes are special-cased, error.rs:683-751). `message` is `Option<String>` → binary or nil.
+  - `{:error, {:read_only_database, extended_code, message}}` — SQLITE_READONLY (8), classified specially (error.rs:688-691, encode :501-504).
+- Classifier: `EvoGit.Store.Errors.disk_full_error?/1` (public, pure — testable). Matches `{:sqlite_failure, code, _, _}` with `code in [8, 10, 13]`, `{:read_only_database, _, _}`, PLUS a message-text fallback — `String.contains?(String.downcase(msg), "database or disk is full")` on the `:sqlite_failure` message — catching the canonical SQLITE_FULL text on unidentifiable codes. NOT reachable by trigger RAISEs: SQLite reports them as `SQLITE_CONSTRAINT_TRIGGER` (code 19), which xqlite classifies as `{:error, {:constraint_violation, :constraint_trigger, %{message: ...}}}` — a shape the classifier deliberately does not match. Message reword/localization downgrades to `false` (graceful — crash as before), never a misclassification.
+
+### Write boundary
+
+All 8 write handlers (`put_task`, `delete_task`, `delete_tasks`, `clear_tasks`, `update_lease_expires_at`, `update_task_columns`, `put_project`, `delete_project`) route through the private `execute_write(conn, data_dir, sql, params)` helper (store.ex): `{:ok, _}` → `:ok`; disk-full-class → `log_disk_full/2` (Logger.warning including the DB path from `state.data_dir` + a "free disk space" hint) → `{:error, :disk_full}`; anything else → `raise MatchError, term: error` (historical crash preserved). No try/rescue anywhere — the boundary is a plain `case` on the NIF return (the NIFs never raise; the only justified try/rescue remains `terminate/2`'s WAL checkpoint).
+
+**Per-function error contract (success shapes unchanged):**
+
+| Function | Success | Disk-full | Other errors |
+|---|---|---|---|
+| `put_task` | `:ok` | `{:error, :disk_full}` | crash (MatchError) |
+| `delete_task` | `:ok` | `{:error, :disk_full}` | crash |
+| `delete_tasks` (chunked) | `:ok` | `{:error, :disk_full}` (partial deletion across chunks possible; stops at failing chunk) | crash |
+| `clear_tasks` | `:ok` | `{:error, :disk_full}` | crash |
+| `update_lease_expires_at` | `:ok` | `{:error, :disk_full}` | crash |
+| `update_task_columns` | `:ok` | `{:error, :disk_full}` | crash |
+| `put_project` | `:ok` | `{:error, :disk_full}` | crash |
+| `delete_project` | `:ok` | `{:error, :disk_full}` | crash |
+
+(`put_task`/`put_project` keep their `{:error, :invalid_task_struct}`/`{:error, :invalid_project_struct}` validation arms — unchanged.)
+
+### Caller degradation (task_registry.ex + cleanup.ex, same commit)
+
+- **`start_task` put_task**: log + continue — the task runs in-memory (unpersisted); the next status write retries persistence.
+- **`force_kill_task`** (`update_task_columns`): in-memory cleanup still runs (task_refs deleted, cancelling marker cleared); returns `{:error, :disk_full}`.
+- **`cancel_task`** pending branch: returns `{:error, :disk_full}` (persisted status stays `:pending`; a retry would work).
+- **`append_log` / `delete_task` / `set_review_status` / `set_review_metadata` casts** + **`:heartbeat`** (`update_lease_expires_at`): fire-and-forget — swallow + log (log-loss and stale review/lease state are acceptable degradations on a full disk).
+- **`handle_update_status/6`** (all terminal-status casts incl. startup reconciliation) and **`{:task_status,...}`** handler: log; in-memory terminal cleanup still runs (clear marker + delete task_refs).
+- **`resolve_recheck_task`**, **`:lease_sweep`** (`put_task`): log + continue (sweep still counts the task as changed).
+- **`clear_finished_tasks`** (`delete_tasks`): returns `{:error, :disk_full}` (finished rows remain).
+- **`add_recent_project` / `remove_recent_project` / `trim_recent_projects`**: log + continue, reply `:ok`.
+- **`Cleanup.cleanup_expired_tasks`** (`delete_tasks`): log + continue; the 5-min `:periodic_cleanup` retries.
+
+### Testability findings (for the test phase — no tests in this commit)
+
+- **No read-only open flag in use**: `Xqlite.open/2` has no `:read_only` option; `Xqlite.open_readonly/1` exists but `Store.init/1` doesn't use it (`journal_mode: :wal, synchronous: :normal, cache_size: -2000` at store.ex:411). Chmod-based triggers are unreliable: chmod 0444 on the DB file after open does NOT block WAL-mode writes (writes go to `-wal`/`-shm`); chmod 555 on the parent DIRECTORY blocks `-wal`/`-shm` creation → READONLY/CANTOPEN — but **root bypasses chmod** (CI often runs as root; a root-guard is needed).
+- **✅ Validated test technique — `PRAGMA query_only = ON` on the Store's own connection**: obtain the connection via `:sys.get_state(Store)` (xqlite NIFs are mutex-guarded, so cross-process use is safe) and run `PRAGMA query_only = ON` — every subsequent write fails with genuine `{:error, {:read_only_database, 8, ...}}` (SQLITE_READONLY, a real classified code) → `{:error, :disk_full}` at the write boundary; `PRAGMA query_only = OFF` restores writes (retry test). Deterministic, root-proof, and CI-safe. Why not the alternatives: chmod is unreliable (0444 on the DB file does NOT block WAL-mode writes through the already-open fd; 555 on the parent directory is bypassed by root), and the `RAISE(FAIL, 'database or disk is full')` trigger does NOT work — SQLite reports trigger RAISEs as `SQLITE_CONSTRAINT_TRIGGER` (primary code 19), which xqlite classifies as `{:error, {:constraint_violation, :constraint_trigger, %{message: ...}}}`; the classifier deliberately does not match that shape, so the write crashes with the historical MatchError instead of `{:error, :disk_full}` (empirically verified — see `test/evo_git/store_disk_full_test.exs`, module `EvoGit.StoreDiskFullTest`, the implemented coverage).
+- **Implemented coverage** — `apps/evo_git/test/evo_git/store_disk_full_test.exs` (module `EvoGit.StoreDiskFullTest`):
+  1. Pure classifier unit tests — feed synthetic shapes to the PUBLIC `EvoGit.Store.Errors.disk_full_error?/1`: `{:error, {:sqlite_failure, 13, 13, msg}}` → true, code 10 → true, code 8 → true, `{:error, {:read_only_database, 8, msg}}` → true, `{:error, {:sqlite_failure, 1, 1, "database or disk is full"}}` → true (message fallback), `{:ok, _}` → false, `{:error, {:sqlite_failure, 19, 19, nil}}` → false (constraint class — incl. trigger RAISEs), unknown code with nil message → false.
+  2. Integration (armed via `PRAGMA query_only = ON` on the Store's own connection — the validated technique above): `EvoGit.Store.put_task` returns `{:error, :disk_full}`, the Store process stays alive (`Process.alive?`), a subsequent read (`get_task`/`select_task_ids`) still works, a disk-full warning was logged (`ExUnit.CaptureLog`), and a retried `put_task` succeeds after `query_only = OFF`.
+  3. TaskRegistry degradation: with query_only armed, `TaskRegistry.start_task` does not crash the registry (task runs in-memory, unpersisted).
+  4. Non-disk-full errors still crash: not integration-tested (no seam to produce a real non-disk-full NIF error — the classifier unit tests cover the mapping; the crash path is `raise MatchError` in `execute_write/4`, unreachable without a real non-disk-full NIF error).
 
 ## Known Gaps
 
@@ -178,4 +232,4 @@ Goal context: lower work into SQL instead of Elixir. The codebase is already wel
 - Column order matters — `@task_columns` and `@project_columns` define positional encoding/decoding.
 - JSON encoding via Jason; complex fields stored as JSON TEXT in SQLite columns.
 - Known-atom whitelists must stay in sync with the application's valid status/review_status/type atoms.
-- The main `EvoGit.Store` GenServer follows the crash philosophy: no try/rescue in handle_call/2; only `terminate/2` has a justified try/rescue for graceful connection close.
+- The main `EvoGit.Store` GenServer follows the crash philosophy: no try/rescue in handle_call/2; only `terminate/2` has a justified try/rescue for graceful connection close. Two deliberate exceptions (see "Disk-Full Handling" and "Known Issues" above): (1) disk-full-class write errors are converted to `{:error, :disk_full}` at the `execute_write/4` boundary instead of crashing; (2) the 6 heavy full-decode read handlers run on a short-lived linked Task (crash-on-raise behavior preserved via the link).

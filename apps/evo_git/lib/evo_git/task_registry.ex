@@ -341,8 +341,20 @@ defmodule EvoGit.TaskRegistry do
           model_id: Keyword.get(opts, :model_id)
         }
 
-        # Persist to SQLite with ref nulled (ref is runtime-only data)
-        EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
+        # Persist to SQLite with ref nulled (ref is runtime-only data). A
+        # disk-full write must NOT crash the registry: the task still runs
+        # in-memory (unpersisted) and the next status write (terminal or
+        # otherwise) retries the persistence.
+        case EvoGit.Store.put_task(state.task_store, %{task | ref: nil}) do
+          :ok ->
+            :ok
+
+          {:error, :disk_full} ->
+            Logger.warning(
+              "TaskRegistry: disk full — task #{task_id} could not be persisted; " <>
+                "continuing in-memory only"
+            )
+        end
 
         # Keep the runtime ref in-memory only
         state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
@@ -427,16 +439,30 @@ defmodule EvoGit.TaskRegistry do
                 # transitions), so writing result: nil preserves the old
                 # put_task semantics. `ref` is runtime-only and never persisted.
                 # A force-killed task is persisted as :failed (never :cancelled)
-                # — "cancelled" means ONLY graceful cancellation.
-                EvoGit.Store.update_task_columns(state.task_store, task_id,
-                  status: :failed,
-                  finished_at: DateTime.utc_now(),
-                  lease_expires_at: nil,
-                  result: nil
-                )
+                # — "cancelled" means ONLY graceful cancellation. On disk-full
+                # the in-memory cleanup still happens (task_refs deleted, marker
+                # cleared) and {:error, :disk_full} is returned.
+                reply =
+                  case EvoGit.Store.update_task_columns(state.task_store, task_id,
+                         status: :failed,
+                         finished_at: DateTime.utc_now(),
+                         lease_expires_at: nil,
+                         result: nil
+                       ) do
+                    :ok ->
+                      :ok
+
+                    {:error, :disk_full} ->
+                      Logger.warning(
+                        "TaskRegistry: disk full — force-killed task #{task_id} " <>
+                          "could not be persisted as :failed"
+                      )
+
+                      {:error, :disk_full}
+                  end
 
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
-                {:ok, state}
+                {reply, state}
               else
                 {{:error, :not_running}, state}
               end
@@ -464,13 +490,24 @@ defmodule EvoGit.TaskRegistry do
         :pending ->
           # No agents exist yet — mark :cancelled immediately. The start_task
           # guard (see {:start_task, ...} handler) then refuses to start it.
-          EvoGit.Store.update_task_columns(state.task_store, task_id,
-            status: :cancelled,
-            finished_at: DateTime.utc_now(),
-            lease_expires_at: nil
-          )
+          # On disk-full the persisted status stays :pending and
+          # {:error, :disk_full} is returned (a later cancel retry would work).
+          case EvoGit.Store.update_task_columns(state.task_store, task_id,
+                 status: :cancelled,
+                 finished_at: DateTime.utc_now(),
+                 lease_expires_at: nil
+               ) do
+            :ok ->
+              :ok
 
-          :ok
+            {:error, :disk_full} ->
+              Logger.warning(
+                "TaskRegistry: disk full — pending task #{task_id} could not " <>
+                  "be marked :cancelled"
+              )
+
+              {:error, :disk_full}
+          end
 
         :running ->
           # 1. Transition to :cancelling via the normal status-update path so
@@ -602,11 +639,24 @@ defmodule EvoGit.TaskRegistry do
   def handle_call(:clear_finished_tasks, _from, state) do
     task_ids = EvoGit.Store.select_finished_task_ids(state.task_store)
 
-    EvoGit.Store.delete_tasks(state.task_store, task_ids)
+    # On disk-full the finished rows remain and {:error, :disk_full} is
+    # returned (a later clear retry would succeed once space is freed).
+    reply =
+      case EvoGit.Store.delete_tasks(state.task_store, task_ids) do
+        :ok ->
+          Cleanup.cleanup_expired_tasks(state.task_store)
+          :ok
 
-    Cleanup.cleanup_expired_tasks(state.task_store)
+        {:error, :disk_full} ->
+          Logger.warning(
+            "TaskRegistry: disk full — #{length(task_ids)} finished tasks could not be deleted"
+          )
+
+          {:error, :disk_full}
+      end
+
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
-    {:reply, :ok, state}
+    {:reply, reply, state}
   end
 
   ## Recent Projects Handlers
@@ -615,10 +665,18 @@ defmodule EvoGit.TaskRegistry do
   def handle_call({:add_recent_project, path, name}, _from, state) do
     now = DateTime.utc_now()
 
-    EvoGit.Store.put_project(
-      state.task_store,
-      %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
-    )
+    # On disk-full the project simply isn't persisted — log and continue
+    # (recent projects are a convenience, never worth crashing the registry).
+    case EvoGit.Store.put_project(
+           state.task_store,
+           %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
+         ) do
+      :ok ->
+        :ok
+
+      {:error, :disk_full} ->
+        Logger.warning("TaskRegistry: disk full — recent project #{inspect(path)} not persisted")
+    end
 
     # Enforce max limit
     trim_recent_projects(state)
@@ -638,7 +696,16 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
-    EvoGit.Store.delete_project(state.task_store, path)
+    # On disk-full the project row simply remains — log and continue.
+    case EvoGit.Store.delete_project(state.task_store, path) do
+      :ok ->
+        :ok
+
+      {:error, :disk_full} ->
+        Logger.warning(
+          "TaskRegistry: disk full — recent project #{inspect(path)} could not be deleted"
+        )
+    end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
     {:reply, :ok, state}
@@ -660,7 +727,18 @@ defmodule EvoGit.TaskRegistry do
     case EvoGit.Store.select_task_logs(state.task_store, task_id) do
       logs when is_list(logs) ->
         updated_logs = [log_entry | logs] |> Enum.take(@max_log_entries)
-        EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs)
+
+        case EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs) do
+          :ok ->
+            :ok
+
+          {:error, :disk_full} ->
+            # Log-loss is acceptable on disk-full (this is a hot path during
+            # runs) — log a warning and continue; never crash the registry.
+            Logger.warning(
+              "TaskRegistry: disk full — log entry for task #{task_id} not persisted"
+            )
+        end
 
       nil ->
         :ok
@@ -671,7 +749,15 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    EvoGit.Store.delete_task(state.task_store, task_id)
+    case EvoGit.Store.delete_task(state.task_store, task_id) do
+      :ok ->
+        :ok
+
+      {:error, :disk_full} ->
+        # Fire-and-forget delete (cast): swallow + log — the task row simply
+        # remains until disk space is freed and a later delete/cleanup retries.
+        Logger.warning("TaskRegistry: disk full — task #{task_id} could not be deleted")
+    end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
@@ -685,7 +771,17 @@ defmodule EvoGit.TaskRegistry do
         :ok
 
       _status ->
-        EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
+        case EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status) do
+          :ok ->
+            :ok
+
+          {:error, :disk_full} ->
+            # Fire-and-forget review-status write (cast): swallow + log — the
+            # review status stays as-is in the DB until a retry succeeds.
+            Logger.warning(
+              "TaskRegistry: disk full — review status for task #{task_id} not persisted"
+            )
+        end
     end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -700,10 +796,20 @@ defmodule EvoGit.TaskRegistry do
         :ok
 
       _status ->
-        EvoGit.Store.update_task_columns(state.task_store, task_id,
-          base_sha: base_sha,
-          commit_sha: commit_sha
-        )
+        case EvoGit.Store.update_task_columns(state.task_store, task_id,
+               base_sha: base_sha,
+               commit_sha: commit_sha
+             ) do
+          :ok ->
+            :ok
+
+          {:error, :disk_full} ->
+            # Fire-and-forget review-metadata write (cast): swallow + log — the
+            # review SHAs stay as-is in the DB until a retry succeeds.
+            Logger.warning(
+              "TaskRegistry: disk full — review metadata for task #{task_id} not persisted"
+            )
+        end
     end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -795,7 +901,20 @@ defmodule EvoGit.TaskRegistry do
                 if(commit_sha, do: [commit_sha: commit_sha], else: []) ++
                 if(archive_records, do: [archive_metadata: archive_records], else: [])
 
-            EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
+            case EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols) do
+              :ok ->
+                :ok
+
+              {:error, :disk_full} ->
+                # The terminal write is lost, but the in-memory cleanup below
+                # still runs so the task is not stuck: the task_refs entry is
+                # removed and the cancelling marker cleared. The persisted row
+                # keeps its old status until disk space is freed.
+                Logger.warning(
+                  "TaskRegistry: disk full — status write for task #{task_id} " <>
+                    "not persisted (status #{inspect(status)})"
+                )
+            end
 
             if status in [:completed, :failed, :cancelled] do
               # Terminal state — clean up the graceful-cancel marker (guarded:
@@ -915,8 +1034,18 @@ defmodule EvoGit.TaskRegistry do
       ] ++ if(branch_name, do: [branch_name: branch_name], else: [])
 
     # Targeted write — only the changed columns; `ref` is runtime-only and
-    # never persisted.
-    EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
+    # never persisted. On disk-full the task stays in its previous persisted
+    # state — log and continue (the in-memory resolution is complete).
+    case EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols) do
+      :ok ->
+        :ok
+
+      {:error, :disk_full} ->
+        Logger.warning(
+          "TaskRegistry: disk full — recheck resolution for task #{task_id} " <>
+            "(#{final_status}) not persisted"
+        )
+    end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
@@ -938,7 +1067,21 @@ defmodule EvoGit.TaskRegistry do
 
       {_kept, to_remove} ->
         paths = Enum.map(to_remove, fn project -> project.path end)
-        Enum.each(paths, &EvoGit.Store.delete_project(state.task_store, &1))
+
+        Enum.each(paths, fn path ->
+          case EvoGit.Store.delete_project(state.task_store, path) do
+            :ok ->
+              :ok
+
+            {:error, :disk_full} ->
+              # Over-limit project rows simply remain until space is freed —
+              # log and continue (recent projects are a convenience).
+              Logger.warning(
+                "TaskRegistry: disk full — recent project #{inspect(path)} could not be trimmed"
+              )
+          end
+        end)
+
         :ok
     end
   end
@@ -996,7 +1139,18 @@ defmodule EvoGit.TaskRegistry do
                 do: %{updated | lease_expires_at: nil},
                 else: updated
 
-            EvoGit.Store.put_task(state.task_store, updated)
+            # On disk-full the persisted row keeps its old status — log and
+            # continue; the in-memory terminal cleanup below still runs.
+            case EvoGit.Store.put_task(state.task_store, updated) do
+              :ok ->
+                :ok
+
+              {:error, :disk_full} ->
+                Logger.warning(
+                  "TaskRegistry: disk full — :task_status update for task #{task_id} " <>
+                    "not persisted (status #{inspect(status)})"
+                )
+            end
 
             if status in [:completed, :failed, :cancelled] do
               # Terminal state via this direct write — clean up the
@@ -1170,7 +1324,22 @@ defmodule EvoGit.TaskRegistry do
       status = EvoGit.Store.get_task_status(state.task_store, task_id)
 
       if status in [:running, :pending, :cancelling] do
-        EvoGit.Store.update_lease_expires_at(state.task_store, task_id, now + @lease_duration)
+        case EvoGit.Store.update_lease_expires_at(
+               state.task_store,
+               task_id,
+               now + @lease_duration
+             ) do
+          :ok ->
+            :ok
+
+          {:error, :disk_full} ->
+            # Fire-and-forget heartbeat renewal: swallow + log. The lease
+            # simply expires on schedule if it cannot be renewed; the sweep
+            # then treats the task as orphaned (correct degradation).
+            Logger.warning(
+              "TaskRegistry: disk full — lease renewal for task #{task_id} not persisted"
+            )
+        end
       end
     end)
 
@@ -1220,8 +1389,20 @@ defmodule EvoGit.TaskRegistry do
                   result: "Lease expired; owning instance no longer renewing"
               }
 
-              EvoGit.Store.put_task(state.task_store, updated)
-              true
+              case EvoGit.Store.put_task(state.task_store, updated) do
+                :ok ->
+                  true
+
+                {:error, :disk_full} ->
+                  # The sweep result is still "changed" (in-memory state and
+                  # diagnostics updated) — log and continue.
+                  Logger.warning(
+                    "TaskRegistry: disk full — lease-expired task #{id} could not be " <>
+                      "persisted as :failed"
+                  )
+
+                  true
+              end
 
             nil ->
               acc
