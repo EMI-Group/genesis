@@ -819,6 +819,21 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.branch_exists?(node, repo_path, branch_name)
   end
 
+  @doc """
+  Dry-runs merging a branch into an explicit target branch on the given node
+  WITHOUT mutating the repository.
+
+  Delegates to `EvoGit.RemoteNode.check_merge/4`. Returns `{:ok, :clean}`
+  when the merge applies cleanly, `{:ok, {:conflict, files}}` with the list of
+  conflicting file paths when it does not, or `{:error, reason}` on failure.
+  On RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec check_merge(node(), String.t(), String.t(), String.t()) ::
+          {:ok, :clean} | {:ok, {:conflict, [String.t()]}} | {:error, term()}
+  def check_merge(node, repo_path, branch, target) do
+    EvoGit.RemoteNode.check_merge(node, repo_path, branch, target)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning
