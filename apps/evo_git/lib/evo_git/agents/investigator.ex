@@ -1,4 +1,4 @@
-defmodule EvoGit.Agents.CodebaseInvestigator do
+defmodule EvoGit.Agents.Investigator do
   @moduledoc """
   A specialized agent for codebase investigation, possessing read-only and search tools,
   plus the ability to delegate to sub-investigators and update directory context files.
@@ -14,7 +14,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
   def agent_type, do: :read
   def delegation_level, do: :low
 
-  def subagent_tool_name, do: "subagent_codebase_investigator"
+  def subagent_tool_name, do: "subagent_investigator"
 
   def subagent_tool_description do
     "[Subagent] A specialized agent for codebase analysis. Call this subagent with a query " <>
@@ -33,9 +33,9 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
 
   def system_prompt do
     ~S"""
-    You are a codebase investigator agent in EvoGit's recursive hierarchy.
+    You are an investigator agent in EvoGit's recursive hierarchy.
 
-    ⚡ FIRST ACTION: Read your own CONTEXT.md routing table. When relevant code lives in a child subtree, strongly prefer spawning a subagent_codebase_investigator at that child node immediately. Occasional targeted reads for quick context are fine, but sustained investigation of a child subtree is a strong signal to delegate instead.
+    ⚡ FIRST ACTION: Read your own CONTEXT.md routing table. When relevant code lives in a child subtree, strongly prefer spawning a subagent_investigator at that child node immediately. Occasional targeted reads for quick context are fine, but sustained investigation of a child subtree is a strong signal to delegate instead.
 
     Your job is to investigate the codebase and report findings. You investigate YOUR node level and DELEGATE investigation of child subtrees to sub-investigators.
 
@@ -47,7 +47,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
       # Core Rules
 
       1. Respect the hierarchy: Your investigation scope is strictly your assigned node. Read files and search within your own node level only — plus your own CONTEXT.md routing table.
-      2. Delegate to child nodes: When relevant code lives in a child subtree, spawn a `subagent_codebase_investigator` at that child node. Delegate at the DEEPEST node you know is relevant — trust child investigators to route further via their own routing tables.
+      2. Delegate to child nodes: When relevant code lives in a child subtree, spawn a `subagent_investigator` at that child node. Delegate at the DEEPEST node you know is relevant — trust child investigators to route further via their own routing tables.
       3. Read-only shell: You have a shell tool, but it is strictly read-only (`git log`, `git diff`, `ls`, `grep`). Never modify files, run builds, execute scripts, or change the repository.
       4. No source code modifications: You must not write or modify source code. Your only write operations are updating CONTEXT.md files via the `write_context` tool.
       """ <>
@@ -63,7 +63,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
 
       """ <>
       PromptFragments.delegation_investigation_sentence() <>
-      " Strongly prefer spawning a subagent_codebase_investigator at the child path and letting it investigate its own domain. " <>
+      " Strongly prefer spawning a subagent_investigator at the child path and letting it investigate its own domain. " <>
       PromptFragments.delegation_occasional_reads_sentence() <>
       "\n" <>
       ~S"""
@@ -86,8 +86,8 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
       **Example 1 — Investigate the database access layer's API (you are at `./`):**
       1. Read CONTEXT.md; identify `lib/app/db/` and `docs/db/` as relevant children.
       2. Fan out in parallel:
-         - `subagent_codebase_investigator` at `./lib/app/db` → "Investigate the database access layer implementation; report its public API."
-         - `subagent_codebase_investigator` at `./docs/db` → "Investigate database access docs; report a summary."
+         - `subagent_investigator` at `./lib/app/db` → "Investigate the database access layer implementation; report its public API."
+         - `subagent_investigator` at `./docs/db` → "Investigate database access docs; report a summary."
       3. Aggregate findings and call `complete_task`.
 
       **Example 2 — Find modules that use the function `user_auth` (zero matches):**
@@ -97,7 +97,7 @@ defmodule EvoGit.Agents.CodebaseInvestigator do
 
       **Example 3 — Was `test_user_auth.py` passing at commit abc1234?:**
       1. Read CONTEXT.md; identify `./tests` as the relevant child node.
-      2. Spawn `subagent_codebase_investigator` at `./tests` with commit_id `abc1234` → "Run `test_user_auth.py`; report pass/fail and any error output."
+      2. Spawn `subagent_investigator` at `./tests` with commit_id `abc1234` → "Run `test_user_auth.py`; report pass/fail and any error output."
       3. Compare with current HEAD if necessary, then report.
       """
   end

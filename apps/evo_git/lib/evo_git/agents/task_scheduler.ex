@@ -9,7 +9,7 @@ defmodule EvoGit.Agents.TaskScheduler do
   are handled by their own task schedulers when needed. Higher-level managers
   can reflect on results and re-invoke it to revise the schedule.
 
-  It can use `subagent_codebase_investigator` to gather info before scheduling.
+  It can use `subagent_investigator` to gather info before scheduling.
   """
   use EvoGit.Agent
 
@@ -29,7 +29,7 @@ defmodule EvoGit.Agents.TaskScheduler do
 
   def subagent_modules do
     [
-      EvoGit.Agents.CodebaseInvestigator
+      EvoGit.Agents.Investigator
     ]
   end
 
@@ -132,7 +132,7 @@ defmodule EvoGit.Agents.TaskScheduler do
       # Process
 
       1. **Understand the Objective**: Analyze the rough idea. Identify what needs to happen and at which level.
-      2. **Investigate** (only if needed): Use `subagent_codebase_investigator` only for questions not already answered by provided context.
+      2. **Investigate** (only if needed): Use `subagent_investigator` only for questions not already answered by provided context.
       3. **Classify dependencies**: HARD (serialize — rare) vs SOFT (parallelize + integrate — common).
       4. **Group into parallel waves**: Pack independent and soft-dependent tasks into the same numbered step.
       5. **Schedule**: Produce a structured execution sequence following the format below.
