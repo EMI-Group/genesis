@@ -37,6 +37,23 @@ end
 # therefore the safe upper bound: requests to origin A only ever use pool A,
 # and any single origin's demand is at most the total concurrency.
 #
+# PER-ORIGIN CAPACITY = count × size: each of the `count` NimblePool shards
+# (pool processes) holds up to `size` connections, so with `size: 2` the
+# capacity is `count × 2` concurrent HTTP/1 streams per origin. Connections
+# are opened LAZILY on checkout, so `size` is a per-shard upper bound, not a
+# boot-time allocation.
+#
+# SHARD SELECTION (RoundRobin): `size: 2` means requests must be spread across
+# shards, and finch 0.23.0 only supports RoundRobin via the PER-REQUEST
+# `pool_strategy` option — there is NO `strategy:` key in the pool template
+# (NimbleOptions raises on unknown keys at boot). ReqLLM exposes it as the
+# top-level config key `stream_pool_strategy`, read at CALL time
+# (streaming/finch_client.ex:426-428) and forwarded to every stream request.
+# It MUST be the `{Finch.Pool.Strategy.RoundRobin, counter}` tuple where
+# `counter = Finch.Pool.Strategy.RoundRobin.new()` (an `:atomics` ref) — a
+# bare module would crash (`mod.select(entries, nil)` → badarg). The strategy
+# must NOT go inside the `finch:` pool template.
+#
 # MAX-WITH-DEFAULT RATIONALE: unknown model ids (per-task `-m` flags that do
 # not match any [[llm.models]] profile) are gated by
 # scheduler.default_llm_max_concurrency as an INDEPENDENT slot bucket — each
@@ -50,6 +67,11 @@ end
 # (ReqLLM's default pool count) live in `EvoGit.ReqLLMPool.desired_count/1` —
 # the single source of truth shared with runtime reconciliation. Do NOT
 # duplicate that formula inline here.
+#
+# `stream_pool_timeout: 300_000` (5 min) is the Finch connection CHECKOUT
+# wait — how long a request waits for a free connection before raising the
+# "excess queuing" RuntimeError. It is read at CALL time
+# (streaming/finch_client.ex:299-305), NOT part of the pool template.
 resolved = EvoGit.Config.resolve()
 
 default_llm_max_concurrency = EvoGit.Config.resolve([:scheduler, :default_llm_max_concurrency])
@@ -71,6 +93,11 @@ total_concurrency =
 
 stream_pool_count = EvoGit.ReqLLMPool.desired_count(total_concurrency)
 
+# RoundRobin shard counter for the Finch pool. ReqLLM forwards this to every
+# stream request as the per-request `pool_strategy` option (top-level config
+# key `stream_pool_strategy`, read at call time — see comment block above).
+round_robin = Finch.Pool.Strategy.RoundRobin.new()
+
 # The pool is configured via the full `finch:` override form (not the
 # `stream_pool_*` shorthand) so we can set `start_pool_metrics?: true` —
 # required for `Finch.get_pool_status(ReqLLM.Finch, :default)` to enumerate
@@ -78,21 +105,24 @@ stream_pool_count = EvoGit.ReqLLMPool.desired_count(total_concurrency)
 # dynamically reconcile the pool size at runtime (on config changes and on
 # the "excess queuing" error path); without the metrics flag the pools never
 # register under `:default` and reconciliation is a silent no-op.
-# `stream_pool_timeout` stays a top-level key because ReqLLM reads it at
-# CALL time (streaming/finch_client.ex:300), not as part of the pool config.
+# `stream_pool_timeout` and `stream_pool_strategy` stay top-level keys
+# because ReqLLM reads them at CALL time (streaming/finch_client.ex:299-305
+# and :426-428), not as part of the pool config. `size: 2` doubles the
+# per-origin capacity to `count × 2` connections (see comment block above).
 config :req_llm,
   finch: [
     name: ReqLLM.Finch,
     pools: %{
       default: [
         protocols: [:http1],
-        size: 1,
+        size: 2,
         count: stream_pool_count,
         start_pool_metrics?: true
       ]
     }
   ],
-  stream_pool_timeout: 120_000
+  stream_pool_strategy: {Finch.Pool.Strategy.RoundRobin, round_robin},
+  stream_pool_timeout: 300_000
 
 # The genesis_remote release is a headless evo_git-only daemon for SSH remote
 # development. It has NO Phoenix/evo_dash, so SECRET_KEY_BASE and endpoint config
