@@ -32,7 +32,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 - All tool execution results must be strings.
 - Sandboxed tools use `EvoGit.sandbox_run/4` (`systemd-run`); file tools use Elixir `File` directly.
 - All tool outputs are sanitized and truncated by `EvoGit.Agent.OutputSanitizer` (ANSI stripping, progress bar removal, configurable truncation via `[truncation]` config section).
-- Tools execute sequentially to avoid git lock conflicts.
+- Tool calls within a batch execute in parallel (`Task.async_stream`, bounded by the scheduler's tool-slot pool `max_tool_concurrency`); parallel committing tools (`write_context`/`edit_context`/`make_dir` with `commit: true`) may contend on git's `index.lock` — lower `max_tool_concurrency` if contention appears.
 - `callback` in `ReqLLM.tool()` is always a no-op; real execution goes through `execute`.
 - Write tools receive 4 args (including `node_path` for scope); read tools receive 3.
 - `Git` and `Curl` schemas are commented out in `schemas/0`; agents use `run_bash` for git operations.
