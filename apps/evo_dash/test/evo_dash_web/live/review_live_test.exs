@@ -371,6 +371,298 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "async merge check on the review page" do
+    # The async dry-run merge check is spawned on mount for mergeable repos.
+    # The check runs `EvoDash.NodeContext.check_merge/4`, whose backend
+    # (`EvoGit.RemoteNode.check_merge/4`) ships in parallel work — the spawned
+    # Task crashes without sending a result, which is harmless. Results are
+    # injected directly via send/2, so the state machine is fully testable.
+    setup do
+      {repo_path, task_id, change_sha} = create_review_task_with_repo!("main", "dev")
+
+      {:ok, repo_path: repo_path, task_id: task_id, change_sha: change_sha}
+    end
+
+    test "starts a merge check on mount", %{conn: conn, task_id: task_id} do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      assert %{state: :checking, target: "main", files: []} = assigns(view)[:merge_status]
+    end
+
+    test "renders the clean state and keeps the merge form", %{conn: conn, task_id: task_id} do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      send(view.pid, {:merge_check_result, task_id, node(), "main", {:ok, :clean}})
+      html = render(view)
+
+      assert html =~ "Merge check passed"
+      assert assigns(view)[:merge_status] == %{state: :clean, target: "main", files: []}
+
+      # The manual merge form/selector is untouched.
+      assert html =~ "Merge into"
+      assert target_branch_select(html) != ""
+    end
+
+    test "renders conflicting file names and the auto-resolve button", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "main",
+         {:ok, {:conflict, ["src/app.ex", "lib/util.ex"]}}}
+      )
+
+      html = render(view)
+
+      assert html =~ "src/app.ex"
+      assert html =~ "lib/util.ex"
+      assert html =~ "Auto-resolve conflict"
+      assert assigns(view)[:merge_status].state == :conflict
+    end
+
+    test "ignores stale results (wrong target or wrong task id)", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      # Wrong target — the running check targets "main".
+      send(view.pid, {:merge_check_result, task_id, node(), "other-target", {:ok, :clean}})
+      html = render(view)
+
+      assert assigns(view)[:merge_status].state == :checking
+      refute html =~ "Merge check passed"
+
+      # Wrong task id.
+      send(view.pid, {:merge_check_result, "other-task-id", node(), "main", {:ok, :clean}})
+      html = render(view)
+
+      assert assigns(view)[:merge_status].state == :checking
+      refute html =~ "Merge check passed"
+    end
+
+    test "changing the target branch re-checks and ignores old-target results", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      render_change(view, "merge_target_change", %{"target_branch" => "dev"})
+
+      assert assigns(view)[:default_merge_target] == "dev"
+      assert %{state: :checking, target: "dev"} = assigns(view)[:merge_status]
+
+      # Result for the NEW target is applied.
+      send(view.pid, {:merge_check_result, task_id, node(), "dev", {:ok, :clean}})
+      html = render(view)
+
+      assert assigns(view)[:merge_status].state == :clean
+      assert html =~ "Merge check passed"
+
+      # Result for the OLD target arrives afterwards — ignored.
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "main", {:ok, {:conflict, ["old.txt"]}}}
+      )
+
+      html = render(view)
+
+      assert assigns(view)[:merge_status].state == :clean
+      refute html =~ "old.txt"
+    end
+  end
+
+  describe "auto merge conflict resolution" do
+    # These fixtures use a NONEXISTENT repo path (same pattern as the
+    # ignore-test fixture), so no async check is started on mount
+    # (merge_status stays nil) — results are injected directly via send/2.
+    # The auto-resolve action starts a real :evolve task; its worker fails
+    # fast on the invalid path with no LLM calls (same documented pattern as
+    # projects_live_test's nonexistent-node-path submission).
+    setup do
+      task_id = "review_test_auto_resolve_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        review_status: nil,
+        result:
+          {:ok,
+           %{
+             commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+             branch_name: "evogit/test-branch",
+             result: "Agent summary",
+             pr_url: nil,
+             pr_title: nil
+           }}
+      }
+
+      EvoGit.Store.put_task(EvoGit.Store, task)
+
+      on_exit(fn ->
+        TaskRegistry.delete_task(task_id)
+        TaskRegistry.list_tasks()
+      end)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "auto-resolve starts a merge-resolution task and redirects", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "main",
+         {:ok, {:conflict, ["file_a.txt", "file_b.txt"]}}}
+      )
+
+      html = render(view)
+
+      assert html =~ "Auto-resolve conflict"
+      assert html =~ "file_a.txt"
+      assert html =~ "file_b.txt"
+
+      render_click(view, "auto_resolve")
+
+      assert_redirect(view, "/")
+
+      # The original task is marked :continued (mirroring the resume flow).
+      assert TaskRegistry.get_task(task_id).review_status == :continued
+
+      # A new :evolve merge-resolution task was started with the merge opts.
+      new_task =
+        Enum.find(TaskRegistry.list_tasks(), &(merge_opt(&1.opts, :merge_from) == task_id))
+
+      assert new_task, "expected a merge-resolution task to be started"
+
+      on_exit(fn ->
+        if new_task, do: TaskRegistry.delete_task(new_task.id)
+        # Synchronize the deletion cast.
+        TaskRegistry.list_tasks()
+      end)
+
+      assert new_task.type == :evolve
+      assert merge_opt(new_task.opts, :merge_from) == task_id
+      assert merge_opt(new_task.opts, :merge_target) == "main"
+      assert new_task.opts[:mode] == "simple"
+      assert new_task.opts[:path] == "/nonexistent/repo/path"
+      assert new_task.opts[:starting_commit] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    end
+
+    test "auto-resolve refuses when no conflict is detected (clean state)", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      send(view.pid, {:merge_check_result, task_id, node(), "main", {:ok, :clean}})
+      html = render(view)
+      assert html =~ "Merge check passed"
+
+      html = render_click(view, "auto_resolve")
+      assert html =~ "Auto-resolve unavailable"
+      refute_redirected(view)
+
+      # No review-status change, no spawned merge task.
+      assert TaskRegistry.get_task(task_id).review_status == nil
+      refute Enum.any?(TaskRegistry.list_tasks(), &(merge_opt(&1.opts, :merge_from) == task_id))
+    end
+
+    test "auto-resolve refuses when no check ran at all (nil state)", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      html = render_click(view, "auto_resolve")
+      assert html =~ "Auto-resolve unavailable"
+      refute_redirected(view)
+
+      assert TaskRegistry.get_task(task_id).review_status == nil
+      refute Enum.any?(TaskRegistry.list_tasks(), &(merge_opt(&1.opts, :merge_from) == task_id))
+    end
+  end
+
+  describe "auto merge conflict resolution on an unreachable remote node" do
+    # Same XDG_CONFIG_HOME isolation + fake ConnectionManager seam as the
+    # remote-node describe above.
+    setup do
+      original = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_config =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_test_config_review_auto_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      File.mkdir_p!(tmp_config)
+      System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+      on_exit(fn ->
+        File.rm_rf(tmp_config)
+
+        if original do
+          System.put_env("XDG_CONFIG_HOME", original)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+      end)
+
+      :ok
+    end
+
+    test "auto-resolve against an unreachable node fails with an error flash", %{conn: conn} do
+      id = "review-auto-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Review Auto Target"
+        })
+
+      start_supervised!(
+        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      # The task does not exist on the (unreachable) remote node — the page
+      # renders the graceful error state, but merge_check_result injection and
+      # the auto_resolve event still operate on the assigns.
+      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+
+      remote_node = assigns(view)[:current_node]
+      assert remote_node != node()
+
+      send(
+        view.pid,
+        {:merge_check_result, "some-remote-task-id", remote_node, "main",
+         {:ok, {:conflict, ["file_a.txt"]}}}
+      )
+
+      render(view)
+
+      # The set_review_status and start_task RPCs both fail fast with
+      # :nodedown → error flash, no navigation.
+      html = render_click(view, "auto_resolve")
+
+      assert html =~ "Failed to start auto-resolve"
+      refute_redirected(view)
+    end
+  end
+
   describe "remote node review (unreachable node)" do
     # A remote node that cannot be reached must degrade to the existing
     # graceful "Review Not Available" state instead of crashing. The seam:
@@ -446,6 +738,26 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # --- Helpers for the merge-target selector tests ---
+
+  # Reads the LiveView's socket assigns (same pattern as projects_live_test).
+  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+
+  # Opt keys round-trip through the Store codec: known keys stay atoms, but
+  # unknown keys (merge_from/merge_target) come back as STRING keys. Read
+  # either form.
+  defp merge_opt(opts, key) do
+    # The Store codec round-trips unknown opt keys (merge_from/merge_target)
+    # as STRING keys, so look up both forms without Access (which raises on
+    # string-keyed keyword lists) and without Keyword.get/3 (atom-key-only).
+    find_opt(opts, key) || find_opt(opts, Atom.to_string(key))
+  end
+
+  defp find_opt(opts, key) do
+    Enum.find_value(opts, fn
+      {^key, value} -> value
+      _ -> nil
+    end)
+  end
 
   # Runs a git command in `repo`, asserting it succeeds.
   defp git!(repo, args) do
