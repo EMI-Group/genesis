@@ -79,14 +79,14 @@ defmodule EvoGit.RemoteBootstrap do
 
   @doc """
   The release asset file name for a platform, e.g.
-  `"genesis_remote_linux_x64.tar.gz"`.
+  `"genesis_remote_linux_x64.tar.xz"`.
   """
   @spec asset_name(String.t()) :: String.t()
-  def asset_name(platform), do: "genesis_remote_#{platform}.tar.gz"
+  def asset_name(platform), do: "genesis_remote_#{platform}.tar.xz"
 
   @doc """
   The direct (redirecting) download URL for a platform's release tarball:
-  `.../releases/latest/download/genesis_remote_<platform>.tar.gz`.
+  `.../releases/latest/download/genesis_remote_<platform>.tar.xz`.
 
   GitHub 302-redirects this to the actual versioned asset.
   """
@@ -110,11 +110,11 @@ defmodule EvoGit.RemoteBootstrap do
   @doc """
   Local cache path for a platform/version tarball under
   `EvoGit.Platform.data_dir()`:
-  `<data_dir>/remote_binaries/<platform>_<version>.tar.gz`.
+  `<data_dir>/remote_binaries/<platform>_<version>.tar.xz`.
   """
   @spec cache_path(String.t(), String.t()) :: String.t()
   def cache_path(platform, version) do
-    Path.join([EvoGit.Platform.data_dir(), "remote_binaries", "#{platform}_#{version}.tar.gz"])
+    Path.join([EvoGit.Platform.data_dir(), "remote_binaries", "#{platform}_#{version}.tar.xz"])
   end
 
   # --- Private ---
