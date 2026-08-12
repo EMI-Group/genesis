@@ -24,32 +24,32 @@ defmodule EvoDashWeb.Helpers do
   user, "blocked" and "pending" both mean the agent is queued / waiting to be
   scheduled (the scheduler keeps them as distinct states).
   """
-  def agent_status_color(:pending), do: "text-base-content/70"
+  def agent_status_color(:pending), do: "text-base-content/80"
   def agent_status_color(:running), do: "text-success"
   def agent_status_color(:waiting), do: "text-warning"
   def agent_status_color(:blocked), do: agent_status_color(:pending)
   def agent_status_color(:ready), do: "text-info"
-  def agent_status_color(_), do: "text-base-content/70"
+  def agent_status_color(_), do: "text-base-content/80"
 
   @doc """
   Returns background color class for agent status.
   """
-  def agent_status_bg(:pending), do: "bg-base-100"
+  def agent_status_bg(:pending), do: "bg-base-200/60"
   def agent_status_bg(:running), do: "bg-success/10"
   def agent_status_bg(:waiting), do: "bg-warning/10"
   def agent_status_bg(:blocked), do: agent_status_bg(:pending)
   def agent_status_bg(:ready), do: "bg-info/10"
-  def agent_status_bg(_), do: "bg-base-100"
+  def agent_status_bg(_), do: "bg-base-200/60"
 
   @doc """
   Returns border color class for agent status.
   """
-  def agent_status_border(:pending), do: "border-base-300"
+  def agent_status_border(:pending), do: "border-base-content/20"
   def agent_status_border(:running), do: "border-success/30"
   def agent_status_border(:waiting), do: "border-warning/30"
   def agent_status_border(:blocked), do: agent_status_border(:pending)
   def agent_status_border(:ready), do: "border-info/30"
-  def agent_status_border(_), do: "border-base-300"
+  def agent_status_border(_), do: "border-base-content/20"
 
   @doc """
   Returns heroicon name for agent status.
