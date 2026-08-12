@@ -28,6 +28,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   require Logger
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.WorktreeRetry
   alias EvoGit.AgentScheduler.Worktrees
 
   # The Runner's request can take a long time on slow filesystems (NFS,
@@ -244,8 +245,9 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       # agents from the previous instance are still running, the workers
       # directory may be in use and rm_rf can fail with :eexist (or other
       # errors). Log a warning and continue — mkdir_p on the next line is a
-      # no-op since the directory already exists.
-      case File.rm_rf(worker_base) do
+      # no-op since the directory already exists. Transient failures
+      # (Windows file locking, anti-virus scans) are retried first.
+      case WorktreeRetry.rm_rf_retry(worker_base) do
         {:ok, _} ->
           :ok
 
@@ -256,12 +258,26 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
           )
       end
 
-      Git.prune_worktrees(repo_root)
+      WorktreeRetry.retry_on_transient(fn -> Git.prune_worktrees(repo_root) end)
 
       # Clean up orphaned evogit-agent branches from previous runs
       clean_orphaned_branches(repo_root)
 
-      File.mkdir_p!(worker_base)
+      # Loud on exhaustion: raise exactly like File.mkdir_p!/1 does —
+      # same File.Error struct and fields (reason, action, path). Note
+      # File.mkdir_p/1 returns 2-tuples {:error, reason}, so the original
+      # path is used in the raise, mirroring mkdir_p!.
+      case WorktreeRetry.mkdir_p_retry(worker_base) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise File.Error,
+            reason: reason,
+            action: "make directory (with -p)",
+            path: worker_base
+      end
+
       %{state | repos: Map.put(state.repos, repo_root, true)}
     end
   end
@@ -323,9 +339,13 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # Destroys a worktree: rm_rf the directory, prune the worktree registry,
   # then delete the branch. Order matters — git refuses to delete a branch
   # that is checked out in another worktree. Idempotent and tolerant: all
-  # failure modes log and continue.
+  # failure modes log and continue. Transient failures (Windows file
+  # locking, anti-virus scans) are retried via WorktreeRetry; this runs in
+  # the WorktreeManager GenServer process, so the retry budget is kept small
+  # (4 attempts, at most 350ms of sleeping). A leftover dir is harmless —
+  # the next init/create destroys leftovers.
   defp destroy_worktree(worktree_path, repo_root, branch_name) do
-    case File.rm_rf(worktree_path) do
+    case WorktreeRetry.rm_rf_retry(worktree_path) do
       {:ok, _} ->
         :ok
 
@@ -336,9 +356,11 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         )
     end
 
-    Git.prune_worktrees(repo_root)
+    WorktreeRetry.retry_on_transient(fn -> Git.prune_worktrees(repo_root) end)
 
-    case Worktrees.delete_branch_tolerant(repo_root, branch_name) do
+    case WorktreeRetry.retry_on_transient(fn ->
+           Worktrees.delete_branch_tolerant(repo_root, branch_name)
+         end) do
       :ok ->
         :ok
 

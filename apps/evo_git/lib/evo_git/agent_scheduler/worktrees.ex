@@ -12,6 +12,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.Store
+  alias EvoGit.AgentScheduler.WorktreeRetry
   alias EvoGit.Platform
   alias EvoGit.Powershell
   alias EvoGit.ProjectConfig
@@ -136,7 +137,11 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   end
 
   defp destroy_leftovers(worktree_path, repo_root, branch_name) do
-    case File.rm_rf(worktree_path) do
+    # Transient failures (Windows file locking, anti-virus scans) are
+    # retried via WorktreeRetry; never raises — this runs inside the
+    # offloaded create task. A leftover dir is harmless; the next
+    # init/create destroys leftovers.
+    case WorktreeRetry.rm_rf_retry(worktree_path) do
       {:ok, _} ->
         :ok
 
@@ -147,9 +152,11 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         )
     end
 
-    Git.prune_worktrees(repo_root)
+    WorktreeRetry.retry_on_transient(fn -> Git.prune_worktrees(repo_root) end)
 
-    case delete_branch_tolerant(repo_root, branch_name) do
+    case WorktreeRetry.retry_on_transient(fn ->
+           delete_branch_tolerant(repo_root, branch_name)
+         end) do
       :ok ->
         :ok
 
@@ -167,9 +174,12 @@ defmodule EvoGit.AgentScheduler.Worktrees do
 
   Destroy operations (leftover cleanup, worktree teardown) have "the branch is
   gone" as their goal, so a `git branch -D` failing with `error: branch
-  '<name>' not found` means the goal is already met — not a failure. Returns
-  `:ok` for success-or-already-gone and `{:error, output}` for genuine
-  failures so callers can keep their warning logs.
+  '<name>' not found` means the goal is already met — not a failure. The same
+  applies when the repository itself is gone ("Repository path does not exist"
+  / "not a git repository" — see `WorktreeRetry.repo_gone_output?/1`): a
+  vanished repo implies the branch is gone with it. Returns `:ok` for
+  success-or-already-gone and `{:error, output}` for genuine failures so
+  callers can keep their warning logs.
   """
   @spec delete_branch_tolerant(String.t(), String.t()) :: :ok | {:error, String.t()}
   def delete_branch_tolerant(repo_root, branch_name) do
@@ -178,7 +188,7 @@ defmodule EvoGit.AgentScheduler.Worktrees do
         :ok
 
       {:error, {_tag, output}} ->
-        if branch_not_found?(output) do
+        if branch_not_found?(output) or WorktreeRetry.repo_gone_output?(output) do
           :ok
         else
           {:error, output}
