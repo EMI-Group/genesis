@@ -12,7 +12,7 @@ None — leaf directory (two workflow files: `ci.yml`, `build-desktop.yml`).
 
 ### `ci.yml` — Continuous Integration
 Triggered on PRs and pushes to `main`. Three parallel jobs on `ubuntu-latest`:
-- **test** — Runs `mix test` for both apps. Uses the Erlang/OTP + Elixir setup action (pinned via `.tool-versions`), caches `deps/` and `_build/`, and fetches deps before testing.
+- **test** — Runs `mix test` for both apps. Uses the Erlang/OTP + Elixir setup action (versions from the `OTP_VERSION`/`ELIXIR_VERSION` env vars), caches `deps/` and `_build/`, and fetches deps before testing.
 - **format** — Runs `mix format --check-formatted` to enforce code style.
 - **compile** — Runs `mix compile --warnings-as-errors` to catch warnings.
 
@@ -23,7 +23,7 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 
 **Build process** (12 steps per platform):
 1. Checkout code
-2. Set up Erlang/OTP + Elixir (`.tool-versions` pins OTP 29, Elixir 1.20.1)
+2. Set up Erlang/OTP + Elixir (`ELIXIR_VERSION` env var pins Elixir 1.20.3; `OTP_VERSION` pins OTP 29)
 3. Set up Rust toolchain (stable)
 4. Install system dependencies (Linux: webkit2gtk, libayatana, libdbus; macOS: none; Windows: none)
 5. Cache Mix deps (`deps/`), Mix build (`_build/`), Rust target, Tauri CLI (npm `@tauri-apps/cli`, cached in `~/tauri-cli`)
@@ -63,3 +63,4 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 - The `genesis_remote` tarball is uploaded alongside desktop installers as a release asset.
 - The workflow file is the single source of truth for the release build process.
 - Release assets are **unversioned** with permanent `releases/latest/download/<name>` links (e.g. `genesis_desktop_darwin_arm64.dmg`, `genesis_remote_linux_x64.tar.xz`); the version comes from the release tag and is baked into the app at build time, never into the filename. `EvoGit.RemoteBootstrap` (apps/evo_git/lib/evo_git/remote_bootstrap.ex) depends on the `genesis_remote_<platform>.tar.xz` naming.
+```

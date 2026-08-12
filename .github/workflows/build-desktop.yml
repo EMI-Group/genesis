@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ELIXIR_VERSION: "1.20.2"
+  ELIXIR_VERSION: "1.20.3"
   OTP_VERSION: "29"
   RUST_VERSION: "1.97.1"
   TAURI_CLI_VERSION: "2.11.4"
