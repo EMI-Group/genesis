@@ -57,6 +57,7 @@ Notes on specific functions:
 - `list_branches/2` (glob pattern) returns `{:ok, names} | {:error, {tag, output}}` like `list_branches/1`.
 - `get_note/4` returns `{:error, {:no_note, output}}` (missing note) / `{:error, {:invalid_json, note_content}}` (unparseable or non-map JSON) / passes through other `{:error, {tag, output}}` (e.g. `:enoent`).
 - `merge/2`, `merge_no_commit/2`, `merge_octopus/2` all share one private `do_merge/2` → `run/2`; conflict (exit 1) surfaces as `{:error, {:conflict, output}}`, other exits as `{:error, {code, output}}`.
+- **`merge_no_commit/2` has ZERO call sites in lib/test** (git.ex:195 — `git merge --no-commit <sha>`). It is the existing primitive for a "will this merge conflict?" dry-run check, but nothing uses it. No `merge_abort` helper exists. After a conflicted `merge/2` the repo is left mid-merge (MERGE_HEAD present + unmerged index entries + conflict markers in the working tree). Empirically verified: `git checkout --force <branch>` clears MERGE_HEAD, the unmerged index, and the working-tree markers (so `Review.merge_into_other`'s `force_restore_branch` does discard the conflicted merge state), but `Review.merge_into_current` (target == currently checked-out branch) returns `{:conflict, details}` WITHOUT any restore — the repo stays mid-merge on that branch.
 
 ## Known Issues / Notes for Agents — Windows argv quoting (`-m` vs `-F`)
 
