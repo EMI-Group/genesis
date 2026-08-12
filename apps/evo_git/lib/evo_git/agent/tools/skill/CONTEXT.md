@@ -29,7 +29,7 @@ All tools follow the standard EvoGit tool pattern:
 - `schema/0` returns a `ReqLLM.tool()` schema with `name`, `description`, `parameter_schema`, and a no-op `callback`
 - `execute/3(args, repo_path, repo_root)` — **3-arity** (no `node_path`) because skills operate on `.agents/skills/`, not the spatial codebase tree
 - Write tools (`SkillAdd`, `SkillEdit`) use `Shared.fetch_string_arg/2` for argument validation
-- Read tools (`SkillRead`, `SkillRemove`) use `Shared.fetch_string_arg/2` for the `name` parameter
+- `SkillRead` and `SkillRemove` use `Shared.fetch_string_arg/2` for the `name` parameter
 
 ### Dependency
 

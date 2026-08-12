@@ -1,7 +1,7 @@
 # Runtime
 
 ## Intent
-Implements the two-phase execution engine of EvoGit: **Genesis** (initial codebase creation or analysis of an existing codebase) and **Evolution** (iterative modification loop). A shared `PullRequest` module handles post-phase PR creation. The design doc's centralized `EvoGit.Runtime.Prompts` module was never implemented — prompts live in agent `system_prompt/0` callbacks and inline strings.
+Implements the two-phase execution engine of EvoGit: **Genesis** (initial codebase creation or analysis of an existing codebase) and **Evolution** (iterative modification loop). A shared `PullRequest` module handles post-phase PR creation. There is no centralized `EvoGit.Runtime.Prompts` module — prompts live in agent `system_prompt/0` callbacks and inline strings.
 
 ## Routing Table
 
@@ -76,19 +76,14 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 - Top-level agent cancelled → `{:error, :cancelled}` (lifecycle.ex:72).
 A graceful agent return of `{:error, :recovery_failed}` / `{:error, :path_not_exist}` also flows through and is mapped to `:failed` (these exit the Task `:normal` but are non-`{:ok, _}`). See `agent_scheduler/lifecycle.ex` and the `:DOWN` handler (`agent_scheduler.ex:826`) for the full crash→retry→permanent-failure cascade.
 
-### Spurious `:failed` Hazard — ETS Ownership & Crash Cascade (FIXED)
+### ETS Table Ownership & Crash Resilience
 
-⚠️ **The original bug described below has been FIXED in current HEAD** (commit `5f30b0dd`, "fix(evo_git): move ETS table creation to Application to survive AgentScheduler crashes"). The three scheduler ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) are now created in **`EvoGit.Application.start/2`** (`application.ex:13-15`) via the idempotent `ensure_ets_table/2` helper, owned by the long-lived application process. `AgentScheduler.init/1` now only performs a defensive check (warning if a table is missing). The tables survive an `AgentScheduler` crash/restart.
+The three scheduler ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) are created in **`EvoGit.Application.start/2`** (`application.ex:13-15`) via the idempotent `ensure_ets_table/2` helper, owned by the long-lived application process. `AgentScheduler.init/1` only performs a defensive check (warning if a table is missing). The tables survive an `AgentScheduler` crash/restart.
 
-For historical reference, the ORIGINAL (now-fixed) cascade was: the three ETS tables were created in `AgentScheduler.init/1` and therefore owned by the GenServer process (no `:heir`). If the `AgentScheduler` GenServer crashed and its supervisor restarted it, the tables were destroyed and recreated empty, triggering:
-1. `AgentScheduler` crashes → ETS tables destroyed.
-2. The EvoDash wrapper process's blocking `GenServer.call(__MODULE__, {:run_agent, spec}, :infinity)` (`agent_scheduler.ex:76-78`) raised (caller died) → wrapper process crashed.
-3. EvoDash `TaskRegistry`'s `:DOWN` handler (`task_registry.ex:907`) checked `sched_meta_has_active_agents?(task_id)` against the now-empty/missing ETS table → returned `false`.
-4. Task prematurely marked `:failed` (`task_registry.ex:939`) even though the agent processes were still alive under `EvoGit.TaskSupervisor` and would eventually commit their work.
+**Supervision structure**: `EvoGit.AgentGroupSupervisor` uses `strategy: :one_for_all` wrapping `EvoGit.TaskSupervisor` and `EvoGit.AgentScheduler` — if the `AgentScheduler` GenServer crashes, the `TaskSupervisor` is also killed and restarted, tearing down ALL running agent Task processes, so an AgentScheduler crash never leaves orphaned agents running. Agent Tasks are spawned via `Task.Supervisor.async_nolink/4` (monitored by the scheduler, NOT linked to the wrapper).
 
-**Note on the supervision restructure**: `EvoGit.AgentGroupSupervisor` (commit `fbe3b0fe`) uses `strategy: :one_for_all` wrapping `EvoGit.TaskSupervisor` and `EvoGit.AgentScheduler`. This means if the `AgentScheduler` GenServer crashes, the `TaskSupervisor` is ALSO killed and restarted, which tears down ALL running agent Task processes. So after the ETS fix, an AgentScheduler crash no longer leaves orphaned agents running (the `one_for_all` strategy tears them down together). Agent Tasks are spawned via `Task.Supervisor.async_nolink/4` (monitored by the scheduler, NOT linked to the wrapper).
+**`merge_and_report/3` is failure-tolerant**: `helpers.ex:11-100` uses `with`/graceful `else` clauses and always returns `{:ok, _}` — branch-creation failure and even `rev_parse` failure fall through to success maps with `branch_name: nil` (the agent's committed work is valid even if branch creation fails).
 
-A **second, related trigger** was fixed in `f0d01679` ("handle git failures gracefully in merge_and_report/3", IN `HEAD`): the old `merge_and_report/3` used strict matches (`{:ok, base_sha} = Git.rev_parse(...)` and `{:ok, _} = Git.create_branch(...)`) that raised `MatchError` if git failed under concurrent load, crashing the runtime wrapper → task marked `:failed`. The current `helpers.ex:11-100` uses `with`/graceful `else` clauses and always returns `{:ok, _}` (the agent's committed work is valid even if branch creation fails).
 - Foreign repos are registered with `AgentScheduler` at the start of each phase if provided.
 
 ## Agent Spawning & Coordination
@@ -191,7 +186,7 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
 
-## Known Issues — repo_path Resolution vs. BEAM cwd (dashboard Windows path bug, investigation T1-A4)
+## Known Issues — repo_path Resolution vs. BEAM cwd (dashboard Windows path bug)
 
 **Q: Why can a picked folder land under the app's own directory?** All three runtime `run/2` entry points resolve a possibly-relative/name-only `:repo_path` against the **BEAM process cwd**:
 
