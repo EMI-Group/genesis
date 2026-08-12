@@ -6,7 +6,7 @@ Contains data structs and extracted helper modules used internally by `EvoGit.Ag
 
 ## Routing Table
 
-None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `store.ex`, `worktrees.ex`, `worktree_manager.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`, `pubsub.ex`, `throttle.ex`, `remote_api.ex`).
+None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`, `slots.ex`, `store.ex`, `worktrees.ex`, `worktree_manager.ex`, `worktree_retry.ex`, `dispatch.ex`, `subagents.ex`, `lifecycle.ex`, `pubsub.ex`, `throttle.ex`, `remote_api.ex`).
 
 ## Throttled PubSub (PubSub module + throttle.ex)
 
