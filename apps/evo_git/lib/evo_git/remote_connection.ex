@@ -799,7 +799,7 @@ defmodule EvoGit.RemoteConnection do
 
   # Computes the temp tarball path on the remote from the remote_path.
   defp remote_tarball_path(remote_path) do
-    "#{remote_path}.tar.gz"
+    "#{remote_path}.tar.xz"
   end
 
   # SCPs the local tarball to the remote temp path.
@@ -816,7 +816,7 @@ defmodule EvoGit.RemoteConnection do
   # Extracts the uploaded tarball on the remote host.
   defp extract_tarball(ssh_target, remote_tarball, extract_dir) do
     cmd =
-      "ssh #{ssh_target} 'mkdir -p #{extract_dir} && tar -xzf #{remote_tarball} -C #{extract_dir}'"
+      "ssh #{ssh_target} 'mkdir -p #{extract_dir} && tar -xJf #{remote_tarball} -C #{extract_dir}'"
 
     case run_cmd(cmd, @scp_timeout_ms) do
       {:ok, _output, 0} -> :ok

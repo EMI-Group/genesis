@@ -65,10 +65,10 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert {:ok, target} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "example.com",
-                 local_binary_path: "_build/prod/rel/genesis_remote.tar.gz"
+                 local_binary_path: "_build/prod/rel/genesis_remote.tar.xz"
                })
 
-      assert target.local_binary_path == "_build/prod/rel/genesis_remote.tar.gz"
+      assert target.local_binary_path == "_build/prod/rel/genesis_remote.tar.xz"
     end
 
     test "returns {:error, :missing_ssh_target} when ssh_target is absent" do
@@ -122,7 +122,10 @@ defmodule EvoGit.RemoteConnectionsTest do
 
     test "platform round-trips through the TOML file" do
       assert {:ok, _target} =
-               EvoGit.RemoteConnections.save(%{ssh_target: "example.com", platform: "darwin_arm64"})
+               EvoGit.RemoteConnections.save(%{
+                 ssh_target: "example.com",
+                 platform: "darwin_arm64"
+               })
 
       list = EvoGit.RemoteConnections.list()
       assert length(list) == 1
@@ -213,7 +216,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert {:ok, _t1} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "deploy@prod.example.com",
-                 local_binary_path: "_build/prod/rel/genesis_remote.tar.gz",
+                 local_binary_path: "_build/prod/rel/genesis_remote.tar.xz",
                  dist_port: 9100
                })
 
@@ -238,7 +241,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert prod != nil
       assert prod.ssh_target == "deploy@prod.example.com"
       assert prod.dist_port == 9100
-      assert prod.local_binary_path == "_build/prod/rel/genesis_remote.tar.gz"
+      assert prod.local_binary_path == "_build/prod/rel/genesis_remote.tar.xz"
 
       staging = Enum.find(list, fn c -> c.ssh_target == "staging.example.com" end)
       assert staging != nil
