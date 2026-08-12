@@ -14,6 +14,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   attr(:is_no_changes, :boolean, default: false)
   attr(:merge_targets, :list, default: [])
   attr(:default_merge_target, :string, default: nil)
+  attr(:merge_status, :map, default: nil)
 
   def action_buttons(assigns) do
     ~H"""
@@ -23,9 +24,12 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <h3 class="font-semibold text-base">{gettext("Actions")}</h3>
       </div>
       <div class="flex flex-wrap gap-3">
+        <%= if @merge_status do %>
+          <.merge_status_block status={@merge_status} loading={@loading} />
+        <% end %>
         <%= if @branch_exists do %>
           <%= if @merge_targets != [] do %>
-            <form phx-submit="merge" class="contents">
+            <form phx-submit="merge" phx-change="merge_target_change" class="contents">
               <label class="flex items-center gap-2">
                 <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Merge into")}</span>
                 <select
@@ -169,6 +173,71 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
       </div>
     </div>
     """
+  end
+
+  # ---------------------------------------------------------------------------
+  # merge_status_block/1 — async merge-check result (clean/conflict/checking)
+  # ---------------------------------------------------------------------------
+
+  attr(:status, :map, required: true)
+  attr(:loading, :boolean, default: false)
+
+  defp merge_status_block(assigns) do
+    ~H"""
+    <%= case @status do %>
+      <% %{state: :checking} -> %>
+        <div class="flex items-center gap-2 w-full text-sm text-base-content/60">
+          <span class="loading loading-spinner loading-xs"></span>
+          {gettext("Checking if merge is clean…")}
+        </div>
+      <% %{state: :clean} -> %>
+        <div class="flex items-center gap-2 w-full rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
+          <.icon name="hero-check-circle" class="size-5 shrink-0" />
+          {gettext("Merge check passed — clean merge.")}
+        </div>
+      <% %{state: :conflict, files: files} -> %>
+        <% count = length(files) %>
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 w-full rounded-lg border border-warning/30 bg-warning/10 p-4">
+          <div class="flex items-start gap-3 min-w-0">
+            <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
+            <span class="text-sm text-warning break-words">
+              {ngettext(
+                "Merge conflict detected in %{count} file: %{files}",
+                "Merge conflict detected in %{count} files: %{files}",
+                count,
+                count: count,
+                files: conflict_files_summary(files)
+              )}
+            </span>
+          </div>
+          <button
+            class="btn btn-warning rounded-full px-6 gap-2 shrink-0 sm:ml-auto"
+            phx-click="auto_resolve"
+            phx-confirm={
+              gettext(
+                "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
+              )
+            }
+            disabled={@loading}
+          >
+            <.icon name="hero-bolt" class="size-4.5" />
+            {gettext("Auto-resolve conflict")}
+          </button>
+        </div>
+      <% _ -> %>
+    <% end %>
+    """
+  end
+
+  # First ~4 conflicting file names joined with ", ", with a "…" suffix when
+  # more exist.
+  defp conflict_files_summary(files) do
+    shown = Enum.take(files, 4)
+
+    case Enum.drop(files, 4) do
+      [] -> Enum.join(shown, ", ")
+      _ -> Enum.join(shown, ", ") <> "…"
+    end
   end
 
   # ---------------------------------------------------------------------------

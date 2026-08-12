@@ -131,6 +131,7 @@ defmodule EvoDashWeb.ReviewLive do
                           is_no_changes={@is_no_changes}
                           merge_targets={@merge_targets}
                           default_merge_target={@default_merge_target}
+                          merge_status={@merge_status}
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
                           <.link
@@ -260,7 +261,8 @@ defmodule EvoDashWeb.ReviewLive do
         started_at: nil,
         finished_at: nil,
         merge_targets: [],
-        default_merge_target: nil
+        default_merge_target: nil,
+        merge_status: nil
       )
 
     {:ok, socket}
@@ -286,6 +288,7 @@ defmodule EvoDashWeb.ReviewLive do
         socket
         |> load_task_data(socket.assigns.task_id)
         |> assign(:tasks_loaded_for, socket.assigns.current_node)
+        |> maybe_start_merge_check()
       end
 
     case {socket.assigns.live_action, params["commit_sha"]} do
@@ -506,6 +509,89 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
+  def handle_event("merge_target_change", params, socket) do
+    # The merge form's target-branch select changed: update the default target
+    # and re-run the async dry-run merge check against the new target.
+    target = params["target_branch"]
+
+    %{
+      merge_targets: merge_targets,
+      branch_name: branch_name,
+      repo_path: repo_path,
+      current_node: current_node,
+      task_id: task_id
+    } = socket.assigns
+
+    if is_binary(target) and target in merge_targets and is_binary(branch_name) and
+         repo_available?(socket, repo_path) do
+      socket = assign(socket, :default_merge_target, target)
+
+      {:noreply, start_merge_check(socket, current_node, repo_path, branch_name, target, task_id)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("auto_resolve", _params, socket) do
+    %{
+      merge_status: merge_status,
+      repo_path: repo_path,
+      commit_sha: commit_sha,
+      task_id: task_id,
+      current_node: current_node
+    } = socket.assigns
+
+    case merge_status do
+      %{state: :conflict, target: target} when is_binary(target) ->
+        # Mirror the resume flow: mark the original task continued before
+        # spawning the merge-resolution task.
+        EvoDash.NodeContext.set_review_status(current_node, task_id, :continued)
+
+        opts = [
+          path: repo_path,
+          mode: "simple",
+          # The objective is an agent prompt — plain string interpolation,
+          # NOT gettext.
+          objective:
+            "Merge the completed task's changes into the #{target} branch and resolve all merge conflicts, producing a fully integrated result.",
+          starting_commit: commit_sha,
+          merge_from: task_id,
+          merge_target: target
+        ]
+
+        case EvoDash.NodeContext.start_task(current_node, :evolve, opts) do
+          {:ok, _task} ->
+            {:noreply,
+             socket
+             |> put_flash(
+               :success,
+               gettext(
+                 "Auto-resolve task started. It will merge the changes and resolve conflicts; review its result when done."
+               )
+             )
+             |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> put_flash(
+               :error,
+               gettext("Failed to start auto-resolve: %{reason}", reason: inspect(reason))
+             )}
+        end
+
+      _ ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Auto-resolve unavailable — no merge conflict detected.")
+         )}
+    end
+  end
+
+  @impl true
   def handle_event("reject", _params, socket) do
     %{repo_path: repo_path, branch_name: branch_name, task_id: task_id} = socket.assigns
 
@@ -705,8 +791,36 @@ defmodule EvoDashWeb.ReviewLive do
     # Debounce timer fired: reload the reviewed task's data and the sidebar's
     # running/pending tasks, then clear the debounce-pending flag.
     socket = load_task_data(socket, socket.assigns.task_id)
+    socket = maybe_start_merge_check(socket)
     socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
+  end
+
+  @impl true
+  def handle_info({:merge_check_result, task_id, node, target, {:ok, :clean}}, socket) do
+    apply_merge_check_result(socket, task_id, node, target, %{
+      state: :clean,
+      target: target,
+      files: []
+    })
+  end
+
+  def handle_info({:merge_check_result, task_id, node, target, {:ok, {:conflict, files}}}, socket)
+      when is_list(files) do
+    apply_merge_check_result(socket, task_id, node, target, %{
+      state: :conflict,
+      target: target,
+      files: files
+    })
+  end
+
+  def handle_info({:merge_check_result, task_id, node, target, {:error, _reason}}, socket) do
+    apply_merge_check_result(socket, task_id, node, target, %{state: :error, target: target})
+  end
+
+  # Safety net: ignore any unmatched merge-check-result shape.
+  def handle_info({:merge_check_result, _, _, _, _}, socket) do
+    {:noreply, socket}
   end
 
   @impl true
@@ -745,7 +859,8 @@ defmodule EvoDashWeb.ReviewLive do
           task_status: nil,
           model_id: nil,
           started_at: nil,
-          finished_at: nil
+          finished_at: nil,
+          merge_status: nil
         )
 
       task ->
@@ -903,7 +1018,8 @@ defmodule EvoDashWeb.ReviewLive do
           started_at: task.started_at,
           finished_at: task.finished_at,
           merge_targets: merge_targets,
-          default_merge_target: default_merge_target
+          default_merge_target: default_merge_target,
+          merge_status: nil
         )
     end
   end
@@ -930,6 +1046,80 @@ defmodule EvoDashWeb.ReviewLive do
     EvoDash.NodeContext.branch_exists?(socket.assigns.current_node, repo_path, branch_name) ==
       true
   end
+
+  # Kicks off the async dry-run merge check after a successful task-data load,
+  # under the same gates action_buttons uses to render the merge form (branch
+  # exists, merge targets known, repo available). The result arrives later as
+  # a {:merge_check_result, ...} message.
+  defp maybe_start_merge_check(socket) do
+    %{
+      task_id: task_id,
+      current_node: current_node,
+      repo_path: repo_path,
+      branch_name: branch_name,
+      branch_exists: branch_exists,
+      merge_targets: merge_targets,
+      default_merge_target: default_target,
+      merge_status: merge_status
+    } = socket.assigns
+
+    target = default_target || List.first(merge_targets)
+
+    if branch_exists and merge_targets != [] and is_binary(target) and
+         repo_available?(socket, repo_path) do
+      case merge_status do
+        %{state: :checking, target: ^target} ->
+          # Already checking this exact target — don't spawn a duplicate.
+          socket
+
+        _ ->
+          start_merge_check(socket, current_node, repo_path, branch_name, target, task_id)
+      end
+    else
+      socket
+    end
+  end
+
+  # Spawns the dry-run merge check for `target` in a supervised Task (same
+  # async pattern as SettingsLive's LLM connection test) and immediately marks
+  # the status as :checking.
+  defp start_merge_check(socket, current_node, repo_path, branch_name, target, task_id) do
+    parent = self()
+
+    socket =
+      assign(socket, :merge_status, %{state: :checking, target: target, files: []})
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = EvoDash.NodeContext.check_merge(current_node, repo_path, branch_name, target)
+      send(parent, {:merge_check_result, task_id, current_node, target, result})
+    end)
+
+    socket
+  end
+
+  # Applies an async merge-check result, ignoring stale results (different
+  # task/node, or a target that no longer matches the current merge_status
+  # target — a nil status has no target to mismatch, so a matching task/node
+  # result is still accepted).
+  defp apply_merge_check_result(socket, task_id, node, target, status) do
+    %{task_id: current_task_id, current_node: current_node, merge_status: merge_status} =
+      socket.assigns
+
+    current_target = merge_status_target(merge_status)
+
+    stale? =
+      task_id != current_task_id or node != current_node or
+        (current_target != nil and current_target != target)
+
+    if stale? do
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, :merge_status, status)}
+    end
+  end
+
+  defp merge_status_target(%{target: target}) when is_binary(target), do: target
+  defp merge_status_target(_), do: nil
 
   defp format_commit_history([]), do: nil
 
