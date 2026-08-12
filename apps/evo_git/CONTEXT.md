@@ -167,6 +167,7 @@ The dashboard "Cancel" now triggers a **graceful** cancel instead of a brutal ki
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
+- `remote_api.ex` (~900 lines) and `remote_node.ex` (~1250 lines) are intentionally long cohesive wrapper modules (the RPC surface: every function is a thin delegate/wrapper). Do NOT split them — add new RPC functions to these modules.
 
 ### Distribution & Release Setup (relevant to remote/SSH features)
 - **EPMD-less distribution via custom module.** All `rel/vm.args.eex` files use `-epmd_module Elixir.EvoGit.EpmdDist` with `-start_epmd false`. The `EvoGit.EpmdDist` module implements the `erl_epmd` interface using `:persistent_term` as a node→port registry. No external `epmd` process is needed. Distribution is NOT started at boot for the local dashboard — it is enabled on-demand by `EvoGit.Distribution.enable_for_remote/1` when a user initiates a remote connection. The remote daemon starts distributed at boot (port 9000).
