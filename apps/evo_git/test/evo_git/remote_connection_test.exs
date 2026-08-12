@@ -134,7 +134,7 @@ defmodule EvoGit.RemoteConnectionTest do
 
     test "set-but-missing local_binary_path falls back to auto-download (probe fails)" do
       ensure_registry_and_supervisor()
-      target_id = save_test_target(local_binary_path: "/nonexistent/path/to/tarball.tar.gz")
+      target_id = save_test_target(local_binary_path: "/nonexistent/path/to/tarball.tar.xz")
 
       assert {:error, {:probe_failed, _}} = EvoGit.RemoteConnection.bootstrap(target_id)
 
@@ -179,7 +179,7 @@ defmodule EvoGit.RemoteConnectionTest do
       tmp =
         Path.join(
           System.tmp_dir!(),
-          "evogit-test-tarball-#{System.unique_integer([:positive])}.tar.gz"
+          "evogit-test-tarball-#{System.unique_integer([:positive])}.tar.xz"
         )
 
       File.write!(tmp, "fake tarball")

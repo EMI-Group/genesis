@@ -110,19 +110,19 @@ defmodule EvoGit.RemoteBootstrapTest do
   describe "asset_name/1" do
     test "builds the tarball name" do
       assert RemoteBootstrap.asset_name("linux_x64") ==
-               "genesis_remote_linux_x64.tar.gz"
+               "genesis_remote_linux_x64.tar.xz"
     end
   end
 
   describe "direct_url/1" do
     test "builds the linux_x64 direct URL" do
       assert RemoteBootstrap.direct_url("linux_x64") ==
-               "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.gz"
+               "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.xz"
     end
 
     test "builds the darwin_arm64 direct URL" do
       assert RemoteBootstrap.direct_url("darwin_arm64") ==
-               "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.gz"
+               "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.xz"
     end
   end
 
@@ -130,14 +130,14 @@ defmodule EvoGit.RemoteBootstrapTest do
     test "returns the direct linux_x64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("linux_x64") ==
                {:ok,
-                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.gz",
+                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.xz",
                 "latest"}
     end
 
     test "returns the direct darwin_arm64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("darwin_arm64") ==
                {:ok,
-                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.gz",
+                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.xz",
                 "latest"}
     end
 
@@ -148,10 +148,10 @@ defmodule EvoGit.RemoteBootstrapTest do
                Path.join([
                  EvoGit.Platform.data_dir(),
                  "remote_binaries",
-                 "windows_x64_latest.tar.gz"
+                 "windows_x64_latest.tar.xz"
                ])
 
-      assert String.ends_with?(url, "genesis_remote_windows_x64.tar.gz")
+      assert String.ends_with?(url, "genesis_remote_windows_x64.tar.xz")
     end
   end
 
@@ -161,7 +161,7 @@ defmodule EvoGit.RemoteBootstrapTest do
                Path.join([
                  EvoGit.Platform.data_dir(),
                  "remote_binaries",
-                 "linux_x64_0.1.0.tar.gz"
+                 "linux_x64_0.1.0.tar.xz"
                ])
     end
 
@@ -170,7 +170,7 @@ defmodule EvoGit.RemoteBootstrapTest do
                Path.join([
                  EvoGit.Platform.data_dir(),
                  "remote_binaries",
-                 "darwin_arm64_latest.tar.gz"
+                 "darwin_arm64_latest.tar.xz"
                ])
     end
   end
