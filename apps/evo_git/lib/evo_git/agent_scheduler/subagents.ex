@@ -216,7 +216,7 @@ defmodule EvoGit.AgentScheduler.Subagents do
             """
             Read-write agents cannot be spawned in foreign repositories.
             Use read-only agent types instead:
-            - subagent_codebase_investigator — for investigating and analyzing code
+            - subagent_investigator — for investigating and analyzing code
             - subagent_task_scheduler — for planning and scheduling tasks
 
             Foreign repos are read-only to prevent unintended modifications.

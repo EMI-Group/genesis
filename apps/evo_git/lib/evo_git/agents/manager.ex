@@ -5,7 +5,7 @@ defmodule EvoGit.Agents.Manager do
   The Manager does NOT implement features directly. Its role is to:
   - Analyze the objective and understand what needs to be done
   - Plan the work and break it down into manageable tasks
-  - Delegate tasks to appropriate subagents (Executor, CodebaseInvestigator, or child Managers)
+  - Delegate tasks to appropriate subagents (Executor, Investigator, or child Managers)
   - Validate results and handle conflicts if necessary
   - Report completion when the objective is satisfied
   """
@@ -29,7 +29,7 @@ defmodule EvoGit.Agents.Manager do
       EvoGit.Agents.Manager,
       EvoGit.Agents.Executor,
       EvoGit.Agents.TaskScheduler,
-      EvoGit.Agents.CodebaseInvestigator
+      EvoGit.Agents.Investigator
     ]
   end
 
@@ -121,7 +121,7 @@ defmodule EvoGit.Agents.Manager do
       """ <>
       "- **Strongly prefer delegating child subtree investigation.** " <>
       PromptFragments.delegation_investigation_sentence() <>
-      " Strongly prefer spawning a subagent_manager or subagent_codebase_investigator at the child path and letting it investigate its own domain. The subagent at the child path inherits that child's CONTEXT.md routing table automatically, so it can navigate the subtree immediately without you having to read and convey the structure. " <>
+      " Strongly prefer spawning a subagent_manager or subagent_investigator at the child path and letting it investigate its own domain. The subagent at the child path inherits that child's CONTEXT.md routing table automatically, so it can navigate the subtree immediately without you having to read and convey the structure. " <>
       PromptFragments.delegation_occasional_reads_sentence() <>
       "\n" <>
       ~S"""
@@ -171,11 +171,11 @@ defmodule EvoGit.Agents.Manager do
 
       Select the right subagent for the job:
       - **subagent_manager** (primary): Coordinate work in a child node or subtree. Delegate at the deepest known correct node — trust the sub-manager's routing table to route further.
-      - **subagent_codebase_investigator**: Use when YOU need information to make a delegation decision (e.g., routing table is ambiguous). Keep the objective focused and high-level.
+      - **subagent_investigator**: Use when YOU need information to make a delegation decision (e.g., routing table is ambiguous). Keep the objective focused and high-level.
       - **subagent_task_scheduler**: Use for complex, multi-step, or cross-node objectives BEFORE implementing anything. Returns a structured execution sequence. Skip if the change is well-understood.
       - **subagent_executor**: Use for specific, well-defined code changes at YOUR OWN node level. For work in child nodes, use subagent_manager instead.
 
-      Foreign Repositories: When your routing table or objective references a foreign repository (an absolute path), spawn subagents there by passing the path parameter. Use ONLY read-only agents (subagent_codebase_investigator or subagent_task_scheduler) in foreign repos — write-capable agents are not permitted. Ask for quick, focused answers.
+      Foreign Repositories: When your routing table or objective references a foreign repository (an absolute path), spawn subagents there by passing the path parameter. Use ONLY read-only agents (subagent_investigator or subagent_task_scheduler) in foreign repos — write-capable agents are not permitted. Ask for quick, focused answers.
 
       # Workflow
 
@@ -188,7 +188,7 @@ defmodule EvoGit.Agents.Manager do
       # Genesis Implementation Mode
 
       In some cases, you may be spawned as a root agent to complete the implementation of a newly architected codebase. In this mode:
-      - The architecture, directory structure, and CONTEXT.md routing tables are already in place (created by a CodebaseLead agent)
+      - The architecture, directory structure, and CONTEXT.md routing tables are already in place (created by an Architect agent)
       - Your job is to review what exists, identify what remains unimplemented, and implement all remaining work
       - Use the existing CONTEXT.md routing tables to identify child nodes that need implementation
       - Delegate implementation to `subagent_executor` at child paths for specific code changes, or `subagent_manager` for complex child subtrees
@@ -209,9 +209,9 @@ defmodule EvoGit.Agents.Manager do
 
       *Design rationale: These three directories are independent — no hard dependency between them. Thanks to worktree isolation, each sub-manager gets its own isolated workspace and can work simultaneously without conflicts. The sub-managers at each path inherit their own CONTEXT.md routing tables, so each one routes work within its subtree autonomously while you coordinate at the top level.*
 
-      **Routing table genuinely ambiguous**: Objective mentions "the notification system" but no routing table entry mentions notifications. Spawn a subagent_codebase_investigator: "Find where notification-related code lives. Report the directory paths." Based on the report, spawn a subagent_manager at the identified node(s). Validate and complete.
+      **Routing table genuinely ambiguous**: Objective mentions "the notification system" but no routing table entry mentions notifications. Spawn a subagent_investigator: "Find where notification-related code lives. Report the directory paths." Based on the report, spawn a subagent_manager at the identified node(s). Validate and complete.
 
-      *Design rationale: When the routing table has no entry for "notifications", this means the Context Tree doesn't have that mapping yet. A codebase_investigator searches the codebase and reports the actual location — you're effectively discovering what should be in the routing table. If this discovery is useful for future agents, the investigator may update the relevant CONTEXT.md routing table to add the notification entry.*
+      *Design rationale: When the routing table has no entry for "notifications", this means the Context Tree doesn't have that mapping yet. An investigator searches the codebase and reports the actual location — you're effectively discovering what should be in the routing table. If this discovery is useful for future agents, the investigator may update the relevant CONTEXT.md routing table to add the notification entry.*
       """
   end
 end

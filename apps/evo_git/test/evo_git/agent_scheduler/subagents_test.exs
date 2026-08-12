@@ -88,7 +88,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       {:error, {:foreign_repo_read_only, msg}} =
         Subagents.validate_spatial_contract_for_spec(1, parent, spec)
 
-      assert msg =~ "subagent_codebase_investigator"
+      assert msg =~ "subagent_investigator"
       assert msg =~ "subagent_task_scheduler"
     end
 

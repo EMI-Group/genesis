@@ -31,7 +31,7 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 6. **Worktree init script (Mode B only)**: Before spawning the agent, `Genesis` reads `build_system` from opts (selected interactively via CLI or via `--build-system` flag), looks up predefined scripts via `WorktreeInitScript.scripts_for/1`, and writes them to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) via `ProjectConfig.write_worktree_script/2` so the existing per-worktree init-script infra copies deps/build cache into new worktrees. Skipped when no build system is selected or `:none` is chosen.
 7. **Dispatch agent**:
    - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
-   - **Mode B (New)** → `CodebaseLead` agent (read-write, 3-phase: architecture & design → implementation delegation → review & accountability). Also spawns a second root Manager agent for implementation.
+   - **Mode B (New)** → `Architect` agent (read-write, 3-phase: architecture & design → implementation delegation → review & accountability). Also spawns a second root Manager agent for implementation.
 8. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
 9. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `genesis/agent_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
 
@@ -118,11 +118,11 @@ ContextExtractor (root)
 
 **Genesis Mode B (New Codebase)**:
 ```
-CodebaseLead (root — architecture phase)
+Architect (root — architecture phase)
   ├── subagent_genesis_planner (optional — large-scale planning)
   ├── subagent_executor (design artifacts: CONTEXT.md, init commands, directories, public API stubs)
-  ├── subagent_codebase_lead (child dir architecture)
-  │     ├── subagent_codebase_lead (grandchild...)
+  ├── subagent_architect (child dir architecture)
+  │     ├── subagent_architect (grandchild...)
   │     └── subagent_executor (design artifacts)
   └── subagent_manager (implementation delegation)
 
@@ -131,13 +131,13 @@ Manager (root — implementation phase, second root agent, same task_id)
   ├── subagent_manager (child subtree implementation)
   └── ...
 ```
-Note: Mode B spawns TWO sequential root agents sharing a task_id — CodebaseLead first (architecture), then Manager (implementation).
+Note: Mode B spawns TWO sequential root agents sharing a task_id — Architect first (architecture), then Manager (implementation).
 
 **Evolution Simple Mode**:
 ```
 Manager (target node)
   ├── subagent_task_scheduler (complex objectives — produces execution sequence)
-  ├── subagent_codebase_investigator (codebase exploration)
+  ├── subagent_investigator (codebase exploration)
   ├── subagent_executor (code changes)
   ├── subagent_manager (delegation to child nodes)
   └── ...
@@ -177,9 +177,9 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 | `EvoGit.AgentScheduler` | Lifecycle manager — scheduling, ETS state, slot management, subagent spawning (worktree lifecycle owned by `EvoGit.AgentScheduler.WorktreeManager`) |
 | `EvoGit.AgentSpec` | Structured specification passed to scheduler (context_node + phylo_node + module + objective) |
 | `EvoGit.Agent.Result` | Structured agent output (result string, commit_sha, tag, branch, base_commit) |
-| `EvoGit.Agents.CodebaseLead` | Genesis Mode B agent — 3-phase: architecture & design → implementation delegation → review & accountability. Accountable for all code in its node path but delegates implementation to Manager subagents. |
+| `EvoGit.Agents.Architect` | Genesis Mode B agent — 3-phase: architecture & design → implementation delegation → review & accountability. Accountable for all code in its node path but delegates implementation to Manager subagents. |
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
-| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used in genesis as the second root agent for implementation (after CodebaseLead establishes architecture) |
+| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used in genesis as the second root agent for implementation (after Architect establishes architecture) |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
 | `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
 | `EvoGit.Adapters.Git` | All git CLI operations |

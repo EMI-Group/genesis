@@ -2705,8 +2705,8 @@ msgstr "エージェントがサブエージェントを生成するよう促さ
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr "エージェントがサブエージェントに調査を委任するよう促されるまでの、同一子ディレクトリへの読み取りツール呼び出し（read_file、rg、glob、list_dir）の回数。高レベルエージェントが子ディレクトリ内のファイルをこの回数読み取ると、ツール出力にそのパスで subagent_codebase_investigator を生成するよう提案するヒントが追加されます。0に設定すると読み取り委任ヒントを無効にします。"
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr "エージェントがサブエージェントに調査を委任するよう促されるまでの、同一子ディレクトリへの読み取りツール呼び出し（read_file、rg、glob、list_dir）の回数。高レベルエージェントが子ディレクトリ内のファイルをこの回数読み取ると、ツール出力にそのパスで subagent_investigator を生成するよう提案するヒントが追加されます。0に設定すると読み取り委任ヒントを無効にします。"
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex

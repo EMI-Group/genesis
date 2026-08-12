@@ -2705,8 +2705,8 @@ msgstr "對同一子目錄進行多少次寫入工具調用後，才會提示智
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr "對同一子目錄進行多少次讀取工具調用（read_file、rg、glob、list_dir）後，才會提示智能體將調查工作委派給子智能體。當高層智能體對某子目錄讀取檔案達到此次數時，工具輸出中會附加一條提示，建議在該路徑下生成一個 subagent_codebase_investigator。設為 0 可停用讀取委派提示。"
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr "對同一子目錄進行多少次讀取工具調用（read_file、rg、glob、list_dir）後，才會提示智能體將調查工作委派給子智能體。當高層智能體對某子目錄讀取檔案達到此次數時，工具輸出中會附加一條提示，建議在該路徑下生成一個 subagent_investigator。設為 0 可停用讀取委派提示。"
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex

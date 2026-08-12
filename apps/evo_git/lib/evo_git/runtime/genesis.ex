@@ -4,7 +4,7 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Core.ContextNode
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
-  alias EvoGit.Agents.CodebaseLead
+  alias EvoGit.Agents.Architect
   alias EvoGit.Agents.Manager
   alias EvoGit.Agents.ContextExtractor
   alias EvoGit.Agent.Usage
@@ -60,7 +60,7 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  # Mode B: New Codebase — two-phase: Architecture (CodebaseLead) then Implementation (Manager)
+  # Mode B: New Codebase — two-phase: Architecture (Architect) then Implementation (Manager)
   defp run_new_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode B (New Codebase)")
 
@@ -95,12 +95,12 @@ defmodule EvoGit.Runtime.Genesis do
 
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
-    # --- Phase 1: Architecture (CodebaseLead as root agent) ---
+    # --- Phase 1: Architecture (Architect as root agent) ---
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
     architect_spec =
-      AgentSpec.new(context_node, phylo_node, CodebaseLead, objective,
+      AgentSpec.new(context_node, phylo_node, Architect, objective,
         foreign_repos: foreign_repos,
         archive: Keyword.get(opts, :archive, false),
         task_id: task_id,
@@ -216,7 +216,7 @@ defmodule EvoGit.Runtime.Genesis do
     end
   end
 
-  # Validate genesis.toml integrity in case a root agent (CodebaseLead/Manager) modified it.
+  # Validate genesis.toml integrity in case a root agent (Architect/Manager) modified it.
   # Re-writes the worktree script when the file was corrupted during the phase.
   defp ensure_worktree_script(repo_path, scripts, phase_label) do
     if scripts != nil do

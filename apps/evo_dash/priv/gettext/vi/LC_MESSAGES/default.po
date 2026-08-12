@@ -2705,8 +2705,8 @@ msgstr "Số lần gọi công cụ ghi vào cùng một thư mục con trước
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr "Số lần gọi công cụ đọc (read_file, rg, glob, list_dir) vào cùng một thư mục con trước khi tác tử được nhắc nhở ủy quyền điều tra cho một tác tử con. Khi một tác tử cấp cao đọc tệp trong một thư mục con với số lần này, một gợi ý sẽ được thêm vào đầu ra của công cụ, đề xuất nó sinh ra một subagent_codebase_investigator tại đường dẫn đó. Đặt thành 0 để tắt gợi ý ủy quyền đọc."
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr "Số lần gọi công cụ đọc (read_file, rg, glob, list_dir) vào cùng một thư mục con trước khi tác tử được nhắc nhở ủy quyền điều tra cho một tác tử con. Khi một tác tử cấp cao đọc tệp trong một thư mục con với số lần này, một gợi ý sẽ được thêm vào đầu ra của công cụ, đề xuất nó sinh ra một subagent_investigator tại đường dẫn đó. Đặt thành 0 để tắt gợi ý ủy quyền đọc."
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex

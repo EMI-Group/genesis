@@ -2705,8 +2705,8 @@ msgstr "에이전트가 하위 에이전트 생성을 권유받기 전까지 동
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr "에이전트가 하위 에이전트에 조사를 위임하도록 권유받기 전까지 동일한 하위 디렉터리에 대한 읽기 도구 호출(read_file, rg, glob, list_dir) 횟수입니다. 상위 에이전트가 하위 디렉터리에서 파일을 이 횟수만큼 읽으면, 도구 출력에 해당 경로에서 subagent_codebase_investigator를 생성하라는 힌트가 추가됩니다. 0으로 설정하면 읽기 위임 힌트가 비활성화됩니다."
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr "에이전트가 하위 에이전트에 조사를 위임하도록 권유받기 전까지 동일한 하위 디렉터리에 대한 읽기 도구 호출(read_file, rg, glob, list_dir) 횟수입니다. 상위 에이전트가 하위 디렉터리에서 파일을 이 횟수만큼 읽으면, 도구 출력에 해당 경로에서 subagent_investigator를 생성하라는 힌트가 추가됩니다. 0으로 설정하면 읽기 위임 힌트가 비활성화됩니다."
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex
