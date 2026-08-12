@@ -781,6 +781,7 @@ defmodule EvoGit.AgentScheduler do
       max_turns_root: state.max_turns_root,
       llm_model: state.llm_model,
       llm_generation_params: state.llm_generation_params,
+      model_profiles: state.model_profiles,
       paused: state.paused,
       sandbox_mode: state.sandbox_mode,
       sandbox_resources: state.sandbox_resources,
