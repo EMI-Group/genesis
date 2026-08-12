@@ -10,13 +10,14 @@
 // compact box NEVER shows an internal scrollbar while growing — overflow-y:
 // auto on the compact textarea is a safety net only. In expanded layout the
 // card is naturally constrained to its flex-allocated height by CSS overflow
-// containment (overflow: hidden on .input-card); the
-// textarea fills the remaining card space (flex: 1), caps at a soft
-// line-based max-height (calc(1.6em * 32)), and scrolls INTERNALLY, so the
-// launch panel always stays at the bottom of the viewport regardless of
-// prompt length. The inline height write below is subject to that CSS cap at
-// render time (CSS max-height wins over the inline height), so the box
-// renders capped and scrolls instead of growing unboundedly.
+// containment (overflow: hidden on .input-card); the textarea fills the
+// remaining card space (flex: 1) with NO max-height cap and scrolls
+// INTERNALLY, so the launch panel always stays pinned at the bottom of the
+// card regardless of prompt length or viewport height. The inline height
+// write below is overridden by the rendered layout: in compact mode the CSS
+// max-height wins over the inline height (the box renders capped and
+// scrolls); in expanded mode flex layout (flex-basis 0% + grow) fills the
+// card with no cap, so the box never grows unboundedly.
 //
 // LAYOUT — the compact/expanded layout decision is CLIENT-DRIVEN: this hook
 // computes `data-layout` on the closest `.input-layout` ancestor from the
@@ -105,12 +106,13 @@ const AdaptiveInput = {
     // inside the input handler / observer callback — no paint happens between
     // the layout flip and the height write, so the compact box can never
     // render with an internal scrollbar at the flip moment. The neutralization
-    // also means the expanded layout's CSS max-height cap (css/app.css
-    // "Adaptive Input Layout") never skews the measurement: scrollHeight is
-    // always the FULL natural content height, and the inline height write
-    // below is then subject to the cap at render time (CSS max-height wins
-    // over the inline height), so the expanded box renders capped and scrolls
-    // internally instead of growing unboundedly.
+    // keeps the measurement layout-independent: scrollHeight is always the
+    // FULL natural content height, and the inline height write is then
+    // overridden by the rendered layout — in compact mode the CSS max-height
+    // wins over the inline height (the box renders capped and scrolls), while
+    // in expanded mode flex layout (flex-basis 0% + grow, no max-height cap;
+    // see css/app.css "Adaptive Input Layout") fills the card, so the box
+    // scrolls internally instead of growing unboundedly.
     this.measureAndApply();
     this.applyLayout();
   },
@@ -126,10 +128,11 @@ const AdaptiveInput = {
   // drop below the cap by at least a full line (AND the char/line thresholds
   // must be under) before leaving expanded, so the layout cannot flicker at
   // the boundary while deleting. NOTE: only the COMPACT cap feeds this
-  // decision — the expanded layout's CSS max-height cap (css/app.css
-  // "Adaptive Input Layout") is a render-time constraint handled entirely by
-  // CSS and must NOT be fed into applyLayout (it never gates the compact flip,
-  // which fires only when content drops ~1 line below the 8-line cap). The
+  // decision — expanded mode has NO max-height cap (the card's flex
+  // containment bounds the textarea; see css/app.css "Adaptive Input
+  // Layout"), and no expanded-mode height value may be fed into applyLayout
+  // (it never gates the compact flip, which fires only when content drops
+  // ~1 line below the 8-line cap). The
   // server only seeds the initial data-layout attribute; from then on the DOM
   // value + measurement are the source of truth (no per-keystroke server
   // round-trip). Array.from counts code points — an acceptable stand-in for
@@ -181,10 +184,11 @@ const AdaptiveInput = {
     const ta = this.el;
 
     // Read the layout metrics BEFORE neutralizing: the compact max-height cap
-    // only resolves to px while the layout is compact (in expanded mode the
-    // computed max-height is the soft line-based cap, calc(1.6em * 32) — see
-    // css/app.css "Adaptive Input Layout"). The layout-gated guard below
-    // keeps it out of the compact-cap cache. The layout spends most of its
+    // only resolves to px while the layout is compact (in expanded mode there
+    // is no max-height rule — the computed value is "none", and the card's
+    // flex containment bounds the textarea; see css/app.css "Adaptive Input
+    // Layout"). The layout-gated guard below keeps it out of the compact-cap
+    // cache. The layout spends most of its
     // life in compact mode while typing, so the cache is warm; applyLayout's
     // lineHeight * 8 fallback covers a cold cache. Note Tailwind preflight
     // sets box-sizing: border-box, so the computed maxHeight is a border-box
@@ -194,10 +198,10 @@ const AdaptiveInput = {
     const cs = getComputedStyle(ta);
     const computedMaxHeight = parseFloat(cs.maxHeight);
     // Cache the compact cap ONLY while the layout is compact: in expanded
-    // mode the CSS max-height is the line-based cap (calc(1.6em * 32) —
-    // see css/app.css "Adaptive Input Layout"), which getComputedStyle
-    // resolves to a single px — caching it would corrupt _compactMaxHeight
-    // and leak the expanded cap into applyLayout's hysteresis (a premature
+    // mode max-height computes to "none", so parseFloat yields NaN (skipped
+    // by the guard above) — and the layout gate below is belt-and-braces, so
+    // no expanded-mode value can ever corrupt _compactMaxHeight or leak
+    // into applyLayout's hysteresis (a premature
     // flip back to compact with an internal scrollbar while the content is
     // still far above the 8-line cap). The lineHeight * 8 fallback in
     // applyLayout covers a cold cache (e.g. the first measurement in an
@@ -211,16 +215,17 @@ const AdaptiveInput = {
     this._lineHeight = parseFloat(cs.lineHeight) || 0;
 
     // Temporarily neutralize flex stretching and min/max-height while
-    // measuring: in expanded mode the flex layout stretches the textarea, the
-    // CSS min-height would otherwise floor scrollHeight, and the expanded CSS
-    // max-height cap (calc(1.6em * 32) — see css/app.css "Adaptive Input
-    // Layout") would otherwise CAP scrollHeight — all three would hide the
-    // real content height. Setting max-height: "none" here means the
+    // measuring: in expanded mode the flex layout stretches the textarea and
+    // the CSS min-height would otherwise floor scrollHeight — both would hide
+    // the real content height (expanded mode has no max-height rule; see
+    // css/app.css "Adaptive Input Layout"). Setting max-height: "none" here
+    // keeps the measurement layout-independent: the
     // measurement is ALWAYS the full natural content height; the inline
-    // height write below is then subject to the CSS cap at render time (CSS
-    // max-height wins over the inline height), so in expanded mode the box
-    // renders capped and scrolls internally. (Kept from the pre-redesign
-    // hook; harmless in compact mode.)
+    // height write below is then overridden by the rendered layout — in
+    // compact mode the CSS max-height wins over the inline height (the box
+    // renders capped and scrolls internally), and in expanded mode flex
+    // layout (flex-basis 0% + grow) fills the card with no cap. (Kept from
+    // the pre-redesign hook; harmless in compact mode.)
     const prevFlex = ta.style.flex;
     const prevMinHeight = ta.style.minHeight;
     const prevMaxHeight = ta.style.maxHeight;
@@ -244,9 +249,11 @@ const AdaptiveInput = {
     // (only data-layout is), so an unconditional write cannot loop, and
     // writing a value identical to the current one is a rendering no-op. In
     // expanded mode the written value (the full natural content height) can
-    // exceed the CSS max-height cap — CSS max-height wins over the inline
-    // height, so the box renders capped and scrolls internally (no
-    // oscillation: the cap is a static CSS value, height is not observed).
+    // exceed the card's flex-allocated box — flex layout (flex-basis 0% +
+    // grow, no max-height cap) wins over the inline height, so the box fills
+    // the card and scrolls internally (no
+    // oscillation: the flex allocation is deterministic, height is not
+    // observed).
     ta.style.height = scrollHeight + "px";
     ta.style.flex = prevFlex;
     ta.style.minHeight = prevMinHeight;

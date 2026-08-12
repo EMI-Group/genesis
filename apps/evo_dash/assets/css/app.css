@@ -1533,15 +1533,16 @@ button, a, input, textarea, select, summary,
                   internal scrollbar while growing (overflow-y: auto on the
                   compact textarea is a safety net only).
      "expanded" → Layout B: large objective area with an in-flow launch panel
-                  below the textarea; Launch button in the middle. CSS overflow
-                  containment (overflow: hidden on .input-layout and .input-card)
-                  naturally constrains the card to its flex-allocated height —
-                  no fragile viewport-derived offset. The textarea fills the
-                  remaining card space (flex: 1 1 auto), caps at a soft
-                  line-based max-height (calc(1.6em * 32)), and scrolls
-                  INTERNALLY (overflow-y: auto), so the launch panel always
-                  stays at the bottom of the viewport regardless of prompt
-                  length.
+                  below the textarea; Launch button in the middle. The card is
+                  a flex column that fills the viewport (flex: 1; min-height:
+                  0; overflow: hidden on .input-card), so it is naturally
+                  constrained to its flex-allocated height — no fragile
+                  viewport-derived offset and NO max-height cap on the
+                  textarea. The textarea absorbs ALL remaining card space
+                  (flex: 1) and scrolls INTERNALLY (overflow-y: auto), so the
+                  in-flow launch panel (.input-controls) always stays pinned
+                  at the bottom of the card on any viewport height, regardless
+                  of prompt length.
    Flip semantics: compact → expanded when the natural content height exceeds
    the compact max-height cap (or >600 code points / >16 lines, mirroring
    layout_for/1 for SSR-seed convergence); expanded → compact only after the
@@ -1677,34 +1678,40 @@ button, a, input, textarea, select, summary,
    naturally constrained to its flex-allocated height by overflow: hidden on
    the card itself — no viewport-derived cap is needed for containment. The
    textarea scrolls INTERNALLY (overflow-y: auto) so the in-flow
-   .input-controls row always stays at the bottom of the viewport regardless
-   of prompt length.
+   .input-controls row always stays pinned at the bottom of the card.
 
-   Cap derivation:
-     * max-height: calc(1.6em * 32) — soft line-based ceiling (~32 lines) so
-       the box cannot become absurdly tall on very large monitors. On such
-       monitors extra space appears below the controls — which is fine.
+   NO max-height cap (deliberate): the textarea's height is bounded purely by
+   the card's flex containment — .input-card is a flex column with
+   flex: 1; min-height: 0; overflow: hidden, and the textarea is flex: 1
+   (flex-basis 0%, grow 1), so it absorbs ALL free card space and the controls
+   row stays pinned at the bottom on any viewport height. (A previous
+   calc(1.6em * 32) cap left the unabsorbed free space unallocated BELOW
+   .input-controls on tall viewports, floating the launch panel mid-card.)
+
+   Height notes:
      * min-height: min(calc(1.6em * 10), calc(100dvh - 12rem)) — 10-line
        floor capped by the viewport-derived budget so the box never exceeds
-       the available space on short viewports. CSS min-height wins over
-       max-height when they conflict, so on viewports < ~448px the floor
-       shrinks with the budget (at 400px: min(256px, 208px) = 208px ≈ 8
+       the available space on short viewports. On viewports < ~448px the
+       floor shrinks with the budget (at 400px: min(256px, 208px) = 208px ≈ 8
        lines) and the controls stay visible. Re-derive the 12rem if any of
        the topbar/controls measurements change.
      * The AdaptiveInput hook neutralizes max-height (sets it to "none")
        while measuring, then writes the FULL natural content height inline;
-       CSS max-height wins over the inline height, so the box renders capped
-       and scrolls internally. The hook's measureAndApply gates its
-       compact-cap cache on the current layout (caches only while compact) —
-       the expanded cap can never leak into applyLayout's flip decisions (see
-       adaptive_input.js measureAndApply).
+       in compact mode the CSS max-height wins over the inline height (the
+       box renders capped and scrolls). In expanded mode flex layout
+       (flex-basis 0% + grow) overrides the inline height, so the box fills
+       the card and scrolls internally regardless of the written value. The
+       hook's measureAndApply gates its compact-cap cache on the current
+       layout (caches only while compact) — in expanded mode max-height now
+       computes to "none" (parseFloat → NaN), which the hook skips, so
+       nothing from expanded mode can leak into applyLayout's flip decisions
+       (see adaptive_input.js measureAndApply).
    scrollbar-gutter: stable reserves layout space for a classic (non-overlay)
    scrollbar so text is never clipped under it; overlay scrollbars (macOS)
    ignore it. */
 .input-layout[data-layout="expanded"] .input-prompt {
   flex: 1;
   min-height: min(calc(1.6em * 10), calc(100dvh - 12rem));
-  max-height: calc(1.6em * 32);
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
