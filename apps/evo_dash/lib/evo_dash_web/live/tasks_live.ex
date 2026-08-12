@@ -219,7 +219,6 @@ defmodule EvoDashWeb.TasksLive do
               <EvoDashWeb.TaskCardComponents.task_card
                 task={task}
                 show_details={MapSet.member?(@expanded_task_ids, task.id)}
-                remote?={@current_node_id != nil}
                 current_node_id={@current_node_id}
               />
             </div>

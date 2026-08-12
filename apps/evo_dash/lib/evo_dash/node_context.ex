@@ -227,6 +227,25 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Returns the FULL resolved user configuration on the given node.
+
+  This is exactly what `EvoGit.Config.resolve/0` returns: the merged
+  defaults + user config as an atom-keyed nested map (e.g.
+  `%{scheduler: %{...}, llm: %{models: [...], ...}, tools: %{...}, ...}`).
+  On the local node the function is called directly; on a remote node it is
+  routed through `EvoGit.RemoteNode.call_remote/4`.
+
+  Returns `{:ok, config}` on success or `{:error, {kind, reason}}` on
+  transport failure (node down, timeout). Unlike `get_remote_config/1`, a
+  failure is NOT silently collapsed to `%{}` — callers can distinguish a
+  genuinely unconfigured node from an unreachable one.
+  """
+  @spec get_resolved_config(node()) :: {:ok, map()} | {:error, term()}
+  def get_resolved_config(node) do
+    EvoGit.RemoteNode.call_remote(node, EvoGit.Config, :resolve, [])
+  end
+
+  @doc """
   Returns the config health status on the given node.
 
   Delegates to `EvoGit.RemoteNode.get_config_status/1`. Returns a safe
@@ -540,6 +559,264 @@ defmodule EvoDash.NodeContext do
   @spec list_tasks_summary_by_path(node(), String.t(), [atom()]) :: [map()]
   def list_tasks_summary_by_path(node, path, statuses \\ []) do
     EvoGit.RemoteNode.list_tasks_summary_by_path(node, path, statuses)
+  end
+
+  # ── Task review operations ───────────────────────────────────────
+  #
+  # Delegates to EvoGit.RemoteNode's node-first review wrappers so the code
+  # review git operations run on the TARGET node's filesystem (local → direct
+  # call, remote → routed through `:erpc`). Return values follow the RemoteNode
+  # envelope convention: the VERBATIM underlying value in BOTH paths; only
+  # transport failures surface as `{:error, {kind, reason}}`.
+
+  @doc """
+  Fetches a single task by id on the given node.
+
+  Delegates to `EvoGit.RemoteNode.get_task/2`. Returns the `%EvoGit.TaskInfo{}`
+  or `nil` if the task does not exist (or the remote call fails).
+  """
+  @spec get_task(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
+  def get_task(node, task_id) do
+    EvoGit.RemoteNode.get_task(node, task_id)
+  end
+
+  @doc """
+  Sets the review status for a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.set_review_status/3`. Returns `:ok` on
+  success or `{:error, reason}` on failure (including RPC failures).
+  """
+  @spec set_review_status(node(), String.t(), atom()) :: :ok | {:error, term()}
+  def set_review_status(node, task_id, status) do
+    EvoGit.RemoteNode.set_review_status(node, task_id, status)
+  end
+
+  @doc """
+  Sets the review metadata (base and commit SHAs) for a task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.set_review_metadata/4`. Returns `:ok` on
+  success or `{:error, reason}` on failure (including RPC failures).
+  """
+  @spec set_review_metadata(node(), String.t(), String.t(), String.t()) ::
+          :ok | {:error, term()}
+  def set_review_metadata(node, task_id, base_sha, commit_sha) do
+    EvoGit.RemoteNode.set_review_metadata(node, task_id, base_sha, commit_sha)
+  end
+
+  @doc """
+  Fetches the full content of a file at a specific commit on the given node.
+
+  Delegates to `EvoGit.RemoteNode.get_file_content/4`. Returns
+  `{:ok, content}` if the file exists at that commit, or
+  `{:error, {tag, output}}` if not. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec get_file_content(node(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def get_file_content(node, repo_path, commit_sha, file_path) do
+    EvoGit.RemoteNode.get_file_content(node, repo_path, commit_sha, file_path)
+  end
+
+  @doc """
+  Lists commits between the merge-base and a branch tip on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_commits/3`. Returns
+  `{:ok, [%EvoGit.Review.CommitInfo{}]}` or `{:error, reason}`. On RPC
+  failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec list_commits(node(), String.t(), String.t()) ::
+          {:ok, [EvoGit.Review.CommitInfo.t()]} | {:error, term()}
+  def list_commits(node, repo_path, branch_name) do
+    EvoGit.RemoteNode.list_commits(node, repo_path, branch_name)
+  end
+
+  @doc """
+  Loads all review data (diff stat, full diff, parsed files) for a branch on
+  the given node.
+
+  Delegates to `EvoGit.RemoteNode.load_review_data/3`. Returns
+  `{:ok, review_data_map}` or an error tuple. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_review_data(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def load_review_data(node, repo_path, branch_name) do
+    EvoGit.RemoteNode.load_review_data(node, repo_path, branch_name)
+  end
+
+  @doc """
+  Loads review metadata only (file list with counts, no diffs) for a branch
+  on the given node.
+
+  Delegates to `EvoGit.RemoteNode.load_review_metadata/3`. Returns
+  `{:ok, review_data_map}` or an error tuple. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_review_metadata(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  def load_review_metadata(node, repo_path, branch_name) do
+    EvoGit.RemoteNode.load_review_metadata(node, repo_path, branch_name)
+  end
+
+  @doc """
+  Loads the diff of a single file between two commits on the given node.
+
+  Delegates to `EvoGit.RemoteNode.load_file_diff/5`. Returns the diff result
+  from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t()) :: term()
+  def load_file_diff(node, repo_path, base_sha, commit_sha, file_path) do
+    EvoGit.RemoteNode.load_file_diff(node, repo_path, base_sha, commit_sha, file_path)
+  end
+
+  @doc """
+  Loads the diff of a single file between two commits on the given node,
+  with options.
+
+  Delegates to `EvoGit.RemoteNode.load_file_diff/6`. `opts` is a keyword
+  list of options (e.g. context lines). Returns the diff result from
+  `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
+          term()
+  def load_file_diff(node, repo_path, base_sha, commit_sha, file_path, opts) do
+    EvoGit.RemoteNode.load_file_diff(node, repo_path, base_sha, commit_sha, file_path, opts)
+  end
+
+  @doc """
+  Loads review metadata from explicit base/commit SHAs on the given node (no
+  branch resolution).
+
+  Delegates to `EvoGit.RemoteNode.load_review_metadata_from_shas/4`. Returns
+  the result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_review_metadata_from_shas(node(), String.t(), String.t(), String.t()) :: term()
+  def load_review_metadata_from_shas(node, repo_path, base_sha, commit_sha) do
+    EvoGit.RemoteNode.load_review_metadata_from_shas(node, repo_path, base_sha, commit_sha)
+  end
+
+  @doc """
+  Lists commits between explicit base/commit SHAs on the given node (no
+  branch resolution).
+
+  Delegates to `EvoGit.RemoteNode.list_commits_from_shas/4`. Returns the
+  result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec list_commits_from_shas(node(), String.t(), String.t(), String.t()) :: term()
+  def list_commits_from_shas(node, repo_path, base_sha, commit_sha) do
+    EvoGit.RemoteNode.list_commits_from_shas(node, repo_path, base_sha, commit_sha)
+  end
+
+  @doc """
+  Lists the files changed in a single commit on the given node.
+
+  Delegates to `EvoGit.RemoteNode.load_commit_files/3`. Returns the result
+  from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_commit_files(node(), String.t(), String.t()) :: term()
+  def load_commit_files(node, repo_path, commit_sha) do
+    EvoGit.RemoteNode.load_commit_files(node, repo_path, commit_sha)
+  end
+
+  @doc """
+  Loads the diff of a single file within a single commit on the given node.
+
+  Delegates to `EvoGit.RemoteNode.load_commit_file_diff/4`. Returns the
+  result from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec load_commit_file_diff(node(), String.t(), String.t(), String.t()) :: term()
+  def load_commit_file_diff(node, repo_path, commit_sha, file_path) do
+    EvoGit.RemoteNode.load_commit_file_diff(node, repo_path, commit_sha, file_path)
+  end
+
+  @doc """
+  Merges an agent branch into the repository's default merge target on the
+  given node.
+
+  Delegates to `EvoGit.RemoteNode.merge_branch/3`. Returns `{:ok, sha}` on
+  success, `{:conflict, details}` on a merge conflict, or `{:error, reason}`
+  on failure. On RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec merge_branch(node(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  def merge_branch(node, repo_path, branch_name) do
+    EvoGit.RemoteNode.merge_branch(node, repo_path, branch_name)
+  end
+
+  @doc """
+  Merges an agent branch into an explicit target branch on the given node.
+
+  Delegates to `EvoGit.RemoteNode.merge_branch/4`. Returns `{:ok, sha}` on
+  success, `{:conflict, details}` on a merge conflict, or `{:error, reason}`
+  on failure. On RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec merge_branch(node(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:conflict, term()} | {:error, term()}
+  def merge_branch(node, repo_path, branch_name, target_branch) do
+    EvoGit.RemoteNode.merge_branch(node, repo_path, branch_name, target_branch)
+  end
+
+  @doc """
+  Resolves the default merge target branch for a repository on the given node.
+
+  Delegates to `EvoGit.RemoteNode.default_merge_target/2`. Returns the branch
+  name (`main` → `master` → `dev` → `prod` → current → first local branch) or
+  `{:error, :no_branch_found}`. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec default_merge_target(node(), String.t()) :: String.t() | {:error, term()}
+  def default_merge_target(node, repo_path) do
+    EvoGit.RemoteNode.default_merge_target(node, repo_path)
+  end
+
+  @doc """
+  Lists all local branches in a repository on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_branches/2`. Returns
+  `{:ok, [String.t()]}` or `{:error, {tag, output}}`. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec list_branches(node(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  def list_branches(node, repo_path) do
+    EvoGit.RemoteNode.list_branches(node, repo_path)
+  end
+
+  @doc """
+  Rejects (deletes) an agent branch in a repository on the given node.
+
+  Delegates to `EvoGit.RemoteNode.reject_branch/3`. Returns the result from
+  `EvoGit.Review` verbatim. On RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec reject_branch(node(), String.t(), String.t()) :: term()
+  def reject_branch(node, repo_path, branch_name) do
+    EvoGit.RemoteNode.reject_branch(node, repo_path, branch_name)
+  end
+
+  @doc """
+  Creates a GitHub pull request for an agent branch on the given node.
+
+  Delegates to `EvoGit.RemoteNode.create_github_pr/5`. Returns the result
+  from `EvoGit.Review` verbatim. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec create_github_pr(node(), String.t(), String.t(), String.t(), String.t()) :: term()
+  def create_github_pr(node, repo_path, branch_name, objective, result) do
+    EvoGit.RemoteNode.create_github_pr(node, repo_path, branch_name, objective, result)
+  end
+
+  @doc """
+  Checks whether a branch exists in a repository on the given node.
+
+  Delegates to `EvoGit.RemoteNode.branch_exists?/3`. Returns a boolean. On
+  RPC failure, returns `{:error, {kind, reason}}`.
+  """
+  @spec branch_exists?(node(), String.t(), String.t()) :: boolean() | {:error, term()}
+  def branch_exists?(node, repo_path, branch_name) do
+    EvoGit.RemoteNode.branch_exists?(node, repo_path, branch_name)
   end
 
   # ── Private helpers ──────────────────────────────────────────────

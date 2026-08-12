@@ -6,8 +6,6 @@ defmodule EvoDashWeb.ReviewLive do
   reject, and continue actions, plus optional GitHub PR creation.
   """
   use EvoDashWeb, :live_view
-  alias EvoGit.TaskRegistry
-  alias EvoGit.Review
 
   @impl true
   def render(assigns) do
@@ -136,7 +134,7 @@ defmodule EvoDashWeb.ReviewLive do
                         />
                         <%= if @archive_metadata not in [nil, []] do %>
                           <.link
-                            href={"/tasks/#{@task_id}/export"}
+                            href={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
                             class="btn btn-sm btn-outline btn-primary gap-2"
                             download
                           >
@@ -264,7 +262,6 @@ defmodule EvoDashWeb.ReviewLive do
         merge_targets: [],
         default_merge_target: nil
       )
-      |> load_task_data(task_id)
 
     {:ok, socket}
   end
@@ -275,6 +272,21 @@ defmodule EvoDashWeb.ReviewLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/review/#{socket.assigns.task_id}")
+
+    # Node-aware task load. `@current_node` is only resolved by assign_node
+    # above (at mount time it is still the on_mount local default), so the
+    # task fetch MUST live here — handle_params runs after mount on initial
+    # load too. Dedup guard: the task id is fixed for the page lifetime, so
+    # only a node change warrants a refetch (e.g. a pending→connected
+    # transition that push_patch-es this path, or a manual ?node= switch).
+    socket =
+      if Map.get(socket.assigns, :tasks_loaded_for) == socket.assigns.current_node do
+        socket
+      else
+        socket
+        |> load_task_data(socket.assigns.task_id)
+        |> assign(:tasks_loaded_for, socket.assigns.current_node)
+      end
 
     case {socket.assigns.live_action, params["commit_sha"]} do
       {:commit, commit_sha} when is_binary(commit_sha) ->
@@ -441,16 +453,22 @@ defmodule EvoDashWeb.ReviewLive do
     # what the merge actually used — mention it in the success flash.
     effective_target = target || default_merge_target
 
+    # All review git operations run on the node being viewed: local → direct
+    # call, remote → RPC to the remote daemon's filesystem. RemoteNode
+    # returns the verbatim underlying value in both paths, so the existing
+    # pattern matches below are unchanged.
+    node = socket.assigns.current_node
+
     result =
       if target do
-        Review.merge_branch(repo_path, branch_name, target)
+        EvoDash.NodeContext.merge_branch(node, repo_path, branch_name, target)
       else
-        Review.merge_branch(repo_path, branch_name)
+        EvoDash.NodeContext.merge_branch(node, repo_path, branch_name)
       end
 
     case result do
       {:ok, _sha} ->
-        TaskRegistry.set_review_status(task_id, :merged)
+        EvoDash.NodeContext.set_review_status(node, task_id, :merged)
 
         success_flash =
           if effective_target do
@@ -468,7 +486,7 @@ defmodule EvoDashWeb.ReviewLive do
         {:noreply,
          socket
          |> put_flash(:success, success_flash)
-         |> push_navigate(to: ~p"/")}
+         |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
 
       {:conflict, details} ->
         {:noreply,
@@ -491,9 +509,11 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("reject", _params, socket) do
     %{repo_path: repo_path, branch_name: branch_name, task_id: task_id} = socket.assigns
 
-    case Review.reject_branch(repo_path, branch_name) do
+    node = socket.assigns.current_node
+
+    case EvoDash.NodeContext.reject_branch(node, repo_path, branch_name) do
       :ok ->
-        TaskRegistry.set_review_status(task_id, :rejected)
+        EvoDash.NodeContext.set_review_status(node, task_id, :rejected)
 
         {:noreply,
          socket
@@ -501,7 +521,7 @@ defmodule EvoDashWeb.ReviewLive do
            :info,
            gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name)
          )
-         |> push_navigate(to: ~p"/")}
+         |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
 
       {:error, reason} ->
         {:noreply,
@@ -520,12 +540,21 @@ defmodule EvoDashWeb.ReviewLive do
     task_id = socket.assigns.task_id
     repo_path = socket.assigns.repo_path
 
-    TaskRegistry.set_review_status(task_id, :continued)
+    EvoDash.NodeContext.set_review_status(socket.assigns.current_node, task_id, :continued)
 
     query = [resume_from: task_id]
     query = if commit_sha, do: Keyword.put(query, :starting_commit, commit_sha), else: query
     # Include project query param so the dashboard re-opens the correct project
     query = if repo_path, do: Keyword.put(query, :project, repo_path), else: query
+
+    # The target URL already carries a query string, so with_node_param's `?`
+    # append does not apply — a manual `&node=` suffix preserves the node
+    # context (same pattern as project_flow.ex's project_url/2).
+    to =
+      case socket.assigns.current_node_id do
+        nil -> ~p"/?#{query}"
+        node_id -> ~p"/?#{query}" <> "&node=" <> node_id
+      end
 
     flash_msg =
       if commit_sha do
@@ -542,19 +571,19 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply,
      socket
      |> put_flash(:info, flash_msg)
-     |> push_navigate(to: ~p"/?#{query}")}
+     |> push_navigate(to: to)}
   end
 
   @impl true
   def handle_event("ignore", _params, socket) do
     task_id = socket.assigns.task_id
 
-    TaskRegistry.set_review_status(task_id, :ignored)
+    EvoDash.NodeContext.set_review_status(socket.assigns.current_node, task_id, :ignored)
 
     {:noreply,
      socket
      |> put_flash(:info, gettext("Review ignored and dismissed."))
-     |> push_navigate(to: ~p"/")}
+     |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
   end
 
   @impl true
@@ -564,7 +593,13 @@ defmodule EvoDashWeb.ReviewLive do
 
     socket = assign(socket, :action_loading, true)
 
-    case Review.create_github_pr(repo_path, branch_name, objective || "", result || "") do
+    case EvoDash.NodeContext.create_github_pr(
+           socket.assigns.current_node,
+           repo_path,
+           branch_name,
+           objective || "",
+           result || ""
+         ) do
       {pr_url, pr_title} when is_binary(pr_url) ->
         {:noreply,
          socket
@@ -627,7 +662,10 @@ defmodule EvoDashWeb.ReviewLive do
     opts =
       if user_note && user_note != "", do: Keyword.put(opts, :user_note, user_note), else: opts
 
-    case TaskRegistry.start_task(:extract_skills, opts) do
+    # Skill extraction runs on the node being viewed (local → direct call,
+    # remote → RPC), so the git ops inside start_task execute against the
+    # repo on the correct host.
+    case EvoDash.NodeContext.start_task(socket.assigns.current_node, :extract_skills, opts) do
       {:ok, _task} ->
         {:noreply,
          socket
@@ -689,7 +727,13 @@ defmodule EvoDashWeb.ReviewLive do
   # --- Private Helpers ---
 
   defp load_task_data(socket, task_id) do
-    case TaskRegistry.get_task(task_id) do
+    # All review operations run on the node being viewed: local → direct
+    # call, remote → RPC to the remote daemon (its own TaskRegistry + its own
+    # filesystem). RemoteNode returns the verbatim underlying value in both
+    # paths, so the pattern matches below are identical for local and remote.
+    node = socket.assigns.current_node
+
+    case EvoDash.NodeContext.get_task(node, task_id) do
       nil ->
         assign(socket,
           loading: false,
@@ -710,18 +754,18 @@ defmodule EvoDashWeb.ReviewLive do
 
         # Merge-target branch selector: list local branches and resolve the
         # default merge target. Degrades gracefully to [] / nil when branches
-        # cannot be listed (e.g. missing repo) — plain case on the tuple
-        # returns, no try/rescue.
+        # cannot be listed (e.g. missing repo or unreachable remote node) —
+        # plain case on the tuple returns, no try/rescue.
         {merge_targets, default_merge_target} =
-          if repo_path && File.dir?(repo_path) do
+          if repo_available?(socket, repo_path) do
             targets =
-              case Review.list_branches(repo_path) do
+              case EvoDash.NodeContext.list_branches(node, repo_path) do
                 {:ok, names} -> Enum.filter(names, &(is_binary(&1) and String.trim(&1) != ""))
                 _ -> []
               end
 
             default =
-              case Review.default_merge_target(repo_path) do
+              case EvoDash.NodeContext.default_merge_target(node, repo_path) do
                 {:ok, name} -> name
                 _ -> nil
               end
@@ -752,11 +796,11 @@ defmodule EvoDashWeb.ReviewLive do
         title = pr_title || objective || branch_name || gettext("Review Changes")
 
         branch_exists =
-          !!(branch_name && repo_path && File.dir?(repo_path) &&
-               Review.branch_exists?(repo_path, branch_name))
+          !!(branch_name && repo_available?(socket, repo_path) &&
+               branch_exists_on_node?(socket, repo_path, branch_name))
 
         can_continue =
-          repo_path != nil && File.dir?(repo_path) && (commit_sha != nil || branch_name == nil)
+          repo_available?(socket, repo_path) && (commit_sha != nil || branch_name == nil)
 
         rs = task.review_status
 
@@ -776,14 +820,19 @@ defmodule EvoDashWeb.ReviewLive do
           cond do
             # Normal case: branch still exists
             branch_exists && repo_path ->
-              case Review.load_review_metadata(repo_path, branch_name) do
+              case EvoDash.NodeContext.load_review_metadata(node, repo_path, branch_name) do
                 {:ok, data} -> data
                 _ -> nil
               end
 
             # Post-merge/reject case: branch gone but SHAs persisted
             not branch_exists && repo_path && task.base_sha && commit_sha ->
-              case Review.load_review_metadata_from_shas(repo_path, task.base_sha, commit_sha) do
+              case EvoDash.NodeContext.load_review_metadata_from_shas(
+                     node,
+                     repo_path,
+                     task.base_sha,
+                     commit_sha
+                   ) do
                 {:ok, data} -> data
                 _ -> nil
               end
@@ -796,18 +845,29 @@ defmodule EvoDashWeb.ReviewLive do
 
         # Persist SHAs when loading from branch (for future post-merge access)
         if (branch_exists && review_data && is_nil(task.base_sha)) and base_sha do
-          TaskRegistry.set_review_metadata(task_id, base_sha, commit_sha)
+          EvoDash.NodeContext.set_review_metadata(node, task_id, base_sha, commit_sha)
         end
 
         commits =
           cond do
             branch_exists && repo_path ->
-              {:ok, commits} = Review.list_commits(repo_path, branch_name)
-              commits
+              case EvoDash.NodeContext.list_commits(node, repo_path, branch_name) do
+                {:ok, commits} -> commits
+                # Graceful degradation (missing repo, unreachable remote
+                # node): render an empty commit list instead of crashing.
+                _ -> []
+              end
 
             not branch_exists && repo_path && task.base_sha && commit_sha ->
-              {:ok, commits} = Review.list_commits_from_shas(repo_path, task.base_sha, commit_sha)
-              commits
+              case EvoDash.NodeContext.list_commits_from_shas(
+                     node,
+                     repo_path,
+                     task.base_sha,
+                     commit_sha
+                   ) do
+                {:ok, commits} -> commits
+                _ -> []
+              end
 
             true ->
               []
@@ -848,6 +908,29 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
+  # Local repos are gated on a cheap File.dir?/1 check (avoids git errors on
+  # missing paths). Remote repos live on the remote host's filesystem — no
+  # local check is possible, so availability is derived from the RPC results
+  # themselves (an {:error, _} return — missing repo or transport failure —
+  # degrades to the empty/disabled state below).
+  defp repo_available?(socket, repo_path) do
+    if socket.assigns.current_node == node() do
+      repo_path != nil && File.dir?(repo_path)
+    else
+      repo_path != nil
+    end
+  end
+
+  # Branch existence on the current node. For the local node this is
+  # `EvoGit.Review.branch_exists?/2` (a raw boolean). For remote nodes it is
+  # the RPC result, which may be `{:error, {kind, reason}}` on transport
+  # failure — treated as branch-not-determinable (false) so the page degrades
+  # to the existing post-merge/reject state instead of crashing.
+  defp branch_exists_on_node?(socket, repo_path, branch_name) do
+    EvoDash.NodeContext.branch_exists?(socket.assigns.current_node, repo_path, branch_name) ==
+      true
+  end
+
   defp format_commit_history([]), do: nil
 
   defp format_commit_history(commits) do
@@ -872,11 +955,18 @@ defmodule EvoDashWeb.ReviewLive do
 
     if file && is_nil(file.diff) do
       %{base_sha: base_sha, commit_sha: commit_sha, repo_path: repo_path} = socket.assigns
+      node = socket.assigns.current_node
 
-      case Review.load_file_diff(repo_path, base_sha, commit_sha, path) do
+      case EvoDash.NodeContext.load_file_diff(node, repo_path, base_sha, commit_sha, path) do
         {:ok, diff_string} ->
-          full_new = content_or_nil(Review.get_file_content(repo_path, commit_sha, path))
-          full_old = content_or_nil(Review.get_file_content(repo_path, base_sha, path))
+          full_new =
+            content_or_nil(
+              EvoDash.NodeContext.get_file_content(node, repo_path, commit_sha, path)
+            )
+
+          full_old =
+            content_or_nil(EvoDash.NodeContext.get_file_content(node, repo_path, base_sha, path))
+
           {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3, full_new, full_old)}
 
         {:error, reason} ->
@@ -901,11 +991,20 @@ defmodule EvoDashWeb.ReviewLive do
 
     if file && is_nil(file.diff) do
       %{repo_path: repo_path, inspect_commit_sha: commit_sha} = socket.assigns
+      node = socket.assigns.current_node
 
-      case Review.load_commit_file_diff(repo_path, commit_sha, path) do
+      case EvoDash.NodeContext.load_commit_file_diff(node, repo_path, commit_sha, path) do
         {:ok, diff_string} ->
-          full_new = content_or_nil(Review.get_file_content(repo_path, commit_sha, path))
-          full_old = content_or_nil(Review.get_file_content(repo_path, "#{commit_sha}~1", path))
+          full_new =
+            content_or_nil(
+              EvoDash.NodeContext.get_file_content(node, repo_path, commit_sha, path)
+            )
+
+          full_old =
+            content_or_nil(
+              EvoDash.NodeContext.get_file_content(node, repo_path, "#{commit_sha}~1", path)
+            )
+
           {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3, full_new, full_old)}
 
         {:error, reason} ->
@@ -927,13 +1026,22 @@ defmodule EvoDashWeb.ReviewLive do
   # Loads a file diff using the appropriate mode (commit vs review).
   defp load_file_diff_for_mode(socket, path, opts) do
     %{repo_path: repo_path} = socket.assigns
+    node = socket.assigns.current_node
 
     if socket.assigns.live_action == :commit do
       %{inspect_commit_sha: commit_sha} = socket.assigns
-      Review.load_file_diff(repo_path, "#{commit_sha}~1", commit_sha, path, opts)
+
+      EvoDash.NodeContext.load_file_diff(
+        node,
+        repo_path,
+        "#{commit_sha}~1",
+        commit_sha,
+        path,
+        opts
+      )
     else
       %{base_sha: base_sha, commit_sha: commit_sha} = socket.assigns
-      Review.load_file_diff(repo_path, base_sha, commit_sha, path, opts)
+      EvoDash.NodeContext.load_file_diff(node, repo_path, base_sha, commit_sha, path, opts)
     end
   end
 
@@ -1004,7 +1112,11 @@ defmodule EvoDashWeb.ReviewLive do
         }
 
     commit_data =
-      case Review.load_commit_files(repo_path, commit_sha) do
+      case EvoDash.NodeContext.load_commit_files(
+             socket.assigns.current_node,
+             repo_path,
+             commit_sha
+           ) do
         {:ok, data} -> data
         _ -> nil
       end

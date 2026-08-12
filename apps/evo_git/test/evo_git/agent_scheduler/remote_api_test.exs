@@ -9,6 +9,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
   use ExUnit.Case, async: false
 
+  alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.RemoteAPI
@@ -674,6 +675,193 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert result.status == :completed
       assert Enum.sort(Map.keys(result)) == [:id, :status, :updated_at]
       assert is_binary(result.updated_at)
+    end
+  end
+
+  # ── get_task/1, set_review_status/2, set_review_metadata/3 ────────
+
+  describe "get_task/1" do
+    test "returns nil for a missing task" do
+      assert RemoteAPI.get_task("missing-#{System.unique_integer([:positive])}") == nil
+    end
+
+    test "returns the %TaskInfo{} for a persisted task" do
+      id = "get-task-#{System.unique_integer([:positive])}"
+      insert_task(id, :running)
+
+      assert %TaskInfo{} = task = RemoteAPI.get_task(id)
+      assert task.id == id
+      assert task.status == :running
+      assert task.type == :genesis
+      assert task.opts == [path: "/tmp/test"]
+    end
+  end
+
+  describe "set_review_status/2" do
+    test "returns :ok and persists review_status on the task" do
+      id = "review-status-#{System.unique_integer([:positive])}"
+      insert_task(id, :completed)
+
+      # The cast is issued from this process and the subsequent get_task call
+      # is ordered after it, so the write is visible without sleeping.
+      assert :ok = RemoteAPI.set_review_status(id, :merged)
+
+      assert %TaskInfo{} = task = RemoteAPI.get_task(id)
+      assert task.review_status == :merged
+    end
+  end
+
+  describe "set_review_metadata/3" do
+    test "returns :ok and persists base_sha and commit_sha on the task" do
+      id = "review-meta-#{System.unique_integer([:positive])}"
+      insert_task(id, :completed)
+
+      assert :ok = RemoteAPI.set_review_metadata(id, "base123", "commit456")
+
+      assert %TaskInfo{} = task = RemoteAPI.get_task(id)
+      assert task.base_sha == "base123"
+      assert task.commit_sha == "commit456"
+    end
+  end
+
+  # ── Review delegates (real temp git repos) ─────────────────────────
+  #
+  # Replicates the repo-building helpers from review_test.exs (which are
+  # private to that module): init + identity config, commit_file,
+  # rename_current_branch. The delegates are thin wrappers over
+  # EvoGit.Review, so the assertions pin pass-through delegation.
+
+  defp review_repo do
+    tmp_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evo_git_remote_api_review_" <> to_string(System.unique_integer())
+      )
+
+    File.mkdir_p!(tmp_dir)
+    {:ok, _} = Git.init(tmp_dir)
+
+    System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+    System.cmd("git", ["config", "user.name", "Test"], cd: tmp_dir)
+
+    on_exit(fn -> File.rm_rf!(tmp_dir) end)
+
+    tmp_dir
+  end
+
+  # Writes a file (creating parent dirs), stages, and commits it. Returns
+  # `{:ok, sha}` for the new HEAD (same shape as review_test.exs).
+  defp commit_file(tmp_dir, path, content, message) do
+    full_path = Path.join(tmp_dir, path)
+    File.mkdir_p!(Path.dirname(full_path))
+    File.write!(full_path, content)
+    {:ok, _} = Git.add(tmp_dir, path)
+    {:ok, _} = Git.commit(tmp_dir, message)
+    Git.rev_parse(tmp_dir, "HEAD")
+  end
+
+  # Renames the current branch to `new_name` (no-op if it already has that
+  # name), so tests don't depend on the machine's `init.defaultBranch`.
+  defp rename_current_branch(tmp_dir, new_name) do
+    case Git.current_branch(tmp_dir) do
+      {:ok, ^new_name} -> :ok
+      {:ok, _other} -> System.cmd("git", ["branch", "-m", new_name], cd: tmp_dir)
+    end
+  end
+
+  describe "review delegates" do
+    test "list_branches/1 and branch_exists?/2 delegate to Review" do
+      tmp_dir = review_repo()
+      {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      System.cmd("git", ["branch", "alpha"], cd: tmp_dir)
+
+      assert {:ok, branches} = RemoteAPI.list_branches(tmp_dir)
+      assert "alpha" in branches
+
+      # branch_exists? is a boolean predicate (Review delegates to
+      # Git.branch_exists?/2), not a {:ok, bool} tuple.
+      assert RemoteAPI.branch_exists?(tmp_dir, "alpha") == true
+      assert RemoteAPI.branch_exists?(tmp_dir, "nope") == false
+    end
+
+    test "default_merge_target/1 resolves main" do
+      tmp_dir = review_repo()
+      {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      assert {:ok, "main"} = RemoteAPI.default_merge_target(tmp_dir)
+    end
+
+    test "load_review_metadata/2 returns the same map as a direct Review call" do
+      tmp_dir = review_repo()
+      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+
+      Git.create_branch(tmp_dir, "feature", base_sha)
+      Git.checkout(tmp_dir, "feature")
+      commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
+      Git.checkout(tmp_dir, base_sha)
+
+      assert {:ok, direct} = EvoGit.Review.load_review_metadata(tmp_dir, "feature")
+      assert {:ok, via_api} = RemoteAPI.load_review_metadata(tmp_dir, "feature")
+      assert via_api == direct
+      assert via_api.changed_files_count == 1
+    end
+
+    test "merge_branch/2 merges into the default target and deletes the branch" do
+      tmp_dir = review_repo()
+      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+      Git.checkout(tmp_dir, "agent_branch")
+      {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
+      Git.checkout(tmp_dir, "main")
+
+      assert {:ok, ^feature_sha} = RemoteAPI.merge_branch(tmp_dir, "agent_branch")
+      assert RemoteAPI.branch_exists?(tmp_dir, "agent_branch") == false
+    end
+
+    test "merge_branch/3 merges into a non-default target branch" do
+      tmp_dir = review_repo()
+      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+      System.cmd("git", ["branch", "dev"], cd: tmp_dir)
+
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+      Git.checkout(tmp_dir, "agent_branch")
+      {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
+      Git.checkout(tmp_dir, "main")
+
+      assert {:ok, ^feature_sha} = RemoteAPI.merge_branch(tmp_dir, "agent_branch", "dev")
+      assert RemoteAPI.branch_exists?(tmp_dir, "agent_branch") == false
+    end
+
+    test "reject_branch/2 deletes the branch" do
+      tmp_dir = review_repo()
+      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+
+      assert :ok = RemoteAPI.reject_branch(tmp_dir, "agent_branch")
+      assert RemoteAPI.branch_exists?(tmp_dir, "agent_branch") == false
+    end
+
+    test "list_commits/2 and load_file_diff/4 delegate to Review" do
+      tmp_dir = review_repo()
+      {:ok, base_sha} = commit_file(tmp_dir, "file.txt", "line1\nline2\n", "Initial commit")
+
+      Git.create_branch(tmp_dir, "feature", base_sha)
+      Git.checkout(tmp_dir, "feature")
+      commit_file(tmp_dir, "file.txt", "line1\nCHANGED\n", "Feature commit")
+      {:ok, feature_tip} = Git.rev_parse(tmp_dir, "feature")
+      Git.checkout(tmp_dir, base_sha)
+
+      assert {:ok, commits} = RemoteAPI.list_commits(tmp_dir, "feature")
+      assert length(commits) == 1
+      assert List.first(commits).message == "Feature commit"
+
+      assert {:ok, diff} = RemoteAPI.load_file_diff(tmp_dir, base_sha, feature_tip, "file.txt")
+      assert String.contains?(diff, "-line2")
+      assert String.contains?(diff, "+CHANGED")
     end
   end
 end

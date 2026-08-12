@@ -19,6 +19,7 @@ defmodule EvoGit.RemoteNodeTest do
 
   use ExUnit.Case, async: true
 
+  alias EvoGit.Adapters.Git
   alias EvoGit.RemoteNode
   alias EvoGit.TaskInfo
 
@@ -215,6 +216,172 @@ defmodule EvoGit.RemoteNodeTest do
     test "local path delegates to File.dir?/1" do
       assert RemoteNode.dir?(node(), System.tmp_dir!()) == true
       assert RemoteNode.dir?(node(), "/definitely/not/a/real/dir") == false
+    end
+  end
+
+  describe "get_task/2" do
+    test "returns nil when the remote node is unreachable" do
+      assert RemoteNode.get_task(@fake_remote, "abc123") == nil
+    end
+
+    test "local path returns nil for a missing task" do
+      assert RemoteNode.get_task(node(), "missing-task") == nil
+    end
+
+    test "local path returns the %TaskInfo{} for a persisted task" do
+      id = "rn-get-task-#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now()
+      }
+
+      on_exit(fn ->
+        EvoGit.Store.delete_tasks(EvoGit.Store, [id])
+      end)
+
+      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+
+      assert %TaskInfo{} = result = RemoteNode.get_task(node(), id)
+      assert result.id == id
+      assert result.status == :running
+      assert result.type == :genesis
+    end
+  end
+
+  describe "set_review_status/3" do
+    test "returns {:error, _} when the remote node is unreachable" do
+      assert {:error, _} = RemoteNode.set_review_status(@fake_remote, "abc123", :merged)
+    end
+
+    test "local path returns :ok and persists review_status" do
+      id = "rn-review-status-#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now()
+      }
+
+      on_exit(fn ->
+        EvoGit.Store.delete_tasks(EvoGit.Store, [id])
+      end)
+
+      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+
+      assert :ok = RemoteNode.set_review_status(node(), id, :merged)
+
+      assert %TaskInfo{} = result = RemoteNode.get_task(node(), id)
+      assert result.review_status == :merged
+    end
+  end
+
+  describe "set_review_metadata/4" do
+    test "returns {:error, _} when the remote node is unreachable" do
+      assert {:error, _} =
+               RemoteNode.set_review_metadata(@fake_remote, "abc123", "base123", "commit456")
+    end
+
+    test "local path returns :ok and persists base_sha/commit_sha" do
+      id = "rn-review-meta-#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: id,
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now()
+      }
+
+      on_exit(fn ->
+        EvoGit.Store.delete_tasks(EvoGit.Store, [id])
+      end)
+
+      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+
+      assert :ok = RemoteNode.set_review_metadata(node(), id, "base123", "commit456")
+
+      assert %TaskInfo{} = result = RemoteNode.get_task(node(), id)
+      assert result.base_sha == "base123"
+      assert result.commit_sha == "commit456"
+    end
+  end
+
+  describe "review wrappers (local-direct)" do
+    # Replicates review_test.exs's repo-building helpers (private to that
+    # module): init + identity config, commit_file, rename_current_branch.
+    # Local-direct wrappers call RemoteAPI → Review, so the Review return
+    # envelopes pass through verbatim.
+    defp review_repo do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_remote_node_review_" <> to_string(System.unique_integer())
+        )
+
+      File.mkdir_p!(tmp_dir)
+      {:ok, _} = Git.init(tmp_dir)
+
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test"], cd: tmp_dir)
+
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+
+      tmp_dir
+    end
+
+    defp commit_file(tmp_dir, path, content, message) do
+      full_path = Path.join(tmp_dir, path)
+      File.mkdir_p!(Path.dirname(full_path))
+      File.write!(full_path, content)
+      {:ok, _} = Git.add(tmp_dir, path)
+      {:ok, _} = Git.commit(tmp_dir, message)
+      Git.rev_parse(tmp_dir, "HEAD")
+    end
+
+    defp rename_current_branch(tmp_dir, new_name) do
+      case Git.current_branch(tmp_dir) do
+        {:ok, ^new_name} -> :ok
+        {:ok, _other} -> System.cmd("git", ["branch", "-m", new_name], cd: tmp_dir)
+      end
+    end
+
+    test "list_branches/2, branch_exists?/3, and default_merge_target/2 delegate through RemoteAPI" do
+      tmp_dir = review_repo()
+      {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+      System.cmd("git", ["branch", "alpha"], cd: tmp_dir)
+
+      assert {:ok, branches} = RemoteNode.list_branches(node(), tmp_dir)
+      assert "alpha" in branches
+
+      # branch_exists? is a boolean predicate (mirrors Review/Git), not a
+      # {:ok, bool} tuple — the envelope passes through verbatim.
+      assert RemoteNode.branch_exists?(node(), tmp_dir, "alpha") == true
+      assert RemoteNode.branch_exists?(node(), tmp_dir, "nope") == false
+
+      assert {:ok, "main"} = RemoteNode.default_merge_target(node(), tmp_dir)
+    end
+
+    test "merge_branch/4 returns {:ok, sha} and deletes the branch" do
+      tmp_dir = review_repo()
+      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+      Git.checkout(tmp_dir, "agent_branch")
+      {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
+      Git.checkout(tmp_dir, "main")
+
+      assert {:ok, ^feature_sha} =
+               RemoteNode.merge_branch(node(), tmp_dir, "agent_branch", "main")
+
+      assert RemoteNode.branch_exists?(node(), tmp_dir, "agent_branch") == false
     end
   end
 

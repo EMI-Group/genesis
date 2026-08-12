@@ -70,8 +70,30 @@ defmodule EvoDashWeb.SettingsLive do
         </div>
       <% end %>
 
-      <%!-- No LLM Model Warning (local only — remote config_status covers this) --%>
-      <%= if is_nil(get_in(@file_config, [:llm, :models])) or Enum.empty?(get_in(@file_config, [:llm, :models]) || []) do %>
+      <%!-- Remote config load error — the remote node's config could not be
+           fetched (node unreachable, RPC failure, ...). Shown INSTEAD of the
+           "No LLM Model Configured" warning below so the user sees the real
+           problem rather than a bogus unconfigured-model message. --%>
+      <%= if @remote_config_error do %>
+        <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
+          <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
+          <div>
+            <h3 class="font-bold text-sm text-error mb-2">{gettext(
+              "Remote Configuration Unavailable"
+            )}</h3>
+            <p class="text-sm font-medium text-error/80 leading-relaxed max-w-3xl">
+              {@remote_config_error}
+            </p>
+          </div>
+        </div>
+      <% end %>
+
+      <%!-- No LLM Model Warning (gated off while a remote config load error is
+           shown — otherwise "No LLM Model Configured" would render on top of
+           the real problem) --%>
+      <%= if @remote_config_error == nil and
+              (is_nil(get_in(@file_config, [:llm, :models])) or
+                 Enum.empty?(get_in(@file_config, [:llm, :models]) || [])) do %>
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
           <div>
@@ -545,6 +567,7 @@ defmodule EvoDashWeb.SettingsLive do
         editing_profile_id: nil,
         test_profile_id: test_profile_id,
         remote_config: false,
+        remote_config_error: nil,
         bootstrap_progress: %{},
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
@@ -1361,21 +1384,40 @@ defmodule EvoDashWeb.SettingsLive do
 
           {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
         else
-          # Remote save — reload the remote scheduler config and re-fetch
+          # Remote save — reload the remote scheduler config and re-fetch the
+          # FULL resolved config (same shape as the local path), so the editor
+          # keeps showing every section after a save.
           EvoDash.NodeContext.reload_remote_config(node)
-          remote_cfg = EvoDash.NodeContext.get_remote_config(node)
-          remote_file_config = remote_config_to_file_config(remote_cfg)
           config_file_exists = File.exists?(socket.assigns.config_path)
 
           socket =
-            socket
-            |> assign(:file_config, remote_file_config)
-            |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
-            |> assign(:config_file_exists, config_file_exists)
-            |> assign(:per_category_errors, %{})
-            |> put_flash(:info, success_msg)
+            case EvoDash.NodeContext.get_resolved_config(node) do
+              {:ok, resolved} ->
+                socket
+                |> assign(:file_config, resolved)
+                |> assign(:remote_config_error, nil)
 
-          {:noreply, socket}
+              {:error, reason} ->
+                # The save itself succeeded (save_user_config returned :ok) —
+                # only the re-fetch failed. Keep the just-saved in-memory
+                # config and surface the fetch failure so the UI does not
+                # silently fall back to a stale/empty config.
+                assign(
+                  socket,
+                  :remote_config_error,
+                  gettext(
+                    "Could not load configuration from the remote node: %{reason} — the node may be unreachable.",
+                    reason: inspect(reason)
+                  )
+                )
+            end
+
+          {:noreply,
+           socket
+           |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
+           |> assign(:config_file_exists, config_file_exists)
+           |> assign(:per_category_errors, %{})
+           |> put_flash(:info, success_msg)}
         end
 
       {:error, reason} ->
@@ -1410,10 +1452,15 @@ defmodule EvoDashWeb.SettingsLive do
   # Loads the config to display based on the current node context.
   #
   # On the local node (`socket.assigns.current_node == node()`), config is loaded
-  # from the local file system. On a remote node, the resolved scheduler config is
-  # fetched via `EvoDash.NodeContext.get_remote_config/1` and displayed — the form
+  # from the local file system. On a remote node, the FULL resolved user config
+  # (defaults + user config merged — the same atom-keyed nested shape
+  # `ConfigIO.load_file_config/0` produces locally) is fetched via
+  # `EvoDash.NodeContext.get_resolved_config/1` and displayed directly — the form
   # is editable and saves go to the REMOTE node's config file (routed via
-  # `EvoDash.NodeContext.save_user_config/2`).
+  # `EvoDash.NodeContext.save_user_config/2`). A fetch failure is surfaced via
+  # `:remote_config_error` instead of silently rendering an empty config (the
+  # old `get_remote_config/1` path returned a flat scheduler subset that never
+  # included `llm.models`, causing a spurious "No LLM Model Configured" box).
   defp load_node_config(socket) do
     if socket.assigns.current_node == node() do
       # Local node — load from disk exactly as mount/1 does.
@@ -1422,20 +1469,35 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:file_config, ConfigIO.load_file_config())
       |> assign(:config_status, config_status())
     else
-      # Remote node — fetch the resolved scheduler config via RPC. This returns
-      # a flat map (e.g. %{default_llm_max_concurrency: 3, llm_model: "...", ...}), which we
-      # surface as a best-effort nested map so the schema-driven cards display them.
-      remote_cfg = EvoDash.NodeContext.get_remote_config(socket.assigns.current_node)
+      # Remote node — fetch the full resolved config via RPC.
+      node = socket.assigns.current_node
 
-      file_config = remote_config_to_file_config(remote_cfg)
+      case EvoDash.NodeContext.get_resolved_config(node) do
+        {:ok, resolved} ->
+          socket
+          |> assign(:remote_config, false)
+          |> assign(:file_config, resolved)
+          |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
+          |> assign(:remote_config_error, nil)
 
-      socket
-      |> assign(:remote_config, false)
-      |> assign(:file_config, file_config)
-      |> assign(
-        :config_status,
-        EvoDash.NodeContext.get_remote_config_status(socket.assigns.current_node)
-      )
+        {:error, reason} ->
+          # Do NOT silently render an empty config — surface the failure so the
+          # user sees the real problem instead of a bogus "No LLM Model
+          # Configured" warning. The config-status assign comes from
+          # get_remote_config_status/1, which degrades to a safe map on RPC
+          # failure (never crashes).
+          socket
+          |> assign(:remote_config, false)
+          |> assign(:file_config, %{})
+          |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
+          |> assign(
+            :remote_config_error,
+            gettext(
+              "Could not load configuration from the remote node: %{reason} — the node may be unreachable.",
+              reason: inspect(reason)
+            )
+          )
+      end
     end
   end
 
@@ -1444,6 +1506,14 @@ defmodule EvoDashWeb.SettingsLive do
   # Only the keys present in the scheduler config are populated; the rest fall
   # back to schema defaults when rendered. This is best-effort display data for
   # the remote config view.
+  #
+  # LEGACY — the load path (load_node_config/1) and the persist path
+  # (persist_file_config/1) now fetch the FULL resolved config via
+  # `EvoDash.NodeContext.get_resolved_config/1` (which includes `llm.models`,
+  # tools, evolution, truncation, nix, ...). This converter remains ONLY for the
+  # remaining remote re-fetch callers that still use the flat scheduler-map
+  # shape: `save_category`/`save_search` (settings_live.ex) and
+  # `SearchEvents.handle_reset_key/2`.
   def remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
     scheduler =
       %{}
