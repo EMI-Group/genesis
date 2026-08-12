@@ -36,7 +36,6 @@ The full design specification is documented across the CONTEXT.md tree.
 | `genesis-desktop.nix` | Nix derivation — builds the Tauri desktop app: first builds the `genesis_desktop` Mix release, then builds the Tauri Rust binary with `rustPlatform.buildRustPackage`, and wraps them together. Called from `flake.nix` as `packages.desktop`. |
 | `README.md` | User-facing documentation: installation, CLI usage, architecture overview |
 | `.formatter.exs` | Code format configuration |
-| `.tool-versions` | Pinned Erlang/OTP 29 and Elixir 1.20.1 (for asdf/mise/CI) |
 | `LICENSE` | Project license |
 
 ### CLI Interface
@@ -175,7 +174,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 - **ARM runner ImageOS fix**: GitHub-hosted ARM partner runners (`ubuntu-24.04-arm`) report `ImageOS` values that `erlef/setup-beam` does not recognize. The workflow sets `ImageOS` to the base value (`ubuntu24`) via `$GITHUB_ENV` before the setup-beam step for the ARM64 target.
 - **Toolchains**: CI requires Elixir/OTP and Rust (Tauri) on all platforms; Linux also needs system packages (webkit2gtk, libayatana-appindicator3-dev for system tray, libdbus-1-dev for tray-icon crate, etc.)
 - **Vendor binaries**: ripgrep and git (or MinGit on Windows) are bundled into `apps/evo_git/priv/vendor/{platform}/` for each target
-- **Version pinning**: `.tool-versions` pins OTP 29 / Elixir 1.20.1
+- **Version pinning**: CI pins the BEAM toolchain via explicit `OTP_VERSION` / `ELIXIR_VERSION` env vars in the workflows (OTP 29, Elixir 1.20.3)
 
 The Tauri Rust shell (`desktop/src-tauri/src/sidecar.rs`) spawns the release launcher script (`bin/genesis_desktop start`) as a child process and handles backend lifecycle with the correct env vars.
 

@@ -33,6 +33,8 @@ evo_git-*.tar
 # Ignore local config files
 *.local.exs
 
+# Local asdf/mise version pin (dev-only, not versioned)
+.tool-versions
 # Local secrets / env (Apple signing, API keys, etc.)
 .env
 .env.*

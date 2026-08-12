@@ -13,7 +13,7 @@
         lib = pkgs.lib;
 
         # ── BEAM toolchain ──────────────────────────────────────────
-        # Erlang/OTP 29 + Elixir 1.20, matching .tool-versions.
+        # Erlang/OTP 29 + Elixir 1.20, matching CI version pins.
         beamPkgs = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_29;
         erlang = beamPkgs.erlang;
         elixir = beamPkgs.elixir_1_20;
