@@ -56,6 +56,7 @@ Notes on specific functions:
 - `list_branches/2` (glob pattern) returns `{:ok, names} | {:error, {tag, output}}` like `list_branches/1`.
 - `get_note/4` returns `{:error, {:no_note, output}}` (missing note) / `{:error, {:invalid_json, note_content}}` (unparseable or non-map JSON) / passes through other `{:error, {tag, output}}` (e.g. `:enoent`).
 - `merge/2`, `merge_no_commit/2`, `merge_octopus/2` all share one private `do_merge/2` → `run/2`; conflict (exit 1) surfaces as `{:error, {:conflict, output}}`, other exits as `{:error, {code, output}}`.
+- **`merge_no_commit/2` has ZERO call sites in lib/test** (git.ex:195 — `git merge --no-commit <sha>`). It is the existing primitive for a "will this merge conflict?" dry-run check, but nothing uses it; after a conflicted `merge/2`, no `merge_abort` helper exists — the adapter leaves the repo mid-merge (MERGE_HEAD + conflicted index) for the caller to resolve. `Review.merge_branch/3` (review.ex) force-restores the original branch via `checkout --force` but never aborts the merge state.
 
 ## Known Issues / Notes for Agents — Windows argv quoting (`-m` vs `-F`)
 
