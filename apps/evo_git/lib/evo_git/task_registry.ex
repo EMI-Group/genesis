@@ -675,9 +675,7 @@ defmodule EvoGit.TaskRegistry do
         :ok
 
       {:error, :disk_full} ->
-        Logger.warning(
-          "TaskRegistry: disk full — recent project #{inspect(path)} not persisted"
-        )
+        Logger.warning("TaskRegistry: disk full — recent project #{inspect(path)} not persisted")
     end
 
     # Enforce max limit
@@ -758,9 +756,7 @@ defmodule EvoGit.TaskRegistry do
       {:error, :disk_full} ->
         # Fire-and-forget delete (cast): swallow + log — the task row simply
         # remains until disk space is freed and a later delete/cleanup retries.
-        Logger.warning(
-          "TaskRegistry: disk full — task #{task_id} could not be deleted"
-        )
+        Logger.warning("TaskRegistry: disk full — task #{task_id} could not be deleted")
     end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
@@ -775,9 +771,7 @@ defmodule EvoGit.TaskRegistry do
         :ok
 
       _status ->
-        case EvoGit.Store.update_task_columns(state.task_store, task_id,
-               review_status: status
-             ) do
+        case EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status) do
           :ok ->
             :ok
 
