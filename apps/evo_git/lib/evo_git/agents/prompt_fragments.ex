@@ -38,7 +38,7 @@ defmodule EvoGit.Agents.PromptFragments do
   @doc """
   Variant A of the worktree-isolation note — full three-sentence form.
 
-  Used by: Executor, ContextExtractor, TaskScheduler, CodebaseInvestigator
+  Used by: Executor, ContextExtractor, TaskScheduler, Investigator
   (each as a standalone paragraph).
   """
   def worktree_isolation_note do
@@ -59,10 +59,10 @@ defmodule EvoGit.Agents.PromptFragments do
 
   Shared sentence tail used by:
   - Manager (end of the "Your assigned directory is your domain." paragraph)
-  - CodebaseLead (end of the "Your two main delegation specialists are …" bullet)
+  - Architect (end of the "Your two main delegation specialists are …" bullet)
 
   NOTE: do NOT merge with `subagent_worktree_tail_own/0` — that variant says
-  "OWN worktree" (no "isolated") and is used only by CodebaseLead.
+  "OWN worktree" (no "isolated") and is used only by Architect.
   """
   def subagent_worktree_tail_isolated do
     "Each subagent runs in its OWN isolated worktree — never include worktree paths or `cd` commands in subagent objectives."
@@ -74,10 +74,10 @@ defmodule EvoGit.Agents.PromptFragments do
   "Investigating child subtrees yourself is rarely the best use of your turns …"
 
   Used by: Manager (inside the "Strongly prefer delegating child subtree
-  investigation." bullet), CodebaseInvestigator (opening of the "# ⚠️ Strongly
+  investigation." bullet), Investigator (opening of the "# ⚠️ Strongly
   Prefer Delegating Child Subtree Investigation" section).
 
-  Deliberately NOT used by CodebaseLead (wording differs: "Investigating or
+  Deliberately NOT used by Architect (wording differs: "Investigating or
   implementing in child subtrees yourself …") or GenesisPlanner ("Investigating
   child subtrees in detail yourself …") — those variants stay inline.
   """
@@ -88,20 +88,20 @@ defmodule EvoGit.Agents.PromptFragments do
   @doc """
   "Occasional targeted reads for quick context are fine, but …"
 
-  Used by: Manager, CodebaseInvestigator, GenesisPlanner (closing sentence of
+  Used by: Manager, Investigator, GenesisPlanner (closing sentence of
   the delegation-guidance paragraphs).
   """
   def delegation_occasional_reads_sentence do
     "Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead."
   end
 
-  # ── Genesis architecture (Manager + CodebaseLead) ───────────────────────────
+  # ── Genesis architecture (Manager + Architect) ───────────────────────────
 
   @doc """
   "# Genesis System Architecture" heading plus the framework-intro opening.
 
   Used by: Manager (continues ". Understanding its design is essential — …"),
-  CodebaseLead (continues " built on two orthogonal dimensions. …").
+  Architect (continues " built on two orthogonal dimensions. …").
   """
   def genesis_architecture_header do
     "# Genesis System Architecture
@@ -113,7 +113,7 @@ Genesis is a recursive software development framework"
   The Context Tree routing-table description clause ("as both documentation …").
 
   Used by: Manager ("…`CONTEXT.md` file that serves " <> clause <> " This is how
-  agents know …"), CodebaseLead ("…`CONTEXT.md` file serving " <> clause <> "
+  agents know …"), Architect ("…`CONTEXT.md` file serving " <> clause <> "
   When you design …").
   """
   def context_tree_routing_table_clause do
@@ -123,7 +123,7 @@ Genesis is a recursive software development framework"
   @doc """
   "Code evolves through a DAG of immutable Git commits."
 
-  Used by: Manager (sentence in the Phylogenetic Graph section), CodebaseLead
+  Used by: Manager (sentence in the Phylogenetic Graph section), Architect
   ("**Temporal Dimension — The Phylogenetic Graph:** " <> sentence <> " …").
   """
   def phylogenetic_graph_sentence do
@@ -134,7 +134,7 @@ Genesis is a recursive software development framework"
   "in the Context Tree (CONTEXT.md files) or the Phylogenetic Graph (Git history)."
 
   Used by: Manager ("…all persistent memory lives either " <> clause),
-  CodebaseLead ("All persistent memory lives " <> clause <> " This means:").
+  Architect ("All persistent memory lives " <> clause <> " This means:").
   """
   def transient_memory_clause do
     "in the Context Tree (CONTEXT.md files) or the Phylogenetic Graph (Git history)."
@@ -143,7 +143,7 @@ Genesis is a recursive software development framework"
   @doc """
   "Every agent at every level has the same fundamental loop: read CONTEXT.md"
 
-  Used by: Manager (continues " routing table "), CodebaseLead (continues " ").
+  Used by: Manager (continues " routing table "), Architect (continues " ").
   Paired with `recursive_loop_tail/0`.
   """
   def recursive_loop_intro do
@@ -153,7 +153,7 @@ Genesis is a recursive software development framework"
   @doc """
   "→ delegate to deepest correct child → validate → complete."
 
-  Used by: Manager, CodebaseLead (completes the fundamental-loop sentence).
+  Used by: Manager, Architect (completes the fundamental-loop sentence).
   Paired with `recursive_loop_intro/0`.
   """
   def recursive_loop_tail do
@@ -165,7 +165,7 @@ Genesis is a recursive software development framework"
   @doc """
   "Routing tables primarily map to child subdirectories, … Authentication test suite). "
 
-  Used by: Manager (continues "When sibling paths appear, …"), CodebaseLead
+  Used by: Manager (continues "When sibling paths appear, …"), Architect
   (continues "When including sibling entries, …").
   """
   def routing_sibling_prefix do
@@ -175,20 +175,20 @@ Genesis is a recursive software development framework"
   @doc """
   "`../tests/auth_tests/` → Authentication test suite (sibling — read-only, escalate writes to parent)"
 
-  Used by: Manager (", like: " <> clause <> "."), CodebaseLead ("…, like: " <>
+  Used by: Manager (", like: " <> clause <> "."), Architect ("…, like: " <>
   clause <> ". Agents can …"), ContextExtractor (list item "- " <> clause).
   """
   def sibling_example_parenthetical do
     "`../tests/auth_tests/` → Authentication test suite (sibling — read-only, escalate writes to parent)"
   end
 
-  # ── Code quality & file structure (Manager + CodebaseLead) ──────────────────
+  # ── Code quality & file structure (Manager + Architect) ──────────────────
 
   @doc """
   "Single Responsibility (each file has one reason to change), … (related code lives together). "
 
   Used by: Manager ("…essential software engineering practices: " <> clause <>
-  "In the Genesis recursive delegation system, …"), CodebaseLead ("…practices — "
+  "In the Genesis recursive delegation system, …"), Architect ("…practices — "
   <> clause <> "In the Genesis system …").
   """
   def solid_principles_sentence do
@@ -199,7 +199,7 @@ Genesis is a recursive software development framework"
   "Some files are long for a good reason — … When you "
 
   Used by: Manager (continues "encounter a file that exceeds …"),
-  CodebaseLead (continues "determine a file is long …"). Paired with
+  Architect (continues "determine a file is long …"). Paired with
   `large_files_remediation/0`.
   """
   def large_files_intro do
@@ -209,7 +209,7 @@ Genesis is a recursive software development framework"
   @doc """
   "leave a short comment at the top of the file … re-investigating whether "
 
-  Used by: Manager (ends "the file should be split."), CodebaseLead (ends
+  Used by: Manager (ends "the file should be split."), Architect (ends
   "it should be split."). Paired with `large_files_intro/0`.
   """
   def large_files_remediation do
@@ -220,7 +220,7 @@ Genesis is a recursive software development framework"
   "the user or project config specifies a particular structure, convention, or file organization,"
 
   Used by: Manager ("…first** — if " <> clause <> " that is always the highest
-  priority."), CodebaseLead ("…ALWAYS the highest priority. If " <> clause <>
+  priority."), Architect ("…ALWAYS the highest priority. If " <> clause <>
   " follow it unconditionally.").
   """
   def user_config_specifies_clause do
@@ -230,19 +230,19 @@ Genesis is a recursive software development framework"
   @doc """
   "file-structure expectations in the objective (e.g., \"keep files under ~1000 lines, extract shared "
 
-  Used by: Manager (ends "helpers to a common module\")."), CodebaseLead (ends
+  Used by: Manager (ends "helpers to a common module\")."), Architect (ends
   "utilities to a common module\").").
   """
   def file_structure_expectations_prefix do
     "file-structure expectations in the objective (e.g., \"keep files under ~1000 lines, extract shared "
   end
 
-  # ── Context Tree definition (CodebaseLead + ContextExtractor) ───────────────
+  # ── Context Tree definition (Architect + ContextExtractor) ───────────────
 
   @doc """
   "spatial, recursive representation of the codebase structure."
 
-  Used by: CodebaseLead ("The Context Tree is the " <> clause), ContextExtractor
+  Used by: Architect ("The Context Tree is the " <> clause), ContextExtractor
   ("The Context Tree is a " <> clause).
   """
   def context_tree_definition_clause do
@@ -252,7 +252,7 @@ Genesis is a recursive software development framework"
   @doc """
   "simple markdown list mapping each area/module/feature to its owning child subdirectory"
 
-  Used by: CodebaseLead ("(2) Routing Table — a " <> clause <> ", so parent
+  Used by: Architect ("(2) Routing Table — a " <> clause <> ", so parent
   agents know …"), ContextExtractor ("**Routing Table** — A " <> clause <>
   ". May also include …").
   """
@@ -263,7 +263,7 @@ Genesis is a recursive software development framework"
   @doc """
   "where to delegate work without investigating the subtree."
 
-  Used by: CodebaseLead ("…so parent agents know " <> clause), ContextExtractor
+  Used by: Architect ("…so parent agents know " <> clause), ContextExtractor
   ("…quickly determine " <> clause <> " Example:").
   """
   def delegate_without_investigating_clause do
@@ -275,8 +275,8 @@ Genesis is a recursive software development framework"
   @doc """
   "standard sections (Intent, API Surface, Constraints, Routing Table)"
 
-  Used by: CodebaseLead ("The " <> clause <> " are required; …"),
-  CodebaseInvestigator ("not only the " <> clause <> " but also:").
+  Used by: Architect ("The " <> clause <> " are required; …"),
+  Investigator ("not only the " <> clause <> " but also:").
 
   NOTE: Manager says "standard four sections (Intent, …)" — that variant stays
   inline in manager.ex.
@@ -288,7 +288,7 @@ Genesis is a recursive software development framework"
   @doc """
   "CONTEXT.md chain from `./` → `./src/` → `./src/auth/` → `./src/auth/oauth/`"
 
-  Used by: Manager ("inherits the full " <> clause), CodebaseLead ("sees the " <>
+  Used by: Manager ("inherits the full " <> clause), Architect ("sees the " <>
   clause <> ". This is why …").
   """
   def context_chain_example do
@@ -315,9 +315,9 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   "CONTEXT.md documents the **current state** of the code — what is TRUE NOW …"
 
   Used by: Manager (standalone paragraph after the "CONTEXT.md is your
-  long-term memory" bullet), CodebaseLead (continuation sentence at the end of
+  long-term memory" bullet), Architect (continuation sentence at the end of
   the "Every directory (node) has a short CONTEXT.md file serving two
-  functions" paragraph), CodebaseInvestigator (continuation of rule 5 "Update
+  functions" paragraph), Investigator (continuation of rule 5 "Update
   missing context"), ContextExtractor (standalone paragraph after the
   Documentation section list, before the Routing Table item).
   """
@@ -325,12 +325,12 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
     "CONTEXT.md documents the **current state** of the code — what is TRUE NOW (intent, API surface, constraints, current known issues, current design decisions) — not a change log. Do NOT record history in CONTEXT.md: no records of past behaviors, no \"was X, now Y\" notes, no \"bug fixed\" or \"FIXED\" annotations, no dated changelog entries. A bug or gotcha that exists NOW may be recorded (e.g. under `## Known Issues`) — but once it is fixed, DELETE the related text outright (use `edit_context` to remove the stale entry); do not annotate it as fixed. To inspect past versions or change history of CONTEXT.md or any file, use git — `git log -p -- <path>` or the `search_history` tool — git history IS the change log, not CONTEXT.md."
   end
 
-  # ── Foreign repositories (CodebaseLead + ContextExtractor) ──────────────────
+  # ── Foreign repositories (Architect + ContextExtractor) ──────────────────
 
   @doc """
   "a foreign repository (an absolute path like `/Source/original-proj`),"
 
-  Used by: CodebaseLead ("When your objective involves " <> clause <> " such as
+  Used by: Architect ("When your objective involves " <> clause <> " such as
   porting an existing codebase:"), ContextExtractor ("…objective references " <>
   clause <> " you can spawn subagents in that repo …").
   """
@@ -341,7 +341,7 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   @doc """
   "- **Spawn at the right level**: When you know the foreign repo's structure"
 
-  Used by: CodebaseLead (continues ", spawn investigators directly at …"),
+  Used by: Architect (continues ", spawn investigators directly at …"),
   ContextExtractor (continues " (from the objective or from previous
   investigation), spawn subagents directly at …").
   """
