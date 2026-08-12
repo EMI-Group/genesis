@@ -5,6 +5,24 @@ defmodule EvoDashWeb.ReviewLiveTest do
   alias EvoGit.TaskRegistry
   alias EvoGit.TaskInfo
 
+  setup do
+    # Test-seam stub (read by EvoDashWeb.ReviewLive.MergeCheck.start/4): the
+    # auto-spawned async merge check resolves to :clean immediately and never
+    # touches the file system, so mounted pages can't perform real git
+    # worktree operations that race ExUnit's temp-repo teardown. Tests that
+    # assert on :checking or inject their own results override this stub with
+    # a blocking runner.
+    Application.put_env(:evo_dash, :merge_check_runner, fn _node, _repo, _branch, _target ->
+      {:ok, :clean}
+    end)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :merge_check_runner)
+    end)
+
+    :ok
+  end
+
   describe "review for non-existent task" do
     test "shows error for non-existent task id", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id")
@@ -373,12 +391,23 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
   describe "async merge check on the review page" do
     # The async dry-run merge check is spawned on mount for mergeable repos.
-    # The check runs `EvoDash.NodeContext.check_merge/4`, whose backend
-    # (`EvoGit.RemoteNode.check_merge/4`) ships in parallel work — the spawned
-    # Task crashes without sending a result, which is harmless. Results are
-    # injected directly via send/2, so the state machine is fully testable.
+    # The runner is stubbed via the :merge_check_runner test seam: the
+    # describe-level blocking runner keeps the status at :checking until the
+    # LiveView dies at test end (the spawned task is linked to the view), so
+    # no auto-generated result can race a manually injected
+    # {:merge_check_result, ...} message. Results are injected directly via
+    # send/2, making the state machine fully deterministic.
     setup do
       {repo_path, task_id, change_sha} = create_review_task_with_repo!("main", "dev")
+
+      # Fully deterministic blocking runner — override the module-level fast
+      # :clean stub so tests that assert on :checking (or inject their own
+      # results) never race an auto-generated result message.
+      Application.put_env(:evo_dash, :merge_check_runner, fn _node, _repo, _branch, _target ->
+        receive do
+          :release_merge_check -> {:ok, :clean}
+        end
+      end)
 
       {:ok, repo_path: repo_path, task_id: task_id, change_sha: change_sha}
     end
@@ -808,10 +837,27 @@ defmodule EvoDashWeb.ReviewLiveTest do
     task_id = seed_review_task!(tmp_dir, String.trim(change_sha))
 
     on_exit(fn ->
-      File.rm_rf!(tmp_dir)
+      rm_rf_retry(tmp_dir)
     end)
 
     {tmp_dir, task_id, String.trim(change_sha)}
+  end
+
+  # Removes a temp repo dir with retries (defense in depth): a spawned merge
+  # check can briefly touch the repo while ExUnit tears it down, which makes
+  # File.rm_rf!/1 raise intermittently. Never raises.
+  defp rm_rf_retry(path, attempts \\ 5) do
+    case File.rm_rf(path) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _, _} when attempts > 1 ->
+        Process.sleep(50)
+        rm_rf_retry(path, attempts - 1)
+
+      other ->
+        other
+    end
   end
 
   # Seeds a completed review task pointing at `repo_path` with the agent

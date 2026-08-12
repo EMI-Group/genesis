@@ -197,10 +197,26 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
   defp start(socket, current_node, repo_path, branch_name, target, task_id) do
     parent = self()
 
+    # Test seam: the check runner is resolved from application env at spawn
+    # time so tests can stub out the real (repo-touching) dry-run check. The
+    # default is the real `EvoDash.NodeContext.check_merge/4`.
+    check_fun =
+      Application.get_env(:evo_dash, :merge_check_runner) ||
+        (&EvoDash.NodeContext.check_merge/4)
+
     socket = assign(socket, :merge_status, %{state: :checking, target: target, files: []})
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = EvoDash.NodeContext.check_merge(current_node, repo_path, branch_name, target)
+      result =
+        try do
+          check_fun.(current_node, repo_path, branch_name, target)
+        rescue
+          # The repo can vanish mid-check (e.g. temp-repo teardown in tests) —
+          # report a failed check instead of crashing silently and leaving the
+          # status stuck at :checking.
+          _ -> {:error, :check_failed}
+        end
+
       send(parent, {:merge_check_result, task_id, current_node, target, result})
     end)
 
