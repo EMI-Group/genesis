@@ -144,4 +144,17 @@ defmodule EvoGit.AgentSchedulerTest do
                {:update_config, [default_llm_max_concurrency: 4]}
              )
   end
+
+  test "get_config map-form includes model_profiles matching the scheduler state" do
+    # The map-form return of :get_config mirrors the key-form accessor for
+    # :model_profiles (the map-form previously omitted it). The setup block
+    # above updates model_profiles to exactly this list, so the map must
+    # reflect it.
+    config = EvoGit.AgentScheduler.get_config()
+
+    assert config.model_profiles == [%{id: "default", model: "test:model", concurrency: 1}]
+
+    assert config.model_profiles ==
+             GenServer.call(EvoGit.AgentScheduler, {:get_config, :model_profiles})
+  end
 end
