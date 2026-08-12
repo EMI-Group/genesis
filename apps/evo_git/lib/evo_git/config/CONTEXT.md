@@ -126,7 +126,7 @@ enabled = false              # Run tool calls inside a cached Nix dev environmen
 flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
 
-**`[sandbox] write_paths` semantics**: `[:sandbox, :write_paths]` is a `:list_of_strings` schema key (default `nil`). Unset/nil means the sandbox backends use their platform-default writable paths; set (including an explicitly empty list) REPLACES the built-in list — `[]` disables those writable paths entirely. The value survives the resolve pipeline (`deep_merge` → `atomize_enum_values` → `Schema.validate`) and any non-list/non-string-list value surfaces as a validation error (never a crash). **Consumed by the sandbox backends** (`EvoGit.Sandbox.Linux.args/4` and `EvoGit.Sandbox.MacOS.generate_profile/2` resolve it via `EvoGit.Config.resolve([:sandbox, :write_paths])`): nil → platform default cache-dir list (byte-identical to legacy behavior); set (incl. `[]`) → replaces the built-in cache-dir list only; `~`-prefixed entries expand to `System.user_home!()`, absolute entries as-is, relative entries joined to `$HOME`. Structural paths (cwd, tmp, nix store, repo `.git`) are always appended regardless; deny lists are never affected. Details in `sandbox/CONTEXT.md`.
+**`[sandbox] write_paths` semantics**: `[:sandbox, :write_paths]` is a `:list_of_strings` schema key (default `nil`). Unset/nil means the sandbox backends use their platform-default writable paths; set (including an explicitly empty list) REPLACES the built-in list — `[]` disables those writable paths entirely. The value survives the resolve pipeline (`deep_merge` → `atomize_enum_values` → `Schema.validate`) and any non-list/non-string-list value surfaces as a validation error (never a crash). **Consumed by the sandbox backends** (`EvoGit.Sandbox.Linux.args/4` and `EvoGit.Sandbox.MacOS.generate_profile/2` resolve it via `EvoGit.Config.resolve([:sandbox, :write_paths])`): nil → platform default cache-dir list; set (incl. `[]`) → replaces the built-in cache-dir list only; `~`-prefixed entries expand to `System.user_home!()`, absolute entries as-is, relative entries joined to `$HOME`. Structural paths (cwd, tmp, nix store, repo `.git`) are always appended regardless; deny lists are never affected. Details in `sandbox/CONTEXT.md`.
 
 ### credentials.toml Structure
 ```toml
@@ -145,7 +145,7 @@ Keys are loaded into ReqLLM's in-process key store on load. Only one key needed 
 `user_config/0` and `credentials/0` cache their **parsed TOML maps** in `:persistent_term`, keyed by file path, storing `{mtime, size, parsed_map}` (private helper `cached_file_read/2`, config.ex ~line 920).
 
 **Design:**
-- Every call runs `File.stat(path)` (cheap). On `{:ok, stat}`: if a cached entry exists with **matching mtime AND size**, the cached map is returned; otherwise the file is read + TOML-decoded, stored with the current stat, and returned. On `{:error, _}` (missing/unreadable): returns `%{}` — same behavior as the old `File.exists?` gate, no warning log.
+- Every call runs `File.stat(path)` (cheap). On `{:ok, stat}`: if a cached entry exists with **matching mtime AND size**, the cached map is returned; otherwise the file is read + TOML-decoded, stored with the current stat, and returned. On `{:error, _}` (missing/unreadable): returns `%{}`, no warning log.
 - **Per-path keys** (`{EvoGit.Config, :file_cache, path}`): tests flipping `XDG_CONFIG_HOME`/`APPDATA` between calls resolve different paths → different keys → no staleness; stale entries for old paths linger harmlessly.
 - **Explicit invalidation**: `save_user_config/1` and `save_credentials/1` erase the entry for their path after a successful `File.write`. (mtime validation would eventually catch the rewrite anyway; the erase covers coarse-mtime filesystems and same-second same-size rewrites.)
 - **External-edit freshness**: any external change to `config.toml`/`credentials.toml` while the app runs is picked up by the mtime+size check on the next call. This is what makes `RemoteAPI.reload_config/0` → `Config.resolve()` observe fresh disk content.
@@ -157,7 +157,7 @@ Keys are loaded into ReqLLM's in-process key store on load. Only one key needed 
 - `defaults/0` — pure, cheap.
 - `read_toml_file/3` itself (`@doc false`) — deliberately NOT cached: `project_config.ex` and `remote_connections.ex` use it for `genesis.toml` / `remote_connections.toml`, which must stay fresh. The cache lives only inside `user_config/0` and `credentials/0`.
 
-**`config_status/0` truthfulness**: unchanged — it still calls `resolve()` + `credentials()` per invocation; the cache only serves already-validated (mtime+size-matched) file content, so missing/warning lists reflect the current on-disk state.
+**`config_status/0` truthfulness**: it calls `resolve()` + `credentials()` per invocation; the cache only serves already-validated (mtime+size-matched) file content, so missing/warning lists reflect the current on-disk state.
 
 **Documented limitation**: a same-second + same-size external rewrite on a filesystem with coarse mtime granularity may be missed (modern ext4/APFS/NTFS have ns granularity, so this is theoretical in practice).
 
