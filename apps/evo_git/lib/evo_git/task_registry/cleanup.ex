@@ -5,6 +5,8 @@ defmodule EvoGit.TaskRegistry.Cleanup do
   Handles expiry of finished tasks based on configurable age and count limits.
   """
 
+  require Logger
+
   @doc """
   Reads the task history configuration from `EvoGit.Config`, merging with
   defaults: `max_tasks: 100`, `max_age_days: 14`.
@@ -34,7 +36,19 @@ defmodule EvoGit.TaskRegistry.Cleanup do
     ids = EvoGit.Store.select_cleanup_info(task_store, cutoff_iso, config.max_tasks)
 
     if ids != [] do
-      EvoGit.Store.delete_tasks(task_store, ids)
+      case EvoGit.Store.delete_tasks(task_store, ids) do
+        :ok ->
+          :ok
+
+        {:error, :disk_full} ->
+          # Disk-full during cleanup: log and continue — never crash the
+          # registry. The expired rows remain and the next periodic_cleanup
+          # (5 min) retries the deletion.
+          Logger.warning(
+            "TaskRegistry.Cleanup: disk full — #{length(ids)} expired tasks could not " <>
+              "be deleted; will retry on next cleanup"
+          )
+      end
     end
 
     :ok

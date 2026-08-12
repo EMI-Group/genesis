@@ -17,6 +17,23 @@ defmodule EvoGit.Store do
   supervisor restarts it with a fresh connection. Data is safe in SQLite WAL
   mode (`journal_mode=WAL`, `synchronous=NORMAL`).
 
+  Two deliberate exceptions to "crash on SQLite failure":
+
+    * **Disk-full writes** — SQLite's disk-full error class (`SQLITE_FULL` 13,
+      `SQLITE_IOERR` 10, `SQLITE_READONLY` 8) is detected at the write boundary
+      (`execute_write/4`) and converted to `{:error, :disk_full}` after logging
+      an actionable warning. The GenServer survives so reads keep working and
+      writes can be retried — a full disk is transient, unlike a corrupt DB.
+      All OTHER write errors still crash via the historical bad match.
+      See `EvoGit.Store.Errors` for the classifier.
+    * **Heavy read offload** — the full-decode read handlers run the query AND
+      the decode on a short-lived linked Task and reply via `GenServer.reply/2`
+      (the connection is mutex-guarded in the NIF, so cross-process use is
+      safe). Large decoded terms are allocated and discarded on the Task's
+      heap, not this GenServer's. The Task is LINKED to this process, so a
+      decode raise still crashes the GenServer exactly like the old inline
+      handler did. The caller's 30s `@call_timeout` still applies.
+
   The codec (`EvoGit.Store.Codec`) uses non-crashing `Jason.encode/1` + `case`
   for TOTAL encode (no try/rescue). Decode functions raise on bad data by
   design — the safe-select helper `decode_skipping_bad/3` below is the
@@ -36,7 +53,7 @@ defmodule EvoGit.Store do
 
   require Logger
 
-  alias EvoGit.Store.{Codec, Queries, Schema}
+  alias EvoGit.Store.{Codec, Errors, Queries, Schema}
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -466,20 +483,18 @@ defmodule EvoGit.Store do
           # bookkeeping, not part of %TaskInfo{}/Codec.task_columns).
           values = Codec.encode_task(task) ++ [Codec.encode_datetime(DateTime.utc_now())]
 
-          {:ok, _} =
-            XqliteNIF.execute(
-              state.conn,
-              """
-              INSERT OR REPLACE INTO tasks
-              (id, type, status, opts, started_at, finished_at, logs,
-               result, review_status, usage, agent_count, base_sha, commit_sha,
-               archive_metadata, lease_expires_at, model_id, project_path, branch_name, updated_at)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
-              """,
-              values
-            )
-
-          :ok
+          execute_write(
+            state.conn,
+            state.data_dir,
+            """
+            INSERT OR REPLACE INTO tasks
+            (id, type, status, opts, started_at, finished_at, logs,
+             result, review_status, usage, agent_count, base_sha, commit_sha,
+             archive_metadata, lease_expires_at, model_id, project_path, branch_name, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+            """,
+            values
+          )
 
         error ->
           error
@@ -501,8 +516,10 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call({:delete_task, task_id}, _from, state) do
-    {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM tasks WHERE id = ?1", [task_id])
-    {:reply, :ok, state}
+    reply =
+      execute_write(state.conn, state.data_dir, "DELETE FROM tasks WHERE id = ?1", [task_id])
+
+    {:reply, reply, state}
   end
 
   @impl true
@@ -510,29 +527,51 @@ defmodule EvoGit.Store do
     # Batch the deletes into chunked `WHERE id IN (...)` statements (chunk size
     # 500, safely under SQLite's 999-parameter limit). This changes partial-crash
     # semantics from "some deleted" to "all-or-nothing per chunk" — an improvement.
-    task_ids
-    |> Enum.chunk_every(500)
-    |> Enum.each(fn chunk ->
-      placeholders =
-        chunk
-        |> Enum.with_index(1)
-        |> Enum.map_join(", ", fn {_, i} -> "?#{i}" end)
+    # On disk-full, deletion stops at the failing chunk (earlier chunks already
+    # committed — partial deletion across chunks is possible) and
+    # {:error, :disk_full} is returned; other errors crash as before.
+    reply =
+      task_ids
+      |> Enum.chunk_every(500)
+      |> Enum.reduce_while(:ok, fn chunk, _acc ->
+        placeholders =
+          chunk
+          |> Enum.with_index(1)
+          |> Enum.map_join(", ", fn {_, i} -> "?#{i}" end)
 
-      {:ok, _} =
-        XqliteNIF.execute(state.conn, "DELETE FROM tasks WHERE id IN (#{placeholders})", chunk)
-    end)
+        case execute_write(
+               state.conn,
+               state.data_dir,
+               "DELETE FROM tasks WHERE id IN (#{placeholders})",
+               chunk
+             ) do
+          :ok -> {:cont, :ok}
+          {:error, :disk_full} = disk_full -> {:halt, disk_full}
+        end
+      end)
 
-    {:reply, :ok, state}
+    {:reply, reply, state}
   end
 
   @impl true
-  def handle_call(:select_all_tasks, _from, state) do
-    reply =
-      case XqliteNIF.query(state.conn, Queries.task_select_sql(), []) do
-        {:ok, %{rows: rows}} -> Enum.map(rows, &Codec.decode_task/1)
-      end
+  def handle_call(:select_all_tasks, from, state) do
+    # Offloaded: the query AND the decode run on a short-lived linked Task so
+    # large decoded terms are allocated and discarded on that process's heap,
+    # not this GenServer's (the known decode-retention hot spot — TaskRegistry
+    # already offloads its side the same way; the decode itself still ran here).
+    # Cross-process xqlite use is safe: the connection resource is
+    # mutex-guarded inside the NIF (deps/xqlite connection.rs) — no owner
+    # constraint. The Task is LINKED to this process, so a decode/query raise
+    # (e.g. the `{:ok, %{rows: rows}}` bad match below on query failure)
+    # crashes the GenServer exactly like the old inline handler did. The
+    # caller's 30s @call_timeout still applies (it times out if the Task is
+    # slower — same as today's slow-NFS behavior).
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, do_select_all_tasks(state.conn))
+      end)
 
-    {:reply, reply, state}
+    {:noreply, state}
   end
 
   @impl true
@@ -542,44 +581,25 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call({:safe_select_paginated_tasks, opts}, _from, state) do
-    filters = Keyword.get(opts, :filters, [])
-    {where_clause, where_params} = Queries.build_where(filters)
-    limit = Queries.clamp_limit(Keyword.get(opts, :limit))
-    offset = Queries.clamp_offset(Keyword.get(opts, :offset))
+  def handle_call({:safe_select_paginated_tasks, opts}, from, state) do
+    # Offloaded (query + decode + reply on a linked short-lived Task): the
+    # decoded task list is the largest term this store produces — it must not
+    # be allocated on this GenServer's heap. See select_all_tasks for the full
+    # rationale (linked Task ⇒ decode raises still crash the Store; the
+    # skip-and-log decode boundary and the `_ -> []` query-failure arms run
+    # inside the Task, preserving their exact behavior).
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, do_safe_select_paginated_tasks(state.conn, opts))
+      end)
 
-    limit_idx = length(where_params) + 1
-    offset_idx = length(where_params) + 2
-
-    select_sql =
-      Queries.task_select_sql() <>
-        where_clause <>
-        " ORDER BY started_at DESC LIMIT ?" <>
-        Integer.to_string(limit_idx) <>
-        " OFFSET ?" <> Integer.to_string(offset_idx)
-
-    select_params = where_params ++ [limit, offset]
-
-    rows =
-      case XqliteNIF.query(state.conn, select_sql, select_params) do
-        {:ok, %{rows: rows}} -> rows
-        _ -> []
-      end
-
-    # Skip-and-log decode boundary (same as safe_select_all_tasks).
-    tasks = decode_skipping_bad(rows, &Codec.decode_task/1, "tasks")
-
-    # COUNT with the SAME WHERE clause so total_count reflects filtered results.
-    count_sql = "SELECT COUNT(*) FROM tasks" <> where_clause
-    {:ok, %{rows: [[total_count]]}} = XqliteNIF.query(state.conn, count_sql, where_params)
-
-    {:reply, {tasks, total_count}, state}
+    {:noreply, state}
   end
 
   @impl true
   def handle_call(:clear_tasks, _from, state) do
-    {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM tasks", [])
-    {:reply, :ok, state}
+    reply = execute_write(state.conn, state.data_dir, "DELETE FROM tasks", [])
+    {:reply, reply, state}
   end
 
   # Lightweight query: reads only the project_path column, returning distinct
@@ -677,14 +697,15 @@ defmodule EvoGit.Store do
   # Lightweight write: updates only the lease_expires_at column.
   @impl true
   def handle_call({:update_lease_expires_at, task_id, expires_at}, _from, state) do
-    {:ok, _} =
-      XqliteNIF.execute(
+    reply =
+      execute_write(
         state.conn,
+        state.data_dir,
         "UPDATE tasks SET lease_expires_at = ?1 WHERE id = ?2",
         [expires_at, task_id]
       )
 
-    {:reply, :ok, state}
+    {:reply, reply, state}
   end
 
   # Lightweight write: updates only the specified columns for a task. Every
@@ -695,14 +716,15 @@ defmodule EvoGit.Store do
     columns = [{:updated_at, DateTime.utc_now()} | columns]
     {set_clauses, values} = Queries.build_update_set(columns, 1)
 
-    {:ok, _} =
-      XqliteNIF.execute(
+    reply =
+      execute_write(
         state.conn,
+        state.data_dir,
         "UPDATE tasks SET #{set_clauses} WHERE id = ?#{length(values) + 1}",
         values ++ [task_id]
       )
 
-    {:reply, :ok, state}
+    {:reply, reply, state}
   end
 
   # Lightweight read: returns only the decoded status atom (or nil).
@@ -810,55 +832,53 @@ defmodule EvoGit.Store do
   # no heavy JSON fields (logs, usage, archive_metadata) are decoded. Status
   # filtering is pushed into SQL when `statuses` is non-empty; the optional
   # `since` filter is pushed into SQL as `updated_at > ?N` (string comparison).
+  #
+  # Offloaded (query + decode + reply on a linked short-lived Task): this is
+  # the dashboard-poll hot path — the decoded summary list must not be
+  # allocated on this GenServer's heap. See select_all_tasks for the full
+  # rationale. The skip-and-log boundary (decode_skipping_bad) and the
+  # `_ -> []` query-failure arm run inside the Task, preserving their exact
+  # behavior.
   @impl true
-  def handle_call({:select_tasks_summary, statuses, since}, _from, state) do
-    {where_clause, where_params} = build_summary_where(statuses, since)
+  def handle_call({:select_tasks_summary, statuses, since}, from, state) do
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, do_select_tasks_summary(state.conn, statuses, since))
+      end)
 
-    reply =
-      case XqliteNIF.query(state.conn, @summary_select_sql <> where_clause, where_params) do
-        {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
-        _ -> []
-      end
-
-    {:reply, reply, state}
+    {:noreply, state}
   end
 
   @impl true
-  def handle_call({:select_tasks_summary_by_path, project_path, statuses, since}, _from, state) do
-    # project_path uses ?1; the optional status filter appends ?2..?N, and the
-    # optional since filter appends after that.
-    {status_clause, status_params} = build_status_clause(statuses, 2)
-    {since_clause, since_params} = build_since_clause(since, 2 + length(status_params))
+  def handle_call({:select_tasks_summary_by_path, project_path, statuses, since}, from, state) do
+    # Offloaded (query + decode + reply on a linked short-lived Task) — same
+    # rationale as select_tasks_summary: the decoded summary list must not be
+    # allocated on this GenServer's heap.
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(
+          from,
+          do_select_tasks_summary_by_path(state.conn, project_path, statuses, since)
+        )
+      end)
 
-    reply =
-      case XqliteNIF.query(
-             state.conn,
-             @summary_select_sql <> " WHERE project_path = ?1" <> status_clause <> since_clause,
-             [project_path] ++ status_params ++ since_params
-           ) do
-        {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
-        _ -> []
-      end
-
-    {:reply, reply, state}
+    {:noreply, state}
   end
 
   # Lightweight query: same 15-column summary projection as above, filtered by
   # `updated_at > ?1` (string comparison — fixed-precision 24-char ISO format
   # sorts chronologically). No heavy JSON fields are decoded.
+  #
+  # Offloaded (query + decode + reply on a linked short-lived Task) — same
+  # rationale as select_tasks_summary.
   @impl true
-  def handle_call({:select_tasks_changed_since, since_iso}, _from, state) do
-    reply =
-      case XqliteNIF.query(
-             state.conn,
-             @summary_select_sql <> " WHERE updated_at > ?1",
-             [since_iso]
-           ) do
-        {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
-        _ -> []
-      end
+  def handle_call({:select_tasks_changed_since, since_iso}, from, state) do
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, do_select_tasks_changed_since(state.conn, since_iso))
+      end)
 
-    {:reply, reply, state}
+    {:noreply, state}
   end
 
   ## GenServer — Project handlers
@@ -870,14 +890,12 @@ defmodule EvoGit.Store do
         :ok ->
           values = Codec.encode_project(project)
 
-          {:ok, _} =
-            XqliteNIF.execute(
-              state.conn,
-              "INSERT OR REPLACE INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
-              values
-            )
-
-          :ok
+          execute_write(
+            state.conn,
+            state.data_dir,
+            "INSERT OR REPLACE INTO projects (path, name, last_opened_at) VALUES (?1, ?2, ?3)",
+            values
+          )
 
         error ->
           error
@@ -899,8 +917,10 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call({:delete_project, path}, _from, state) do
-    {:ok, _} = XqliteNIF.execute(state.conn, "DELETE FROM projects WHERE path = ?1", [path])
-    {:reply, :ok, state}
+    reply =
+      execute_write(state.conn, state.data_dir, "DELETE FROM projects WHERE path = ?1", [path])
+
+    {:reply, reply, state}
   end
 
   @impl true
@@ -928,17 +948,17 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call(:safe_select_all_tasks, _from, state) do
-    col_list = Enum.join(Codec.task_columns(), ", ")
+  def handle_call(:safe_select_all_tasks, from, state) do
+    # Offloaded (query + decode + reply on a linked short-lived Task): full
+    # table decode of every task row is the store's heaviest allocation — it
+    # must not run on this GenServer's heap. See select_all_tasks for the full
+    # rationale (skip-and-log boundary and `_ -> []` arms run inside the Task).
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, do_safe_select_all_tasks(state.conn))
+      end)
 
-    rows =
-      case XqliteNIF.query(state.conn, "SELECT #{col_list} FROM tasks", []) do
-        {:ok, %{rows: rows}} -> rows
-        _ -> []
-      end
-
-    decoded = decode_skipping_bad(rows, &Codec.decode_task/1, "tasks")
-    {:reply, decoded, state}
+    {:noreply, state}
   end
 
   @impl true
@@ -958,6 +978,142 @@ defmodule EvoGit.Store do
   ## GenServer — Periodic memory cleanup
 
   ## Private — Helpers
+
+  # ── Offloaded read bodies ─────────────────────────────────────────────
+  #
+  # These run inside a linked short-lived Task (see the offloaded handle_call
+  # clauses above): they perform the query AND the decode, then reply via
+  # GenServer.reply/2, so large decoded terms are allocated and discarded on
+  # the Task's heap instead of this GenServer's. Bodies are byte-for-byte the
+  # old inline handler logic — the skip-and-log decode boundary
+  # (decode_skipping_bad), the `_ -> []` query-failure arms, and even the
+  # crashing bad matches are preserved verbatim so behavior (including crash
+  # behavior via the Task link) is unchanged.
+
+  defp do_select_all_tasks(conn) do
+    case XqliteNIF.query(conn, Queries.task_select_sql(), []) do
+      {:ok, %{rows: rows}} -> Enum.map(rows, &Codec.decode_task/1)
+    end
+  end
+
+  defp do_safe_select_paginated_tasks(conn, opts) do
+    filters = Keyword.get(opts, :filters, [])
+    {where_clause, where_params} = Queries.build_where(filters)
+    limit = Queries.clamp_limit(Keyword.get(opts, :limit))
+    offset = Queries.clamp_offset(Keyword.get(opts, :offset))
+
+    limit_idx = length(where_params) + 1
+    offset_idx = length(where_params) + 2
+
+    select_sql =
+      Queries.task_select_sql() <>
+        where_clause <>
+        " ORDER BY started_at DESC LIMIT ?" <>
+        Integer.to_string(limit_idx) <>
+        " OFFSET ?" <> Integer.to_string(offset_idx)
+
+    select_params = where_params ++ [limit, offset]
+
+    rows =
+      case XqliteNIF.query(conn, select_sql, select_params) do
+        {:ok, %{rows: rows}} -> rows
+        _ -> []
+      end
+
+    # Skip-and-log decode boundary (same as safe_select_all_tasks).
+    tasks = decode_skipping_bad(rows, &Codec.decode_task/1, "tasks")
+
+    # COUNT with the SAME WHERE clause so total_count reflects filtered results.
+    count_sql = "SELECT COUNT(*) FROM tasks" <> where_clause
+    {:ok, %{rows: [[total_count]]}} = XqliteNIF.query(conn, count_sql, where_params)
+
+    {tasks, total_count}
+  end
+
+  defp do_safe_select_all_tasks(conn) do
+    col_list = Enum.join(Codec.task_columns(), ", ")
+
+    rows =
+      case XqliteNIF.query(conn, "SELECT #{col_list} FROM tasks", []) do
+        {:ok, %{rows: rows}} -> rows
+        _ -> []
+      end
+
+    decode_skipping_bad(rows, &Codec.decode_task/1, "tasks")
+  end
+
+  defp do_select_tasks_summary(conn, statuses, since) do
+    {where_clause, where_params} = build_summary_where(statuses, since)
+
+    case XqliteNIF.query(conn, @summary_select_sql <> where_clause, where_params) do
+      {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
+      _ -> []
+    end
+  end
+
+  defp do_select_tasks_summary_by_path(conn, project_path, statuses, since) do
+    # project_path uses ?1; the optional status filter appends ?2..?N, and the
+    # optional since filter appends after that.
+    {status_clause, status_params} = build_status_clause(statuses, 2)
+    {since_clause, since_params} = build_since_clause(since, 2 + length(status_params))
+
+    case XqliteNIF.query(
+           conn,
+           @summary_select_sql <> " WHERE project_path = ?1" <> status_clause <> since_clause,
+           [project_path] ++ status_params ++ since_params
+         ) do
+      {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
+      _ -> []
+    end
+  end
+
+  defp do_select_tasks_changed_since(conn, since_iso) do
+    case XqliteNIF.query(conn, @summary_select_sql <> " WHERE updated_at > ?1", [since_iso]) do
+      {:ok, %{rows: rows}} -> decode_skipping_bad(rows, &decode_summary_row/1, "tasks")
+      _ -> []
+    end
+  end
+
+  # ── Write boundary ────────────────────────────────────────────────────
+  #
+  # Shared boundary for EVERY SQLite write statement (INSERT/UPDATE/DELETE).
+  # xqlite NIFs RETURN error tuples — they never raise. Disk-full-class errors
+  # (SQLITE_FULL 13, SQLITE_IOERR 10, SQLITE_READONLY 8 — see
+  # EvoGit.Store.Errors) are converted to {:error, :disk_full} after logging
+  # an actionable warning: the GenServer survives, reads keep working, and
+  # subsequent writes can be retried (a full disk is transient). ANY OTHER
+  # write error deliberately falls into the historical `{:ok, _} = ...` bad
+  # match, crashing the GenServer exactly like the old inline code — the error
+  # contract converts ONLY the disk-full class.
+  defp execute_write(conn, data_dir, sql, params) do
+    case XqliteNIF.execute(conn, sql, params) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} = error ->
+        if Errors.disk_full_error?(error) do
+          log_disk_full(data_dir, reason)
+          {:error, :disk_full}
+        else
+          # Historical crash behavior for non-disk-full errors: the old code
+          # was `{:ok, _} = XqliteNIF.execute(...)` — a MatchError that crashed
+          # the GenServer (supervisor restarts with a fresh connection). Do
+          # not convert other error classes. The MatchError is constructed
+          # explicitly (rather than via a real bad match) so the compiler's
+          # type checker does not flag a statically-impossible pattern; the
+          # raised exception is identical to the historical one.
+          raise MatchError, term: error
+        end
+    end
+  end
+
+  defp log_disk_full(data_dir, reason) do
+    Logger.warning(
+      "Store: DISK FULL — SQLite write failed for database at #{data_dir}. " <>
+        "Free disk space on this volume and retry the write. " <>
+        "(xqlite error: #{inspect(reason)})"
+    )
+  end
 
   # Safe-select decode boundary: decodes every row, SKIPPING (and logging) rows
   # that raise instead of crashing the whole select. The decoder raises by
