@@ -18,14 +18,16 @@ defmodule EvoDashWeb.TaskFormComponents do
   network events:
 
     * Layout A (`data-layout="compact"`) — unified objective box: the controls
-      row is the card's last line.
-    * Layout B (`data-layout="expanded"`) — large objective area with an
-      in-flow launch panel below. CSS overflow containment (`overflow: hidden`
-      on `.input-card`) naturally constrains the card to its flex-allocated
-      height; the textarea fills the remaining card space (`flex: 1`), caps at
-      a soft line-based max-height (`calc(1.6em * 32)`), and scrolls internally
-      (`overflow-y: auto`), so the launch panel always stays at the bottom of
-      the viewport regardless of prompt length.
+      row is the card's last line. The compact textarea keeps its own
+      max-height cap (~8 wrapped lines) — load-bearing for the AdaptiveInput
+      hook's flip-to-expanded decision.
+    * Layout B (`data-layout="expanded"`) — the input card fills the available
+      page height (flex column): `.input-card` is `flex: 1; min-height: 0;
+      overflow: hidden`, the textarea is `flex: 1` with internal scrolling
+      (`overflow-y: auto`) and NO max-height cap, and the in-flow
+      `.input-controls` launch panel is pinned at the bottom of the card by
+      flexbox — the card's overflow containment bounds the textarea on any
+      viewport height.
 
   Both layouts share the same control order — mode (order-1) | Launch
   (order-2, centered via mx-auto) | model (order-3); only the textarea size
