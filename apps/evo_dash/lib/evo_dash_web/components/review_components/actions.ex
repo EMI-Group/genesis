@@ -29,7 +29,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <% end %>
         <%= if @branch_exists do %>
           <%= if @merge_targets != [] do %>
-            <form phx-submit="merge" phx-change="merge_target_change" class="contents">
+            <form id="merge-form" phx-submit="merge" phx-change="merge_target_change" class="contents">
               <label class="flex items-center gap-2">
                 <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Merge into")}</span>
                 <select
