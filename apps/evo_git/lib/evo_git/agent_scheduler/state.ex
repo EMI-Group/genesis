@@ -277,12 +277,25 @@ defmodule EvoGit.AgentScheduler.State do
   end
 
   @doc """
-  Returns a list of all model_ids that have pools configured.
-  Falls back to the model_concurrency keys.
+  Returns the union of all model_ids that have pool entries: the configured
+  `model_concurrency` keys plus any live/stale pool entries in the LLM holder,
+  waiting, or backoff maps.
+
+  Stale model ids — e.g. agents whose ETS `model_id` no longer matches a
+  configured profile after a profiles update removed their profile, or agents
+  requesting a model that was never in the profiles — remain visible so the
+  slot sweeps in `EvoGit.AgentScheduler.Slots` can release their holders and
+  grant their queued waiters. Their capacity is `concurrency_for/2`'s fallback
+  (`default_llm_max_concurrency`), which is correct and safe.
   """
   @spec all_model_ids(t()) :: [String.t()]
   def all_model_ids(%__MODULE__{} = state) do
-    Map.keys(state.model_concurrency)
+    state.model_concurrency
+    |> Map.keys()
+    |> Kernel.++(Map.keys(state.llm_holders))
+    |> Kernel.++(Map.keys(state.llm_waiting))
+    |> Kernel.++(Map.keys(state.llm_backoff_until))
+    |> Enum.uniq()
   end
 
   # --- Config Update ---
@@ -299,7 +312,28 @@ defmodule EvoGit.AgentScheduler.State do
     state =
       if Keyword.has_key?(opts, :model_profiles) do
         profiles = Keyword.get(opts, :model_profiles)
-        pool_state = from_model_profiles(profiles)
+        # Pass opts through so a :default_llm_max_concurrency override in the
+        # same update is honored instead of being clobbered by the first
+        # profile's concurrency.
+        pool_state = from_model_profiles(profiles, opts)
+
+        # Preserve LIVE per-model LLM pools from the old state: holders must
+        # stay counted (over-grant prevention) and queued waiters' GenServer
+        # `from` refs must never be dropped (a dropped from = permanently
+        # blocked agent). Old entries win for ids present in both; brand-new
+        # profile ids keep the fresh empty entries; stale pool ids (profiles
+        # removed at runtime) keep their live entries so the slot sweeps can
+        # still release/grant them.
+        pool_state = %__MODULE__{
+          pool_state
+          | llm_holders: Map.merge(pool_state.llm_holders, state.llm_holders),
+            llm_waiting: Map.merge(pool_state.llm_waiting, state.llm_waiting),
+            llm_backoff_until: Map.merge(pool_state.llm_backoff_until, state.llm_backoff_until),
+            llm_last_granted: Map.merge(pool_state.llm_last_granted, state.llm_last_granted)
+        }
+
+        pool_state = prune_empty_pools(pool_state)
+
         # Merge non-LLM fields from the old state
         %__MODULE__{
           pool_state
@@ -330,7 +364,7 @@ defmodule EvoGit.AgentScheduler.State do
     # Apply all field updates
     state =
       state
-      |> maybe_update(:default_llm_max_concurrency, opts)
+      |> maybe_apply_default_llm_concurrency(opts)
       |> maybe_update(:agent_max_retries, opts)
       |> maybe_update(:max_depth, opts)
       |> maybe_update(:llm_model, opts)
@@ -386,5 +420,58 @@ defmodule EvoGit.AgentScheduler.State do
       {:ok, value} -> struct(state, [{key, value}])
       :error -> state
     end
+  end
+
+  @doc """
+  Applies a runtime `default_llm_max_concurrency` override (floor semantics).
+
+  Sets `state.default_llm_max_concurrency` to the new value AND raises every
+  per-model concurrency limit to at least that value: the default acts as a
+  lower bound on ALL live pools, so raising it takes effect immediately for
+  every model — both with and without `[[llm.models]]` profiles. Explicit
+  profile concurrencies above the new default are never lowered (profiles
+  still win when their concurrency is higher).
+
+  Note: this floor applies to runtime `update_config` only. At init, the file
+  semantics remain "profile wins" (`from_model_profiles/2` does not floor).
+  """
+  @spec apply_default_llm_concurrency_override(t(), pos_integer()) :: t()
+  def apply_default_llm_concurrency_override(%__MODULE__{} = state, new_default) do
+    %__MODULE__{
+      state
+      | default_llm_max_concurrency: new_default,
+        model_concurrency:
+          Map.new(state.model_concurrency, fn {id, concurrency} ->
+            {id, max(concurrency, new_default)}
+          end)
+    }
+  end
+
+  defp maybe_apply_default_llm_concurrency(%__MODULE__{} = state, opts) do
+    case Keyword.fetch(opts, :default_llm_max_concurrency) do
+      {:ok, value} -> apply_default_llm_concurrency_override(state, value)
+      :error -> state
+    end
+  end
+
+  # Drops per-model pool entries whose values are empty (empty holder MapSet,
+  # empty waiting queue, nil backoff, empty last_granted map). Safe because
+  # all `holders_for`/`waiting_for`/`backoff_for`/`last_granted_for` accessors
+  # default gracefully, and `all_model_ids/1` keeps configured profile ids
+  # visible via `model_concurrency` even when their pool entries are pruned.
+  defp prune_empty_pools(%__MODULE__{} = state) do
+    %__MODULE__{
+      state
+      | llm_holders:
+          Map.filter(state.llm_holders, fn {_id, holders} -> MapSet.size(holders) > 0 end),
+        llm_waiting:
+          Map.filter(state.llm_waiting, fn {_id, waiting} -> not :queue.is_empty(waiting) end),
+        llm_backoff_until:
+          Map.filter(state.llm_backoff_until, fn {_id, backoff} -> backoff != nil end),
+        llm_last_granted:
+          Map.filter(state.llm_last_granted, fn {_id, last_granted} ->
+            map_size(last_granted) > 0
+          end)
+    }
   end
 end

@@ -130,8 +130,14 @@ defmodule EvoGit.AgentScheduler.Slots do
   @doc """
   Handles an LLM slot release.
 
-  Removes the agent from the per-model holder set and grants pending requests
-  for that model. Returns `{state, status_updates}`.
+  Removes the agent from the holder set of every per-model pool (idempotent —
+  an agent holds at most one LLM slot) and grants pending requests. The model
+  is NOT resolved via ETS: the releasing agent's ETS entry may already be gone
+  (stale `model_id` after a profiles update removed its profile), so a
+  single-pool delete could hit the wrong pool and leak the holder. Scanning
+  all pool ids makes the release race-proof.
+
+  Returns `{state, status_updates}`.
 
   Note: This function is called via `handle_cast`, so it returns a plain
   `{state, status_updates}` tuple rather than the `{:reply, ...}` format
@@ -140,9 +146,23 @@ defmodule EvoGit.AgentScheduler.Slots do
   @spec handle_release_llm_slot(pos_integer(), State.t()) ::
           {State.t(), [{pos_integer(), atom()}]}
   def handle_release_llm_slot(agent_id, %State{} = state) do
-    model_id = resolve_model_id(agent_id, state)
-    holders = State.holders_for(state, model_id)
-    state = State.update_holders(state, model_id, MapSet.delete(holders, agent_id))
+    # Scan ALL pools: the agent's ETS model_id may be stale or absent, so a
+    # resolve-then-delete-from-one-pool would release the wrong pool.
+    state =
+      Enum.reduce(State.all_model_ids(state), state, fn model_id, acc_state ->
+        holders = State.holders_for(acc_state, model_id)
+
+        if MapSet.member?(holders, agent_id) do
+          acc_state =
+            State.update_holders(acc_state, model_id, MapSet.delete(holders, agent_id))
+
+          last_granted = State.last_granted_for(acc_state, model_id)
+          State.update_last_granted(acc_state, model_id, Map.delete(last_granted, agent_id))
+        else
+          acc_state
+        end
+      end)
+
     {state, unblocked} = grant_pending_llm_slots(state)
     {state, unblocked}
   end
