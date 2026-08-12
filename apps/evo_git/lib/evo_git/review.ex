@@ -308,6 +308,44 @@ defmodule EvoGit.Review do
   end
 
   @doc """
+  Checks whether merging `branch_or_sha` into `target_branch` would conflict,
+  without mutating the repository.
+
+  This is a **non-mutating dry-run**: both refs are resolved, and the merge is
+  attempted in a temporary detached worktree under
+  `<repo_path>/.genesis/merge_check_<unique>/` checked out at the target. The
+  main repository's index and HEAD are never touched, and nothing is ever
+  committed — the merge result is simply discarded when the temporary worktree
+  is removed (cleanup always runs, even on failure).
+
+  When both refs resolve to the same commit SHA (the branch is already merged
+  into the target, or the two refs are identical), `{:ok, :clean}` is returned
+  immediately without attempting any merge.
+
+  Returns:
+
+    * `{:ok, :clean}` — the merge would apply without conflicts (or the refs
+      point at the same commit).
+    * `{:ok, {:conflict, files}}` — the merge would conflict; `files` is the
+      list of conflicted file paths.
+    * `{:error, reason}` — a missing/unresolvable ref, a conflicted merge with
+      no detectable conflict files, or any other git failure (`{tag, output}`,
+      per the `EvoGit.Adapters.Git` return contract).
+  """
+  def check_merge(repo_path, branch_or_sha, target_branch) do
+    with {:ok, branch_sha} <- Git.rev_parse(repo_path, branch_or_sha),
+         {:ok, target_sha} <- Git.rev_parse(repo_path, target_branch) do
+      if branch_sha == target_sha do
+        {:ok, :clean}
+      else
+        check_merge_in_worktree(repo_path, branch_sha, target_sha)
+      end
+    else
+      error -> normalize_git_error(error)
+    end
+  end
+
+  @doc """
   Merges the branch's tip commit into `target_branch` and deletes the branch.
 
   Works regardless of the currently checked-out branch: switches to
@@ -455,6 +493,66 @@ defmodule EvoGit.Review do
       {:ok, [first | _]} -> {:ok, first}
       _ -> :none
     end
+  end
+
+  # Performs the actual dry-run merge in a unique temporary detached worktree
+  # under `.genesis/`. The worktree is always removed afterwards (even on
+  # failure) and nothing is ever committed.
+  #
+  # NOTE: `worktree_path` is bound BEFORE the try — variables bound inside a
+  # try body are NOT visible in its `after` block, so binding it inside the
+  # try would make cleanup a no-op.
+  defp check_merge_in_worktree(repo_path, branch_sha, target_sha) do
+    genesis_dir = Path.join(repo_path, ".genesis")
+    File.mkdir_p!(genesis_dir)
+
+    unique = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+    worktree_path = Path.join(genesis_dir, "merge_check_" <> unique)
+
+    try do
+      case Git.add_worktree(repo_path, worktree_path, target_sha) do
+        {:ok, _} ->
+          case Git.merge_no_commit(worktree_path, branch_sha) do
+            {:ok, _} ->
+              {:ok, :clean}
+
+            {:error, {:conflict, merge_output}} ->
+              case Git.conflict_files(worktree_path) do
+                {:ok, files} when files != [] -> {:ok, {:conflict, files}}
+                {:ok, []} -> {:error, {:merge_failed, merge_output}}
+                error -> error
+              end
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    after
+      cleanup_merge_check_worktree(repo_path, worktree_path)
+    end
+  end
+
+  # Removes the temporary merge-check worktree and never raises. If
+  # `git worktree remove --force` fails (e.g. the worktree was never fully
+  # created), falls back to `File.rm_rf/1` followed by `git worktree prune`
+  # (whose result is ignored). A nil/non-binary path is a no-op.
+  defp cleanup_merge_check_worktree(repo_path, worktree_path) do
+    if is_binary(worktree_path) and File.dir?(worktree_path) do
+      case Git.remove_worktree(repo_path, worktree_path) do
+        {:ok, _} ->
+          :ok
+
+        {:error, _} ->
+          File.rm_rf(worktree_path)
+          Git.prune_worktrees(repo_path)
+          :ok
+      end
+    end
+
+    :ok
   end
 
   defp normalize_git_error({:error, {code, output}}), do: {:error, {code, output}}
