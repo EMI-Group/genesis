@@ -23,9 +23,12 @@ defmodule EvoGit.Store.Errors do
   message}`; `SQLITE_FULL` and `SQLITE_IOERR` fall through to the generic
   `{:sqlite_failure, code, extended_code, message | nil}` arm. Both shapes are
   matched here, plus a message-text fallback for the canonical SQLITE_FULL
-  message ("database or disk is full") so synthetic/triggered errors with
-  primary code 1 (e.g. a `RAISE(FAIL, 'database or disk is full')` test
-  trigger) classify correctly.
+  message ("database or disk is full"). The fallback catches errors whose
+  code is not 8/10/13 but whose message is the canonical SQLITE_FULL text —
+  rare in practice: trigger RAISEs do NOT reach it, because SQLite reports
+  them as `SQLITE_CONSTRAINT_TRIGGER` (code 19), which xqlite classifies as
+  `{:error, {:constraint_violation, :constraint_trigger, %{message: ...}}}`,
+  a shape the classifier deliberately does not match.
   """
 
   @doc """
@@ -48,11 +51,13 @@ defmodule EvoGit.Store.Errors do
        do: true
 
   # Message-text fallback: SQLite's canonical SQLITE_FULL message is
-  # "database or disk is full". This also covers synthetic errors raised with
-  # primary code 1 (e.g. a test trigger `RAISE(FAIL, 'database or disk is
-  # full')`), which carry no distinguishing result code. Message reword/
-  # localization downgrades to `false` — graceful (the error crashes the
-  # GenServer as before), never a misclassification into :disk_full.
+  # "database or disk is full". This catches errors whose code is not 8/10/13
+  # but whose message is the canonical text (rare; trigger RAISEs do NOT reach
+  # it — SQLite reports them as SQLITE_CONSTRAINT_TRIGGER code 19, which
+  # xqlite classifies as `{:error, {:constraint_violation, :constraint_trigger,
+  # %{message: ...}}}` and which the classifier deliberately does not match).
+  # Message reword/localization downgrades to `false` — graceful (the error
+  # crashes the GenServer as before), never a misclassification into :disk_full.
   defp disk_full_reason?({:sqlite_failure, _code, _extended_code, message})
        when is_binary(message) do
     String.contains?(String.downcase(message), "database or disk is full")
