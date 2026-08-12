@@ -9,14 +9,14 @@
 // content height would exceed that cap (synchronously, before paint), so the
 // compact box NEVER shows an internal scrollbar while growing — overflow-y:
 // auto on the compact textarea is a safety net only. In expanded layout the
-// box fills the available space (flex: 1 0 auto) but the textarea CAPS at a
-// viewport-derived max-height (min(calc(1.6em * 32), calc(100dvh - 12rem)) in
-// css/app.css "Adaptive Input Layout") and scrolls INTERNALLY, so an
-// extremely long prompt can never push the in-flow launch panel
-// (.input-controls) below the fold. The inline height write below is subject
-// to that CSS cap at render time (CSS max-height wins over the inline
-// height), so the box renders capped and scrolls instead of growing
-// unboundedly.
+// card is naturally constrained to its flex-allocated height by CSS overflow
+// containment (overflow: hidden on .input-layout and .input-card); the
+// textarea fills the remaining card space (flex: 1 1 auto), caps at a soft
+// line-based max-height (calc(1.6em * 32)), and scrolls INTERNALLY, so the
+// launch panel always stays at the bottom of the viewport regardless of
+// prompt length. The inline height write below is subject to that CSS cap at
+// render time (CSS max-height wins over the inline height), so the box
+// renders capped and scrolls instead of growing unboundedly.
 //
 // LAYOUT — the compact/expanded layout decision is CLIENT-DRIVEN: this hook
 // computes `data-layout` on the closest `.input-layout` ancestor from the
@@ -182,27 +182,26 @@ const AdaptiveInput = {
 
     // Read the layout metrics BEFORE neutralizing: the compact max-height cap
     // only resolves to px while the layout is compact (in expanded mode the
-    // computed max-height is the min(calc(1.6em * 32), calc(100dvh - 12rem))
-    // viewport cap, which getComputedStyle resolves to a single px — the
-    // layout-gated guard below keeps it out of the compact-cap cache). The
-    // layout spends most of its life in compact mode while typing, so the
-    // cache is warm; applyLayout's lineHeight * 8 fallback covers a cold
-    // cache. Note Tailwind preflight sets box-sizing: border-box, so the
-    // computed maxHeight is a border-box cap; the textarea border is 0
-    // (border: none), so the neutralized scrollHeight (content + padding)
-    // compares 1:1 with it — scrollHeight > cap fires exactly when the box
-    // would need an internal scrollbar.
+    // computed max-height is the soft line-based cap, calc(1.6em * 32) — see
+    // css/app.css "Adaptive Input Layout"). The layout-gated guard below
+    // keeps it out of the compact-cap cache. The layout spends most of its
+    // life in compact mode while typing, so the cache is warm; applyLayout's
+    // lineHeight * 8 fallback covers a cold cache. Note Tailwind preflight
+    // sets box-sizing: border-box, so the computed maxHeight is a border-box
+    // cap; the textarea border is 0 (border: none), so the neutralized
+    // scrollHeight (content + padding) compares 1:1 with it — scrollHeight >
+    // cap fires exactly when the box would need an internal scrollbar.
     const cs = getComputedStyle(ta);
     const computedMaxHeight = parseFloat(cs.maxHeight);
     // Cache the compact cap ONLY while the layout is compact: in expanded
-    // mode the CSS max-height is the min(calc(1.6em * 32), calc(100dvh -
-    // 12rem)) viewport cap (css/app.css "Adaptive Input Layout"), which
-    // getComputedStyle resolves to a single px — caching it would corrupt
-    // _compactMaxHeight and leak the expanded cap into applyLayout's
-    // hysteresis (a premature flip back to compact with an internal
-    // scrollbar while the content is still far above the 8-line cap). The
-    // lineHeight * 8 fallback in applyLayout covers a cold cache (e.g. the
-    // first measurement in an SSR-seeded expanded state).
+    // mode the CSS max-height is the line-based cap (calc(1.6em * 32) —
+    // see css/app.css "Adaptive Input Layout"), which getComputedStyle
+    // resolves to a single px — caching it would corrupt _compactMaxHeight
+    // and leak the expanded cap into applyLayout's hysteresis (a premature
+    // flip back to compact with an internal scrollbar while the content is
+    // still far above the 8-line cap). The lineHeight * 8 fallback in
+    // applyLayout covers a cold cache (e.g. the first measurement in an
+    // SSR-seeded expanded state).
     if (!Number.isNaN(computedMaxHeight)) {
       const layoutEl = this.el.closest('.input-layout');
       if (!layoutEl || layoutEl.dataset.layout === 'compact') {
@@ -214,14 +213,14 @@ const AdaptiveInput = {
     // Temporarily neutralize flex stretching and min/max-height while
     // measuring: in expanded mode the flex layout stretches the textarea, the
     // CSS min-height would otherwise floor scrollHeight, and the expanded CSS
-    // max-height cap (min(calc(1.6em * 32), calc(100dvh - 12rem)) — see
-    // css/app.css "Adaptive Input Layout") would otherwise CAP scrollHeight —
-    // all three would hide the real content height. Setting max-height: "none"
-    // here means the measurement is ALWAYS the full natural content height;
-    // the inline height write below is then subject to the CSS cap at render
-    // time (CSS max-height wins over the inline height), so in expanded mode
-    // the box renders capped and scrolls internally. (Kept from the
-    // pre-redesign hook; harmless in compact mode.)
+    // max-height cap (calc(1.6em * 32) — see css/app.css "Adaptive Input
+    // Layout") would otherwise CAP scrollHeight — all three would hide the
+    // real content height. Setting max-height: "none" here means the
+    // measurement is ALWAYS the full natural content height; the inline
+    // height write below is then subject to the CSS cap at render time (CSS
+    // max-height wins over the inline height), so in expanded mode the box
+    // renders capped and scrolls internally. (Kept from the pre-redesign
+    // hook; harmless in compact mode.)
     const prevFlex = ta.style.flex;
     const prevMinHeight = ta.style.minHeight;
     const prevMaxHeight = ta.style.maxHeight;
