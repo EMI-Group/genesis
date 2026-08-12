@@ -40,7 +40,7 @@ None — leaf directory (modules: `skills.ex`, `skill.ex`, `executor.ex`, `crud.
 | `execute/4` | Find a skill by name, build positional refs, run its bash block (sandboxed), return output |
 | `extract_bash_block/1` | Extract the first ```bash fenced block from markdown |
 | `build_positional_script/3` | **Injection-safe substitution** — replaces `{{param}}` with `"$N"` refs, returns `{script_with_refs, values}` (values passed as argv, never inlined) |
-| `substitute_params/3` | ⚠️ LEGACY raw `String.replace` — kept byte-for-byte for API/test compatibility, **NOT safe for shell execution** (runtime path does not use it) |
+| `substitute_params/3` | ⚠️ LEGACY raw `String.replace` — retained as-is for API/test compatibility, **NOT safe for shell execution** (runtime path does not use it) |
 | `run_script/3` | Writes script to a `resolve_tmpdir` temp file, executes via `EvoGit.sandbox_run/4` (Unix) or direct `System.cmd` argv (Windows) with values as positional args |
 
 ### CRUD Operations (delegates to `EvoGit.Skills.CRUD`)
@@ -88,10 +88,10 @@ execution path therefore uses a **positional-parameter scheme** instead:
   `System.cmd(bash_path, [tmp_file | values], ...)` on Windows. Both arg-list forms are
   injection-safe: no metacharacter in a value (`;`, backticks, `$(...)`, quotes) can execute,
   and values are echoed literally.
-- The `{{param}}` contract still works for skill scripts: bare tokens (`DEBUG={{debug}}` →
+- The `{{param}}` contract works for skill scripts: bare tokens (`DEBUG={{debug}}` →
   `DEBUG="$1"`), inside double quotes (`echo "{{name}}"` → `echo ""$1""`), and partial-token
   concatenation all resolve correctly.
-- **Caveat**: a placeholder inside SINGLE quotes (`'{{name}}'`) now renders literally (the
+- **Caveat**: a placeholder inside SINGLE quotes (`'{{name}}'`) renders literally (the
   quoted string contains `"$N"` verbatim) — only bare and double-quoted contexts are supported.
 
 ### Sandbox routing
@@ -105,20 +105,20 @@ chmod 0o755, then executed via `EvoGit.sandbox_run(repo_path, "bash", [tmp_file 
 → `{output, exit_code}`. On Linux this yields systemd-run isolation (values arrive as
 positional params through the sandbox's own per-arg shell-escaping wrapper); in test env the
 `Linux.enabled?/0` `@mix_env == :test` gate routes to the disabled plain-bash path, so tests
-stay hermetic. Output formatting is unchanged:
+stay hermetic. Output formatting:
 `"Skill executed successfully:\n#{String.trim(output)}"` (exit 0) /
 `"Skill failed with exit code N:\n#{String.trim(output)}"` (non-zero). The tmp file is removed
-best-effort (`File.rm/1` result ignored). Windows keeps its status quo: bash-not-found error
-branch unchanged, direct `System.cmd(bash_path, [tmp_file | values], ...)` (no sandbox on
-Windows; argv execution is injection-safe).
+best-effort (`File.rm/1` result ignored). Windows: bash-not-found error branch, direct
+`System.cmd(bash_path, [tmp_file | values], ...)` (no sandbox on Windows; argv execution is
+injection-safe).
 
 ### `substitute_params/3` — legacy warning
 
 `substitute_params/3` is a **raw `String.replace`** that inlines values verbatim into the
 script text — LLM-controlled argument values containing shell metacharacters would execute.
-It is **NOT safe for execution** and is no longer used by the runtime path; it is kept
-byte-for-byte for API and test compatibility (pinned by `skills_test.exs`). Its `@doc` carries
-an explicit warning.
+It is **NOT safe for execution** and is not used by the runtime path; it is retained as-is
+for API and test compatibility (pinned by `skills_test.exs`). Its `@doc` carries an explicit
+warning.
 
 ### Security tests
 
@@ -126,9 +126,8 @@ an explicit warning.
 `build_positional_script/3` refs/values/fallbacks, and end-to-end injection resistance through
 the FULL `Executor.execute/4` path (real bash; payloads `; rm -rf <sentinel>; #`, backtick
 `touch <marker>`, `$(touch <marker>)` — sentinel must survive, marker must not be created, and
-the literal payload must appear in the output). The file currently lives in the lib tree
-because the app test tree is outside this node's write scope — it is a normal ExUnit test file
-(`async: false`) awaiting relocation to `apps/evo_git/test/evo_git/`.
+the literal payload must appear in the output). The file lives in the lib tree; it is a
+normal ExUnit test file (`async: false`).
 
 ## Constraints
 
