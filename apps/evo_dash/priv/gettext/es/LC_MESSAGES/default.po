@@ -2705,8 +2705,8 @@ msgstr "Número de llamadas a herramientas de escritura al mismo directorio hijo
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr "Número de llamadas a herramientas de lectura (read_file, rg, glob, list_dir) al mismo directorio hijo antes de que se sugiera al agente delegar la investigación a un subagente. Cuando un agente de alto nivel lee archivos en un directorio hijo esta cantidad de veces, se añade una sugerencia a la salida de la herramienta indicando que cree un subagent_codebase_investigator en esa ruta. Establezca en 0 para deshabilitar las sugerencias de delegación de lectura."
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr "Número de llamadas a herramientas de lectura (read_file, rg, glob, list_dir) al mismo directorio hijo antes de que se sugiera al agente delegar la investigación a un subagente. Cuando un agente de alto nivel lee archivos en un directorio hijo esta cantidad de veces, se añade una sugerencia a la salida de la herramienta indicando que cree un subagent_investigator en esa ruta. Establezca en 0 para deshabilitar las sugerencias de delegación de lectura."
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex

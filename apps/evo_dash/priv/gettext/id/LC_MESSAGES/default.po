@@ -2705,8 +2705,8 @@ msgstr "Jumlah panggilan alat-tulis ke direktori anak yang sama sebelum agen did
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
-msgstr "Jumlah panggilan alat-baca (read_file, rg, glob, list_dir) ke direktori anak yang sama sebelum agen didorong untuk mendelegasikan investigasi ke subagen. Ketika agen tingkat tinggi membaca file di direktori anak sebanyak ini, petunjuk akan ditambahkan ke keluaran alat yang menyarankan untuk memunculkan subagent_codebase_investigator di jalur tersebut. Setel ke 0 untuk menonaktifkan petunjuk delegasi baca."
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
+msgstr "Jumlah panggilan alat-baca (read_file, rg, glob, list_dir) ke direktori anak yang sama sebelum agen didorong untuk mendelegasikan investigasi ke subagen. Ketika agen tingkat tinggi membaca file di direktori anak sebanyak ini, petunjuk akan ditambahkan ke keluaran alat yang menyarankan untuk memunculkan subagent_investigator di jalur tersebut. Setel ke 0 untuk menonaktifkan petunjuk delegasi baca."
 
 #.key_path: scheduler.max_tool_timeout
 #: lib/evo_git/config/schema.ex

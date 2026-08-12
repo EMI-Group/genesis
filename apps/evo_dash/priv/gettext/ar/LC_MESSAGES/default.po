@@ -2725,7 +2725,7 @@ msgstr "عدد استدعاءات أدوات الكتابة لنفس الدلي�
 
 #.key_path: scheduler.read_delegation_hint_threshold
 #: lib/evo_git/config/schema.ex
-msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_codebase_investigator at that path. Set to 0 to disable read delegation hints."
+msgid "Number of read-tool calls (read_file, rg, glob, list_dir) to the same child directory before the agent is nudged to delegate investigation to a subagent. When a high-level agent reads files in a child directory this many times, a hint is appended to the tool output suggesting it spawn a subagent_investigator at that path. Set to 0 to disable read delegation hints."
 msgstr "عدد استدعاءات أدوات القراءة (read_file، rg، glob، list_dir) لنفس الدليل الفرعي قبل أن يُنبّه الوكيل لتفويض التحقيق إلى وكيل فرعي. عندما يقرأ وكيل عالي المستوى ملفات في دليل فرعي بهذا العدد من المرات، يُلحق تلميح بمخرجات الأداة يقترح إنشاء وكيل_فرعي_محقق_قاعدة_الشفرة في ذلك المسار. اضبط القيمة على 0 لتعطيل تلميحات تفويض القراءة."
 
 #.key_path: scheduler.max_tool_timeout

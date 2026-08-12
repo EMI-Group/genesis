@@ -36,7 +36,7 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
   end
 
   # Subagent tool calls (core `subagent_tool_name/0` family: subagent_manager,
-  # subagent_executor, subagent_codebase_investigator, ...) — structured rows.
+  # subagent_executor, subagent_investigator, ...) — structured rows.
   defp do_display(call, name) when is_binary(name) do
     cond do
       String.starts_with?(name, "subagent_") -> display_subagent(call, name)
