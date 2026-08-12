@@ -55,6 +55,8 @@ defmodule EvoGit.Agent.Tools.Context do
           "(may also include sibling paths for cross-references like related test directories), " <>
           "so parent agents know where to delegate work. " <>
           "The context should be simple, concise, and clear. " <>
+          "CONTEXT.md must describe the CURRENT state of the directory — it is NOT a change log, so do not record past behaviors, previously-fixed bugs, or fix annotations there. " <>
+          "When something changes (e.g. a bug is fixed), REMOVE the outdated text rather than appending notes about the change; past versions live in git history (`git log -p -- <dir>/CONTEXT.md` or the search_history tool). " <>
           "Use this to document a directory after analyzing its contents or establishing its design, or update existing context. " <>
           "By default, the tool will create a git commit for the new or updated CONTEXT.md file (only this file), " <>
           "and you should consider committing it as an important part of your workflow to ensure the context is preserved in the repository history.",
@@ -97,6 +99,8 @@ defmodule EvoGit.Agent.Tools.Context do
           "The edit will FAIL if old_string is not unique in the file. " <>
           "Either provide a larger string with more surrounding context to make it unique " <>
           "or use replace_all to change every instance of old_string. " <>
+          "CONTEXT.md must describe the CURRENT state of the directory, not a change log — once a recorded issue is resolved (e.g. a bug is fixed), " <>
+          "use this tool to DELETE the stale entry rather than annotating it; past versions live in git history. " <>
           "By default, the tool will create a git commit for the updated CONTEXT.md file.",
       parameter_schema: %{
         "type" => "object",
