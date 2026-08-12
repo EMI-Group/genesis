@@ -44,6 +44,20 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 5. **Dispatch agent**: Spawns a `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents).
 6. **Post-processing**: Same `merge_and_report/3` pattern — creates `genesis/agent_<hex>` branch, optionally PR.
 
+### `starting_commit` Opt — Evolution Only (Genesis Ignores It)
+
+`TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` (`task_registry/runtime_opts.ex:32-37`) passes `:starting_commit` into runtime opts for BOTH `:genesis` and `:evolve` tasks, and the CLI passes it for evolve (`cli.ex:89`, flag `--starting-commit`, `cli/parser.ex:34`). But **only `Evolution.run/2` reads it** (`evolution.ex:14,23` → `Helpers.resolve_starting_commit/2`, `helpers.ex:167-180`: nil → `PhyloGraphNode.current_head/1`; ref → `Git.rev_parse`, error propagates as phase error). `Genesis.run/2` has no `starting_commit` clause — it always starts from `PhyloGraphNode.current_head(repo_path)` (`genesis.ex:23`), so a `:starting_commit` in genesis opts is silently ignored. `ResumeContext.apply_resume_context/3` (`task_registry/resume_context.ex:43-54`) sets `:starting_commit` to the previous task's `commit_sha` for evolve-resume tasks (context block prepended to the objective, `resume_context.ex:114-119`).
+
+**How the starting commit reaches the agent**: resolved SHA → `PhyloGraphNode.new(repo_path, current_sha)` (`phylo_graph_node.ex:23-24`, both `base_commit` and `current_commit` = the SHA) → `AgentSpec.phylo_node` → `AgentScheduler.run_agent/1` (`agent_scheduler.ex:593-641`) → the worktree is created AT that commit: `Worktrees.create_worktree/6` (`worktrees.ex:96-137`) uses `spec.phylo_node.current_commit` for `CowWorktree.create_worktree` / `Git.add_worktree`, and `assign_and_prepare_worktree/2` (`worktrees.ex:233-259`) rebuilds the worktree-bound phylo node (repo = worktree path) into ETS. The commit SHA is NOT injected into the prompt text — the agent learns its starting point from the worktree contents; `base_commit`/`current_commit` are only in ETS state (and described abstractly in Manager's `system_prompt/0`, `agents/manager.ex:57,63`).
+
+### Genesis Mode B Second Root — Unconditional, No Commit-Based Condition
+
+The second root (`Manager`) spawns only in Mode B after a successful Architect run (`genesis.ex:110-123` → `run_implementation_phase/8`, `genesis.ex:132-217`). There is NO condition on repo non-emptiness or `starting_commit != base` — Mode B itself is gated only by `resolve_mode/2` (`genesis.ex:238-244`: explicit `:mode` opt or `Helpers.new_codebase?/1`, `helpers.ex:113-121`). The Manager's phylo node starts at the architect's final commit (`architect_output.commit_sha || base_sha`, `genesis.ex:143-144`). Both roots share one `task_id` (generated upfront, `genesis.ex:68-72`); the scheduler's cancel guard (`agent_scheduler.ex:597-607`) refuses the second root when the task is cancelling. On implementation-phase failure the architect's output is merged as partial success (`genesis.ex:208-216`).
+
+### No Merge/Conflict in `merge_and_report` — `Task.resolve_conflict/3` Is Dead Code
+
+`merge_and_report/3` (`helpers.ex:11-100`) never merges branches: it only `rev_parse`s HEAD and `Git.create_branch(repo_path, branch_name, final_sha)` (`helpers.ex:24`) — the agent commit is NOT merged into any target branch; PR creation is not done here either. There is therefore no conflict path in the phases. The "special merge task" exists but is dead code: `EvoGit.Task.resolve_conflict/3` (`task.ex:115-190`) git-merges `incoming_sha` into `phylo_node.current_commit` and, on `{:error, {:conflict, _}}`, spawns one `Manager` agent per conflicted file with an inline conflict-resolution prompt (`task.ex:157-165`), then commits. **No caller exists anywhere in `apps/`** (rg-verified). Actual branch merging with conflict reporting lives in `EvoGit.Review.merge_branch/2,3` (dashboard Review flow — returns `{:conflict, details}`).
+
 ### `PullRequest.try_create/4` — Step by Step
 
 1. **Check `gh` CLI available** via `Git.gh_available?/0`.
