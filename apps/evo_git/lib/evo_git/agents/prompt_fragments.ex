@@ -309,6 +309,22 @@ Genesis is a recursive software development framework"
 Genesis models the codebase as a **Context Tree**: a hierarchical tree where every directory node has a `CONTEXT.md`"
   end
 
+  # ── CONTEXT.md describes current state, not history ─────────────────────────
+
+  @doc """
+  "CONTEXT.md documents the **current state** of the code — what is TRUE NOW …"
+
+  Used by: Manager (standalone paragraph after the "CONTEXT.md is your
+  long-term memory" bullet), CodebaseLead (continuation sentence at the end of
+  the "Every directory (node) has a short CONTEXT.md file serving two
+  functions" paragraph), CodebaseInvestigator (continuation of rule 5 "Update
+  missing context"), ContextExtractor (standalone paragraph after the
+  Documentation section list, before the Routing Table item).
+  """
+  def context_current_state_clause do
+    "CONTEXT.md documents the **current state** of the code — what is TRUE NOW (intent, API surface, constraints, current known issues, current design decisions) — not a change log. Do NOT record history in CONTEXT.md: no records of past behaviors, no \"was X, now Y\" notes, no \"bug fixed\" or \"FIXED\" annotations, no dated changelog entries. A bug or gotcha that exists NOW may be recorded (e.g. under `## Known Issues`) — but once it is fixed, DELETE the related text outright (use `edit_context` to remove the stale entry); do not annotate it as fixed. To inspect past versions or change history of CONTEXT.md or any file, use git — `git log -p -- <path>` or the `search_history` tool — git history IS the change log, not CONTEXT.md."
+  end
+
   # ── Foreign repositories (CodebaseLead + ContextExtractor) ──────────────────
 
   @doc """
