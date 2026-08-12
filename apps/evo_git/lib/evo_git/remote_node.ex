@@ -953,6 +953,37 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Checks whether a branch or commit SHA can be merged into an explicit target
+  branch on the given node without conflicts.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.check_merge/3`
+  directly (which delegates to `EvoGit.Review.check_merge/3`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the review
+  operation runs inside the remote VM against the remote filesystem.
+
+  Returns `{:ok, :clean}` on a conflict-free merge,
+  `{:ok, {:conflict, files}}` when the merge would conflict, or
+  `{:error, reason}` on failure. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec check_merge(node(), String.t(), String.t(), String.t()) ::
+          {:ok, :clean} | {:ok, {:conflict, term()}} | {:error, term()}
+  def check_merge(node, repo_path, branch_or_sha, target_branch) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.check_merge(repo_path, branch_or_sha, target_branch)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :check_merge, [
+             repo_path,
+             branch_or_sha,
+             target_branch
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Resolves the default merge target branch for a repository on the given node.
 
   On the local node, calls
