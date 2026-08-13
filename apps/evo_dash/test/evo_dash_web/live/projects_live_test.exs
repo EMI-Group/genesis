@@ -2108,7 +2108,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert_push_event(view, "picker_result:objective_file", %{
         error: true,
-        reason: "File not found: " <> missing
+        reason: "File not found: " <> ^missing
       })
 
       assert render(view) =~ "File not found"
