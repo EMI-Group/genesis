@@ -10,8 +10,6 @@ defmodule EvoGit.Runtime.Helpers do
   """
   def merge_and_report(repo_path, %Result{} = agent_output, phase) when is_binary(phase) do
     final_sha = agent_output.commit_sha
-    result = agent_output.result
-    tag = agent_output.tag
 
     with {:ok, base_sha} <- Git.rev_parse(repo_path) do
       if final_sha && final_sha != base_sha do
@@ -27,18 +25,7 @@ defmodule EvoGit.Runtime.Helpers do
               "#{String.capitalize(phase)}: Created branch '#{branch_name}' at #{binary_part(final_sha, 0, 7)}"
             )
 
-            {:ok,
-             %{
-               commit_sha: final_sha,
-               result: result,
-               tag: tag,
-               branch_name: branch_name,
-               pr_url: nil,
-               pr_title: nil,
-               usage: agent_output.usage,
-               agent_count: agent_output.agent_count,
-               archive_records: agent_output.archive_records
-             }}
+            {:ok, report_map(agent_output, final_sha, branch_name)}
 
           error ->
             Logger.error(
@@ -47,56 +34,38 @@ defmodule EvoGit.Runtime.Helpers do
 
             # Still return success — the agent's work is committed, we just couldn't
             # create a named branch. The commit_sha is still valid.
-            {:ok,
-             %{
-               commit_sha: final_sha,
-               result: result,
-               tag: tag,
-               branch_name: nil,
-               pr_url: nil,
-               pr_title: nil,
-               usage: agent_output.usage,
-               agent_count: agent_output.agent_count,
-               archive_records: agent_output.archive_records
-             }}
+            {:ok, report_map(agent_output, final_sha, nil)}
         end
       else
         Logger.info(
           "#{String.capitalize(phase)}: No changes detected (base and final commit are the same)"
         )
 
-        {:ok,
-         %{
-           commit_sha: final_sha || base_sha,
-           result: result,
-           tag: tag,
-           branch_name: nil,
-           pr_url: nil,
-           pr_title: nil,
-           no_changes: true,
-           usage: agent_output.usage,
-           agent_count: agent_output.agent_count,
-           archive_records: agent_output.archive_records
-         }}
+        {:ok, report_map(agent_output, final_sha || base_sha, nil, true)}
       end
     else
       error ->
         Logger.error("#{String.capitalize(phase)}: Failed to resolve base SHA: #{inspect(error)}")
         # Return the agent's result anyway — the work IS done, we just couldn't
         # do post-processing. Mark commit_sha as the agent's final_sha.
-        {:ok,
-         %{
-           commit_sha: final_sha,
-           result: result,
-           tag: tag,
-           branch_name: nil,
-           pr_url: nil,
-           pr_title: nil,
-           usage: agent_output.usage,
-           agent_count: agent_output.agent_count,
-           archive_records: agent_output.archive_records
-         }}
+        {:ok, report_map(agent_output, final_sha, nil)}
     end
+  end
+
+  defp report_map(agent_output, commit_sha, branch_name, no_changes \\ false) do
+    base = %{
+      commit_sha: commit_sha,
+      result: agent_output.result,
+      tag: agent_output.tag,
+      branch_name: branch_name,
+      pr_url: nil,
+      pr_title: nil,
+      usage: agent_output.usage,
+      agent_count: agent_output.agent_count,
+      archive_records: agent_output.archive_records
+    }
+
+    if no_changes, do: Map.put(base, :no_changes, true), else: base
   end
 
   def notify_finalizing(nil), do: :ok
