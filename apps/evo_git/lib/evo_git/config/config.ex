@@ -354,20 +354,14 @@ defmodule EvoGit.Config do
     # Collect override keys (anything beyond :provider and :id).
     override_keys = Map.keys(atomized) -- [:provider, :id]
 
-    cond do
-      provider != nil and id != nil and override_keys == [] ->
-        # Simple model: format as "provider:id" string (resolved through LLMDB).
-        "#{provider}:#{id}"
-
-      provider != nil and id != nil ->
-        # Model with overrides: keep as atomized map so ReqLLM.model/1's
-        # map clause handles base_url and other overrides correctly.
-        atomized
-
-      true ->
-        # Fallback: return the atomized map as-is (defensive — missing provider
-        # or id; the schema validator will report the error).
-        atomized
+    if provider != nil and id != nil and override_keys == [] do
+      # Simple model: format as "provider:id" string (resolved through LLMDB).
+      "#{provider}:#{id}"
+    else
+      # Model with overrides (keep as atomized map so ReqLLM.model/1's map
+      # clause handles base_url and other overrides correctly) OR a defensive
+      # fallback for missing provider/id (the schema validator reports the error).
+      atomized
     end
   end
 
@@ -487,20 +481,13 @@ defmodule EvoGit.Config do
         with :ok <- File.mkdir_p(dir),
              config = strip_flat_llm_fields(config),
              string_config = stringify_keys(config),
-             {:ok, toml} <- TomlElixir.encode(string_config) do
-          case File.write(path, toml) do
-            :ok ->
-              # Explicit invalidation: the mtime+size check would eventually
-              # catch the rewrite, but erasing now covers coarse-mtime
-              # filesystems and same-second same-size rewrites.
-              invalidate_file_cache(path)
-              :ok
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-        else
-          {:error, reason} -> {:error, reason}
+             {:ok, toml} <- TomlElixir.encode(string_config),
+             :ok <- File.write(path, toml) do
+          # Explicit invalidation: the mtime+size check would eventually
+          # catch the rewrite, but erasing now covers coarse-mtime
+          # filesystems and same-second same-size rewrites.
+          invalidate_file_cache(path)
+          :ok
         end
     end
   end
@@ -621,9 +608,8 @@ defmodule EvoGit.Config do
          has_model =
            Enum.any?(profiles, fn profile ->
              case Map.get(profile, :model) do
-               nil -> false
-               "" -> false
-               _ -> true
+               model when is_binary(model) and model != "" -> true
+               _ -> false
              end
            end)
 
@@ -644,13 +630,14 @@ defmodule EvoGit.Config do
        end}
     ]
 
-    missing = for {key, _msg, check} <- checks, check.(), do: key
-    warnings = for {_key, msg, check} <- checks, check.(), do: msg
+    # Evaluate each check once, collecting {key, message} pairs for failing checks.
+    failing =
+      for {key, msg, check} <- checks, check.(), do: {key, msg}
 
     %{
-      missing: missing,
-      warnings: warnings,
-      ok?: missing == [],
+      missing: Enum.map(failing, &elem(&1, 0)),
+      warnings: Enum.map(failing, &elem(&1, 1)),
+      ok?: failing == [],
       validation_errors: Process.get(:evo_git_config_validation_errors, [])
     }
   end
@@ -755,8 +742,8 @@ defmodule EvoGit.Config do
 
     existing = credentials()
 
-    merged =
-      Map.merge(existing, new_creds, fn _key, _existing_val, new_val -> new_val end)
+    # New credentials override existing ones with the same key.
+    merged = Map.merge(existing, new_creds)
 
     # Set each new key-value pair via ReqLLM for immediate in-process effect.
     # This guarantees the keys are usable in the current session even if

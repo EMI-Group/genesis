@@ -101,9 +101,8 @@ defmodule EvoGit.Adapters.CowWorktree do
            {:changed, Git.diff_name_only(repo_root, source_sha, target_commit)},
          {:target, {:ok, target_files}} <-
            {:target, Git.ls_tree_names(repo_root, target_commit)} do
-      dirty_files = parse_dirty_files(porcelain)
+      dirty_set = parse_dirty_files(porcelain)
       changed_set = MapSet.new(changed_files)
-      dirty_set = dirty_files
       target_set = MapSet.new(target_files)
 
       # Shared files = in target tree, but NOT changed between commits AND NOT dirty in source
@@ -191,35 +190,30 @@ defmodule EvoGit.Adapters.CowWorktree do
   defp populate_worktree(_repo_root, worktree_path, _source_path, target_commit, []) do
     # No shared files to copy — just checkout everything
     Logger.debug("[CowWorktree] No shared files; checkout all from target commit")
-
-    case Git.run(["checkout", target_commit, "--", "."], worktree_path) do
-      {:ok, _} -> :ok
-      error -> Logger.warning("[CowWorktree] checkout failed: #{inspect(error)}"); {:fallback, :checkout_failed}
-    end
+    checkout_target(worktree_path, target_commit)
   end
 
   defp populate_worktree(_repo_root, worktree_path, source_path, target_commit, shared_files) do
     # Step 7: copy shared files from source to worktree
     case copy_shared_files(source_path, worktree_path, shared_files) do
       :ok ->
-        :ok
+        # Step 8: checkout remaining files (git stat+hash-skips already-present files)
+        checkout_target(worktree_path, target_commit)
 
       {:error, code, output} ->
         Logger.warning("[CowWorktree] cp failed (code #{code}): #{output}")
         {:fallback, :cp_failed}
     end
-    |> case do
-      :ok ->
-        # Step 8: checkout remaining files (git stat+hash-skips already-present files)
-        case Git.run(["checkout", target_commit, "--", "."], worktree_path) do
-          {:ok, _} -> :ok
-          error ->
-            Logger.warning("[CowWorktree] checkout failed: #{inspect(error)}")
-            {:fallback, :checkout_failed}
-        end
+  end
 
-      fallback ->
-        fallback
+  # Checkout target commit into the worktree, restoring any files not present
+  # (or differing) from the CoW copy. Returns :ok or {:fallback, :checkout_failed}.
+  defp checkout_target(worktree_path, target_commit) do
+    case Git.run(["checkout", target_commit, "--", "."], worktree_path) do
+      {:ok, _} -> :ok
+      error ->
+        Logger.warning("[CowWorktree] checkout failed: #{inspect(error)}")
+        {:fallback, :checkout_failed}
     end
   end
 

@@ -436,11 +436,9 @@ defmodule EvoGit.Config.Schema do
     id = Map.get(profile, :id) || Map.get(profile, "id")
     model = Map.get(profile, :model) || Map.get(profile, "model")
 
-    errors = []
-
-    errors =
+    id_errors =
       if is_binary(id) and id != "" do
-        errors
+        []
       else
         [
           error(
@@ -449,7 +447,6 @@ defmodule EvoGit.Config.Schema do
             id,
             :string
           )
-          | errors
         ]
       end
 
@@ -461,10 +458,8 @@ defmodule EvoGit.Config.Schema do
         is_binary(model) ->
           []
 
-        is_map(model) ->
-          type_errors(path ++ [:model], :model_spec, model)
-
         true ->
+          # Map or any other type — delegate to model_spec validation.
           type_errors(path ++ [:model], :model_spec, model)
       end
 
@@ -487,7 +482,7 @@ defmodule EvoGit.Config.Schema do
           []
       end
 
-    errors ++ model_errors ++ provider_options_errors
+    id_errors ++ model_errors ++ provider_options_errors
   end
 
   defp validate_model_profile(path, profile) do

@@ -101,11 +101,9 @@ defmodule EvoGit.Adapters.Git do
   def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil)
       when is_binary(repo_path) and is_binary(worktree_path) and is_binary(base_sha) do
     if branch_name && branch_exists?(repo_path, branch_name) do
-      # Branch already exists (previous session crashed) — force-delete and recreate
-      System.cmd(EvoGit.Executable.resolve("git"), ["branch", "-D", branch_name],
-        cd: repo_path,
-        env: EvoGit.GitEnv.git_env(repo_path)
-      )
+      # Branch already exists (previous session crashed) — force-delete and recreate.
+      # Result is intentionally ignored.
+      delete_branch(repo_path, branch_name)
     end
 
     args =

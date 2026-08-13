@@ -333,9 +333,11 @@ defmodule EvoGit.Config.LLMCatalog do
 
     spec =
       case Keyword.get(opts, :base_url) do
-        nil -> spec
-        "" -> spec
-        base_url -> Map.put(spec, :base_url, base_url)
+        base_url when is_binary(base_url) and base_url != "" ->
+          Map.put(spec, :base_url, base_url)
+
+        _ ->
+          spec
       end
 
     case Keyword.get(opts, :extra) do
