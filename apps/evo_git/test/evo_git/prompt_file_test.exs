@@ -75,9 +75,62 @@ defmodule EvoGit.PromptFileTest do
   end
 
   describe "read/1 — .pdf" do
-    test "returns {:error, {:unsupported, \"pdf\"}}" do
-      path = write_tmp!("prompt.pdf", "%PDF-1.4 fake content")
-      assert {:error, {:unsupported, "pdf"}} = PromptFile.read(path)
+    test "multi-page PDF returns page texts with conversion note and page markers" do
+      path = write_tmp!("multi_page.pdf", pdf_binary(["Hello page one", "Hello page two"]))
+
+      assert {:ok, text} = PromptFile.read(path)
+
+      # Conversion note mentioning the file basename
+      assert text =~ "converted from a PDF file"
+      assert text =~ Path.basename(path)
+      assert text =~ "PDF text extraction can be imperfect"
+
+      # Page markers in order, page content present
+      assert text =~ "## Page 1"
+      assert text =~ "## Page 2"
+      assert text =~ "Hello page one"
+      assert text =~ "Hello page two"
+      assert String.split(text, "## Page 1") |> length() == 2
+
+      # Deterministic and trimmed
+      assert text == String.trim(text)
+      assert {:ok, ^text} = PromptFile.read(path)
+    end
+
+    test "single-page PDF content appears under the page 1 marker" do
+      path = write_tmp!("single_page.pdf", pdf_binary(["Only page text"]))
+
+      assert {:ok, text} = PromptFile.read(path)
+      assert text =~ "## Page 1\n\nOnly page text"
+    end
+
+    test "PDF with no extractable text (scanned/image-only) returns {:error, {:empty, _}}" do
+      path = write_tmp!("empty.pdf", pdf_binary([]))
+
+      assert {:error, {:empty, reason}} = PromptFile.read(path)
+      assert reason =~ "OCR"
+    end
+
+    test "file that is not a PDF returns {:error, {:invalid, :not_a_pdf}}" do
+      path = write_tmp!("fake.pdf", "this is definitely not a PDF document")
+      assert {:error, {:invalid, :not_a_pdf}} = PromptFile.read(path)
+    end
+
+    test "truncated PDF is recovered (recover: true) and yields no text" do
+      # Missing xref/objects: the reader's recovery mode tolerates this and
+      # yields an empty document rather than a fatal error.
+      path = write_tmp!("truncated.pdf", "%PDF-1.7\n%%EOF\n")
+      assert {:error, {:empty, _}} = PromptFile.read(path)
+    end
+
+    test "missing .pdf file returns :enoent" do
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "prompt_file_test_missing_#{System.unique_integer([:positive])}.pdf"
+        )
+
+      assert {:error, :enoent} = PromptFile.read(path)
     end
   end
 
@@ -91,13 +144,6 @@ defmodule EvoGit.PromptFileTest do
                "Failed to read file: obj.txt (:eacces)"
     end
 
-    test "unsupported pdf" do
-      msg = PromptFile.describe_error({:unsupported, "pdf"}, "obj.pdf")
-      assert msg =~ "not supported"
-      assert msg =~ "pdftotext"
-      assert msg =~ ".txt/.docx"
-    end
-
     test "invalid docx" do
       assert PromptFile.describe_error({:invalid, "missing word/document.xml"}, "obj.docx") ==
                "Invalid .docx file: missing word/document.xml"
@@ -107,9 +153,55 @@ defmodule EvoGit.PromptFileTest do
       assert PromptFile.describe_error({:empty, "no text runs found"}, "obj.docx") ==
                "No text found in .docx file: no text runs found"
     end
+
+    test "invalid pdf — not a pdf" do
+      msg = PromptFile.describe_error({:invalid, :not_a_pdf}, "obj.pdf")
+      assert msg == "Invalid .pdf file: not a valid PDF (file does not contain PDF data)"
+    end
+
+    test "invalid pdf — encrypted without password" do
+      msg = PromptFile.describe_error({:invalid, :encrypted_password_required}, "obj.pdf")
+      assert msg =~ "Invalid .pdf file:"
+      assert msg =~ "password-protected"
+    end
+
+    test "empty pdf" do
+      reason = "no extractable text found — scanned or image-only PDFs are not supported (no OCR)"
+      msg = PromptFile.describe_error({:empty, reason}, "obj.pdf")
+      assert msg == "No text found in .pdf file: #{reason}"
+      assert msg =~ "OCR"
+    end
+
+    test "bare posix atom from pdf path" do
+      assert PromptFile.describe_error(:enoent, "obj.pdf") == "File not found: obj.pdf"
+    end
   end
 
   ## Helpers
+
+  # Builds a real PDF binary with one page per text (pure-BEAM writer).
+  # An empty list yields a single blank page (no text) — simulates an
+  # image-only/scanned PDF.
+  defp pdf_binary([]), do: Pdf.build([], & &1) |> Pdf.export()
+
+  defp pdf_binary(page_texts) do
+    pdf =
+      Pdf.build([], fn pdf ->
+        pdf
+        |> Pdf.set_font("Helvetica", 12)
+        |> Pdf.text_at({72, 700}, hd(page_texts))
+      end)
+
+    pdf =
+      Enum.reduce(tl(page_texts), pdf, fn text, doc ->
+        doc
+        |> Pdf.add_page(:a4)
+        |> Pdf.set_font("Helvetica", 12)
+        |> Pdf.text_at({72, 700}, text)
+      end)
+
+    Pdf.export(pdf)
+  end
 
   defp docx_zip(xml, entry_name \\ ~c"word/document.xml") do
     {:ok, {_, zip}} = :zip.create(~c"docx.zip", [{entry_name, xml}], [:memory])
