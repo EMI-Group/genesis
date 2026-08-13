@@ -82,6 +82,13 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - `mix compile` — compile and check for errors
 - `mix bump.version <new-version>` — bump the project version from the single source of truth (`VERSION`) and sync it to the Tauri/Cargo desktop manifests in one step
 
+### Internationalization (i18n) Development Policy
+
+The web dashboard (`:evo_dash`) is internationalized with Gettext — all user-facing strings in LiveViews, components, helpers, and templates are wrapped with `gettext/1,2`. The CLI / `:evo_git` core is deliberately NOT internationalized (English-only). **During development, agents do NOT need to care about PO files or translations:**
+- **Never** run `mix gettext.extract`, `mix gettext.merge`, or `mix translate` during feature work. The POT/PO files and all translations are maintained centrally and updated at release time — every release runs the translation pipeline once, translating all untranslated texts in a single run (`mix gettext.extract` → `mix gettext.merge` → `mix translate apps/evo_dash/priv/gettext/default.pot all`; AI-powered via `deepseek-v4-flash`).
+- Just keep developing normally and write `gettext`-wrapped strings. When a string's meaning needs anchoring for the release-time AI translator (ambiguous short labels, domain jargon, etc.), write a **Chinese comment** next to the `gettext` call explaining the intended meaning — that is the ONLY i18n-related work expected during development.
+- Full details: `apps/evo_dash/CONTEXT.md` → "Internationalization (i18n)".
+
 ### Versioning
 
 The project version has a **single source of truth**: the root `VERSION` file. The three umbrella `mix.exs` files (`./mix.exs`, `apps/evo_git/mix.exs`, `apps/evo_dash/mix.exs`) all read the version dynamically from `VERSION` via a shared `version/0` helper. The desktop manifests (`desktop/src-tauri/tauri.conf.json` and `Cargo.toml`) carry a literal copy that must stay in sync.
