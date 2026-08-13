@@ -15,7 +15,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 
 | File | Purpose |
 |------|---------|
-| `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns the Elixir release, opens window, intercepts close-to-tray, starts the backend watchdog |
+| `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window · separator · Quit Genesis menu), spawns the Elixir release, opens window, intercepts close-to-tray, starts the backend watchdog |
 | `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), shared `spawn(launcher, env)` (the ONLY GUI launcher spawn path, always via `launcher_command`), one-shot `probe_http`, readiness polling, shutdown |
 | `src/backend_watchdog.rs` | Backend crash watchdog: monitors the child process, restarts it with backoff on unexpected exit, shows an error page in the WebView while down, reloads the dashboard on recovery (`RestartPolicy`, `classify_exit`, `tcp_accepting`, `percent_encode`/`error_page_data_url`, `BackendManager`) |
 | `src/sidecar_path.rs` | Shared launcher-path resolution (`resolve_launcher/2`) — first existing candidate wins, descriptive error listing all candidates when none exist; used by both GUI (`sidecar.rs`) and headless (`main.rs`) modes; contains the unit tests |
@@ -49,10 +49,13 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 
 ## System Tray Behavior
 
+The tray menu is **Show Window**, a **separator** (`PredefinedMenuItem::separator`), then **Quit Genesis**. The separator visually and spatially isolates the destructive "Quit Genesis" item so a misclick on the benign "Show Window" can't land on Quit. "Show Window" is kept as the topmost item: on Linux (where left-click only opens the menu — see below), a quick left-click + top-entry press is the natural flow.
+
 - **Close window** → `WindowEvent::CloseRequested` is intercepted (`api.prevent_close()` + `window.hide()`); the window is hidden to the tray and the backend keeps running.
 - **Tray menu "Show Window"** → `window.show()` + `window.set_focus()`
-- **Tray menu "Quit"** → `BackendManager::kill_for_quit()` (sets the `intentional_shutdown` flag BEFORE taking and killing the child, so the backend watchdog never restarts after a quit began — double-kill guard), then `app.exit(0)`
-- **Left-click tray icon** → shows and focuses the main window via `.on_tray_icon_event` (matches `Click { Left, Up }`) combined with `.show_menu_on_left_click(false)`. The flag is required on macOS: with a menu attached, the default left-click opens the menu on mouse-down and swallows the `Click(Left, Up)` event, so the window never pops; with the flag set, left-click emits the event (menu stays on right-click).
+- **Tray menu "Quit Genesis"** → `BackendManager::kill_for_quit()` (sets the `intentional_shutdown` flag BEFORE taking and killing the child, so the backend watchdog never restarts after a quit began — double-kill guard), then `app.exit(0)`
+- **Left-click tray icon** → shows and focuses the main window via `.on_tray_icon_event` (matches `Click { Left, Up }`) combined with `.show_menu_on_left_click(false)`. **Windows + macOS only.** The flag is required on macOS: with a menu attached, the default left-click opens the menu on mouse-down and swallows the `Click(Left, Up)` event, so the window never pops; with the flag set, left-click emits the event (menu stays on right-click).
+- **Linux limitation** — the `tray-icon` crate (v0.24.1) uses libappindicator on Linux, which NEVER emits `TrayIconEvent::Click` (upstream: tauri-apps/tray-icon#104, maintainer says it's an unfixable libappindicator limitation, slated for the v3 rewrite). So the `.on_tray_icon_event` left-click handler is a no-op on Linux — a left-click there simply opens the context menu. This is why "Show Window" is the topmost item (with a separator guarding "Quit Genesis" below it): on Linux the user does left-click → top menu entry, and the separator makes misclicking Quit unlikely.
 
 ## Native Directory Picker (Elixir backend)
 
