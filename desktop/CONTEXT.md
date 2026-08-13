@@ -15,7 +15,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 
 | File | Purpose |
 |------|---------|
-| `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window / Quit menu), spawns backend, opens window, intercepts close-to-tray |
+| `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window · separator · Quit Genesis menu), spawns backend, opens window, intercepts close-to-tray |
 | `src-tauri/src/sidecar.rs` | Backend lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
 | `src-tauri/Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
 | `src-tauri/tauri.conf.json` | Tauri config: window settings, trayIcon config, resource bundle reference, bundle metadata |
@@ -26,7 +26,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 
 - **No log files — console only**: Neither the Rust shell nor the sidecar writes any log file. The Elixir backend's stdout/stderr are drained and re-printed by `sidecar.rs` to the desktop process's own stdout/stderr with a `[backend] ` prefix (piped → `println!`/`eprintln!`); in `--headless` mode they are inherited directly (`Stdio::inherit`). So logs are only visible when the app is launched from a terminal. No `--log` flags, no app-data log dir, no logging env vars are passed to the backend (sidecar env is only PORT/PHX_IP/PHX_SERVER/SECRET_KEY_BASE/RELEASE_DISTRIBUTION/EVOGIT_DESKTOP).
 - Tauri v2 (not v1) — API and config schema differ significantly. Pinned in `Cargo.lock`: `tauri` 2.11.3, `tauri-build` 2.x. The `"tray-icon"` Cargo feature **is** enabled alongside `"devtools"`.
-- **System tray support**: closing the window hides it to the tray (via `WindowEvent::CloseRequested` → `api.prevent_close()` + `window.hide()`). The tray icon has "Show Window" and "Quit" menu items; left-clicking the tray icon also shows the window. "Quit" kills the backend process and exits.
+- **System tray support**: closing the window hides it to the tray (via `WindowEvent::CloseRequested` → `api.prevent_close()` + `window.hide()`). The tray menu is "Show Window", a separator, then "Quit Genesis" — the separator visually isolates the destructive Quit action to reduce accidental misclicks. Left-clicking the tray icon shows the window on Windows + macOS (no menu navigation needed). On Linux this left-click handler is a no-op (libappindicator limitation — `TrayIconEvent::Click` is never emitted, so left-click only opens the menu); the separator + topmost "Show Window" item mitigates this. "Quit Genesis" kills the backend process and exits.
 - **Configurable binding address**: the backend binds to `127.0.0.1` (localhost) by default. Set `EVOGIT_BIND=0.0.0.0` before launching for remote access. The `PORT` env var (default 9999) controls the backend port. The WebView always connects via `localhost` regardless of bind address.
 - The desktop shell contains NO Elixir code — only Rust
 - **No native directory picker in Tauri**: the dashboard's Browse buttons use a picker implemented on the Elixir backend via Erlang `:wx` (`EvoDash.DirectoryPicker`, LiveView `directory_pick` event → `picker_result:<picker_id>` push — see root `CONTEXT.md` → "Native Directory Picker (wx backend)"). There is NO Tauri `pick_directory` command (`src-tauri/src/commands.rs` does not exist) and no `tauri-plugin-dialog` dependency — the Tauri dialog path is unreliable (the Windows invoke fails after picking; the macOS NSOpenPanel does not present when the app is inactive/hidden to tray).
@@ -51,14 +51,14 @@ This is the native application layer — it contains NO Elixir code. The actual 
 └─────────────────────┘
 ```
 
-Tauri launches the Phoenix app as a child process via the mix release launcher script (`bin/genesis_desktop start`). The WebView connects to Phoenix over HTTP to render the LiveView UI. Closing the window hides it to the system tray — the backend keeps running. The user fully exits via the tray's "Quit" menu item.
+Tauri launches the Phoenix app as a child process via the mix release launcher script (`bin/genesis_desktop start`). The WebView connects to Phoenix over HTTP to render the LiveView UI. Closing the window hides it to the system tray — the backend keeps running. The user fully exits via the tray's "Quit Genesis" menu item.
 
 ## Sidecar Lifecycle
 
 1. Tauri spawns the Elixir release launcher (`bin/genesis_desktop start`) with env vars: `PORT=9999`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1` — always via `sidecar::spawn` → `launcher_command` (Windows `CREATE_NO_WINDOW`), the only GUI spawn path (initial boot AND every watchdog restart)
 2. Tauri polls `http://localhost:9999` until the backend responds (up to 30s)
 3. The WebView window opens, pointing to `http://localhost:9999`
-4. Closing the window hides it to the system tray (backend keeps running); the "Quit" tray menu item kills the backend process and exits
+4. Closing the window hides it to the system tray (backend keeps running); the "Quit Genesis" tray menu item (below a separator) kills the backend process and exits
 5. **A backend crash watchdog runs for the app's lifetime** (`src-tauri/src/backend_watchdog.rs`): it monitors the child process, and on an unexpected exit shows a `data:`-URL error page in the WebView ("backend unavailable — will be restarted automatically" + Retry button), restarts the backend with capped exponential backoff (1s→30s; after 8 consecutive failures it retries every 30s indefinitely — no dead state; success resets the sequence), and once the backend serves again (TCP accepting + HTTP probe) navigates the WebView back to the dashboard (full reload). Tray Quit is the ONLY intentional kill path — `BackendManager::kill_for_quit()` sets an `intentional_shutdown` flag BEFORE killing, and the watchdog never restarts after a quit began. Full design in `src-tauri/CONTEXT.md` → "Backend Crash Watchdog".
 
 ## Single-Instance Detection

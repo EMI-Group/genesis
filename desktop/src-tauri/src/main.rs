@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
@@ -236,10 +236,15 @@ fn run_gui() {
             let watchdog_manager = manager.clone();
             std::thread::spawn(move || watchdog_manager.run_watchdog(app_handle));
 
-            // 4. Build the system tray menu with "Show Window" and "Quit" items.
+            // 4. Build the system tray menu. "Show Window" is the primary,
+            //    benign action (placed first so it's the natural target for a
+            //    quick left-click + top-entry press). A separator visually and
+            //    spatially isolates the destructive "Quit" item so a misclick
+            //    on the benign action can't land on "Quit".
             let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Genesis", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &separator, &quit_item])?;
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -268,6 +273,18 @@ fn run_gui() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
+                    // On Windows and macOS a left-click on the tray icon emits
+                    // a `TrayIconEvent::Click { Left, Up }`, which we use to
+                    // show the window directly (one click, no menu navigation).
+                    //
+                    // Linux limitation: the underlying `tray-icon` crate uses
+                    // libappindicator on Linux, which NEVER emits click events
+                    // (upstream: tauri-apps/tray-icon#104). So this handler is
+                    // a no-op on Linux — a left-click there simply opens the
+                    // context menu instead. That is why "Show Window" is kept
+                    // as the topmost menu item (with a separator above "Quit"):
+                    // on Linux, left-click → top entry is the natural flow, and
+                    // the separator guards against misclicking "Quit".
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
