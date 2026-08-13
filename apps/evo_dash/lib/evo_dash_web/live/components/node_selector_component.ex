@@ -44,7 +44,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             ]}
             phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
           >
-            <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
+            <span class={dot_color_class(nil, @connection_statuses)}></span>
             <span class="flex-1 text-left">{gettext("Local")}</span>
             <.icon :if={is_nil(@current_node_id)} name="hero-check-solid" class="size-4 text-indigo-500 shrink-0" />
           </button>
@@ -66,7 +66,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             ]}
             phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
           >
-            <span class={["w-2 h-2 rounded-full shrink-0", target_dot_color(target.id, @connection_statuses)]}></span>
+            <span class={dot_color_class(target.id, @connection_statuses)}></span>
             <span class="flex-1 text-left">
               <span class="block">{target.name}</span>
               <span class="block text-xs text-base-content/50">
@@ -79,7 +79,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
           <div class="my-1 border-t border-base-200"></div>
 
           <.link
-            navigate={~p"/settings?category=remote_connections#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"}
+            navigate={~p"/settings?category=remote_connections" <> (if @current_node_id, do: "&node=#{@current_node_id}", else: "")}
             class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
           >
             <.icon name="hero-server-stack" class="size-4 shrink-0" />
@@ -132,15 +132,19 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   # ── View helpers ──────────────────────────────────────────────────
 
+  # Single shared dot renderer for the trigger AND the dropdown items: always
+  # returns the full shape classes plus the phase-appropriate color, so the
+  # trigger dot is never reduced to a color-only (invisible) span.
   defp dot_color_class(current_node_id, _statuses) when is_nil(current_node_id) do
-    "w-2 h-2 rounded-full bg-emerald-500"
+    "w-2 h-2 rounded-full bg-emerald-500 shrink-0"
   end
 
   defp dot_color_class(current_node_id, statuses) do
-    target_dot_color(current_node_id, statuses)
+    "w-2 h-2 rounded-full shrink-0 " <> target_dot_color(current_node_id, statuses)
   end
 
-  # Returns the Tailwind class for a target's status dot.
+  # Single source of truth for the phase → dot COLOR mapping (shape classes are
+  # composed by dot_color_class/2).
   defp target_dot_color(target_id, statuses) do
     status_map = Map.get(statuses, target_id, %{})
     phase = Map.get(status_map, :phase, :disconnected)
