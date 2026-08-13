@@ -255,13 +255,30 @@ const DirectoryPicker = {
 //     when the user typed between click and result, so their typing is never
 //     clobbered).
 //   {cancelled: true}  → user dismissed the dialog — no-op
-//   {unavailable: true} → dialog unavailable (remote node, picker disabled) — no-op
+//   {unavailable: true} → dialog unavailable (remote node, picker disabled) —
+//     reveals the manual path input rendered next to the button
+//     (".file-manual", task_form_components.ex); typing a path and pressing
+//     Enter (or the confirm button) pushes "file_pick_manual" and the server
+//     replies with the SAME picker_result payloads (success → write textarea
+//     + close, error → inline error + keep open, unavailable/cancelled →
+//     close).
 //   {error: true}      → server failed to read the file — console.warn, no-op
 const FilePicker = {
   mounted() {
     this._basePrompt = null;
+    this._picking = false;             // native dialog in flight (re-entrancy guard)
+    this._manualSubmitted = false;     // manual path submission in flight
+    this._manualEl = this.el.parentElement?.querySelector(".file-manual");
+    this._manualInput = this._manualEl?.querySelector(".file-manual-input");
+    this._manualError = this._manualEl?.querySelector(".file-manual-error");
+
     this.el.addEventListener("click", () => {
-      if (this._picking) return;            // re-entrancy guard, DirectoryPicker pattern
+      if (this._manualEl && !this._manualEl.hidden) {
+        // Manual input is open — never re-fire file_pick; just focus it.
+        this._manualInput?.focus();
+        return;
+      }
+      if (this._picking) return;       // re-entrancy guard, DirectoryPicker pattern
       const textarea = this.promptTextarea();
       if (!textarea) return;
       this._basePrompt = textarea.value;
@@ -272,12 +289,48 @@ const FilePicker = {
       });
     });
 
+    if (this._manualEl && this._manualInput) {
+      this._manualInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();          // inside the task form — never submit it
+          this.submitManual();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          this.closeManual();
+        }
+      });
+      this._manualEl.querySelector(".file-manual-confirm")
+        ?.addEventListener("click", () => this.submitManual());
+      this._manualEl.querySelector(".file-manual-cancel")
+        ?.addEventListener("click", () => this.closeManual());
+    }
+
     this.handleEvent("picker_result:" + this.el.dataset.pickerId, (payload) => {
-      this._picking = false;                // dialog closed — re-arm the button
-      if (payload.unavailable || payload.cancelled) return;   // not an error
-      if (payload.error) {
-        console.warn("[FilePicker] Failed to attach the file");
-        return;
+      if (this._manualSubmitted) {
+        // Result of a manual path submission — mirror the native semantics:
+        // success closes the input and writes the prompt below; error keeps
+        // the input open with an inline message; unavailable/cancelled close.
+        this._manualSubmitted = false;
+        if (payload.error) {
+          this.showManualError(payload.reason || null);
+          return;
+        }
+        if (!payload.attached) {
+          this.closeManual();          // unavailable / cancelled
+          return;
+        }
+        this.closeManual();            // success — fall through to the write
+      } else {
+        this._picking = false;         // dialog closed — re-arm the button
+        if (payload.unavailable) {
+          this.openManual();           // native picker unavailable — manual fallback
+          return;
+        }
+        if (payload.cancelled) return; // not an error
+        if (payload.error) {
+          console.warn("[FilePicker] Failed to attach the file");
+          return;
+        }
       }
       if (typeof payload.prompt !== "string") return;         // defensive
       const textarea = this.promptTextarea();
@@ -298,13 +351,69 @@ const FilePicker = {
   },
 
   reconnected() {
-    this._picking = false;                  // server-side pick is gone after reconnect
+    this._picking = false;             // server-side pick is gone after reconnect
+    this._manualSubmitted = false;
   },
 
   promptTextarea() {
     // The task-form textarea; find within the enclosing form first.
     return this.el.closest("form")?.querySelector('textarea[name="prompt"]') ||
       document.querySelector('textarea[name="prompt"]');
+  },
+
+  // --- Manual path fallback (revealed when the native picker is unavailable) ---
+
+  openManual() {
+    if (!this._manualEl) return;
+    this._manualEl.hidden = false;
+    // Fresh open: no stale value, no stale error. The pop/slide expansion
+    // animation (app.css @keyframes file-manual-expand) restarts whenever
+    // the widget becomes visible again.
+    if (this._manualInput) this._manualInput.value = "";
+    this.clearManualError();
+    this._manualInput?.focus();
+    console.warn(
+      "[FilePicker] Native picker unavailable — the path input next to the attach button remains editable for manual entry"
+    );
+  },
+
+  submitManual() {
+    if (this._manualSubmitted) return; // one submission in flight
+    const textarea = this.promptTextarea();
+    if (!textarea) return;
+    const path = this._manualInput?.value ?? "";
+    this._basePrompt = textarea.value;
+    this._manualSubmitted = true;
+    this.clearManualError();
+    this.pushEvent("file_pick_manual", {
+      picker_id: this.el.dataset.pickerId,
+      path: path,
+      prompt: this._basePrompt
+    });
+  },
+
+  closeManual() {
+    if (!this._manualEl) return;
+    this._manualEl.hidden = true;
+    this.clearManualError();
+    if (this._manualInput) this._manualInput.value = "";
+  },
+
+  showManualError(reason) {
+    if (!this._manualEl || !reason) return;
+    if (this._manualError) {
+      this._manualError.textContent = reason;
+      this._manualError.hidden = false;
+    }
+    this._manualInput?.focus();
+    this._manualInput?.select();
+  },
+
+  clearManualError() {
+    if (this._manualError) {
+      this._manualError.textContent = "";
+      this._manualError.hidden = true;
+    }
   }
 };
 

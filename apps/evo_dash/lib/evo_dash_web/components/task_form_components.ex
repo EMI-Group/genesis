@@ -192,6 +192,76 @@ defmodule EvoDashWeb.TaskFormComponents do
                  is CRITICAL: inside the task form, a button without it would
                  submit. --%>
             <%= unless @disabled do %>
+              <%!-- Manual path fallback for the attach-file "+" button —
+                   rendered hidden; the FilePicker JS hook reveals it when the
+                   native picker is unavailable (headless server, remote node,
+                   picker disabled) and submits the typed path via the
+                   "file_pick_manual" event. Positioned to the LEFT of the "+"
+                   button (absolute top-right, .file-manual in app.css).
+                   phx-update="ignore" is CRITICAL (same contract as the
+                   textarea): visibility / typed value / inline error are
+                   client-owned, so a server re-render (e.g. task broadcasts,
+                   mode toggles) must never reset the open input. All
+                   user-facing strings are gettext-wrapped here (the JS hook
+                   only toggles visibility and reads payload.reason). --%>
+              <div
+                id="objective-file-manual"
+                class="file-manual"
+                phx-update="ignore"
+                hidden
+              >
+                <div class="file-manual-input-wrap">
+                  <%!-- zh_CN: 手动输入完整文件路径的占位提示 → "输入完整文件路径…" --%>
+                  <input
+                    type="text"
+                    class="file-manual-input"
+                    placeholder={gettext("Type a full file path…")}
+                    aria-label={gettext("File path to attach")}
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <%!-- zh_CN: 确认输入的文件路径 → "确认附加文件路径" --%>
+                  <button
+                    type="button"
+                    class="file-manual-confirm"
+                    aria-label={gettext("Confirm attach file path")}
+                    title={gettext("Confirm attach file path")}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                  <%!-- zh_CN: 取消手动附加文件 → "取消附加文件路径" --%>
+                  <button
+                    type="button"
+                    class="file-manual-cancel"
+                    aria-label={gettext("Cancel attach file path")}
+                    title={gettext("Cancel attach file path")}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <path d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <span class="file-manual-error" role="alert" hidden></span>
+              </div>
+
               <%!-- zh_CN: Attach file → "附加文件" --%>
               <button
                 type="button"

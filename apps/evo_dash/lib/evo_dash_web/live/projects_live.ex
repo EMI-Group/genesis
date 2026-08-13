@@ -8,7 +8,16 @@ defmodule EvoDashWeb.ProjectsLive do
   """
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
-  alias EvoDashWeb.ProjectsLive.{StatePersistence, Project, Assigns, ProjectFlow, RemoteView}
+
+  alias EvoDashWeb.ProjectsLive.{
+    StatePersistence,
+    Project,
+    Assigns,
+    ProjectFlow,
+    RemoteView,
+    AttachFile
+  }
+
   alias EvoDashWeb.ThemeColor
   alias EvoDashWeb.ExampleTask
   alias EvoGit.Core.ForeignRepo
@@ -18,7 +27,10 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Picker id for the objective editor's attach-file button — must match the
   # `data-picker-id` on the FilePicker hook button in
-  # EvoDashWeb.TaskFormComponents.task_form/1.
+  # EvoDashWeb.TaskFormComponents.task_form/1 and the `@attach_picker_id`
+  # literal in the AttachFile support module (kept as a literal in both
+  # modules — a compile-time function call in a module attribute is fragile
+  # under parallel compilation).
   @attach_picker_id "objective_file"
 
   @impl true
@@ -1400,6 +1412,52 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   @impl true
+  def handle_event("file_pick_manual", params, socket) do
+    # Manual path fallback for the attach-file "+" button: the FilePicker JS
+    # hook reveals an inline path input when the native picker is unavailable
+    # (headless server, remote node, picker disabled) and submits the typed
+    # path here. Runs the SAME attachment pipeline as the native picker result
+    # (AttachFile.handle_attach_result/2); the submitted textarea value is
+    # snapshotted into file_pick_bases, exactly like "file_pick" does for the
+    # native flow, so base-prompt semantics are identical.
+    picker_id = Map.get(params, "picker_id", @attach_picker_id)
+    path = Map.get(params, "path")
+    prompt = Map.get(params, "prompt")
+    prompt = if is_binary(prompt), do: prompt, else: ""
+
+    cond do
+      not is_binary(path) or path == "" ->
+        # zh_CN: 手动输入为空 → "请输入文件路径。"
+        reason = gettext("Please enter a file path.")
+        {:noreply, push_manual_attach_error(socket, picker_id, reason)}
+
+      not File.regular?(path) ->
+        # zh_CN: 输入的路径不是可读文件 → "文件不存在：%{path}"
+        reason = gettext("File not found: %{path}", path: path)
+        {:noreply, push_manual_attach_error(socket, picker_id, reason)}
+
+      true ->
+        bases = Map.put(socket.assigns.file_pick_bases || %{}, picker_id, prompt)
+
+        socket =
+          socket
+          |> assign(:file_pick_bases, bases)
+          |> AttachFile.handle_attach_result(path)
+
+        {:noreply, socket}
+    end
+  end
+
+  # Validation failure in the manual attach flow: error flash (native flow
+  # parity) + `%{error: true, reason: ...}` push — the FilePicker hook shows
+  # the reason inline next to the path input and keeps it open.
+  defp push_manual_attach_error(socket, picker_id, reason) do
+    socket
+    |> put_flash(:error, reason)
+    |> push_event("picker_result:#{picker_id}", %{error: true, reason: reason})
+  end
+
+  @impl true
   def handle_event("run_command", %{"command" => command}, socket) do
     commands = socket.assigns.commands
     project_root = socket.assigns.active_project_path
@@ -1477,50 +1535,12 @@ defmodule EvoDashWeb.ProjectsLive do
   # Attach-file flow: read the picked file with EvoDash.AttachedFile and append
   # its content to the objective. The textarea is phx-update="ignore" (the
   # DOM is authoritative), so the new value must reach the client via
-  # push_event — the FilePicker JS hook writes it into the textarea.
+  # push_event — the FilePicker JS hook writes it into the textarea. Shared
+  # pipeline with the manual path fallback (file_pick_manual) lives in
+  # EvoDashWeb.ProjectsLive.AttachFile.
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id, {:ok, path}}, socket) do
-    base =
-      Map.get(
-        socket.assigns.file_pick_bases || %{},
-        @attach_picker_id,
-        socket.assigns.task_prompt || ""
-      )
-
-    case EvoDash.AttachedFile.read(path) do
-      {:ok, content} ->
-        basename = Path.basename(path)
-        block = "\n\n---\n## Attached file: #{basename}\n\n" <> content <> "\n"
-        new_prompt = base <> block
-
-        socket =
-          socket
-          |> assign(:task_prompt, new_prompt)
-          |> assign(
-            :file_pick_bases,
-            Map.delete(socket.assigns.file_pick_bases || %{}, @attach_picker_id)
-          )
-
-        {:noreply,
-         push_event(socket, "picker_result:#{@attach_picker_id}", %{
-           prompt: new_prompt,
-           block: block,
-           attached: true,
-           name: basename
-         })}
-
-      {:error, reason} ->
-        # zh_CN: Failed to attach file → "附加文件失败"
-        msg =
-          gettext("Failed to attach file: %{reason}",
-            reason: EvoDash.AttachedFile.describe_error(reason, path)
-          )
-
-        {:noreply,
-         socket
-         |> put_flash(:error, msg)
-         |> push_event("picker_result:#{@attach_picker_id}", %{error: true})}
-    end
+    {:noreply, AttachFile.handle_attach_result(socket, path)}
   end
 
   @impl true

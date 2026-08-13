@@ -2011,6 +2011,109 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
       assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
     end
+
+    test "file_pick_manual with a valid path appends the file content to the prompt", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      file_path = Path.join(tmp_dir, "manual-note.txt")
+      File.write!(file_path, "Hello manual file")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "file_pick_manual", %{
+        picker_id: "objective_file",
+        path: file_path,
+        prompt: "my base prompt"
+      })
+
+      block = "\n\n---\n## Attached file: manual-note.txt\n\nHello manual file\n"
+      expected = "my base prompt" <> block
+
+      assert_push_event(view, "picker_result:objective_file", %{
+        prompt: ^expected,
+        block: ^block,
+        attached: true,
+        name: "manual-note.txt"
+      })
+
+      assert assigns(view)[:task_prompt] == expected
+      # The snapshot base is consumed after the append, proving the snapshot
+      # (not the stale @task_prompt) was used as the base.
+      assert assigns(view)[:file_pick_bases] == %{}
+    end
+
+    test "file_pick_manual with an empty path pushes an error and keeps the prompt", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+      before = assigns(view)[:task_prompt]
+
+      render_hook(view, "file_pick_manual", %{
+        picker_id: "objective_file",
+        path: "",
+        prompt: "my base prompt"
+      })
+
+      assert_push_event(view, "picker_result:objective_file", %{
+        error: true,
+        reason: "Please enter a file path."
+      })
+
+      assert render(view) =~ "Please enter a file path."
+      assert assigns(view)[:task_prompt] == before
+    end
+
+    test "file_pick_manual with a nil path pushes an error without crashing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      before = assigns(view)[:task_prompt]
+
+      render_hook(view, "file_pick_manual", %{
+        picker_id: "objective_file",
+        path: nil,
+        prompt: "my base prompt"
+      })
+
+      assert_push_event(view, "picker_result:objective_file", %{
+        error: true,
+        reason: "Please enter a file path."
+      })
+
+      assert assigns(view)[:task_prompt] == before
+    end
+
+    test "file_pick_manual with missing params pushes an error without crashing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # No path and no picker_id at all — must not crash the LiveView (the
+      # handler falls back to @attach_picker_id for the push channel).
+      render_hook(view, "file_pick_manual", %{})
+      assert_push_event(view, "picker_result:objective_file", %{error: true})
+    end
+
+    test "file_pick_manual with a nonexistent file pushes an error and keeps the prompt", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      missing = Path.join(tmp_dir, "missing-manual.txt")
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      before = assigns(view)[:task_prompt]
+
+      render_hook(view, "file_pick_manual", %{
+        picker_id: "objective_file",
+        path: missing,
+        prompt: "my base prompt"
+      })
+
+      assert_push_event(view, "picker_result:objective_file", %{
+        error: true,
+        reason: "File not found: " <> missing
+      })
+
+      assert render(view) =~ "File not found"
+      assert assigns(view)[:task_prompt] == before
+    end
   end
 end
 

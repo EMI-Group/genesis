@@ -1819,3 +1819,112 @@ button, a, input, textarea, select, summary,
 [data-picker-error="manual"] .picker-container input[type="text"] {
   border-color: color-mix(in oklab, var(--color-warning) 60%, transparent);
 }
+
+/* --- FilePicker manual-entry fallback (attach-file "+" button) ---
+   When the native file dialog is unavailable (headless server, remote node,
+   picker disabled), the FilePicker hook (js/app.js) reveals this inline path
+   input to the LEFT of the "+" attach button (absolute top-right;
+   `right: 2.75rem` clears the ~2rem square button plus a gap). The widget is
+   `phx-update="ignore"` (task_form_components.ex) — visibility / typed value /
+   inline error are client-owned. The inner wrap expands leftward with a
+   subtle pop/slide on open (@keyframes file-manual-expand restarts whenever
+   the widget becomes visible again). Uses only the --color-base-* /
+   --color-warning / --color-success / --color-error theme variables via
+   color-mix (never oklch(var(--x) / a) — Known Issue (i)). */
+.file-manual {
+  position: absolute;
+  top: 0.5rem;
+  right: 2.75rem;
+  z-index: 20;
+}
+
+.file-manual-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 16.5rem;
+  overflow: hidden;
+  animation: file-manual-expand 0.2s ease-out;
+}
+
+@keyframes file-manual-expand {
+  from {
+    opacity: 0;
+    max-width: 0;
+    transform: translateX(0.75rem);
+  }
+
+  to {
+    opacity: 1;
+    max-width: 16.5rem;
+    transform: translateX(0);
+  }
+}
+
+.file-manual-input {
+  width: 12rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+  line-height: 1;
+  border-radius: 0.375rem;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 25%, transparent);
+  background: color-mix(in oklab, var(--color-base-100) 85%, transparent);
+  color: var(--color-base-content);
+  outline: none;
+}
+
+.file-manual-input:focus {
+  border-color: color-mix(in oklab, var(--color-warning) 60%, transparent);
+}
+
+.file-manual-confirm,
+.file-manual-cancel {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--color-base-content);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.file-manual-confirm:hover {
+  color: var(--color-success);
+  opacity: 1;
+}
+
+.file-manual-cancel:hover {
+  color: var(--color-error);
+  opacity: 1;
+}
+
+.file-manual-confirm svg,
+.file-manual-cancel svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+/* Inline error below the manual input — mirrors the DirectoryPicker
+   data-picker-error="manual" hint (below the row, warning-colored). The hook
+   fills it from the server's `reason` (gettext'd) on %{error: true}. */
+.file-manual-error {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 10;
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: color-mix(in oklab, var(--color-warning) 80%, var(--color-base-100));
+  pointer-events: none;
+}
