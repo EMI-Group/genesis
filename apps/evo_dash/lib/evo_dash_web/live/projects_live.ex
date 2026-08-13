@@ -1474,7 +1474,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # Results from the async directory picker (EvoDash.DirectoryPicker sends
   # these to the LiveView pid passed to pick/2).
   #
-  # Attach-file flow: read the picked file with EvoGit.PromptFile and append
+  # Attach-file flow: read the picked file with EvoDash.AttachedFile and append
   # its content to the objective. The textarea is phx-update="ignore" (the
   # DOM is authoritative), so the new value must reach the client via
   # push_event — the FilePicker JS hook writes it into the textarea.
@@ -1487,7 +1487,7 @@ defmodule EvoDashWeb.ProjectsLive do
         socket.assigns.task_prompt || ""
       )
 
-    case EvoGit.PromptFile.read(path) do
+    case EvoDash.AttachedFile.read(path) do
       {:ok, content} ->
         basename = Path.basename(path)
         block = "\n\n---\n## Attached file: #{basename}\n\n" <> content <> "\n"
@@ -1513,7 +1513,7 @@ defmodule EvoDashWeb.ProjectsLive do
         # zh_CN: Failed to attach file → "附加文件失败"
         msg =
           gettext("Failed to attach file: %{reason}",
-            reason: EvoGit.PromptFile.describe_error(reason, path)
+            reason: EvoDash.AttachedFile.describe_error(reason, path)
           )
 
         {:noreply,
