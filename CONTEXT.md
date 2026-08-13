@@ -61,7 +61,7 @@ Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots
 - No source code at root — all code under `./apps/`
 - Agents commit before delegating subagents (auto-commit fallback enforced)
 - Genesis stores its runtime artifacts (agent worktrees, state) under a `.genesis/` directory at each repo root. This directory must be git-ignored everywhere (root `.gitignore` and the `.gitignore` that Genesis auto-writes into new repos).
-- LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, sandbox-exec on macOS, direct on Windows)
+- LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, bwrap/bubblewrap on Linux without systemd — e.g. Docker — filesystem isolation only, sandbox-exec on macOS, direct on Windows); backend preference configurable via `[sandbox] backend = "auto" | "systemd" | "bwrap"` (`auto` tries systemd-run first, then bwrap, then no sandbox)
 - No hardcoded model or username — users configure via `~/.config/genesis/config.toml`
 - User config follows XDG conventions
 
