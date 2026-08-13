@@ -23,8 +23,13 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # is exercised without a live LLM endpoint. There is no mocking library
   # (Mox/Meck) in this codebase and ReqLLM's VCR fixture backend is not shipped
   # (see the note in context_compression_test.exs).
+  # A dummy api_key is required so ReqLLM's OpenAI provider gets past the
+  # request-build phase — without it the failure is a build-phase error
+  # (:provider_build_failed), not the connection-refused transport error
+  # (:http_streaming_failed) the retry loop expects to see. The key is never
+  # sent to the server because the connection is refused before any request.
   defp refused_model do
-    %{provider: :openai, id: "test-refused", base_url: "http://127.0.0.1:1"}
+    %{provider: :openai, id: "test-refused", base_url: "http://127.0.0.1:1", api_key: "test-key"}
   end
 
   # The FIRST stream_text to a fresh Finch destination creates the connection
