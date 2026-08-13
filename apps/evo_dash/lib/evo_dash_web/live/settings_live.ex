@@ -1157,6 +1157,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_event("move_model_profile", params, socket) do
+    ModelProfileEvents.move_model_profile(socket, params)
+  end
+
+  @impl true
   def handle_event(
         "save_api_key",
         %{"credential_key" => credential_key, "api_key" => api_key},
