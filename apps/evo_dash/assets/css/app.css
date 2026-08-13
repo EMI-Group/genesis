@@ -490,6 +490,32 @@ button, a, input, textarea, select, summary,
   color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
 }
 
+/* Legend tooltip — rendered by the LegendTooltip JS hook as a fixed-position
+   element appended to document.body. It must live outside the page layout:
+   every ancestor (.agents-page-layout, .agents-left-col, #main-scroll,
+   #app-layout) clips overflow, and .agents-page-layout's persisted translateY
+   transform (animation-fill-mode: both) creates a containing block that would
+   trap even position:fixed descendants inside the layout's overflow clip. */
+.agents-legend-tip {
+  position: fixed;
+  z-index: 9999;
+  max-width: 20rem;
+  background-color: var(--color-neutral);
+  color: var(--color-neutral-content);
+  border-radius: var(--radius-field);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease-in;
+}
+
+.agents-legend-tip.is-visible {
+  opacity: 1;
+}
+
 .agents-detail-col {
   /* normal flow on mobile */
 }
