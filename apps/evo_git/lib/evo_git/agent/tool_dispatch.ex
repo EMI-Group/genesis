@@ -64,9 +64,8 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  @doc false
   # Syncs current commit and returns the SHA (for use in completion)
-  def sync_and_get_current_commit(%LoopState{} = state) do
+  defp sync_and_get_current_commit(%LoopState{} = state) do
     repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
     current_sha =
@@ -259,12 +258,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     )
   end
 
-  @doc false
   # Handles the protocol-violation outcome (no usable tool calls) by either
   # triggering recovery (when not in the grace period), re-entering the loop
   # during grace with budget remaining (consuming one grace turn), or returning
   # :recovery_failed (when the grace budget is exhausted).
-  def handle_protocol_violation(%LoopState{} = state, loop_fn, trigger_recovery_fn) do
+  defp handle_protocol_violation(%LoopState{} = state, loop_fn, trigger_recovery_fn) do
     cond do
       EvoGit.Agent.grace_period_continue_failed?(state) ->
         {:error, :recovery_failed}
@@ -414,16 +412,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         )
 
       {:error, :protocol_violation} ->
-        cond do
-          EvoGit.Agent.grace_period_continue_failed?(state) ->
-            {:error, :recovery_failed}
-
-          state.in_grace_period ->
-            loop_fn.(consume_grace_turn(state))
-
-          true ->
-            trigger_recovery_fn.(state, "agent stopped calling tools")
-        end
+        handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
     end
   end
 
@@ -694,16 +683,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  @doc false
-  def do_complete(complete_call, %LoopState{} = state) do
+  defp do_complete(complete_call, %LoopState{} = state) do
     # Sync the current commit before completing
     commit_sha = sync_and_get_current_commit(state)
 
     complete_args = ReqLLM.ToolCall.args_map(complete_call)
 
-    result =
-      Map.get(complete_args, "result") ||
-        Map.get(complete_args, :result, "Task finished.")
+    result = Map.get(complete_args, "result", "Task finished.")
 
     # Get metadata from agent state
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -1063,8 +1049,7 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   # --- Shared Helpers ---
 
-  @doc false
-  def subagent_module_for(tool_name, subagent_mods) do
+  defp subagent_module_for(tool_name, subagent_mods) do
     Enum.find(subagent_mods, fn mod -> mod.subagent_tool_name() == tool_name end)
   end
 
