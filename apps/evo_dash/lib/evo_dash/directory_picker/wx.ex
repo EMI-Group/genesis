@@ -48,12 +48,18 @@ defmodule EvoDash.DirectoryPicker.Wx do
   @doc "Creates the native file dialog (see `:wxFileDialog.new/2`)."
   def new_file_dialog(wx_ref, opts), do: :wxFileDialog.new(wx_ref, opts)
 
-  @doc "Shows the modal dialog and returns the result code (see `:wxDirDialog.showModal/1`)."
-  def show_modal(dialog), do: :wxDirDialog.showModal(dialog)
+  @doc """
+  Shows the modal dialog and returns the result code (see `:wxDirDialog.showModal/1`
+  / `:wxFileDialog.showModal/1`).
+  """
+  def show_modal({:wx_ref, _, :wxDirDialog, _} = dialog), do: :wxDirDialog.showModal(dialog)
+  def show_modal({:wx_ref, _, :wxFileDialog, _} = dialog), do: :wxFileDialog.showModal(dialog)
 
-  @doc "Returns the selected path (see `:wxDirDialog.getPath/1`)."
-  def get_path(dialog), do: :wxDirDialog.getPath(dialog)
+  @doc "Returns the selected path (see `:wxDirDialog.getPath/1` / `:wxFileDialog.getPath/1`)."
+  def get_path({:wx_ref, _, :wxDirDialog, _} = dialog), do: :wxDirDialog.getPath(dialog)
+  def get_path({:wx_ref, _, :wxFileDialog, _} = dialog), do: :wxFileDialog.getPath(dialog)
 
-  @doc "Destroys the dialog (see `:wxDirDialog.destroy/1`)."
-  def destroy(dialog), do: :wxDirDialog.destroy(dialog)
+  @doc "Destroys the dialog (see `:wxDirDialog.destroy/1` / `:wxFileDialog.destroy/1`)."
+  def destroy({:wx_ref, _, :wxDirDialog, _} = dialog), do: :wxDirDialog.destroy(dialog)
+  def destroy({:wx_ref, _, :wxFileDialog, _} = dialog), do: :wxFileDialog.destroy(dialog)
 end
