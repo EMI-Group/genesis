@@ -61,8 +61,12 @@ defmodule EvoGit.Adapters.CowWorktree do
 
       :auto ->
         case flag() do
-          :enabled -> true
-          :disabled -> false
+          :enabled ->
+            true
+
+          :disabled ->
+            false
+
           :not_set ->
             can_cow? = not EvoGit.Platform.windows?() and System.find_executable("cp") != nil
             if can_cow?, do: enable(), else: disable()
@@ -117,7 +121,13 @@ defmodule EvoGit.Adapters.CowWorktree do
       case create_empty_worktree(repo_root, worktree_path, target_commit, branch_name) do
         :ok ->
           # Step 7 + 8: copy shared files then checkout remaining
-          case populate_worktree(repo_root, worktree_path, source_path, target_commit, shared_list) do
+          case populate_worktree(
+                 repo_root,
+                 worktree_path,
+                 source_path,
+                 target_commit,
+                 shared_list
+               ) do
             :ok ->
               Logger.info(
                 "[CowWorktree] Created worktree with #{length(shared_list)} CoW-copied shared file(s)"
@@ -145,7 +155,11 @@ defmodule EvoGit.Adapters.CowWorktree do
 
       {:dirty, error} ->
         disable()
-        Logger.warning("[CowWorktree] Falling back: failed to read source status (#{inspect(error)})")
+
+        Logger.warning(
+          "[CowWorktree] Falling back: failed to read source status (#{inspect(error)})"
+        )
+
         {:fallback, :no_source_status}
 
       {:changed, error} ->
@@ -155,7 +169,11 @@ defmodule EvoGit.Adapters.CowWorktree do
 
       {:target, error} ->
         disable()
-        Logger.warning("[CowWorktree] Falling back: failed to list target tree (#{inspect(error)})")
+
+        Logger.warning(
+          "[CowWorktree] Falling back: failed to list target tree (#{inspect(error)})"
+        )
+
         {:fallback, :no_target_tree}
     end
   end
@@ -210,7 +228,9 @@ defmodule EvoGit.Adapters.CowWorktree do
   # (or differing) from the CoW copy. Returns :ok or {:fallback, :checkout_failed}.
   defp checkout_target(worktree_path, target_commit) do
     case Git.run(["checkout", target_commit, "--", "."], worktree_path) do
-      {:ok, _} -> :ok
+      {:ok, _} ->
+        :ok
+
       error ->
         Logger.warning("[CowWorktree] checkout failed: #{inspect(error)}")
         {:fallback, :checkout_failed}
