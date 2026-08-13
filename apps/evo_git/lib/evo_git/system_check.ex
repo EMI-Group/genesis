@@ -70,7 +70,7 @@ defmodule EvoGit.SystemCheck do
   Returns:
 
       %{
-        backend: :systemd_run | :sandbox_exec | :none,
+        backend: :systemd_run | :bwrap | :sandbox_exec | :none,
         enabled: boolean(),
         capabilities: %{filesystem_isolation: bool, resource_limits: bool, backend: atom},
         systemd_available: boolean(),
@@ -337,9 +337,13 @@ defmodule EvoGit.SystemCheck do
     EvoGit.Config.credentials()
 
     context = ReqLLM.Context.new([ReqLLM.Context.user("Say hello in one word.")])
+
     stream_opts =
       Keyword.merge([max_tokens: 10], opts)
-      |> Keyword.put(:provider_options, EvoGit.Config.Schema.LLM.provider_options_for_model(model))
+      |> Keyword.put(
+        :provider_options,
+        EvoGit.Config.Schema.LLM.provider_options_for_model(model)
+      )
 
     with {:ok, stream_response} <- ReqLLM.stream_text(model, context, stream_opts),
          {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response) do

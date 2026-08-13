@@ -153,6 +153,11 @@ defmodule EvoGit.SandboxProcessRegistry do
       @mix_env == :test ->
         false
 
+      # Only the systemd backend registers units — a bwrap backend on a
+      # systemd host must never register `systemd-run` units.
+      EvoGit.Sandbox.backend() != EvoGit.Sandbox.Linux ->
+        false
+
       true ->
         case EvoGit.Config.resolve([:sandbox, :mode]) do
           :enabled -> true

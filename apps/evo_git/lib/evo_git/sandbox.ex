@@ -4,12 +4,16 @@ defmodule EvoGit.Sandbox do
 
   Dispatches sandboxed command execution to the appropriate platform backend:
 
-    * **Linux** — `systemd-run` with full sandboxing: filesystem isolation, resource
-      limits (CPU, memory), syscall filtering, and process isolation.
+    * **Linux (systemd)** — `systemd-run` with full sandboxing: filesystem isolation,
+      resource limits (CPU, memory), syscall filtering, and process isolation.
+    * **Linux (bwrap)** — bubblewrap sandboxing (filesystem isolation, no resource limits).
     * **macOS** — `sandbox-exec` with filesystem isolation (read/write restrictions).
     * **Windows** — No sandbox; commands run directly.
 
-  The active backend is determined automatically by `EvoGit.Platform.sandbox_backend/0`.
+  The active backend is determined by `EvoGit.Platform.sandbox_backend/0` unless
+  overridden via the `[sandbox] backend` config key (`:auto` (default) → platform
+  detection, `:systemd` → systemd-run, `:bwrap` → bubblewrap; explicit choices are
+  availability-gated with fallback to no sandbox).
   """
 
   alias EvoGit.Platform
@@ -17,30 +21,42 @@ defmodule EvoGit.Sandbox do
   @type capabilities :: %{
           filesystem_isolation: boolean(),
           resource_limits: boolean(),
-          backend: :systemd_run | :sandbox_exec | :none
+          backend: :systemd_run | :bwrap | :sandbox_exec | :none
         }
 
-  @doc "Returns the active sandbox backend module based on platform and availability."
+  @doc "Returns the active sandbox backend module based on config and platform availability."
   @spec backend() :: module()
   def backend do
-    case Platform.sandbox_backend() do
-      :systemd_run -> EvoGit.Sandbox.Linux
-      :sandbox_exec -> EvoGit.Sandbox.MacOS
-      :none -> EvoGit.Sandbox.None
+    case EvoGit.Config.resolve([:sandbox, :backend]) do
+      :auto ->
+        platform_backend()
+
+      :systemd ->
+        if Platform.systemd_available?(), do: EvoGit.Sandbox.Linux, else: EvoGit.Sandbox.None
+
+      :bwrap ->
+        if Platform.bwrap_available?(), do: EvoGit.Sandbox.Bwrap, else: EvoGit.Sandbox.None
+
+      # nil (key not yet in the config schema) or any unknown value → platform detection
+      _ ->
+        platform_backend()
     end
   end
 
-  @doc "Returns the capabilities of the current platform's sandbox backend."
+  @doc "Returns the capabilities of the active sandbox backend."
   @spec capabilities() :: capabilities()
   def capabilities do
-    case Platform.sandbox_backend() do
-      :systemd_run ->
+    case backend() do
+      EvoGit.Sandbox.Linux ->
         %{filesystem_isolation: true, resource_limits: true, backend: :systemd_run}
 
-      :sandbox_exec ->
+      EvoGit.Sandbox.Bwrap ->
+        %{filesystem_isolation: true, resource_limits: false, backend: :bwrap}
+
+      EvoGit.Sandbox.MacOS ->
         %{filesystem_isolation: true, resource_limits: false, backend: :sandbox_exec}
 
-      :none ->
+      EvoGit.Sandbox.None ->
         %{filesystem_isolation: false, resource_limits: false, backend: :none}
     end
   end
@@ -151,6 +167,18 @@ defmodule EvoGit.Sandbox do
         else
           default
         end
+    end
+  end
+
+  # Returns the backend module selected by platform capability detection
+  # (`EvoGit.Platform.sandbox_backend/0`): systemd-run first, then bwrap,
+  # then sandbox-exec, then no sandbox.
+  defp platform_backend do
+    case Platform.sandbox_backend() do
+      :systemd_run -> EvoGit.Sandbox.Linux
+      :bwrap -> EvoGit.Sandbox.Bwrap
+      :sandbox_exec -> EvoGit.Sandbox.MacOS
+      :none -> EvoGit.Sandbox.None
     end
   end
 

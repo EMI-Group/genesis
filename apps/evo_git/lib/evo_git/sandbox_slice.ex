@@ -181,6 +181,11 @@ defmodule EvoGit.SandboxSlice do
       @mix_env == :test ->
         false
 
+      # Only the systemd backend manages the slice — a bwrap backend on a
+      # systemd host must never create `evogit.slice`.
+      EvoGit.Sandbox.backend() != EvoGit.Sandbox.Linux ->
+        false
+
       true ->
         case EvoGit.Config.resolve([:sandbox, :mode]) do
           :enabled -> true
