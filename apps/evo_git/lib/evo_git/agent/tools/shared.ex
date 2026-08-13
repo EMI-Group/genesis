@@ -115,13 +115,17 @@ defmodule EvoGit.Agent.Tools.Shared do
   """
   def get_optional_integer(args, key, default) do
     case Map.get(args, key, default) do
-      val when is_integer(val) -> val
+      val when is_integer(val) ->
+        val
+
       val when is_binary(val) ->
         case Integer.parse(val) do
           {int, _} -> int
           :error -> default
         end
-      _ -> default
+
+      _ ->
+        default
     end
   end
 
@@ -139,35 +143,6 @@ defmodule EvoGit.Agent.Tools.Shared do
       _ -> default
     end
   end
-
-  @doc """
-  Wraps execution with argument validation. Returns error message on failure.
-  """
-  def with_valid_args(args, required_keys, fun) when is_list(required_keys) do
-    Enum.reduce_while(required_keys, {:ok, %{}}, fn key_spec, {:ok, acc} ->
-      {key, type} = parse_key_spec(key_spec)
-
-      result =
-        case type do
-          :string -> fetch_string_arg(args, key)
-          :array -> fetch_array_arg(args, key)
-        end
-
-      case result do
-        {:ok, value} -> {:cont, {:ok, Map.put(acc, key, value)}}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, fetched} -> fun.(fetched)
-      {:error, message} -> message
-    end
-  end
-
-  defp parse_key_spec(key) when is_atom(key), do: {key, :string}
-  defp parse_key_spec({key, :string}), do: {key, :string}
-  defp parse_key_spec({key, :array}), do: {key, :array}
-  defp parse_key_spec(key) when is_binary(key), do: {key, :string}
 
   @doc """
   Validates and sanitizes an array argument to ensure all elements are binaries.
@@ -335,7 +310,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     cond do
       # Path is outside the repository root (Path.relative_to returned it
       # unchanged and it's still absolute).
-      is_absolute_outside_repo?(relative_path) ->
+      EvoGit.Platform.absolute_path?(relative_path) ->
         {:error, format_outside_repo_error(expanded_path)}
 
       true ->
@@ -359,13 +334,6 @@ defmodule EvoGit.Agent.Tools.Shared do
   def validate_file_scope(_expanded_path, node_path, _repo_path) when not is_binary(node_path) do
     # If no node_path assigned, allow all (backward compatibility)
     :ok
-  end
-
-  # Path.relative_to/2 returns the path unchanged when it is not under the
-  # base. If the result still starts with "/", the original expanded path was
-  # outside the repository root.
-  defp is_absolute_outside_repo?(relative_path) when is_binary(relative_path) do
-    EvoGit.Platform.absolute_path?(relative_path)
   end
 
   defp format_outside_repo_error(path) do
@@ -436,8 +404,7 @@ defmodule EvoGit.Agent.Tools.Shared do
         {:ok, _output} ->
           case EvoGit.Adapters.Git.commit(repo_path, commit_message) do
             {:ok, _} -> {:ok, "Commit successful"}
-            {:error, {:conflict, _}} = conflict -> {:error, conflict}
-            {:error, {_, _}} = error -> {:error, error}
+            {:error, _} = error -> error
           end
 
         {:error, {:conflict, output}} ->
