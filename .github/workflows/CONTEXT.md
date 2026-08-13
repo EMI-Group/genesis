@@ -35,13 +35,14 @@ Triggered on **GitHub releases** (published, including pre-releases) and manual 
 11. Copy release to `desktop/src-tauri/resources/genesis-backend/`
 12. Build Tauri app (`tauri build`) → native installers
 
-**Platform matrix** (4 parallel jobs, each on native runners):
+**Platform matrix** (5 jobs, each on native runners):
 
 | Platform | Runner | Installer Formats |
 |----------|--------|-------------------|
 | macOS ARM64 | `macos-14` | `.dmg`, `.app` |
 | Linux x86_64 | `ubuntu-24.04` | `.deb`, `.rpm`, AppImage, `.tar.gz` |
 | Linux ARM64 | `ubuntu-24.04-arm` | `.deb`, `.rpm`, `.tar.gz` (NO AppImage — `appimagetool`/`linuxdeploy` are x86_64-only) |
+| Linux Remote musl (x64 + arm64) | `ubuntu-24.04` / `ubuntu-24.04-arm` (Alpine container) | `genesis_remote` musl `.tar.xz` only (no desktop installers) |
 | Windows x86_64 | `windows-2022` | `.msi`, `.exe` (NSIS) |
 
 **Platform-specific quirks**:
