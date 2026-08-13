@@ -236,6 +236,55 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       refute html =~ ~s(phx-change="task_prompt_change")
       refute html =~ ~s(phx-debounce="200")
     end
+
+    test "attach-file button renders when a project is active (default)" do
+      html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+
+      [btn] = Floki.find(parse(html), "button#objective-file-button")
+
+      # FilePicker hook wiring + picker id used by the JS hook to correlate
+      # the server's "picker_result:<id>" push.
+      assert btn |> Floki.attribute("phx-hook") |> List.first() == "FilePicker"
+      assert btn |> Floki.attribute("data-picker-id") |> List.first() == "objective_file"
+
+      # type="button" is critical: inside the task form a button without it
+      # would submit the form.
+      assert btn |> Floki.attribute("type") |> List.first() == "button"
+
+      assert btn |> Floki.attribute("aria-label") |> List.first() == "Attach file"
+      assert btn |> Floki.attribute("title") |> List.first() == "Attach file"
+
+      # Floats at the card's top-right corner (absolute, requires `relative`
+      # on .input-card), square ghost button.
+      assert btn_class = btn |> Floki.attribute("class") |> List.first() |> to_string()
+      assert btn_class =~ "absolute top-2 right-2"
+      assert btn_class =~ "btn-square"
+
+      # Paper-clip icon inside the button.
+      assert html =~ "hero-paper-clip"
+    end
+
+    test "attach-file button is NOT inside the controls row" do
+      html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+
+      doc = parse(html)
+      [controls] = Floki.find(doc, ".input-controls")
+
+      # Placement contract: the attach-file button sits between the textarea
+      # and .input-controls — NOT inside the row — so the DOM-order test
+      # (exactly 3 children: mode | Launch | model) stays valid.
+      assert Floki.find(controls, "button#objective-file-button") == []
+    end
+
+    test "attach-file button is not rendered in the disabled (no-project) state" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          disabled: true
+        )
+
+      assert Floki.find(parse(html), "button#objective-file-button") == []
+    end
   end
 
   # --- helpers ---
