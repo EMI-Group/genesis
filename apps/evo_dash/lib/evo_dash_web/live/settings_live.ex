@@ -384,63 +384,85 @@ defmodule EvoDashWeb.SettingsLive do
                               class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
                             />
                           </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext(
-                                "Local Release Tarball"
-                              )}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="local_binary_path"
-                              value={@remote_form_target[:local_binary_path]}
-                              placeholder="_build/prod/rel/genesis_remote.tar.xz"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-                            />
-                            <p class="text-xs text-base-content/50 mt-1">
-                              {gettext("Leave blank to auto-download the release on the remote")}
-                            </p>
+                          <div class="col-span-2 flex">
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-xs gap-1 -mt-1 text-base-content/60"
+                              phx-click="toggle_remote_advanced"
+                            >
+                              <.icon
+                                name={"hero-chevron-" <> if(@remote_show_advanced, do: "up", else: "down")}
+                                class="size-3.5"
+                              />
+                              {gettext("Advanced settings")} <%!-- 高级设置（折叠面板标题，展开后显示高级连接字段） --%>
+                            </button>
                           </div>
-                          <div class="form-control col-span-2">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext(
-                                "Platform (optional)"
-                              )}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="platform"
-                              value={@remote_form_target[:platform]}
-                              placeholder="linux_x64, darwin_arm64, windows_x64"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-                            />
-                            <p class="text-xs text-base-content/50 mt-1">
-                              {gettext("Blank = auto-probe the remote OS/arch")}
-                            </p>
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Dist Port")}</span>
-                            </label>
-                            <input
-                              type="number"
-                              name="dist_port"
-                              value={@remote_form_target[:dist_port]}
-                              placeholder="9000"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-                            />
-                          </div>
-                          <div class="form-control">
-                            <label class="label">
-                              <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
-                            </label>
-                            <input
-                              type="text"
-                              name="remote_path"
-                              value={@remote_form_target[:remote_path]}
-                              placeholder="/tmp/genesis_remote"
-                              class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
-                            />
+                          <%!-- CSS `hidden` (not `:if`) keeps the inputs in the DOM so they are
+                             always submitted on save: editing an existing target with a
+                             NON-default dist_port/remote_path would otherwise silently reset
+                             those values to the backend defaults. With `hidden` the inputs
+                             keep submitting their prefilled values exactly as today,
+                             preserving custom values and keeping
+                             build_remote_target_from_params/1 unchanged. --%>
+                          <div class={"grid grid-cols-2 gap-4 col-span-2" <> if(@remote_show_advanced, do: "", else: " hidden")}>
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext(
+                                  "Local Release Tarball"
+                                )}</span>
+                              </label>
+                              <input
+                                type="text"
+                                name="local_binary_path"
+                                value={@remote_form_target[:local_binary_path]}
+                                placeholder="_build/prod/rel/genesis_remote.tar.xz"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                              <p class="text-xs text-base-content/50 mt-1">
+                                {gettext("Leave blank to auto-download the release on the remote")}
+                              </p>
+                            </div>
+                            <div class="form-control col-span-2">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext(
+                                  "Platform (optional)"
+                                )}</span>
+                              </label>
+                              <input
+                                type="text"
+                                name="platform"
+                                value={@remote_form_target[:platform]}
+                                placeholder="linux_x64, darwin_arm64, windows_x64"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                              <p class="text-xs text-base-content/50 mt-1">
+                                {gettext("Blank = auto-probe the remote OS/arch")}
+                              </p>
+                            </div>
+                            <div class="form-control">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Dist Port")}</span>
+                              </label>
+                              <input
+                                type="number"
+                                name="dist_port"
+                                value={@remote_form_target[:dist_port]}
+                                placeholder="9000"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
+                            <div class="form-control">
+                              <label class="label">
+                                <span class="label-text font-semibold text-xs">{gettext("Remote Path")}</span>
+                              </label>
+                              <input
+                                type="text"
+                                name="remote_path"
+                                value={@remote_form_target[:remote_path]}
+                                placeholder="/tmp/genesis_remote"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                              />
+                            </div>
                           </div>
                         </div>
                         <div class="flex items-center justify-end gap-2 pt-1">
@@ -571,7 +593,8 @@ defmodule EvoDashWeb.SettingsLive do
         bootstrap_progress: %{},
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
-        remote_form_target: nil
+        remote_form_target: nil,
+        remote_show_advanced: false
       )
 
     {:ok, socket}
@@ -1241,16 +1264,19 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("add_remote_target", _params, socket) do
     {:noreply,
-     assign(socket, :remote_form_target, %{
-       dist_port: 9000,
-       remote_path: "/tmp/genesis_remote",
-       platform: nil
-     })}
+     assign(socket,
+       remote_form_target: %{
+         dist_port: 9000,
+         remote_path: "/tmp/genesis_remote",
+         platform: nil
+       },
+       remote_show_advanced: false
+     )}
   end
 
   @impl true
   def handle_event("cancel_edit_remote", _params, socket) do
-    {:noreply, assign(socket, :remote_form_target, nil)}
+    {:noreply, assign(socket, remote_form_target: nil, remote_show_advanced: false)}
   end
 
   @impl true
@@ -1266,7 +1292,12 @@ defmodule EvoDashWeb.SettingsLive do
           nil
       end
 
-    {:noreply, assign(socket, :remote_form_target, form_target)}
+    {:noreply, assign(socket, remote_form_target: form_target, remote_show_advanced: false)}
+  end
+
+  @impl true
+  def handle_event("toggle_remote_advanced", _params, socket) do
+    {:noreply, update(socket, :remote_show_advanced, &(!&1))}
   end
 
   @impl true
