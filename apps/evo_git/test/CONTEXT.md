@@ -18,7 +18,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 - **`phylo_graph_node_test.exs`** — `EvoGit.Core.PhyloGraphNodeTest`: tests `PhyloGraphNode` — `new/0`, `crossover/2`, `add_and_commit/3`. Exercises phylogenetic graph node creation and merge logic via real git repos.
 
 ### `evo_git/adapters/`
-- **`git_test.exs`** — `EvoGit.Adapters.GitTest`: tests the Git adapter — `init/1`, `add_worktree/2`, `add/2`, `commit/2`, `merge/2`, `merge_octopus/2`, `status/1`. Full integration tests creating real git repos in temp dirs. **Error-shape assertions** follow the uniform `{:ok, value} | {:error, {tag, output}}` adapter contract: `show_note` conflict → `{:error, {:conflict, _}}`, `get_note` invalid JSON → `{:error, {:invalid_json, _}}`, no note → `{:error, {:no_note, _}}`, `rev_parse` on missing ref → `{:error, {_, _}}`. Also covers `remove_worktree/2` (detached worktree removal via `git worktree remove --force`): success path, missing-path error-shape `{:error, {tag, output}}`, and a dirty-worktree no-raise test.
+- **`git_test.exs`** — `EvoGit.Adapters.GitTest`: tests the Git adapter — `init/1`, `add_worktree/2`, `add/2`, `commit/2`, `merge/2`, `merge_octopus/2`, `status/1`. Full integration tests creating real git repos in temp dirs. **Error-shape assertions** follow the uniform `{:ok, value} | {:error, {tag, output}}` adapter contract: `show_note` conflict → `{:error, {:conflict, _}}`, `get_note` invalid JSON → `{:error, {:invalid_json, _}}`, no note → `{:error, {:no_note, _}}`, `rev_parse` on missing ref → `{:error, {_, _}}`.
 
 ### `evo_git/agent/`
 - **`tools_test.exs`** — `EvoGit.Agent.ToolsTest`: validates `Tools` schema definitions.

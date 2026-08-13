@@ -20,7 +20,7 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Generic execution** | `run/2` — execute arbitrary `git` args in a directory |
 | **Worktree** | `add_worktree/4`, `prune_worktrees/1` |
 | **Working tree ops** | `checkout/2`, `reset_hard/2`, `clean/1`, `add/2`, `commit/2` |
-| **Merge** | `merge/2`, `merge_no_commit/2`, `merge_octopus/2`, `merge_base/3` — the three merge variants are thin wrappers over one private `do_merge/2` that goes through `run/2` (no raw `System.cmd` copy-paste) |
+| **Merge** | `merge/2`, `merge_octopus/2`, `merge_base/3` — the two merge variants are thin wrappers over one private `do_merge/2` that goes through `run/2` (no raw `System.cmd` copy-paste) |
 | **Status / query** | `conflict_files/1`, `status/1`, `rev_parse/2`, `check_ignore/2` |
 | **Tree listing** | `ls_tree_names/2` — recursive file list in a git tree |
 | **History** | `log/2`, `file_history/3`, `show/2` |
