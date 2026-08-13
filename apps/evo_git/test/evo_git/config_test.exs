@@ -28,6 +28,46 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "sandbox backend config" do
+    test "defaults to :auto" do
+      assert Config.defaults().sandbox.backend == :auto
+    end
+
+    test "atomizes string backend values" do
+      config =
+        Config.defaults()
+        |> put_in([:sandbox, :backend], "systemd")
+        |> Config.__atomize_enum_values__()
+
+      assert config.sandbox.backend == :systemd
+
+      config =
+        Config.defaults()
+        |> put_in([:sandbox, :backend], "bwrap")
+        |> Config.__atomize_enum_values__()
+
+      assert config.sandbox.backend == :bwrap
+    end
+
+    test "validates the known backend atoms" do
+      for backend <- [:auto, :systemd, :bwrap] do
+        config = put_in(EvoGit.Config.Schema.defaults(), [:sandbox, :backend], backend)
+        assert {:ok, _} = EvoGit.Config.Schema.validate(config)
+      end
+    end
+
+    test "rejects an unknown backend value without crashing" do
+      config = put_in(EvoGit.Config.Schema.defaults(), [:sandbox, :backend], :bogus)
+      assert {:error, errors} = EvoGit.Config.Schema.validate(config)
+      assert is_list(errors)
+      assert length(errors) > 0
+
+      error = List.first(errors)
+      assert error.key_path == [:sandbox, :backend]
+      assert error.rule == {:in, [:auto, :systemd, :bwrap]}
+    end
+  end
+
   describe "resolve/0" do
     test "returns a map with at least the default keys" do
       config = Config.resolve()

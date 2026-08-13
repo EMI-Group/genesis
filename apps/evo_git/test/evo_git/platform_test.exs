@@ -208,4 +208,36 @@ defmodule EvoGit.PlatformTest do
       refute Platform.trailing_separator?(nil)
     end
   end
+
+  describe "bwrap_available?/0" do
+    test "returns a boolean" do
+      assert is_boolean(Platform.bwrap_available?())
+    end
+
+    test "when true, the platform is Linux" do
+      # bwrap is Linux-only by definition — a true result implies linux?().
+      if Platform.bwrap_available?() do
+        assert Platform.linux?()
+      end
+    end
+  end
+
+  describe "sandbox_backend/0" do
+    # Host-dependent by design (availability probing); never assert a specific
+    # backend. Pin the environment-agnostic decision chain instead.
+    test "returns one of the known backend atoms" do
+      assert Platform.sandbox_backend() in [:systemd_run, :bwrap, :sandbox_exec, :none]
+    end
+
+    test "follows the availability priority chain" do
+      backend = Platform.sandbox_backend()
+
+      cond do
+        Platform.systemd_available?() -> assert backend == :systemd_run
+        Platform.bwrap_available?() -> assert backend == :bwrap
+        Platform.sandbox_exec_available?() -> assert backend == :sandbox_exec
+        true -> assert backend == :none
+      end
+    end
+  end
 end
