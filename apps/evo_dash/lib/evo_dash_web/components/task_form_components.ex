@@ -157,7 +157,7 @@ defmodule EvoDashWeb.TaskFormComponents do
           data-layout={layout}
           id="input-layout"
         >
-          <div class="input-card">
+          <div class="input-card relative">
             <textarea
               name="prompt"
               id="prompt"
@@ -179,6 +179,32 @@ defmodule EvoDashWeb.TaskFormComponents do
                 end
               }
             ><%= @prompt %></textarea>
+
+            <%!-- Attach-file button — floats at the card's top-right corner
+                 (absolute, requires `relative` on .input-card). Rendered only
+                 when a project is open (@disabled == false), same gate as the
+                 controls row. The FilePicker JS hook owns the click: it pushes
+                 a "file_pick" event to the server (ProjectsLive runs the
+                 native file dialog and appends the picked file's text to the
+                 objective) and writes the returned prompt back into the
+                 textarea — the server cannot do it, because the textarea is
+                 phx-update="ignore" (the DOM is authoritative). type="button"
+                 is CRITICAL: inside the task form, a button without it would
+                 submit. --%>
+            <%= unless @disabled do %>
+              <%!-- zh_CN: Attach file → "附加文件" --%>
+              <button
+                type="button"
+                id="objective-file-button"
+                phx-hook="FilePicker"
+                data-picker-id="objective_file"
+                aria-label={gettext("Attach file")}
+                title={gettext("Attach file")}
+                class="btn btn-ghost btn-sm btn-square absolute top-2 right-2 bg-base-100/80 z-10"
+              >
+                <.icon name="hero-paper-clip" class="size-4" />
+              </button>
+            <% end %>
 
             <%!-- Controls row — the card's LAST element, in normal document flow
                  (never position: fixed). DOM order AND visual order are
