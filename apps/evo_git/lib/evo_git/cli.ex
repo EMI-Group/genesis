@@ -136,11 +136,13 @@ defmodule EvoGit.CLI do
   defp get_input(rest, opts) do
     cond do
       opts[:file] ->
-        if File.exists?(opts[:file]) do
-          File.read!(opts[:file]) |> String.trim()
-        else
-          IO.puts("Error: File not found: #{opts[:file]}")
-          nil
+        case EvoGit.PromptFile.read(opts[:file]) do
+          {:ok, text} ->
+            text
+
+          {:error, reason} ->
+            IO.puts("Error: #{EvoGit.PromptFile.describe_error(reason, opts[:file])}")
+            nil
         end
 
       rest != [] ->
