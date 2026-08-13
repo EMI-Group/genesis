@@ -622,6 +622,23 @@ defmodule EvoDashWeb.SettingsComponents do
                           </p>
                         </div>
                       </div>
+                    <% :bwrap -> %>
+                      <div class="flex items-start gap-4 p-5 bg-warning/5 border-warning/20">
+                        <div class="text-warning mt-0.5">
+                          <.icon name="hero-shield-exclamation" class="size-5" />
+                        </div>
+                        <div>
+                          <h3 class="font-bold text-warning mb-1 flex items-center gap-2">
+                            bwrap
+                            <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
+                          </h3>
+                          <p class="text-sm font-medium text-warning/80 leading-relaxed">
+                            <%!-- zh_CN: 沙箱后端 bwrap：仅文件系统隔离可用，无资源限制/系统调用过滤 --%>{gettext(
+                              "Filesystem isolation is active (bubblewrap). Resource limits/syscall filtering not available with bwrap."
+                            )}
+                          </p>
+                        </div>
+                      </div>
                     <% _ -> %>
                       <div class="flex items-start gap-4 p-5 bg-error/5 border-error/20">
                         <div class="text-error mt-0.5">

@@ -441,6 +441,61 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ ">Sandbox</span>"
       assert html =~ "sandbox-exec (macOS)"
     end
+
+    test "Sandbox row shows a bwrap backend badge when the platform is Linux", %{conn: conn} do
+      Application.put_env(:evo_dash, :platform_os_override, :linux)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :platform_os_override)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      assert assigns(view)[:platform_os] == :linux
+
+      # Inject a bwrap-style sandbox check result (Linux host with bwrap but no
+      # systemd) so the badge text is deterministic regardless of the host OS.
+      html =
+        render_with_checks(view, %{
+          EvoGit.SystemCheck.run_all_checks()
+          | sandbox: %{
+              backend: :bwrap,
+              enabled: true,
+              capabilities: %{filesystem_isolation: true, resource_limits: false},
+              systemd_available: false,
+              sandbox_exec_available: false
+            }
+        })
+
+      assert html =~ ">Sandbox</span>"
+      assert html =~ "bwrap (Linux)"
+    end
+  end
+
+  describe "Status sandbox helpers — bwrap" do
+    # Pure function calls into EvoDashWeb.SystemLive.Status — no LiveView
+    # harness needed (same style as the other helper unit tests).
+    alias EvoDashWeb.SystemLive.Status
+
+    test "format_backend/1 maps :bwrap to its display name" do
+      assert Status.format_backend(:bwrap) == "bwrap (Linux)"
+    end
+
+    test "sandbox_status/1 treats bwrap with filesystem isolation as ok" do
+      assert Status.sandbox_status(%{
+               backend: :bwrap,
+               enabled: true,
+               capabilities: %{filesystem_isolation: true}
+             }) == :ok
+    end
+
+    test "sandbox_status/1 errors when bwrap lacks filesystem isolation" do
+      assert Status.sandbox_status(%{
+               backend: :bwrap,
+               enabled: true,
+               capabilities: %{filesystem_isolation: false}
+             }) == :error
+    end
   end
 
   describe "system self-check" do
