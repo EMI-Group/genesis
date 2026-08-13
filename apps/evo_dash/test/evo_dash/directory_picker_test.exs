@@ -124,6 +124,68 @@ defmodule EvoDash.DirectoryPickerTest do
     end
   end
 
+  describe "pick/3 (file mode)" do
+    test "file pick opens the file dialog and delivers the picked file path" do
+      assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
+      assert_receive {:directory_picker_result, "file-1", {:ok, "/fake/picked/file.txt"}}, 1000
+    end
+
+    test "pick/2 behaves exactly like pick/3 :directory" do
+      assert DirectoryPicker.pick(self(), "picker-1") == :ok
+      assert_receive {:directory_picker_result, "picker-1", {:ok, "/fake/picked/dir"}}, 1000
+
+      # pick/2 delegates to pick/3 with :directory — identical result protocol.
+      assert DirectoryPicker.pick(self(), "picker-2", :directory) == :ok
+      assert_receive {:directory_picker_result, "picker-2", {:ok, "/fake/picked/dir"}}, 1000
+    end
+
+    test "concurrent file picks are serialized (busy)" do
+      # Gate the dialog: show_modal/1 blocks until the test releases it, so the
+      # busy window is deterministic (the gate is kind-agnostic).
+      FakeWx.set_gate(self())
+
+      assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
+      assert_receive {:dialog_open, task_pid}, 1000
+
+      # Second file pick while busy → synchronous unavailable, no result message.
+      assert DirectoryPicker.pick(self(), "file-2", :file) == {:error, :unavailable}
+      refute_receive {:directory_picker_result, "file-2", _}, 50
+
+      # The busy flag is kind-agnostic: a :directory pick is rejected the same way.
+      assert DirectoryPicker.pick(self(), "dir-1", :directory) == {:error, :unavailable}
+      refute_receive {:directory_picker_result, "dir-1", _}, 50
+
+      # Release the dialog; the first pick completes and busy clears.
+      send(task_pid, :release_dialog)
+      assert_receive {:directory_picker_result, "file-1", {:ok, "/fake/picked/file.txt"}}, 1000
+
+      wait_until_pick_ok("file-3")
+      assert_receive {:directory_picker_result, "file-3", {:ok, _}}, 1000
+    end
+
+    test "file pick wx init failure degrades to :unavailable and clears busy" do
+      # Make :wx.new/0 fail like on a headless machine.
+      FakeWx.set_mode(:init_fails)
+
+      # With wx init in the Task, the failure is ASYNCHRONOUS — pick/3 returns
+      # :ok because the Task was spawned successfully.
+      assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
+      assert_receive {:directory_picker_result, "file-1", :unavailable}, 1000
+      refute_receive {:directory_picker_result, "file-1", _}, 50
+
+      # The picker is NOT stuck busy: once wx recovers, picks work again.
+      FakeWx.set_mode(:normal)
+      wait_until_pick_ok("file-2")
+      assert_receive {:directory_picker_result, "file-2", {:ok, _}}, 1000
+    end
+
+    test "returns {:error, :unavailable} when disabled by config (file mode)" do
+      Application.put_env(:evo_dash, :directory_picker, enabled: false)
+      assert DirectoryPicker.pick(self(), "file-1", :file) == {:error, :unavailable}
+      refute_receive {:directory_picker_result, _, _}, 50
+    end
+  end
+
   # Picks are accepted asynchronously: after a pick completes, the Task sends
   # the result to the test process and THEN `:pick_done` to the GenServer. The
   # result arriving does not guarantee the GenServer has processed `:pick_done`
