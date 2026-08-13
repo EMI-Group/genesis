@@ -31,10 +31,23 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # pool (~1.7s); subsequent calls to the same destination fail in ~1-2ms. Warm
   # the pool so each retry attempt fails in milliseconds, making the retry-sleep
   # windows deterministic for the assertions below.
+  #
+  # stream_text/3 returns {:ok, stream_resp} once the provider build phase
+  # succeeds (the API key is resolved); the actual transport failure surfaces
+  # later in process_stream/1 as {:error, ...}. We only need the pool warmed, so
+  # the process_stream result is discarded.
   defp warm_pool do
-    {:ok, stream_resp} = ReqLLM.stream_text(refused_model(), ReqLLM.Context.new(), [])
-    _ = ReqLLM.StreamResponse.process_stream(stream_resp)
-    :ok
+    case ReqLLM.stream_text(refused_model(), ReqLLM.Context.new(), []) do
+      {:ok, stream_resp} ->
+        _ = ReqLLM.StreamResponse.process_stream(stream_resp)
+        :ok
+
+      {:error, _reason} ->
+        # Build-phase failure (e.g. missing API key from a polluted env): the
+        # pool is not warmed, but build-phase errors are also instantaneous, so
+        # the retry timing assertions still hold without a warm pool.
+        :ok
+    end
   end
 
   # Registers a fake agent in the scheduler ETS with the connection-refused model.
@@ -69,6 +82,15 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # a no-op when not paused).
     AgentScheduler.resume()
 
+    # Pin a test API key in the ReqLLM application env so the refused_model's
+    # OpenAI provider requests clear the build phase (ReqLLM.Keys resolution)
+    # and reach the transport layer where they fail fast with connection-refused.
+    # Without this, a prior test that deletes :openai_api_key (e.g.
+    # config_test's credential cleanup) leaves the env empty, causing a
+    # provider-build failure that changes the error shape and crashes warm_pool/0.
+    original_api_key = Application.get_env(:req_llm, :openai_api_key)
+    Application.put_env(:req_llm, :openai_api_key, "test-key")
+
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
     # Single-slot "default" pool: while the retrying agent holds the slot NO other
@@ -82,6 +104,12 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     on_exit(fn ->
       AgentScheduler.resume()
       AgentScheduler.update_config(model_profiles: original_profiles)
+
+      if original_api_key do
+        Application.put_env(:req_llm, :openai_api_key, original_api_key)
+      else
+        Application.delete_env(:req_llm, :openai_api_key)
+      end
     end)
 
     :ok
