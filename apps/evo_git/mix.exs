@@ -33,10 +33,7 @@ defmodule EvoGit.MixProject do
       {:toml_elixir, "~> 3.1"},
       {:yaml_elixir, "~> 2.11"},
       {:xqlite, "~> 0.10"},
-      {:jason, "~> 1.2"},
-      # Pure-BEAM PDF reader/writer (no runtime deps) — used by EvoGit.PromptFile
-      # to extract text from .pdf prompt files.
-      {:ex_pdf, "~> 1.0"}
+      {:jason, "~> 1.2"}
     ]
   end
 
