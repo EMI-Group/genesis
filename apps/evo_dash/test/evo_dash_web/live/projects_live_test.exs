@@ -1833,6 +1833,185 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "picker_result:foreign-repo", %{path: "/fake/picked/dir"})
     end
   end
+
+  describe "file attach" do
+    # Attach-file flow for the objective editor ("file_pick" event + the
+    # "objective_file" picker id in projects_live.ex). Same picker machinery as
+    # "directory picker", but in :file mode: the picked file's content is read
+    # with EvoGit.PromptFile and appended to the prompt. Uses the injectable
+    # fake picker module, which delivers its result synchronously during
+    # render_hook so handle_info runs and the pushed event arrives.
+
+    setup do
+      on_exit(fn ->
+        # Clear the fake's per-test file result so it never leaks across tests.
+        EvoDash.DirectoryPicker.Fake.reset()
+      end)
+
+      :ok
+    end
+
+    test "file_pick with the fake picker appends the file content to the prompt", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      original = Application.get_env(:evo_dash, :directory_picker_module)
+      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker_module, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker_module)
+        end
+      end)
+
+      file_path = Path.join(tmp_dir, "note.txt")
+      File.write!(file_path, "Hello file content")
+
+      EvoDash.DirectoryPicker.Fake.set_file_result({:ok, file_path})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+
+      block = "\n\n---\n## Attached file: note.txt\n\nHello file content\n"
+      expected = "my base prompt" <> block
+
+      assert_push_event(view, "picker_result:objective_file", %{
+        prompt: ^expected,
+        block: ^block,
+        attached: true,
+        name: "note.txt"
+      })
+
+      assert assigns(view)[:task_prompt] == expected
+      # The snapshot base is consumed after the append, proving the snapshot
+      # (not the stale @task_prompt) was used as the base.
+      assert assigns(view)[:file_pick_bases] == %{}
+    end
+
+    test "file_pick with a missing file shows an error flash and keeps the prompt", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      original = Application.get_env(:evo_dash, :directory_picker_module)
+      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker_module, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker_module)
+        end
+      end)
+
+      missing = Path.join(tmp_dir, "missing.txt")
+
+      EvoDash.DirectoryPicker.Fake.set_file_result({:ok, missing})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      before = assigns(view)[:task_prompt]
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+      assert_push_event(view, "picker_result:objective_file", %{error: true})
+
+      assert render(view) =~ "Failed to attach file"
+      assert assigns(view)[:task_prompt] == before
+    end
+
+    test "file_pick cancelled leaves the prompt untouched", %{conn: conn} do
+      original = Application.get_env(:evo_dash, :directory_picker_module)
+      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker_module, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker_module)
+        end
+      end)
+
+      EvoDash.DirectoryPicker.Fake.set_file_result(:cancelled)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      before = assigns(view)[:task_prompt]
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+      assert_push_event(view, "picker_result:objective_file", %{cancelled: true})
+
+      refute render(view) =~ "Failed to attach file"
+      assert assigns(view)[:task_prompt] == before
+    end
+
+    test "file_pick unavailable pushes unavailable", %{conn: conn} do
+      original = Application.get_env(:evo_dash, :directory_picker_module)
+      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker_module, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker_module)
+        end
+      end)
+
+      EvoDash.DirectoryPicker.Fake.set_file_result(:unavailable)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+    end
+
+    test "file_pick on a remote node pushes unavailable without any picker involvement", %{
+      conn: conn
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Proves the remote context is active — the remote branch short-circuits
+      # and never touches the picker module (real or fake).
+      assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+    end
+
+    test "file_pick with the picker disabled pushes unavailable", %{conn: conn} do
+      # Explicit and self-documenting (test_helper.exs already sets it, but
+      # state it here so this test reads standalone). The disabled flag is
+      # checked FIRST in EvoDash.DirectoryPicker.pick/3, so this exercises the
+      # real synchronous {:error, :unavailable} path with the real picker
+      # module (the env seam defaults to it).
+      original = Application.get_env(:evo_dash, :directory_picker)
+      Application.put_env(:evo_dash, :directory_picker, enabled: false)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+    end
+  end
 end
 
 # A minimal GenServer standing in for a real remote connection manager in
