@@ -146,25 +146,9 @@ defmodule EvoGit.AgentScheduler.Slots do
   @spec handle_release_llm_slot(pos_integer(), State.t()) ::
           {State.t(), [{pos_integer(), atom()}]}
   def handle_release_llm_slot(agent_id, %State{} = state) do
-    # Scan ALL pools: the agent's ETS model_id may be stale or absent, so a
-    # resolve-then-delete-from-one-pool would release the wrong pool.
-    state =
-      Enum.reduce(State.all_model_ids(state), state, fn model_id, acc_state ->
-        holders = State.holders_for(acc_state, model_id)
+    state = remove_agent_from_llm_holders(state, agent_id)
 
-        if MapSet.member?(holders, agent_id) do
-          acc_state =
-            State.update_holders(acc_state, model_id, MapSet.delete(holders, agent_id))
-
-          last_granted = State.last_granted_for(acc_state, model_id)
-          State.update_last_granted(acc_state, model_id, Map.delete(last_granted, agent_id))
-        else
-          acc_state
-        end
-      end)
-
-    {state, unblocked} = grant_pending_llm_slots(state)
-    {state, unblocked}
+    grant_pending_llm_slots(state)
   end
 
   @doc """
@@ -390,6 +374,26 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   # --- Private Helpers: LLM Slots ---
+
+  # Removes an agent from the holder set (and last_granted map) of every
+  # per-model LLM pool. Scans ALL pools because the agent's ETS model_id may
+  # be stale or absent — a resolve-then-delete-from-one-pool could hit the
+  # wrong pool and leak the holder.
+  defp remove_agent_from_llm_holders(%State{} = state, agent_id) do
+    Enum.reduce(State.all_model_ids(state), state, fn model_id, acc_state ->
+      holders = State.holders_for(acc_state, model_id)
+
+      if MapSet.member?(holders, agent_id) do
+        acc_state =
+          State.update_holders(acc_state, model_id, MapSet.delete(holders, agent_id))
+
+        last_granted = State.last_granted_for(acc_state, model_id)
+        State.update_last_granted(acc_state, model_id, Map.delete(last_granted, agent_id))
+      else
+        acc_state
+      end
+    end)
+  end
 
   # Grants pending LLM slots across all model pools, clearing expired backoffs.
   # Returns {state, unblocked} where unblocked is a list of {agent_id, :running}.

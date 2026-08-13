@@ -127,7 +127,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
 
   @doc """
   Computes the next task number by scanning the `.genesis/workers/` directory.
-  Returns max+1 of existing `worker_T<n>_a<m>` entries, or 1 if none/empty.
+  Returns max+1 of existing `worker_T<n>_A<m>` entries, or 1 if none/empty.
   """
   @spec next_task_number(String.t()) :: pos_integer()
   def next_task_number(repo_root) do
