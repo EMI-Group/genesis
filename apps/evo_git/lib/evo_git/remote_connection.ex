@@ -531,12 +531,12 @@ defmodule EvoGit.RemoteConnection do
     broadcast_status(target, state)
 
     case resolve_platform(target, ssh_target) do
-      {:ok, daemon_os, platform} ->
+      {:ok, daemon_os, platform, libc} ->
         # :downloading stage
         state = %{state | bootstrap_stage: :downloading}
         broadcast_status(target, state)
 
-        case download_tarball(state, target, ssh_target, platform, remote_tarball) do
+        case download_tarball(state, target, ssh_target, platform, libc, remote_tarball) do
           {:ok, state} ->
             launch_after_staging(
               state,
@@ -560,18 +560,24 @@ defmodule EvoGit.RemoteConnection do
 
   # Resolves the remote platform. Uses the target's optional `platform` field
   # (skipping the SSH probe entirely) when set; otherwise probes the remote
-  # via SSH. Returns {:ok, daemon_os, platform} where daemon_os is the
-  # canonical "Linux" | "Darwin" string used by the launcher functions.
+  # via SSH. Returns {:ok, daemon_os, platform, libc} where daemon_os is the
+  # canonical "Linux" | "Darwin" string used by the launcher functions and libc
+  # is :musl | :glibc | nil (only probed for Linux platforms; nil for
+  # non-Linux or on failure).
   defp resolve_platform(target, ssh_target) do
     case Map.get(target, :platform) do
       platform when is_binary(platform) and platform != "" ->
-        with {:ok, %{os: _os, arch: _arch}} <- EvoGit.RemoteBootstrap.parse_platform(platform),
+        with {:ok, %{os: os, arch: _arch}} <- EvoGit.RemoteBootstrap.parse_platform(platform),
              {:ok, daemon_os} <- EvoGit.RemoteBootstrap.daemon_os(platform) do
-          {:ok, daemon_os, platform}
+          libc = if os == "linux", do: probe_libc(ssh_target), else: nil
+          {:ok, daemon_os, platform, libc}
         end
 
       _ ->
-        probe_platform(ssh_target)
+        with {:ok, daemon_os, platform} <- probe_platform(ssh_target) do
+          libc = if daemon_os == "Linux", do: probe_libc(ssh_target), else: nil
+          {:ok, daemon_os, platform, libc}
+        end
     end
   end
 
@@ -603,17 +609,30 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
+  # Probes the remote libc implementation via SSH
+  # (`ldd --version 2>&1 | head -1`). Returns :musl | :glibc | nil — nil on
+  # failure/timeout (defaults to musl behavior since nil = default/musl).
+  defp probe_libc(ssh_target) do
+    cmd = "ssh #{ssh_target} 'ldd --version 2>&1 | head -1'"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, output, 0} -> EvoGit.RemoteBootstrap.detect_libc(output)
+      {:ok, _output, _status} -> nil
+      :timeout -> nil
+    end
+  end
+
   # Downloads the release tarball for the platform to the remote temp path.
   # Primary: curl directly on the remote host (with a wget fallback when curl
   # is missing or fails). Fallback: curl locally into the data-dir cache, then
   # scp to the remote temp path. Returns
   # {:ok, state} | {:error, reason, state}.
-  defp download_tarball(state, target, ssh_target, platform, remote_tarball) do
-    # download_url/1 is deterministic — always the direct Cloudflare-worker
+  defp download_tarball(state, target, ssh_target, platform, libc, remote_tarball) do
+    # download_url/2 is deterministic — always the direct Cloudflare-worker
     # "smart download" URL (https://genesis.evox.group/dl/...), which proxies
     # the latest GitHub release asset; version is always "latest" and keys the
-    # local cache.
-    {:ok, url, version} = EvoGit.RemoteBootstrap.download_url(platform)
+    # local cache. The libc variant selects the musl (default) or _glibc asset.
+    {:ok, url, version} = EvoGit.RemoteBootstrap.download_url(platform, libc)
 
     case download_on_remote(ssh_target, url, remote_tarball) do
       :ok ->
@@ -628,7 +647,7 @@ defmodule EvoGit.RemoteConnection do
         local_state = %{state | bootstrap_stage: :downloading_locally}
         broadcast_status(target, local_state)
 
-        case download_locally_and_scp(ssh_target, url, platform, version, remote_tarball) do
+        case download_locally_and_scp(ssh_target, url, platform, version, libc, remote_tarball) do
           :ok ->
             {:ok, local_state}
 
@@ -671,8 +690,8 @@ defmodule EvoGit.RemoteConnection do
   # Fallback download: curls the tarball into a cache file under the platform
   # data dir (reusing a cached copy when present), then scps it to the remote
   # temp path.
-  defp download_locally_and_scp(ssh_target, url, platform, version, remote_tarball) do
-    cache_file = EvoGit.RemoteBootstrap.cache_path(platform, version)
+  defp download_locally_and_scp(ssh_target, url, platform, version, libc, remote_tarball) do
+    cache_file = EvoGit.RemoteBootstrap.cache_path(platform, version, libc)
 
     case download_locally(cache_file, url) do
       :ok ->
