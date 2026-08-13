@@ -1448,15 +1448,6 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # Validation failure in the manual attach flow: error flash (native flow
-  # parity) + `%{error: true, reason: ...}` push — the FilePicker hook shows
-  # the reason inline next to the path input and keeps it open.
-  defp push_manual_attach_error(socket, picker_id, reason) do
-    socket
-    |> put_flash(:error, reason)
-    |> push_event("picker_result:#{picker_id}", %{error: true, reason: reason})
-  end
-
   @impl true
   def handle_event("run_command", %{"command" => command}, socket) do
     commands = socket.assigns.commands
@@ -1519,6 +1510,15 @@ defmodule EvoDashWeb.ProjectsLive do
             {:noreply, put_flash(socket, :error, msg)}
         end
     end
+  end
+
+  # Validation failure in the manual attach flow: error flash (native flow
+  # parity) + `%{error: true, reason: ...}` push — the FilePicker hook shows
+  # the reason inline next to the path input and keeps it open.
+  defp push_manual_attach_error(socket, picker_id, reason) do
+    socket
+    |> put_flash(:error, reason)
+    |> push_event("picker_result:#{picker_id}", %{error: true, reason: reason})
   end
 
   defp truncate_output(output) when byte_size(output) > 2000 do
