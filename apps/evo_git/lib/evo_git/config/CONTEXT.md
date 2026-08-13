@@ -117,6 +117,7 @@ github_username = "..."      # For PR creation
 
 [sandbox]
 mode = "auto"                # "auto" | "enabled" | "disabled"
+backend = "auto"             # "auto" | "systemd" | "bwrap" — sandbox backend selection
 write_paths = []             # Optional user-defined writable paths for sandboxed tools
                              # (unset/nil = use platform default writable paths; set,
                              # including an empty list, = REPLACES the built-in list)
@@ -125,6 +126,8 @@ write_paths = []             # Optional user-defined writable paths for sandboxe
 enabled = false              # Run tool calls inside a cached Nix dev environment (requires flake.nix in config dir)
 flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
+
+**`[sandbox] backend` semantics**: `[:sandbox, :backend]` is an `:atom` schema key (default `:auto`, validation `[in: [:auto, :systemd, :bwrap]]`) selecting the Linux sandbox backend. `:auto` tries systemd-run first, then bubblewrap (`bwrap`), then no sandbox when neither is available (macOS always uses sandbox-exec regardless — bwrap is Linux-only). `:systemd` forces systemd-run (no sandbox if systemd is unavailable); `:bwrap` forces bubblewrap — filesystem isolation only, no resource limits — useful in Docker/containers where systemd is unavailable, and falls back to no sandbox if `bwrap` is unavailable. **The `[sandbox.resources]` and `[sandbox.process]` keys are systemd-only and ignored when bwrap is the active backend.** String values from config.toml are atomized by the `atomize_enum_values/1` pipeline step (`"auto" | "systemd" | "bwrap"` → atoms) before `Schema.validate`.
 
 **`[sandbox] write_paths` semantics**: `[:sandbox, :write_paths]` is a `:list_of_strings` schema key (default `nil`). Unset/nil means the sandbox backends use their platform-default writable paths; set (including an explicitly empty list) REPLACES the built-in list — `[]` disables those writable paths entirely. The value survives the resolve pipeline (`deep_merge` → `atomize_enum_values` → `Schema.validate`) and any non-list/non-string-list value surfaces as a validation error (never a crash). **Consumed by the sandbox backends** (`EvoGit.Sandbox.Linux.args/4` and `EvoGit.Sandbox.MacOS.generate_profile/2` resolve it via `EvoGit.Config.resolve([:sandbox, :write_paths])`): nil → platform default cache-dir list; set (incl. `[]`) → replaces the built-in cache-dir list only; `~`-prefixed entries expand to `System.user_home!()`, absolute entries as-is, relative entries joined to `$HOME`. Structural paths (cwd, tmp, nix store, repo `.git`) are always appended regardless; deny lists are never affected. Details in `sandbox/CONTEXT.md`.
 

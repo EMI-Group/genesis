@@ -175,7 +175,12 @@ defmodule EvoGit.Config do
       {:sandbox, sandbox_config}, acc when is_map(sandbox_config) ->
         mode = Map.get(sandbox_config, :mode)
         new_mode = atomize_if_string(mode, [:auto, :enabled, :disabled])
-        put_in(acc, [:sandbox, :mode], new_mode)
+        acc = put_in(acc, [:sandbox, :mode], new_mode)
+
+        # Sandbox backend: "auto" | "systemd" | "bwrap" -> :auto | :systemd | :bwrap
+        backend = Map.get(sandbox_config, :backend)
+        new_backend = atomize_if_string(backend, [:auto, :systemd, :bwrap])
+        put_in(acc, [:sandbox, :backend], new_backend)
 
       # Git CoW worktree creation: "auto" | "enabled" | "disabled" -> :auto | :enabled | :disabled
       {:git, git_config}, acc when is_map(git_config) ->
