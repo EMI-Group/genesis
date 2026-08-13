@@ -1,23 +1,30 @@
 defmodule EvoDash.DirectoryPicker do
   @moduledoc """
-  Native-first directory-dialog picker for the dashboard's Browse buttons.
+  Native-first directory/file-dialog picker for the dashboard's Browse buttons.
 
-  Uses a "native first, wx fallback" model on ALL platforms:
+  Picks have a `kind` (`pick/3`): `:directory` (the default, via `pick/2` —
+  used by the Browse buttons) or `:file`. Uses a "native first, wx fallback"
+  model on ALL platforms:
 
-  * **macOS** — uses `osascript` to invoke the native `choose folder` dialog.
-    This avoids the Erlang dock icon that `:wx.new/0` creates (wx registers as a
-    GUI application on macOS, showing the Erlang icon in the dock even after the
-    dialog closes). The native dialog has no dock icon and no Erlang branding.
+  * **macOS** — uses `osascript` to invoke the native `choose folder` dialog for
+    `:directory` and `choose file` for `:file`. This avoids the Erlang dock icon
+    that `:wx.new/0` creates (wx registers as a GUI application on macOS,
+    showing the Erlang icon in the dock even after the dialog closes). The
+    native dialog has no dock icon and no Erlang branding.
 
-  * **Linux** — uses `zenity --file-selection --directory` (GTK native dialog).
-    Falls back to wx if zenity is not installed or fails at runtime.
+  * **Linux** — uses `zenity --file-selection --directory` (GTK native dialog)
+    for `:directory`, plain `zenity --file-selection --title=Select File` for
+    `:file`. Falls back to wx if zenity is not installed or fails at runtime.
 
   * **Windows** — uses PowerShell `[System.Windows.Forms.FolderBrowserDialog]`
-    (.NET native dialog). Falls back to wx if PowerShell/.NET fails at runtime.
+    (.NET native dialog) for `:directory` and
+    `[System.Windows.Forms.OpenFileDialog]` for `:file`. Falls back to wx if
+    PowerShell/.NET fails at runtime.
 
-  * **Fallback (all platforms)** — Erlang's `:wx` module (`wxDirDialog`) is
-    used when the native tool is unavailable or fails at runtime. wx is
-    initialized lazily inside the pick Task (NOT cached in GenServer state).
+  * **Fallback (all platforms)** — Erlang's `:wx` module (`wxDirDialog` for
+    `:directory`, `wxFileDialog` for `:file`) is used when the native tool is
+    unavailable or fails at runtime. wx is initialized lazily inside the pick
+    Task (NOT cached in GenServer state).
 
   Only one native dialog can be open at a time: this GenServer marks itself
   busy during a pick and rejects concurrent picks with `{:error, :unavailable}`.
@@ -41,8 +48,8 @@ defmodule EvoDash.DirectoryPicker do
   `{:directory_picker_result, picker_id, result}` where `result` is
   `{:ok, path} | :cancelled | :unavailable`. Synchronous failures (disabled by
   config, neither native nor wx available, the GenServer not running, or
-  another pick in flight) return `{:error, :unavailable}` from `pick/2` without
-  a result message.
+  another pick in flight) return `{:error, :unavailable}` from `pick/2` /
+  `pick/3` without a result message.
 
   Disabled with `config :evo_dash, :directory_picker, enabled: false`. The wx
   backend is injectable via `config :evo_dash, :directory_picker_wx, Module`
@@ -54,11 +61,11 @@ defmodule EvoDash.DirectoryPicker do
   # wx ships with OTP but is intentionally NOT a dependency of any umbrella app
   # (only loaded in the `genesis`/`genesis_desktop` releases via `wx: :load` in
   # the root mix.exs). Mix prunes OTP code paths not in the dependency graph
-  # (`:prune_code_paths`), so the compiler cannot resolve `:wx`/`:wxDirDialog`
-  # here — suppress the undefined-module warnings for this optional runtime
-  # dependency. Availability is checked at runtime via `available?/0`
-  # (`:code.which/1`).
-  @compile {:no_warn_undefined, [:wx, :wxDirDialog]}
+  # (`:prune_code_paths`), so the compiler cannot resolve `:wx`/`:wxDirDialog`/
+  # `:wxFileDialog` here — suppress the undefined-module warnings for this
+  # optional runtime dependency. Availability is checked at runtime via
+  # `available?/0` (`:code.which/1`).
+  @compile {:no_warn_undefined, [:wx, :wxDirDialog, :wxFileDialog]}
 
   # Verified from the installed source
   # (`:code.lib_dir(:wx)` → include/wx.hrl): wxID_OK = 5100, wxID_CANCEL = 5101.
@@ -67,6 +74,9 @@ defmodule EvoDash.DirectoryPicker do
 
   @doc """
   Opens the native directory dialog and delivers the result to `reply_to`.
+
+  Equivalent to `pick(reply_to, picker_id, :directory)` — the behavior of the
+  dashboard's Browse buttons.
 
   Returns `:ok` when the pick was accepted, or `{:error, :unavailable}` when the
   picker is disabled by config, neither native nor wx is available, the
@@ -78,7 +88,21 @@ defmodule EvoDash.DirectoryPicker do
   `{:ok, path} | :cancelled | :unavailable`.
   """
   @spec pick(pid(), term()) :: :ok | {:error, :unavailable}
-  def pick(reply_to, picker_id) do
+  def pick(reply_to, picker_id), do: pick(reply_to, picker_id, :directory)
+
+  @doc """
+  Opens the native dialog for `kind` (`:directory` or `:file`) and delivers the
+  result to `reply_to`.
+
+  `kind` selects the per-platform native dialog (folder vs file chooser) and
+  the wx fallback (`wxDirDialog` vs `wxFileDialog`). The result protocol and
+  failure semantics are identical to `pick/2` — a synchronous
+  `:ok | {:error, :unavailable}` acceptance reply, then an async
+  `{:directory_picker_result, picker_id, result}` where `result` is
+  `{:ok, path} | :cancelled | :unavailable`.
+  """
+  @spec pick(pid(), term(), :directory | :file) :: :ok | {:error, :unavailable}
+  def pick(reply_to, picker_id, kind) when kind in [:directory, :file] do
     cond do
       # 1. Disabled by config (`config :evo_dash, :directory_picker, enabled: false`).
       not enabled?() ->
@@ -98,7 +122,7 @@ defmodule EvoDash.DirectoryPicker do
 
           pid ->
             try do
-              GenServer.call(pid, {:pick, reply_to, picker_id})
+              GenServer.call(pid, {:pick, reply_to, picker_id, kind})
             catch
               :exit, _ -> {:error, :unavailable}
             end
@@ -119,16 +143,16 @@ defmodule EvoDash.DirectoryPicker do
   end
 
   @impl true
-  def handle_call({:pick, _reply_to, _picker_id}, _from, %{busy: true} = state) do
+  def handle_call({:pick, _reply_to, _picker_id, _kind}, _from, %{busy: true} = state) do
     # Another pick is already in flight — dialogs are serialized.
     {:reply, {:error, :unavailable}, state}
   end
 
-  def handle_call({:pick, reply_to, picker_id}, _from, %{busy: false} = state) do
+  def handle_call({:pick, reply_to, picker_id, kind}, _from, %{busy: false} = state) do
     # Always spawn a single Task — no platform branching, no wx init here.
     # Everything is deferred to the Task which tries native first, then wx.
     gen_server = self()
-    Task.start(fn -> run_pick(gen_server, reply_to, picker_id) end)
+    Task.start(fn -> run_pick(gen_server, reply_to, picker_id, kind) end)
     {:reply, :ok, %{state | busy: true}}
   end
 
@@ -173,11 +197,11 @@ defmodule EvoDash.DirectoryPicker do
   # must never crash the LiveView — every failure path degrades to
   # `:unavailable`. `rescue` alone does NOT catch exits, so `:exit` and
   # `:throw` are caught explicitly.
-  defp run_pick(gen_server, reply_to, picker_id) do
+  defp run_pick(gen_server, reply_to, picker_id, kind) do
     result =
       try do
-        case show_dialog_native() do
-          :unavailable -> show_dialog_wx_fallback()
+        case show_dialog_native(kind) do
+          :unavailable -> show_dialog_wx_fallback(kind)
           other -> other
         end
       rescue
@@ -200,12 +224,12 @@ defmodule EvoDash.DirectoryPicker do
   # Platform-specific native dialog. Returns `{:ok, path} | :cancelled | :unavailable`.
   # Wrapped in try/catch/rescue so a platform-native-tool crash never propagates —
   # the caller will fall back to wx (or degrade to :unavailable).
-  defp show_dialog_native do
+  defp show_dialog_native(kind) do
     try do
       cond do
-        EvoGit.Platform.macos?() -> show_dialog_macos()
-        EvoGit.Platform.linux?() -> show_dialog_zenity()
-        EvoGit.Platform.windows?() -> show_dialog_powershell()
+        EvoGit.Platform.macos?() -> show_dialog_macos(kind)
+        EvoGit.Platform.linux?() -> show_dialog_zenity(kind)
+        EvoGit.Platform.windows?() -> show_dialog_powershell(kind)
         true -> :unavailable
       end
     rescue
@@ -218,15 +242,22 @@ defmodule EvoDash.DirectoryPicker do
 
   # --- macOS: osascript ---
 
-  # Invokes the native macOS folder picker via `osascript` (`choose folder`).
-  # This shows a proper macOS-native dialog with no dock icon and no Erlang
-  # branding — unlike wx, which registers as a GUI app and shows the Erlang icon
-  # in the dock.
-  defp show_dialog_macos do
+  # Invokes the native macOS folder/file picker via `osascript` (`choose folder`
+  # for :directory, `choose file` for :file). This shows a proper macOS-native
+  # dialog with no dock icon and no Erlang branding — unlike wx, which registers
+  # as a GUI app and shows the Erlang icon in the dock.
+  defp show_dialog_macos(kind) do
     try do
-      default_path = System.user_home() || "/"
       script =
-        ~s[POSIX path of (choose folder with prompt "Select Directory" default location (POSIX file "#{default_path}"))]
+        case kind do
+          :directory ->
+            default_path = System.user_home() || "/"
+
+            ~s[POSIX path of (choose folder with prompt "Select Directory" default location (POSIX file "#{default_path}"))]
+
+          :file ->
+            ~s[POSIX path of (choose file with prompt "Select File")]
+        end
 
       case System.cmd("osascript", ["-e", script], stderr_to_stdout: true) do
         {path, 0} ->
@@ -251,10 +282,15 @@ defmodule EvoDash.DirectoryPicker do
 
   # --- Linux: zenity ---
 
-  defp show_dialog_zenity do
+  defp show_dialog_zenity(kind) do
     try do
-      case System.cmd("zenity", ["--file-selection", "--directory", "--title=Select Directory"],
-             stderr_to_stdout: true) do
+      args =
+        case kind do
+          :directory -> ["--file-selection", "--directory", "--title=Select Directory"]
+          :file -> ["--file-selection", "--title=Select File"]
+        end
+
+      case System.cmd("zenity", args, stderr_to_stdout: true) do
         {path, 0} ->
           path = String.trim(path)
 
@@ -275,22 +311,36 @@ defmodule EvoDash.DirectoryPicker do
     end
   end
 
-  # --- Windows: PowerShell FolderBrowserDialog ---
+  # --- Windows: PowerShell FolderBrowserDialog / OpenFileDialog ---
 
-  defp show_dialog_powershell do
-    script = """
-    Add-Type -AssemblyName System.Windows.Forms
-    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dialog.Description = "Select Directory"
-    $result = $dialog.ShowDialog()
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        Write-Output $dialog.SelectedPath
-    }
-    """
+  defp show_dialog_powershell(kind) do
+    script =
+      case kind do
+        :directory ->
+          """
+          Add-Type -AssemblyName System.Windows.Forms
+          $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+          $dialog.Description = "Select Directory"
+          $result = $dialog.ShowDialog()
+          if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+              Write-Output $dialog.SelectedPath
+          }
+          """
+
+        :file ->
+          """
+          Add-Type -AssemblyName System.Windows.Forms
+          $dialog = New-Object System.Windows.Forms.OpenFileDialog
+          $dialog.Title = "Select File"
+          $result = $dialog.ShowDialog()
+          if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+              Write-Output $dialog.FileName
+          }
+          """
+      end
 
     try do
-      case System.cmd("powershell", ["-NoProfile", "-Command", script],
-             stderr_to_stdout: true) do
+      case System.cmd("powershell", ["-NoProfile", "-Command", script], stderr_to_stdout: true) do
         {path, 0} ->
           path = String.trim(path)
 
@@ -315,12 +365,12 @@ defmodule EvoDash.DirectoryPicker do
 
   # wx fallback: initializes wx fresh in this Task and shows the dialog.
   # Returns `{:ok, path} | :cancelled | :unavailable`.
-  defp show_dialog_wx_fallback do
+  defp show_dialog_wx_fallback(kind) do
     unless wx_backend().available?() do
       :unavailable
     else
       case wx_new_task() do
-        {:ok, ref, env} -> show_dialog(ref, env)
+        {:ok, ref, env} -> show_dialog(ref, env, kind)
         {:error, _} -> :unavailable
       end
     end
@@ -364,7 +414,7 @@ defmodule EvoDash.DirectoryPicker do
     end
   end
 
-  defp show_dialog(wx_ref, wx_env) do
+  defp show_dialog(wx_ref, wx_env, kind) do
     wx = wx_backend()
 
     # wx commands are delivered per-process: this Task process must adopt the
@@ -373,15 +423,30 @@ defmodule EvoDash.DirectoryPicker do
     wx.set_env(wx_env)
 
     # Option names verified from the installed source
-    # (`:code.lib_dir(:wx)` → src/gen/wxDirDialog.erl): `new/2` accepts
-    # `title`, `defaultPath`, `style`, `pos`, `sz` — NOT `message` (a
-    # `message` option raises `{:badoption, _}`). `System.user_home/0` can
-    # return nil, so only pass `defaultPath` when a home exists.
-    opts =
-      [title: "Select Directory"] ++
-        if(home = System.user_home(), do: [defaultPath: home], else: [])
+    # (`:code.lib_dir(:wx)` → src/gen/wxDirDialog.erl and src/gen/wxFileDialog.erl):
+    # wxDirDialog's `new/2` accepts `title`, `defaultPath`, `style`, `pos`, `sz`
+    # — NOT `message` (a `message` option raises `{:badoption, _}`); wxFileDialog's
+    # `new/2` accepts `message` (the dialog title), `defaultDir`, `defaultFile`,
+    # `wildCard`, `style`, `pos`, `sz` — NOT `title`. wx.hrl defines
+    # `wxFD_DEFAULT_STYLE = wxFD_OPEN` (1), so the file dialog's default style
+    # is already an open dialog — no explicit `style` is needed. `System.user_home/0`
+    # can return nil, so only pass the default-path option when a home exists.
+    dialog =
+      case kind do
+        :directory ->
+          opts =
+            [title: "Select Directory"] ++
+              if(home = System.user_home(), do: [defaultPath: home], else: [])
 
-    dialog = wx.new_dir_dialog(wx_ref, opts)
+          wx.new_dir_dialog(wx_ref, opts)
+
+        :file ->
+          opts =
+            [message: "Select File"] ++
+              if(home = System.user_home(), do: [defaultDir: home], else: [])
+
+          wx.new_file_dialog(wx_ref, opts)
+      end
 
     result =
       case dialog do
