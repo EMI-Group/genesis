@@ -95,28 +95,19 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
 
     agent_response = extract_result_summary(prev_task.result)
 
-    parts = []
+    commits_part = commits_line && "Previous task commits: #{commits_line}"
 
-    parts =
-      if commits_line do
-        parts ++ ["Previous task commits: #{commits_line}"]
-      else
-        parts
-      end
-
-    parts =
+    objective_part =
       if is_binary(old_objective) and old_objective != "" do
-        parts ++ [delimited_section("Previous task objective:", old_objective, "OBJECTIVE")]
-      else
-        parts
+        delimited_section("Previous task objective:", old_objective, "OBJECTIVE")
       end
 
-    parts =
+    result_part =
       if is_binary(agent_response) and agent_response != "" do
-        parts ++ [delimited_section("Previous task result:", agent_response, "RESULT")]
-      else
-        parts
+        delimited_section("Previous task result:", agent_response, "RESULT")
       end
+
+    parts = Enum.reject([commits_part, objective_part, result_part], &is_nil/1)
 
     if parts == [] do
       ""
