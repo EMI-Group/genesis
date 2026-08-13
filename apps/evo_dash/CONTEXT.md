@@ -204,14 +204,14 @@ cp favicon.ico priv/static/favicon.ico
 
 EvoDash uses **Gettext** for internationalization. All user-facing strings in LiveViews, components, helpers, and templates are wrapped with `gettext/1,2` calls.
 
-> **⚠️ Development note:** Do NOT run `mix gettext.extract`, `mix gettext.merge`, or `mix translate` during normal development. The POT/PO files and all translations are maintained centrally and updated on each release — there is no need to regenerate or retranslate them during feature work. New `gettext` calls in code will be picked up when the maintainer runs the extraction/translation pipeline at release time.
+> **⚠️ Development note:** Do NOT run `mix gettext.extract`, `mix gettext.merge`, or `mix translate` during normal development. The POT/PO files and all translations are maintained centrally and updated on each release — there is no need to regenerate or retranslate them during feature work. New `gettext` calls in code will be picked up when the maintainer runs the extraction/translation pipeline at release time. Just keep developing normally and write `gettext`-wrapped strings. When a string's meaning needs anchoring for the release-time AI translator (ambiguous short labels, domain jargon, etc.), write a **Chinese comment** next to the `gettext` call explaining the intended meaning — this is the ONLY i18n-related work expected during development.
 
 - **Backend**: `EvoDashWeb.Gettext` (`lib/evo_dash_web/gettext.ex`) — `use Gettext, otp_app: :evo_dash`
 - **Import**: `import EvoDashWeb.Gettext` in `evo_dash_web.ex` `html_helpers/0` — available in all LiveViews and HTML components
 - **Translation files**: `priv/gettext/default.pot` (template, 253 messages), `priv/gettext/en/LC_MESSAGES/default.po` (English source strings)
 - **Dynamic locale**: `root.html.heex` uses `Gettext.get_locale(EvoDashWeb.Gettext)` for the `<html lang>` attribute
-- **Workflow**: `mix gettext.extract` → `mix gettext.merge priv/gettext --locale=<lang>` to add new languages (release-time only)
-- **AI Translation**: `mix translate apps/evo_dash/priv/gettext/default.pot all` — translates POT file to all supported languages using LLM (`deepseek-v4-flash`). Supports `--force/-f` to re-translate existing entries and `--prefix/-p` to filter by source file prefix. See `lib/mix/tasks/translate.ex`. Release-time only.
+- **Workflow**: `mix gettext.extract` → `mix gettext.merge priv/gettext --locale=<lang>` to add new languages (release-time only). The full pipeline (`mix gettext.extract` → `mix gettext.merge` → `mix translate ... all`) runs ONCE per release, translating ALL untranslated texts in a single run.
+- **AI Translation**: `mix translate apps/evo_dash/priv/gettext/default.pot all` — translates the POT file to all supported languages using LLM (`deepseek-v4-flash`), covering all untranslated texts in one single release-time run. Supports `--force/-f` to re-translate existing entries and `--prefix/-p` to filter by source file prefix. See `lib/mix/tasks/translate.ex`. Release-time only.
 - **CLI excluded**: The `:evo_git` CLI interface does NOT use gettext — only the web dashboard is internationalized
 
 ## Code Review Page — Node-Aware (SSH Remote Support)
