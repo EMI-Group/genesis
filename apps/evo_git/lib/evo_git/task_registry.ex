@@ -1132,12 +1132,10 @@ defmodule EvoGit.TaskRegistry do
                 do: DateTime.utc_now(),
                 else: task.finished_at
 
-            updated = %{task | status: status, finished_at: finished_at}
-
             updated =
               if status in [:completed, :failed, :cancelled],
-                do: %{updated | lease_expires_at: nil},
-                else: updated
+                do: %{task | status: status, finished_at: finished_at, lease_expires_at: nil},
+                else: %{task | status: status, finished_at: finished_at}
 
             # On disk-full the persisted row keeps its old status — log and
             # continue; the in-memory terminal cleanup below still runs.

@@ -771,15 +771,9 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call({:update_config, opts}, _from, %State{} = state) do
-    # Validate llm_model if being updated
-    if Keyword.has_key?(opts, :llm_model) do
-      new_model = Keyword.get(opts, :llm_model)
-
-      unless new_model do
-        {:reply, {:error, "llm_model cannot be nil"}, state}
-      else
-        reconcile_pool_after_update(State.do_update_config(opts, state))
-      end
+    # Validate llm_model if being updated: setting it to nil is rejected.
+    if Keyword.has_key?(opts, :llm_model) and Keyword.get(opts, :llm_model) == nil do
+      {:reply, {:error, "llm_model cannot be nil"}, state}
     else
       reconcile_pool_after_update(State.do_update_config(opts, state))
     end
