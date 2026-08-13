@@ -62,7 +62,14 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
   @doc """
   Builds a "Previous Task Context" block string from a completed task's
   `%TaskInfo{}` struct. Includes commits, objective, and result summary.
-  Returns an empty string if no useful context is available.
+
+  The block is fenced by `--- Previous Task Context ---` /
+  `--- End Previous Task Context ---`. Sections are separated by blank
+  lines; the objective and result sections wrap their (potentially
+  multi-line) content in explicit `<<<BEGIN ...>>>` / `<<<END ...>>>`
+  delimiters so the agent can never confuse a section label with its
+  content, or the content with the outer fence. Returns an empty string
+  if no useful context is available.
   """
   def build_resume_context_block(%TaskInfo{} = prev_task) do
     base_sha = prev_task.base_sha
@@ -99,14 +106,14 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
 
     parts =
       if is_binary(old_objective) and old_objective != "" do
-        parts ++ ["Previous task objective: #{old_objective}"]
+        parts ++ [delimited_section("Previous task objective:", old_objective, "OBJECTIVE")]
       else
         parts
       end
 
     parts =
       if is_binary(agent_response) and agent_response != "" do
-        parts ++ ["Previous task result:", agent_response]
+        parts ++ [delimited_section("Previous task result:", agent_response, "RESULT")]
       else
         parts
       end
@@ -115,11 +122,19 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
       ""
     else
       "--- Previous Task Context ---\n" <>
-        Enum.join(parts, "\n") <> "\n--- End Previous Task Context ---"
+        Enum.join(parts, "\n\n") <> "\n--- End Previous Task Context ---"
     end
   end
 
   def build_resume_context_block(_), do: ""
+
+  # Wraps potentially multi-line section content in explicit BEGIN/END
+  # delimiters: a label line, then the content between `<<<BEGIN MARKER>>>` /
+  # `<<<END MARKER>>>`. The triple-angle-bracket, all-caps markers are chosen
+  # so no plausible agent-generated text collides with them.
+  defp delimited_section(label, content, marker) do
+    "#{label}\n<<<BEGIN #{marker}>>>\n#{content}\n<<<END #{marker}>>>"
+  end
 
   @doc """
   Extracts a human-readable summary string from a task result tuple
