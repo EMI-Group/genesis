@@ -3993,7 +3993,8 @@ msgstr "Проверка слияния пройдена — чистое сли
 msgid "Merge conflict detected in %{count} file: %{files}"
 msgid_plural "Merge conflict detected in %{count} files: %{files}"
 msgstr[0] "Обнаружен конфликт слияния в %{count} файле: %{files}"
-msgstr[1] "Обнаружен конфликт слияния в %{count} файле: %{files}"
+msgstr[1] "Обнаружен конфликт слияния в %{count} файлах: %{files}"
+msgstr[2] "Обнаружен конфликт слияния в %{count} файлах: %{files}"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:217
 #, elixir-autogen, elixir-format

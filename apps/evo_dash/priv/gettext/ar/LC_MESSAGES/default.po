@@ -4007,8 +4007,12 @@ msgstr "نجح فحص الدمج — الدمج نظيف."
 #, elixir-autogen, elixir-format
 msgid "Merge conflict detected in %{count} file: %{files}"
 msgid_plural "Merge conflict detected in %{count} files: %{files}"
-msgstr[0] "تم اكتشاف تعارض في الدمج في %{count} ملف: %{files}"
+msgstr[0] "تم اكتشاف تعارض في الدمج في %{count} ملفات: %{files}"
 msgstr[1] "تم اكتشاف تعارض في الدمج في %{count} ملف: %{files}"
+msgstr[2] "تم اكتشاف تعارض في الدمج في %{count} ملفين: %{files}"
+msgstr[3] "تم اكتشاف تعارض في الدمج في %{count} ملفات: %{files}"
+msgstr[4] "تم اكتشاف تعارض في الدمج في %{count} ملفًا: %{files}"
+msgstr[5] "تم اكتشاف تعارض في الدمج في %{count} ملفًا: %{files}"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:217
 #, elixir-autogen, elixir-format
