@@ -1,7 +1,7 @@
 defmodule EvoDash.DirectoryPicker.Wx do
   @moduledoc """
-  Injectable seam around the optional `:wx` / `:wxDirDialog` runtime backend
-  used by `EvoDash.DirectoryPicker`.
+  Injectable seam around the optional `:wx` / `:wxDirDialog` / `:wxFileDialog`
+  runtime backend used by `EvoDash.DirectoryPicker`.
 
   wx ships with OTP but is intentionally NOT a dependency of any umbrella app
   (only loaded in the `genesis`/`genesis_desktop` releases via `wx: :load` in
@@ -11,16 +11,16 @@ defmodule EvoDash.DirectoryPicker.Wx do
 
       config :evo_dash, :directory_picker_wx, MyFakeWx
 
-  Every function delegates to `:wx` / `:wxDirDialog`; a fake only needs to
-  implement the same arities. All functions are plain delegations — the wx
-  failure handling (catch/rescue → `:unavailable`) lives in
+  Every function delegates to `:wx` / `:wxDirDialog` / `:wxFileDialog`; a fake
+  only needs to implement the same arities. All functions are plain delegations
+  — the wx failure handling (catch/rescue → `:unavailable`) lives in
   `EvoDash.DirectoryPicker`, not here.
   """
 
   # wx is not a compile dependency (see moduledoc) — suppress the
   # undefined-module warnings for this optional runtime dependency. Availability
   # is checked at runtime via `available?/0` (`:code.which/1`).
-  @compile {:no_warn_undefined, [:wx, :wxDirDialog]}
+  @compile {:no_warn_undefined, [:wx, :wxDirDialog, :wxFileDialog]}
 
   @doc """
   True when the native wx backend is compiled into this OTP build.
@@ -44,6 +44,9 @@ defmodule EvoDash.DirectoryPicker.Wx do
 
   @doc "Creates the native directory dialog (see `:wxDirDialog.new/2`)."
   def new_dir_dialog(wx_ref, opts), do: :wxDirDialog.new(wx_ref, opts)
+
+  @doc "Creates the native file dialog (see `:wxFileDialog.new/2`)."
+  def new_file_dialog(wx_ref, opts), do: :wxFileDialog.new(wx_ref, opts)
 
   @doc "Shows the modal dialog and returns the result code (see `:wxDirDialog.showModal/1`)."
   def show_modal(dialog), do: :wxDirDialog.showModal(dialog)
