@@ -122,18 +122,6 @@ defmodule EvoGit.Adapters.Git do
     run(["worktree", "prune"], repo_path)
   end
 
-  @doc """
-  Removes a worktree from the repository, using `--force` so uncommitted
-  changes or untracked files in the worktree do not block removal.
-
-  Returns `{:ok, output}` on success or `{:error, {tag, output}}` on failure
-  (see the module "## Return contract" section).
-  """
-  def remove_worktree(repo_path, worktree_path)
-      when is_binary(repo_path) and is_binary(worktree_path) do
-    run(["worktree", "remove", "--force", worktree_path], repo_path)
-  end
-
   def checkout(path, sha) when is_binary(path) and is_binary(sha) do
     run(["checkout", sha], path)
   end
@@ -196,16 +184,6 @@ defmodule EvoGit.Adapters.Git do
   """
   def merge(path, commit_sha) when is_binary(path) and is_binary(commit_sha) do
     do_merge(path, ["merge", commit_sha])
-  end
-
-  @doc """
-  Merges a commit into the current branch without committing.
-
-  Returns `{:ok, output}` on success or `{:error, {:conflict, output}}` on a
-  merge conflict (see the module "## Return contract" section).
-  """
-  def merge_no_commit(path, commit_sha) when is_binary(path) and is_binary(commit_sha) do
-    do_merge(path, ["merge", "--no-commit", commit_sha])
   end
 
   @doc """

@@ -295,64 +295,6 @@ defmodule EvoGit.Adapters.GitTest do
     end
   end
 
-  describe "remove_worktree/2" do
-    test "removes a detached worktree created by add_worktree/3", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
-      Git.add(tmp_dir, "test.txt")
-      Git.commit(tmp_dir, "Initial commit")
-      {:ok, sha} = Git.rev_parse(tmp_dir, "HEAD")
-
-      worktree_path =
-        Path.join(System.tmp_dir!(), "evo_git_test_wt_" <> to_string(System.unique_integer()))
-
-      assert {:ok, _} = Git.add_worktree(tmp_dir, worktree_path, sha)
-      assert File.dir?(worktree_path)
-
-      assert {:ok, _} = Git.remove_worktree(tmp_dir, worktree_path)
-      refute File.dir?(worktree_path)
-
-      {list_output, 0} = System.cmd("git", ["worktree", "list"], cd: tmp_dir)
-      refute String.contains?(list_output, worktree_path)
-    end
-
-    test "returns {:error, {tag, output}} for a path that is not a worktree",
-         %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
-      Git.add(tmp_dir, "test.txt")
-      Git.commit(tmp_dir, "Initial commit")
-
-      never_created =
-        Path.join(
-          System.tmp_dir!(),
-          "evo_git_test_wt_missing_" <> to_string(System.unique_integer())
-        )
-
-      assert {:error, {tag, output}} = Git.remove_worktree(tmp_dir, never_created)
-      assert is_integer(tag)
-      assert is_binary(output)
-    end
-
-    test "handles a worktree with uncommitted changes without raising", %{tmp_dir: tmp_dir} do
-      File.write!(Path.join(tmp_dir, "test.txt"), "initial content\n")
-      Git.add(tmp_dir, "test.txt")
-      Git.commit(tmp_dir, "Initial commit")
-      {:ok, sha} = Git.rev_parse(tmp_dir, "HEAD")
-
-      worktree_path =
-        Path.join(System.tmp_dir!(), "evo_git_test_wt_dirty_" <> to_string(System.unique_integer()))
-
-      assert {:ok, _} = Git.add_worktree(tmp_dir, worktree_path, sha)
-      File.write!(Path.join(worktree_path, "dirty.txt"), "uncommitted\n")
-
-      result = Git.remove_worktree(tmp_dir, worktree_path)
-      assert match?({:ok, _}, result) or match?({:error, {_, _}}, result)
-
-      # Whether or not git removed it, ensure the dir is gone so the suite stays clean.
-      if File.dir?(worktree_path), do: File.rm_rf(worktree_path)
-      refute File.dir?(worktree_path)
-    end
-  end
-
   describe "GIT_EDITOR configuration" do
     test "true executable is resolved to a non-nil path ending in 'true'", %{tmp_dir: tmp_dir} do
       # The resolved `true` path is memoized via :persistent_term; clear the cache

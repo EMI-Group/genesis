@@ -312,11 +312,12 @@ defmodule EvoGit.Review do
   without mutating the repository.
 
   This is a **non-mutating dry-run**: both refs are resolved, and the merge is
-  attempted in a temporary detached worktree under
-  `<repo_path>/.genesis/merge_check_<unique>/` checked out at the target. The
-  main repository's index and HEAD are never touched, and nothing is ever
-  committed — the merge result is simply discarded when the temporary worktree
-  is removed (cleanup always runs, even on failure).
+  then computed in memory by `git merge-tree --write-tree --name-only
+  --no-messages` (requires git >= 2.38). `merge-tree` performs a real merge of
+  the two commits' trees without touching the working tree, the index, or any
+  ref — no temporary worktree is ever created (nothing is added to
+  `<repo_path>/.genesis/`), nothing is committed, and the merge result is
+  simply discarded.
 
   When both refs resolve to the same commit SHA (the branch is already merged
   into the target, or the two refs are identical), `{:ok, :clean}` is returned
@@ -338,7 +339,7 @@ defmodule EvoGit.Review do
       if branch_sha == target_sha do
         {:ok, :clean}
       else
-        check_merge_in_worktree(repo_path, branch_sha, target_sha)
+        check_merge_with_merge_tree(repo_path, branch_sha, target_sha)
       end
     else
       error -> normalize_git_error(error)
@@ -495,64 +496,46 @@ defmodule EvoGit.Review do
     end
   end
 
-  # Performs the actual dry-run merge in a unique temporary detached worktree
-  # under `.genesis/`. The worktree is always removed afterwards (even on
-  # failure) and nothing is ever committed.
-  #
-  # NOTE: `worktree_path` is bound BEFORE the try — variables bound inside a
-  # try body are NOT visible in its `after` block, so binding it inside the
-  # try would make cleanup a no-op.
-  defp check_merge_in_worktree(repo_path, branch_sha, target_sha) do
-    genesis_dir = Path.join(repo_path, ".genesis")
-    File.mkdir_p!(genesis_dir)
+  # Runs the in-memory dry-run merge via `git merge-tree --write-tree`. With
+  # `--name-only --no-messages`, a clean merge prints only the resulting tree
+  # OID, and a conflict prints the conflicted tree's OID followed by one
+  # conflicted file path per line. Nothing in the repository is touched.
+  defp check_merge_with_merge_tree(repo_path, branch_sha, target_sha) do
+    case Git.run(
+           [
+             "merge-tree",
+             "--write-tree",
+             "--name-only",
+             "--no-messages",
+             branch_sha,
+             target_sha
+           ],
+           repo_path
+         ) do
+      {:ok, _tree_oid} ->
+        {:ok, :clean}
 
-    unique = :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-    worktree_path = Path.join(genesis_dir, "merge_check_" <> unique)
+      {:error, {:conflict, output}} ->
+        case conflicted_file_paths(output) do
+          [] -> {:error, {:merge_failed, output}}
+          files -> {:ok, {:conflict, files}}
+        end
 
-    try do
-      case Git.add_worktree(repo_path, worktree_path, target_sha) do
-        {:ok, _} ->
-          case Git.merge_no_commit(worktree_path, branch_sha) do
-            {:ok, _} ->
-              {:ok, :clean}
-
-            {:error, {:conflict, merge_output}} ->
-              case Git.conflict_files(worktree_path) do
-                {:ok, files} when files != [] -> {:ok, {:conflict, files}}
-                {:ok, []} -> {:error, {:merge_failed, merge_output}}
-                error -> error
-              end
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    after
-      cleanup_merge_check_worktree(repo_path, worktree_path)
+      other ->
+        other
     end
   end
 
-  # Removes the temporary merge-check worktree and never raises. If
-  # `git worktree remove --force` fails (e.g. the worktree was never fully
-  # created), falls back to `File.rm_rf/1` followed by `git worktree prune`
-  # (whose result is ignored). A nil/non-binary path is a no-op.
-  defp cleanup_merge_check_worktree(repo_path, worktree_path) do
-    if is_binary(worktree_path) and File.dir?(worktree_path) do
-      case Git.remove_worktree(repo_path, worktree_path) do
-        {:ok, _} ->
-          :ok
-
-        {:error, _} ->
-          File.rm_rf(worktree_path)
-          Git.prune_worktrees(repo_path)
-          :ok
-      end
-    end
-
-    :ok
+  # Extracts the conflicted file paths from `merge-tree --write-tree` conflict
+  # output. The leading tree OID line(s) are dropped by shape, not by position
+  # — git exit 1 can also carry non-conflict errors (e.g. a missing ref), whose
+  # output contains no OID/file lines and correctly yields `[]`.
+  @merge_tree_oid_re ~r/^[0-9a-f]{40}$/
+  defp conflicted_file_paths(output) do
+    output
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == "" or Regex.match?(@merge_tree_oid_re, &1)))
   end
 
   defp normalize_git_error({:error, {code, output}}), do: {:error, {code, output}}

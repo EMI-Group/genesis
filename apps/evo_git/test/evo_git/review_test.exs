@@ -338,6 +338,16 @@ defmodule EvoGit.ReviewTest do
     String.contains?(output, "merge_check_")
   end
 
+  # Asserts that check_merge/3 left no trace on the filesystem: no
+  # `merge_check_*` entry under `.genesis/`, no extra worktrees registered,
+  # and — since the merge-tree dry-run never touches the disk — the `.genesis`
+  # directory itself is not created by the check.
+  defp assert_no_merge_check_artifacts(tmp_dir) do
+    assert merge_check_entries(tmp_dir) == []
+    refute worktree_list_contains_merge_check?(tmp_dir)
+    refute File.dir?(Path.join(tmp_dir, ".genesis"))
+  end
+
   test "merge_branch/2 merges into the default target (current branch)", %{tmp_dir: tmp_dir} do
     {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
     rename_current_branch(tmp_dir, "main")
@@ -422,8 +432,7 @@ defmodule EvoGit.ReviewTest do
 
       assert {:ok, :clean} = Review.check_merge(tmp_dir, "feature", "main")
 
-      assert merge_check_entries(tmp_dir) == []
-      refute worktree_list_contains_merge_check?(tmp_dir)
+      assert_no_merge_check_artifacts(tmp_dir)
     end
 
     test "returns {:conflict, files} for a conflicting merge", %{tmp_dir: tmp_dir} do
@@ -442,8 +451,27 @@ defmodule EvoGit.ReviewTest do
       assert {:ok, {:conflict, files}} = Review.check_merge(tmp_dir, "agent_branch", "main")
       assert "file.txt" in files
 
-      assert merge_check_entries(tmp_dir) == []
-      refute worktree_list_contains_merge_check?(tmp_dir)
+      assert_no_merge_check_artifacts(tmp_dir)
+    end
+
+    test "lists every conflicted file in a multi-file conflict", %{tmp_dir: tmp_dir} do
+      commit_file(tmp_dir, "one.txt", "one base\n", "Initial commit one")
+      {:ok, base_sha} = commit_file(tmp_dir, "two.txt", "two base\n", "Initial commit two")
+      rename_current_branch(tmp_dir, "main")
+
+      # main modifies both files...
+      commit_file(tmp_dir, "one.txt", "main one\n", "Main change one")
+      commit_file(tmp_dir, "two.txt", "main two\n", "Main change two")
+
+      # ...and the agent branch modifies both from the same base.
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+      Git.checkout(tmp_dir, "agent_branch")
+      commit_file(tmp_dir, "one.txt", "agent one\n", "Agent change one")
+      commit_file(tmp_dir, "two.txt", "agent two\n", "Agent change two")
+      Git.checkout(tmp_dir, "main")
+
+      assert {:ok, {:conflict, files}} = Review.check_merge(tmp_dir, "agent_branch", "main")
+      assert Enum.sort(files) == ["one.txt", "two.txt"]
     end
 
     test "returns :clean when both refs resolve to the same sha", %{tmp_dir: tmp_dir} do
@@ -451,9 +479,8 @@ defmodule EvoGit.ReviewTest do
 
       assert {:ok, :clean} = Review.check_merge(tmp_dir, sha, sha)
 
-      # Short-circuit path never creates a worktree.
-      assert merge_check_entries(tmp_dir) == []
-      refute worktree_list_contains_merge_check?(tmp_dir)
+      # The short-circuit path never runs merge-tree or touches the filesystem.
+      assert_no_merge_check_artifacts(tmp_dir)
     end
 
     test "returns an error for a missing branch or missing target ref", %{tmp_dir: tmp_dir} do
@@ -496,8 +523,7 @@ defmodule EvoGit.ReviewTest do
       assert status_after == status_before
       assert {:ok, "main"} = Git.current_branch(tmp_dir)
 
-      assert merge_check_entries(tmp_dir) == []
-      refute worktree_list_contains_merge_check?(tmp_dir)
+      assert_no_merge_check_artifacts(tmp_dir)
     end
   end
 
