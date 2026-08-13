@@ -40,6 +40,12 @@ The review page (`ReviewLive`, `GET /review/:task_id`) has a merge-target branch
 ### Templates
 - **`agents_live.html.heex`** — Companion template for `AgentsLive` with sidebar tree + detail panel layout.
 
+### Notes for Agents — Agents page layout & legend tooltip (`agents_live.html.heex` + app.css)
+
+The Agents page uses a fixed-viewport layout (`xl+` only): `.agents-page-layout` (grid, `overflow: hidden`), `.agents-left-col` (column flex, `overflow: hidden`), `.agents-tree-panel` (card, `flex: 1 1 0`), with the tree content scrolling inside `.agents-tree-panel .card-body` (`overflow-y: auto`) and the legend (`.agents-legend`) as a SIBLING of card-body at the panel's bottom. On mobile (<xl) it's normal flow under `#main-scroll` (`overflow: auto`) inside `#app-layout` (`overflow: hidden`).
+
+**Legend tooltips use the `LegendTooltip` JS hook (`assets/js/hooks/legend_tooltip.js`) — NOT DaisyUI `.tooltip`.** DaisyUI's tooltip pseudo-element is absolutely positioned and horizontally CENTERED on the chip, so the long `data-tip` texts (max-width 20rem) on the right-aligned legend chips extend past the panel's right edge and get clipped by the page-level overflow containers (`#app-layout`, `#main-scroll`, `.agents-page-layout`, `.agents-left-col`). CSS-only anchoring can't fix this (the panel is ~480px wide at xl, so any single anchor overflows on some chip). The hook renders the tip as a `position: fixed` element appended to **`document.body`** — mandatory because `.agents-page-layout`'s `animate-fade-in-up` uses `animation-fill-mode: both`, so `transform: translateY(0)` PERSISTS on the layout and would trap even `position: fixed` descendants inside its `overflow: hidden`. The chips carry `data-tip` (gettext) + `phx-hook="LegendTooltip"` + unique ids (LiveView requires `id` for phx-hook); the `tooltip` class was REMOVED so DaisyUI's clipped tooltip doesn't double-render. The "Send Message" button tooltip (`tooltip` class, short text near the card edge) stays inside its container and is NOT affected — do not convert it.
+
 ### Notes for Agents — Tool-call display contract (`agents_live/tool_call_display.ex`)
 
 The Agents page chat history viewer renders tool-call messages (both the inline detail panel and the full-message modal) through `EvoDashWeb.AgentsLive.ToolCallDisplay.display/1` (aliased as `ToolCallDisplay` in `agents_live.ex`). The module is a pure rendering contract — see `agents_live/CONTEXT.md` for the full API. Durable facts:
