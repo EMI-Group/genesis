@@ -280,7 +280,7 @@ defmodule EvoGit.Agent.Tools.Context do
   # Optionally stages and commits the CONTEXT.md for the given directory.
   # Shared by write_context and edit_context. When `commit` is false (or the
   # file was not modified), returns `result_msg` unchanged.
-  defp maybe_commit_context(result_msg, dir_path, false, _repo_path, _repo_root), do: result_msg
+  defp maybe_commit_context(result_msg, _dir_path, false, _repo_path, _repo_root), do: result_msg
 
   defp maybe_commit_context(result_msg, dir_path, true, repo_path, repo_root) do
     relative_path = Path.join(dir_path, "CONTEXT.md")
