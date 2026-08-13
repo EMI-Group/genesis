@@ -1,7 +1,10 @@
 defmodule EvoDash.DirectoryPicker.Wx.Fake do
   @moduledoc """
   Deterministic test double for `EvoDash.DirectoryPicker.Wx` — simulates wx
-  server death and init failure without a display.
+  server death and init failure without a display. Simulates both dialogs the
+  picker can open: `new_dir_dialog/2` (wxDirDialog, `:directory` picks) and
+  `new_file_dialog/2` (wxFileDialog, `:file` picks); `get_path/1` returns a
+  per-dialog-type path so tests can tell which dialog was used.
 
   Installed via `Application.put_env(:evo_dash, :directory_picker_wx, ...)` so
   the real picker exercises its full GenServer/Task flow without ever popping a
@@ -116,6 +119,8 @@ defmodule EvoDash.DirectoryPicker.Wx.Fake do
 
   def new_dir_dialog(_wx_ref, _opts), do: {:wx_ref, 1, :wxDirDialog, []}
 
+  def new_file_dialog(_wx_ref, _opts), do: {:wx_ref, 1, :wxFileDialog, []}
+
   def show_modal(_dialog) do
     case :persistent_term.get(@gate_key, nil) do
       nil ->
@@ -137,6 +142,10 @@ defmodule EvoDash.DirectoryPicker.Wx.Fake do
     end
   end
 
+  # Branch on the dialog ref type so tests can tell which dialog was used.
+  def get_path({:wx_ref, _, :wxFileDialog, _}), do: "/fake/picked/file.txt"
+  def get_path({:wx_ref, _, :wxDirDialog, _}), do: "/fake/picked/dir"
   def get_path(_dialog), do: "/fake/picked/dir"
+
   def destroy(_dialog), do: :ok
 end

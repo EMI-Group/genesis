@@ -16,6 +16,11 @@ defmodule EvoDashWeb.ProjectsLive do
   alias EvoDash.NodeContext
   alias EvoGit.ProjectConfig
 
+  # Picker id for the objective editor's attach-file button — must match the
+  # `data-picker-id` on the FilePicker hook button in
+  # EvoDashWeb.TaskFormComponents.task_form/1.
+  @attach_picker_id "objective_file"
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -498,7 +503,12 @@ defmodule EvoDashWeb.ProjectsLive do
           build_systems: build_systems,
           tauri_detected: false,
           platform: "linux",
-          notified_task_ids: Assigns.build_notified_task_ids(MapSet.new())
+          notified_task_ids: Assigns.build_notified_task_ids(MapSet.new()),
+          # Prompt snapshot per attach-file picker id, taken when the native
+          # file dialog opens (see handle_event("file_pick")) so the picked
+          # file's text can be appended even if the user keeps typing while
+          # the dialog is open.
+          file_pick_bases: %{}
         )
 
       socket = Assigns.assign_form_defaults(socket)
@@ -539,6 +549,18 @@ defmodule EvoDashWeb.ProjectsLive do
         prev_node_id,
         socket.assigns[:current_node_id]
       )
+
+    # Attach-file flow: the prompt snapshot taken when the file dialog opened
+    # (file_pick_bases) is per-node client state — clear it alongside the
+    # other client state on node switches (mirrors the StatePersistence
+    # clearing above; that module owns task_prompt and friends, this assign
+    # is LiveView-local).
+    socket =
+      if prev_node_id != socket.assigns[:current_node_id] do
+        assign(socket, :file_pick_bases, %{})
+      else
+        socket
+      end
 
     # When viewing a connected remote node, the dashboard shows the remote
     # node's active agents instead of local tasks/projects. Load them here so
@@ -1344,6 +1366,40 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   @impl true
+  def handle_event("file_pick", %{"picker_id" => picker_id, "prompt" => prompt}, socket) do
+    # Attach-file flow for the objective editor: same server-side picker as
+    # "directory_pick" but in :file mode (the parallel DirectoryPicker work
+    # adds pick/3 with a kind argument). The current DOM textarea value is
+    # passed along and snapshotted as the base so the picked file's text can
+    # be appended even if the user keeps typing while the dialog is open.
+    if socket.assigns.current_node == node() do
+      # wx dialogs must only ever pop on the local node. The picker module is
+      # resolved from the app env so there is no hard compile-time dependency.
+      module =
+        Application.get_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker)
+
+      if Code.ensure_loaded?(module) do
+        case module.pick(self(), picker_id, :file) do
+          :ok ->
+            # The dialog runs asynchronously; the result arrives later via
+            # {:directory_picker_result, picker_id, result}. NEVER block the
+            # LiveView on the modal dialog.
+            bases = Map.put(socket.assigns.file_pick_bases || %{}, picker_id, prompt || "")
+            {:noreply, assign(socket, :file_pick_bases, bases)}
+
+          {:error, :unavailable} ->
+            {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+        end
+      else
+        {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+      end
+    else
+      # Remote/headless node — never pop a dialog there.
+      {:noreply, push_event(socket, "picker_result:#{picker_id}", %{unavailable: true})}
+    end
+  end
+
+  @impl true
   def handle_event("run_command", %{"command" => command}, socket) do
     commands = socket.assigns.commands
     project_root = socket.assigns.active_project_path
@@ -1417,6 +1473,56 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Results from the async directory picker (EvoDash.DirectoryPicker sends
   # these to the LiveView pid passed to pick/2).
+  #
+  # Attach-file flow: read the picked file with EvoGit.PromptFile and append
+  # its content to the objective. The textarea is phx-update="ignore" (the
+  # DOM is authoritative), so the new value must reach the client via
+  # push_event — the FilePicker JS hook writes it into the textarea.
+  @impl true
+  def handle_info({:directory_picker_result, @attach_picker_id, {:ok, path}}, socket) do
+    base =
+      Map.get(
+        socket.assigns.file_pick_bases || %{},
+        @attach_picker_id,
+        socket.assigns.task_prompt || ""
+      )
+
+    case EvoGit.PromptFile.read(path) do
+      {:ok, content} ->
+        basename = Path.basename(path)
+        block = "\n\n---\n## Attached file: #{basename}\n\n" <> content <> "\n"
+        new_prompt = base <> block
+
+        socket =
+          socket
+          |> assign(:task_prompt, new_prompt)
+          |> assign(
+            :file_pick_bases,
+            Map.delete(socket.assigns.file_pick_bases || %{}, @attach_picker_id)
+          )
+
+        {:noreply,
+         push_event(socket, "picker_result:#{@attach_picker_id}", %{
+           prompt: new_prompt,
+           block: block,
+           attached: true,
+           name: basename
+         })}
+
+      {:error, reason} ->
+        # zh_CN: Failed to attach file → "附加文件失败"
+        msg =
+          gettext("Failed to attach file: %{reason}",
+            reason: EvoGit.PromptFile.describe_error(reason, path)
+          )
+
+        {:noreply,
+         socket
+         |> put_flash(:error, msg)
+         |> push_event("picker_result:#{@attach_picker_id}", %{error: true})}
+    end
+  end
+
   @impl true
   def handle_info({:directory_picker_result, picker_id, {:ok, path}}, socket) do
     {:noreply, push_event(socket, "picker_result:#{picker_id}", %{path: path})}

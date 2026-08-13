@@ -243,6 +243,71 @@ const DirectoryPicker = {
   }
 };
 
+// FilePicker hook: attach a file to the objective editor
+//
+// The "+" button (data-picker-id="objective_file") pushes a "file_pick" event
+// with the CURRENT textarea value; ProjectsLive (local node only) runs a
+// native file dialog server-side (EvoDash.DirectoryPicker :file mode) and
+// pushes the result back as "picker_result:<picker_id>". Payloads:
+//   {prompt: "...", block: "...", attached: true, name: "..."} → success —
+//     `prompt` is the full new objective (base prompt + attached-file
+//     Markdown block); `block` is the appended Markdown block alone (used
+//     when the user typed between click and result, so their typing is never
+//     clobbered).
+//   {cancelled: true}  → user dismissed the dialog — no-op
+//   {unavailable: true} → dialog unavailable (remote node, picker disabled) — no-op
+//   {error: true}      → server failed to read the file — console.warn, no-op
+const FilePicker = {
+  mounted() {
+    this._basePrompt = null;
+    this.el.addEventListener("click", () => {
+      if (this._picking) return;            // re-entrancy guard, DirectoryPicker pattern
+      const textarea = this.promptTextarea();
+      if (!textarea) return;
+      this._basePrompt = textarea.value;
+      this._picking = true;
+      this.pushEvent("file_pick", {
+        picker_id: this.el.dataset.pickerId,
+        prompt: this._basePrompt
+      });
+    });
+
+    this.handleEvent("picker_result:" + this.el.dataset.pickerId, (payload) => {
+      this._picking = false;                // dialog closed — re-arm the button
+      if (payload.unavailable || payload.cancelled) return;   // not an error
+      if (payload.error) {
+        console.warn("[FilePicker] Failed to attach the file");
+        return;
+      }
+      if (typeof payload.prompt !== "string") return;         // defensive
+      const textarea = this.promptTextarea();
+      if (!textarea) return;
+      const block = typeof payload.block === "string" ? payload.block : "";
+      if (textarea.value === this._basePrompt) {
+        // Prompt unchanged since the click — apply the server-computed value.
+        textarea.value = payload.prompt;
+      } else if (block) {
+        // User typed meanwhile — append ONLY the file block, never clobber.
+        textarea.value = textarea.value + block;
+      } else {
+        return; // no block info and value changed — do not clobber
+      }
+      textarea.dispatchEvent(new Event("input", {bubbles: true}));
+      textarea.dispatchEvent(new Event("change", {bubbles: true}));
+    });
+  },
+
+  reconnected() {
+    this._picking = false;                  // server-side pick is gone after reconnect
+  },
+
+  promptTextarea() {
+    // The task-form textarea; find within the enclosing form first.
+    return this.el.closest("form")?.querySelector('textarea[name="prompt"]') ||
+      document.querySelector('textarea[name="prompt"]');
+  }
+};
+
 // StatePersistence hook: saves/restores dashboard state via sessionStorage
 const StatePersistence = {
   mounted() {
@@ -588,7 +653,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList},
+  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, FocusInput, PaletteList},
 })
 
 // Show progress bar on live navigation and form submits
