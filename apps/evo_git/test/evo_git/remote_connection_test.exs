@@ -145,8 +145,9 @@ defmodule EvoGit.RemoteConnectionTest do
       ensure_registry_and_supervisor()
       target_id = save_test_target(platform: "linux_x64")
 
-      # download_url/1 is deterministic (direct releases/latest/download URL,
-      # no API query), so the remote download (curl first, wget fallback) always
+      # download_url/1 is deterministic (direct Cloudflare-worker "smart
+      # download" URL, no API query), so the remote download (curl first, wget
+      # fallback) always
       # fails at the ssh level ({:download_failed, {:exit_status, _}}) — the
       # release asset doesn't exist — and the local curl fallback also fails
       # ({:download_failed, {:local, _}}). Keep the assertion broad.

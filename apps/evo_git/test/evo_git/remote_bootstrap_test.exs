@@ -117,28 +117,24 @@ defmodule EvoGit.RemoteBootstrapTest do
   describe "direct_url/1" do
     test "builds the linux_x64 direct URL" do
       assert RemoteBootstrap.direct_url("linux_x64") ==
-               "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.xz"
+               "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz"
     end
 
     test "builds the darwin_arm64 direct URL" do
       assert RemoteBootstrap.direct_url("darwin_arm64") ==
-               "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.xz"
+               "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz"
     end
   end
 
   describe "download_url/1" do
     test "returns the direct linux_x64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("linux_x64") ==
-               {:ok,
-                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_linux_x64.tar.xz",
-                "latest"}
+               {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz", "latest"}
     end
 
     test "returns the direct darwin_arm64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("darwin_arm64") ==
-               {:ok,
-                "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_remote_darwin_arm64.tar.xz",
-                "latest"}
+               {:ok, "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz", "latest"}
     end
 
     test "version is always latest, keying the local download cache" do

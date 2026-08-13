@@ -10,17 +10,17 @@ defmodule EvoGit.RemoteBootstrap do
       (`<os>_<arch>`, e.g. `linux_x64`, `darwin_arm64`),
     * validating platform strings (`parse_platform/1`),
     * computing the release tarball file name (`asset_name/1`),
-    * resolving the GitHub download URL (`download_url/1`) — the direct
-      `releases/latest/download/...` URL (GitHub 302-redirects it to the
-      versioned asset),
+    * resolving the download URL (`download_url/1`) — the deterministic
+      `https://genesis.evox.group/dl/...` Cloudflare-worker "smart download"
+      endpoint (auto-detects mainland-China users and proxies the GitHub
+      release asset through Cloudflare when needed),
     * computing the local download-cache path (`cache_path/2`).
 
   All functions are deterministic and perform **no network I/O** — the actual
   tarball downloads happen in `EvoGit.RemoteConnection` via curl/wget.
   """
 
-  @github_repo "EMI-Group/genesis"
-  @latest_download_base_url "https://github.com/#{@github_repo}/releases/latest/download/"
+  @download_base_url "https://genesis.evox.group/dl/"
 
   @valid_os ["linux", "darwin", "windows"]
   @valid_arch ["x64", "arm64"]
@@ -85,21 +85,24 @@ defmodule EvoGit.RemoteBootstrap do
   def asset_name(platform), do: "genesis_remote_#{platform}.tar.xz"
 
   @doc """
-  The direct (redirecting) download URL for a platform's release tarball:
-  `.../releases/latest/download/genesis_remote_<platform>.tar.xz`.
+  The direct download URL for a platform's release tarball:
+  `https://genesis.evox.group/dl/genesis_remote_<platform>.tar.xz`.
 
-  GitHub 302-redirects this to the actual versioned asset.
+  This Cloudflare-worker "smart download" endpoint serves the latest GitHub
+  release asset, auto-detecting mainland-China users and proxying the asset
+  through the Cloudflare network when needed.
   """
   @spec direct_url(String.t()) :: String.t()
-  def direct_url(platform), do: @latest_download_base_url <> asset_name(platform)
+  def direct_url(platform), do: @download_base_url <> asset_name(platform)
 
   @doc """
   Resolves the download URL for a platform's release tarball.
 
   Deterministic and network-free: always returns the direct
-  `releases/latest/download/...` URL — no GitHub API query and no asset
-  listing/matching is performed (GitHub 302-redirects the URL to the actual
-  versioned asset).
+  `https://genesis.evox.group/dl/genesis_remote_<platform>.tar.xz`
+  Cloudflare-worker "smart download" URL — no API query and no asset
+  listing/matching is performed (the worker proxies the GitHub release asset
+  and auto-detects mainland-China users).
 
   Returns `{:ok, url, version}` — `version` is always `"latest"` and keys the
   local download cache.
