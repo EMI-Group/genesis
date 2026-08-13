@@ -4,12 +4,15 @@ defmodule EvoGit do
 
   The sandbox system supports multiple platform backends:
 
-    * **Linux** — `systemd-run` with full sandboxing: filesystem isolation, resource
+    * **Linux (systemd)** — `systemd-run` with full sandboxing: filesystem isolation, resource
       limits (CPU, memory), syscall filtering, and process isolation.
+    * **Linux (bwrap)** — bubblewrap (`bwrap`) sandboxing: filesystem isolation only, no
+      resource limits.
     * **macOS** — `sandbox-exec` with filesystem isolation (read/write restrictions).
     * **Windows** — No sandbox; commands run directly.
 
-  The active backend is determined automatically by `EvoGit.Platform.sandbox_backend/0`.
+  The active backend is determined automatically by `EvoGit.Platform.sandbox_backend/0`,
+  and can be overridden via the `[sandbox] backend` config key (`:auto | :systemd | :bwrap`).
 
   ## Sandbox Configuration
 
