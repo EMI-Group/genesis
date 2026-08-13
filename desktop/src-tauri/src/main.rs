@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use rfd::MessageDialog;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -240,7 +241,9 @@ fn run_gui() {
             //    benign action (placed first so it's the natural target for a
             //    quick left-click + top-entry press). A separator visually and
             //    spatially isolates the destructive "Quit" item so a misclick
-            //    on the benign action can't land on "Quit".
+            //    on the benign action can't land on "Quit". Quitting shows a
+            //    native confirmation dialog first (via the `rfd` crate) so an
+            //    accidental click can't destroy long-running tasks.
             let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Genesis", true, None::<&str>)?;
@@ -262,6 +265,25 @@ fn run_gui() {
                         }
                     }
                     "quit" => {
+                        // Show a native confirmation dialog before quitting,
+                        // because an accidental click could interrupt tasks
+                        // that have been running for days or weeks. The
+                        // `show()` call is synchronous/blocking — it runs its
+                        // own event loop, which is fine since menu events are
+                        // dispatched on the main thread.
+                        let confirmed = MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Warning)
+                            .set_buttons(rfd::MessageButtons::YesNo)
+                            .set_title("Quit Genesis?")
+                            .set_description(
+                                "Are you sure you want to quit Genesis?\n\n\
+                                 Running tasks will be interrupted and may lose \
+                                 progress. This action cannot be undone.",
+                            )
+                            .show();
+                        if confirmed != rfd::MessageDialogResult::Yes {
+                            return;
+                        }
                         // Flags an intentional shutdown BEFORE killing the
                         // child, so the watchdog never restarts the backend
                         // after a quit has begun (double-kill guard).
