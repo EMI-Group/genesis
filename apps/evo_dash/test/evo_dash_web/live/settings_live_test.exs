@@ -956,6 +956,176 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Base URL cannot be empty."
     end
+
+    # ── move_model_profile (profile re-ordering) ──
+
+    # Adds a complete, saved profile (same fixture shape as the add/save tests
+    # above): add_model_profile creates a draft, save_model_profile persists it.
+    defp add_saved_profile(view, id, provider, model_id) do
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => id,
+        "profile_id_new" => id,
+        "provider" => provider,
+        "model_id" => model_id,
+        "concurrency" => "3"
+      })
+    end
+
+    defp profile_ids(view) do
+      Enum.map(current_models(view), & &1.id)
+    end
+
+    test "move_model_profile moves a profile up", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      html = render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
+
+      assert html =~ "Model profile moved."
+      assert profile_ids(view) == ["profile-2", "profile-1"]
+    end
+
+    test "move_model_profile moves a profile down", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      html =
+        render_hook(view, "move_model_profile", %{"direction" => "down", "id" => "profile-1"})
+
+      assert html =~ "Model profile moved."
+      assert profile_ids(view) == ["profile-2", "profile-1"]
+    end
+
+    test "move_model_profile is a no-op when moving the first profile up", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      html =
+        render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-1"})
+
+      assert html =~ "Model profile moved."
+      assert profile_ids(view) == ["profile-1", "profile-2"]
+    end
+
+    test "move_model_profile is a no-op when moving the last profile down", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      html =
+        render_hook(view, "move_model_profile", %{"direction" => "down", "id" => "profile-2"})
+
+      assert html =~ "Model profile moved."
+      assert profile_ids(view) == ["profile-1", "profile-2"]
+    end
+
+    test "move_model_profile persists the reordered config to disk", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      html =
+        render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
+
+      assert html =~ "Model profile moved."
+
+      # The in-memory file_config assign is reloaded from disk after the save
+      # (persist_file_config → ConfigIO.load_file_config → EvoGit.Config.resolve),
+      # so the swapped order proves the file was written with the new order.
+      assert profile_ids(view) == ["profile-2", "profile-1"]
+
+      # File-level check on the raw user config TOML (string-keyed decode).
+      file_models = get_in(EvoGit.Config.user_config(), ["llm", "models"]) || []
+      assert Enum.map(file_models, &Map.get(&1, "id")) == ["profile-2", "profile-1"]
+    end
+
+    test "move_model_profile move buttons respect boundary positions", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      html = render(view)
+
+      # Exactly one move-up button (for the SECOND profile) and one move-down
+      # button (for the FIRST profile) are rendered.
+      doc = Floki.parse_document!(html)
+      up_buttons = Floki.find(doc, ~s([phx-value-direction="up"]))
+      down_buttons = Floki.find(doc, ~s([phx-value-direction="down"]))
+      assert Floki.attribute(up_buttons, "phx-value-id") == ["profile-2"]
+      assert Floki.attribute(down_buttons, "phx-value-id") == ["profile-1"]
+
+      # Region check: the first card's markup (from its edit button up to the
+      # second card's edit button) must NOT contain a move-up button...
+      {first_start, _} = :binary.match(html, ~s(phx-value-profile_id="profile-1"))
+      {second_start, _} = :binary.match(html, ~s(phx-value-profile_id="profile-2"))
+      first_card_region = binary_part(html, first_start, second_start - first_start)
+      refute first_card_region =~ ~s(phx-value-direction="up")
+
+      # ...and the last card's markup (from its edit button to the end of the
+      # page) must NOT contain a move-down button.
+      last_card_region = binary_part(html, second_start, byte_size(html) - second_start)
+      refute last_card_region =~ ~s(phx-value-direction="down")
+    end
+  end
+
+  describe "ModelProfileHelpers.move_model_profile/3" do
+    alias EvoDashWeb.SettingsLive.ModelProfileHelpers
+
+    defp config_with(models), do: %{llm: %{models: models}}
+
+    test "moves a profile up in the middle of the list" do
+      config = config_with([%{id: "a"}, %{id: "b"}, %{id: "c"}])
+
+      moved = ModelProfileHelpers.move_model_profile(config, "b", "up")
+
+      assert Enum.map(moved.llm.models, & &1.id) == ["b", "a", "c"]
+    end
+
+    test "moves a profile down in the middle of the list" do
+      config = config_with([%{id: "a"}, %{id: "b"}, %{id: "c"}])
+
+      moved = ModelProfileHelpers.move_model_profile(config, "a", "down")
+
+      assert Enum.map(moved.llm.models, & &1.id) == ["b", "a", "c"]
+    end
+
+    test "unknown id leaves the config unchanged" do
+      config = config_with([%{id: "a"}, %{id: "b"}])
+
+      assert ModelProfileHelpers.move_model_profile(config, "nope", "up") == config
+    end
+
+    test "invalid direction leaves the config unchanged" do
+      config = config_with([%{id: "a"}, %{id: "b"}])
+
+      assert ModelProfileHelpers.move_model_profile(config, "a", "sideways") == config
+    end
+
+    test "empty model list leaves the config unchanged" do
+      config = config_with([])
+
+      assert ModelProfileHelpers.move_model_profile(config, "a", "up") == config
+    end
+
+    test "first profile cannot move up and last profile cannot move down" do
+      config = config_with([%{id: "a"}, %{id: "b"}])
+
+      assert ModelProfileHelpers.move_model_profile(config, "a", "up") == config
+      assert ModelProfileHelpers.move_model_profile(config, "b", "down") == config
+    end
+
+    test "matches string- or atom-keyed profile ids" do
+      config = config_with([%{"id" => "a"}, %{id: "b"}])
+
+      moved = ModelProfileHelpers.move_model_profile(config, "b", "up")
+
+      assert Enum.map(moved.llm.models, &ModelProfileHelpers.profile_id/1) == ["b", "a"]
+    end
   end
 
   describe "LLM connection test rendering (map model safety)" do
