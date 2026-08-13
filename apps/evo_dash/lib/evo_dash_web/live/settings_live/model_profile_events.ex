@@ -22,7 +22,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       socket.assigns.file_config
       |> ModelProfileHelpers.add_model_profile(model_string)
 
-    EvoDashWeb.SettingsLive.persist_file_config(file_config, socket, gettext("Model selected and saved."))
+    EvoDashWeb.SettingsLive.persist_file_config(
+      file_config,
+      socket,
+      gettext("Model selected and saved.")
+    )
   end
 
   def save_custom_model(socket, params) do
@@ -78,7 +82,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
           socket.assigns.file_config
           |> ModelProfileHelpers.add_model_profile(model_value)
 
-        EvoDashWeb.SettingsLive.persist_file_config(file_config, socket, gettext("Custom model saved."))
+        EvoDashWeb.SettingsLive.persist_file_config(
+          file_config,
+          socket,
+          gettext("Custom model saved.")
+        )
     end
   end
 
@@ -136,8 +144,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
                 do: [],
                 else: [base_url: String.trim(base_url)]
 
-            {:ok,
-             EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_name, opts)}
+            {:ok, EvoGit.Config.LLMCatalog.resolve_model_spec(resolved_atom, model_name, opts)}
           end
       end
 
@@ -150,7 +157,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
           socket.assigns.file_config
           |> ModelProfileHelpers.add_model_profile(model_value)
 
-        EvoDashWeb.SettingsLive.persist_file_config(file_config, socket, gettext("Model selected and saved."))
+        EvoDashWeb.SettingsLive.persist_file_config(
+          file_config,
+          socket,
+          gettext("Model selected and saved.")
+        )
     end
   end
 
@@ -219,7 +230,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
             socket = socket |> assign(:editing_profile_id, nil)
 
-            EvoDashWeb.SettingsLive.persist_file_config(file_config, socket, gettext("Model profile saved."))
+            EvoDashWeb.SettingsLive.persist_file_config(
+              file_config,
+              socket,
+              gettext("Model profile saved.")
+            )
 
           {:error, "model_id_empty"} ->
             {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
@@ -228,13 +243,15 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
             {:noreply, put_flash(socket, :error, gettext("Extra Config must be valid JSON."))}
 
           {:error, "extra_must_be_object"} ->
-            {:noreply, put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
+            {:noreply,
+             put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
 
           {:error, "invalid_provider_options_json"} ->
             {:noreply, put_flash(socket, :error, gettext("Provider Options must be valid JSON."))}
 
           {:error, "provider_options_must_be_object"} ->
-            {:noreply, put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
+            {:noreply,
+             put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
         end
     end
   end
@@ -249,7 +266,24 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
     socket = socket |> assign(:editing_profile_id, nil)
 
-    EvoDashWeb.SettingsLive.persist_file_config(file_config, socket, gettext("Model profile deleted."))
+    EvoDashWeb.SettingsLive.persist_file_config(
+      file_config,
+      socket,
+      gettext("Model profile deleted.")
+    )
+  end
+
+  def move_model_profile(socket, %{"direction" => direction, "id" => id}) do
+    file_config =
+      socket.assigns.file_config
+      |> ModelProfileHelpers.move_model_profile(id, direction)
+
+    # 模型配置档已成功上移/下移（"moved" = 已移动）
+    EvoDashWeb.SettingsLive.persist_file_config(
+      file_config,
+      socket,
+      gettext("Model profile moved.")
+    )
   end
 
   # ───────────────────────────────────────────────────────────────────────────

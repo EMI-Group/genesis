@@ -103,6 +103,44 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   @doc """
+  Moves the profile identified by `id` up or down in the file_config's
+  `[:llm, :models]` list.
+
+  `direction` is `"up"` (swap with the previous element) or `"down"` (swap
+  with the next element). The id comparison uses `profile_id/1` string
+  semantics, so atom- or string-keyed profiles both match.
+
+  Returns the file_config with the list UNCHANGED (never crashes, never
+  raises) for boundary/edge cases: unknown id, invalid/missing direction,
+  empty list, already-first + "up", already-last + "down".
+  """
+  def move_model_profile(file_config, id, direction) do
+    models = get_in(file_config, [:llm, :models]) || []
+
+    new_models =
+      case Enum.find_index(models, fn profile -> profile_id(profile) == id end) do
+        nil ->
+          models
+
+        idx ->
+          swap_idx =
+            case direction do
+              "up" -> idx - 1
+              "down" -> idx + 1
+              _ -> nil
+            end
+
+          if is_integer(swap_idx) and swap_idx >= 0 and swap_idx < length(models) do
+            swap_elements(models, idx, swap_idx)
+          else
+            models
+          end
+      end
+
+    put_in_model_profiles(file_config, new_models)
+  end
+
+  @doc """
   Parses the form params for a single profile into a normalized map with atom
   keys and correctly-typed values.
 
@@ -347,6 +385,14 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   defp maybe_put_profile_model(profile, nil), do: profile
   defp maybe_put_profile_model(profile, ""), do: profile
   defp maybe_put_profile_model(profile, model_value), do: Map.put(profile, :model, model_value)
+
+  # Swaps the elements at indices `i` and `j` in the list (both assumed in
+  # bounds). Reads both original values before either replacement, so the
+  # second List.replace_at/3 never sees a partially-swapped list.
+  defp swap_elements(list, i, j) do
+    {a, b} = {Enum.at(list, i), Enum.at(list, j)}
+    list |> List.replace_at(i, b) |> List.replace_at(j, a)
+  end
 
   defp draft_model_value?(nil), do: true
   defp draft_model_value?(""), do: true
