@@ -52,12 +52,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </div>
       <% else %>
         <div class="space-y-3">
-          <%= for profile <- @profiles do %>
+          <% total = length(@profiles) %>
+          <%= for {profile, index} <- Enum.with_index(@profiles) do %>
             <% id = profile_id_string(profile) %>
             <%= if @editing_profile_id == id do %>
               <.model_profile_edit_form profile={profile} />
             <% else %>
-              <.model_profile_row profile={profile} />
+              <.model_profile_row profile={profile} index={index} total={total} id={id} />
             <% end %>
           <% end %>
         </div>
@@ -69,10 +70,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   # ── Read-only summary row for a single profile ──
 
   attr(:profile, :map, required: true)
+  attr(:index, :integer, default: 0)
+  attr(:total, :integer, default: 1)
+  attr(:id, :string, default: "")
 
   defp model_profile_row(assigns) do
     ~H"""
-    <div class="flex items-start gap-4 p-4 rounded-lg border border-base-200 bg-base-100 hover:bg-base-200/30 transition-colors">
+    <div class="group relative flex items-start gap-4 p-4 pb-9 rounded-lg border border-base-200 bg-base-100 hover:bg-base-200/30 transition-colors">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1.5">
           <.icon name="hero-cpu-chip" class="size-4 text-primary shrink-0" />
@@ -113,6 +117,36 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <.icon name="hero-trash" class="size-4" />
           {gettext("Delete")}
         </button>
+      </div>
+      <div class="absolute bottom-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <%= if @index > 0 do %>
+          <button
+            type="button"
+            phx-click="move_model_profile"
+            phx-value-direction="up"
+            phx-value-id={@id}
+            class="btn btn-ghost btn-xs"
+            title={gettext("Move up")}
+            aria-label={gettext("Move up")}
+          >
+            <%!-- zh_CN: Move up → "上移" --%>
+            <.icon name="hero-arrow-up" class="size-3.5" />
+          </button>
+        <% end %>
+        <%= if @index < @total - 1 do %>
+          <button
+            type="button"
+            phx-click="move_model_profile"
+            phx-value-direction="down"
+            phx-value-id={@id}
+            class="btn btn-ghost btn-xs"
+            title={gettext("Move down")}
+            aria-label={gettext("Move down")}
+          >
+            <%!-- zh_CN: Move down → "下移" --%>
+            <.icon name="hero-arrow-down" class="size-3.5" />
+          </button>
+        <% end %>
       </div>
     </div>
     """
@@ -452,7 +486,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   # Returns "" if nil/absent.
   defp profile_provider_options(profile) when is_map(profile) do
     case Map.get(profile, :provider_options) || Map.get(profile, "provider_options") do
-      nil -> ""
+      nil ->
+        ""
+
       options ->
         case Jason.encode(options) do
           {:ok, json} -> json
@@ -474,14 +510,18 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     provider_str = if is_nil(provider), do: "", else: to_string(provider)
     id_str = if is_nil(id), do: "", else: to_string(id)
     base_url_str = if is_nil(base_url), do: "", else: to_string(base_url)
-    extra_str = cond do
-      is_nil(extra) -> ""
-      true ->
-        case Jason.encode(extra) do
-          {:ok, json} -> json
-          {:error, _} -> ""
-        end
-    end
+
+    extra_str =
+      cond do
+        is_nil(extra) ->
+          ""
+
+        true ->
+          case Jason.encode(extra) do
+            {:ok, json} -> json
+            {:error, _} -> ""
+          end
+      end
 
     {provider_str, id_str, base_url_str, extra_str}
   end
