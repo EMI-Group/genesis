@@ -229,33 +229,7 @@ defmodule EvoGit.Agent.Tools.Context do
           if String.starts_with?(result, "Error:") do
             result
           else
-            if commit do
-              trailer =
-                if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
-                  do: @co_author_trailer,
-                  else: ""
-
-              case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
-                {add_output, 0} ->
-                  case commit_with_message_file(
-                         repo_path,
-                         repo_root,
-                         "Update CONTEXT.md for #{dir_path}#{trailer}"
-                       ) do
-                    {commit_output, 0} ->
-                      result <>
-                        "\n\nCommitted:\n#{add_output}#{commit_output}"
-
-                    {commit_output, code} ->
-                      "Error: git commit failed (exit #{code}):\n#{commit_output}"
-                  end
-
-                {add_output, code} ->
-                  "Error: git add failed (exit #{code}):\n#{add_output}"
-              end
-            else
-              result
-            end
+            maybe_commit_context(result, dir_path, commit, repo_path, repo_root)
           end
         end
     end
@@ -291,36 +265,7 @@ defmodule EvoGit.Agent.Tools.Context do
             case File.write(context_path, content) do
               :ok ->
                 result_msg = "Successfully updated CONTEXT.md for directory '#{dir_path}'"
-
-                if commit do
-                  trailer =
-                    if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
-                      do: @co_author_trailer,
-                      else: ""
-
-                  relative_path = Path.join(dir_path, "CONTEXT.md")
-
-                  case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
-                    {add_output, 0} ->
-                      case commit_with_message_file(
-                             repo_path,
-                             repo_root,
-                             "Update CONTEXT.md for #{dir_path}#{trailer}"
-                           ) do
-                        {commit_output, 0} ->
-                          result_msg <>
-                            "\n\nCommitted:\n#{add_output}#{commit_output}"
-
-                        {commit_output, code} ->
-                          "Error: git commit failed (exit #{code}):\n#{commit_output}"
-                      end
-
-                    {add_output, code} ->
-                      "Error: git add failed (exit #{code}):\n#{add_output}"
-                  end
-                else
-                  result_msg
-                end
+                maybe_commit_context(result_msg, dir_path, commit, repo_path, repo_root)
 
               {:error, reason} ->
                 "Error writing CONTEXT.md: #{:file.format_error(reason)}"
@@ -329,6 +274,39 @@ defmodule EvoGit.Agent.Tools.Context do
 
       {:error, reason} ->
         "Error creating directory '#{dir_path}': #{:file.format_error(reason)}"
+    end
+  end
+
+  # Optionally stages and commits the CONTEXT.md for the given directory.
+  # Shared by write_context and edit_context. When `commit` is false (or the
+  # file was not modified), returns `result_msg` unchanged.
+  defp maybe_commit_context(result_msg, dir_path, false, _repo_path, _repo_root), do: result_msg
+
+  defp maybe_commit_context(result_msg, dir_path, true, repo_path, repo_root) do
+    relative_path = Path.join(dir_path, "CONTEXT.md")
+
+    trailer =
+      if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
+        do: @co_author_trailer,
+        else: ""
+
+    case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
+      {add_output, 0} ->
+        case commit_with_message_file(
+               repo_path,
+               repo_root,
+               "Update CONTEXT.md for #{dir_path}#{trailer}"
+             ) do
+          {commit_output, 0} ->
+            result_msg <>
+              "\n\nCommitted:\n#{add_output}#{commit_output}"
+
+          {commit_output, code} ->
+            "Error: git commit failed (exit #{code}):\n#{commit_output}"
+        end
+
+      {add_output, code} ->
+        "Error: git add failed (exit #{code}):\n#{add_output}"
     end
   end
 
