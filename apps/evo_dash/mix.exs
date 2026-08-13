@@ -45,6 +45,8 @@ defmodule EvoDash.MixProject do
   defp deps do
     [
       {:evo_git, in_umbrella: true},
+      # pure-BEAM PDF reader, zero runtime deps — used by the objective attach-file feature
+      {:ex_pdf, "~> 1.0"},
       {:phoenix, "~> 1.8.1"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},

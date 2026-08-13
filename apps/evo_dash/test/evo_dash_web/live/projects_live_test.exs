@@ -1838,7 +1838,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     # Attach-file flow for the objective editor ("file_pick" event + the
     # "objective_file" picker id in projects_live.ex). Same picker machinery as
     # "directory picker", but in :file mode: the picked file's content is read
-    # with EvoGit.PromptFile and appended to the prompt. Uses the injectable
+    # with EvoDash.AttachedFile and appended to the prompt. Uses the injectable
     # fake picker module, which delivers its result synchronously during
     # render_hook so handle_info runs and the pushed event arrives.
 
