@@ -184,6 +184,16 @@ defmodule EvoGit.Platform do
   end
 
   @doc """
+  Returns true if `bwrap` (bubblewrap) is available on this platform.
+
+  Only returns true on Linux where the `bwrap` binary is found in PATH.
+  """
+  @spec bwrap_available?() :: boolean()
+  def bwrap_available? do
+    linux?() and System.find_executable("bwrap") != nil
+  end
+
+  @doc """
   Returns true if the given path is an absolute path on any platform.
   Handles Unix paths (/foo), Windows drive-letter paths (C:\\foo, D:/bar),
   and UNC paths (\\\\server\\share).
@@ -251,13 +261,15 @@ defmodule EvoGit.Platform do
   Returns the sandbox backend available on this platform.
 
   - `:systemd_run` — Linux with systemd
+  - `:bwrap` — Linux with bubblewrap
   - `:sandbox_exec` — macOS with sandbox-exec
   - `:none` — Windows or unsupported platform
   """
-  @spec sandbox_backend() :: :systemd_run | :sandbox_exec | :none
+  @spec sandbox_backend() :: :systemd_run | :bwrap | :sandbox_exec | :none
   def sandbox_backend do
     cond do
       systemd_available?() -> :systemd_run
+      bwrap_available?() -> :bwrap
       sandbox_exec_available?() -> :sandbox_exec
       true -> :none
     end

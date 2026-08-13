@@ -61,7 +61,7 @@ Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots
 - No source code at root — all code under `./apps/`
 - Agents commit before delegating subagents (auto-commit fallback enforced)
 - Genesis stores its runtime artifacts (agent worktrees, state) under a `.genesis/` directory at each repo root. This directory must be git-ignored everywhere (root `.gitignore` and the `.gitignore` that Genesis auto-writes into new repos).
-- LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, sandbox-exec on macOS, direct on Windows)
+- LLM-generated code runs under platform-appropriate sandboxing (systemd-run on Linux, bwrap/bubblewrap on Linux without systemd — e.g. Docker — filesystem isolation only, sandbox-exec on macOS, direct on Windows); backend preference configurable via `[sandbox] backend = "auto" | "systemd" | "bwrap"` (`auto` tries systemd-run first, then bwrap, then no sandbox)
 - No hardcoded model or username — users configure via `~/.config/genesis/config.toml`
 - User config follows XDG conventions
 
@@ -72,7 +72,7 @@ EvoGit has two OTP applications under an umbrella:
 - **`:evo_git`** (Core Runtime): AgentScheduler GenServer managing worktree pools, LLM/tool slot management with global backoff, agent implementations (Manager, Executor, Investigator, etc.), Git adapter, and two-phase execution (Genesis → Evolution). Uses a 3-level configuration system: built-in defaults → user TOML config → session-level runtime overrides.
 - **`:evo_dash`** (Web Dashboard): Phoenix LiveView interface with project-based task management, agent tree inspector, runtime settings panel, and in-browser config editor. Uses Bandit adapter, Tailwind CSS 4 + DaisyUI, SQLite-based persistence (xqlite).
 
-Key design: spatial context tree for routing, phylogenetic graph for temporal evolution, transient agents in isolated worktrees, multi-repo support via absolute path resolution, slot-based concurrency with LLM rate-limit backoff, multi-platform sandboxing (systemd-run on Linux, sandbox-exec on macOS), and a dynamic skills system.
+Key design: spatial context tree for routing, phylogenetic graph for temporal evolution, transient agents in isolated worktrees, multi-repo support via absolute path resolution, slot-based concurrency with LLM rate-limit backoff, multi-platform sandboxing (systemd-run on Linux, bwrap/bubblewrap filesystem isolation on Linux without systemd, sandbox-exec on macOS), and a dynamic skills system.
 
 ## Development Notes
 

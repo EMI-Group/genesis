@@ -119,8 +119,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 66 schemas" do
-      assert length(Schema.all_schemas()) == 66
+    test "has exactly 67 schemas" do
+      assert length(Schema.all_schemas()) == 67
     end
   end
 
@@ -151,6 +151,7 @@ defmodule EvoGit.Config.SchemaTest do
 
       # Sandbox
       assert defaults.sandbox.mode == :auto
+      assert defaults.sandbox.backend == :auto
       assert defaults.sandbox.resources.cpu_quota == "1000%"
       assert defaults.sandbox.resources.cpu_weight == 30
       assert defaults.sandbox.resources.memory_max == "16G"
@@ -248,7 +249,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:scheduler]) == 11
       assert length(grouped[:llm]) == 10
       assert length(grouped[:user]) == 1
-      assert length(grouped[:sandbox]) == 18
+      assert length(grouped[:sandbox]) == 19
       assert length(grouped[:truncation]) == 4
       assert length(grouped[:task_history]) == 2
       assert length(grouped[:nix]) == 2

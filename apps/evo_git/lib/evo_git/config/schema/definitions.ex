@@ -258,7 +258,17 @@ defmodule EvoGit.Config.Schema.Definitions do
         category: :sandbox,
         sub_category: nil,
         description:
-          "Sandbox execution mode. 'auto' enables sandboxing on supported platforms (Linux with systemd-run, macOS with sandbox-exec) and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
+          "Sandbox execution mode. 'auto' enables sandboxing on supported platforms — Linux with systemd-run (falling back to bubblewrap when systemd is unavailable), macOS with sandbox-exec — and falls back to direct execution on unsupported platforms. 'enabled' forces sandboxing and fails if unavailable. 'disabled' skips sandboxing entirely."
+      },
+      %{
+        key_path: [:sandbox, :backend],
+        type: :atom,
+        default: :auto,
+        validation: [in: [:auto, :systemd, :bwrap]],
+        category: :sandbox,
+        sub_category: nil,
+        description:
+          "Sandbox backend selection (Linux). 'auto' tries systemd-run first, then bubblewrap (bwrap), then no sandbox when neither is available. 'systemd' forces systemd-run; no sandbox if systemd is unavailable. 'bwrap' forces bubblewrap — filesystem isolation only, no resource limits — useful in Docker/containers where systemd is unavailable; no sandbox if bwrap is unavailable. Note: the [sandbox.resources] and [sandbox.process] keys are systemd-only and ignored when bwrap is the active backend."
       },
       %{
         key_path: [:sandbox, :write_paths],

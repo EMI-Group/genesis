@@ -54,6 +54,7 @@ defmodule EvoGitTest do
 
       # Check that tmp paths are present in ReadWritePaths
       tmp_paths = EvoGit.Platform.tmp_paths()
+
       for tmp_path <- tmp_paths do
         assert "ReadWritePaths=-#{tmp_path}" in args
       end
@@ -76,6 +77,7 @@ defmodule EvoGitTest do
     test "backend/0 returns a valid module" do
       assert EvoGit.Sandbox.backend() in [
                EvoGit.Sandbox.Linux,
+               EvoGit.Sandbox.Bwrap,
                EvoGit.Sandbox.MacOS,
                EvoGit.Sandbox.None
              ]
@@ -86,7 +88,7 @@ defmodule EvoGitTest do
       assert Map.has_key?(caps, :filesystem_isolation)
       assert Map.has_key?(caps, :resource_limits)
       assert Map.has_key?(caps, :backend)
-      assert caps.backend in [:systemd_run, :sandbox_exec, :none]
+      assert caps.backend in [:systemd_run, :bwrap, :sandbox_exec, :none]
     end
 
     test "enabled?/0 returns a boolean" do
@@ -122,7 +124,7 @@ defmodule EvoGitTest do
       paths = EvoGit.Platform.tmp_paths()
       assert is_list(paths)
       assert length(paths) > 0
-      for p <- paths, do: assert is_binary(p)
+      for p <- paths, do: assert(is_binary(p))
     end
 
     test "boolean helpers return booleans" do
@@ -130,10 +132,11 @@ defmodule EvoGitTest do
       assert is_boolean(EvoGit.Platform.macos?())
       assert is_boolean(EvoGit.Platform.windows?())
       assert is_boolean(EvoGit.Platform.systemd_available?())
+      assert is_boolean(EvoGit.Platform.bwrap_available?())
     end
 
     test "sandbox_backend/0 returns a valid backend atom" do
-      assert EvoGit.Platform.sandbox_backend() in [:systemd_run, :sandbox_exec, :none]
+      assert EvoGit.Platform.sandbox_backend() in [:systemd_run, :bwrap, :sandbox_exec, :none]
     end
 
     test "sandbox_exec_available?/0 returns a boolean" do

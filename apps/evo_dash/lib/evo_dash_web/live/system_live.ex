@@ -284,7 +284,7 @@ defmodule EvoDashWeb.SystemLive do
                         )}
                       </p>
                       <div class="flex flex-wrap gap-2 items-center">
-                        <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
+                        <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :bwrap -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
                           {Status.format_backend(@sandbox_check.backend)}
                         </span>
                         <span class="text-sm text-base-content/60">

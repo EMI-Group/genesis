@@ -148,7 +148,7 @@ defmodule EvoGit.SystemCheckTest do
 
     test ":backend is one of the known sandbox backends" do
       result = SystemCheck.sandbox_check()
-      assert result.backend in [:systemd_run, :sandbox_exec, :none]
+      assert result.backend in [:systemd_run, :bwrap, :sandbox_exec, :none]
     end
 
     test ":enabled is a boolean" do

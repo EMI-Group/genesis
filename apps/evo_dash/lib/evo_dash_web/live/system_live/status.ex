@@ -59,6 +59,10 @@ defmodule EvoDashWeb.SystemLive.Status do
     end
   end
 
+  def sandbox_status(%{backend: :bwrap} = check) do
+    if check.capabilities.filesystem_isolation, do: :ok, else: :error
+  end
+
   def sandbox_status(%{backend: :none}), do: :info
   def sandbox_status(_), do: :error
 
@@ -66,6 +70,7 @@ defmodule EvoDashWeb.SystemLive.Status do
   Formats the sandbox backend name for display.
   """
   def format_backend(:systemd_run), do: "systemd-run (Linux)"
+  def format_backend(:bwrap), do: "bwrap (Linux)"
   def format_backend(:sandbox_exec), do: "sandbox-exec (macOS)"
   def format_backend(:none), do: gettext("None")
 
