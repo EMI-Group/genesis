@@ -3,7 +3,7 @@
 # Genesis Docker (dev/test only) — mix release, foreground logs on stdout.
 #
 # Build with the adjacent Compose file:
-#   GIT_AUTH_TOKEN="$(gh auth token)" docker compose build
+#   docker compose build
 #
 # The image runs as the non-root genesis account by default.
 
@@ -77,7 +77,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --profile default --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustc --version
 
-ARG GENESIS_VERSION=v0.9.2
+ARG GENESIS_VERSION=v0.10.4
 LABEL org.opencontainers.image.source="https://github.com/EMI-Group/genesis" \
       org.opencontainers.image.version="${GENESIS_VERSION}"
 ADD --chown=genesis:genesis \

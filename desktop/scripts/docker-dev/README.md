@@ -8,7 +8,6 @@ Do not use this configuration as a public production deployment. The image inclu
 
 - Docker Engine or Docker Desktop
 - Docker Compose v2 (`docker compose`)
-- An authenticated GitHub CLI (`gh`) session with read access to `EMI-Group/genesis`
 
 ## Build and start Genesis
 
@@ -23,12 +22,10 @@ cp desktop/scripts/docker-dev/{Dockerfile,docker-compose.yaml} \
   "${run_dir}/"
 
 cd "${run_dir}"
-GIT_AUTH_TOKEN="$(gh auth token)" docker compose up --build -d
+docker compose up --build -d
 ```
 
-The command obtains the token from the local [GitHub CLI](https://cli.github.com/) session. Compose passes it to BuildKit as the predefined `GIT_AUTH_TOKEN` build secret. The token is used only to fetch the private Git source; it is not exposed to Dockerfile instructions, passed to the running container, or stored in the image. If GitHub CLI is unavailable, populate `GIT_AUTH_TOKEN` through your normal secret manager before building. Do not put the token in `.env` or pass it as a build argument.
-
-`GENESIS_VERSION` must be a complete Git tag from the [Genesis repository](https://github.com/EMI-Group/genesis/tags), including the `v` prefix. It defaults to `v0.9.2`. BuildKit resolves that tag as a remote Git input and does not copy source files from the local checkout. The repository metadata under `.git` is not included in the image.
+`GENESIS_VERSION` must be a complete Git tag from the [Genesis repository](https://github.com/EMI-Group/genesis/tags), including the `v` prefix. BuildKit fetches that public tag over HTTPS and does not copy source files from the local checkout. The repository metadata under `.git` is not included in the image.
 
 Compose builds the image as `genesis:local`. Open `http://localhost:9999` and follow the setup page to configure an LLM provider.
 
@@ -59,8 +56,7 @@ The image includes language runtimes and native build tools for projects opened 
 Set environment variables when building to select different source and language versions:
 
 ```bash
-GIT_AUTH_TOKEN="$(gh auth token)" \
-GENESIS_VERSION=v0.9.2 \
+GENESIS_VERSION=v0.10.4 \
 NODE_VERSION=22 \
 PYTHON_VERSION=3.13 \
 RUST_TOOLCHAIN=1.89.0 \
