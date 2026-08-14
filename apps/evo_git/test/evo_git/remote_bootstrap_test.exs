@@ -331,4 +331,54 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert musl_path != glibc_path
     end
   end
+
+  # CI no longer publishes a musl arm64 tarball, so "linux_arm64" must resolve
+  # to the _glibc asset for EVERY libc variant (:musl, :glibc, nil).
+  describe "linux_arm64 asset rule (musl tarball not published)" do
+    test "asset_name/2 is _glibc-suffixed for every libc variant" do
+      assert RemoteBootstrap.asset_name("linux_arm64", :musl) ==
+               "genesis_remote_linux_arm64_glibc.tar.xz"
+
+      assert RemoteBootstrap.asset_name("linux_arm64", :glibc) ==
+               "genesis_remote_linux_arm64_glibc.tar.xz"
+
+      assert RemoteBootstrap.asset_name("linux_arm64", nil) ==
+               "genesis_remote_linux_arm64_glibc.tar.xz"
+
+      assert RemoteBootstrap.asset_name("linux_arm64") ==
+               "genesis_remote_linux_arm64_glibc.tar.xz"
+    end
+
+    test "direct_url/2 is _glibc-suffixed for every libc variant" do
+      base = "https://genesis.evox.group/dl/genesis_remote_linux_arm64_glibc.tar.xz"
+
+      assert RemoteBootstrap.direct_url("linux_arm64", :musl) == base
+      assert RemoteBootstrap.direct_url("linux_arm64", :glibc) == base
+      assert RemoteBootstrap.direct_url("linux_arm64", nil) == base
+      assert RemoteBootstrap.direct_url("linux_arm64") == base
+    end
+
+    test "download_url/2 is _glibc-suffixed for every libc variant" do
+      base = "https://genesis.evox.group/dl/genesis_remote_linux_arm64_glibc.tar.xz"
+
+      assert RemoteBootstrap.download_url("linux_arm64", :musl) == {:ok, base, "latest"}
+      assert RemoteBootstrap.download_url("linux_arm64", :glibc) == {:ok, base, "latest"}
+      assert RemoteBootstrap.download_url("linux_arm64", nil) == {:ok, base, "latest"}
+      assert RemoteBootstrap.download_url("linux_arm64") == {:ok, base, "latest"}
+    end
+
+    test "cache_path/3 is _glibc-suffixed for every libc variant" do
+      expected =
+        Path.join([
+          EvoGit.Platform.data_dir(),
+          "remote_binaries",
+          "linux_arm64_glibc_latest.tar.xz"
+        ])
+
+      assert RemoteBootstrap.cache_path("linux_arm64", "latest", :musl) == expected
+      assert RemoteBootstrap.cache_path("linux_arm64", "latest", :glibc) == expected
+      assert RemoteBootstrap.cache_path("linux_arm64", "latest", nil) == expected
+      assert RemoteBootstrap.cache_path("linux_arm64", "latest") == expected
+    end
+  end
 end

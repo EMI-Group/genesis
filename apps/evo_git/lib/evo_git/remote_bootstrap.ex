@@ -16,6 +16,16 @@ defmodule EvoGit.RemoteBootstrap do
       release asset through Cloudflare when needed),
     * computing the local download-cache path (`cache_path/2`).
 
+  **Linux arm64 asset rule:** CI no longer publishes a musl arm64 tarball, so
+  for platform `"linux_arm64"` EVERY libc variant (`:musl`, `:glibc`, `nil`)
+  resolves to the `_glibc`-suffixed asset (`genesis_remote_linux_arm64_glibc.tar.xz`).
+  `"linux_x64"` keeps the musl-default behavior (musl/nil → unsuffixed, glibc →
+  `_glibc`-suffixed), and non-Linux platforms are never suffixed. The
+  normalization lives in the private `effective_libc/2` helper, threaded
+  through `asset_name/2` and `cache_path/3` (and hence through the delegating
+  `direct_url/2` / `download_url/2`), so the asset name, download URL, and
+  local cache entry always stay consistent.
+
   All functions are deterministic and perform **no network I/O** — the actual
   tarball downloads happen in `EvoGit.RemoteConnection` via curl/wget.
   """
@@ -107,22 +117,21 @@ defmodule EvoGit.RemoteBootstrap do
 
   When `libc` is `:glibc` and the platform is Linux, a `_glibc` suffix is
   inserted before the extension
-  (e.g. `"genesis_remote_linux_x64_glibc.tar.xz"`). musl (the default) and
-  non-Linux platforms are never suffixed.
+  (e.g. `"genesis_remote_linux_x64_glibc.tar.xz"`). For `"linux_x64"`, musl
+  (the default) is unsuffixed. **Linux arm64 exception:** CI publishes no
+  musl arm64 tarball, so `"linux_arm64"` ALWAYS gets the `_glibc` suffix
+  regardless of `libc` (`:musl`, `:glibc`, or `nil`). Non-Linux platforms are
+  never suffixed.
   """
   @spec asset_name(String.t(), :musl | :glibc | nil) :: String.t()
   def asset_name(platform, libc \\ nil)
 
-  def asset_name(platform, :glibc) when is_binary(platform) do
-    if linux_platform?(platform) do
+  def asset_name(platform, libc) when is_binary(platform) do
+    if effective_libc(platform, libc) == :glibc and linux_platform?(platform) do
       "genesis_remote_#{platform}_glibc.tar.xz"
     else
       "genesis_remote_#{platform}.tar.xz"
     end
-  end
-
-  def asset_name(platform, _libc) when is_binary(platform) do
-    "genesis_remote_#{platform}.tar.xz"
   end
 
   @doc """
@@ -130,7 +139,8 @@ defmodule EvoGit.RemoteBootstrap do
   `https://genesis.evox.group/dl/genesis_remote_<platform>.tar.xz`.
 
   The optional `libc` variant threads through to `asset_name/2` so glibc Linux
-  builds get the `_glibc`-suffixed URL.
+  builds get the `_glibc`-suffixed URL (and `"linux_arm64"` always does —
+  see `asset_name/2`).
 
   This Cloudflare-worker "smart download" endpoint serves the latest GitHub
   release asset, auto-detecting mainland-China users and proxying the asset
@@ -160,14 +170,16 @@ defmodule EvoGit.RemoteBootstrap do
   `EvoGit.Platform.data_dir()`:
   `<data_dir>/remote_binaries/<platform>_<version>.tar.xz`.
 
-  When `libc` is `:glibc` and the platform is Linux, the cache filename
-  includes a `_glibc` suffix so musl and glibc builds have separate cache
-  entries.
+  When the effective libc is `:glibc` and the platform is Linux, the cache
+  filename includes a `_glibc` suffix so musl and glibc builds have separate
+  cache entries. For `"linux_arm64"` the effective libc is ALWAYS `:glibc`
+  (no musl arm64 tarball is published), so its cache entry is always the
+  `_glibc`-suffixed one.
   """
   @spec cache_path(String.t(), String.t(), :musl | :glibc | nil) :: String.t()
   def cache_path(platform, version, libc \\ nil) do
     name =
-      if libc == :glibc and linux_platform?(platform) do
+      if effective_libc(platform, libc) == :glibc and linux_platform?(platform) do
         "#{platform}_glibc_#{version}.tar.xz"
       else
         "#{platform}_#{version}.tar.xz"
@@ -177,6 +189,13 @@ defmodule EvoGit.RemoteBootstrap do
   end
 
   # --- Private ---
+
+  # Normalizes the libc variant for asset selection. CI publishes NO musl
+  # arm64 tarball, so "linux_arm64" always resolves to the glibc asset
+  # regardless of the probed/nil libc. All other platforms keep the caller's
+  # variant unchanged.
+  defp effective_libc("linux_arm64", _libc), do: :glibc
+  defp effective_libc(_platform, libc), do: libc
 
   defp linux_platform?(platform) when is_binary(platform) do
     case parse_platform(platform) do

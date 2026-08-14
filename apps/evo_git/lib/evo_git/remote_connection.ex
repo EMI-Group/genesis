@@ -563,7 +563,10 @@ defmodule EvoGit.RemoteConnection do
   # via SSH. Returns {:ok, daemon_os, platform, libc} where daemon_os is the
   # canonical "Linux" | "Darwin" string used by the launcher functions and libc
   # is :musl | :glibc | nil (only probed for Linux platforms; nil for
-  # non-Linux or on failure).
+  # non-Linux or on failure). Asset selection is handled by
+  # EvoGit.RemoteBootstrap — for "linux_arm64" EVERY libc value resolves to
+  # the _glibc asset (no musl arm64 tarball is published; nil defaults to the
+  # glibc asset for arm64, musl only for linux_x64).
   defp resolve_platform(target, ssh_target) do
     case Map.get(target, :platform) do
       platform when is_binary(platform) and platform != "" ->
@@ -611,7 +614,9 @@ defmodule EvoGit.RemoteConnection do
 
   # Probes the remote libc implementation via SSH
   # (`ldd --version 2>&1 | head -1`). Returns :musl | :glibc | nil — nil on
-  # failure/timeout (defaults to musl behavior since nil = default/musl).
+  # failure/timeout. Asset selection uses this only for linux_x64 (nil
+  # defaults to the unsuffixed musl asset there); for linux_arm64 every libc
+  # value resolves to the _glibc asset via RemoteBootstrap.effective_libc/2.
   defp probe_libc(ssh_target) do
     cmd = "ssh #{ssh_target} 'ldd --version 2>&1 | head -1'"
 
@@ -628,10 +633,14 @@ defmodule EvoGit.RemoteConnection do
   # scp to the remote temp path. Returns
   # {:ok, state} | {:error, reason, state}.
   defp download_tarball(state, target, ssh_target, platform, libc, remote_tarball) do
+    maybe_warn_musl_arm64(platform, libc)
+
     # download_url/2 is deterministic — always the direct Cloudflare-worker
     # "smart download" URL (https://genesis.evox.group/dl/...), which proxies
     # the latest GitHub release asset; version is always "latest" and keys the
-    # local cache. The libc variant selects the musl (default) or _glibc asset.
+    # local cache. The libc variant selects the musl (default for linux_x64) or
+    # _glibc asset — for linux_arm64 the _glibc asset is ALWAYS selected (no
+    # musl arm64 tarball is published).
     {:ok, url, version} = EvoGit.RemoteBootstrap.download_url(platform, libc)
 
     case download_on_remote(ssh_target, url, remote_tarball) do
@@ -657,6 +666,18 @@ defmodule EvoGit.RemoteConnection do
         end
     end
   end
+
+  # CI publishes no musl arm64 tarball, so a musl probe result for linux_arm64
+  # still downloads the glibc asset (via RemoteBootstrap.effective_libc/2).
+  # Log a clear warning instead of silently using a different libc than probed.
+  defp maybe_warn_musl_arm64("linux_arm64", :musl) do
+    Logger.warning(
+      "RemoteConnection: musl arm64 builds are not published; " <>
+        "falling back to the glibc asset for linux_arm64."
+    )
+  end
+
+  defp maybe_warn_musl_arm64(_platform, _libc), do: :ok
 
   # Downloads the tarball directly on the remote host — `curl -fL` first, with
   # a `wget -O` fallback when curl is missing (default Ubuntu installs ship
