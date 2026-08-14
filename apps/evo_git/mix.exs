@@ -27,7 +27,7 @@ defmodule EvoGit.MixProject do
     [
       {:req_llm, "~> 1.19"},
       {:retry, "~> 0.19"},
-      {:req, "~> 0.6.0"},
+      {:req, "~> 0.7.0"},
       {:phoenix_pubsub, "~> 2.2"},
       # TomlElixir
       {:toml_elixir, "~> 3.1"},
