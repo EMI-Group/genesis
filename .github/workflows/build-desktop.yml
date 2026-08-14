@@ -52,7 +52,7 @@ permissions:
 # Jobs:
 #   prepare             publish flag, release tag, linux matrix JSON
 #   build-linux         ubuntu-24.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
-#   build-linux-remote-musl  Alpine container — genesis_remote musl tarball (default)
+#   build-linux-remote-musl  Alpine container, x64 only — genesis_remote musl tarball (default)
 #   build-macos-arm64   macos-15 — dmg, app.zip (signed + notarized)
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
 #   publish-release     single writer for GitHub Release assets
