@@ -3,11 +3,10 @@
 
 use std::sync::Arc;
 
-use rfd::MessageDialog;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 
 mod backend_watchdog;
@@ -31,8 +30,19 @@ const LAUNCHER_NAME: &str = "genesis_desktop.bat";
 const LAUNCHER_NAME: &str = "genesis_desktop";
 
 /// Managed handle to the [`BackendManager`], shared between the tray-quit
-/// handler and the watchdog thread.
+/// handler, the watchdog thread, and the `begin_quit` command.
 type BackendHandle = Arc<BackendManager>;
+
+/// Tauri command invoked by the dashboard's JavaScript after the user
+/// confirms the web-page quit dialog.
+///
+/// Marks the shutdown as intentional WITHOUT killing anything, so the backend
+/// watchdog never restarts the child process; the backend then stops itself
+/// gracefully (dashboard `System.stop()`).
+#[tauri::command]
+fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
+    manager.begin_quit();
+}
 
 /// Returns the port the Phoenix backend listens on.
 ///
@@ -187,7 +197,7 @@ fn run_headless() {
 }
 
 // ---------------------------------------------------------------------------
-// GUI mode (existing behaviour — unchanged)
+// GUI mode
 // ---------------------------------------------------------------------------
 
 fn run_gui() {
@@ -207,6 +217,7 @@ fn run_gui() {
             }
         }))
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![begin_quit])
         .setup(|app| {
             // 1. Resolve the launcher path once and build the backend
             //    environment. A broken install (missing launcher) stays fatal.
@@ -241,9 +252,12 @@ fn run_gui() {
             //    benign action (placed first so it's the natural target for a
             //    quick left-click + top-entry press). A separator visually and
             //    spatially isolates the destructive "Quit" item so a misclick
-            //    on the benign action can't land on "Quit". Quitting shows a
-            //    native confirmation dialog first (via the `rfd` crate) so an
-            //    accidental click can't destroy long-running tasks.
+            //    on the benign action can't land on "Quit". Quitting is a
+            //    two-step flow: "Quit" shows and focuses the window, probes
+            //    the backend, and (if healthy) emits `quit-requested` so the
+            //    dashboard renders a web-page confirmation dialog; on
+            //    confirmation the dashboard JS invokes the `begin_quit`
+            //    command and the backend stops itself gracefully.
             let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit Genesis", true, None::<&str>)?;
@@ -265,28 +279,31 @@ fn run_gui() {
                         }
                     }
                     "quit" => {
-                        // Show a native confirmation dialog before quitting,
-                        // because an accidental click could interrupt tasks
-                        // that have been running for days or weeks. The
-                        // `show()` call is synchronous/blocking — it runs its
-                        // own event loop, which is fine since menu events are
-                        // dispatched on the main thread.
-                        let confirmed = MessageDialog::new()
-                            .set_level(rfd::MessageLevel::Warning)
-                            .set_buttons(rfd::MessageButtons::YesNo)
-                            .set_title("Quit Genesis?")
-                            .set_description(
-                                "Are you sure you want to quit Genesis?\n\n\
-                                 Running tasks will be interrupted and may lose \
-                                 progress. This action cannot be undone.",
-                            )
-                            .show();
-                        if confirmed != rfd::MessageDialogResult::Yes {
+                        // Show + focus the main window first, exactly like the
+                        // "show" arm and the single-instance callback, so the
+                        // user sees the confirm dialog the dashboard renders.
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                        // Backend healthy → hand the quit decision to the web
+                        // page: emit `quit-requested` and do NOTHING else. The
+                        // dashboard shows its confirm modal; on confirmation
+                        // its JS invokes the `begin_quit` command (sets the
+                        // intentional-shutdown flag, no kill) and the backend
+                        // stops itself gracefully. `backend_url()` is called
+                        // inside the handler because `on_menu_event` requires
+                        // a `'static` closure, so nothing may be captured.
+                        if sidecar::probe_http(&backend_url()).is_some() {
+                            let _ = app.emit("quit-requested", ());
                             return;
                         }
-                        // Flags an intentional shutdown BEFORE killing the
-                        // child, so the watchdog never restarts the backend
-                        // after a quit has begun (double-kill guard).
+                        // Backend down — the WebView shows the watchdog error
+                        // page, so no dashboard dialog could appear. Keep the
+                        // old immediate path: flag an intentional shutdown
+                        // BEFORE killing the child, so the watchdog never
+                        // restarts the backend after a quit has begun.
                         if let Some(manager) = app.try_state::<BackendHandle>() {
                             manager.kill_for_quit();
                         }

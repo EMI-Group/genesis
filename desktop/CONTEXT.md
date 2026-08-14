@@ -15,7 +15,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 
 | File | Purpose |
 |------|---------|
-| `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window · separator · Quit Genesis menu with confirmation dialog), spawns backend, opens window, intercepts close-to-tray |
+| `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window · separator · Quit Genesis menu), spawns backend, opens window, intercepts close-to-tray; registers the `begin_quit` command; tray Quit shows+focuses the window and emits `quit-requested` to the webview for the web-page confirm flow |
 | `src-tauri/src/sidecar.rs` | Backend lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
 | `src-tauri/Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
 | `src-tauri/tauri.conf.json` | Tauri config: window settings, trayIcon config, resource bundle reference, bundle metadata |
@@ -58,8 +58,22 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 1. Tauri spawns the Elixir release launcher (`bin/genesis_desktop start`) with env vars: `PORT=9999`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1` — always via `sidecar::spawn` → `launcher_command` (Windows `CREATE_NO_WINDOW`), the only GUI spawn path (initial boot AND every watchdog restart)
 2. Tauri polls `http://localhost:9999` until the backend responds (up to 30s)
 3. The WebView window opens, pointing to `http://localhost:9999`
-4. Closing the window hides it to the system tray (backend keeps running); the "Quit Genesis" tray menu item (below a separator) shows a native confirmation dialog, then on confirm kills the backend process and exits
-5. **A backend crash watchdog runs for the app's lifetime** (`src-tauri/src/backend_watchdog.rs`): it monitors the child process, and on an unexpected exit shows a `data:`-URL error page in the WebView ("backend unavailable — will be restarted automatically" + Retry button), restarts the backend with capped exponential backoff (1s→30s; after 8 consecutive failures it retries every 30s indefinitely — no dead state; success resets the sequence), and once the backend serves again (TCP accepting + HTTP probe) navigates the WebView back to the dashboard (full reload). Tray Quit is the ONLY intentional kill path — `BackendManager::kill_for_quit()` sets an `intentional_shutdown` flag BEFORE killing, and the watchdog never restarts after a quit began. Full design in `src-tauri/CONTEXT.md` → "Backend Crash Watchdog".
+4. Closing the window hides it to the system tray (backend keeps running); the "Quit Genesis" tray menu item (below a separator) shows+focuses the window and emits `quit-requested` so the dashboard renders a web-page confirm dialog (backend-down fallback: immediate `kill_for_quit()` + exit — see "Quit Flow (Web Confirmation)")
+5. **A backend crash watchdog runs for the app's lifetime** (`src-tauri/src/backend_watchdog.rs`): it monitors the child process, and on an unexpected exit shows a `data:`-URL error page in the WebView ("backend unavailable — will be restarted automatically" + Retry button), restarts the backend with capped exponential backoff (1s→30s; after 8 consecutive failures it retries every 30s indefinitely — no dead state; success resets the sequence), and once the backend serves again (TCP accepting + HTTP probe) navigates the WebView back to the dashboard (full reload). Tray Quit is the intentional shutdown path — the dashboard invokes the `begin_quit` command (sets the `intentional_shutdown` flag WITHOUT killing), the backend stops itself gracefully, and the watchdog waits up to 15s for the child exit (force-kill fallback) before `app.exit(0)`; a clean `Some(0)` child exit is also classified as intentional (deliberate `System.stop/0`), so the System-page "Stop" button exits the app instead of triggering a restart. `kill_for_quit()` (flag + kill) survives only as the backend-down fallback. Full design in `src-tauri/CONTEXT.md` → "Backend Crash Watchdog".
+
+## Quit Flow (Web Confirmation)
+
+The tray-quit confirmation is a **web-page dialog** rendered by the dashboard. **Design decision:** the confirmation lives in the web page rather than a native OS dialog because native dialogs are unreliable on Linux (the dialog never shows there); no dialog crate is used at all (no `rfd`, no `tauri-plugin-dialog`). Fixed protocol between Rust and the dashboard:
+
+1. **Tray "Quit Genesis"** → Rust shows+focuses the main window (unminimize → show → set_focus, same as the "Show Window" arm and the single-instance callback), then probes backend health (`sidecar::probe_http`).
+   - **Backend healthy** → Rust emits the Tauri event `quit-requested` (payload `()`) and does NOTHING else — no kill, no exit.
+   - **Backend already down** (webview shows the watchdog error page, so no dashboard dialog could appear) → immediate fallback: `kill_for_quit()` (sets the intentional-shutdown flag BEFORE killing) + `app.exit(0)`.
+2. The dashboard's JS listens for `quit-requested` and renders a confirm modal.
+3. On confirmation the dashboard JS invokes the Tauri command **`begin_quit`** (`window.__TAURI__.core.invoke("begin_quit")`) BEFORE triggering the server-side graceful `System.stop()`, so the flag is guaranteed set before the child exits. `begin_quit` is a `#[tauri::command]` (`tauri::State<'_, BackendHandle>` → `BackendManager::begin_quit()`) — sets the `intentional_shutdown` flag, kills NOTHING. Registered via `invoke_handler(tauri::generate_handler![begin_quit])`; app-owned commands need no capability changes (`core:default` also covers the webview's `event.listen`).
+4. The backend stops itself gracefully. The watchdog observes the intentional shutdown, waits up to 15s for the child to actually exit (force-kill fallback if the BEAM stop hangs), then `app.exit(0)` — every post-shutdown exit path of the watchdog ends with `app.exit(0)`, so the app can never linger windowed with a dead watchdog.
+5. **Belt-and-braces for the IPC race**: a monitored child exit with status `Some(0)` is classified as intentional (deliberate `System.stop/0` — the only way the release backend exits code 0; crashes produce non-zero codes or signal death) → `app.exit(0)`, no restart. This also makes the System-page "Stop" button coherent in desktop mode (previously the watchdog would restart the backend after a Stop).
+
+Full details: `src-tauri/CONTEXT.md` → "Quit Flow (Web Confirmation)" + "Backend Crash Watchdog" point 4.
 
 ## Single-Instance Detection
 

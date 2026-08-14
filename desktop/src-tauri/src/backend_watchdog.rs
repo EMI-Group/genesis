@@ -17,9 +17,16 @@
 //! 4. once the backend serves requests again (TCP accepting + HTTP probe),
 //!    navigates the WebView back to the dashboard (a full reload).
 //!
-//! A tray "Quit" sets the `intentional_shutdown` flag before killing the
-//! child; the watchdog checks the flag at every stage and never restarts the
-//! backend after a quit has begun.
+//! A tray "Quit" no longer kills the child directly: it shows the window and
+//! emits a `quit-requested` event so the dashboard can ask for confirmation in
+//! the WebView. On confirmation the `begin_quit` Tauri command sets the
+//! `intentional_shutdown` flag (no kill), the backend stops itself gracefully
+//! (dashboard `System.stop()`), and the watchdog's shutdown path waits for the
+//! child to exit (force-killing it if it hangs) before exiting the app. The
+//! watchdog checks the flag at every stage and never restarts the backend
+//! after a quit has begun. A clean `Some(0)` child exit is also treated as
+//! intentional (the release backend only exits with code 0 on a deliberate
+//! stop).
 
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
@@ -37,6 +44,10 @@ const READY_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// How long a respawned backend has to come up before the attempt is
 /// considered a failure.
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the shutdown path waits for the child to exit on its own after a
+/// graceful stop before force-killing it as a fallback.
+const SHUTDOWN_CHILD_WAIT: Duration = Duration::from_secs(15);
 
 /// Maximum consecutive failures before entering the slow-retry regime.
 const MAX_CONSECUTIVE_FAILURES: u32 = 8;
@@ -111,16 +122,27 @@ impl RestartPolicy {
 /// How a backend process exited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitKind {
-    /// The process exited without an intentional shutdown being requested.
-    /// Carries the exit code (`None` = killed by a signal / no code).
+    /// The process crashed or exited non-zero without a shutdown being
+    /// requested. Carries the exit code (`None` = killed by a signal / no
+    /// code).
     Unexpected(Option<i32>),
-    /// The exit was requested (tray Quit / app shutdown).
+    /// The exit was deliberate: a shutdown was requested (tray Quit confirm /
+    /// app shutdown) or the process exited cleanly with code 0.
     Intentional,
 }
 
 /// Classifies a process exit as intentional or unexpected.
+///
+/// An exit is intentional when a shutdown was requested OR the process exited
+/// cleanly with code 0. The release backend only exits with code 0 on a
+/// deliberate stop (dashboard graceful `System.stop/0` — the new quit flow or
+/// the System page's Stop button); crashes produce non-zero codes or signal
+/// death (`None`). Treating `Some(0)` as intentional makes the System-page
+/// "Stop" button coherent in desktop mode (previously the watchdog would
+/// restart the backend) and is belt-and-braces for the IPC race where the
+/// child exits cleanly right before/around `begin_quit` arrives.
 pub fn classify_exit(intentional: bool, status: Option<i32>) -> ExitKind {
-    if intentional {
+    if intentional || status == Some(0) {
         ExitKind::Intentional
     } else {
         ExitKind::Unexpected(status)
@@ -214,10 +236,10 @@ enum ExitObservation {
 /// Managed state for the backend child process and the watchdog.
 ///
 /// Registered via `app.manage` (wrapped in an `Arc` shared with the watchdog
-/// thread); the tray-quit handler and the watchdog share it. The current
-/// child lives in a [`Mutex`] so the quit handler can take and kill it while
-/// the watchdog is polling, and the `intentional_shutdown` flag tells the
-/// watchdog to stop restarting.
+/// thread); the tray-quit handler, the `begin_quit` command, and the watchdog
+/// share it. The current child lives in a [`Mutex`] so the quit handler can
+/// take and kill it while the watchdog is polling, and the
+/// `intentional_shutdown` flag tells the watchdog to stop restarting.
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
     intentional_shutdown: AtomicBool,
@@ -254,6 +276,21 @@ impl BackendManager {
         Ok(())
     }
 
+    /// Marks shutdown as intentional WITHOUT killing the child.
+    ///
+    /// Invoked by the dashboard's JavaScript via the `begin_quit` Tauri
+    /// command after the user confirms the web-page quit dialog. The backend
+    /// then stops itself gracefully (dashboard `System.stop()`); the watchdog
+    /// observes the flag, waits up to [`SHUTDOWN_CHILD_WAIT`] for the child
+    /// to exit (force-killing it if the graceful stop hangs), and then exits
+    /// the app — never restarting the backend after a quit has begun.
+    pub fn begin_quit(&self) {
+        self.intentional_shutdown.store(true, Ordering::SeqCst);
+        println!(
+            "[desktop] quit confirmed — backend stopping gracefully; watchdog will not restart it"
+        );
+    }
+
     /// Marks shutdown as intentional, then takes and kills the current child.
     /// The watchdog observes the flag at every stage (before, during and
     /// after every spawn/sleep) and therefore never restarts the backend
@@ -275,9 +312,26 @@ impl BackendManager {
         }
     }
 
-    /// True once the user has requested shutdown (tray Quit).
+    /// True once the user has requested shutdown (tray Quit confirm).
     pub fn shutdown_requested(&self) -> bool {
         self.intentional_shutdown.load(Ordering::SeqCst)
+    }
+
+    /// Finalizes an intentional shutdown from the watchdog thread.
+    ///
+    /// Waits up to [`SHUTDOWN_CHILD_WAIT`] for the child to actually exit on
+    /// its own (the backend was told to stop gracefully and normally exits in
+    /// well under a second), then force-kills it as a fallback if the graceful
+    /// BEAM stop hung (`kill_current_child` is a no-op when the child was
+    /// already reaped), and finally exits the app — `AppHandle::exit` is
+    /// thread-safe, so calling it from the watchdog thread is fine.
+    fn finish_shutdown(&self, app: &AppHandle) {
+        let deadline = Instant::now() + SHUTDOWN_CHILD_WAIT;
+        while self.child_alive() && Instant::now() < deadline {
+            std::thread::sleep(MONITOR_INTERVAL);
+        }
+        self.kill_current_child();
+        app.exit(0);
     }
 
     /// Runs the watchdog loop until intentional shutdown.
@@ -287,21 +341,40 @@ impl BackendManager {
     pub fn run_watchdog(&self, app: AppHandle) {
         println!("[desktop] backend watchdog started");
         loop {
+            // Covers every path that loops back here (e.g. `wait_until_ready`
+            // timing out or `show_backend` bailing early): on shutdown, wait
+            // for the child to exit and then exit the app.
             if self.shutdown_requested() {
+                self.finish_shutdown(&app);
                 return;
             }
 
             // Monitor the current child until it exits (reaping the zombie).
             let status = match self.wait_for_exit() {
-                ExitObservation::Shutdown => return,
+                ExitObservation::Shutdown => {
+                    self.finish_shutdown(&app);
+                    return;
+                }
                 ExitObservation::Missing => None,
                 ExitObservation::Exited(status) => status,
             };
 
+            // A clean code-0 exit is a deliberate stop (dashboard graceful
+            // `System.stop/0` — the quit flow or the System page's Stop
+            // button): exit the app instead of restarting the backend.
+            let kind = classify_exit(false, status);
+            if kind == ExitKind::Intentional {
+                println!(
+                    "[desktop] backend exited cleanly (code 0) — treating as intentional shutdown"
+                );
+                self.kill_current_child();
+                app.exit(0);
+                return;
+            }
+
             // Unexpected exit (or a missing child from a failed boot) —
             // failure path: grow the backoff, show the error page, wait,
             // then respawn.
-            let kind = classify_exit(false, status);
             let (delay, failures) = {
                 let mut policy = self.lock_policy();
                 policy.record_failure();
@@ -318,6 +391,7 @@ impl BackendManager {
             self.show_error_page(&app);
 
             if !self.sleep_interruptible(delay) {
+                self.finish_shutdown(&app);
                 return;
             }
 
@@ -325,9 +399,13 @@ impl BackendManager {
                 eprintln!("[desktop] failed to respawn backend: {err}");
                 continue; // failure path again, with the next backoff delay
             }
-            // A quit may have raced the respawn: kill the fresh child and stop.
+            // A quit may have raced the respawn: kill the fresh child and stop
+            // IMMEDIATELY. Do NOT use `finish_shutdown`'s 15s graceful-stop
+            // wait here — the child was just spawned and cannot have completed
+            // a graceful stop yet, so waiting would only delay the exit.
             if self.shutdown_requested() {
                 self.kill_current_child();
+                app.exit(0);
                 return;
             }
 
@@ -555,6 +633,49 @@ mod tests {
         assert_eq!(classify_exit(true, None), ExitKind::Intentional);
         assert_eq!(classify_exit(false, Some(1)), ExitKind::Unexpected(Some(1)));
         assert_eq!(classify_exit(false, None), ExitKind::Unexpected(None));
+    }
+
+    #[test]
+    fn classify_exit_treats_clean_code_zero_as_intentional() {
+        // The release backend only exits with code 0 on a deliberate stop
+        // (dashboard graceful `System.stop/0`); crashes are non-zero or
+        // signal death. So a clean exit, even without the
+        // `intentional_shutdown` flag, must not trigger a restart.
+        assert_eq!(classify_exit(false, Some(0)), ExitKind::Intentional);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn begin_quit_sets_flag_without_killing_child() {
+        let manager = BackendManager::new(
+            PathBuf::from("/nonexistent"),
+            vec![],
+            9999,
+            "http://localhost:9999".to_string(),
+        );
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        *manager.child.lock().unwrap() = Some(child);
+
+        manager.begin_quit();
+
+        assert!(manager.shutdown_requested());
+        // `begin_quit` only sets the flag — the child must still be running
+        // so the backend can finish its graceful stop on its own.
+        let mut child = manager
+            .child
+            .lock()
+            .unwrap()
+            .take()
+            .expect("child still present");
+        assert!(
+            matches!(child.try_wait(), Ok(None)),
+            "begin_quit must not kill the child"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
