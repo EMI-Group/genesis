@@ -108,83 +108,24 @@ defmodule EvoGit.RemoteBootstrapTest do
   end
 
   describe "asset_name/1" do
-    test "builds the tarball name" do
+    test "builds the tarball name for linux_x64" do
       assert RemoteBootstrap.asset_name("linux_x64") ==
                "genesis_remote_linux_x64.tar.xz"
     end
-  end
 
-  describe "asset_name/2" do
-    test "builds the glibc-suffixed name for linux_x64" do
-      assert RemoteBootstrap.asset_name("linux_x64", :glibc) ==
-               "genesis_remote_linux_x64_glibc.tar.xz"
+    test "builds the unsuffixed tarball name for linux_arm64" do
+      assert RemoteBootstrap.asset_name("linux_arm64") ==
+               "genesis_remote_linux_arm64.tar.xz"
     end
 
-    test "builds the unsuffixed name for musl" do
-      assert RemoteBootstrap.asset_name("linux_x64", :musl) ==
-               "genesis_remote_linux_x64.tar.xz"
-    end
-
-    test "defaults to unsuffixed (musl) name when libc is nil" do
-      assert RemoteBootstrap.asset_name("linux_x64") ==
-               "genesis_remote_linux_x64.tar.xz"
-
-      assert RemoteBootstrap.asset_name("linux_x64", nil) ==
-               "genesis_remote_linux_x64.tar.xz"
-    end
-
-    test "builds the glibc-suffixed name for linux_arm64" do
-      assert RemoteBootstrap.asset_name("linux_arm64", :glibc) ==
-               "genesis_remote_linux_arm64_glibc.tar.xz"
-    end
-
-    test "never suffixes darwin even with glibc" do
-      assert RemoteBootstrap.asset_name("darwin_arm64", :glibc) ==
+    test "builds the unsuffixed tarball name for darwin_arm64" do
+      assert RemoteBootstrap.asset_name("darwin_arm64") ==
                "genesis_remote_darwin_arm64.tar.xz"
     end
 
-    test "never suffixes windows even with glibc" do
-      assert RemoteBootstrap.asset_name("windows_x64", :glibc) ==
+    test "builds the unsuffixed tarball name for windows_x64" do
+      assert RemoteBootstrap.asset_name("windows_x64") ==
                "genesis_remote_windows_x64.tar.xz"
-    end
-  end
-
-  describe "detect_libc/1" do
-    test "detects musl" do
-      assert RemoteBootstrap.detect_libc("musl libc (x86_64)") == :musl
-    end
-
-    test "detects musl on aarch64" do
-      assert RemoteBootstrap.detect_libc("musl libc (aarch64)") == :musl
-    end
-
-    test "detects MUSL case-insensitively" do
-      assert RemoteBootstrap.detect_libc("MUSL libc (x86_64)") == :musl
-    end
-
-    test "detects glibc" do
-      assert RemoteBootstrap.detect_libc("ldd (GNU libc) 2.39") == :glibc
-    end
-
-    test "detects GLIBC case-insensitively" do
-      assert RemoteBootstrap.detect_libc("ldd (Ubuntu GLIBC 2.39-0ubuntu8.4) 2.39") == :glibc
-    end
-
-    test "detects gnu libc" do
-      assert RemoteBootstrap.detect_libc("ldd (GNU libc) stable release version 2.31") ==
-               :glibc
-    end
-
-    test "returns nil for empty string" do
-      assert RemoteBootstrap.detect_libc("") == nil
-    end
-
-    test "returns nil for unknown libc" do
-      assert RemoteBootstrap.detect_libc("some unknown libc implementation") == nil
-    end
-
-    test "returns nil for nil input" do
-      assert RemoteBootstrap.detect_libc(nil) == nil
     end
   end
 
@@ -194,26 +135,19 @@ defmodule EvoGit.RemoteBootstrapTest do
                "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz"
     end
 
+    test "builds the linux_arm64 direct URL" do
+      assert RemoteBootstrap.direct_url("linux_arm64") ==
+               "https://genesis.evox.group/dl/genesis_remote_linux_arm64.tar.xz"
+    end
+
     test "builds the darwin_arm64 direct URL" do
       assert RemoteBootstrap.direct_url("darwin_arm64") ==
                "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz"
     end
-  end
 
-  describe "direct_url/2" do
-    test "builds the glibc-suffixed URL for linux_x64" do
-      assert RemoteBootstrap.direct_url("linux_x64", :glibc) ==
-               "https://genesis.evox.group/dl/genesis_remote_linux_x64_glibc.tar.xz"
-    end
-
-    test "builds the unsuffixed URL for musl" do
-      assert RemoteBootstrap.direct_url("linux_x64", :musl) ==
-               "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz"
-    end
-
-    test "never suffixes darwin even with glibc" do
-      assert RemoteBootstrap.direct_url("darwin_arm64", :glibc) ==
-               "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz"
+    test "builds the windows_x64 direct URL" do
+      assert RemoteBootstrap.direct_url("windows_x64") ==
+               "https://genesis.evox.group/dl/genesis_remote_windows_x64.tar.xz"
     end
   end
 
@@ -223,40 +157,32 @@ defmodule EvoGit.RemoteBootstrapTest do
                {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz", "latest"}
     end
 
+    test "returns the direct linux_arm64 URL with the latest version (no network)" do
+      assert RemoteBootstrap.download_url("linux_arm64") ==
+               {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_arm64.tar.xz", "latest"}
+    end
+
     test "returns the direct darwin_arm64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("darwin_arm64") ==
                {:ok, "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz", "latest"}
     end
 
-    test "version is always latest, keying the local download cache" do
-      assert {:ok, url, "latest"} = RemoteBootstrap.download_url("windows_x64")
+    test "returns the direct windows_x64 URL with the latest version (no network)" do
+      assert RemoteBootstrap.download_url("windows_x64") ==
+               {:ok, "https://genesis.evox.group/dl/genesis_remote_windows_x64.tar.xz", "latest"}
+    end
 
-      assert RemoteBootstrap.cache_path("windows_x64", "latest") ==
+    test "version is always latest, keying the local download cache" do
+      assert {:ok, url, "latest"} = RemoteBootstrap.download_url("linux_arm64")
+
+      assert String.ends_with?(url, "genesis_remote_linux_arm64.tar.xz")
+
+      assert RemoteBootstrap.cache_path("linux_arm64", "latest") ==
                Path.join([
                  EvoGit.Platform.data_dir(),
                  "remote_binaries",
-                 "windows_x64_latest.tar.xz"
+                 "linux_arm64_latest.tar.xz"
                ])
-
-      assert String.ends_with?(url, "genesis_remote_windows_x64.tar.xz")
-    end
-  end
-
-  describe "download_url/2" do
-    test "returns the glibc-suffixed URL for linux_x64" do
-      assert RemoteBootstrap.download_url("linux_x64", :glibc) ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_x64_glibc.tar.xz",
-                "latest"}
-    end
-
-    test "returns the unsuffixed URL for musl" do
-      assert RemoteBootstrap.download_url("linux_x64", :musl) ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz", "latest"}
-    end
-
-    test "returns the unsuffixed URL for darwin even with glibc" do
-      assert RemoteBootstrap.download_url("darwin_arm64", :glibc) ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz", "latest"}
     end
   end
 
@@ -278,107 +204,23 @@ defmodule EvoGit.RemoteBootstrapTest do
                  "darwin_arm64_latest.tar.xz"
                ])
     end
-  end
 
-  describe "cache_path/3" do
-    test "includes _glibc in the cache filename for glibc" do
-      assert RemoteBootstrap.cache_path("linux_x64", "latest", :glibc) ==
+    test "never suffixes linux_arm64 (glibc default, no variant suffix)" do
+      assert RemoteBootstrap.cache_path("linux_arm64", "latest") ==
                Path.join([
                  EvoGit.Platform.data_dir(),
                  "remote_binaries",
-                 "linux_x64_glibc_latest.tar.xz"
+                 "linux_arm64_latest.tar.xz"
                ])
     end
 
-    test "has no suffix for musl (same as default)" do
-      assert RemoteBootstrap.cache_path("linux_x64", "latest", :musl) ==
+    test "never suffixes windows_x64" do
+      assert RemoteBootstrap.cache_path("windows_x64", "latest") ==
                Path.join([
                  EvoGit.Platform.data_dir(),
                  "remote_binaries",
-                 "linux_x64_latest.tar.xz"
+                 "windows_x64_latest.tar.xz"
                ])
-    end
-
-    test "has no suffix when libc is nil (backward compat)" do
-      assert RemoteBootstrap.cache_path("linux_x64", "latest") ==
-               Path.join([
-                 EvoGit.Platform.data_dir(),
-                 "remote_binaries",
-                 "linux_x64_latest.tar.xz"
-               ])
-
-      assert RemoteBootstrap.cache_path("linux_x64", "latest", nil) ==
-               Path.join([
-                 EvoGit.Platform.data_dir(),
-                 "remote_binaries",
-                 "linux_x64_latest.tar.xz"
-               ])
-    end
-
-    test "has no suffix for darwin even with glibc (non-linux)" do
-      assert RemoteBootstrap.cache_path("darwin_arm64", "latest", :glibc) ==
-               Path.join([
-                 EvoGit.Platform.data_dir(),
-                 "remote_binaries",
-                 "darwin_arm64_latest.tar.xz"
-               ])
-    end
-
-    test "separates musl and glibc cache entries" do
-      musl_path = RemoteBootstrap.cache_path("linux_x64", "latest", :musl)
-      glibc_path = RemoteBootstrap.cache_path("linux_x64", "latest", :glibc)
-
-      assert musl_path != glibc_path
-    end
-  end
-
-  # CI no longer publishes a musl arm64 tarball, so "linux_arm64" must resolve
-  # to the _glibc asset for EVERY libc variant (:musl, :glibc, nil).
-  describe "linux_arm64 asset rule (musl tarball not published)" do
-    test "asset_name/2 is _glibc-suffixed for every libc variant" do
-      assert RemoteBootstrap.asset_name("linux_arm64", :musl) ==
-               "genesis_remote_linux_arm64_glibc.tar.xz"
-
-      assert RemoteBootstrap.asset_name("linux_arm64", :glibc) ==
-               "genesis_remote_linux_arm64_glibc.tar.xz"
-
-      assert RemoteBootstrap.asset_name("linux_arm64", nil) ==
-               "genesis_remote_linux_arm64_glibc.tar.xz"
-
-      assert RemoteBootstrap.asset_name("linux_arm64") ==
-               "genesis_remote_linux_arm64_glibc.tar.xz"
-    end
-
-    test "direct_url/2 is _glibc-suffixed for every libc variant" do
-      base = "https://genesis.evox.group/dl/genesis_remote_linux_arm64_glibc.tar.xz"
-
-      assert RemoteBootstrap.direct_url("linux_arm64", :musl) == base
-      assert RemoteBootstrap.direct_url("linux_arm64", :glibc) == base
-      assert RemoteBootstrap.direct_url("linux_arm64", nil) == base
-      assert RemoteBootstrap.direct_url("linux_arm64") == base
-    end
-
-    test "download_url/2 is _glibc-suffixed for every libc variant" do
-      base = "https://genesis.evox.group/dl/genesis_remote_linux_arm64_glibc.tar.xz"
-
-      assert RemoteBootstrap.download_url("linux_arm64", :musl) == {:ok, base, "latest"}
-      assert RemoteBootstrap.download_url("linux_arm64", :glibc) == {:ok, base, "latest"}
-      assert RemoteBootstrap.download_url("linux_arm64", nil) == {:ok, base, "latest"}
-      assert RemoteBootstrap.download_url("linux_arm64") == {:ok, base, "latest"}
-    end
-
-    test "cache_path/3 is _glibc-suffixed for every libc variant" do
-      expected =
-        Path.join([
-          EvoGit.Platform.data_dir(),
-          "remote_binaries",
-          "linux_arm64_glibc_latest.tar.xz"
-        ])
-
-      assert RemoteBootstrap.cache_path("linux_arm64", "latest", :musl) == expected
-      assert RemoteBootstrap.cache_path("linux_arm64", "latest", :glibc) == expected
-      assert RemoteBootstrap.cache_path("linux_arm64", "latest", nil) == expected
-      assert RemoteBootstrap.cache_path("linux_arm64", "latest") == expected
     end
   end
 end
