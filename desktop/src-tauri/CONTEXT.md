@@ -59,7 +59,7 @@ The tray menu is **Show Window**, a **separator** (`PredefinedMenuItem::separato
 
 ### Quit Flow (Web Confirmation)
 
-The tray-quit confirmation is a **web-page dialog** rendered by the dashboard — the native Rust confirmation dialog is gone (the dialog dependency was removed from `Cargo.toml`/`Cargo.lock`). Protocol between Rust and the dashboard:
+The tray-quit confirmation is a **web-page dialog** rendered by the dashboard. **Design decision:** the confirmation lives in the web page rather than a native OS dialog because native dialogs are unreliable on Linux (the dialog never shows there); no dialog crate is used at all (no `rfd`, no `tauri-plugin-dialog`). Protocol between Rust and the dashboard:
 
 1. **Tray "Quit Genesis"** (backend healthy) → Rust shows+focuses the main window, then emits the Tauri event **`quit-requested`** (payload `()` — `app.emit("quit-requested", ())`; requires the `Emitter` trait import in `main.rs`).
 2. The dashboard's JS listens for `quit-requested` (via the standard `@tauri-apps/api/event` `listen`, covered by `core:event:default`) and renders a confirm modal.
