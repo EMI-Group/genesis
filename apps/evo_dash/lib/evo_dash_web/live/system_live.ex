@@ -33,6 +33,7 @@ defmodule EvoDashWeb.SystemLive do
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
+      desktop_quit_confirm={@desktop_quit_confirm}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>

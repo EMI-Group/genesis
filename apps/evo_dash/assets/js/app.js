@@ -686,6 +686,70 @@ const TauriDetect = {
   }
 };
 
+// DesktopQuit hook: listens for the Tauri shell's "quit-requested" event
+// (tray "Quit Genesis" item) and forwards it to the server as
+// desktop_quit_requested, which opens the confirm dialog on whichever page is
+// being viewed (the hook is mounted on a wrapper around the app layout's
+// <main>, so it is re-established on every page navigation). A complete no-op
+// outside the Tauri shell (normal browsers) since window.__TAURI__ is absent.
+const DesktopQuit = {
+  mounted() {
+    // Same detection as TauriDetect (see above).
+    const isTauri = !!(window.__TAURI__ || window.__TAURI_OS_INTERNALS__);
+    if (!isTauri) {
+      return;
+    }
+    this._unlisten = null;
+    this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
+      this.pushEvent("desktop_quit_requested", {});
+    });
+    this._unlistenPromise.then((unlisten) => {
+      // If the hook was destroyed before the promise resolved, unlisten right
+      // away; otherwise keep the unlisten for destroyed().
+      if (this._unlistenPromise) {
+        this._unlisten = unlisten;
+      } else {
+        unlisten();
+      }
+    });
+  },
+  destroyed() {
+    // Safe if the listen promise hasn't resolved yet: nulling _unlistenPromise
+    // makes the then-callback unlisten immediately instead of storing.
+    this._unlistenPromise = null;
+    if (this._unlisten) {
+      this._unlisten();
+      this._unlisten = null;
+    }
+  }
+};
+
+// DesktopQuitConfirm hook: the desktop quit dialog's red Quit button. Invokes
+// the Tauri `begin_quit` command first — the shell sets its
+// intentional-shutdown flag so its watchdog won't restart the backend — and
+// then pushes desktop_quit_confirmed to the server. A begin_quit failure must
+// still proceed: the confirm event still needs to reach the server. Without
+// Tauri (browser testing path) the event is pushed directly.
+const DesktopQuitConfirm = {
+  mounted() {
+    this.el.addEventListener("click", (event) => {
+      event.preventDefault();
+      this.confirmQuit();
+    });
+  },
+  async confirmQuit() {
+    const isTauri = !!(window.__TAURI__ || window.__TAURI_OS_INTERNALS__);
+    if (isTauri) {
+      try {
+        await window.__TAURI__.core.invoke("begin_quit");
+      } catch (_error) {
+        // Failure must still proceed — the server still needs the confirm.
+      }
+    }
+    this.pushEvent("desktop_quit_confirmed", {});
+  }
+};
+
 // PlatformDetect hook: pushes platform_info event on mount
 const PlatformDetect = {
   mounted() {
@@ -763,7 +827,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList},
 })
 
 // Show progress bar on live navigation and form submits

@@ -40,6 +40,12 @@ defmodule EvoDashWeb.Layouts do
   attr(:running_tasks, :list, default: [])
   attr(:pending_tasks, :list, default: [])
 
+  attr(:desktop_quit_confirm, :boolean,
+    default: false,
+    doc:
+      "when true, renders the desktop tray quit confirmation dialog (seeded by EvoDashWeb.LiveHooks.DesktopQuit)"
+  )
+
   slot(:inner_block, required: true)
 
   def app(assigns) do
@@ -210,9 +216,15 @@ defmodule EvoDashWeb.Layouts do
 
       <!-- Main Content Area -->
       <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0">
-        <main id="main-content" class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900" phx-hook="NodeSwitchFade" data-node-id={@current_node_id || "local"}>
-          {render_slot(@inner_block)}
-        </main>
+        <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
+             "quit-requested" tray event on every page: hooks only mount on
+             elements inside the LiveView root DOM, and this wrapper is part of
+             the shared app layout, so it is re-established on every navigation. --%>
+        <div id="desktop-quit-hook" phx-hook="DesktopQuit" class="flex-1 flex flex-col min-w-0 min-h-0">
+          <main id="main-content" class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900" phx-hook="NodeSwitchFade" data-node-id={@current_node_id || "local"}>
+            {render_slot(@inner_block)}
+          </main>
+        </div>
       </div>
 
       <!-- Config Warning Banner -->
@@ -241,6 +253,48 @@ defmodule EvoDashWeb.Layouts do
                 onclick="this.closest('.fixed').remove()"
               >
                 <.icon name="hero-x-mark" class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
+
+      <!-- Desktop tray quit confirm dialog — driven by the DesktopQuit
+           on-mount hook (EvoDashWeb.LiveHooks.DesktopQuit) from the Tauri
+           shell's tray "Quit Genesis" item. Rendered in the app layout so it
+           can appear on ANY page (including Welcome/WelcomeComplete). -->
+      <%= if @desktop_quit_confirm do %>
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="desktop_quit_cancelled"></div>
+          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="flex items-center gap-3 mb-4">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+              <h3 class="text-lg font-bold">{gettext("Quit Genesis?")}</h3>
+            </div>
+
+            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+              {gettext(
+                "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
+              )}
+            </p>
+            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
+              {gettext(
+                "Running tasks will be interrupted and may lose progress. The VM will stop and must be restarted again from the desktop app. This cannot be undone."
+              )}
+            </p>
+
+            <div class="flex justify-end gap-3 pt-2">
+              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="desktop_quit_cancelled">
+                {gettext("Cancel")}
+              </button>
+              <button
+                type="button"
+                id="desktop-quit-confirm-btn"
+                class="btn btn-error rounded-md px-6 gap-2"
+                phx-hook="DesktopQuitConfirm"
+              >
+                <.icon name="hero-power" class="size-4.5" />
+                {gettext("Quit")}
               </button>
             </div>
           </div>

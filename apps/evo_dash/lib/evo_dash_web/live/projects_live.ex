@@ -45,6 +45,7 @@ defmodule EvoDashWeb.ProjectsLive do
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
+        desktop_quit_confirm={@desktop_quit_confirm}
       >
         <%!--
           Full-bleed Phoenix LiveDashboard: no header chrome — the iframe
@@ -69,6 +70,7 @@ defmodule EvoDashWeb.ProjectsLive do
         current_node_name={@current_node_name}
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
+        desktop_quit_confirm={@desktop_quit_confirm}
       >
         <%!--
           --project-accent carries the TASK-MODE accent: genesis_new → red,

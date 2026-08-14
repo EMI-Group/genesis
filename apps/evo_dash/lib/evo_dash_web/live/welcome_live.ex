@@ -24,6 +24,7 @@ defmodule EvoDashWeb.WelcomeLive do
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
+      desktop_quit_confirm={@desktop_quit_confirm}
     >
       <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-5xl mx-auto px-4 lg:px-6 py-3 lg:py-4 flex flex-col">
           <!-- Back navigation: pure client-side (browser history back with a
