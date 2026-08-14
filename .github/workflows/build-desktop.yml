@@ -47,12 +47,13 @@ permissions:
 # ── Architecture ────────────────────────────────────────────────────────────
 #
 # Native builds only (mix release --include_erts + Tauri on the host runner).
-# Each job also builds genesis_remote and stages installers under dist/.
+# Desktop jobs stage installers under dist/; the dedicated build-linux-remote
+# job (Linux) plus the macOS/Windows jobs also build genesis_remote tarballs.
 #
 # Jobs:
 #   prepare             publish flag, release tag, linux matrix JSON
 #   build-linux         ubuntu-24.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
-#   build-linux-remote-musl  Alpine container, x64 only — genesis_remote musl tarball (default)
+#   build-linux-remote  ubuntu-22.04 (+ arm) — dedicated genesis_remote glibc build (default)
 #   build-macos-arm64   macos-15 — dmg, app.zip (signed + notarized)
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
 #   publish-release     single writer for GitHub Release assets
@@ -67,12 +68,14 @@ permissions:
 # (unversioned — permanent releases/latest/download/ links; the version comes
 # from the release tag and is baked into the app at build time, not the filename)
 #
-# genesis_remote Linux naming: the musl build (x64-only) is the default
-# (genesis_remote_linux_x64.tar.xz, no suffix); the glibc build carries a
-# _glibc suffix (genesis_remote_linux_x64_glibc.tar.xz,
-# genesis_remote_linux_arm64_glibc.tar.xz). Linux arm64 remote tarballs come
-# exclusively from build-linux. Non-linux remote tarballs (darwin, windows)
-# are unchanged.
+# genesis_remote Linux naming: glibc is now the DEFAULT with NO suffix —
+# genesis_remote_linux_x64.tar.xz and genesis_remote_linux_arm64.tar.xz (both
+# glibc, built by build-linux-remote). Musl builds are disabled for now.
+# build-linux stays on ubuntu-24.04 (desktop AppImage bundling needs the
+# wxWidgets 3.2 runtime, which only noble's default repos ship) and no longer
+# builds/stages the Linux remote tarball. Non-linux remote tarballs (darwin,
+# windows) are unchanged (genesis_remote_darwin_arm64.tar.xz,
+# genesis_remote_windows_x64.tar.xz).
 #
 # Triggers: release → all platforms + publish; workflow_dispatch → `target`,
 # publish only when publish_release (tag required). Always upload-artifact.
@@ -85,7 +88,7 @@ jobs:
       publish: ${{ steps.meta.outputs.publish }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       linux_matrix: ${{ steps.linux.outputs.matrix }}
-      linux_musl_matrix: ${{ steps.linux-musl.outputs.matrix }}
+      linux_remote_matrix: ${{ steps.linux-remote.outputs.matrix }}
     steps:
       - name: Resolve build metadata
         id: meta
@@ -176,35 +179,50 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Resolve Linux musl matrix
-        id: linux-musl
+      - name: Resolve Linux remote matrix
+        id: linux-remote
         env:
           TARGET: ${{ steps.meta.outputs.target }}
         run: |
           set -euo pipefail
 
           # Dynamic matrix so unused linux arches never start a runner.
-          # Musl builds are x64-only: GitHub Actions JavaScript actions are not
-          # supported inside Alpine containers on ARM64 runners (details in
-          # .github/workflows/CONTEXT.md → Known issues).
+          # The dedicated genesis_remote glibc build (x64 + arm64) runs on
+          # ubuntu-22.04 for a wider glibc (2.35) compatibility range.
           case "${TARGET}" in
             all|linux-x64)
               LINUX_X64=1 ;;
             *)
               LINUX_X64=0 ;;
           esac
+          case "${TARGET}" in
+            all|linux-arm64)
+              LINUX_ARM64=1 ;;
+            *)
+              LINUX_ARM64=0 ;;
+          esac
 
-          LINUX_MUSL_MATRIX="$(
-            LINUX_X64="${LINUX_X64}" python3 - <<'PY'
+          LINUX_REMOTE_MATRIX="$(
+            LINUX_X64="${LINUX_X64}" LINUX_ARM64="${LINUX_ARM64}" python3 - <<'PY'
           import json, os
           rows = []
           if os.environ["LINUX_X64"] == "1":
               rows.append({
                   "arch": "x64",
-                  "runner": "ubuntu-24.04",
+                  "runner": "ubuntu-22.04",
                   "vendor_platform": "linux-x86_64",
                   "rg_target": "x86_64-unknown-linux-musl",
                   "rg_sha256": "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                  "image_os": "",
+              })
+          if os.environ["LINUX_ARM64"] == "1":
+              rows.append({
+                  "arch": "arm64",
+                  "runner": "ubuntu-22.04-arm",
+                  "vendor_platform": "linux-arm64",
+                  "rg_target": "aarch64-unknown-linux-gnu",
+                  "rg_sha256": "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e",
+                  "image_os": "ubuntu22",
               })
           print(json.dumps(rows))
           PY
@@ -212,7 +230,7 @@ jobs:
 
           {
             echo "matrix<<EOF"
-            echo "${LINUX_MUSL_MATRIX}"
+            echo "${LINUX_REMOTE_MATRIX}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -295,7 +313,6 @@ jobs:
       - name: Build Elixir releases
         run: |
           MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
 
       - name: Place desktop release in Tauri resources
         run: |
@@ -340,8 +357,6 @@ jobs:
             tar -czf "dist/${PREFIX}.tar.gz" \
               -C "desktop/src-tauri/target/${{ matrix.rust_target }}/release" genesis-desktop
           fi
-          tar -cJf "dist/genesis_remote_linux_${{ matrix.arch }}_glibc.tar.xz" \
-            -C _build/prod/rel genesis_remote
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -350,47 +365,32 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # ── Linux Remote musl (Alpine container) ────────────────────────────────
-  build-linux-remote-musl:
-    name: Linux Remote musl (${{ matrix.arch }})
+  # ── Linux Remote (glibc, ubuntu-22.04) ──────────────────────────────────
+  # Dedicated genesis_remote glibc build producing the default Linux remote
+  # tarballs. Runs on ubuntu-22.04 for a wider glibc (2.35) compatibility
+  # range than the desktop build's ubuntu-24.04. Musl builds are disabled for
+  # now (see .github/workflows/CONTEXT.md → Known issues).
+  build-linux-remote:
+    name: Linux Remote (${{ matrix.arch }})
     needs: prepare
-    if: needs.prepare.outputs.linux_musl_matrix != '[]'
+    if: needs.prepare.outputs.linux_remote_matrix != '[]'
     runs-on: ${{ matrix.runner }}
-    container:
-      image: hexpm/elixir:1.20.3-erlang-29.0.5-alpine-3.22.5
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.prepare.outputs.linux_musl_matrix) }}
+        include: ${{ fromJSON(needs.prepare.outputs.linux_remote_matrix) }}
     steps:
-      - name: Install Alpine dependencies
-        # nodejs is needed for GitHub Actions JavaScript actions (checkout,
-        # cache, upload-artifact): the runner's bundled Node.js is glibc-linked
-        # and won't run in the musl-based Alpine container.
-        run: |
-          apk add --no-cache git nodejs build-base curl xz
-
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Cache mix deps
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: deps
-          key: mix-deps-linux-musl-${{ matrix.arch }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-deps-linux-musl-${{ matrix.arch }}-
+      - name: Fix ImageOS for ARM runner
+        if: matrix.image_os != ''
+        run: echo "ImageOS=${{ matrix.image_os }}" >> "$GITHUB_ENV"
 
-      - name: Cache mix build
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - name: Setup Elixir and assets
+        uses: ./.github/actions/setup-mix
         with:
-          path: _build
-          key: mix-build-linux-musl-${{ matrix.arch }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            mix-build-linux-musl-${{ matrix.arch }}-${{ env.OTP_VERSION }}-${{ env.ELIXIR_VERSION }}-
-
-      - name: Install Elixir dependencies
-        run: mix deps.get
+          cache-key: linux-remote-${{ matrix.arch }}
 
       - name: Bundle vendor binaries
         env:
@@ -416,18 +416,6 @@ jobs:
         run: |
           MIX_ENV=prod mix release genesis_remote --overwrite
 
-      - name: Bundle libgcc_s.so.1
-        run: |
-          set -euo pipefail
-          RUNTIME_DIR="_build/prod/rel/genesis_remote/lib/runtime"
-          mkdir -p "${RUNTIME_DIR}"
-          # The precompiled Rust NIF .so files (xqlite's SQLite NIF) dynamically
-          # link against libgcc_s.so.1 for stack unwinding. Minimal Alpine/musl
-          # systems may not have the libgcc package installed, so we bundle it in
-          # the release. The env.sh template sets LD_LIBRARY_PATH to include
-          # this directory.
-          cp /usr/lib/libgcc_s.so.1 "${RUNTIME_DIR}/"
-
       - name: Stage artifacts
         run: |
           set -euo pipefail
@@ -438,7 +426,7 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: genesis-linux-remote-musl-${{ matrix.arch }}
+          name: genesis-linux-remote-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
@@ -738,7 +726,7 @@ jobs:
     needs:
       - prepare
       - build-linux
-      - build-linux-remote-musl
+      - build-linux-remote
       - build-macos-arm64
       - build-windows-x64
     if: >-
@@ -746,7 +734,7 @@ jobs:
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.publish == 'true' &&
       (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
-      (needs.build-linux-remote-musl.result == 'success' || needs.build-linux-remote-musl.result == 'skipped') &&
+      (needs.build-linux-remote.result == 'success' || needs.build-linux-remote.result == 'skipped') &&
       (needs.build-macos-arm64.result == 'success' || needs.build-macos-arm64.result == 'skipped') &&
       (needs.build-windows-x64.result == 'success' || needs.build-windows-x64.result == 'skipped')
     runs-on: ubuntu-22.04
