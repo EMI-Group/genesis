@@ -67,10 +67,12 @@ permissions:
 # (unversioned — permanent releases/latest/download/ links; the version comes
 # from the release tag and is baked into the app at build time, not the filename)
 #
-# genesis_remote Linux naming: the musl build is the default
-# (genesis_remote_linux_{arch}.tar.xz, no suffix); the glibc build carries a
-# _glibc suffix (genesis_remote_linux_{arch}_glibc.tar.xz). Non-linux remote
-# tarballs (darwin, windows) are unchanged.
+# genesis_remote Linux naming: the musl build (x64-only) is the default
+# (genesis_remote_linux_x64.tar.xz, no suffix); the glibc build carries a
+# _glibc suffix (genesis_remote_linux_x64_glibc.tar.xz,
+# genesis_remote_linux_arm64_glibc.tar.xz). Linux arm64 remote tarballs come
+# exclusively from build-linux. Non-linux remote tarballs (darwin, windows)
+# are unchanged.
 #
 # Triggers: release → all platforms + publish; workflow_dispatch → `target`,
 # publish only when publish_release (tag required). Always upload-artifact.
@@ -182,21 +184,18 @@ jobs:
           set -euo pipefail
 
           # Dynamic matrix so unused linux arches never start a runner.
+          # Musl builds are x64-only: GitHub Actions JavaScript actions are not
+          # supported inside Alpine containers on ARM64 runners (details in
+          # .github/workflows/CONTEXT.md → Known issues).
           case "${TARGET}" in
             all|linux-x64)
               LINUX_X64=1 ;;
             *)
               LINUX_X64=0 ;;
           esac
-          case "${TARGET}" in
-            all|linux-arm64)
-              LINUX_ARM64=1 ;;
-            *)
-              LINUX_ARM64=0 ;;
-          esac
 
           LINUX_MUSL_MATRIX="$(
-            LINUX_X64="${LINUX_X64}" LINUX_ARM64="${LINUX_ARM64}" python3 - <<'PY'
+            LINUX_X64="${LINUX_X64}" python3 - <<'PY'
           import json, os
           rows = []
           if os.environ["LINUX_X64"] == "1":
@@ -206,20 +205,6 @@ jobs:
                   "vendor_platform": "linux-x86_64",
                   "rg_target": "x86_64-unknown-linux-musl",
                   "rg_sha256": "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
-                  "rg_apk_fallback": False,
-              })
-          if os.environ["LINUX_ARM64"] == "1":
-              # BurntSushi/ripgrep did not publish an aarch64-unknown-linux-musl
-              # binary until 15.2.0 (RIPGREP_VERSION is pinned at 15.1.0), so the
-              # arm64 musl job falls back to `apk add ripgrep` and copies the
-              # system binary. See the vendor step in build-linux-remote-musl.
-              rows.append({
-                  "arch": "arm64",
-                  "runner": "ubuntu-24.04-arm",
-                  "vendor_platform": "linux-arm64",
-                  "rg_target": "",
-                  "rg_sha256": "",
-                  "rg_apk_fallback": True,
               })
           print(json.dumps(rows))
           PY
@@ -412,25 +397,17 @@ jobs:
           VENDOR_PLATFORM: ${{ matrix.vendor_platform }}
           RG_TARGET: ${{ matrix.rg_target }}
           RG_SHA256: ${{ matrix.rg_sha256 }}
-          RG_APK_FALLBACK: ${{ matrix.rg_apk_fallback }}
         run: |
           set -euo pipefail
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          DOWNLOAD_DIR=".build/vendor-downloads"
           mkdir -p "${VENDOR_DIR}"
-          if [[ "${RG_APK_FALLBACK}" == "true" ]]; then
-            # No aarch64-unknown-linux-musl prebuilt ripgrep for 15.1.0
-            # (published from 15.2.0); fall back to the Alpine package.
-            apk add --no-cache ripgrep
-            cp "$(which rg)" "${VENDOR_DIR}/rg"
-          else
-            DOWNLOAD_DIR=".build/vendor-downloads"
-            mkdir -p "${DOWNLOAD_DIR}"
-            RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-            curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
-            echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
-            tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
-            cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          fi
+          mkdir -p "${DOWNLOAD_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
+          cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
           chmod +x "${VENDOR_DIR}/rg"
           cp "$(which git)" "${VENDOR_DIR}/git"
           chmod +x "${VENDOR_DIR}/git"
