@@ -20,7 +20,9 @@ defmodule EvoGit.RemoteBootstrap do
       glibc-linked release cannot execute on NixOS hosts (no
       `/lib64/ld-linux-x86-64.so.2`), so bootstrap patches the extracted
       release's ELF binaries with a Nix-built `patchelf` (mirroring the NixOS
-      `vscode-remote-ssh` extension patch pattern),
+      `vscode-remote-ssh` extension patch pattern): dynamic executables get
+      interpreter + rpath, shared libraries get rpath only, and truly static
+      binaries are skipped,
     * building the remote shell wrapper (`bash_wrap/1`) that makes every
       remote command execute under bash regardless of the remote user's login
       shell (fixes bootstrap failures on hosts whose login shell is fish).
@@ -197,23 +199,48 @@ defmodule EvoGit.RemoteBootstrap do
 
   echo "nixos-patch: building stdenv.cc.cc.lib..."
   nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1
+  # nix-build names the out-link "$PATCH_DIR/cc-lib" because the attr selects
+  # the non-default `lib` output of the multi-output gcc derivation; alias it
+  # as "$PATCH_DIR/cc" so the RPATH entry below always resolves.
+  if [ ! -e "$PATCH_DIR/cc" ]; then
+    ln -s "$PATCH_DIR/cc-lib" "$PATCH_DIR/cc"
+  fi
 
   echo "nixos-patch: building openssl..."
-  nix-build "$NIXPKGS" -A openssl --out-link "$PATCH_DIR/openssl" 2>&1
+  nix-build "$NIXPKGS" -A openssl.out --out-link "$PATCH_DIR/openssl" 2>&1
 
-  RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib"
+  echo "nixos-patch: building zlib..."
+  nix-build "$NIXPKGS" -A zlib --out-link "$PATCH_DIR/zlib" 2>&1
+
+  echo "nixos-patch: building ncurses..."
+  nix-build "$NIXPKGS" -A ncurses --out-link "$PATCH_DIR/ncurses" 2>&1
+
+  echo "nixos-patch: building pcre2..."
+  nix-build "$NIXPKGS" -A pcre2.out --out-link "$PATCH_DIR/pcre2" 2>&1
+
+  RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib:$PATCH_DIR/zlib/lib:$PATCH_DIR/ncurses/lib:$PATCH_DIR/pcre2/lib"
 
   count=0
+  rpath_count=0
   for file in $(find "$RELEASE_ROOT" -type f); do
     magic="$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')"
     if [ "$magic" = "7f454c46" ]; then
-      echo "nixos-patch: patching $file"
-      "$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"
-      count=$((count + 1))
+      if "$PATCH_DIR/patchelf/bin/patchelf" --print-interpreter "$file" >/dev/null 2>&1; then
+        echo "nixos-patch: patching $file"
+        "$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"
+        count=$((count + 1))
+      elif "$PATCH_DIR/patchelf/bin/patchelf" --print-rpath "$file" >/dev/null 2>&1 &&
+           "$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null | grep -q NEEDED; then
+        echo "nixos-patch: setting rpath on $file"
+        "$PATCH_DIR/patchelf/bin/patchelf" --set-rpath "$RPATH" "$file"
+        rpath_count=$((rpath_count + 1))
+      else
+        echo "nixos-patch: skipping static binary $file"
+      fi
     fi
   done
 
-  echo "nixos-patch: patched $count ELF files"
+  echo "nixos-patch: patched $count executables, set rpath on $rpath_count ELF files"
   """
 
   @doc """
@@ -228,20 +255,46 @@ defmodule EvoGit.RemoteBootstrap do
     * derives the release root via `dirname` twice and creates a patch dir
       `<release>/.nixos-patch` — persisted across re-extractions as GC roots,
       so re-bootstrap `nix-build`s are instant,
-    * runs the four `nix-build "<nixpkgs>"` builds (`patchelf`, `bintools`,
-      `stdenv.cc.cc.lib`, `openssl`) with `2>&1` on each so errors land in
-      stdout; `openssl` is kept regardless — the OTP `:crypto` NIF
-      `crypto.so` is in the release because req_llm → req → finch → mint pull
-      in `:ssl` (harmless when unneeded),
+    * runs the seven `nix-build "<nixpkgs>"` builds (`patchelf`, `bintools`,
+      `stdenv.cc.cc.lib`, `openssl.out`, `zlib`, `ncurses`, `pcre2.out`) with
+      `2>&1` on each so errors land in stdout. Each lib covers the release's
+      NEEDED deps: `cc` (stdenv.cc.cc.lib) = `libstdc++.so.6`/`libgcc_s.so.1`
+      (beam.smp; glibc's `libc.so.6`/`libm.so.6` resolve from the patched
+      interpreter's own directory, so glibc itself is NOT in the RPATH —
+      nix-build names the out-link `<patch_dir>/cc-lib` because the attr
+      selects the non-default `lib` output of the multi-output gcc
+      derivation, so the script aliases it as `<patch_dir>/cc`),
+      `openssl.out` = `libcrypto.so.3`/`libssl.so.3` (the OTP `:crypto` NIF
+      `crypto.so` — the plain `openssl` attr's default `bin` output has no
+      `lib/`, so `.out` is required; `crypto.so` is in the release because
+      req_llm → req → finch → mint pull in `:ssl`, harmless when unneeded),
+      `zlib` = `libz.so.1` (beam.smp, vendored git), `ncurses` =
+      `libtinfo.so.6` (beam.smp), `pcre2.out` = `libpcre2-8.so.0` (vendored
+      git — same `bin`-output trap as openssl, so `.out` is required),
     * reads the Nix dynamic linker from
       `<patch_dir>/bintools/nix-support/dynamic-linker`,
-    * sets `RPATH` to `<patch_dir>/cc/lib:<patch_dir>/openssl/lib`,
-    * loops over every regular file under the release root, detects ELF
+    * sets `RPATH` to
+      `<patch_dir>/cc/lib:<patch_dir>/openssl/lib:<patch_dir>/zlib/lib:<patch_dir>/ncurses/lib:<patch_dir>/pcre2/lib`,
+    * loops over every regular file under the release root and detects ELF
       binaries via the `\\x7fELF` magic (`7f454c46` from
-      `head -c 4 | od -An -tx1 | tr -d ' \\n'`), and runs
-      `<patch_dir>/patchelf/bin/patchelf --set-interpreter "$INTERPRETER"
-      --set-rpath "$RPATH"` on each (idempotent — re-running on already-patched
-      files is safe, no `.orig` handling).
+      `head -c 4 | od -An -tx1 | tr -d ' \\n'`). Each ELF file is handled three
+      ways:
+        - **dynamic executables** (have a PT_INTERP segment — probed with
+          `patchelf --print-interpreter`): patched as before with
+          `<patch_dir>/patchelf/bin/patchelf --set-interpreter "$INTERPRETER"
+          --set-rpath "$RPATH"` (idempotent — re-running on already-patched
+          files is safe, no `.orig` handling),
+        - **shared libraries** (no PT_INTERP but a `.dynamic` section with
+          NEEDED entries — probed with `patchelf --print-rpath` plus
+          `<patch_dir>/bintools/bin/readelf -d "$file" | grep NEEDED`):
+          rpath-only patch with `--set-rpath "$RPATH"` so their NEEDED deps
+          resolve through the Nix store paths,
+        - **static binaries** (no PT_INTERP and no NEEDED deps — e.g.
+          static-pie executables like the vendored `rg`, which carry a
+          `.dynamic` section but declare no shared-library dependencies):
+          skipped with a `nixos-patch: skipping static binary` marker —
+          nothing to patch (they run unpatched, and patchelf's ELF rewrite
+          corrupts static-pie binaries).
 
   The script echoes `nixos-patch:` progress/step markers to stdout on every
   step and uses `set -e` so any failure aborts with a non-zero exit. `$`,
