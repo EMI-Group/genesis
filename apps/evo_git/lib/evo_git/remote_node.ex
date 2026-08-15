@@ -1156,6 +1156,122 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Lists custom agents on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_custom_agents/0`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  The `agents.toml` file lives per-node (next to `config.toml`), so this reads
+  the node being viewed — not the local dashboard's file.
+
+  Returns `{:ok, %{agents: [...], model_selection_script: script_or_nil,
+  script_status: status}}` on success or `{:error, reason}` on failure
+  (including RPC failures such as node down or timeout).
+  """
+  @spec list_custom_agents(node()) :: {:ok, map()} | {:error, term()}
+  def list_custom_agents(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_custom_agents()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_custom_agents, []) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Saves a custom agent definition on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.save_custom_agent/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`,
+  so the definition is written to the remote node's own `agents.toml`.
+
+  Returns `{:ok, definition}` on success or `{:error, reason}` on failure
+  (validation errors from `EvoGit.CustomAgents.save/1`, or RPC failures such
+  as node down or timeout).
+  """
+  @spec save_custom_agent(node(), map()) :: {:ok, map()} | {:error, atom() | term()}
+  def save_custom_agent(node, def) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.save_custom_agent(def)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_custom_agent, [def]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Deletes a custom agent definition on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.delete_custom_agent/1`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`,
+  so the deletion applies to the remote node's own `agents.toml`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (`:not_found` when
+  no agent has that id, or RPC failures such as node down or timeout).
+  """
+  @spec delete_custom_agent(node(), String.t()) :: :ok | {:error, :not_found | term()}
+  def delete_custom_agent(node, id) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.delete_custom_agent(id)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :delete_custom_agent, [id]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Saves the model-selection script on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.save_model_selection_script/1` directly. On
+  a remote node, routes the call through `:erpc` via `call_remote/4`, so the
+  script is written to the remote node's own `agents.toml`.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec save_model_selection_script(node(), String.t()) :: :ok | {:error, term()}
+  def save_model_selection_script(node, script) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.save_model_selection_script(script)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_model_selection_script, [
+             script
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Invalidates the model-selector compile cache on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.reload_custom_agents/0`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`,
+  so the remote node's `EvoGit.CustomAgents.ModelSelector` cache is invalidated.
+
+  Returns `:ok` on success or `{:error, reason}` on failure (including RPC
+  failures such as node down or timeout).
+  """
+  @spec reload_custom_agents(node()) :: :ok | {:error, term()}
+  def reload_custom_agents(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.reload_custom_agents()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :reload_custom_agents, []) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Returns filesystem path suggestions for the given node.
 
   On the local node, calls `EvoGit.PathSuggestions.suggest/1` directly. On a
