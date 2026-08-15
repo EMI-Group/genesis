@@ -74,42 +74,42 @@ let
   #
   # To update hashes: use lib.fakeHash, build, then copy the reported hashes.
   precompiled_nifs = [
-    # ── lumis 0.6.3 ──────────────────────────────────────────────
+    # ── lumis 0.7.0 ──────────────────────────────────────────────
     {
-      name = "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
-      version = "0.6.3";
+      name = "liblumis_nif-v0.7.0-nif-2.15-${rustTarget}.so.tar.gz";
+      version = "0.7.0";
       file = fetchurl {
         url =
-          "https://github.com/leandrocp/lumis/releases/download/hex-lumis%2Fv0.6.3/"
-          + "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = "sha256-SqvVkgNljREPvsg2jKAN7BpWZmgGMAUxZ/neUTrXXiA=";
+          "https://github.com/leandrocp/lumis/releases/download/hex-lumis%2Fv0.7.0/"
+          + "liblumis_nif-v0.7.0-nif-2.15-${rustTarget}.so.tar.gz";
+        hash = "sha256-zh7GDZkhVyZMXa8vSzrsIVsbkJrMl7V/fk9uuTX8vno=";
       };
     }
 
-    # ── mdex_native 0.2.7 (base) ──────────────────────────────────
+    # ── mdex_native 0.2.8 (base) ──────────────────────────────────
     {
-      name = "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
-      version = "0.2.7";
+      name = "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}.so.tar.gz";
+      version = "0.2.8";
       file = fetchurl {
         url =
-          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
-          + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = "sha256-8MvCRKDqtgM/lf3A3F7MxTRZA4EFTlG94xz0TJob6AY=";
+          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.8/"
+          + "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}.so.tar.gz";
+        hash = "sha256-ljI4QU6lprtFRZhsCcgl3/zXXpMn25q3MG+xqmy9TOw=";
       };
     }
 
-    # ── mdex_native 0.2.7 (--lumis variant) ──────────────────────
+    # ── mdex_native 0.2.8 (--lumis variant) ──────────────────────
     # This variant is required when lumis is also a dependency (which it is
     # in the Genesis project). Without it, mdex_native fails to load because
     # the rustler_precompiled loader looks for the feature-specific binary.
     {
-      name = "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
-      version = "0.2.7";
+      name = "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}--lumis.so.tar.gz";
+      version = "0.2.8";
       file = fetchurl {
         url =
-          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
-          + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
-        hash = "sha256-02P3ONjNGMkrz2+LG7cGC9IDowCWBpGG+OcSui45TKc=";
+          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.8/"
+          + "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}--lumis.so.tar.gz";
+        hash = "sha256-R7nfBwgrkpwqQ8Ph3MHpUtdT2nt0q8/v2pH44M+7tsc=";
       };
     }
 
