@@ -2216,6 +2216,431 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:task_prompt] == before
     end
   end
+
+  describe "GitHub issue integration" do
+    # All three async GitHub runners (resolved from application env at spawn
+    # time by EvoDashWeb.ProjectsLive.GitHub) are stubbed for every test in
+    # this block so the real gh/git adapters are NEVER reachable — a project
+    # activation without a stubbed :github_runner would shell out to git/gh.
+    # Individual tests override the runners they exercise via
+    # put_github_seams/1.
+
+    setup do
+      clear_recent_projects()
+
+      put_github_seams([])
+
+      :ok
+    end
+
+    defp put_github_seams(overrides) do
+      defaults = [
+        {:github_runner, fn _node, _path -> {:error, :no_github_upstream} end},
+        {:github_issues_runner, fn _node, _path, _opts -> {:ok, []} end},
+        {:github_issue_markdown_runner,
+         fn _node, _path, _number ->
+           {:error, :gh_not_available}
+         end}
+      ]
+
+      seams = Keyword.merge(defaults, overrides)
+
+      for {key, value} <- seams do
+        Application.put_env(:evo_dash, key, value)
+      end
+
+      on_exit(fn ->
+        for {key, _value} <- seams do
+          Application.delete_env(:evo_dash, key)
+        end
+      end)
+
+      :ok
+    end
+
+    defp ok_upstream_runner do
+      fn _node, _path ->
+        {:ok,
+         %{
+           owner: "acme",
+           repo: "widgets",
+           gh_available: true,
+           url: "https://github.com/acme/widgets"
+         }}
+      end
+    end
+
+    # Opens `path` through the project palette (open-path mode) — the same
+    # flow as the "opening a project" tests. Activating a project with a
+    # non-genesis_new mode spawns the async GitHub-upstream check.
+    defp open_project(view, path) do
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: path})
+
+      view
+    end
+
+    # Makes `tmp_dir` an evolve_simple project (a CONTEXT.md file) so the
+    # GitHub-upstream check is spawned — genesis_new projects never check.
+    defp make_evolve_project(tmp_dir) do
+      File.write!(Path.join(tmp_dir, "CONTEXT.md"), "# Test project\n")
+    end
+
+    # Polls the LiveView socket assigns until `predicate/1` is truthy. The
+    # GitHub runners run in supervised Tasks and report back via self-messages
+    # handled by handle_info, so polling the assigns (with a generous budget)
+    # is the deterministic way to wait for an async result.
+    defp wait_until(view, predicate, attempts \\ 200) do
+      if predicate.(assigns(view)) do
+        :ok
+      else
+        if attempts <= 0 do
+          flunk("Timed out waiting for async GitHub state — assigns: #{inspect(assigns(view))}")
+        end
+
+        Process.sleep(10)
+        wait_until(view, predicate, attempts - 1)
+      end
+    end
+
+    defp github_status(view, state) do
+      wait_until(view, fn a -> a[:github_status] && a[:github_status].state == state end)
+    end
+
+    test "hides the GitHub button when the upstream check fails", %{conn: conn, tmp_dir: tmp_dir} do
+      make_evolve_project(tmp_dir)
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+
+      # The default :github_runner stub resolves to {:error, :no_github_upstream}.
+      github_status(view, :error)
+
+      html = render(view)
+
+      # The status resolved to :error — no GitHub button, no owner/repo text.
+      refute html =~ "open_github_issues"
+      refute html =~ "acme/widgets"
+    end
+
+    test "hides the GitHub button when gh is unavailable", %{conn: conn, tmp_dir: tmp_dir} do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(
+        github_runner: fn _node, _path ->
+          {:ok,
+           %{
+             owner: "acme",
+             repo: "widgets",
+             gh_available: false,
+             url: "https://github.com/acme/widgets"
+           }}
+        end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+
+      # A resolved upstream with gh_available: false is treated as :error.
+      github_status(view, :error)
+
+      html = render(view)
+
+      refute html =~ "open_github_issues"
+      refute html =~ "acme/widgets"
+    end
+
+    test "shows the GitHub button with owner/repo when the upstream resolves", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(github_runner: ok_upstream_runner())
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+
+      github_status(view, :ok)
+
+      html = render(view)
+
+      assert html =~ "open_github_issues"
+      assert html =~ "acme/widgets"
+    end
+
+    test "opens the issues modal and renders the issue list", %{conn: conn, tmp_dir: tmp_dir} do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(
+        github_runner: ok_upstream_runner(),
+        github_issues_runner: fn _node, _path, _opts ->
+          {:ok,
+           [
+             %{
+               number: 42,
+               title: "Fix the thing",
+               state: "open",
+               labels: ["bug"],
+               url: "https://github.com/acme/widgets/issues/42",
+               author: "octocat",
+               created_at: "2026-08-01T10:00:00Z"
+             }
+           ]}
+        end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      html = render_click(view, "open_github_issues", %{})
+
+      # The modal opens immediately (loading state) while the list is fetched.
+      assert html =~ "github-issues-modal"
+
+      wait_until(view, fn a -> a[:github_issues].status == :ok end)
+      html = render(view)
+
+      # Issue number, title, state badge, label badge, author + created date,
+      # and the external GitHub link.
+      assert html =~ "#42"
+      assert html =~ "Fix the thing"
+      assert html =~ ~r/class="badge badge-sm shrink-0 badge-success">\s*Open\s*<\/span>/s
+      assert html =~ ~s(class="badge badge-outline badge-xs">bug</span>)
+      assert html =~ "https://github.com/acme/widgets/issues/42"
+      assert html =~ "octocat"
+      assert html =~ "2026-08-01"
+      # State filter buttons (open/closed/all) render alongside the list.
+      assert html =~ "Closed"
+      assert html =~ "All"
+    end
+
+    test "surfaces the gh CLI error message in the modal", %{conn: conn, tmp_dir: tmp_dir} do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(
+        github_runner: ok_upstream_runner(),
+        github_issues_runner: fn _node, _path, _opts ->
+          {:error, {:gh, 1, "gh auth login required"}}
+        end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      render_click(view, "open_github_issues", %{})
+
+      wait_until(view, fn a -> a[:github_issues].status == :error end)
+      html = render(view)
+
+      assert html =~ "github-issues-modal"
+      assert html =~ "gh auth login required"
+    end
+
+    test "shows the empty state when there are no open issues", %{conn: conn, tmp_dir: tmp_dir} do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(github_runner: ok_upstream_runner())
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      render_click(view, "open_github_issues", %{})
+
+      wait_until(view, fn a -> a[:github_issues].status == :ok end)
+      html = render(view)
+
+      assert html =~ "No open issues"
+    end
+
+    test "filtering re-fetches the issue list with the new state", %{conn: conn, tmp_dir: tmp_dir} do
+      make_evolve_project(tmp_dir)
+
+      test_pid = self()
+
+      put_github_seams(
+        github_runner: ok_upstream_runner(),
+        github_issues_runner: fn _node, _path, opts ->
+          state = Keyword.get(opts, :state)
+          send(test_pid, {:issues_runner_opts, opts})
+
+          {:ok,
+           [
+             %{
+               number: 1,
+               title: "Issue for #{state}",
+               state: "open",
+               labels: [],
+               url: "https://github.com/acme/widgets/issues/1",
+               author: "",
+               created_at: "2026-01-01T00:00:00Z"
+             }
+           ]}
+        end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      render_click(view, "open_github_issues", %{})
+      wait_until(view, fn a -> a[:github_issues].status == :ok end)
+
+      # The default filter is "open" — the runner receives it as an opt.
+      assert_received {:issues_runner_opts, [state: "open"]}
+      assert render(view) =~ "Issue for open"
+
+      render_click(view, "github_filter_state", %{"state" => "closed"})
+
+      wait_until(view, fn a ->
+        a[:github_issues].state_filter == "closed" and a[:github_issues].status == :ok
+      end)
+
+      assert_received {:issues_runner_opts, [state: "closed"]}
+
+      html = render(view)
+      assert html =~ "Issue for closed"
+      refute html =~ "Issue for open"
+    end
+
+    test "Fix starts an :evolve task with the issue markdown and closes the modal", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      make_evolve_project(tmp_dir)
+
+      # A non-gitfile `.git` file makes the spawned Evolution worker fail fast
+      # in Runtime.ensure_repo (git init exits 128) — no agent dispatch, no
+      # LLM calls, nothing that can leak into the shared test runtime.
+      File.write!(Path.join(tmp_dir, ".git"), "not a gitfile\n")
+
+      markdown =
+        "# GitHub Issue #42: Fix the thing\n" <>
+          "URL: https://github.com/acme/widgets/issues/42 | State: open | Labels: bug\n\n" <>
+          "Body text"
+
+      put_github_seams(
+        github_runner: ok_upstream_runner(),
+        github_issues_runner: fn _node, _path, _opts ->
+          {:ok,
+           [
+             %{
+               number: 42,
+               title: "Fix the thing",
+               state: "open",
+               labels: ["bug"],
+               url: "https://github.com/acme/widgets/issues/42",
+               author: "octocat",
+               created_at: "2026-08-01T10:00:00Z"
+             }
+           ]}
+        end,
+        github_issue_markdown_runner: fn _node, _path, 42 -> {:ok, markdown} end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      render_click(view, "open_github_issues", %{})
+      wait_until(view, fn a -> a[:github_issues].status == :ok end)
+
+      # Thread a model profile id the way the task-form select does.
+      render_change(view, "select_model", %{"model_id" => "test-model"})
+
+      render_click(view, "github_fix_issue", %{"number" => "42"})
+
+      # The markdown fetch is async; the modal closes once the fix task starts.
+      wait_until(view, fn a -> a[:github_modal_open] == false end)
+
+      html = render(view)
+
+      assert html =~ "task started with ID:"
+      refute html =~ "github-issues-modal"
+
+      [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.cancel_task(id)
+        rescue
+          _ -> :ok
+        end
+
+        try do
+          EvoGit.TaskRegistry.delete_task(id)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      task = EvoGit.TaskRegistry.get_task(id)
+
+      assert task.type == :evolve
+      assert task.opts[:path] == assigns(view)[:active_project_path]
+      assert task.opts[:mode] == "simple"
+      assert task.opts[:objective] == "Fix Fix the thing\n\n" <> markdown
+
+      # :model_id is denormalized into TaskInfo.model_id at task creation
+      # (task_registry.ex) — the opts round-trip through the SQLite codec
+      # keeps it on that dedicated field.
+      assert task.model_id == "test-model"
+    end
+
+    test "Fix failure flashes the surfaced error and keeps the modal open", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(
+        github_runner: ok_upstream_runner(),
+        github_issues_runner: fn _node, _path, _opts ->
+          {:ok,
+           [
+             %{
+               number: 7,
+               title: "Broken issue",
+               state: "open",
+               labels: [],
+               url: "https://github.com/acme/widgets/issues/7",
+               author: "",
+               created_at: "2026-01-01T00:00:00Z"
+             }
+           ]}
+        end,
+        github_issue_markdown_runner: fn _node, _path, _number -> {:error, :gh_not_available} end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      render_click(view, "open_github_issues", %{})
+      wait_until(view, fn a -> a[:github_issues].status == :ok end)
+
+      render_click(view, "github_fix_issue", %{"number" => "7"})
+
+      # handle_fix_result clears :github_fixing on the error path.
+      wait_until(view, fn a -> a[:github_fixing] == nil end)
+
+      html = render(view)
+
+      # :gh_not_available falls back to the generic error message.
+      assert html =~ "Could not load GitHub issues"
+      # The modal stays open so the user can retry.
+      assert html =~ "github-issues-modal"
+      assert assigns(view)[:github_modal_open] == true
+    end
+  end
 end
 
 # A minimal GenServer standing in for a real remote connection manager in
