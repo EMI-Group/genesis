@@ -41,7 +41,7 @@ Triggered by **tag pushes** (`push: tags: ['v*']`, e.g. `git push origin v1.2.3`
 
 | Platform | Runner | Installer Formats |
 |----------|--------|-------------------|
-| macOS ARM64 | `macos-14` | `.dmg`, `.app` |
+| macOS ARM64 | `macos-15` | `.dmg`, `.app` |
 | Linux x86_64 | `ubuntu-24.04` | `.deb`, `.rpm`, AppImage, `.tar.gz` |
 | Linux ARM64 | `ubuntu-24.04-arm` | `.deb`, `.rpm`, `.tar.gz` (NO AppImage — `appimagetool`/`linuxdeploy` are x86_64-only) |
 | Linux Remote (glibc) | `ubuntu-22.04` (x64) / `ubuntu-22.04-arm` (arm64) | `genesis_remote_linux_x64.tar.xz` / `genesis_remote_linux_arm64.tar.xz` (both glibc, unsuffixed) — no desktop installers |
