@@ -11,18 +11,20 @@ JS object with lifecycle callbacks (`mounted`, `updated`, `destroyed`) registere
 ### Hook Registration
 
 All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks:` map
-(line ~591):
+(lines 826-831 — `liveSocket` constructed at 827, `hooks:` map at 830):
 
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
+import LegendTooltip from "./hooks/legend_tooltip.js"
 // ...
-hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
-        DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash,
-        ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse,
-        NodeSwitchFade, AdaptiveInput}
+hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, PlatformDetect,
+        PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence,
+        BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy,
+        AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade,
+        AdaptiveInput, LegendTooltip, FocusInput, PaletteList}
 ```
 
 ### Where each hook is defined
@@ -32,17 +34,23 @@ hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
 | `SidebarCollapse` | `./sidebar_collapse.js` (own file, ES module default export) | `layouts.ex` `<aside id="sidebar" phx-hook="SidebarCollapse">` |
 | `AdaptiveInput` | `./adaptive_input.js` (own file, ES module default export) | `task_form_components.ex` prompt `<textarea phx-hook="AdaptiveInput">` (class `.input-prompt`) — does **BOTH autogrow AND the client-side layout switch**: (1) **autogrow** — measures `scrollHeight` and sets the textarea's `height` so it grows smoothly with its content; in compact mode the hook flips the layout to expanded the INSTANT the natural content height would exceed the compact max-height cap, so the compact box NEVER shows an internal scrollbar while growing (`overflow-y: auto` is a safety net only — the box flips to expanded at the 8-line cap instead). In expanded mode the card is naturally constrained to its flex-allocated height by CSS overflow containment (`overflow: hidden` on `.input-card`); the textarea fills the remaining card space (`flex: 1`) with NO max-height cap and scrolls INTERNALLY, so the in-flow `.input-controls` launch panel always stays pinned at the bottom of the card regardless of prompt length or viewport height: the hook writes the full natural content height inline and the rendered layout overrides it at render time — compact mode's CSS max-height wins over the inline height, while expanded mode's flex layout (flex-basis 0% + grow) fills the card with no cap (the measurement itself is never capped — `measureAndApply` neutralizes `max-height: "none"` while measuring; the compact-cap cache is layout-gated — cached only while `data-layout="compact"` — and in expanded mode max-height computes to `"none"` → NaN, which the hook skips, so nothing from expanded mode can leak into `applyLayout`'s flip decisions); (2) **layout** — computes `data-layout` on the closest `.input-layout` ancestor from the textarea value AND its measured natural content height: the value thresholds mirror `EvoDashWeb.TaskFormComponents.layout_for/1` (>600 code points or >16 lines → `"expanded"`) for SSR-seed convergence; the height threshold is client-only (natural height exceeds the compact 8-line cap → `"expanded"` — the server has no knowledge of rendered text metrics). The flip back to compact uses ~1 line-height of **hysteresis**: the height must drop below the cap by a full line AND the char/line thresholds must be under before leaving `"expanded"`, so the layout does not flicker at the boundary while deleting (`"compact"` = Layout A unified objective box with the controls row as the card's last line, `"expanded"` = Layout B with a large objective area and an in-flow launch panel below the textarea). The server only **SEEDS** the initial `data-layout` at render (SSR first paint + after restore/submit); from then on the client is authoritative — no per-keystroke server event. A **MutationObserver on `.input-layout`** (`attributeFilter: ['data-layout']`) re-asserts the client-computed layout whenever the server re-seeds the attribute from its (possibly stale) `@task_prompt` — e.g. toggling the mode/model `<select>` triggers a server re-render that would otherwise snap the layout back to compact while a long prompt remains in the box (the textarea is inside `phx-update="ignore"`, so `updated()` never fires on those re-renders). `applyLayout` only writes the attribute when the computed value differs, so the observer converges immediately with no loop and NO network events. Also handles the server's `"clear_prompt"` push event (sent after a successful `task_submit`): empties the textarea value, re-runs `_apply()` (autogrow + layout re-assertion, converging in one step), and clears the `task_prompt` field in the `dashboard_state` sessionStorage blob so the submitted draft can't be restored on reload. The controls row `.input-controls` is the last in-flow element of `.input-card` — no `position: fixed`, no `--input-layout-center` |
 | `NodeSwitchFade` | `./node_switch_fade.js` (own file, ES module default export) | `layouts.ex` `<main id="main-content" phx-hook="NodeSwitchFade" data-node-id=...>` — plays a 0.25s opacity fade when `data-node-id` changes |
-| `PathAutocomplete` | `../app.js` (inline, line ~43) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) |
-| `DirectoryPicker` | `../app.js` (inline, line ~113) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) — click pushes `directory_pick` to the server; listens for `picker_result:<id>` (protocol in `../assets/CONTEXT.md` Notes for Agents) |
-| `StatePersistence` | `../app.js` (inline, line ~170) | `projects_live.ex` dashboard root (`phx-hook="StatePersistence"`) |
-| `BrowserNotifications` | `../app.js` (inline, line ~244) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) |
-| `TauriDetect` | `../app.js` (inline, line ~435) | `projects_live.ex` (`phx-hook="TauriDetect"`) |
-| `PlatformDetect` | `../app.js` (inline, line ~442) | `projects_live.ex` (`phx-hook="PlatformDetect"`) |
-| `ClipboardCopy` | `../app.js` (inline, line ~259) | `settings_live.ex`, `review_components/header.ex` |
-| `AutoClearFlash` | `../app.js` (inline, line ~283) | `core_components.ex` flash component |
-| `ScrollToFile` | `../app.js` (inline, line ~300) | `review_components/diff_viewer.ex` (`phx-hook="ScrollToFile"`) |
-| `AgentHistoryAutoScroll` | `../app.js` (inline, line ~348) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) |
-| `DialogModal` | `../app.js` (inline, line ~463) | (native `<dialog class="modal">` elements) |
+| `LegendTooltip` | `./legend_tooltip.js` (own file, ES module default export) | `agents_live.html.heex` legend chips (`phx-hook="LegendTooltip"` + `data-tip` + unique id) — renders the tip as a `position: fixed` element appended to `document.body` (DaisyUI `.tooltip` is clipped; see `live/CONTEXT.md`) |
+| `PathAutocomplete` | `../app.js` (inline, line 46) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) — Tab-completion to longest common prefix + real-time single-match autofill from datalist |
+| `DirectoryPicker` | `../app.js` (inline, line 140) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) — click pushes `directory_pick` to the server; listens for `picker_result:<id>` (protocol in `../assets/CONTEXT.md` Notes for Agents) |
+| `FilePicker` | `../app.js` (inline, line 267) | objective editor "+" attach-file button (`phx-hook="FilePicker"`, `data-picker-id="objective_file"`) — pushes `file_pick`/`file_pick_manual`, listens for `picker_result:<id>`; append-not-clobber textarea write (protocol in `../assets/CONTEXT.md` Notes for Agents) |
+| `StatePersistence` | `../app.js` (inline, line 422) | `projects_live.ex` dashboard root (`phx-hook="StatePersistence"`) — sessionStorage save/restore of dashboard state + client-side debounced form watching |
+| `BrowserNotifications` | `../app.js` (inline, line 495) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) — HTML5 notifications on `task_notification` events |
+| `ClipboardCopy` | `../app.js` (inline, line 510) | `settings_live.ex`, `welcome_complete_live.ex`, `projects_live.ex`, `review_components/header.ex` — copies `data-content` to clipboard on click, pushes `"copied"` |
+| `AutoClearFlash` | `../app.js` (inline, line 536) | `core_components.ex` flash component — auto-dismisses flash messages after 4s (except `client-error`/`server-error`) |
+| `ScrollToFile` | `../app.js` (inline, line 553) | `review_components/diff_viewer.ex` (`<div class="diff-main-content" id="diff-viewer" phx-hook="ScrollToFile">`) — scrolls the diff viewer to the selected file section on `scroll_to_file` events (the ONLY hook on the review diff page) |
+| `AgentHistoryAutoScroll` | `../app.js` (inline, line 592) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) — rAF-based ease-out auto-scroll when at the bottom |
+| `TauriDetect` | `../app.js` (inline, line 679) | `projects_live.ex` `#tauri-detect` (`phx-hook="TauriDetect"`) — pushes `tauri_detected` |
+| `DesktopQuit` | `../app.js` (inline, line 695) | `layouts.ex` wrapper around `<main id="main-content">` — listens for Tauri `quit-requested`, pushes `desktop_quit_requested` |
+| `DesktopQuitConfirm` | `../app.js` (inline, line 733) | desktop quit dialog's red Quit button — invokes Tauri `begin_quit` then pushes `desktop_quit_confirmed` |
+| `PlatformDetect` | `../app.js` (inline, line 754) | `projects_live.ex` `#platform-detect` (`phx-hook="PlatformDetect"`) — pushes `platform_info` |
+| `DialogModal` | `../app.js` (inline, line 775) | (native `<dialog class="modal">` elements) — shows the dialog in the top layer, pushes `dialog_closed` on ESC/backdrop close |
+| `FocusInput` | `../app.js` (inline, line 797) | `project_components.ex` command palette search input — focus on mount + re-focus on update |
+| `PaletteList` | `../app.js` (inline, line 811) | `project_components.ex` command palette list — scrolls `[data-selected="true"]` into view on re-render |
 
 ### SidebarCollapse — selector contract
 
@@ -65,10 +73,11 @@ undo the collapse state. This is why collapse state survives route changes.
 
 - **NOT colocated**: there are **zero `.exh` files** in the project, so the `colocatedHooks`
   import from `phoenix-colocated/evo_dash` (see `../app.js`) resolves to an empty object; ALL
-  hooks are hand-written (one in this directory, the rest inline in `app.js`). Do not rely on
-  `.exh` colocated hook generation.
-- `SidebarCollapse` is the only hook exported as a proper ES module (`export default`); the
-  rest are `const` objects declared inline in `app.js`.
+  hooks are hand-written (four in this directory — `sidebar_collapse.js`,
+  `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js` — the rest inline in
+  `app.js`). Do not rely on `.exh` colocated hook generation.
+- The four file-based hooks are exported as proper ES modules (`export default`); the
+  inline hooks are `const` objects declared in `app.js`.
 - **Mobile sidebar toggle**: The `#sidebar-mobile-toggle` hamburger button and
 `#sidebar-overlay` (lines 50-62 of `layouts.ex`) are wired up by the
 `SidebarCollapse` hook. On mobile (< lg breakpoint, checked via
