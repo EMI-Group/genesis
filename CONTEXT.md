@@ -51,7 +51,15 @@ mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c 
 mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R <id:>path]
 ```
 
-Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R <id:>path` for foreign repos (repeatable).
+Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R <id:>path` for foreign repos (repeatable), `--agent <id>` to run a custom root agent (defined in `<config_dir>/agents.toml`), `--mode <mode>` (`new`/`existing` for genesis, `simple`/`custom` for evolve).
+
+### Custom Agents & Custom Task Mode
+
+Users define custom agents declaratively in `<config_dir>/agents.toml` (pure TOML: `name`, `description`, `prompt` system prompt, `agent_type` read/read_write, `delegation_level`, `model_id`, `max_turns`, `tools`, `subagents`; ids auto-derived from slugified names). An optional `[model_selection] script` in the same file is a short user Elixir body evaluated per agent spawn (with an `agent` map in scope: `agent_type`, `custom_agent_id`, `depth`, `parent_id`, `task_id`, `objective`; last expression = model profile id, `nil`/`""`/`false` → default) — implemented via `EvoGit.CustomAgents` / `EvoGit.Agents.Custom` / `EvoGit.CustomAgents.ModelSelector` (compile-once stat-validated cache, never raises user-code errors). Model priority per spawn: user-locked (`-m` / explicit dashboard pick) → script → per-agent default → scheduler default.
+
+The dashboard Settings page has a dedicated **Agents** category (custom-agents list editor + model-selection script editor, node-aware), and the task form has an Agent select plus a model "Auto (by rules)" option.
+
+**Custom task mode** (the entry point for custom root agents): a 4th dashboard task mode **"Custom Agent"** (combined-mode string `"custom_agent"`) maps to `{:evolve, mode: "custom", agent: <custom_agent_id>}` — task type stays `:evolve`, mode opt value `"custom"` (string; CLI passes atom `:custom`). `EvoGit.Runtime.Evolution.run/2` routes `"custom"` to a custom-root path with evolve semantics (reviewable `merge_and_report`); a missing/empty `:agent` raises a descriptive ArgumentError before any repo I/O (spec-error style, mirrors `Helpers.resolve_root_agent/2`'s unknown-id raise); unknown mode values warn + fall back to simple (legacy compatibility). CLI: `evolve --mode custom --agent <id>`; genesis rejects custom mode ("evolve-only"). Custom agents are root-only this version (not spawnable as subagents); `delegation_level` default `:low`. Details: `apps/evo_git/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 
 ## Constraints
 
