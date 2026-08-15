@@ -135,7 +135,8 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
-          model_profiles: [%{id: "pro", model: "gpt-x"}]
+          model_profiles: [%{id: "pro", model: "gpt-x"}],
+          selected_model_id: "pro"
         )
 
       doc = parse(html)
@@ -145,6 +146,23 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert option |> Floki.text() |> String.trim() == "pro"
       assert option |> Floki.attribute("value") |> List.first() == "pro"
       refute html =~ "pro (gpt-x)"
+    end
+
+    test "model select shows Auto (by rules) first when no model is selected" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "Short",
+          model_profiles: [%{id: "pro", model: "gpt-x"}]
+        )
+
+      doc = parse(html)
+      [auto, pro] = Floki.find(doc, "select[name=model_id] option")
+
+      # The auto option (empty value) leads so the select is never visually
+      # empty; the profile option follows.
+      assert auto |> Floki.text() |> String.trim() == "Auto (by rules)"
+      assert auto |> Floki.attribute("value") |> List.first() == ""
+      assert pro |> Floki.attribute("value") |> List.first() == "pro"
     end
 
     test "Layout B (expanded): Launch order-2 centered (mx-auto), model order-3" do
