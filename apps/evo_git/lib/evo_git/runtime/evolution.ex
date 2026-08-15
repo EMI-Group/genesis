@@ -41,12 +41,20 @@ defmodule EvoGit.Runtime.Evolution do
     context_node = ContextNode.load(node_path, repo_path)
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
-    case AgentSpec.new(context_node, phylo_node, EvoGit.Agents.Manager, objective,
+    {agent_module, agent_opts} =
+      Helpers.resolve_root_agent(opts, EvoGit.Agents.Manager)
+
+    case AgentSpec.new(context_node, phylo_node, agent_module, objective,
            foreign_repos: foreign_repos,
            archive: Keyword.get(opts, :archive, false),
            task_id: Keyword.get(opts, :task_id),
-           model_id: Keyword.get(opts, :model_id)
+           model_id: Keyword.get(opts, :model_id),
+           model_id_locked: Helpers.model_id_locked?(opts)
          )
+         |> then(fn spec ->
+           # merge custom_agent_id into the spec opts when present
+           %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
+         end)
          |> AgentScheduler.run_agent() do
       {:ok, %Result{} = agent_output} ->
         Helpers.notify_finalizing(Keyword.get(opts, :task_id))
