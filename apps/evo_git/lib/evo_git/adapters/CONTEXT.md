@@ -1,11 +1,11 @@
 # Adapters
 
 ## Intent
-Adapter layer that wraps external tool CLIs, providing a safe and idiomatic Elixir API for the rest of the application. Contains the Git adapter (abstracting all `System.cmd("git", ...)` calls behind structured result tuples) and a CoW-optimized worktree creation module.
+Adapter layer that wraps external tool CLIs, providing a safe and idiomatic Elixir API for the rest of the application. Contains the Git adapter (abstracting all `System.cmd("git", ...)` calls behind structured result tuples), the GitHub adapter (`gh` CLI issue queries — all GitHub interaction via the `gh` command, no GitHub API HTTP calls), and a CoW-optimized worktree creation module.
 
 ## Routing Table
 
-None — leaf directory (`git.ex`, `cow_worktree.ex`).
+None — leaf directory (`git.ex`, `github.ex`, `cow_worktree.ex`).
 
 ## API Surface
 
@@ -68,6 +68,31 @@ Notes on specific functions:
 **Rules for future work in this file:**
 - Content-bearing args → `-F <tempfile>` with the `temp_file_path/1` + `normalize_temp_path/1` helpers (private, git.ex) and `try/after` cleanup; never `-m`.
 - Other call sites: `tag/3`/`delete_tag/2` have zero callers in lib/test (unused API surface; git itself validates tag names as ref names). `create_branch/3` branch names come from `Runtime.Helpers.generate_branch_name/1` (`genesis/agent_<hex>`, safe alphabet) or fixed test literals; `add_worktree/4` (fallback inside `Worktrees.prepare_new_worktree/5`) uses `Worktrees.branch_name/2` (`evogit-agent-T<task_number>-A<task_local_id>`, safe alphabet) — safe. `create_pull_request/5` title/body are content-bearing but go to the `gh` CLI (a native Go binary parsing via CommandLineToArgvW, NOT MSYS2 — Erlang's Windows argv quoting round-trips embedded quotes correctly for it) — different bug class. `agent/tools/context.ex` (write_context/edit_context commit path) passes the message via `git commit -F <tempfile>` under `EvoGit.Sandbox.resolve_tmpdir()` (sandbox-readable) with Windows path normalization and `try/after` cleanup (details in `agent/tools/CONTEXT.md` → "Known Issues — Windows MSYS2 argv quoting").
+
+### `EvoGit.Adapters.GitHub` (`github.ex`)
+Thin wrapper for GitHub issue queries via the `gh` CLI (`gh issue list` / `gh issue view`). All GitHub interaction goes through the `gh` command — no GitHub API HTTP calls. `gh_available?/0` is **reused from `EvoGit.Adapters.Git`** (never duplicated).
+
+**Invocation conventions** (deliberately distinct per binary):
+- **gh** (mirrors `Git.create_pull_request/5`): `System.cmd("gh", args, cd: repo_path, stderr_to_stdout: true)` — plain `"gh"`, no GitEnv. Every gh invocation is guarded by `Git.gh_available?/0` first (`System.cmd("gh", ...)` raises `ErlangError` when gh is not on PATH).
+- **git** (mirrors `Git.has_origin_remote?/1`): `System.cmd(EvoGit.Executable.resolve("git"), args, cd: repo_path, stderr_to_stdout: true, env: EvoGit.GitEnv.git_env(repo_path))`.
+- `:enoent` convention: every function PRE-CHECKS `File.dir?(repo_path)` and returns `{:error, {:enoent, repo_path}}` — `System.cmd` never gets a bad `:cd`.
+
+**Functions** (all take `repo_path` first; the check order is pinned — dir exists → gh available → upstream resolvable → run gh):
+
+| Function | Success | Errors |
+|---|---|---|
+| `github_upstream/1` | `{:ok, %{owner: String.t(), repo: String.t(), url: String.t(), gh_available: boolean()}}` | `{:error, {:enoent, repo_path}}` / `{:error, :no_github_upstream}` (non-GitHub origin URL, or git reports no origin remote — contract-pinned exit 128, plus exit 2 which real git ≥2.55 emits for "No such remote") / `{:error, {:code, code, trimmed_output}}` (any other git non-zero exit) |
+| `list_github_issues/2` (`opts \\ []`: `:state` default `"open"`, `:limit` default 100, integer — stringified for the arg) | `{:ok, [issue_map]}` | `{:error, {:enoent, _}}` / `{:error, :gh_not_available}` / upstream error propagated as-is / `{:error, {:gh, code, trimmed_output}}` (gh non-zero exit) / `{:error, {:invalid_json, reason}}` (malformed JSON, `reason` = Jason error term; or non-array JSON, `reason` = `:not_an_array`) |
+| `github_issue_markdown/2` | `{:ok, markdown}` | same error shapes as `list_github_issues/2` (gh JSON here is a single object; non-object → `{:error, {:invalid_json, :not_an_object}}`) |
+
+**Upstream URL parsing**: own regexes (NOT git.ex's `@repo_url_re`, which covers https only) — https `https://github.com/owner/repo` AND ssh `git@github.com:owner/repo.git`, each with optional trailing `.git`/slash/whitespace (input trimmed first, then anchored match). `url` = trimmed origin URL verbatim; `repo` has `.git` stripped.
+
+**JSON normalization** (list JSON fields `number,title,state,labels,url,author,createdAt`; view uses `body` instead of `createdAt`): each gh object → `%{number: integer, title: String.t(), state: String.t(), labels: [String.t()], url: String.t(), author: String.t(), created_at: String.t()}` (the list map has exactly these 7 keys). `labels` = `name` strings extracted from the label objects (a label object missing `name` is skipped); `author` = `login` of the author map (missing author → `""`); `createdAt` → `:created_at`.
+
+**Pinned markdown format** (`github_issue_markdown/2`, asserted character-for-character):
+- With labels: `# GitHub Issue #<n>: <title>\nURL: <url> | State: <state> | Labels: <l1>, <l2>\n\n<body>`
+- WITHOUT labels the labels segment is omitted entirely (second line is `URL: <url> | State: <state>`): `# GitHub Issue #<n>: <title>\nURL: <url> | State: <state>\n\n<body>`
+- Labels joined with `", "`; body embedded verbatim after one blank line (no trailing-whitespace manipulation of the body). No `try/rescue` — all failures are tagged tuples.
 
 ### `EvoGit.Adapters.CowWorktree` (`cow_worktree.ex`)
 CoW (copy-on-write) optimized worktree creation. Instead of extracting every file from the git database, copies unchanged files from a source working tree using `cp` (leveraging filesystem reflink on Linux, clonefile on macOS), then lets git restore only the differing files via a checkout. Designed as an **optimization with graceful fallback** — any failure disables the feature and returns `{:fallback, reason}` so the caller can use the standard worktree method. **Shape-agnostic w.r.t. the Git adapter contract** — its tagged `with` patterns (`{:source_head, {:ok, sha}} <- ...`) and catch-all `error` arms are contract-agnostic; its `{:error, code, output}` at cow_worktree.ex:207 comes from its own internal `copy_shared_files` (cp), NOT the Git adapter.
