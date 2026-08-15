@@ -33,7 +33,7 @@ defmodule EvoGit.Agents.Custom do
         name: "My Agent",                        # display name
         prompt: "You are ...",                   # the system prompt
         agent_type: :read | :read_write,         # absent/nil → :read_write (inherited default)
-        delegation_level: :high | :low,          # absent/nil → :high (inherited default)
+        delegation_level: :high | :low,          # absent/nil → :low (agents.toml schema default)
         subagents: ["executor", "investigator"], # absent/nil → [] (no subagents)
         tools: ["read_file", "write_file"] | nil # nil/absent → all standard tools
       }
@@ -89,7 +89,7 @@ defmodule EvoGit.Agents.Custom do
 
   def agent_type, do: field(definition!(), :agent_type) || :read_write
 
-  def delegation_level, do: field(definition!(), :delegation_level) || :high
+  def delegation_level, do: field(definition!(), :delegation_level) || :low
 
   def subagent_tool_name, do: nil
 

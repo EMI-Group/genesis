@@ -79,12 +79,14 @@ defmodule EvoGit.Agents.CustomTest do
       assert EvoGit.Agents.Custom.delegation_level() == :high
     end
 
-    test "fall back to the inherited EvoGit.Agent defaults when the fields are absent" do
+    test "fall back to the store-normalized defaults when the fields are absent" do
       id = save_definition!(%{prompt: "minimal"})
       put_custom_agent!(id)
 
+      # EvoGit.CustomAgents normalizes absent fields on save to the agents.toml
+      # schema defaults: :read_write for agent_type, :low for delegation_level.
       assert EvoGit.Agents.Custom.agent_type() == :read_write
-      assert EvoGit.Agents.Custom.delegation_level() == :high
+      assert EvoGit.Agents.Custom.delegation_level() == :low
       assert EvoGit.Agents.Custom.system_prompt() == "minimal"
     end
   end
@@ -116,8 +118,18 @@ defmodule EvoGit.Agents.CustomTest do
              ]
     end
 
-    test "accepts atom entries" do
-      id = save_definition!(%{subagents: [:executor]})
+    test "maps string entries from agents.toml (save/1 rejects atom entries)" do
+      # The agents.toml contract stores subagents as STRINGS; saving atom
+      # entries is rejected by EvoGit.CustomAgents.save/1 with
+      # :invalid_subagents (the store, not the runtime agent, owns validation).
+      assert {:error, :invalid_subagents} =
+               EvoGit.CustomAgents.save(%{
+                 name: "Atom Subagents",
+                 prompt: "doomed",
+                 subagents: [:executor]
+               })
+
+      id = save_definition!(%{subagents: ["executor"]})
       put_custom_agent!(id)
 
       assert EvoGit.Agents.Custom.subagent_modules() == [EvoGit.Agents.Executor]
