@@ -309,5 +309,280 @@ defmodule EvoGit.RemoteConnectionTest do
         end)
       end
     end
+
+    describe "bootstrap/1 with fake ssh" do
+      # Writes a fake `ssh` + fake `scp` onto PATH and returns
+      # %{log:, marker:, tarball:}. The fake ssh receives $1 = ssh_target and
+      # $2 = the remote command (ONE argv element), logs every command to the
+      # log file, and dispatches on $2. Daemon state is emulated via a marker
+      # file: `systemd-run` / `launchctl load` touch it, while
+      # `systemctl --user is-active` / `launchctl list` report active /
+      # non-empty only when it exists — so the post-start health check
+      # succeeds after the daemon is "started". Options: :os (default Linux),
+      # :detect ("yes"/"no" for the NixOS detection command), :patch_exit,
+      # :patch_output, :daemon_active? (pre-create the marker).
+      defp with_fake_ssh_tools(opts, fun) do
+        tmp =
+          Path.join(
+            System.tmp_dir!(),
+            "evogit-test-ssh-#{System.unique_integer([:positive])}"
+          )
+
+        File.mkdir_p!(tmp)
+
+        log = Path.join(tmp, "ssh.log")
+        marker = Path.join(tmp, "daemon.marker")
+
+        if Keyword.get(opts, :daemon_active?, false) do
+          File.touch!(marker)
+        end
+
+        script =
+          ~S"""
+          #!/bin/sh
+          log="__LOG__"
+          marker="__MARKER__"
+          printf '%s\n' "$2" >> "$log"
+          case "$2" in
+            "uname -s && uname -m"*) printf 'Linux\nx86_64\n'; exit 0 ;;
+            "uname -s"*) printf '__OS__\n'; exit 0 ;;
+            "systemctl --user is-active"*) if [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
+            "systemctl --user reset-failed"*) exit 0 ;;
+            "systemd-run"*) touch "$marker"; exit 0 ;;
+            "launchctl unload"*) touch "$marker"; exit 0 ;;
+            "launchctl list"*) if [ -f "$marker" ]; then printf '1234\t0\tcom.genesis.remote.test\n'; fi; exit 0 ;;
+            "launchctl"*) exit 0 ;;
+            "test -d /etc/nixos"*) printf '__DETECT__\n'; exit 0 ;;
+            *nix-build*) printf '%s\n' '__PATCH_OUTPUT__'; exit __PATCH_EXIT__ ;;
+            "curl"*|"wget"*) exit 0 ;;
+            "mkdir"*|"tar"*|"chmod"*|"test -f"*) exit 0 ;;
+            *) exit 0 ;;
+          esac
+          """
+          |> String.replace("__LOG__", log)
+          |> String.replace("__MARKER__", marker)
+          |> String.replace("__OS__", Keyword.get(opts, :os, "Linux"))
+          |> String.replace("__DETECT__", Keyword.get(opts, :detect, "no"))
+          |> String.replace(
+            "__PATCH_OUTPUT__",
+            Keyword.get(opts, :patch_output, "nixos-patch: patched 0 ELF files")
+          )
+          |> String.replace(
+            "__PATCH_EXIT__",
+            Integer.to_string(Keyword.get(opts, :patch_exit, 0))
+          )
+
+        ssh_path = Path.join(tmp, "ssh")
+        scp_path = Path.join(tmp, "scp")
+
+        File.write!(ssh_path, script)
+        File.chmod!(ssh_path, 0o755)
+
+        # The local-tarball path shells out to real `scp` via run_cmd
+        # ({:spawn, "scp ..."} → /bin/sh -c) — a fake scp on PATH intercepts it.
+        File.write!(scp_path, "#!/bin/sh\nexit 0\n")
+        File.chmod!(scp_path, 0o755)
+
+        original_path = System.get_env("PATH")
+        new_path = if original_path, do: tmp <> ":" <> original_path, else: tmp
+        System.put_env("PATH", new_path)
+
+        on_exit(fn ->
+          if original_path do
+            System.put_env("PATH", original_path)
+          else
+            System.delete_env("PATH")
+          end
+
+          File.rm_rf!(tmp)
+        end)
+
+        tarball = Path.join(tmp, "local.tar.xz")
+        File.write!(tarball, "fake tarball")
+
+        fun.(%{log: log, marker: marker, tarball: tarball})
+      end
+
+      # Drains all {:remote_connection_status, target_id, status} broadcasts
+      # received so far and returns their bootstrap_stage values in order.
+      defp collect_stages(target_id) do
+        collect_stages(target_id, [])
+      end
+
+      defp collect_stages(target_id, acc) do
+        receive do
+          {:remote_connection_status, ^target_id, %{bootstrap_stage: stage}} ->
+            collect_stages(target_id, [stage | acc])
+        after
+          0 ->
+            Enum.reverse(acc)
+        end
+      end
+
+      # Asserts that `expected` stages all appear in `stages`, in that order
+      # (other stages may interleave).
+      defp assert_stage_subsequence(stages, expected) do
+        indices =
+          Enum.map(expected, fn stage ->
+            Enum.find_index(stages, &(&1 == stage))
+          end)
+
+        assert Enum.all?(indices, &is_integer/1),
+               "expected stages #{inspect(expected)} present in #{inspect(stages)}"
+
+        assert indices == Enum.sort(indices), "stages out of order: #{inspect(stages)}"
+      end
+
+      test "NixOS detected → patch issued + :patching_binaries broadcast before :starting_daemon" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([detect: "yes", os: "Linux"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+
+          # detection command issued
+          assert log_content =~ "test -d /etc/nixos"
+
+          # patch script issued as one argv element with all four nix-build lines
+          assert log_content =~ ~S|nix-build "$NIXPKGS" -A patchelf|
+          assert log_content =~ ~S|nix-build "$NIXPKGS" -A bintools|
+          assert log_content =~ ~S|nix-build "$NIXPKGS" -A stdenv.cc.cc.lib|
+          assert log_content =~ ~S|nix-build "$NIXPKGS" -A openssl|
+
+          stages = collect_stages(target_id)
+
+          assert_stage_subsequence(stages, [
+            :generating_cookie,
+            :patching_binaries,
+            :starting_daemon
+          ])
+
+          cleanup_connections()
+        end)
+      end
+
+      test "non-NixOS Linux → detection issued but no patch" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([detect: "no", os: "Linux"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+          assert log_content =~ "test -d /etc/nixos"
+          refute log_content =~ "nix-build"
+
+          stages = collect_stages(target_id)
+          refute :patching_binaries in stages
+
+          cleanup_connections()
+        end)
+      end
+
+      test "macOS → no detection, no patch, no :patching_binaries broadcast" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Darwin"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+          refute log_content =~ "test -d /etc/nixos"
+          refute log_content =~ "nix-build"
+
+          stages = collect_stages(target_id)
+          refute :patching_binaries in stages
+
+          cleanup_connections()
+        end)
+      end
+
+      test "daemon already running → no detection, no patch" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux", daemon_active?: true], fn %{
+                                                                      log: log,
+                                                                      tarball: tarball
+                                                                    } ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+          refute log_content =~ "test -d /etc/nixos"
+          refute log_content =~ "nix-build"
+
+          stages = collect_stages(target_id)
+          refute :patching_binaries in stages
+          refute :starting_daemon in stages
+
+          cleanup_connections()
+        end)
+      end
+
+      test "patch script failure propagates {:nixos_patch_failed, details}" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools(
+          [
+            detect: "yes",
+            os: "Linux",
+            patch_exit: 1,
+            patch_output: "nixos-patch: nix-build failed: error: patchelf build broken"
+          ],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:error, {:nixos_patch_failed, details}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            # details carries the failing step's stdout tail
+            assert details =~ "patch script failed (exit 1)"
+            assert details =~ "nix-build failed"
+
+            # the patch script was actually issued
+            assert File.read!(log) =~ "nix-build"
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "auto-download path also patches (platform override, single insertion point)" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([detect: "yes", os: "Linux"], fn %{log: log} ->
+          target_id = save_test_target(platform: "linux_x64")
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+          assert log_content =~ "curl -fL -o"
+          assert log_content =~ ~S|nix-build "$NIXPKGS" -A patchelf|
+
+          stages = collect_stages(target_id)
+          refute :detecting_os in stages
+
+          assert_stage_subsequence(stages, [
+            :generating_cookie,
+            :patching_binaries,
+            :starting_daemon
+          ])
+
+          cleanup_connections()
+        end)
+      end
+    end
   end
 end

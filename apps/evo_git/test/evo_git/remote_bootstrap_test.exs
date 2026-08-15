@@ -223,4 +223,85 @@ defmodule EvoGit.RemoteBootstrapTest do
                ])
     end
   end
+
+  describe "nixos_detect_command/0" do
+    test "checks /etc/nixos as the primary marker and echoes yes/no" do
+      cmd = RemoteBootstrap.nixos_detect_command()
+
+      assert cmd =~ "test -d /etc/nixos"
+      assert cmd =~ "echo yes"
+      assert cmd =~ "echo no"
+      assert cmd =~ "ID=nixos"
+      assert cmd =~ "/etc/os-release"
+    end
+
+    test "is a single one-shot command (no embedded newlines)" do
+      cmd = RemoteBootstrap.nixos_detect_command()
+
+      refute cmd =~ "\n"
+    end
+  end
+
+  describe "nixos_patch_script/1" do
+    @launcher "/tmp/genesis_remote/bin/genesis_remote"
+
+    test "interpolates the launcher path and derives the release root" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ @launcher
+      assert script =~ ~S|RELEASE_ROOT="$(dirname "$(dirname "$LAUNCHER")")"|
+      assert script =~ ~S|PATCH_DIR="$RELEASE_ROOT/.nixos-patch"|
+      assert script =~ ~S|mkdir -p "$PATCH_DIR"|
+    end
+
+    test "runs all four nix-builds with 2>&1" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|nix-build "$NIXPKGS" -A patchelf --out-link "$PATCH_DIR/patchelf" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A bintools --out-link "$PATCH_DIR/bintools" 2>&1|
+
+      assert script =~
+               ~S|nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1|
+
+      assert script =~ ~S|nix-build "$NIXPKGS" -A openssl --out-link "$PATCH_DIR/openssl" 2>&1|
+      # nixpkgs comes from NIX_PATH via the angle-bracket lookup path
+      assert script =~ ~S|NIXPKGS="<nixpkgs>"|
+    end
+
+    test "reads the interpreter from the bintools nix-support file" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|INTERPRETER="$(cat "$PATCH_DIR/bintools/nix-support/dynamic-linker")"|
+    end
+
+    test "sets the rpath from cc/lib and openssl/lib" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib"|
+    end
+
+    test "loops over release files with an ELF magic check and invokes patchelf" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|for file in $(find "$RELEASE_ROOT" -type f); do|
+      assert script =~ ~S|head -c 4 "$file"|
+      assert script =~ ~S|od -An -tx1|
+      assert script =~ ~S|tr -d ' \n'|
+      assert script =~ ~S|7f454c46|
+
+      assert script =~
+               ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"|
+    end
+
+    test "echoes nixos-patch progress markers and uses set -e" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ "nixos-patch: building patchelf..."
+      assert script =~ "nixos-patch: building bintools..."
+      assert script =~ "nixos-patch: building stdenv.cc.cc.lib..."
+      assert script =~ "nixos-patch: building openssl..."
+      assert script =~ ~S|echo "nixos-patch: patched $count ELF files"|
+      assert script =~ "set -e"
+    end
+  end
 end
