@@ -7,6 +7,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   """
 
   alias EvoGit.Core.ForeignRepo
+  alias EvoDashWeb.ProjectsLive.ProjectFlow
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
@@ -137,7 +138,17 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
             do: [description: r["description"]],
             else: []
 
-        ForeignRepo.new(id, r["path"], opts)
+        # Node-aware construction: in a remote context the persisted root is a
+        # REMOTE node path (a remote-added POSIX/Windows repo must survive the
+        # persist/restore round-trip unmangled). `ForeignRepo.new/3` would
+        # `Path.expand/1` it against the DASHBOARD's OS; remote contexts
+        # rebuild raw structs via ProjectFlow.build_foreign_repo/4. Local
+        # contexts keep `ForeignRepo.new/3` exactly as before.
+        if socket.assigns[:remote?] or socket.assigns[:current_node] != node() do
+          ProjectFlow.build_foreign_repo(socket.assigns[:current_node], id, r["path"], opts)
+        else
+          ForeignRepo.new(id, r["path"], opts)
+        end
       end)
 
     if restored != [] do

@@ -1728,6 +1728,107 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:active_project] == nil
     end
 
+    test "remote open_project accepts a POSIX absolute path (cross-OS regression)", %{
+      conn: conn
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      # Cross-OS bug vector: `/home/user/proj` is a POSIX absolute path that
+      # the pre-fix LOCAL normalization misclassified on a Windows dashboard
+      # (Path.type/1 → :volumerelative → the "Enter a full path" flash). The
+      # remote-aware normalization must accept it verbatim and fail ONLY at
+      # the remote dir? validation (no real daemon answers the RPC in tests).
+      html =
+        view
+        |> element("form[phx-submit='open_project']")
+        |> render_submit(%{path: "/home/user/proj"})
+
+      refute html =~ "Enter a full path"
+      assert html =~ "Directory does not exist on the remote node: /home/user/proj"
+
+      # The failed remote validation must NOT register the path locally
+      # (proves the remote branch ran, not the local one)
+      refute Enum.any?(
+               EvoGit.TaskRegistry.list_recent_projects(),
+               &(&1.path == "/home/user/proj")
+             )
+    end
+
+    test "add_foreign_repo accepts POSIX/Windows paths on a remote node, raw-preserved", %{
+      conn: conn
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      assert assigns(view)[:remote?] == true
+
+      # POSIX absolute — the node-aware validator accepts it even though a
+      # Windows dashboard's local `Platform.absolute_path?/1` would reject it.
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "remote-posix",
+          "path" => "/home/user/repo",
+          "description" => ""
+        })
+
+      refute html =~ "Path must be absolute."
+
+      repos = assigns(view)[:foreign_repos]
+      assert Enum.any?(repos, &(&1.id == "remote-posix"))
+
+      posix_repo = Enum.find(repos, &(&1.id == "remote-posix"))
+      # Raw-preservation contract: remote contexts build the struct via
+      # node-aware ProjectFlow.build_foreign_repo/4, which stores the root
+      # VERBATIM — never Path.expand-ed against the LOCAL OS (a Windows
+      # dashboard would rewrite it to a drive-letter path).
+      assert posix_repo.root == "/home/user/repo"
+
+      # Windows-style absolute — the node-aware validator also ACCEPTS it
+      # (a POSIX dashboard's local check would cwd-join it), so no rejection
+      # flash may appear.
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "remote-win",
+          "path" => "D:\\stuff\\repo",
+          "description" => ""
+        })
+
+      refute html =~ "Path must be absolute."
+
+      # Raw-preservation contract: remote contexts store the root verbatim via
+      # node-aware ProjectFlow.build_foreign_repo/4 — a Windows-style path is
+      # never cwd-joined by the LOCAL OS (which `ForeignRepo.new/3` would do).
+      repos = assigns(view)[:foreign_repos]
+      win_repo = Enum.find(repos, &(&1.id == "remote-win"))
+      assert win_repo.root == "D:\\stuff\\repo"
+
+      # Relative input is still rejected on a remote node
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "remote-bad",
+          "path" => "foo/bar",
+          "description" => ""
+        })
+
+      assert html =~ "Path must be absolute."
+      refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "remote-bad"))
+    end
+
     test "local render carries data-node-id=local on the dashboard root", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/")
 
