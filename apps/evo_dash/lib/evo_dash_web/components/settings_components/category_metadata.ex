@@ -18,6 +18,8 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   # zh_CN: Scheduler → "调度器"
   def category_display_name(:scheduler), do: gettext("Scheduler")
   def category_display_name(:llm), do: gettext("LLM")
+  # zh_CN: Agent → "智能体"
+  def category_display_name(:agents), do: gettext("Agents")
   def category_display_name(:user), do: gettext("User")
   def category_display_name(:git), do: gettext("Git")
   # zh_CN: Sandbox → "沙箱"
@@ -32,6 +34,8 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
 
   def category_icon(:scheduler), do: "hero-cog-6-tooth"
   def category_icon(:llm), do: "hero-sparkles"
+  # zh_CN: Agent → "智能体" (hero-user-group = 用户组图标)
+  def category_icon(:agents), do: "hero-user-group"
   def category_icon(:user), do: "hero-user"
   def category_icon(:git), do: "brand-git"
   def category_icon(:sandbox), do: "hero-shield-check"
@@ -51,6 +55,10 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   # zh_CN: provider → "服务商", token → "词元"
   def category_description(:llm),
     do: gettext("Configure the language model provider and token compression.")
+
+  # zh_CN: Agent → "智能体", Model → "模型", Script → "脚本"
+  def category_description(:agents),
+    do: gettext("Create custom agents and configure the per-agent model selection script.")
 
   def category_description(:user),
     do: gettext("Set your user identity for Git commits and collaboration.")
@@ -109,6 +117,7 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def sort_categories(categories) do
     order = [
       :llm,
+      :agents,
       :scheduler,
       :user,
       :git,
