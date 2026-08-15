@@ -938,7 +938,7 @@ button, a, input, textarea, select, summary,
 }
 
 /* ---------------------------------------------------------------------------
-   Client-side syntax highlighting — highlight.js token colors (DiffHighlight
+   Client-side syntax highlighting — highlight.js token colors (DiffViewer
    hook). The hook injects <span class="hljs-*"> into .diff-split-cell, so the
    palette lives on the cell's token classes. Colors must stay readable on the
    translucent green/red addition/deletion row tints. One accent per token

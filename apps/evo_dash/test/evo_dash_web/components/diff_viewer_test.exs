@@ -404,6 +404,18 @@ defmodule EvoDashWeb.DiffViewerTest do
       assert html =~ "+1"
       assert html =~ "-1"
     end
+
+    test "attaches the single DiffViewer hook to #diff-viewer (LiveView 1.2: one hook name per element)" do
+      html = render_diff_viewer([file_fixture("lib/foo.ex", @basic_diff)])
+
+      [viewer] = Floki.find(parse(html), "#diff-viewer")
+      assert Floki.attribute(viewer, "phx-hook") == ["DiffViewer"]
+
+      # LiveView 1.2 looks up the WHOLE attribute value as one hook name —
+      # a space-separated multi-hook list would silently attach nothing.
+      # (This exact-value assert pins the single-hook contract; a regression
+      # reintroducing the old two-hook form fails it.)
+    end
   end
 
   # --- helpers ---
