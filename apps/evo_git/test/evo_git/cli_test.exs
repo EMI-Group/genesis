@@ -68,6 +68,34 @@ defmodule EvoGit.CLITest do
     end
   end
 
+  describe "agent flag parsing (--agent)" do
+    test "parses --agent <id> for evolve" do
+      {opts, argv} =
+        EvoGit.CLI.Parser.parse_args(["--agent", "code-reviewer", "evolve", "fix x"])
+
+      assert opts[:agent] == "code-reviewer"
+      assert argv == ["evolve", "fix x"]
+    end
+
+    test "parses --agent <id> for genesis" do
+      {opts, argv} =
+        EvoGit.CLI.Parser.parse_args(["genesis", "make a thing", "--agent", "architect"])
+
+      assert opts[:agent] == "architect"
+      assert argv == ["genesis", "make a thing"]
+    end
+
+    test "returns nil when --agent is not passed" do
+      {opts, _argv} = EvoGit.CLI.Parser.parse_args(["evolve", "fix x"])
+      assert opts[:agent] == nil
+    end
+
+    test "supports --agent=<id> syntax" do
+      {opts, _argv} = EvoGit.CLI.Parser.parse_args(["evolve", "fix x", "--agent=code-reviewer"])
+      assert opts[:agent] == "code-reviewer"
+    end
+  end
+
   describe "model flag parsing (-m / --model)" do
     test "bare model string returns nil id" do
       # "provider:model" → {nil, "provider:model"}
@@ -273,6 +301,7 @@ defmodule EvoGit.CLITest do
 
       profile = hd(decoded_models)
       assert profile["id"] == "default"
+
       assert profile["model"] == %{
                "provider" => "openai",
                "id" => "gpt-5.5",
