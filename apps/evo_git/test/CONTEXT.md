@@ -6,12 +6,17 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 ## Routing Table
 - `evo_git/` → Test files mirroring source structure (core, adapters, agent tools, project config tests)
 - `evo_git/skills/` → Skills subsystem tests (executor injection safety + sandbox routing)
+- `support/` → Shared test helpers (`EvoGit.FakeGh` — fake `gh` executable for gh-CLI adapter tests)
 
 ## API Surface
 
 ### Top-level files
 - **`test_helper.exs`** — Minimal bootstrap: calls `ExUnit.start()`.
 - **`evo_git_test.exs`** — `EvoGitTest`: validates `EvoGit.sandbox_args/3` output for sandboxed command execution.
+- **`remote_node_github_test.exs`** — `EvoGit.RemoteNodeGitHubTest` (`async: false`): GitHub gh-CLI RPC wrappers on `EvoGit.RemoteNode` — `github_upstream/2`, `list_github_issues/3`, `github_issue_markdown/3`. Covers unreachable-remote `{:error, _}` fallbacks and local-path RemoteAPI delegation (with `EvoGit.FakeGh` for the gh-dependent paths). Kept in a SEPARATE file from `remote_node_test.exs` because PATH manipulation requires `async: false` while the existing module stays `async: true`.
+
+### `support/`
+- **`fake_gh.ex`** — `EvoGit.FakeGh` (plain module, no `use ExUnit`): shared helper that puts a fake `gh` POSIX shell script on PATH — canned GitHub issue JSON, `GH_FAKE_MODE` `fail`/`badjson` failure modes, argv logged one element per line to `GH_FAKE_LOG`. API: `with_fake_gh/1` (temp dir + PATH/env restore on exit), `read_argv_log/1`. Only usable from `async: false` test modules (PATH is BEAM-global) in POSIX-gated blocks (`if not match?({:win32, _}, :os.type()) do`).
 
 ### `evo_git/core/`
 - **`context_node_test.exs`** — `EvoGit.Core.ContextNodeTest`: tests `ContextNode` — `hierarchy_nodes/2`, `is_ignored/1`, `load/2`, `build_context/1`. Validates hierarchy traversal, `.gitignore` handling, and error cases (absolute paths).
@@ -20,6 +25,7 @@ ExUnit test suite for the EvoGit OTP application. Validates core domain logic, g
 
 ### `evo_git/adapters/`
 - **`git_test.exs`** — `EvoGit.Adapters.GitTest`: tests the Git adapter — `init/1`, `add_worktree/2`, `add/2`, `commit/2`, `merge/2`, `merge_octopus/2`, `status/1`. Full integration tests creating real git repos in temp dirs. **Error-shape assertions** follow the uniform `{:ok, value} | {:error, {tag, output}}` adapter contract: `show_note` conflict → `{:error, {:conflict, _}}`, `get_note` invalid JSON → `{:error, {:invalid_json, _}}`, no note → `{:error, {:no_note, _}}`, `rev_parse` on missing ref → `{:error, {_, _}}`.
+- **`github_test.exs`** — `EvoGit.Adapters.GitHubTest` (`async: false`): pins the `EvoGit.Adapters.GitHub` gh-CLI adapter contract — `github_upstream/1` origin parsing (https/ssh, `.git` suffix stripping, non-GitHub/missing-origin → `{:error, :no_github_upstream}`, missing repo → `{:error, {:enoent, _}}`, url = verbatim origin URL), `list_github_issues/2` (JSON normalization incl. labels-object→name strings and missing-author→`""`, default `--state open`/`--limit 100` argv asserted, opts `:state`/`:limit` forwarding, `{:error, {:gh, code, output}}` with trimmed stderr, `{:error, {:invalid_json, _}}`, gh-missing check order), `github_issue_markdown/2` (exact markdown incl. label-segment omission, no trailing newline), and RemoteAPI delegation. gh-dependent tests are POSIX-gated (`if not match?({:win32, _}, :os.type()) do`) and use `EvoGit.FakeGh` (fake `gh` executable on PATH).
 
 ### `evo_git/agent/`
 - **`tools_test.exs`** — `EvoGit.Agent.ToolsTest`: validates `Tools` schema definitions.
@@ -72,6 +78,9 @@ The `EvoGit.Store.Errors` moduledoc claims the message-text fallback in `disk_fu
 
 ### Full-suite parallel-run flakiness (pre-existing, verified)
 Running the whole suite `mix test apps/evo_git/test` (parallel, max_cases 16) intermittently fails 1-3 timing-sensitive tests that ALL pass in isolation — observed failing: `EvoGit.Sandbox.TruncationTest` ("temp file cleanup does not leave temp files behind after completion"), `EvoGit.Sandbox.MacOSTest` ("resolve_tmpdir/0 falls back when TMPDIR points outside every tmp path"), and `EvoGit.Agent.ToolDispatchRetrySlotTest` ("releases the LLM slot between retry attempts..." and "a paused scheduler blocks the retrying agent's next attempt..."). The failing set varies run-to-run and was reproduced on a feature-free base commit — this is test pollution/timing under parallel load, NOT a regression from any specific feature. Guidance: re-run the suspect file(s) in isolation before treating full-suite failures as regressions.
+
+### GitHub gh-CLI test files reference a coordinated parallel lib change (transient)
+`github_test.exs`, `remote_node_github_test.exs` (and their `EvoGit.FakeGh` support helper) reference `EvoGit.Adapters.GitHub` and the github functions on `EvoGit.RemoteNode`/`EvoGit.AgentScheduler.RemoteAPI`, which are added in a coordinated parallel lib change. Until that change lands, the new test files do not compile/run standalone. Remove this note once the lib change is merged.
 
 ## Constraints
 - Tests use `@moduletag :tmp_dir` which provides a temporary directory via ExUnit's built-in fixture mechanism.
