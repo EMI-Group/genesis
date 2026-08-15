@@ -174,7 +174,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                       "Optional — leave empty and click Launch to initialize an existing codebase"
                     )
 
-                  String.starts_with?(@mode, "evolve") ->
+                  evolve_family_mode?(@mode) ->
                     gettext("Describe what you want to change or improve...")
 
                   true ->
@@ -313,22 +313,31 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <option value="evolve_simple" selected={@mode == "evolve_simple"}>
                   <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
                 </option>
+                <option value="custom_agent" selected={@mode == "custom_agent"}>
+                  <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                  {gettext("Custom Agent")}
+                </option>
               </select>
 
               <%!-- Custom agent select — rendered only when custom agents
                    exist in agents.toml. "Auto (recommended)" (empty value)
                    lets the runtime spawn its default root agent; a custom
-                   agent id is threaded as the task's :agent opt. --%>
+                   agent id is threaded as the task's :agent opt. In Custom
+                   Agent mode the Auto option is hidden (an agent MUST be
+                   chosen — the server auto-selects the first one on mode
+                   switch and re-validates on submit). --%>
               <%= if @custom_agents != [] do %>
                 <select
                   name="agent"
                   phx-change="select_agent"
                   class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-1"
                 >
-                  <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
-                  <option value="" selected={@selected_agent_id in [nil, ""]}>
-                    {gettext("Auto (recommended)")}
-                  </option>
+                  <%= if @mode != "custom_agent" do %>
+                    <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
+                    <option value="" selected={@selected_agent_id in [nil, ""]}>
+                      {gettext("Auto (recommended)")}
+                    </option>
+                  <% end %>
                   <%= for agent <- @custom_agents do %>
                     <option
                       value={agent_attr(agent, :id)}
@@ -383,6 +392,31 @@ defmodule EvoDashWeb.TaskFormComponents do
                 </select>
               <% end %>
             </div>
+
+            <%!-- Custom Agent mode hint — a single-line explanation under the
+                 controls row (the row stays the card's last element only for
+                 the OTHER modes; in custom mode the hint appends below it,
+                 still inside .input-card normal flow). Two variants: with
+                 agents defined it explains the mode; with none it points to
+                 the Settings → Agents editor. The server also guards submit
+                 (task_submit) so a missing agent can never launch a task. --%>
+            <%= if @mode == "custom_agent" do %>
+              <%= if @custom_agents == [] do %>
+                <p class="px-4 pb-3 text-xs text-warning/80 flex items-center gap-1.5">
+                  <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0" />
+                  <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                  {gettext(
+                    "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
+                  )}
+                </p>
+              <% else %>
+                <p class="px-4 pb-3 text-xs text-base-content/55 flex items-center gap-1.5">
+                  <.icon name="hero-user-circle" class="size-3.5 shrink-0" />
+                  <%!-- zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体" --%>
+                  {gettext("Runs the selected custom agent as the root agent of an evolution task.")}
+                </p>
+              <% end %>
+            <% end %>
             <% end %>
           </div>
 
@@ -415,6 +449,13 @@ defmodule EvoDashWeb.TaskFormComponents do
     Map.get(agent, key) || Map.get(agent, Atom.to_string(key))
   end
 
+  # Custom Agent mode is evolve-family: it runs an :evolve task (existing
+  # repo, reviewable result) with the chosen custom agent as the root agent.
+  # All evolve-gated UI (placeholder, advanced options) must include it.
+  defp evolve_family_mode?(mode) do
+    String.starts_with?(mode, "evolve") or mode == "custom_agent"
+  end
+
   # ---------------------------------------------------------------------------
   # task_options_tab/1 — "Task Options" tab content for the config dropdown.
   #
@@ -425,7 +466,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   #
   # Mode-specific behaviour:
   #   * Build System + Archive — shown for all modes.
-  #   * Starting Node / Starting Commit / Resume from — evolve modes only.
+  #   * Starting Node / Starting Commit / Resume from — evolve-family modes
+  #     only (evolve + custom agent).
   # ---------------------------------------------------------------------------
 
   attr(:mode, :string, default: "genesis_new")
@@ -464,8 +506,8 @@ defmodule EvoDashWeb.TaskFormComponents do
         </div>
       <% end %>
 
-      <%!-- Evolve-specific advanced options --%>
-      <%= if String.starts_with?(@mode, "evolve") do %>
+      <%!-- Evolve-family specific advanced options (evolve + custom agent) --%>
+      <%= if evolve_family_mode?(@mode) do %>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="form-control">
             <label class="label pb-1">
@@ -547,7 +589,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # advanced_options/1 — (legacy) Extracted Advanced Options panel (evolve modes)
+  # advanced_options/1 — (legacy) Extracted Advanced Options panel
+  # (evolve-family modes: evolve + custom agent)
   #
   # Kept for backwards compatibility. The content now lives in task_options_tab/1.
   # Rendered OUTSIDE the task_form's <.form> element in projects_live.ex,
@@ -563,7 +606,7 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   def advanced_options(assigns) do
     ~H"""
-    <%= if String.starts_with?(@mode, "evolve") do %>
+    <%= if evolve_family_mode?(@mode) do %>
       <div class={[
         "rounded-xl bg-base-100 border border-base-200 shadow-sm overflow-hidden transition-opacity",
         @disabled && "opacity-40 pointer-events-none select-none"

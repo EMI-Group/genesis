@@ -518,6 +518,10 @@ defmodule EvoDashWeb.Helpers do
     # zh_CN: Context Tree → "上下文树", Evolution → "演进"
     do: gettext("Context tree detected — Evolution mode selected")
 
+  def mode_info_message("custom_agent"),
+    # zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体）
+    do: gettext("Custom Agent mode selected — requires picking a custom agent")
+
   def mode_info_message(_), do: ""
 
   # ---------------------------------------------------------------------------
@@ -695,6 +699,13 @@ defmodule EvoDashWeb.Helpers do
   def mode_description("evolve_simple"),
     # zh_CN: Agent → "智能体"
     do: gettext("Uses a single top-down agent to modify the codebase based on your objective.")
+
+  def mode_description("custom_agent"),
+    # zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体"
+    do:
+      gettext(
+        "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
+      )
 
   def mode_description(_), do: ""
 

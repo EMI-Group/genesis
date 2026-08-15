@@ -75,12 +75,14 @@ defmodule EvoDashWeb.ProjectsLive do
         <%!--
           --project-accent carries the TASK-MODE accent: genesis_new → red,
           genesis_existing → blue, evolve_simple → green (lighter green when a
-          resume task id is set — evolve only). It drives the objective box
-          (.input-card). --project-ring-accent carries the PROJECT-NAME-HASH
-          accent (ThemeColor.accent_color/1) — stable per project name — and
-          drives the top-bar project ring (.project-palette-trigger:hover).
-          The --project-accent var name is historical; renaming it would
-          require touching assets/css/app.css (out of scope).
+          resume task id is set — evolve only), custom_agent → violet (lighter
+          violet on resume — custom runs are evolve-family). It drives the
+          objective box (.input-card). --project-ring-accent carries the
+          PROJECT-NAME-HASH accent (ThemeColor.accent_color/1) — stable per
+          project name — and drives the top-bar project ring
+          (.project-palette-trigger:hover). The --project-accent var name is
+          historical; renaming it would require touching assets/css/app.css
+          (out of scope).
         --%>
         <div
           id="dashboard-root"
@@ -947,10 +949,30 @@ defmodule EvoDashWeb.ProjectsLive do
 
   @impl true
   def handle_event("task_change", %{"mode" => mode}, socket) do
-    {:noreply,
-     socket
-     |> assign(:task_mode, mode)
-     |> StatePersistence.maybe_persist_state()}
+    # Custom Agent mode requires a chosen agent (task_submit re-validates
+    # it). When the user switches TO custom mode with no agent selected,
+    # default to the first custom agent so the visible select always matches
+    # what will be submitted (the form hides the "Auto (recommended)"
+    # option in this mode).
+    selected_agent_id = socket.assigns[:selected_agent_id]
+
+    agent_id =
+      if mode == "custom_agent" and
+           not (is_binary(selected_agent_id) and String.trim(selected_agent_id) != "") do
+        case socket.assigns[:custom_agents] do
+          [first | _] -> Map.get(first, :id) || Map.get(first, "id")
+          [] -> selected_agent_id
+        end
+      else
+        selected_agent_id
+      end
+
+    socket =
+      socket
+      |> assign(:task_mode, mode)
+      |> assign(:selected_agent_id, agent_id)
+
+    {:noreply, StatePersistence.maybe_persist_state(socket)}
   end
 
   @impl true
@@ -1070,141 +1092,28 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_event("task_submit", %{"prompt" => prompt, "mode" => combined_mode} = params, socket) do
     path = socket.assigns[:active_project_path]
+    selected_agent_id = socket.assigns[:selected_agent_id]
 
-    if is_nil(path) do
-      {:noreply,
-       put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
-    else
-      {task_type, mode} =
-        case combined_mode do
-          "genesis_new" -> {:genesis, "new"}
-          "genesis_existing" -> {:genesis, "existing"}
-          "evolve_simple" -> {:evolve, "simple"}
-          _ -> {:evolve, "simple"}
-        end
+    cond do
+      is_nil(path) ->
+        {:noreply,
+         put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
 
-      node_path = params["node_path"]
-      archive = params["archive"] == "true"
+      # Custom Agent mode must run a user-defined custom agent as the root
+      # agent (the cross-app contract requires the :agent opt) — nil/""/"Auto
+      # (recommended)" can never launch a custom-mode task.
+      combined_mode == "custom_agent" and
+          not (is_binary(selected_agent_id) and String.trim(selected_agent_id) != "") ->
+        # zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体）
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Custom Agent mode requires selecting a custom agent.")
+         )}
 
-      opts = [path: path, mode: mode]
-
-      opts =
-        if task_type == :genesis do
-          Keyword.put(opts, :prompt, String.trim(prompt))
-        else
-          Keyword.put(opts, :objective, String.trim(prompt))
-        end
-
-      build_system_param = params["build_system"]
-
-      opts =
-        if task_type == :genesis and is_binary(build_system_param) and
-             String.trim(build_system_param) != "" do
-          Keyword.put(opts, :build_system, String.to_existing_atom(build_system_param))
-        else
-          opts
-        end
-
-      opts =
-        if task_type == :evolve and is_binary(node_path) and String.trim(node_path) != "" do
-          Keyword.put(opts, :node_path, String.trim(node_path))
-        else
-          opts
-        end
-
-      starting_commit = params["starting_commit"]
-
-      opts =
-        if task_type == :evolve and is_binary(starting_commit) and
-             String.trim(starting_commit) != "" do
-          Keyword.put(opts, :starting_commit, String.trim(starting_commit))
-        else
-          opts
-        end
-
-      # Include foreign repos from project settings for this task
-      foreign_repos = socket.assigns[:foreign_repos] || []
-
-      opts =
-        if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
-
-      opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
-
-      # Thread the selected model profile id into opts (if non-nil/non-empty).
-      # An explicit user choice ALSO sets :model_id_locked => true (the
-      # runtime's model-selection script is deferred for this task); when
-      # "Auto (by rules)" is chosen (selected_model_id is nil/"") neither key
-      # is set and the script (or the default model) decides. The lock is set
-      # unconditionally on an explicit choice per the cross-app contract —
-      # it is a no-op when no script is configured.
-      selected_model_id = socket.assigns[:selected_model_id]
-
-      opts =
-        if is_binary(selected_model_id) and selected_model_id != "" do
-          opts
-          |> Keyword.put(:model_id, selected_model_id)
-          |> Keyword.put(:model_id_locked, true)
-        else
-          opts
-        end
-
-      # Thread the selected custom agent id into opts ("Auto (recommended)" /
-      # nil/"" threads nothing — the runtime spawns its default root agent).
-      selected_agent_id = socket.assigns[:selected_agent_id]
-
-      opts =
-        if is_binary(selected_agent_id) and selected_agent_id != "" do
-          Keyword.put(opts, :agent, selected_agent_id)
-        else
-          opts
-        end
-
-      resume_from = params["resume_from"]
-
-      opts =
-        if task_type == :evolve and is_binary(resume_from) and String.trim(resume_from) != "" do
-          Keyword.put(opts, :resume_from, String.trim(resume_from))
-        else
-          opts
-        end
-
-      start_result =
-        if socket.assigns.remote? do
-          NodeContext.start_task(socket.assigns.current_node, task_type, opts)
-        else
-          TaskRegistry.start_task(task_type, opts)
-        end
-
-      case start_result do
-        {:ok, task} ->
-          {:noreply,
-           socket
-           |> put_flash(
-             :info,
-             gettext("%{type} task started with ID: %{id}",
-               type: String.capitalize(to_string(task_type)),
-               id: task.id
-             )
-           )
-           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
-           # The prompt is intentionally cleared after a successful launch.
-           # assign_form_defaults/1 resets @task_prompt to "" (so the server
-           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
-           # empties the visible textarea — which morphdom skips under
-           # phx-update="ignore" — and removes the persisted draft, so neither
-           # the DOM nor a reload can resurrect the submitted prompt.
-           |> Assigns.assign_form_defaults()
-           |> StatePersistence.maybe_persist_state()
-           |> push_event("clear_prompt", %{})}
-
-        {:error, reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Failed to start task: %{reason}", reason: inspect(reason))
-           )}
-      end
+      true ->
+        do_task_submit(prompt, combined_mode, params, socket)
     end
   end
 
@@ -2086,5 +1995,150 @@ defmodule EvoDashWeb.ProjectsLive do
       show_add_foreign_repo_form: false
     )
     |> Project.maybe_put_flash_mode_info(mode_info)
+  end
+
+  # do_task_submit/4 — builds the start_task opts and launches the task.
+  # Called by handle_event("task_submit") AFTER its guards (project open +
+  # custom mode has a selected agent). Lives down here with the other
+  # private helpers so the handle_event/3 clauses stay grouped.
+  defp do_task_submit(prompt, combined_mode, params, socket) do
+    path = socket.assigns[:active_project_path]
+
+    {task_type, mode} =
+      case combined_mode do
+        "genesis_new" -> {:genesis, "new"}
+        "genesis_existing" -> {:genesis, "existing"}
+        "evolve_simple" -> {:evolve, "simple"}
+        # Custom Agent mode is evolve-family: an :evolve task with the
+        # selected custom agent as the root agent (the core contract's mode
+        # string is "custom" — distinct from the UI's combined-mode string).
+        "custom_agent" -> {:evolve, "custom"}
+        _ -> {:evolve, "simple"}
+      end
+
+    node_path = params["node_path"]
+    archive = params["archive"] == "true"
+
+    opts = [path: path, mode: mode]
+
+    opts =
+      if task_type == :genesis do
+        Keyword.put(opts, :prompt, String.trim(prompt))
+      else
+        Keyword.put(opts, :objective, String.trim(prompt))
+      end
+
+    build_system_param = params["build_system"]
+
+    opts =
+      if task_type == :genesis and is_binary(build_system_param) and
+           String.trim(build_system_param) != "" do
+        Keyword.put(opts, :build_system, String.to_existing_atom(build_system_param))
+      else
+        opts
+      end
+
+    opts =
+      if task_type == :evolve and is_binary(node_path) and String.trim(node_path) != "" do
+        Keyword.put(opts, :node_path, String.trim(node_path))
+      else
+        opts
+      end
+
+    starting_commit = params["starting_commit"]
+
+    opts =
+      if task_type == :evolve and is_binary(starting_commit) and
+           String.trim(starting_commit) != "" do
+        Keyword.put(opts, :starting_commit, String.trim(starting_commit))
+      else
+        opts
+      end
+
+    # Include foreign repos from project settings for this task
+    foreign_repos = socket.assigns[:foreign_repos] || []
+
+    opts =
+      if foreign_repos != [], do: Keyword.put(opts, :foreign_repos, foreign_repos), else: opts
+
+    opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
+
+    # Thread the selected model profile id into opts (if non-nil/non-empty).
+    # An explicit user choice ALSO sets :model_id_locked => true (the
+    # runtime's model-selection script is deferred for this task); when
+    # "Auto (by rules)" is chosen (selected_model_id is nil/"") neither key
+    # is set and the script (or the default model) decides. The lock is set
+    # unconditionally on an explicit choice per the cross-app contract —
+    # it is a no-op when no script is configured.
+    selected_model_id = socket.assigns[:selected_model_id]
+
+    opts =
+      if is_binary(selected_model_id) and selected_model_id != "" do
+        opts
+        |> Keyword.put(:model_id, selected_model_id)
+        |> Keyword.put(:model_id_locked, true)
+      else
+        opts
+      end
+
+    # Thread the selected custom agent id into opts ("Auto (recommended)" /
+    # nil/"" threads nothing — the runtime spawns its default root agent).
+    # Custom Agent mode is validated in handle_event/3 before this point, so
+    # a non-empty agent is guaranteed whenever mode == "custom".
+    selected_agent_id = socket.assigns[:selected_agent_id]
+
+    opts =
+      if is_binary(selected_agent_id) and selected_agent_id != "" do
+        Keyword.put(opts, :agent, selected_agent_id)
+      else
+        opts
+      end
+
+    resume_from = params["resume_from"]
+
+    opts =
+      if task_type == :evolve and is_binary(resume_from) and String.trim(resume_from) != "" do
+        Keyword.put(opts, :resume_from, String.trim(resume_from))
+      else
+        opts
+      end
+
+    start_result =
+      if socket.assigns.remote? do
+        NodeContext.start_task(socket.assigns.current_node, task_type, opts)
+      else
+        TaskRegistry.start_task(task_type, opts)
+      end
+
+    case start_result do
+      {:ok, task} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           gettext("%{type} task started with ID: %{id}",
+             type: String.capitalize(to_string(task_type)),
+             id: task.id
+           )
+         )
+         |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
+         # The prompt is intentionally cleared after a successful launch.
+         # assign_form_defaults/1 resets @task_prompt to "" (so the server
+         # re-seeds data-layout="compact"), and the "clear_prompt" push_event
+         # empties the visible textarea — which morphdom skips under
+         # phx-update="ignore" — and removes the persisted draft, so neither
+         # the DOM nor a reload can resurrect the submitted prompt.
+         |> Assigns.assign_form_defaults()
+         |> StatePersistence.maybe_persist_state()
+         |> push_event("clear_prompt", %{})}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to start task: %{reason}", reason: inspect(reason))
+         )}
+    end
   end
 end
