@@ -230,4 +230,84 @@ defmodule EvoGit.RemoteConnectionTest do
     # by verifying the GenServer's connection flow doesn't produce port conflicts.
     # For now, verify that find_free_port is used and tested independently.
   end
+
+  # The fake ssh below is a POSIX shell script on PATH, which cannot emulate
+  # ssh.exe on Windows — the argv contract is covered on the platforms where
+  # this runs.
+  if not match?({:win32, _}, :os.type()) do
+    describe "run_ssh_command/3" do
+      # Writes a fake `ssh` executable that prints its argv one element per
+      # line and exits 0, puts its dir first on PATH, and restores both on
+      # exit.
+      defp with_fake_ssh(fun) do
+        tmp =
+          Path.join(
+            System.tmp_dir!(),
+            "evogit-test-ssh-#{System.unique_integer([:positive])}"
+          )
+
+        File.mkdir_p!(tmp)
+
+        ssh_path = Path.join(tmp, "ssh")
+
+        File.write!(
+          ssh_path,
+          ~S"""
+          #!/bin/sh
+          printf 'argv=%s\n' "$#"
+          i=1
+          for a in "$@"; do
+            printf 'arg%s=%s\n' "$i" "$a"
+            i=$((i + 1))
+          done
+          exit 0
+          """
+        )
+
+        File.chmod!(ssh_path, 0o755)
+
+        original_path = System.get_env("PATH")
+        new_path = if original_path, do: tmp <> ":" <> original_path, else: tmp
+        System.put_env("PATH", new_path)
+
+        on_exit(fn ->
+          if original_path do
+            System.put_env("PATH", original_path)
+          else
+            System.delete_env("PATH")
+          end
+
+          File.rm_rf!(tmp)
+        end)
+
+        fun.()
+      end
+
+      test "passes the remote command as one argv element (no quotes, no local shell)" do
+        with_fake_ssh(fn ->
+          remote_cmd = "mkdir -p /tmp/g && tar -xJf /tmp/g.tar.xz -C /tmp/g"
+
+          assert {:ok, output, 0} =
+                   EvoGit.RemoteConnection.run_ssh_command("fake@example.com", remote_cmd, 5_000)
+
+          assert output =~ "argv=2\n"
+          assert output =~ "arg1=fake@example.com\n"
+          assert output =~ "arg2=#{remote_cmd}\n"
+          refute output =~ "arg3="
+        end)
+      end
+
+      test "shell metacharacters are not interpreted locally (arrive as one arg)" do
+        with_fake_ssh(fn ->
+          remote_cmd = "echo hi | cat; test -f /tmp/x && echo yes || echo no"
+
+          assert {:ok, output, 0} =
+                   EvoGit.RemoteConnection.run_ssh_command("fake@example.com", remote_cmd, 5_000)
+
+          assert output =~ "argv=2\n"
+          assert output =~ "arg2=#{remote_cmd}\n"
+        end)
+      end
+    end
+  end
 end

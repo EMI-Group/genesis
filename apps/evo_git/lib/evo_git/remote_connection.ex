@@ -583,9 +583,7 @@ defmodule EvoGit.RemoteConnection do
   # (`uname -s && uname -m`). Returns {:ok, daemon_os, platform} or
   # {:error, reason}.
   defp probe_platform(ssh_target) do
-    cmd = "ssh #{ssh_target} 'uname -s && uname -m'"
-
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(ssh_target, "uname -s && uname -m", @cmd_timeout_ms) do
       {:ok, output, 0} ->
         case String.split(String.trim(output), "\n") do
           [os, arch] ->
@@ -666,7 +664,7 @@ defmodule EvoGit.RemoteConnection do
   # Runs a single downloader invocation (`curl` or `wget`) on the remote host
   # via ssh and maps the result to :ok | {:error, {:download_failed, ...}}.
   defp run_remote_download(ssh_target, tool, args) do
-    case run_cmd("ssh #{ssh_target} '#{tool} #{args}'", @download_timeout_ms) do
+    case run_ssh_command(ssh_target, "#{tool} #{args}", @download_timeout_ms) do
       {:ok, _output, 0} -> :ok
       {:ok, _output, status} -> {:error, {:download_failed, {:exit_status, status}}}
       :timeout -> {:error, {:download_failed, :timeout}}
@@ -821,10 +819,11 @@ defmodule EvoGit.RemoteConnection do
 
   # Extracts the uploaded tarball on the remote host.
   defp extract_tarball(ssh_target, remote_tarball, extract_dir) do
-    cmd =
-      "ssh #{ssh_target} 'mkdir -p #{extract_dir} && tar -xJf #{remote_tarball} -C #{extract_dir}'"
-
-    case run_cmd(cmd, @scp_timeout_ms) do
+    case run_ssh_command(
+           ssh_target,
+           "mkdir -p #{extract_dir} && tar -xJf #{remote_tarball} -C #{extract_dir}",
+           @scp_timeout_ms
+         ) do
       {:ok, _output, 0} -> :ok
       {:ok, _output, status} -> {:error, {:extract_failed, status}}
       :timeout -> {:error, {:extract_failed, :timeout}}
@@ -833,9 +832,7 @@ defmodule EvoGit.RemoteConnection do
 
   # Sets the remote launcher executable via `ssh <target> 'chmod +x <path>'`.
   defp chmod_executable(ssh_target, launcher_path) do
-    cmd = "ssh #{ssh_target} 'chmod +x #{launcher_path}'"
-
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(ssh_target, "chmod +x #{launcher_path}", @cmd_timeout_ms) do
       {:ok, _output, 0} -> :ok
       {:ok, _output, status} -> {:error, {:chmod_failed, status}}
       :timeout -> {:error, {:chmod_failed, :timeout}}
@@ -850,7 +847,7 @@ defmodule EvoGit.RemoteConnection do
     remote_config_dir = remote_config_dir(os)
 
     # Ensure the remote config directory exists.
-    run_cmd("ssh #{ssh_target} 'mkdir -p #{remote_config_dir}'", @cmd_timeout_ms)
+    run_ssh_command(ssh_target, "mkdir -p #{remote_config_dir}", @cmd_timeout_ms)
 
     for path <- [EvoGit.Config.config_path(), EvoGit.Config.credentials_path()] do
       if File.exists?(path) do
@@ -885,9 +882,11 @@ defmodule EvoGit.RemoteConnection do
 
   # Checks whether a file exists on the remote host.
   defp remote_file_exists?(ssh_target, remote_file) do
-    cmd = "ssh #{ssh_target} 'test -f #{remote_file} && echo yes || echo no'"
-
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(
+           ssh_target,
+           "test -f #{remote_file} && echo yes || echo no",
+           @cmd_timeout_ms
+         ) do
       {:ok, output, 0} -> String.trim(output) == "yes"
       _ -> false
     end
@@ -896,9 +895,7 @@ defmodule EvoGit.RemoteConnection do
   # Detects the remote OS via `ssh <target> 'uname -s'`.
   # Returns {:ok, "Linux"} or {:ok, "Darwin"} or {:error, :unsupported_os, os}.
   defp detect_os(ssh_target) do
-    cmd = "ssh #{ssh_target} 'uname -s'"
-
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(ssh_target, "uname -s", @cmd_timeout_ms) do
       {:ok, output, 0} ->
         os = String.trim(output)
 
@@ -931,9 +928,12 @@ defmodule EvoGit.RemoteConnection do
   # Checks if the genesis-remote daemon is already running on the remote.
   defp daemon_running?(ssh_target, "Linux", target) do
     unit = "genesis-remote-#{target.id}"
-    cmd = "ssh #{ssh_target} 'systemctl --user is-active #{unit} 2>/dev/null'"
 
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(
+           ssh_target,
+           "systemctl --user is-active #{unit} 2>/dev/null",
+           @cmd_timeout_ms
+         ) do
       {:ok, output, _status} -> String.trim(output) == "active"
       :timeout -> false
     end
@@ -941,9 +941,12 @@ defmodule EvoGit.RemoteConnection do
 
   defp daemon_running?(ssh_target, "Darwin", target) do
     label = "com.genesis.remote.#{target.id}"
-    cmd = "ssh #{ssh_target} 'launchctl list #{label} 2>/dev/null'"
 
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(
+           ssh_target,
+           "launchctl list #{label} 2>/dev/null",
+           @cmd_timeout_ms
+         ) do
       {:ok, output, _status} -> String.trim(output) != ""
       :timeout -> false
     end
@@ -978,9 +981,12 @@ defmodule EvoGit.RemoteConnection do
   # Fetches diagnostic status output for inclusion in the error reason.
   defp fetch_daemon_status(ssh_target, "Linux", target) do
     unit = "genesis-remote-#{target.id}"
-    cmd = "ssh #{ssh_target} 'systemctl --user status #{unit} 2>&1 | tail -20'"
 
-    case run_cmd(cmd, @cmd_timeout_ms) do
+    case run_ssh_command(
+           ssh_target,
+           "systemctl --user status #{unit} 2>&1 | tail -20",
+           @cmd_timeout_ms
+         ) do
       {:ok, output, _status} -> String.trim(output)
       :timeout -> "status unavailable (timeout)"
     end
@@ -1005,15 +1011,17 @@ defmodule EvoGit.RemoteConnection do
     # Clear any stale failed/inactive unit so systemd-run can create a fresh one.
     # reset-failed is idempotent: exits 0 if nothing to clear, non-zero if unit
     # never existed — both are acceptable here.
-    reset_cmd =
-      "ssh #{ssh_target} 'systemctl --user reset-failed #{unit} 2>/dev/null; true'"
+    run_ssh_command(
+      ssh_target,
+      "systemctl --user reset-failed #{unit} 2>/dev/null; true",
+      @cmd_timeout_ms
+    )
 
-    run_cmd(reset_cmd, @cmd_timeout_ms)
-
-    cmd =
-      "ssh #{ssh_target} 'systemd-run --user --unit=#{unit} --setenv=RELEASE_NODE=#{node} --setenv=RELEASE_COOKIE=#{cookie} #{launcher_path} start'"
-
-    case run_cmd(cmd, @launch_receive_timeout_ms) do
+    case run_ssh_command(
+           ssh_target,
+           "systemd-run --user --unit=#{unit} --setenv=RELEASE_NODE=#{node} --setenv=RELEASE_COOKIE=#{cookie} #{launcher_path} start",
+           @launch_receive_timeout_ms
+         ) do
       {:ok, _output, 0} ->
         :ok
 
@@ -1090,10 +1098,11 @@ defmodule EvoGit.RemoteConnection do
     scp_cmd = "scp #{plist_path} #{ssh_target}:#{remote_plist}"
 
     with {:ok, _output, 0} <- run_cmd(scp_cmd, @scp_timeout_ms) do
-      load_cmd =
-        "ssh #{ssh_target} 'launchctl unload #{remote_plist} 2>/dev/null; launchctl load #{remote_plist}'"
-
-      case run_cmd(load_cmd, @cmd_timeout_ms) do
+      case run_ssh_command(
+             ssh_target,
+             "launchctl unload #{remote_plist} 2>/dev/null; launchctl load #{remote_plist}",
+             @cmd_timeout_ms
+           ) do
         {:ok, _output, 0} -> :ok
         {:ok, _output, status} -> {:error, {:daemon_launch_failed, status}}
         :timeout -> {:error, {:daemon_launch_failed, :timeout}}
@@ -1150,6 +1159,29 @@ defmodule EvoGit.RemoteConnection do
   # EXIT messages, so we can collect stdout.
   defp run_cmd(cmd, timeout) do
     port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
+    collect_port_output(port, timeout, "")
+  end
+
+  # Runs a REMOTE command over SSH by passing it as a single argv element to
+  # the `ssh` executable (`{:spawn_executable, ...}` — no shell involved).
+  # Remote commands must NEVER be wrapped in single/double quotes inside a
+  # `{:spawn, String}`: on Windows the CRT argv parser only consumes DOUBLE
+  # quotes, so single quotes travel to ssh.exe and the remote shell parses the
+  # whole quoted string as ONE command name ("No such file or directory"); on
+  # Unix spawn strings go through `/bin/sh -c`, so double quotes would trigger
+  # local `$` expansion. OpenSSH joins its argv entries with single spaces and
+  # the remote shell re-parses them, preserving the command verbatim — the
+  # remote commands used here contain no double quotes or `$`.
+  @doc false
+  def run_ssh_command(ssh_target, remote_cmd, timeout) do
+    ssh = System.find_executable("ssh") || "ssh"
+
+    port =
+      Port.open(
+        {:spawn_executable, ssh},
+        [:binary, :exit_status, :stream, {:args, [ssh_target, remote_cmd]}]
+      )
+
     collect_port_output(port, timeout, "")
   end
 
