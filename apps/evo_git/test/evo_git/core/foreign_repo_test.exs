@@ -26,6 +26,71 @@ defmodule EvoGit.Core.ForeignRepoTest do
     end
   end
 
+  describe "normalize/1" do
+    test "passes ForeignRepo structs through unchanged" do
+      repo = %ForeignRepo{id: "a", root: "/abs/a", description: "desc"}
+      assert ForeignRepo.normalize(repo) == repo
+    end
+
+    test "converts atom-keyed maps" do
+      assert %ForeignRepo{id: "a", root: "/abs/a", description: "desc"} =
+               ForeignRepo.normalize(%{id: "a", root: "/abs/a", description: "desc"})
+    end
+
+    test "converts string-keyed maps" do
+      assert %ForeignRepo{id: "a", root: "/abs/a", description: "desc"} =
+               ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a", "description" => "desc"})
+    end
+
+    test "uses the \"path\" key as a root fallback" do
+      assert %ForeignRepo{id: "a", root: "/abs/a", description: nil} =
+               ForeignRepo.normalize(%{"id" => "a", "path" => "/abs/a"})
+    end
+
+    test "uses the :path key as a root fallback" do
+      assert %ForeignRepo{id: "a", root: "/abs/a", description: nil} =
+               ForeignRepo.normalize(%{id: "a", path: "/abs/a"})
+    end
+
+    test "prefers \"root\" over \"path\" when both are present" do
+      assert %ForeignRepo{id: "a", root: "/abs/root"} =
+               ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/root", "path" => "/abs/path"})
+    end
+
+    test "defaults description to nil when absent or empty" do
+      assert %ForeignRepo{description: nil} =
+               ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a"})
+
+      assert %ForeignRepo{description: nil} =
+               ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a", "description" => ""})
+    end
+
+    test "expands the root path via new/3" do
+      assert %ForeignRepo{root: root} =
+               ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/../abs/a"})
+
+      assert root == Path.expand("/abs/../abs/a")
+    end
+
+    test "returns nil for non-map input" do
+      assert ForeignRepo.normalize(nil) == nil
+      assert ForeignRepo.normalize("not-a-repo") == nil
+      assert ForeignRepo.normalize([:a]) == nil
+    end
+
+    test "returns nil when id is missing or blank" do
+      assert ForeignRepo.normalize(%{"root" => "/abs/a"}) == nil
+      assert ForeignRepo.normalize(%{"id" => "", "root" => "/abs/a"}) == nil
+      assert ForeignRepo.normalize(%{root: "/abs/a"}) == nil
+    end
+
+    test "returns nil when no root or path key exists" do
+      assert ForeignRepo.normalize(%{"id" => "a"}) == nil
+      assert ForeignRepo.normalize(%{"id" => "a", "description" => "desc"}) == nil
+      assert ForeignRepo.normalize(%{"id" => "a", "root" => ""}) == nil
+    end
+  end
+
   describe "primary_id/0" do
     test "returns \"primary\"" do
       assert ForeignRepo.primary_id() == "primary"

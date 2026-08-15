@@ -58,6 +58,63 @@ defmodule EvoGit.Core.ForeignRepo do
   end
 
   @doc """
+  Normalizes any persisted/CLI foreign-repo shape into a `%ForeignRepo{}` struct.
+
+  Returns the struct, or `nil` when the input is unparseable (non-map input,
+  missing/empty `id`, or no root under any of `"root"`/`"path"`/`:root`/`:path`).
+  Callers that map a list through this function drop the `nil` entries.
+
+  ## Why this exists
+
+  `TaskInfo.opts` are persisted to SQLite via `EvoGit.Store.Codec.encode_opts/1`.
+  Because `%ForeignRepo{}` derives `Jason.Encoder`, the JSON round-trip returns
+  `:foreign_repos` entries as STRING-keyed maps
+  (`%{"id" => ..., "root" => ..., "description" => ...}`). Code that dot-accesses
+  `.id`/`.root` on those raw maps (e.g. `EvoGit.Runtime.Helpers.merge_foreign_repos/2`)
+  crashes with a `KeyError`. This function coerces every persisted/CLI shape back
+  into a struct before use. `EvoGit.TaskRegistry.MergeContext` and
+  `EvoGit.Runtime.Helpers` apply it centrally.
+
+  ## Examples
+
+      iex> ForeignRepo.normalize(%ForeignRepo{id: "a", root: "/abs/a"})
+      %ForeignRepo{id: "a", root: "/abs/a", description: nil}
+
+      iex> ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a", "description" => "desc"})
+      %ForeignRepo{id: "a", root: "/abs/a", description: "desc"}
+
+      iex> ForeignRepo.normalize(%{id: "a", path: "/abs/a"})
+      %ForeignRepo{id: "a", root: "/abs/a", description: nil}
+
+      iex> ForeignRepo.normalize(%{"id" => "a"})
+      nil
+  """
+  @spec normalize(term()) :: t() | nil
+  def normalize(%__MODULE__{} = repo), do: repo
+
+  def normalize(repo) when is_map(repo) do
+    id = Map.get(repo, "id") || Map.get(repo, :id)
+
+    root =
+      Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root) ||
+        Map.get(repo, :path)
+
+    description = Map.get(repo, "description") || Map.get(repo, :description)
+
+    with true <- is_binary(id) and id != "",
+         true <- is_binary(root) and root != "" do
+      opts =
+        if is_binary(description) and description != "", do: [description: description], else: []
+
+      new(id, root, opts)
+    else
+      _ -> nil
+    end
+  end
+
+  def normalize(_other), do: nil
+
+  @doc """
   Returns the primary repo identifier.
   """
   @spec primary_id() :: String.t()

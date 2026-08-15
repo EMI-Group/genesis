@@ -223,4 +223,149 @@ defmodule EvoGit.RemoteBootstrapTest do
                ])
     end
   end
+
+  describe "nixos_detect_command/0" do
+    test "checks /etc/nixos as the primary marker and echoes yes/no" do
+      cmd = RemoteBootstrap.nixos_detect_command()
+
+      assert cmd =~ "test -d /etc/nixos"
+      assert cmd =~ "echo yes"
+      assert cmd =~ "echo no"
+      assert cmd =~ "ID=nixos"
+      assert cmd =~ "/etc/os-release"
+    end
+
+    test "is a single one-shot command (no embedded newlines)" do
+      cmd = RemoteBootstrap.nixos_detect_command()
+
+      refute cmd =~ "\n"
+    end
+  end
+
+  describe "nixos_patch_script/1" do
+    @launcher "/tmp/genesis_remote/bin/genesis_remote"
+
+    test "interpolates the launcher path and derives the release root" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ @launcher
+      assert script =~ ~S|RELEASE_ROOT="$(dirname "$(dirname "$LAUNCHER")")"|
+      assert script =~ ~S|PATCH_DIR="$RELEASE_ROOT/.nixos-patch"|
+      assert script =~ ~S|mkdir -p "$PATCH_DIR"|
+    end
+
+    test "runs all seven nix-builds with 2>&1" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|nix-build "$NIXPKGS" -A patchelf --out-link "$PATCH_DIR/patchelf" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A bintools --out-link "$PATCH_DIR/bintools" 2>&1|
+
+      assert script =~
+               ~S|nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1|
+
+      assert script =~ ~S|nix-build "$NIXPKGS" -A openssl.out --out-link "$PATCH_DIR/openssl" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A zlib --out-link "$PATCH_DIR/zlib" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A ncurses --out-link "$PATCH_DIR/ncurses" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A pcre2.out --out-link "$PATCH_DIR/pcre2" 2>&1|
+      # nixpkgs comes from NIX_PATH via the angle-bracket lookup path
+      assert script =~ ~S|NIXPKGS="<nixpkgs>"|
+    end
+
+    test "aliases the cc-lib out-link so the RPATH cc entry always resolves" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      # nix-build names the out-link "$PATCH_DIR/cc-lib" because the attr
+      # selects the non-default `lib` output; the script aliases it as cc
+      assert script =~ ~S|if [ ! -e "$PATCH_DIR/cc" ]; then|
+      assert script =~ ~S|ln -s "$PATCH_DIR/cc-lib" "$PATCH_DIR/cc"|
+      assert script =~ ~S|fi|
+    end
+
+    test "reads the interpreter from the bintools nix-support file" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|INTERPRETER="$(cat "$PATCH_DIR/bintools/nix-support/dynamic-linker")"|
+    end
+
+    test "sets the rpath from cc, openssl, zlib, ncurses and pcre2 lib dirs" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~
+               ~S|RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib:$PATCH_DIR/zlib/lib:$PATCH_DIR/ncurses/lib:$PATCH_DIR/pcre2/lib"|
+    end
+
+    test "loops over release files with an ELF magic check and invokes patchelf" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|for file in $(find "$RELEASE_ROOT" -type f); do|
+      assert script =~ ~S|head -c 4 "$file"|
+      assert script =~ ~S|od -An -tx1|
+      assert script =~ ~S|tr -d ' \n'|
+      assert script =~ ~S|7f454c46|
+
+      assert script =~
+               ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"|
+    end
+
+    test "guards the full patch behind a PT_INTERP probe" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~
+               ~S|if "$PATCH_DIR/patchelf/bin/patchelf" --print-interpreter "$file" >/dev/null 2>&1; then|
+    end
+
+    test "patches shared libraries rpath-only" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      # shared libs are distinguished from static-pie binaries by NEEDED deps
+      assert script =~ ~S|"$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null \| grep -q NEEDED|
+      assert script =~ ~S|echo "nixos-patch: setting rpath on $file"|
+      assert script =~ ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-rpath "$RPATH" "$file"|
+    end
+
+    test "skips truly static binaries" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|echo "nixos-patch: skipping static binary $file"|
+    end
+
+    test "echoes nixos-patch progress markers and uses set -e" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ "nixos-patch: building patchelf..."
+      assert script =~ "nixos-patch: building bintools..."
+      assert script =~ "nixos-patch: building stdenv.cc.cc.lib..."
+      assert script =~ "nixos-patch: building openssl..."
+      assert script =~ "nixos-patch: building zlib..."
+      assert script =~ "nixos-patch: building ncurses..."
+      assert script =~ "nixos-patch: building pcre2..."
+      assert script =~
+               ~S|echo "nixos-patch: patched $count executables, set rpath on $rpath_count ELF files"|
+      assert script =~ "set -e"
+    end
+  end
+
+  describe "bash_wrap/1" do
+    test "wraps a plain command" do
+      assert RemoteBootstrap.bash_wrap("cmd") == "/usr/bin/env bash -c 'cmd'"
+    end
+
+    test "escapes embedded single quotes (close-quote/escaped-quote/reopen-quote)" do
+      assert RemoteBootstrap.bash_wrap(RemoteBootstrap.nixos_detect_command()) ==
+               "/usr/bin/env bash -c 'test -d /etc/nixos && echo yes || grep -qi '\\''^ID=nixos'\\'' /etc/os-release 2>/dev/null && echo yes || echo no'"
+    end
+
+    test "wraps the NixOS patch script, escaping its single quotes" do
+      wrapped = RemoteBootstrap.bash_wrap(RemoteBootstrap.nixos_patch_script(@launcher))
+
+      assert String.starts_with?(wrapped, "/usr/bin/env bash -c '#!/bin/sh")
+      # the script's own single quotes survive as '\'' escape sequences
+      assert String.contains?(wrapped, ~S|tr -d '\'' \n'\''|)
+      refute String.contains?(wrapped, ~S|tr -d ' \n'|)
+    end
+
+    test "wraps an empty command" do
+      assert RemoteBootstrap.bash_wrap("") == "/usr/bin/env bash -c ''"
+    end
+  end
 end

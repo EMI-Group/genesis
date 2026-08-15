@@ -19,7 +19,6 @@ None — leaf directory (four modules: `application.ex`, `node_context.ex`, `dir
   3. `Task.Supervisor` (registered as `EvoDash.TaskSupervisor` — used by `SettingsLive` to spawn the async LLM "Test Connection" task)
   4. `EvoDashWeb.Endpoint`
 - Note: `EvoGit.Store`, the task-registry `Registry`, and `EvoGit.TaskRegistry` are children of `EvoGit.Application`'s supervision tree, not of this supervisor.
-- Configures Floki to use the html5ever Rust NIF parser for robust HTML parsing of Lumis syntax-highlighter output.
 
 ### `EvoDash.NodeContext` (`node_context.ex`)
 

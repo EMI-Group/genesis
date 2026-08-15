@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-FBU32lAXfWOMxtQaWnSpilaq65Lhw9V9SWPp3BN1rpg=";
+    hash = "sha256-jGEdVs9VwfRrKaO2gthz/B0ci3Fhv4s+aq0hw1yVx4w=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -74,58 +74,22 @@ let
   #
   # To update hashes: use lib.fakeHash, build, then copy the reported hashes.
   precompiled_nifs = [
-    # ── lumis 0.6.3 ──────────────────────────────────────────────
+    # ── mdex_native 0.2.8 (base) ──────────────────────────────────
     {
-      name = "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
-      version = "0.6.3";
+      name = "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}.so.tar.gz";
+      version = "0.2.8";
       file = fetchurl {
         url =
-          "https://github.com/leandrocp/lumis/releases/download/hex-lumis%2Fv0.6.3/"
-          + "liblumis_nif-v0.6.3-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = "sha256-SqvVkgNljREPvsg2jKAN7BpWZmgGMAUxZ/neUTrXXiA=";
+          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.8/"
+          + "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}.so.tar.gz";
+        hash = "sha256-ljI4QU6lprtFRZhsCcgl3/zXXpMn25q3MG+xqmy9TOw=";
       };
     }
 
-    # ── mdex_native 0.2.7 (base) ──────────────────────────────────
-    {
-      name = "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
-      version = "0.2.7";
-      file = fetchurl {
-        url =
-          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
-          + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = "sha256-8MvCRKDqtgM/lf3A3F7MxTRZA4EFTlG94xz0TJob6AY=";
-      };
-    }
-
-    # ── mdex_native 0.2.7 (--lumis variant) ──────────────────────
-    # This variant is required when lumis is also a dependency (which it is
-    # in the Genesis project). Without it, mdex_native fails to load because
-    # the rustler_precompiled loader looks for the feature-specific binary.
-    {
-      name = "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
-      version = "0.2.7";
-      file = fetchurl {
-        url =
-          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.7/"
-          + "libmdex_native_nif-v0.2.7-nif-2.15-${rustTarget}--lumis.so.tar.gz";
-        hash = "sha256-02P3ONjNGMkrz2+LG7cGC9IDowCWBpGG+OcSui45TKc=";
-      };
-    }
-
-    # ── html5ever 0.18.0 ─────────────────────────────────────────═
-    # Note: this package lives under rusterlium/html5ever_elixir, not
-    # leandrocp/html5ever as one might expect.
-    {
-      name = "libhtml5ever_nif-v0.18.0-nif-2.15-${rustTarget}.so.tar.gz";
-      version = "0.18.0";
-      file = fetchurl {
-        url =
-          "https://github.com/rusterlium/html5ever_elixir/releases/download/v0.18.0/"
-          + "libhtml5ever_nif-v0.18.0-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = "sha256-7BoEq16kT9dRm0B/bljH2bDX/UgDHcnjliOg3TtigmI=";
-      };
-    }
+    # mdex_native "--lumis" variant: removed together with the lumis
+    # dependency — it is only selected by the unset compile-time config
+    # Application.compile_env(:mdex_native, :syntax_highlighter, nil), so the
+    # base mdex variant above is the only one ever used. Do not reintroduce it.
 
     # ── xqlite 0.10.0 ───────────────────────────────────────────═
     # Note: this package lives under dimitarvp/xqlite, not leandrocp/xqlite.

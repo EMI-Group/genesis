@@ -244,7 +244,8 @@ defmodule EvoDashWeb.SettingsLive do
                                 :detecting_os -> 6
                                 :copying_config -> 7
                                 :generating_cookie -> 8
-                                :starting_daemon -> 9
+                                :patching_binaries -> 9
+                                :starting_daemon -> 10
                                 _ -> -1
                               end %>
                             <ul class="steps steps-horizontal text-xs w-full">
@@ -295,6 +296,12 @@ defmodule EvoDashWeb.SettingsLive do
                               </li>
                               <li class={
                                 ["step"] ++ if(stage_idx >= 9, do: ["step-primary"], else: [])
+                              }>
+                                <%!-- 在NixOS远程主机上用patchelf修补genesis_remote的ELF二进制 --%>
+                                {gettext("Patching binaries")}
+                              </li>
+                              <li class={
+                                ["step"] ++ if(stage_idx >= 10, do: ["step-primary"], else: [])
                               }>
                                 {gettext("Starting daemon")}
                               </li>

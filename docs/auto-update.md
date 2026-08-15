@@ -189,7 +189,7 @@ Two viable options (or both — the Cloudflare worker can front either):
 | # | Prerequisite | Effort | Blocker for |
 |---|---|---|---|
 | 1 | **Minisign keypair** (`tauri signer generate`) + `TAURI_SIGNING_PRIVATE_KEY`/`TAURI_SIGNING_PUBLIC_KEY` CI secrets; pubkey embedded in `tauri.conf.json` | Low | All platforms' in-app updater |
-| 2 | **Manifest + signature generation** step in `publish-release` (uses `github.event.release.tag_name` or a VERSION read) | Low-Med | Feed existence |
+| 2 | **Manifest + signature generation** step in `publish-release` (version from the prepare job's `release_version` output — the tag minus `v`) | Low-Med | Feed existence |
 | 3 | **Windows Authenticode cert** (e.g. Azure Trusted Signing or an EV cert) + signtool step | Med (cost/ownership) | Windows trust (SmartScreen) |
 | 4 | **macOS `.app.zip` stapling** (extend `notarize-macos-dmg.sh` to the zip) | Low | macOS smooth UX (recommended) |
 | 5 | **Linux apt/dnf repo hosting + GPG key** | Med | deb/rpm "notify, don't self-install" strategy |
@@ -233,8 +233,8 @@ Two viable options (or both — the Cloudflare worker can front either):
 5. **Linux x64**: the AppImage updater payload is produced automatically; **arm64 has NO AppImage** → no updater entry for arm64 (deb/rpm only, package-manager path §3).
 
 ### 10.2 publish-release job — manifest generation
-- New step between the artifact staging (L745-750) and the upload step (L752-757, `softprops/action-gh-release` with `files: dist/*`):
-  - `version` = `github.event.release.tag_name` (already read at L99; strip a leading `v`).
+- New step between the artifact download (L766-771, `actions/download-artifact`) and the upload step (L784-792, `softprops/action-gh-release` with `files: dist/*`, creating a draft that `gh release edit --draft=false` flips public at L794-801):
+  - `version` = the prepare job's `release_version` output (tag minus `v`, computed in its `meta` step).
   - Collect the updater payloads present in `dist/` — `darwin-aarch64` → `.app.tar.gz`, `linux-x86_64` → AppImage `.tar.gz` (x64 only), `windows-x86_64` → NSIS exe. For each: `url` = permanent `https://github.com/<owner>/<repo>/releases/download/<tag>/<filename>` (or `releases/latest/download/<filename>`), `signature` = **full contents of the `.sig` file** (including the `untrusted comment:` header lines — the plugin requires the whole file content, not a URL).
   - Write `dist/latest.json`:
     ```json
@@ -252,7 +252,7 @@ Two viable options (or both — the Cloudflare worker can front either):
   - It is then uploaded automatically by `files: dist/*`. The server must NOT 204 this file (only a "no update" response may be 204); a missing platform entry means "no update for this platform".
 - **Feed URL for the app**: `https://github.com/<owner>/<repo>/releases/latest/download/latest.json` (permanent — unversioned asset names are already this repo's convention). The genesis.evox.group Cloudflare worker (mainland-China proxying) is the later upgrade path (§5.2).
 - **Excluded from the manifest**: `.msi`, `.deb`, `.rpm`, `.dmg`, portable `.tar.gz`, and all `genesis_remote_*` tarballs (remote daemons have their own deferred stop→swap→start flow, §6).
-- The workflow never reads `VERSION` today (verified — version is baked at build time; `release.tag_name` is the manifest's version source; keep it that way).
+- The workflow never reads `VERSION` today (verified — version is baked at build time; the tag-derived `release_version` output is the manifest's version source; keep it that way).
 
 ---
 

@@ -347,5 +347,102 @@ defmodule EvoGit.Runtime.HelpersTest do
       shared = Enum.find(result, &(&1.id == "shared"))
       assert shared.root == "/cli/path"
     end
+
+    test "normalizes string-keyed maps from persisted-shape opts", %{tmp_dir: tmp_dir} do
+      File.write!(
+        Path.join(tmp_dir, "genesis.toml"),
+        """
+        [foreign_repos.toml1]
+        path = "/abs/path/toml1"
+        """
+      )
+
+      result =
+        Helpers.load_foreign_repos(
+          tmp_dir,
+          foreign_repos: [%{"id" => "cli1", "root" => "/cli/path", "description" => nil}]
+        )
+
+      assert length(result) == 2
+      assert Enum.all?(result, &match?(%ForeignRepo{}, &1))
+
+      assert %ForeignRepo{id: "cli1", root: "/cli/path", description: nil} =
+               Enum.find(result, &(&1.id == "cli1"))
+    end
+  end
+
+  # ==========================================================================
+  # merge_foreign_repos/2
+  # ==========================================================================
+  describe "merge_foreign_repos/2" do
+    test "accepts structs in both positions" do
+      result =
+        Helpers.merge_foreign_repos(
+          [%ForeignRepo{id: "a", root: "/toml/a"}],
+          [%ForeignRepo{id: "b", root: "/cli/b"}]
+        )
+
+      assert Enum.map(result, & &1.id) |> Enum.sort() == ["a", "b"]
+      assert Enum.all?(result, &match?(%ForeignRepo{}, &1))
+    end
+
+    test "accepts atom-keyed maps" do
+      result =
+        Helpers.merge_foreign_repos(
+          [%{id: "a", root: "/toml/a", description: "toml desc"}],
+          [%{id: "b", root: "/cli/b"}]
+        )
+
+      assert [
+               %ForeignRepo{id: "a", root: "/toml/a", description: "toml desc"},
+               %ForeignRepo{id: "b", root: "/cli/b", description: nil}
+             ] = result
+    end
+
+    test "accepts string-keyed maps" do
+      result =
+        Helpers.merge_foreign_repos(
+          [%{"id" => "a", "root" => "/toml/a"}],
+          [%{"id" => "b", "path" => "/cli/b", "description" => "cli desc"}]
+        )
+
+      assert [
+               %ForeignRepo{id: "a", root: "/toml/a"},
+               %ForeignRepo{id: "b", root: "/cli/b", description: "cli desc"}
+             ] = result
+    end
+
+    test "accepts mixed lists in both positions" do
+      result =
+        Helpers.merge_foreign_repos(
+          [%ForeignRepo{id: "s1", root: "/toml/s1"}, %{"id" => "s2", "root" => "/toml/s2"}],
+          [%{id: "s3", root: "/cli/s3"}, %{"id" => "s4", "path" => "/cli/s4"}]
+        )
+
+      assert Enum.map(result, & &1.id) |> Enum.sort() == ["s1", "s2", "s3", "s4"]
+      assert Enum.all?(result, &match?(%ForeignRepo{}, &1))
+    end
+
+    test "dedupes by id with CLI precedence across shapes" do
+      # TOML carries a string-keyed map, CLI carries a struct for the same id —
+      # the CLI struct must win.
+      result =
+        Helpers.merge_foreign_repos(
+          [%{"id" => "x", "root" => "/toml/x", "description" => "toml desc"}],
+          [%ForeignRepo{id: "x", root: "/cli/x"}]
+        )
+
+      assert [%ForeignRepo{id: "x", root: "/cli/x", description: nil}] = result
+    end
+
+    test "drops unparseable entries from both lists" do
+      result =
+        Helpers.merge_foreign_repos(
+          [%{"id" => "a", "root" => "/toml/a"}, %{"id" => "no-root"}, nil, "junk"],
+          [%ForeignRepo{id: "b", root: "/cli/b"}, %{root: "/no/id"}]
+        )
+
+      assert Enum.map(result, & &1.id) |> Enum.sort() == ["a", "b"]
+    end
   end
 end

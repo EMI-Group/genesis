@@ -47,6 +47,7 @@ Struct: `id` (string), `root` (absolute path), `name` (optional string).
 | Function | Description |
 |---|---|
 | `new/3` | Creates a ForeignRepo struct with expanded root path |
+| `normalize/1` | Coerces any persisted/CLI shape into a `%ForeignRepo{}` struct (`%ForeignRepo{}` passthrough; atom-keyed or string-keyed maps; `"path"`/`:path` accepted as a root fallback); returns `nil` for unparseable input (callers map lists through it and drop `nil`s). Exists because `TaskInfo.opts` persist to SQLite via `Store.Codec` JSON and come back with `:foreign_repos` as STRING-keyed maps — raw dot-access on those crashes with `KeyError`. Used centrally by `TaskRegistry.MergeContext` and `Runtime.Helpers.merge_foreign_repos/2` |
 | `primary_id/0` | Returns the primary repo identifier (`"primary"`) |
 | `primary?/1` | Checks if a repo id is the primary repo |
 | `normalize_path/2` | Normalizes an absolute path to a relative path within this repo |

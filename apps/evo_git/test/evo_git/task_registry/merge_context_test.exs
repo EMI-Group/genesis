@@ -37,10 +37,19 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
           ]
         )
 
-      # Persisted round trip: structs in opts decode as plain maps.
+      # Persisted round trip: structs in opts decode as string-keyed maps.
       fetched = TaskRegistry.get_task(prev.id)
       assert %TaskInfo{} = fetched
-      assert is_list(Keyword.get(fetched.opts, :foreign_repos))
+      fetched_repos = Keyword.get(fetched.opts, :foreign_repos)
+      assert is_list(fetched_repos)
+
+      assert [
+               %{
+                 "id" => "reference",
+                 "root" => "/tmp/reference-proj",
+                 "description" => "Reference implementation"
+               }
+             ] = fetched_repos
 
       result =
         MergeContext.apply_merge_context(caller_opts(prev.id), "next_task_id", prev.id, "main")
@@ -56,14 +65,39 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
       assert Keyword.get(result, :starting_commit) == "commit222"
       assert Keyword.get(result, :starting_commit) == fetched.commit_sha
 
-      # The previous task's foreign repos are carried over verbatim.
-      assert Keyword.get(result, :foreign_repos) == Keyword.get(fetched.opts, :foreign_repos)
+      # The previous task's foreign repos are carried over as %ForeignRepo{}
+      # structs — the string-keyed maps from the store must be normalized back
+      # (carrying them raw would crash downstream dot-access in Runtime.Helpers).
+      assert Keyword.get(result, :foreign_repos) == foreign_repos
 
       # Objective = context block + blank line + original objective.
       block = MergeContext.build_merge_context_block(fetched, "main")
       objective = Keyword.get(result, :objective)
       assert String.starts_with?(objective, block)
       assert objective == block <> "\n\n" <> "Resolve the conflict on the merged code."
+    end
+
+    test "normalizes persisted string-keyed foreign repo maps and drops unparseable entries" do
+      persisted_repos = [
+        %{"id" => "x", "root" => "/abs/path", "description" => nil},
+        %{"id" => "bad"}
+      ]
+
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: persisted_repos
+          ]
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      assert Keyword.get(result, :foreign_repos) == [
+               %ForeignRepo{id: "x", root: "/abs/path", description: nil}
+             ]
     end
 
     test "preserves the caller's starting_commit when the previous task's commit_sha is nil or empty" do

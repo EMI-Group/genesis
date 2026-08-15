@@ -24,10 +24,20 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
+// highlight.js + language packs. The cdnjs language packs are IIFEs that
+// self-register on the GLOBAL `hljs` (no ES exports), so highlight_setup.js
+// must evaluate BEFORE the pack import below (ESM evaluation is depth-first
+// in import order) — it exposes the imported instance as `window.hljs`.
+// The pack then registers "elixir" on that same instance, which the
+// DiffViewer hook also imports (bundler dedup → one shared instance).
+import hljs from "../vendor/highlight.min.js"
+import "./highlight_setup.js"
+import "../vendor/highlight-elixir.min.js"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
 import LegendTooltip from "./hooks/legend_tooltip.js"
+import DiffViewer from "./hooks/diff_viewer.js"
 
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
@@ -549,33 +559,6 @@ const AutoClearFlash = {
   }
 };
 
-// ScrollToFile hook: scrolls the diff viewer to the selected file section
-const ScrollToFile = {
-  mounted() {
-    this.handleEvent("scroll_to_file", ({target_id}) => {
-      setTimeout(() => {
-        const target = document.getElementById(target_id);
-        if (!target) return;
-
-        // The main content area is the scroll container (not window)
-        const scrollContainer = document.getElementById('main-scroll');
-        if (scrollContainer) {
-          const containerRect = scrollContainer.getBoundingClientRect();
-          const targetRect = target.getBoundingClientRect();
-          const scrollOffset = targetRect.top - containerRect.top + scrollContainer.scrollTop;
-          scrollContainer.scrollTo({
-            top: scrollOffset,
-            behavior: "smooth"
-          });
-        } else {
-          // Fallback
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }, 50);
-    });
-  }
-};
-
 // AgentHistoryAutoScroll hook: auto-scrolls chat history when user is at the bottom.
 //
 // Uses requestAnimationFrame to wait for browser layout before reading scrollHeight,
@@ -929,7 +912,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer},
 })
 
 // Show progress bar on live navigation and form submits

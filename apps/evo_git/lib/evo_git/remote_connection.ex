@@ -35,14 +35,20 @@ defmodule EvoGit.RemoteConnection do
 
   Local-tarball path: `:uploading` → `:extracting` → `:setting_permissions` →
   `:detecting_os` → `:copying_config` → `:generating_cookie` →
-  `:starting_daemon`.
+  `:patching_binaries` → `:starting_daemon`.
 
   Auto-download path: `:probing_platform` → `:downloading` (→
   `:downloading_locally` when both the remote curl and wget attempts fail and
   the local fallback kicks in) → `:extracting` → `:setting_permissions` →
   `:copying_config` →
-  `:generating_cookie` → `:starting_daemon`. The probe/override supplies the
-  OS, so `:detecting_os` is skipped.
+  `:generating_cookie` → `:patching_binaries` → `:starting_daemon`. The
+  probe/override supplies the OS, so `:detecting_os` is skipped.
+
+  `:patching_binaries` is broadcast only when the remote is NixOS (Linux +
+  daemon not already running + NixOS detected) and is skipped otherwise: on
+  NixOS hosts the extracted release's ELF binaries are patched on the fly
+  with a Nix-built `patchelf` (the glibc tarball cannot execute there without
+  it). A live daemon is never patched.
 
     * **Connection** (`connect/1`) — establishes an SSH tunnel forwarding the
       remote distribution port to loopback, then performs Erlang distribution
@@ -92,6 +98,12 @@ defmodule EvoGit.RemoteConnection do
   # remote host, or the local curl fallback. Generous to handle slow links.
   @download_timeout_ms 300_000
 
+  # Timeout for the NixOS on-the-fly patch script (nix-build can be slow on
+  # first run — cache.nixos.org). Fits comfortably inside the 900s bootstrap
+  # call timeout alongside the other stages (the patch dir persists as a GC
+  # root, so re-bootstrap nix-builds are instant).
+  @patch_timeout_ms 600_000
+
   # The remote daemon always binds loopback; the SSH tunnel forwards the dist
   # port to loopback on both sides. The remote daemon listens on port 9000 by
   # default (hardcoded in rel/genesis_remote/vm.args.eex, overridable via
@@ -122,6 +134,7 @@ defmodule EvoGit.RemoteConnection do
           | :setting_permissions
           | :copying_config
           | :generating_cookie
+          | :patching_binaries
           | :detecting_os
           | :starting_daemon
           | nil
@@ -711,10 +724,10 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Runs the post-staging launch sequence shared by both bootstrap paths:
-  # extract → chmod → (resolve OS) → config copy → cookie → daemon start →
-  # health verify. `os_or_nil` is the already-known daemon OS string when the
-  # platform was probed/overridden, or nil to detect it via SSH (local-tarball
-  # path, which broadcasts the :detecting_os stage).
+  # extract → chmod → (resolve OS) → config copy → cookie → (NixOS patch) →
+  # daemon start → health verify. `os_or_nil` is the already-known daemon OS
+  # string when the platform was probed/overridden, or nil to detect it via SSH
+  # (local-tarball path, which broadcasts the :detecting_os stage).
   defp launch_after_staging(
          %__MODULE__{} = state,
          target,
@@ -750,16 +763,22 @@ defmodule EvoGit.RemoteConnection do
 
               cookie = ensure_cookie!()
 
-              # :starting_daemon stage
-              state = %{state | bootstrap_stage: :starting_daemon}
-              broadcast_status(target, state)
+              # NixOS on-the-fly patching (Linux only; skipped when the daemon
+              # is already running or the remote is not NixOS). Broadcasts
+              # :patching_binaries only when the patch actually runs.
+              case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
+                {:ok, state} ->
+                  case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie, state) do
+                    :ok ->
+                      EvoGit.RemoteConnections.touch(target.id)
+                      completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+                      broadcast_status(target, completed)
+                      {:ok, completed}
 
-              case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie) do
-                :ok ->
-                  EvoGit.RemoteConnections.touch(target.id)
-                  completed = %{state | phase: :disconnected, bootstrap_stage: nil}
-                  broadcast_status(target, completed)
-                  {:ok, completed}
+                    {:error, reason} ->
+                      error_state = error_state(state, target, reason)
+                      {:error, reason, error_state}
+                  end
 
                 {:error, reason} ->
                   error_state = error_state(state, target, reason)
@@ -913,16 +932,95 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Checks if the daemon is already running; starts it only if not.
-  defp maybe_start_daemon(ssh_target, launcher_path, os, target, cookie) do
+  # Checks if the daemon is already running; starts it only if not. The
+  # :starting_daemon stage is broadcast only on the start path — an
+  # already-running daemon completes without any broadcast.
+  defp maybe_start_daemon(ssh_target, launcher_path, os, target, cookie, state) do
     if daemon_running?(ssh_target, os, target) do
       :ok
     else
+      # :starting_daemon stage
+      state = %{state | bootstrap_stage: :starting_daemon}
+      broadcast_status(target, state)
+
       case start_daemon(ssh_target, launcher_path, os, target, cookie) do
         :ok -> verify_daemon_healthy(ssh_target, os, target)
         {:error, _} = error -> error
       end
     end
+  end
+
+  # On-the-fly NixOS support: the genesis_remote release is a glibc-linked
+  # tarball that cannot execute on NixOS hosts (no /lib64/ld-linux-x86-64.so.2).
+  # For Linux remotes whose daemon is not already running, detect NixOS (one
+  # SSH round trip) and — when detected — patch the extracted release's ELF
+  # binaries with a Nix-built patchelf, mirroring the NixOS vscode-remote-ssh
+  # extension patch pattern. A live daemon is NEVER patched; non-Linux hosts
+  # are untouched. Returns {:ok, state} (patched or skipped) or
+  # {:error, {:nixos_patch_failed, details}}.
+  defp maybe_patch_nixos(state, target, ssh_target, "Linux", launcher_path) do
+    if daemon_running?(ssh_target, "Linux", target) do
+      {:ok, state}
+    else
+      case run_ssh_command(
+             ssh_target,
+             EvoGit.RemoteBootstrap.nixos_detect_command(),
+             @cmd_timeout_ms
+           ) do
+        {:ok, output, 0} ->
+          if nixos_detected?(output) do
+            # :patching_binaries stage — broadcast only when the patch actually runs
+            state = %{state | bootstrap_stage: :patching_binaries}
+            broadcast_status(target, state)
+            run_patch_script(state, ssh_target, launcher_path)
+          else
+            {:ok, state}
+          end
+
+        {:ok, output, status} ->
+          details = "NixOS detection failed: ssh exit #{status}: #{tail_of(output, 500)}"
+          {:error, {:nixos_patch_failed, details}}
+
+        :timeout ->
+          {:error, {:nixos_patch_failed, "NixOS detection failed: timeout"}}
+      end
+    end
+  end
+
+  defp maybe_patch_nixos(state, _target, _ssh_target, _os, _launcher_path) do
+    {:ok, state}
+  end
+
+  # Runs the NixOS patch script in a single SSH round trip — the whole script
+  # is ONE argv element (never quote-wrapped, never {:spawn, String}) so the
+  # remote shell interprets it. The bootstrap stage stays :patching_binaries
+  # through the run; failures propagate with the failing step's stdout tail.
+  defp run_patch_script(state, ssh_target, launcher_path) do
+    script = EvoGit.RemoteBootstrap.nixos_patch_script(launcher_path)
+
+    case run_ssh_command(ssh_target, script, @patch_timeout_ms) do
+      {:ok, _output, 0} ->
+        {:ok, state}
+
+      {:ok, output, status} ->
+        details = "patch script failed (exit #{status}): #{tail_of(output, 500)}"
+        {:error, {:nixos_patch_failed, details}}
+
+      :timeout ->
+        {:error, {:nixos_patch_failed, "patch script timed out after #{@patch_timeout_ms} ms"}}
+    end
+  end
+
+  # The detection command prints `yes` (NixOS) or `no` (not NixOS). Due to
+  # shell `&&`/`||` left-associativity the /etc/nixos branch echoes `yes`
+  # twice — the contains-check is robust against both forms.
+  defp nixos_detected?(output) do
+    String.contains?(String.trim(output), "yes")
+  end
+
+  # Last ~n characters of trimmed output — the failing step's stdout.
+  defp tail_of(output, n) do
+    String.slice(String.trim(output), -n, n)
   end
 
   # Checks if the genesis-remote daemon is already running on the remote.
@@ -1163,18 +1261,29 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Runs a REMOTE command over SSH by passing it as a single argv element to
-  # the `ssh` executable (`{:spawn_executable, ...}` — no shell involved).
-  # Remote commands must NEVER be wrapped in single/double quotes inside a
-  # `{:spawn, String}`: on Windows the CRT argv parser only consumes DOUBLE
-  # quotes, so single quotes travel to ssh.exe and the remote shell parses the
-  # whole quoted string as ONE command name ("No such file or directory"); on
-  # Unix spawn strings go through `/bin/sh -c`, so double quotes would trigger
-  # local `$` expansion. OpenSSH joins its argv entries with single spaces and
-  # the remote shell re-parses them, preserving the command verbatim — the
-  # remote commands used here contain no double quotes or `$`.
+  # the `ssh` executable (`{:spawn_executable, ...}` — no local shell
+  # involved). Remote commands must NEVER be wrapped in single/double quotes
+  # inside a `{:spawn, String}`: on Windows the CRT argv parser only consumes
+  # DOUBLE quotes, so single quotes travel to ssh.exe and the remote shell
+  # parses the whole quoted string as ONE command name ("No such file or
+  # directory"); on Unix spawn strings go through `/bin/sh -c`, so double
+  # quotes would trigger local `$` expansion. OpenSSH joins its argv entries
+  # with single spaces and the remote shell re-parses them, preserving the
+  # command verbatim.
+  #
+  # Because OpenSSH executes the command via the REMOTE user's login shell
+  # (`$SHELL -c "<command>"`), the command is additionally wrapped as
+  # `/usr/bin/env bash -c '<escaped>'` by `EvoGit.RemoteBootstrap.bash_wrap/1`
+  # (single quotes escaped as `'\''`), so it executes under bash regardless of
+  # the remote login shell — fixing the NixOS bootstrap failure where a fish
+  # login shell rejects the POSIX `VAR=...` assignments in the patch script at
+  # parse time. This is safe for all commands: the remote commands used here
+  # (incl. the NixOS patch script, which contains `$`, `$(...)` and single
+  # quotes) are POSIX-ish scripts that bash parses identically.
   @doc false
   def run_ssh_command(ssh_target, remote_cmd, timeout) do
     ssh = System.find_executable("ssh") || "ssh"
+    remote_cmd = EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)
 
     port =
       Port.open(

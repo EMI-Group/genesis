@@ -86,7 +86,7 @@
 
             # ── Core build tools ──
             pkgs.gnumake
-            pkgs.gcc # C compiler for NIF compilation (mdex, lumis)
+            pkgs.gcc # C compiler for NIF compilation (mdex, xqlite)
             pkgs.file # required by Tauri's bundling step
             pkgs.curl # for downloading vendor binaries
 
