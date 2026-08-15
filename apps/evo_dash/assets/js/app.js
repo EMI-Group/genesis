@@ -24,10 +24,20 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
+// highlight.js + language packs. The cdnjs language packs are IIFEs that
+// self-register on the GLOBAL `hljs` (no ES exports), so highlight_setup.js
+// must evaluate BEFORE the pack import below (ESM evaluation is depth-first
+// in import order) — it exposes the imported instance as `window.hljs`.
+// The pack then registers "elixir" on that same instance, which the
+// DiffHighlight hook also imports (bundler dedup → one shared instance).
+import hljs from "../vendor/highlight.min.js"
+import "./highlight_setup.js"
+import "../vendor/highlight-elixir.min.js"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
 import LegendTooltip from "./hooks/legend_tooltip.js"
+import DiffHighlight from "./hooks/diff_highlight.js"
 
 // Compute the longest common prefix among an array of strings
 function longestCommonPrefix(strings) {
@@ -827,7 +837,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffHighlight},
 })
 
 // Show progress bar on live navigation and form submits
