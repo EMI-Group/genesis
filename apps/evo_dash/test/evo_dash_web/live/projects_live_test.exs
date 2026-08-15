@@ -2502,7 +2502,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert opt(task, "model_id_locked") == true
     end
 
-    test "without a script the default is the first profile and submit threads :model_id only",
+    test "without a script the default is the first profile and submit threads :model_id + :model_id_locked",
          %{conn: conn, tmp_dir: tmp_dir} do
       write_model_profile_config()
 
@@ -2537,11 +2537,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       task_id = cleanup_launched_task(html)
       task = EvoGit.TaskRegistry.get_task(task_id)
 
-      # Current behavior preserved: the first profile is threaded as
-      # :model_id, and no lock flag is set.
+      # The first profile is threaded as :model_id, and the lock flag IS set
+      # (unconditional per the cross-app contract — harmless without a script).
       assert task.model_id == "profile-a"
       assert opt(task, "model_id") == "profile-a"
-      refute has_opt?(task, "model_id_locked")
+      assert opt(task, "model_id_locked") == true
     end
   end
 end

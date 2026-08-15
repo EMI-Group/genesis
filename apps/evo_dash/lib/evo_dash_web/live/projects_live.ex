@@ -1131,23 +1131,19 @@ defmodule EvoDashWeb.ProjectsLive do
       opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
 
       # Thread the selected model profile id into opts (if non-nil/non-empty).
-      # An explicit user choice ALSO sets :model_id_locked so the runtime
-      # model-selection script is deferred; when "Auto (by rules)" is chosen
-      # (selected_model_id is nil/"") neither key is set and the script (or
-      # the default model) decides. The lock is only meaningful when a script
-      # IS configured (nothing to defer otherwise), so it is omitted in the
-      # no-script case.
+      # An explicit user choice ALSO sets :model_id_locked => true (the
+      # runtime's model-selection script is deferred for this task); when
+      # "Auto (by rules)" is chosen (selected_model_id is nil/"") neither key
+      # is set and the script (or the default model) decides. The lock is set
+      # unconditionally on an explicit choice per the cross-app contract —
+      # it is a no-op when no script is configured.
       selected_model_id = socket.assigns[:selected_model_id]
 
       opts =
         if is_binary(selected_model_id) and selected_model_id != "" do
-          opts = Keyword.put(opts, :model_id, selected_model_id)
-
-          if socket.assigns[:model_selection_enabled] do
-            Keyword.put(opts, :model_id_locked, true)
-          else
-            opts
-          end
+          opts
+          |> Keyword.put(:model_id, selected_model_id)
+          |> Keyword.put(:model_id_locked, true)
         else
           opts
         end
