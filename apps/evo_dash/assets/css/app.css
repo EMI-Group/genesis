@@ -805,7 +805,8 @@ button, a, input, textarea, select, summary,
   color: oklch(0.4 0.15 255 / 0.8);
 }
 
-/* Syntax highlight overrides — prevent Lumis from adding extra space */
+/* Syntax highlight overrides — keep highlighted spans inline and transparent
+   (the .hljs-* token colors below show through; color is NOT neutralized) */
 .diff-line-content pre,
 .diff-line-content pre *,
 .diff-line-content code,
@@ -819,11 +820,6 @@ button, a, input, textarea, select, summary,
   font-size: inherit !important;
   line-height: inherit !important;
   vertical-align: baseline !important;
-}
-
-/* Lumis light-dark() support — ensure color-scheme is propagated */
-.diff-line-content {
-  color-scheme: light dark;
 }
 
 /* ---------------------------------------------------------------------------
@@ -941,9 +937,82 @@ button, a, input, textarea, select, summary,
   vertical-align: baseline !important;
 }
 
-/* Lumis light-dark() support for split cells */
-.diff-split-cell {
-  color-scheme: light dark;
+/* ---------------------------------------------------------------------------
+   Client-side syntax highlighting — highlight.js token colors (DiffHighlight
+   hook). The hook injects <span class="hljs-*"> into .diff-split-cell, so the
+   palette lives on the cell's token classes. Colors must stay readable on the
+   translucent green/red addition/deletion row tints. One accent per token
+   class; GitHub-light/dark inspired.
+   --------------------------------------------------------------------------- */
+
+/* Default (light) theme */
+.hljs-comment {
+  color: #6e7781; /* gray */
+}
+.hljs-keyword {
+  color: #cf222e; /* red */
+}
+.hljs-string,
+.hljs-regexp {
+  color: #0a3069; /* deep blue */
+}
+.hljs-number,
+.hljs-literal,
+.hljs-built_in,
+.hljs-type {
+  color: #0550ae; /* blue */
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.class_,
+.hljs-meta {
+  color: #8250df; /* purple */
+}
+.hljs-attr,
+.hljs-symbol,
+.hljs-variable,
+.hljs-section,
+.hljs-doctag {
+  color: #953800; /* brown */
+}
+.hljs-operator,
+.hljs-params {
+  color: inherit; /* keep default text color */
+}
+
+/* Dark theme — the <html> element carries data-theme="dark" */
+[data-theme="dark"] .hljs-comment {
+  color: #8b949e; /* gray */
+}
+[data-theme="dark"] .hljs-keyword {
+  color: #ff7b72; /* red */
+}
+[data-theme="dark"] .hljs-string,
+[data-theme="dark"] .hljs-regexp {
+  color: #a5d6ff; /* light blue */
+}
+[data-theme="dark"] .hljs-number,
+[data-theme="dark"] .hljs-literal,
+[data-theme="dark"] .hljs-built_in,
+[data-theme="dark"] .hljs-type {
+  color: #79c0ff; /* blue */
+}
+[data-theme="dark"] .hljs-title,
+[data-theme="dark"] .hljs-title.function_,
+[data-theme="dark"] .hljs-title.class_,
+[data-theme="dark"] .hljs-meta {
+  color: #d2a8ff; /* purple */
+}
+[data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-symbol,
+[data-theme="dark"] .hljs-variable,
+[data-theme="dark"] .hljs-section,
+[data-theme="dark"] .hljs-doctag {
+  color: #ffa657; /* orange */
+}
+[data-theme="dark"] .hljs-operator,
+[data-theme="dark"] .hljs-params {
+  color: inherit; /* keep default text color */
 }
 
 /* Tab bar styling */

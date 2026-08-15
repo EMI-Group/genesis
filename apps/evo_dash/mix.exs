@@ -68,10 +68,8 @@ defmodule EvoDash.MixProject do
       {:gettext, "~> 1.0"},
       {:phoenix_pubsub, "~> 2.2"},
       {:bandit, "~> 1.5"},
-      {:lumis, "~> 0.5"},
       {:mdex, "~> 0.1"},
-      {:floki, "~> 0.38.0"},
-      {:html5ever, "~> 0.18.0"}
+      {:floki, "~> 0.38.0", only: :test}
     ]
   end
 

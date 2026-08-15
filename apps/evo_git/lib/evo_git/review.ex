@@ -567,7 +567,8 @@ defmodule EvoGit.Review do
   end
 
   @doc """
-  Detects the Lumis language name from a file extension.
+  Detects the syntax-highlighting language name for a file (consumed by the
+  dashboard's frontend highlighter).
   """
   def language_for_file(path) do
     case Path.extname(path) do

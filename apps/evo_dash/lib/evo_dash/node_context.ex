@@ -604,20 +604,6 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Fetches the full content of a file at a specific commit on the given node.
-
-  Delegates to `EvoGit.RemoteNode.get_file_content/4`. Returns
-  `{:ok, content}` if the file exists at that commit, or
-  `{:error, {tag, output}}` if not. On RPC failure, returns
-  `{:error, {kind, reason}}`.
-  """
-  @spec get_file_content(node(), String.t(), String.t(), String.t()) ::
-          {:ok, String.t()} | {:error, term()}
-  def get_file_content(node, repo_path, commit_sha, file_path) do
-    EvoGit.RemoteNode.get_file_content(node, repo_path, commit_sha, file_path)
-  end
-
-  @doc """
   Lists commits between the merge-base and a branch tip on the given node.
 
   Delegates to `EvoGit.RemoteNode.list_commits/3`. Returns
