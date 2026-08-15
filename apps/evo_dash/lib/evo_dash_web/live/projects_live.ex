@@ -627,7 +627,8 @@ defmodule EvoDashWeb.ProjectsLive do
           assign(
             socket,
             :recent_projects,
-            filter_absolute_recent_projects(
+            filter_absolute_recent_projects_for_node(
+              socket.assigns.current_node,
               EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
             )
           )
@@ -1239,7 +1240,7 @@ defmodule EvoDashWeb.ProjectsLive do
       path == "" ->
         {:noreply, put_flash(socket, :error, gettext("Path cannot be empty."))}
 
-      not Platform.absolute_path?(path) ->
+      not foreign_repo_path_absolute?(socket, path) ->
         {:noreply, put_flash(socket, :error, gettext("Path must be absolute."))}
 
       true ->
@@ -1653,7 +1654,8 @@ defmodule EvoDashWeb.ProjectsLive do
       cond do
         socket.assigns.remote? ->
           # Connected remote node — reload the remote node's recents via RPC
-          filter_absolute_recent_projects(
+          filter_absolute_recent_projects_for_node(
+            socket.assigns.current_node,
             EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
           )
 
@@ -1862,7 +1864,10 @@ defmodule EvoDashWeb.ProjectsLive do
         EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
 
         recent_projects =
-          filter_absolute_recent_projects(EvoDash.NodeContext.list_recent_projects(node))
+          filter_absolute_recent_projects_for_node(
+            node,
+            EvoDash.NodeContext.list_recent_projects(node)
+          )
 
         socket
         |> assign(:recent_projects, recent_projects)
@@ -1908,6 +1913,39 @@ defmodule EvoDashWeb.ProjectsLive do
         _ -> false
       end
     end)
+  end
+
+  # Node-aware variant of the filter above, used ONLY at the remote recents
+  # sites (handle_params remote branch, the :recent_projects_updated handler,
+  # and activate_remote_palette_project). Delegates to the single shared
+  # predicate `ProjectFlow.absolute_path_for_node?/2`: local nodes keep the
+  # strict `Platform.absolute_path?/1` semantics; remote nodes accept POSIX-
+  # or Windows-absolute paths so remote recents survive a dashboard running
+  # on a different OS (e.g. `/home/user/repo` on a Windows dashboard).
+  defp filter_absolute_recent_projects_for_node(node, recent_projects) do
+    Enum.filter(recent_projects, fn project ->
+      case project do
+        %{path: path} -> ProjectFlow.absolute_path_for_node?(node, path)
+        _ -> false
+      end
+    end)
+  end
+
+  # The add-foreign-repo form is reachable in remote mode (RemoteView renders
+  # it via `show_add_foreign_repo`), so its path must be validated for the
+  # node being viewed: a POSIX path on a remote Linux daemon is wrongly
+  # rejected by the local-only `Platform.absolute_path?/1` on a Windows
+  # dashboard (`Path.type/1` → `:volumerelative`), and vice versa. In a
+  # remote context the shared node-aware predicate is used; local contexts
+  # keep the local semantics. The value itself is an in-memory socket-assign
+  # (passed to the local TaskRegistry at task submission) — it is stored as
+  # the raw trimmed path and NEVER `Path.expand`-ed locally.
+  defp foreign_repo_path_absolute?(socket, path) do
+    if socket.assigns[:remote?] or socket.assigns[:current_node] != node() do
+      ProjectFlow.absolute_path_for_node?(socket.assigns[:current_node], path)
+    else
+      Platform.absolute_path?(path)
+    end
   end
 
   # Builds the dashboard URL for a project path. In a remote context the

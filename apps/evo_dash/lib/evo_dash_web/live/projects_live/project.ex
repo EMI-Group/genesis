@@ -113,13 +113,21 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   from `EvoDash.NodeContext.list_path_suggestions/2` (the remote daemon
   resolves paths against its own filesystem; `[]` on RPC failure). On the local
   node the existing filesystem-suggestion implementation is used unchanged.
+
+  The recents filter is also node-aware: recents must pass
+  `ProjectFlow.absolute_path_for_node?/2`, which keeps the local
+  `EvoGit.Platform.absolute_path?/1` semantics for the local node and accepts
+  POSIX- or Windows-absolute paths for remote nodes (so remote recents are not
+  dropped when the dashboard runs on a different OS).
   """
   def path_suggestions(node, value, recent_projects) do
     recents =
       recent_projects
       |> Enum.map(& &1.path)
       |> Enum.filter(
-        &(is_binary(&1) and EvoGit.Platform.absolute_path?(&1) and matches_prefix?(&1, value))
+        &(is_binary(&1) and
+            EvoDashWeb.ProjectsLive.ProjectFlow.absolute_path_for_node?(node, &1) and
+            matches_prefix?(&1, value))
       )
       |> Enum.take(8)
 

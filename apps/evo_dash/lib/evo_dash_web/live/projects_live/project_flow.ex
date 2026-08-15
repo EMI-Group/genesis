@@ -64,6 +64,81 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     end
   end
 
+  @doc """
+  Normalizes a user-supplied project path for use on a REMOTE node.
+
+  The local `normalize_project_path/1` must NOT be applied to remote paths:
+  its `Path.expand/1` step runs against the DASHBOARD's OS, not the remote
+  node's. A Windows dashboard classifies a POSIX absolute path
+  (`/home/user/repo` — `Path.type/1` → `:volumerelative`) as relative, and
+  `Path.expand("/home/...")` would rewrite it to a drive-letter path; a POSIX
+  dashboard would cwd-join a Windows remote path (`C:\\work\\repo`). This
+  function therefore performs NO local `Path.expand` on absolute input:
+
+  - blank → `{:error, :blank}`
+  - POSIX absolute (leading `/`) → `{:ok, trimmed}` passed through verbatim
+  - Windows-style absolute (drive letter `C:\\`/`D:/` or UNC
+    `\\\\server\\share`, via `EvoGit.Platform.absolute_path?/1`) →
+    `{:ok, trimmed}` passed through verbatim
+  - genuinely tilde-expandable (`~`, `~/...`, `~\\...` — same
+    `expandable_tilde?/1` predicate as the local path) → expanded on the
+    REMOTE node via the node-aware RPC so the remote user's home is used, not
+    the dashboard user's. The expander is injectable via
+    `Application.get_env(:evo_dash, :remote_path_expand_runner)` (test seam,
+    same pattern as `:merge_check_runner`); RPC failure or a non-binary
+    result falls back to the raw input
+  - anything else → `{:error, :relative}`
+  """
+  @spec normalize_remote_project_path(node(), String.t()) ::
+          {:ok, String.t()} | {:error, :blank} | {:error, :relative}
+  def normalize_remote_project_path(node, input) do
+    trimmed = String.trim(input)
+
+    cond do
+      trimmed == "" ->
+        {:error, :blank}
+
+      expandable_tilde?(trimmed) ->
+        # Tilde expansion is cwd-independent but HOME-dependent: expand on the
+        # remote node so the remote user's home resolves correctly. The runner
+        # is read from app env at call time so tests can inject a fake without
+        # a connected node; any failure degrades to the raw input.
+        expand_runner =
+          Application.get_env(:evo_dash, :remote_path_expand_runner) ||
+            (&default_remote_path_expand/2)
+
+        case expand_runner.(node, trimmed) do
+          {:ok, expanded} when is_binary(expanded) -> {:ok, expanded}
+          _ -> {:ok, trimmed}
+        end
+
+      String.starts_with?(trimmed, "/") ->
+        # POSIX absolute — pass through verbatim. NO local Path.expand: on a
+        # Windows dashboard it would rewrite `/home/...` to `<drive>:\home\...`.
+        {:ok, trimmed}
+
+      EvoGit.Platform.absolute_path?(trimmed) ->
+        # Windows-style absolute (drive letter or UNC) — pass through verbatim.
+        # NO local Path.expand: a POSIX dashboard would cwd-join `C:\work\...`.
+        {:ok, trimmed}
+
+      true ->
+        {:error, :relative}
+    end
+  end
+
+  # Default tilde expander for remote paths: runs `Path.expand/1` on the
+  # REMOTE node via the node-aware RPC chain so the remote user's home is
+  # used. `NodeContext.call_remote/4` returns `{:ok, term} | {:error, term}` —
+  # a non-binary result or any failure (e.g. node down) falls back to the raw
+  # input, which the caller then uses as-is.
+  defp default_remote_path_expand(node, path) do
+    case NodeContext.call_remote(node, Path, :expand, [path]) do
+      {:ok, expanded} when is_binary(expanded) -> {:ok, expanded}
+      _ -> {:ok, path}
+    end
+  end
+
   # Only `~`, `~/...`, and (on Windows) `~\\...` are expanded by Path.expand/1
   # without cwd-joining. `~foo` NEVER expands on any platform, and `~\\x` does
   # not expand off Windows — both would be cwd-joined, so they must fall
@@ -74,11 +149,42 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       (EvoGit.Platform.windows?() and String.starts_with?(trimmed, "~\\"))
   end
 
+  @doc """
+  Returns true when `path` is an absolute path for the given node.
+
+  On the LOCAL node the existing local-semantics check
+  (`EvoGit.Platform.absolute_path?/1`) is used unchanged. On a REMOTE node a
+  path is accepted when it is POSIX-absolute (leading `/`) OR Windows-style
+  absolute (drive letter / UNC, via `EvoGit.Platform.absolute_path?/1`): the
+  remote node's paths must not be judged by the dashboard's host OS — on a
+  Windows dashboard `Path.type("/home/user/repo")` is `:volumerelative`,
+  which would wrongly drop remote POSIX recents from the palette (and a POSIX
+  dashboard would drop remote Windows recents). Non-binary paths are always
+  false.
+  """
+  @spec absolute_path_for_node?(node(), term()) :: boolean()
+  def absolute_path_for_node?(node, path) when is_binary(path) do
+    if node == node() do
+      EvoGit.Platform.absolute_path?(path)
+    else
+      String.starts_with?(path, "/") or EvoGit.Platform.absolute_path?(path)
+    end
+  end
+
+  def absolute_path_for_node?(_node, _path), do: false
+
   # Recent projects offered in the palette must have absolute paths — stale
   # cwd-joined entries (from the pre-fix Path.expand-against-cwd behavior)
   # must never render.
   defp filter_absolute_recent_projects(recent_projects) do
     Enum.filter(recent_projects, &EvoGit.Platform.absolute_path?(&1.path))
+  end
+
+  # Node-aware recents filter: local flows keep the strict local-semantics
+  # check; remote flows accept POSIX- or Windows-absolute paths so remote
+  # recents survive a dashboard running on a different OS.
+  defp filter_absolute_recent_projects_for_node(node, recent_projects) do
+    Enum.filter(recent_projects, &absolute_path_for_node?(node, &1.path))
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -265,7 +371,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
          )
        )}
     else
-      case normalize_project_path(path) do
+      # Remote-aware normalization: the dashboard's host OS must not
+      # misclassify the remote node's paths (POSIX absolute on a Windows
+      # dashboard, Windows absolute on a POSIX dashboard) and no local
+      # Path.expand may run on them.
+      case normalize_remote_project_path(socket.assigns[:current_node], path) do
         {:error, :blank} ->
           {:noreply, put_flash(socket, :error, gettext("Invalid project name"))}
 
@@ -285,12 +395,15 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
             recent_projects =
               NodeContext.list_recent_projects(node)
-              |> filter_absolute_recent_projects()
+              |> filter_absolute_recent_projects_for_node(node)
 
             config = NodeContext.read_project_config(node, expanded)
             mode = Project.detect_mode(node, expanded)
             mode_info = mode_info_message(mode)
-            {project_config, worktree_script, commands} = Project.load_project_config(node, expanded, config)
+
+            {project_config, worktree_script, commands} =
+              Project.load_project_config(node, expanded, config)
+
             foreign_repos = Project.load_foreign_repos(node, expanded, config)
 
             socket =
