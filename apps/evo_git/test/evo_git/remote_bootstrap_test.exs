@@ -304,4 +304,28 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ "set -e"
     end
   end
+
+  describe "bash_wrap/1" do
+    test "wraps a plain command" do
+      assert RemoteBootstrap.bash_wrap("cmd") == "/usr/bin/env bash -c 'cmd'"
+    end
+
+    test "escapes embedded single quotes (close-quote/escaped-quote/reopen-quote)" do
+      assert RemoteBootstrap.bash_wrap(RemoteBootstrap.nixos_detect_command()) ==
+               "/usr/bin/env bash -c 'test -d /etc/nixos && echo yes || grep -qi '\\''^ID=nixos'\\'' /etc/os-release 2>/dev/null && echo yes || echo no'"
+    end
+
+    test "wraps the NixOS patch script, escaping its single quotes" do
+      wrapped = RemoteBootstrap.bash_wrap(RemoteBootstrap.nixos_patch_script(@launcher))
+
+      assert String.starts_with?(wrapped, "/usr/bin/env bash -c '#!/bin/sh")
+      # the script's own single quotes survive as '\'' escape sequences
+      assert String.contains?(wrapped, ~S|tr -d '\'' \n'\''|)
+      refute String.contains?(wrapped, ~S|tr -d ' \n'|)
+    end
+
+    test "wraps an empty command" do
+      assert RemoteBootstrap.bash_wrap("") == "/usr/bin/env bash -c ''"
+    end
+  end
 end
