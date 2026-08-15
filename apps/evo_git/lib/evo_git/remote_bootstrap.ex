@@ -14,16 +14,25 @@ defmodule EvoGit.RemoteBootstrap do
       `https://genesis.evox.group/dl/...` Cloudflare-worker "smart download"
       endpoint (auto-detects mainland-China users and proxies the GitHub
       release asset through Cloudflare when needed),
-    * computing the local download-cache path (`cache_path/2`).
+    * computing the local download-cache path (`cache_path/2`),
+    * building the one-shot NixOS detection command (`nixos_detect_command/0`)
+      and the on-the-fly NixOS patch script (`nixos_patch_script/1`) — the
+      glibc-linked release cannot execute on NixOS hosts (no
+      `/lib64/ld-linux-x86-64.so.2`), so bootstrap patches the extracted
+      release's ELF binaries with a Nix-built `patchelf` (mirroring the NixOS
+      `vscode-remote-ssh` extension patch pattern).
 
   **Linux asset rule:** glibc is the default and ONLY published Linux variant.
   Remote tarball names are NEVER suffixed (`genesis_remote_linux_x64.tar.xz`,
   `genesis_remote_linux_arm64.tar.xz`); the musl build is disabled for now.
   Non-Linux platforms are never suffixed either
   (`genesis_remote_darwin_arm64.tar.xz`, `genesis_remote_windows_x64.tar.xz`).
+  NixOS hosts are supported via on-the-fly patching during bootstrap — no new
+  asset variants.
 
   All functions are deterministic and perform **no network I/O** — the actual
-  tarball downloads happen in `EvoGit.RemoteConnection` via curl/wget.
+  tarball downloads happen in `EvoGit.RemoteConnection` via curl/wget, and the
+  NixOS patch script is executed on the remote host via ssh.
   """
 
   @download_base_url "https://genesis.evox.group/dl/"
@@ -138,6 +147,110 @@ defmodule EvoGit.RemoteBootstrap do
       "remote_binaries",
       "#{platform}_#{version}.tar.xz"
     ])
+  end
+
+  @doc """
+  Returns the one-shot remote command that detects NixOS on the remote host.
+
+  The command prints `yes` when the host is NixOS (the `/etc/nixos` directory
+  is the primary marker) and `no` otherwise, with `/etc/os-release` as a
+  secondary marker:
+
+      test -d /etc/nixos && echo yes || grep -qi '^ID=nixos' /etc/os-release 2>/dev/null && echo yes || echo no
+
+  Note: shell `&&`/`||` left-associativity makes the `/etc/nixos` branch echo
+  `yes` twice — `EvoGit.RemoteConnection` treats any output containing `yes`
+  as a NixOS detection, which is robust against both forms.
+
+  Pure builder — performs no I/O; the command is executed on the remote host
+  by `EvoGit.RemoteConnection` (one SSH round trip).
+  """
+  @spec nixos_detect_command() :: String.t()
+  def nixos_detect_command do
+    "test -d /etc/nixos && echo yes || grep -qi '^ID=nixos' /etc/os-release 2>/dev/null && echo yes || echo no"
+  end
+
+  # The script template. `__LAUNCHER__` is interpolated at build time by
+  # nixos_patch_script/1; everything else ($, quotes, $(...)) is literal and
+  # interpreted by the REMOTE shell at run time.
+  @nixos_patch_script_template ~S"""
+  #!/bin/sh
+  set -e
+
+  LAUNCHER="__LAUNCHER__"
+  RELEASE_ROOT="$(dirname "$(dirname "$LAUNCHER")")"
+  PATCH_DIR="$RELEASE_ROOT/.nixos-patch"
+  NIXPKGS="<nixpkgs>"
+
+  echo "nixos-patch: creating patch dir $PATCH_DIR"
+  mkdir -p "$PATCH_DIR"
+
+  echo "nixos-patch: building patchelf..."
+  nix-build "$NIXPKGS" -A patchelf --out-link "$PATCH_DIR/patchelf" 2>&1
+
+  echo "nixos-patch: building bintools..."
+  nix-build "$NIXPKGS" -A bintools --out-link "$PATCH_DIR/bintools" 2>&1
+  INTERPRETER="$(cat "$PATCH_DIR/bintools/nix-support/dynamic-linker")"
+
+  echo "nixos-patch: building stdenv.cc.cc.lib..."
+  nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1
+
+  echo "nixos-patch: building openssl..."
+  nix-build "$NIXPKGS" -A openssl --out-link "$PATCH_DIR/openssl" 2>&1
+
+  RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib"
+
+  count=0
+  for file in $(find "$RELEASE_ROOT" -type f); do
+    magic="$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')"
+    if [ "$magic" = "7f454c46" ]; then
+      echo "nixos-patch: patching $file"
+      "$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"
+      count=$((count + 1))
+    fi
+  done
+
+  echo "nixos-patch: patched $count ELF files"
+  """
+
+  @doc """
+  Builds the remote shell script that patches the extracted `genesis_remote`
+  release's ELF binaries for NixOS, given the remote launcher path (e.g.
+  `/tmp/genesis_remote/bin/genesis_remote`).
+
+  The glibc-linked release tarball cannot execute on NixOS hosts (no
+  `/lib64/ld-linux-x86-64.so.2`), so bootstrap patches it on the fly —
+  mirroring the NixOS `vscode-remote-ssh` extension patch pattern:
+
+    * derives the release root via `dirname` twice and creates a patch dir
+      `<release>/.nixos-patch` — persisted across re-extractions as GC roots,
+      so re-bootstrap `nix-build`s are instant,
+    * runs the four `nix-build "<nixpkgs>"` builds (`patchelf`, `bintools`,
+      `stdenv.cc.cc.lib`, `openssl`) with `2>&1` on each so errors land in
+      stdout; `openssl` is kept regardless — the OTP `:crypto` NIF
+      `crypto.so` is in the release because req_llm → req → finch → mint pull
+      in `:ssl` (harmless when unneeded),
+    * reads the Nix dynamic linker from
+      `<patch_dir>/bintools/nix-support/dynamic-linker`,
+    * sets `RPATH` to `<patch_dir>/cc/lib:<patch_dir>/openssl/lib`,
+    * loops over every regular file under the release root, detects ELF
+      binaries via the `\\x7fELF` magic (`7f454c46` from
+      `head -c 4 | od -An -tx1 | tr -d ' \\n'`), and runs
+      `<patch_dir>/patchelf/bin/patchelf --set-interpreter "$INTERPRETER"
+      --set-rpath "$RPATH"` on each (idempotent — re-running on already-patched
+      files is safe, no `.orig` handling).
+
+  The script echoes `nixos-patch:` progress/step markers to stdout on every
+  step and uses `set -e` so any failure aborts with a non-zero exit. `$`,
+  quotes and `$(...)` in the script are intended — they are interpreted by the
+  REMOTE shell when `EvoGit.RemoteConnection` passes the whole script as a
+  single ssh argv element.
+
+  Pure builder — performs no I/O.
+  """
+  @spec nixos_patch_script(String.t()) :: String.t()
+  def nixos_patch_script(launcher_path) do
+    String.replace(@nixos_patch_script_template, "__LAUNCHER__", launcher_path)
   end
 
   # --- Private ---
