@@ -44,7 +44,7 @@ hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, Platfor
 | `BrowserNotifications` | `../app.js` (inline, line 495) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) — HTML5 notifications on `task_notification` events |
 | `ClipboardCopy` | `../app.js` (inline, line 510) | `settings_live.ex`, `welcome_complete_live.ex`, `projects_live.ex`, `review_components/header.ex` — copies `data-content` to clipboard on click, pushes `"copied"` |
 | `AutoClearFlash` | `../app.js` (inline, line 536) | `core_components.ex` flash component — auto-dismisses flash messages after 4s (except `client-error`/`server-error`) |
-| `ScrollToFile` | `../app.js` (inline, line 553) | `review_components/diff_viewer.ex` (`<div class="diff-main-content" id="diff-viewer" phx-hook="ScrollToFile">`) — scrolls the diff viewer to the selected file section on `scroll_to_file` events (the ONLY hook on the review diff page) |
+| `ScrollToFile` | `../app.js` (inline, line 553) | `review_components/diff_viewer.ex` (`<div class="diff-main-content" id="diff-viewer" phx-hook="ScrollToFile DiffHighlight">`) — scrolls the diff viewer to the selected file section on `scroll_to_file` events (the `DiffHighlight` hook shares the same element; see its row above) |
 | `AgentHistoryAutoScroll` | `../app.js` (inline, line 592) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) — rAF-based ease-out auto-scroll when at the bottom |
 | `TauriDetect` | `../app.js` (inline, line 679) | `projects_live.ex` `#tauri-detect` (`phx-hook="TauriDetect"`) — pushes `tauri_detected` |
 | `DesktopQuit` | `../app.js` (inline, line 695) | `layouts.ex` wrapper around `<main id="main-content">` — listens for Tauri `quit-requested`, pushes `desktop_quit_requested` |
