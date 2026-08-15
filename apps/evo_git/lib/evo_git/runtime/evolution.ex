@@ -10,6 +10,17 @@ defmodule EvoGit.Runtime.Evolution do
   require Logger
 
   def run(objective, opts \\ []) when is_list(opts) do
+    mode = mode_atom(Keyword.get(opts, :mode))
+
+    # Custom mode requires an explicit agents.toml agent id. Raise BEFORE any
+    # repo/git I/O so spec errors surface immediately (crashing loudly is
+    # intentional — a missing agent id is a spec error, mirroring
+    # Helpers.resolve_root_agent/2's unknown-id behavior).
+    if mode == :custom and Keyword.get(opts, :agent) in [nil, ""] do
+      raise ArgumentError,
+            "custom mode requires an agent id; pass agent: <id> (defined in agents.toml)"
+    end
+
     node_path = Keyword.get(opts, :node_path, "./")
     starting_commit = Keyword.get(opts, :starting_commit)
 
@@ -22,7 +33,10 @@ defmodule EvoGit.Runtime.Evolution do
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, current_sha} <- Helpers.resolve_starting_commit(repo_path, starting_commit),
          :ok <- Helpers.validate_node_path(node_path, repo_path) do
-      run_simple_mode(objective, repo_path, current_sha, node_path, opts)
+      case mode do
+        :simple -> run_simple_mode(objective, repo_path, current_sha, node_path, opts)
+        :custom -> run_custom_mode(objective, repo_path, current_sha, node_path, opts)
+      end
     else
       {:error, {:invalid_node_path, message}} ->
         Logger.error("Evolution: Invalid node path: #{message}")
@@ -34,15 +48,72 @@ defmodule EvoGit.Runtime.Evolution do
     end
   end
 
+  @doc false
+  # Public test wrapper for the mode normalization (nil = absent).
+  @spec mode_atom(term()) :: :simple | :custom
+  def mode_atom(nil), do: :simple
+  def mode_atom(:simple), do: :simple
+  def mode_atom("simple"), do: :simple
+  def mode_atom(:custom), do: :custom
+  def mode_atom("custom"), do: :custom
+
+  def mode_atom(other) do
+    Logger.warning("Evolution: unknown mode #{inspect(other)}, falling back to simple")
+    :simple
+  end
+
   # Mode A: Top-Down Evolution (Simple)
   defp run_simple_mode(objective, repo_path, current_sha, node_path, opts) do
     Logger.info("Evolution: Running Mode A (Top-Down)")
-    phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load(node_path, repo_path)
-    foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
     {agent_module, agent_opts} =
       Helpers.resolve_root_agent(opts, EvoGit.Agents.Manager)
+
+    run_resolved_root_agent(
+      objective,
+      repo_path,
+      current_sha,
+      node_path,
+      opts,
+      agent_module,
+      agent_opts
+    )
+  end
+
+  # Mode C: Custom Root Agent (agents.toml) — `opts[:agent]` is guaranteed
+  # non-nil/non-empty here (checked in run/2); unknown ids raise in
+  # Helpers.resolve_root_agent/2.
+  defp run_custom_mode(objective, repo_path, current_sha, node_path, opts) do
+    Logger.info("Evolution: Running custom mode with agent '#{Keyword.get(opts, :agent)}'")
+
+    {agent_module, agent_opts} =
+      Helpers.resolve_root_agent(opts, EvoGit.Agents.Custom)
+
+    run_resolved_root_agent(
+      objective,
+      repo_path,
+      current_sha,
+      node_path,
+      opts,
+      agent_module,
+      agent_opts
+    )
+  end
+
+  # Shared flow for both modes: build the phylo/context nodes and foreign-repo
+  # list, run the resolved root agent, and merge/report on success.
+  defp run_resolved_root_agent(
+         objective,
+         repo_path,
+         current_sha,
+         node_path,
+         opts,
+         agent_module,
+         agent_opts
+       ) do
+    phylo_node = PhyloGraphNode.new(repo_path, current_sha)
+    context_node = ContextNode.load(node_path, repo_path)
+    foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
     case AgentSpec.new(context_node, phylo_node, agent_module, objective,
            foreign_repos: foreign_repos,
@@ -61,7 +132,7 @@ defmodule EvoGit.Runtime.Evolution do
         Helpers.merge_and_report(repo_path, agent_output, "evolve")
 
       error ->
-        Logger.error("Evolution Mode A failed: #{inspect(error)}")
+        Logger.error("Evolution failed: #{inspect(error)}")
         error
     end
   end
