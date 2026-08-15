@@ -1261,18 +1261,29 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Runs a REMOTE command over SSH by passing it as a single argv element to
-  # the `ssh` executable (`{:spawn_executable, ...}` — no shell involved).
-  # Remote commands must NEVER be wrapped in single/double quotes inside a
-  # `{:spawn, String}`: on Windows the CRT argv parser only consumes DOUBLE
-  # quotes, so single quotes travel to ssh.exe and the remote shell parses the
-  # whole quoted string as ONE command name ("No such file or directory"); on
-  # Unix spawn strings go through `/bin/sh -c`, so double quotes would trigger
-  # local `$` expansion. OpenSSH joins its argv entries with single spaces and
-  # the remote shell re-parses them, preserving the command verbatim — the
-  # remote commands used here contain no double quotes or `$`.
+  # the `ssh` executable (`{:spawn_executable, ...}` — no local shell
+  # involved). Remote commands must NEVER be wrapped in single/double quotes
+  # inside a `{:spawn, String}`: on Windows the CRT argv parser only consumes
+  # DOUBLE quotes, so single quotes travel to ssh.exe and the remote shell
+  # parses the whole quoted string as ONE command name ("No such file or
+  # directory"); on Unix spawn strings go through `/bin/sh -c`, so double
+  # quotes would trigger local `$` expansion. OpenSSH joins its argv entries
+  # with single spaces and the remote shell re-parses them, preserving the
+  # command verbatim.
+  #
+  # Because OpenSSH executes the command via the REMOTE user's login shell
+  # (`$SHELL -c "<command>"`), the command is additionally wrapped as
+  # `/usr/bin/env bash -c '<escaped>'` by `EvoGit.RemoteBootstrap.bash_wrap/1`
+  # (single quotes escaped as `'\''`), so it executes under bash regardless of
+  # the remote login shell — fixing the NixOS bootstrap failure where a fish
+  # login shell rejects the POSIX `VAR=...` assignments in the patch script at
+  # parse time. This is safe for all commands: the remote commands used here
+  # (incl. the NixOS patch script, which contains `$`, `$(...)` and single
+  # quotes) are POSIX-ish scripts that bash parses identically.
   @doc false
   def run_ssh_command(ssh_target, remote_cmd, timeout) do
     ssh = System.find_executable("ssh") || "ssh"
+    remote_cmd = EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)
 
     port =
       Port.open(
