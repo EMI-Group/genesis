@@ -112,4 +112,104 @@ defmodule EvoDash.NodeContextTest do
       assert is_map(config[:sandbox])
     end
   end
+
+  describe "custom-agents RPC delegates (local node, real paths)" do
+    # The local path reads/writes the REAL agents.toml at
+    # EvoGit.Config.config_dir(). Never touch the user's real file: isolate
+    # with the same XDG pattern as evo_git's custom_agents_test.exs.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "list_custom_agents/1 returns an empty result when no agents.toml exists" do
+      assert EvoDash.NodeContext.list_custom_agents(node()) ==
+               {:ok, %{agents: [], model_selection_script: nil, script_status: :ok}}
+    end
+
+    test "save_custom_agent/2 round-trips a definition through list_custom_agents/1" do
+      assert {:ok, agent} =
+               EvoDash.NodeContext.save_custom_agent(node(), %{name: "Reviewer", prompt: "p"})
+
+      assert agent.id == "reviewer"
+
+      assert {:ok, %{agents: [%{name: "Reviewer"}]}} =
+               EvoDash.NodeContext.list_custom_agents(node())
+    end
+
+    test "save_custom_agent/2 rejects a duplicate auto-generated id" do
+      assert {:ok, _first} =
+               EvoDash.NodeContext.save_custom_agent(node(), %{name: "Reviewer", prompt: "p1"})
+
+      assert {:error, :duplicate_id} =
+               EvoDash.NodeContext.save_custom_agent(node(), %{name: "Reviewer", prompt: "p2"})
+    end
+
+    test "save_custom_agent/2 rejects invalid input with the core contract error" do
+      # Core's EvoGit.CustomAgents.save/1 validates name before prompt, so an
+      # empty map yields :missing_name (not :invalid_name).
+      assert {:error, :missing_name} = EvoDash.NodeContext.save_custom_agent(node(), %{})
+    end
+
+    test "delete_custom_agent/2 removes an agent and reports :not_found for missing ids" do
+      assert {:error, :not_found} = EvoDash.NodeContext.delete_custom_agent(node(), "missing")
+
+      assert {:ok, agent} =
+               EvoDash.NodeContext.save_custom_agent(node(), %{name: "Deletable", prompt: "p"})
+
+      assert :ok = EvoDash.NodeContext.delete_custom_agent(node(), agent.id)
+
+      assert {:ok, %{agents: []}} = EvoDash.NodeContext.list_custom_agents(node())
+    end
+
+    test "save_model_selection_script/2 round-trips, reports broken scripts via script_status, and empty clears" do
+      script = ~s(if agent.depth == 0, do: "fast", else: nil)
+
+      assert :ok = EvoDash.NodeContext.save_model_selection_script(node(), script)
+
+      assert {:ok, %{model_selection_script: ^script, script_status: :ok}} =
+               EvoDash.NodeContext.list_custom_agents(node())
+
+      # Core's save_model_selection_script/1 only writes the file — it does
+      # NOT compile. A broken script saves :ok and surfaces as a compile error
+      # in the next list's script_status.
+      assert :ok = EvoDash.NodeContext.save_model_selection_script(node(), "this is not elixir (")
+
+      assert {:ok, %{script_status: {:error, {:compile_error, _message}}}} =
+               EvoDash.NodeContext.list_custom_agents(node())
+
+      # An empty script removes the key (core contract).
+      assert :ok = EvoDash.NodeContext.save_model_selection_script(node(), "")
+
+      assert {:ok, %{model_selection_script: nil, script_status: :ok}} =
+               EvoDash.NodeContext.list_custom_agents(node())
+    end
+
+    test "reload_custom_agents/1 returns :ok and preserves stored agents" do
+      assert {:ok, _agent} =
+               EvoDash.NodeContext.save_custom_agent(node(), %{name: "Keeper", prompt: "p"})
+
+      assert :ok = EvoDash.NodeContext.reload_custom_agents(node())
+
+      assert {:ok, %{agents: [%{name: "Keeper"}]}} =
+               EvoDash.NodeContext.list_custom_agents(node())
+    end
+  end
 end

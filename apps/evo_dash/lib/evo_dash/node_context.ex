@@ -485,6 +485,81 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Lists custom agents on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_custom_agents/1`, which reads the
+  node's own `agents.toml` (per-node next to `config.toml`). Returns
+  `{:ok, %{agents: [...], model_selection_script: script_or_nil,
+  script_status: status}}` on success. Transport failures (node down, timeout)
+  degrade gracefully to an empty result (`{:ok, %{agents: [],
+  model_selection_script: nil, script_status: :ok}}`) so an unreachable node
+  reads as "no custom agents" instead of crashing the caller.
+  """
+  @spec list_custom_agents(node()) ::
+          {:ok,
+           %{
+             agents: [map()],
+             model_selection_script: String.t() | nil,
+             script_status: :ok | {:error, {:compile_error, String.t()}}
+           }}
+  def list_custom_agents(node) do
+    case EvoGit.RemoteNode.list_custom_agents(node) do
+      {:ok, result} -> {:ok, result}
+      {:error, _reason} -> {:ok, %{agents: [], model_selection_script: nil, script_status: :ok}}
+    end
+  end
+
+  @doc """
+  Saves a custom agent definition on the given node.
+
+  Delegates to `EvoGit.RemoteNode.save_custom_agent/2`, so the definition is
+  written to the node's own `agents.toml`. Returns `{:ok, definition}` on
+  success or `{:error, reason}` on failure (validation errors from
+  `EvoGit.CustomAgents.save/1`, or transport failures).
+  """
+  @spec save_custom_agent(node(), map()) :: {:ok, map()} | {:error, term()}
+  def save_custom_agent(node, agent_def) do
+    EvoGit.RemoteNode.save_custom_agent(node, agent_def)
+  end
+
+  @doc """
+  Deletes a custom agent definition on the given node.
+
+  Delegates to `EvoGit.RemoteNode.delete_custom_agent/2`, so the deletion
+  applies to the node's own `agents.toml`. Returns `:ok` on success or
+  `{:error, reason}` on failure (`:not_found` when no agent has that id, or
+  transport failures).
+  """
+  @spec delete_custom_agent(node(), String.t()) :: :ok | {:error, :not_found | term()}
+  def delete_custom_agent(node, id) do
+    EvoGit.RemoteNode.delete_custom_agent(node, id)
+  end
+
+  @doc """
+  Saves the model-selection script on the given node.
+
+  Delegates to `EvoGit.RemoteNode.save_model_selection_script/2`, so the
+  script is written to the node's own `agents.toml` (an empty string removes
+  the script — core contract). Returns `:ok` on success or `{:error, reason}`
+  on failure.
+  """
+  @spec save_model_selection_script(node(), String.t()) :: :ok | {:error, term()}
+  def save_model_selection_script(node, script) do
+    EvoGit.RemoteNode.save_model_selection_script(node, script)
+  end
+
+  @doc """
+  Invalidates the model-selector compile cache on the given node.
+
+  Delegates to `EvoGit.RemoteNode.reload_custom_agents/1`. Returns `:ok` on
+  success or `{:error, reason}` on failure.
+  """
+  @spec reload_custom_agents(node()) :: :ok | {:error, term()}
+  def reload_custom_agents(node) do
+    EvoGit.RemoteNode.reload_custom_agents(node)
+  end
+
+  @doc """
   Returns filesystem path suggestions for the given node.
 
   Delegates to `EvoGit.RemoteNode.list_path_suggestions/2` — the remote daemon
