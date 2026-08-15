@@ -1,6 +1,8 @@
 defmodule EvoGit.CLITest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureIO
+
   describe "foreign repo parsing" do
     test "parses name:path format" do
       opts = [foreign_repo: "original:/Source/original-proj"]
@@ -343,6 +345,35 @@ defmodule EvoGit.CLITest do
       profile = hd(decoded_models)
       assert profile["id"] == "default"
       assert profile["model"] == %{"provider" => "anthropic", "id" => "claude-sonnet-4"}
+    end
+  end
+
+  describe "evolve custom-mode dispatch" do
+    test "--mode custom without --agent prints a clear error" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["evolve", "fix x", "--mode", "custom"])
+        end)
+
+      assert output =~ "requires --agent"
+    end
+
+    test "invalid evolve mode prints an error" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["evolve", "fix x", "--mode", "bogus"])
+        end)
+
+      assert output =~ "Invalid mode for evolve. Use 'simple' or 'custom'."
+    end
+
+    test "genesis --mode custom prints the evolve-only error" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["genesis", "make a thing", "--mode", "custom"])
+        end)
+
+      assert output =~ "custom mode is evolve-only"
     end
   end
 end

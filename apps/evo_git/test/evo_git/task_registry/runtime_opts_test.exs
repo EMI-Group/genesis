@@ -197,6 +197,18 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
       assert Keyword.get(runtime_opts, :mode) == :simple
     end
 
+    test "evolve mode \"custom\" maps to :custom and threads :agent" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", mode: "custom", agent: "some_id"],
+          "task-12",
+          :evolve
+        )
+
+      assert Keyword.get(runtime_opts, :mode) == :custom
+      assert Keyword.get(runtime_opts, :agent) == "some_id"
+    end
+
     test "first tuple element is always nil" do
       {first, _runtime_opts} =
         RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-10", :evolve)
@@ -214,6 +226,10 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
   describe "evolution_mode_atom/1" do
     test "converts \"simple\" to :simple" do
       assert RuntimeOpts.evolution_mode_atom("simple") == :simple
+    end
+
+    test "converts \"custom\" to :custom" do
+      assert RuntimeOpts.evolution_mode_atom("custom") == :custom
     end
 
     test "raises ArgumentError for invalid string values" do
@@ -234,6 +250,12 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
 
     test "converts \"existing\" to :existing" do
       assert RuntimeOpts.genesis_mode_atom("existing") == :existing
+    end
+
+    test "raises the evolve-only error for \"custom\"" do
+      assert_raise ArgumentError, ~r/custom mode is evolve-only/, fn ->
+        RuntimeOpts.genesis_mode_atom("custom")
+      end
     end
 
     test "raises ArgumentError for invalid string values" do
@@ -258,6 +280,16 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
 
     test "dispatches evolve + \"simple\" to :simple" do
       assert RuntimeOpts.mode_atom(:evolve, "simple") == :simple
+    end
+
+    test "dispatches evolve + \"custom\" to :custom" do
+      assert RuntimeOpts.mode_atom(:evolve, "custom") == :custom
+    end
+
+    test "raises the evolve-only error for genesis + \"custom\"" do
+      assert_raise ArgumentError, ~r/custom mode is evolve-only/, fn ->
+        RuntimeOpts.mode_atom(:genesis, "custom")
+      end
     end
 
     test "propagates ArgumentError for invalid genesis modes" do

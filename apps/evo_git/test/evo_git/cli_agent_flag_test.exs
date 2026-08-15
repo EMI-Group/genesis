@@ -78,4 +78,59 @@ defmodule EvoGit.CLI.AgentFlagTest do
       assert output =~ "agents.toml"
     end
   end
+
+  describe "evolve dispatch with --mode custom" do
+    test "unknown agent id prints an error and does not run evolution" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["evolve", "fix x", "--mode", "custom", "--agent", "ghost_agent"])
+        end)
+
+      assert output =~ "Error: Unknown custom agent id 'ghost_agent'"
+      assert output =~ "agents.toml"
+    end
+
+    test "valid agent id is accepted and fails quietly on a nonexistent repo" do
+      {:ok, saved} =
+        EvoGit.CustomAgents.save(%{name: "Code Reviewer", prompt: "You review code."})
+
+      repo_path =
+        Path.join(System.tmp_dir!(), "evogit-cli-custom-#{System.unique_integer([:positive])}")
+
+      on_exit(fn -> File.rm_rf!(repo_path) end)
+
+      # Force no model profiles so AgentScheduler.run_agent replies
+      # {:error, :llm_not_configured} instead of dispatching a real LLM agent.
+      scheduler = Process.whereis(EvoGit.AgentScheduler)
+
+      if scheduler do
+        original_profiles = GenServer.call(scheduler, {:get_config, :model_profiles})
+        :ok = EvoGit.AgentScheduler.update_config(model_profiles: [])
+
+        on_exit(fn ->
+          EvoGit.AgentScheduler.update_config(model_profiles: original_profiles)
+        end)
+      end
+
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main([
+            "evolve",
+            "fix x",
+            "--mode",
+            "custom",
+            "--agent",
+            saved.id,
+            "--path",
+            repo_path
+          ])
+        end)
+
+      # The command was accepted (agent validation passed): no error output, no
+      # crash. Evolution.run created the repo via ensure_repo and then stopped
+      # quietly at run_agent with llm_not_configured.
+      refute output =~ "Error:"
+      assert File.dir?(Path.join(repo_path, ".git"))
+    end
+  end
 end
