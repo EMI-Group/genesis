@@ -12,7 +12,7 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 - `./lib/` → Application source (agents, core domain, adapters, runtime, scheduler, config)
 - `./test/` → ExUnit test suite using real git operations on temp directories
 - `./lib/evo_git/core/` → `ContextNode` (spatial) and `PhyloGraphNode` (temporal) data structures
-- `./lib/evo_git/adapters/` → `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)`
+- `./lib/evo_git/adapters/` → `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)` — and `GitHub` (gh) CLI adapter — upstream detection + GitHub issue listing/markdown via the `gh` command
 - `./lib/evo_git/agent/` → Agent behaviour, tool library, context compression, subagent processing, usage tracking
 - `./lib/evo_git/agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner)
 - `./lib/evo_git/runtime/` → Genesis, Evolution, and Prompts (LLM templates)

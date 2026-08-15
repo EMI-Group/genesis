@@ -14,6 +14,10 @@ defmodule EvoGit.FakeGh do
   shell script that cannot emulate `gh.exe` on Windows.
   """
 
+  # `on_exit/1` is an ExUnit.Callbacks macro available inside ExUnit.Case
+  # modules; this plain helper module must import it explicitly.
+  import ExUnit.Callbacks
+
   @doc """
   Creates a fake `gh` executable in a fresh temp dir, puts it first on
   `PATH`, points `GH_FAKE_LOG` at a log file in that dir, and calls
