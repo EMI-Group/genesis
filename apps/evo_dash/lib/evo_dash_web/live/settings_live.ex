@@ -296,7 +296,7 @@ defmodule EvoDashWeb.SettingsLive do
                               <li class={
                                 ["step"] ++ if(stage_idx >= 9, do: ["step-primary"], else: [])
                               }>
-                                <%# 在NixOS远程主机上用patchelf修补genesis_remote的ELF二进制 %>
+                                <%!-- 在NixOS远程主机上用patchelf修补genesis_remote的ELF二进制 --%>
                                 {gettext("Patching binaries")}
                               </li>
                               <li class={
