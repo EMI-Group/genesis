@@ -73,10 +73,11 @@ undo the collapse state. This is why collapse state survives route changes.
 
 - **NOT colocated**: there are **zero `.exh` files** in the project, so the `colocatedHooks`
   import from `phoenix-colocated/evo_dash` (see `../app.js`) resolves to an empty object; ALL
-  hooks are hand-written (one in this directory, the rest inline in `app.js`). Do not rely on
-  `.exh` colocated hook generation.
-- `SidebarCollapse` is the only hook exported as a proper ES module (`export default`); the
-  rest are `const` objects declared inline in `app.js`.
+  hooks are hand-written (four in this directory — `sidebar_collapse.js`,
+  `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js` — the rest inline in
+  `app.js`). Do not rely on `.exh` colocated hook generation.
+- The four file-based hooks are exported as proper ES modules (`export default`); the
+  inline hooks are `const` objects declared in `app.js`.
 - **Mobile sidebar toggle**: The `#sidebar-mobile-toggle` hamburger button and
 `#sidebar-overlay` (lines 50-62 of `layouts.ex`) are wired up by the
 `SidebarCollapse` hook. On mobile (< lg breakpoint, checked via
