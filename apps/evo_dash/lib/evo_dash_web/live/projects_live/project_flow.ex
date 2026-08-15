@@ -19,6 +19,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   import EvoDashWeb.Helpers, only: [mode_info_message: 1]
 
   alias EvoGit.TaskRegistry
+  alias EvoGit.Core.ForeignRepo
   alias EvoDash.NodeContext
   alias EvoDashWeb.ProjectsLive.Project
 
@@ -172,6 +173,37 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   end
 
   def absolute_path_for_node?(_node, _path), do: false
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Foreign repo construction
+  # ───────────────────────────────────────────────────────────────────────────
+
+  @doc """
+  Builds a `%EvoGit.Core.ForeignRepo{}` for the given node.
+
+  On the LOCAL node (`node == nil or node == node()`) delegates to
+  `EvoGit.Core.ForeignRepo.new/3` — EXACT local behavior, including its
+  internal `Path.expand/1` tilde/relative expansion semantics.
+
+  On a REMOTE node constructs the struct DIRECTLY with the raw `root` and NO
+  `Path.expand/1`: `ForeignRepo.new/3`'s expansion runs against the
+  DASHBOARD's OS, not the remote node's, so it mangles remote paths (a
+  Windows dashboard rewrites `/home/...` to a drive-letter path; a POSIX
+  dashboard cwd-joins `D:\\stuff\\repo`). The remote path is stored verbatim.
+  """
+  @spec build_foreign_repo(node() | nil, String.t(), String.t(), keyword()) ::
+          EvoGit.Core.ForeignRepo.t()
+  def build_foreign_repo(node, id, path, opts \\ []) do
+    if node == nil or node == node() do
+      ForeignRepo.new(id, path, opts)
+    else
+      %ForeignRepo{
+        id: id,
+        root: path,
+        description: Keyword.get(opts, :description)
+      }
+    end
+  end
 
   # Recent projects offered in the palette must have absolute paths — stale
   # cwd-joined entries (from the pre-fix Path.expand-against-cwd behavior)

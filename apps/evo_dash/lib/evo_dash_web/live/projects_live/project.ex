@@ -11,6 +11,7 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.ProjectConfig
   alias EvoDash.NodeContext
+  alias EvoDashWeb.ProjectsLive.ProjectFlow
   import Phoenix.LiveView, only: [put_flash: 3]
 
   require Logger
@@ -273,14 +274,19 @@ defmodule EvoDashWeb.ProjectsLive.Project do
 
   @doc """
   Node-aware variant of `load_foreign_repos/2`. When `node == node()`, delegates to
-  the local variant. When remote, extracts foreign repos from the already-parsed config.
+  the local variant. When remote, extracts foreign repos from the already-parsed
+  config as RAW structs (no local `Path.expand` — remote POSIX/Windows roots
+  must not be rewritten by the dashboard's OS).
   """
   def load_foreign_repos(node, repo_path, config) do
     if node == node() do
       load_foreign_repos(repo_path, config)
     else
-      # Remote: extract from the already-parsed config (same logic as local /2 variant)
-      repos = extract_foreign_repos(config)
+      # Remote: extract from the already-parsed config (same logic as the
+      # local /2 variant) but construct RAW structs — `ForeignRepo.new/3`
+      # runs `Path.expand/1` against the DASHBOARD's OS and would mangle
+      # remote POSIX/Windows paths.
+      repos = extract_foreign_repos(node, config)
 
       Enum.sort_by(repos, fn repo ->
         {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
@@ -346,14 +352,18 @@ defmodule EvoDashWeb.ProjectsLive.Project do
 
   # ── Private helpers ──────────────────────────────────────────────────────
 
-  defp extract_foreign_repos(nil), do: []
+  defp extract_foreign_repos(config) do
+    extract_foreign_repos(node(), config)
+  end
 
-  defp extract_foreign_repos(config) when is_map(config) do
+  defp extract_foreign_repos(_node, nil), do: []
+
+  defp extract_foreign_repos(node, config) when is_map(config) do
     case config do
       %{"foreign_repos" => repos} when is_map(repos) ->
         repos
         |> Enum.flat_map(fn {id_str, cfg} ->
-          case build_foreign_repo(id_str, cfg) do
+          case build_foreign_repo(node, id_str, cfg) do
             {:ok, repo} ->
               [repo]
 
@@ -368,18 +378,22 @@ defmodule EvoDashWeb.ProjectsLive.Project do
     end
   end
 
-  defp build_foreign_repo(id_str, config) when is_map(config) do
+  # Node-aware foreign-repo builder: the LOCAL node keeps `ForeignRepo.new/3`
+  # (exact current semantics, incl. its internal `Path.expand/1`); a REMOTE
+  # node builds a RAW struct via `ProjectFlow.build_foreign_repo/4` so remote
+  # POSIX/Windows roots are never expanded against the dashboard's OS.
+  defp build_foreign_repo(node, id_str, config) when is_map(config) do
     case Map.fetch(config, "path") do
       {:ok, path} ->
         description = Map.get(config, "description")
-        {:ok, ForeignRepo.new(id_str, path, description: description)}
+        {:ok, ProjectFlow.build_foreign_repo(node, id_str, path, description: description)}
 
       :error ->
         {:error, "missing required 'path' key"}
     end
   end
 
-  defp build_foreign_repo(_id_str, _config) do
+  defp build_foreign_repo(_node, _id_str, _config) do
     {:error, "invalid config (expected a TOML table)"}
   end
 end

@@ -1257,12 +1257,19 @@ defmodule EvoDashWeb.ProjectsLive do
              gettext("Repo '%{id}' is already registered.", id: repo_id)
            )}
         else
-          repo =
-            if description != "" do
-              ForeignRepo.new(repo_id, path, description: description)
-            else
-              ForeignRepo.new(repo_id, path)
-            end
+          # Node-aware construction: in a remote context the accepted path is
+          # a REMOTE node path — `ForeignRepo.new/3` would `Path.expand/1` it
+          # against the DASHBOARD's OS and mangle it (`/home/...` on a Windows
+          # dashboard, `D:\stuff` cwd-joined on POSIX). Remote contexts store
+          # the raw trimmed path via ProjectFlow.build_foreign_repo/4; local
+          # contexts keep `ForeignRepo.new/3`'s exact expansion semantics.
+          remote_context? =
+            socket.assigns[:remote?] or socket.assigns[:current_node] != node()
+
+          node = if remote_context?, do: socket.assigns[:current_node], else: node()
+          opts = if description != "", do: [description: description], else: []
+
+          repo = ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
 
           updated_repos =
             Enum.sort_by([repo | current_repos], fn r ->
@@ -1937,9 +1944,12 @@ defmodule EvoDashWeb.ProjectsLive do
   # rejected by the local-only `Platform.absolute_path?/1` on a Windows
   # dashboard (`Path.type/1` → `:volumerelative`), and vice versa. In a
   # remote context the shared node-aware predicate is used; local contexts
-  # keep the local semantics. The value itself is an in-memory socket-assign
-  # (passed to the local TaskRegistry at task submission) — it is stored as
-  # the raw trimmed path and NEVER `Path.expand`-ed locally.
+  # keep the local semantics. STORAGE follows the same node split (see the
+  # `add_foreign_repo` handler): remote contexts build RAW structs via
+  # `ProjectFlow.build_foreign_repo/4` — the root is stored verbatim with NO
+  # local `Path.expand` (`ForeignRepo.new/3` would mangle remote
+  # POSIX/Windows paths against the dashboard's OS); local contexts keep
+  # `ForeignRepo.new/3`'s `Path.expand` semantics unchanged.
   defp foreign_repo_path_absolute?(socket, path) do
     if socket.assigns[:remote?] or socket.assigns[:current_node] != node() do
       ProjectFlow.absolute_path_for_node?(socket.assigns[:current_node], path)
