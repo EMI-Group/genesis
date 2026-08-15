@@ -167,6 +167,9 @@ defmodule EvoDashWeb.ProjectsLive do
                     archive={@task_archive}
                     model_profiles={@model_profiles}
                     selected_model_id={@selected_model_id}
+                    custom_agents={@custom_agents}
+                    selected_agent_id={@selected_agent_id}
+                    show_auto_model_option={@model_selection_enabled}
                     build_systems={@build_systems}
                     selected_build_system={@task_build_system}
                   />
@@ -295,6 +298,9 @@ defmodule EvoDashWeb.ProjectsLive do
                     archive={@task_archive}
                     model_profiles={@model_profiles}
                     selected_model_id={@selected_model_id}
+                    custom_agents={@custom_agents}
+                    selected_agent_id={@selected_agent_id}
+                    show_auto_model_option={@model_selection_enabled}
                     build_systems={@build_systems}
                     selected_build_system={@task_build_system}
                   />
@@ -488,6 +494,12 @@ defmodule EvoDashWeb.ProjectsLive do
 
       {model_profiles, selected_model_id} = Project.load_model_profiles()
 
+      # Custom agents + model-selection script state for the task form's
+      # agent select and the model select's "Auto (by rules)" option.
+      # Node-aware (reads the node being viewed), degrading gracefully.
+      {custom_agents, model_selection_enabled} =
+        load_custom_agents(socket.assigns[:current_node])
+
       build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
 
       socket =
@@ -514,6 +526,9 @@ defmodule EvoDashWeb.ProjectsLive do
           show_configure_dropdown: false,
           model_profiles: model_profiles,
           selected_model_id: selected_model_id,
+          custom_agents: custom_agents,
+          selected_agent_id: nil,
+          model_selection_enabled: model_selection_enabled,
           build_systems: build_systems,
           tauri_detected: false,
           platform: "linux",
@@ -553,6 +568,19 @@ defmodule EvoDashWeb.ProjectsLive do
     socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
     socket = assign(socket, :current_path, ~p"/")
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
+
+    # Reload the node's custom agents + model-selection script state on every
+    # handle_params run (cheap stat-cached file read) so edits made on the
+    # Settings page (agents.toml / model-selection script) are picked up on
+    # navigation and node switches.
+    {custom_agents, model_selection_enabled} =
+      load_custom_agents(socket.assigns.current_node)
+
+    socket =
+      assign(socket,
+        custom_agents: custom_agents,
+        model_selection_enabled: model_selection_enabled
+      )
 
     # Each node context (local + each remote target) has its own persisted
     # dashboard state; switching nodes clears the client-side state and
@@ -933,6 +961,14 @@ defmodule EvoDashWeb.ProjectsLive do
      |> StatePersistence.maybe_persist_state()}
   end
 
+  @impl true
+  def handle_event("select_agent", %{"agent" => id}, socket) do
+    {:noreply,
+     socket
+     |> assign(:selected_agent_id, id)
+     |> StatePersistence.maybe_persist_state()}
+  end
+
   # Flash acknowledgement for the ClipboardCopy hook (example task copy button)
   @impl true
   def handle_event("copied", _params, socket) do
@@ -996,6 +1032,7 @@ defmodule EvoDashWeb.ProjectsLive do
         |> StatePersistence.maybe_restore_task_archive(params["task_archive"])
         |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
         |> StatePersistence.maybe_restore_assign(:selected_model_id, params["selected_model_id"])
+        |> StatePersistence.maybe_restore_assign(:selected_agent_id, params["selected_agent_id"])
 
       # Always restore task_mode from sessionStorage — the user's explicit choice
       # takes precedence over auto-detection when returning to a project.
@@ -1094,13 +1131,31 @@ defmodule EvoDashWeb.ProjectsLive do
       opts = if archive, do: Keyword.put(opts, :archive, true), else: opts
 
       # Thread the selected model profile id into opts (if non-nil/non-empty).
-      # The runtime uses this to select which [[llm.models]] profile to use.
+      # An explicit user choice ALSO sets :model_id_locked so the runtime
+      # model-selection script is deferred; when "Auto (by rules)" is chosen
+      # (selected_model_id is nil/"") neither key is set and the script (or
+      # the default model) decides.
       selected_model_id = socket.assigns[:selected_model_id]
 
       opts =
-        if is_binary(selected_model_id) and selected_model_id != "",
-          do: Keyword.put(opts, :model_id, selected_model_id),
-          else: opts
+        if is_binary(selected_model_id) and selected_model_id != "" do
+          opts
+          |> Keyword.put(:model_id, selected_model_id)
+          |> Keyword.put(:model_id_locked, true)
+        else
+          opts
+        end
+
+      # Thread the selected custom agent id into opts ("Auto (recommended)" /
+      # nil/"" threads nothing — the runtime spawns its default root agent).
+      selected_agent_id = socket.assigns[:selected_agent_id]
+
+      opts =
+        if is_binary(selected_agent_id) and selected_agent_id != "" do
+          Keyword.put(opts, :agent, selected_agent_id)
+        else
+          opts
+        end
 
       resume_from = params["resume_from"]
 
@@ -1536,6 +1591,23 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   defp truncate_output(output), do: String.trim(output)
+
+  # Loads the node's custom agents (agents.toml) and whether its
+  # model-selection script is configured, for the task form's agent select
+  # and the model select's "Auto (by rules)" option. Node-aware: reads the
+  # node being viewed (local call or :erpc) via EvoDash.NodeContext, which
+  # degrades to empty agents on transport failure. A configured-but-broken
+  # script still counts as enabled (script non-nil), matching
+  # EvoGit.CustomAgents.ModelSelector.enabled?/0 semantics.
+  defp load_custom_agents(node) do
+    case EvoDash.NodeContext.list_custom_agents(node) do
+      {:ok, %{agents: agents, model_selection_script: script}} ->
+        {agents, is_binary(script) and script != ""}
+
+      _ ->
+        {[], false}
+    end
+  end
 
   # --- PubSub Handlers ---
 

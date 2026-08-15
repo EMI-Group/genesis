@@ -3,8 +3,8 @@ defmodule EvoDashWeb.TaskFormComponents do
   Task form component for the dashboard — a single-card, two-layout
   "pageless editor".
 
-  One card contains the objective textarea AND the controls row (mode select,
-  Launch button, model select) as its last element. The layout is
+  One card contains the objective textarea AND the controls row (agent + mode
+  selects, Launch button, model select) as its last element. The layout is
   server-seeded at render time via `layout_for/1` and client-driven by the
   AdaptiveInput JS hook (which adds a height-based trigger on top of the
   server thresholds): the hook
@@ -29,7 +29,7 @@ defmodule EvoDashWeb.TaskFormComponents do
       flexbox — the card's overflow containment bounds the textarea on any
       viewport height.
 
-  Both layouts share the same control order — mode (order-1) | Launch
+  Both layouts share the same control order — agent + mode (order-1) | Launch
   (order-2, centered via mx-auto) | model (order-3); only the textarea size
   differs. The accent decorations (accent border-color, layered box-shadow
   glow, top-edge gradient) are defined on the base `.input-card` CSS rule
@@ -118,6 +118,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:archive, :boolean, default: false)
   attr(:model_profiles, :list, default: [])
   attr(:selected_model_id, :string, default: nil)
+  attr(:custom_agents, :list, default: [])
+  attr(:selected_agent_id, :string, default: nil)
+  attr(:show_auto_model_option, :boolean, default: false)
   attr(:build_systems, :list, default: [])
   attr(:selected_build_system, :string, default: nil)
 
@@ -146,10 +149,10 @@ defmodule EvoDashWeb.TaskFormComponents do
              MutationObserver on .input-layout catches any server re-render,
              e.g. toggling mode/model, converging with no loop):
                "compact"  → Layout A — unified box: controls row is the card's
-                            last line (mode | Launch | model, launch centered).
+                            last line (agent+mode | Launch | model, launch centered).
                "expanded" → Layout B — large objective area with an in-flow
-                            launch panel below (mode | Launch | model).
-             Both layouts share the same visual order — mode (order-1) |
+                            launch panel below (agent+mode | Launch | model).
+             Both layouts share the same visual order — agent + mode (order-1) |
              Launch (order-2, centered via mx-auto) | model (order-3); only
              the textarea size differs. -->
         <div
@@ -278,15 +281,15 @@ defmodule EvoDashWeb.TaskFormComponents do
 
             <%!-- Controls row — the card's LAST element, in normal document flow
                  (never position: fixed). DOM order AND visual order are
-                 identical in both layouts: mode (order-1) | Launch (order-2,
-                 centered via mx-auto) | model (order-3). The Launch button
-                 carries mx-auto so it stays centered even when the model
-                 select is absent (2-item row: space-between would otherwise
-                 push it to the right edge). The row is guaranteed ONE LINE
-                 (flex-nowrap — never wraps): the two selects use min-w-0 +
-                 truncate, so long labels (mode names, model profile ids) are
-                 clipped with an ellipsis instead of forcing the row wider
-                 than its container. --%>
+                 identical in both layouts: agent + mode (order-1) | Launch
+                 (order-2, centered via mx-auto) | model (order-3). The Launch
+                 button carries mx-auto so it stays centered even when the
+                 agent/model selects are absent (2-item row: space-between
+                 would otherwise push it to the right edge). The row is
+                 guaranteed ONE LINE (flex-nowrap — never wraps): the selects
+                 use min-w-0 + truncate, so long labels (agent names, mode
+                 names, model profile ids) are clipped with an ellipsis
+                 instead of forcing the row wider than its container. --%>
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
@@ -312,6 +315,31 @@ defmodule EvoDashWeb.TaskFormComponents do
                 </option>
               </select>
 
+              <%!-- Custom agent select — rendered only when custom agents
+                   exist in agents.toml. "Auto (recommended)" (empty value)
+                   lets the runtime spawn its default root agent; a custom
+                   agent id is threaded as the task's :agent opt. --%>
+              <%= if @custom_agents != [] do %>
+                <select
+                  name="agent"
+                  phx-change="select_agent"
+                  class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-1"
+                >
+                  <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
+                  <option value="" selected={@selected_agent_id in [nil, ""]}>
+                    {gettext("Auto (recommended)")}
+                  </option>
+                  <%= for agent <- @custom_agents do %>
+                    <option
+                      value={agent_attr(agent, :id)}
+                      selected={@selected_agent_id == agent_attr(agent, :id)}
+                    >
+                      {agent_attr(agent, :name)}
+                    </option>
+                  <% end %>
+                </select>
+              <% end %>
+
               <!-- Launch button — the focal point, centered in BOTH
                    layouts (order-2 + mx-auto; works with or without the
                    model select). data-mode drives the per-mode hover ring
@@ -335,6 +363,18 @@ defmodule EvoDashWeb.TaskFormComponents do
                   phx-change="select_model"
                   class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-3"
                 >
+                  <%!-- "Auto (by rules)" is offered when a model-selection
+                       script is configured (show_auto_model_option) — and
+                       ALWAYS when the current selection is nil/"" so the
+                       select is never visually empty. Choosing it sets
+                       neither :model_id nor :model_id_locked, leaving the
+                       runtime script (or default model) to decide. --%>
+                  <%= if @show_auto_model_option or @selected_model_id in [nil, ""] do %>
+                    <%!-- zh_CN: Auto → "自动"（按模型选择规则/脚本自动选择模型） --%>
+                    <option value="" selected={@selected_model_id in [nil, ""]}>
+                      {gettext("Auto (by rules)")}
+                    </option>
+                  <% end %>
                   <%= for profile <- @model_profiles do %>
                     <option value={profile.id} selected={@selected_model_id == profile.id}>
                       {profile.id}
@@ -366,6 +406,13 @@ defmodule EvoDashWeb.TaskFormComponents do
       </div>
     </.form>
     """
+  end
+
+  # Defensive accessor for custom-agent definition maps: they come from
+  # agents.toml (atom-keyed via EvoGit.CustomAgents.list/0) but callers may
+  # pass string-keyed maps too, so both key forms are accepted.
+  defp agent_attr(agent, key) do
+    Map.get(agent, key) || Map.get(agent, Atom.to_string(key))
   end
 
   # ---------------------------------------------------------------------------
