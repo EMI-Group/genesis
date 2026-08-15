@@ -56,7 +56,7 @@ hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, Platfor
 
 ### SidebarCollapse — selector contract
 
-The only hook in its own file. It manages desktop sidebar collapse with `localStorage`
+The sidebar-collapse hook manages desktop sidebar collapse with `localStorage`
 persistence (`"sidebar-collapsed"`, `"true"`/`"false"`). It toggles these selectors on the
 `<aside id="sidebar">` element (from `layouts.ex`):
 
