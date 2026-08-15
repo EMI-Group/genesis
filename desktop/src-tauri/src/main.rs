@@ -3,11 +3,13 @@
 
 use std::sync::Arc;
 
+use serde_json::json;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
+use tauri_plugin_updater::UpdaterExt;
 
 mod backend_watchdog;
 mod sidecar;
@@ -42,6 +44,203 @@ type BackendHandle = Arc<BackendManager>;
 #[tauri::command]
 fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
     manager.begin_quit();
+}
+
+// ---------------------------------------------------------------------------
+// Auto-update commands (JSON contracts pinned with the dashboard workstream —
+// do not rename keys or statuses)
+// ---------------------------------------------------------------------------
+
+/// The placeholder public key shipped in `tauri.conf.json` →
+/// `plugins > updater > pubkey`. The user must replace it with the output of
+/// `tauri signer generate` (and add the `TAURI_SIGNING_PRIVATE_KEY` /
+/// `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` CI secrets) before any real check or
+/// download can work. Until then the commands report `not_configured` instead
+/// of surfacing raw minisign parse errors.
+const PLACEHOLDER_UPDATER_PUBKEY: &str = "REPLACE_WITH_TAURI_SIGNER_GENERATED_PUBLIC_KEY";
+
+/// Message returned by the update commands while the signing key is not set up.
+const NOT_CONFIGURED_MESSAGE: &str = "Auto-update is not configured yet: the updater public key \
+in tauri.conf.json (plugins > updater > pubkey) is still the placeholder. Run `tauri signer \
+generate` to create a minisign keypair, paste the generated public key over the placeholder in \
+desktop/src-tauri/tauri.conf.json, and add the TAURI_SIGNING_PRIVATE_KEY and \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets to CI. Until then update checks are disabled.";
+
+/// True when the configured updater pubkey is missing, empty, or still the
+/// placeholder string — i.e. the signing setup has not been completed.
+fn updater_pubkey_is_placeholder(pubkey: Option<&str>) -> bool {
+    match pubkey {
+        None => true,
+        Some(key) => {
+            let trimmed = key.trim();
+            trimmed.is_empty() || trimmed == PLACEHOLDER_UPDATER_PUBKEY
+        }
+    }
+}
+
+/// Reads `plugins > updater > pubkey` from the tauri config
+/// (`app.config().plugins` is a name → JSON-value map).
+fn configured_updater_pubkey(app: &tauri::AppHandle) -> Option<String> {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|v| v.get("pubkey"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// `check_update` — asks the updater plugin whether a new version is available.
+///
+/// JSON contract (all keys always present):
+/// `{"status", "current_version", "version", "body", "date", "error"}` where
+/// status ∈ `"up_to_date" | "available" | "not_configured" | "error"`.
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
+    if updater_pubkey_is_placeholder(configured_updater_pubkey(&app).as_deref()) {
+        return json!({
+            "status": "not_configured",
+            "current_version": null,
+            "version": null,
+            "body": null,
+            "date": null,
+            "error": NOT_CONFIGURED_MESSAGE,
+        });
+    }
+
+    // A bounded timeout keeps the dashboard invoke from hanging on a dead
+    // endpoint (the plugin applies no timeout by default).
+    let updater = match app
+        .updater_builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(updater) => updater,
+        Err(err) => {
+            return json!({
+                "status": "error",
+                "current_version": null,
+                "version": null,
+                "body": null,
+                "date": null,
+                "error": format!("Update check failed: {err}"),
+            });
+        }
+    };
+
+    match updater.check().await {
+        Err(err) => json!({
+            "status": "error",
+            "current_version": null,
+            "version": null,
+            "body": null,
+            "date": null,
+            "error": format!("Update check failed: {err}"),
+        }),
+        Ok(None) => json!({
+            "status": "up_to_date",
+            "current_version": app.package_info().version.to_string(),
+            "version": null,
+            "body": null,
+            "date": null,
+            "error": null,
+        }),
+        Ok(Some(update)) => {
+            let date = update.date.and_then(|d| {
+                d.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            });
+            json!({
+                "status": "available",
+                "current_version": app.package_info().version.to_string(),
+                "version": update.version.clone(),
+                "body": update.body.clone(),
+                "date": date,
+                "error": null,
+            })
+        }
+    }
+}
+
+/// `download_update` — downloads (and minisign-verifies) the new bundle.
+///
+/// The download is INERT: nothing the running app depends on is written. The
+/// verified payload is stashed in the process-global
+/// [`backend_watchdog::set_downloaded_update`] slot, where the watchdog's
+/// update-intent flow consumes it after the backend has stopped.
+///
+/// JSON contract: `{"status": <"ready"|"error">, "version": <string|null>,
+/// "error": <string|null>}`.
+#[tauri::command]
+async fn download_update(app: tauri::AppHandle) -> serde_json::Value {
+    if updater_pubkey_is_placeholder(configured_updater_pubkey(&app).as_deref()) {
+        return json!({
+            "status": "error",
+            "version": null,
+            "error": NOT_CONFIGURED_MESSAGE,
+        });
+    }
+
+    let updater = match app.updater() {
+        Ok(updater) => updater,
+        Err(err) => {
+            return json!({
+                "status": "error",
+                "version": null,
+                "error": format!("Update download failed: {err}"),
+            });
+        }
+    };
+
+    let update = match updater.check().await {
+        Ok(Some(update)) => update,
+        Ok(None) => {
+            return json!({
+                "status": "error",
+                "version": null,
+                "error": "No update is available to download.",
+            });
+        }
+        Err(err) => {
+            return json!({
+                "status": "error",
+                "version": null,
+                "error": format!("Update download failed: {err}"),
+            });
+        }
+    };
+
+    let version = update.version.clone();
+    match update.download(|_chunk_len, _total| {}, || {}).await {
+        Ok(bytes) => {
+            backend_watchdog::set_downloaded_update(version.clone(), bytes);
+            json!({
+                "status": "ready",
+                "version": version,
+                "error": null,
+            })
+        }
+        Err(err) => json!({
+            "status": "error",
+            "version": null,
+            "error": format!("Update download failed: {err}"),
+        }),
+    }
+}
+
+/// `begin_update` — arms the watchdog's update-intent flow.
+///
+/// The dashboard invokes this BEFORE the backend calls `System.stop/0` from
+/// inside the BEAM. It only sets the update-intent flag (kills nothing, exactly
+/// like `begin_quit`); when the backend child then exits (code 0), the watchdog
+/// runs the installer for the downloaded payload and relaunches the new bundle
+/// instead of exiting the app.
+///
+/// JSON contract: `{"ok": true}`.
+#[tauri::command]
+fn begin_update(manager: tauri::State<'_, BackendHandle>) -> serde_json::Value {
+    manager.begin_update();
+    json!({"ok": true})
 }
 
 /// Returns the port the Phoenix backend listens on.
@@ -216,8 +415,14 @@ fn run_gui() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![begin_quit])
+        .invoke_handler(tauri::generate_handler![
+            begin_quit,
+            check_update,
+            download_update,
+            begin_update
+        ])
         .setup(|app| {
             // 1. Resolve the launcher path once and build the backend
             //    environment. A broken install (missing launcher) stays fatal.
