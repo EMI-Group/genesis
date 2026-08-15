@@ -1,8 +1,9 @@
 name: Build Desktop App
 
 on:
-  release:
-    types: [published, prereleased]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       target:
@@ -30,7 +31,7 @@ concurrency:
   group: >-
     ${{ github.workflow }}-${{ github.ref }}-
     ${{ inputs.target || 'release' }}-
-    ${{ inputs.tag || github.event.release.tag_name || 'build' }}
+    ${{ inputs.tag || (github.event_name == 'push' && github.ref_name) || 'build' }}
   cancel-in-progress: true
 
 env:
@@ -77,8 +78,15 @@ permissions:
 # windows) are unchanged (genesis_remote_darwin_arm64.tar.xz,
 # genesis_remote_windows_x64.tar.xz).
 #
-# Triggers: release → all platforms + publish; workflow_dispatch → `target`,
-# publish only when publish_release (tag required). Always upload-artifact.
+# Triggers: tag push `v*` → all platforms + release (created as a draft,
+# published as the FINAL step after all artifacts are uploaded); workflow_dispatch
+# → `target`, publish only when publish_release (tag required). Always upload-artifact.
+#
+# Version derivation: v1.2.3 → 1.2.3 (release name; also the version source for
+# a future latest.json manifest). The release event is intentionally NOT listened
+# to — releases are created by pushing a tag, and the draft → publish ordering in
+# publish-release guarantees releases/latest never resolves to a release lacking
+# assets.
 
 jobs:
   prepare:
@@ -87,6 +95,8 @@ jobs:
     outputs:
       publish: ${{ steps.meta.outputs.publish }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_version: ${{ steps.meta.outputs.release_version }}
+      is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
       linux_matrix: ${{ steps.linux.outputs.matrix }}
       linux_remote_matrix: ${{ steps.linux-remote.outputs.matrix }}
     steps:
@@ -96,28 +106,37 @@ jobs:
           BUILD_TARGET: ${{ inputs.target }}
           EVENT_NAME: ${{ github.event_name }}
           PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          RELEASE_TAG: ${{ inputs.tag || (github.event_name == 'push' && github.ref_name) || '' }}
         run: |
           set -euo pipefail
           TAG="${RELEASE_TAG}"
           PUBLISH=false
-          if [[ "${EVENT_NAME}" == "release" || "${PUBLISH_RELEASE}" == "true" ]]; then
+          if [[ "${EVENT_NAME}" == "push" || "${PUBLISH_RELEASE}" == "true" ]]; then
             PUBLISH=true
           fi
           if [[ "${PUBLISH}" == "true" && -z "${TAG}" ]]; then
             echo "tag is required when publishing a release" >&2
             exit 1
           fi
-          if [[ "${EVENT_NAME}" == "release" ]]; then
+          if [[ "${EVENT_NAME}" == "push" ]]; then
             TARGET=all
           else
             TARGET="${BUILD_TARGET}"
+          fi
+
+          # v1.2.3 → 1.2.3 (release name; also the version source for a future latest.json manifest)
+          VERSION="${TAG#v}"
+          PRERELEASE=false
+          if [[ -n "${TAG}" && "${TAG}" == *-* ]]; then
+            PRERELEASE=true
           fi
 
           {
             echo "publish=${PUBLISH}"
             echo "release_tag=${TAG}"
             echo "target=${TARGET}"
+            echo "release_version=${VERSION}"
+            echo "is_prerelease=${PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Resolve Linux matrix
@@ -435,7 +454,7 @@ jobs:
     name: macOS (ARM64)
     needs: prepare
     if: >-
-      github.event_name == 'release' ||
+      github.event_name == 'push' ||
       inputs.target == 'all' ||
       inputs.target == 'macos-arm64'
     runs-on: macos-15
@@ -618,7 +637,7 @@ jobs:
     name: Windows (x86_64)
     needs: prepare
     if: >-
-      github.event_name == 'release' ||
+      github.event_name == 'push' ||
       inputs.target == 'all' ||
       inputs.target == 'windows-x64'
     runs-on: windows-2022
@@ -720,7 +739,9 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # ── Publish release ─────────────────────────────────────────────────────
+  # ── Publish release (draft → public) ────────────────────────────────────
+  # Single writer for GitHub Release assets: uploads everything to a draft,
+  # then flips it public with `gh release edit --draft=false` as the FINAL step.
   publish-release:
     name: Publish GitHub Release
     needs:
@@ -749,9 +770,32 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Upload to GitHub release
+      # Draft → publish ordering: the draft is invisible to the public and to
+      # releases/latest; the FINAL `gh release edit --draft=false` step only
+      # runs after ALL artifacts are uploaded, so releases/latest can never
+      # resolve to an asset-less release. Re-runs are idempotent: softprops
+      # v3.0.2 overwrites files on an existing release and does not flip its
+      # draft/prerelease state; `gh release edit --draft=false` is a no-op on
+      # an already-published release. If the tag's release doesn't exist (e.g.
+      # manual dispatch with a new tag), softprops creates tag+draft via the
+      # API — API-created tags/releases never fire push/release workflow
+      # events (GITHUB_TOKEN actions never re-trigger workflows), so there is
+      # no loop.
+      - name: Create or update draft release and upload artifacts
         uses: softprops/action-gh-release@c12583777ecdfd3be55c69cf75464299dc01057e # v3
         with:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: Genesis ${{ needs.prepare.outputs.release_version }}
+          prerelease: ${{ needs.prepare.outputs.is_prerelease }}
           files: dist/*
+          draft: true
           fail_on_unmatched_files: true
+
+      - name: Publish release (flip draft -> public with all assets attached)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.prepare.outputs.release_tag }}"
+          gh release edit "${TAG}" --draft=false
+          echo "Release ${TAG} is now public with all artifacts attached."
