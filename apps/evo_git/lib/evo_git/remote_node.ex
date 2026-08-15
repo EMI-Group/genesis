@@ -1089,6 +1089,84 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Gets the GitHub upstream information for a repository on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.github_upstream/1`
+  directly (which delegates to `EvoGit.Adapters.GitHub.github_upstream/1`). On
+  a remote node, routes the call through `:erpc` via `call_remote/4` so the
+  git command runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Adapters.GitHub` verbatim. On RPC failure,
+  returns `{:error, {kind, reason}}`.
+  """
+  @spec github_upstream(node(), String.t()) :: term()
+  def github_upstream(node, repo_path) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.github_upstream(repo_path)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :github_upstream, [repo_path]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Lists GitHub issues of a repository's upstream on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_github_issues/2`
+  directly (which delegates to `EvoGit.Adapters.GitHub.list_github_issues/2`).
+  On a remote node, routes the call through `:erpc` via `call_remote/4` so the
+  gh command runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Adapters.GitHub` verbatim. On RPC failure,
+  returns `{:error, {kind, reason}}`.
+  """
+  @spec list_github_issues(node(), String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def list_github_issues(node, repo_path, opts \\ []) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.list_github_issues(repo_path, opts)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_github_issues, [
+             repo_path,
+             opts
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
+  Fetches a GitHub issue of a repository's upstream on the given node and
+  composes it into a deterministic Markdown string.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.github_issue_markdown/2` directly (which
+  delegates to `EvoGit.Adapters.GitHub.github_issue_markdown/2`). On a remote
+  node, routes the call through `:erpc` via `call_remote/4` so the gh command
+  runs inside the remote VM against the remote filesystem.
+
+  Returns the result from `EvoGit.Adapters.GitHub` verbatim. On RPC failure,
+  returns `{:error, {kind, reason}}`.
+  """
+  @spec github_issue_markdown(node(), String.t(), integer() | String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def github_issue_markdown(node, repo_path, number) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.github_issue_markdown(repo_path, number)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :github_issue_markdown, [
+             repo_path,
+             number
+           ]) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Checks whether a branch exists in a repository on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.branch_exists?/2`
