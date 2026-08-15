@@ -226,7 +226,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
         <% show_bottom_expand = @context_level != :all %>
         <div class="diff-split-table">
           <%= if length(@segments) > 0 and @context_level != :all do %>
-            <.diff_expand_bar path={@file_path} context_level={@context_level} />
+            <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:above} />
           <% end %>
           <%= for segment <- @segments do %>
             <%= case segment do %>
