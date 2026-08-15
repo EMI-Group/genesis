@@ -246,7 +246,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
             <% end %>
           <% end %>
           <%= if show_bottom_expand do %>
-            <.diff_expand_bar path={@file_path} context_level={@context_level} />
+            <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:below} />
           <% end %>
         </div>
       <% end %>
@@ -461,6 +461,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   attr(:path, :string, required: true)
   attr(:context_level, :any, default: nil)
+  attr(:direction, :atom, default: :below)
 
   def diff_expand_bar(assigns) do
     ~H"""
@@ -471,7 +472,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           phx-click="expand_context"
           phx-value-path={@path}
         >
-          <.icon name="hero-chevron-double-down" class="size-3.5" />
+          <.icon
+            name={if @direction == :above, do: "hero-chevron-double-up", else: "hero-chevron-double-down"}
+            class="size-3.5"
+          />
         </button>
       </div>
     <% end %>
