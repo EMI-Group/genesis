@@ -66,6 +66,12 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
   attr(:hide_palette, :boolean, default: false)
   attr(:no_project_hint_dismissed, :boolean, default: false)
 
+  # Async GitHub-upstream detection status: nil / %{state: :checking} while
+  # unresolved, %{state: :ok, owner:, repo:} when the active project has a
+  # GitHub upstream with gh available, %{state: :error, owner: nil, repo: nil}
+  # otherwise. Only :ok renders the GitHub button.
+  attr(:github_status, :map, default: nil)
+
   def top_bar(assigns) do
     ~H"""
     <% show_hint =
@@ -139,6 +145,24 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
             {@current_node_name}
           </span>
         </div>
+      <% end %>
+      <!-- RIGHT: compact GitHub button — renders only when the async
+           upstream check resolved :ok (owner/repo known, gh available) and
+           never in gate-state renders (hide_palette). -->
+      <%= if !@hide_palette do %>
+        <%= case @github_status do %>
+          <% %{state: :ok, owner: owner, repo: repo} when is_binary(owner) and is_binary(repo) -> %>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm gap-2 rounded-lg border border-base-300/60 hover:bg-base-200/50 transition-colors"
+              phx-click="open_github_issues"
+              title={gettext("Open GitHub Issues")}
+            >
+              <.icon name="brand-github" class="size-4" />
+              <span class="font-mono text-xs whitespace-nowrap">{owner}/{repo}</span>
+            </button>
+          <% _ -> %>
+        <% end %>
       <% end %>
       <!-- RIGHT: Configure dropdown — server-managed open state -->
       <div class="relative shrink-0">
