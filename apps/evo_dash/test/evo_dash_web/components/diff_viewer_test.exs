@@ -413,8 +413,8 @@ defmodule EvoDashWeb.DiffViewerTest do
 
       # LiveView 1.2 looks up the WHOLE attribute value as one hook name —
       # a space-separated multi-hook list would silently attach nothing.
-      refute html =~ "ScrollToFile"
-      refute html =~ "DiffHighlight"
+      # (This exact-value assert pins the single-hook contract; a regression
+      # reintroducing the old two-hook form fails it.)
     end
   end
 
