@@ -1,13 +1,18 @@
-// DiffHighlight hook: client-side syntax highlighting for the diff viewer.
-// Attached via `phx-hook="ScrollToFile DiffHighlight"` on the #diff-viewer
-// container (space-separated multiple hooks are supported by LiveView).
+// DiffViewer hook: combined client-side behavior for the diff viewer.
 //
-// Replaces the previous server-side highlighter. Both `mounted()` and `updated()`
-// must run the highlighting pass: morphdom applies in-place patches (lazy
-// file load, expand_context, select_file) WITHOUT re-initializing hooks, so
-// `updated()` is what re-highlights new/changed rows; `mounted()` covers full
-// remounts (tab switches destroy/recreate #diff-viewer, task reloads collapse
-// files).
+// LiveView 1.2 `phx-hook` takes exactly ONE hook name per element — the whole
+// attribute value is looked up as a single hook name (no whitespace
+// splitting), so never use space-separated hook lists (that was pre-1.2
+// behavior). A space-separated form silently attaches NOTHING (browser
+// console: `unknown hook found for "..."`), which is why BOTH behaviors —
+// scroll-to-file AND client-side syntax highlighting — are merged into this
+// single hook.
+//
+// Both `mounted()` and `updated()` must run the highlighting pass: morphdom
+// applies in-place patches (lazy file load, expand_context, select_file)
+// WITHOUT re-initializing hooks, so `updated()` is what re-highlights
+// new/changed rows; `mounted()` covers full remounts (tab switches
+// destroy/recreate #diff-viewer, task reloads collapse files).
 import hljs from "../../vendor/highlight.min.js"
 
 // Map backend (server-side) language names to highlight.js names. Anything not
@@ -17,8 +22,29 @@ const LANG_MAP = {
   text: "plaintext"
 };
 
-const DiffHighlight = {
+const DiffViewer = {
   mounted() {
+    this.handleEvent("scroll_to_file", ({target_id}) => {
+      setTimeout(() => {
+        const target = document.getElementById(target_id);
+        if (!target) return;
+
+        // The main content area is the scroll container (not window)
+        const scrollContainer = document.getElementById('main-scroll');
+        if (scrollContainer) {
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const scrollOffset = targetRect.top - containerRect.top + scrollContainer.scrollTop;
+          scrollContainer.scrollTo({
+            top: scrollOffset,
+            behavior: "smooth"
+          });
+        } else {
+          // Fallback
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 50);
+    });
     this.highlight();
   },
 
@@ -66,4 +92,4 @@ const DiffHighlight = {
   }
 };
 
-export default DiffHighlight;
+export default DiffViewer;
