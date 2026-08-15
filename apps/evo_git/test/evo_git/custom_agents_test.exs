@@ -317,4 +317,139 @@ defmodule EvoGit.CustomAgentsTest do
       assert hd(list).tools == nil
     end
   end
+
+  describe "id derivation on read for hand-authored files" do
+    test "entry without id gets a slugified id and is addressable via get/1" do
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.CustomAgents.path(),
+        """
+        [[agents]]
+        name = "Hand Written"
+        prompt = "p"
+        """
+      )
+
+      [agent] = EvoGit.CustomAgents.list()
+      assert agent.id == "hand_written"
+      assert agent.name == "Hand Written"
+
+      assert %{name: "Hand Written"} = EvoGit.CustomAgents.get("hand_written")
+    end
+
+    test "logs a warning naming the agent when an id is derived" do
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.CustomAgents.path(),
+        """
+        [[agents]]
+        name = "Loud Agent"
+        prompt = "p"
+        """
+      )
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          EvoGit.CustomAgents.list()
+        end)
+
+      assert log =~ "Loud Agent"
+      assert log =~ "loud_agent"
+    end
+
+    test "duplicate names get a deterministic _2 suffix on the second entry" do
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.CustomAgents.path(),
+        """
+        [[agents]]
+        name = "Dup"
+        prompt = "p1"
+
+        [[agents]]
+        name = "Dup"
+        prompt = "p2"
+        """
+      )
+
+      [first, second] = EvoGit.CustomAgents.list()
+      assert first.id == "dup"
+      assert first.prompt == "p1"
+      assert second.id == "dup_2"
+      assert second.prompt == "p2"
+    end
+
+    test "symbols-only name falls back to agent_N" do
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.CustomAgents.path(),
+        """
+        [[agents]]
+        name = "!!!"
+        prompt = "p"
+        """
+      )
+
+      [agent] = EvoGit.CustomAgents.list()
+      assert agent.id == "agent_1"
+    end
+
+    test "explicit ids are never modified or suffixed" do
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.CustomAgents.path(),
+        """
+        [[agents]]
+        id = "first"
+        name = "First"
+        prompt = "p1"
+
+        [[agents]]
+        name = "First"
+        prompt = "p2"
+        """
+      )
+
+      [explicit, derived] = EvoGit.CustomAgents.list()
+      assert explicit.id == "first"
+      assert explicit.prompt == "p1"
+      assert derived.id == "first_2"
+      assert derived.prompt == "p2"
+    end
+
+    test "save/1 round-trip of a derived-id definition preserves the derived id" do
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(
+        EvoGit.CustomAgents.path(),
+        """
+        [[agents]]
+        name = "Derived"
+        prompt = "p"
+        """
+      )
+
+      [agent] = EvoGit.CustomAgents.list()
+      assert agent.id == "derived"
+
+      assert {:ok, saved} =
+               EvoGit.CustomAgents.save(%{
+                 id: agent.id,
+                 name: agent.name,
+                 prompt: "p updated"
+               })
+
+      assert saved.id == "derived"
+      assert saved.prompt == "p updated"
+
+      [after_save] = EvoGit.CustomAgents.list()
+      assert after_save.id == "derived"
+      assert after_save.prompt == "p updated"
+    end
+  end
 end

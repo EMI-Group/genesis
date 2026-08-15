@@ -33,7 +33,7 @@ defmodule EvoGit.CustomAgents do
 
   | Field | Type | Required | Default | Description |
   |---|---|---|---|---|
-  | `id` | string | no | auto-generated | Unique identifier (slugified from name, max 40 chars) |
+  | `id` | string | no | auto-generated | Unique identifier — auto-generated from `name` (slugified, max 40 chars) when omitted in the file; explicit ids are respected |
   | `name` | string | **yes** | — | Human name |
   | `description` | string | no | `nil` | Free-form description |
   | `prompt` | string | **yes** | — | System prompt |
@@ -114,6 +114,7 @@ defmodule EvoGit.CustomAgents do
           |> Enum.filter(&is_map/1)
           |> Enum.map(&atomize_agent/1)
           |> Enum.map(&normalize_definition/1)
+          |> derive_ids()
 
         _ ->
           []
@@ -443,6 +444,69 @@ defmodule EvoGit.CustomAgents do
     |> String.replace(@non_alnum_re, "_")
     |> String.replace(@trim_underscore_re, "")
     |> String.slice(0, 40)
+  end
+
+  # Derives ids for definitions read WITHOUT one (hand-authored TOML entries),
+  # so every agent is addressable by id. Explicit ids are never modified and
+  # definitions keep their original order. A missing id is slugified from the
+  # name (falling back to "agent_N" when the name slugifies to ""), and
+  # collisions with already-assigned ids get a deterministic "_2", "_3", ...
+  # suffix (first occurrence keeps the plain id). A warning is logged for each
+  # derivation so users learn ids come from names.
+  defp derive_ids(agents) do
+    {derived, _assigned} =
+      agents
+      |> Enum.with_index()
+      |> Enum.map_reduce(MapSet.new(), fn {agent, index}, assigned ->
+        case Map.get(agent, :id) do
+          id when is_binary(id) and id != "" ->
+            {agent, MapSet.put(assigned, id)}
+
+          _ ->
+            id = derive_unique_id(agent, index, assigned)
+
+            Logger.warning(
+              "Custom agent #{inspect(Map.get(agent, :name))} in agents.toml has no id — " <>
+                "derived \"#{id}\" from its name"
+            )
+
+            {Map.put(agent, :id, id), MapSet.put(assigned, id)}
+        end
+      end)
+
+    derived
+  end
+
+  # Computes a unique id for a definition that has none: slugified name
+  # (max 40 chars), "agent_N" fallback for missing/empty names or names that
+  # slugify to "", and a deterministic "_2", "_3", ... suffix when the base
+  # id collides with an already-assigned id.
+  defp derive_unique_id(agent, index, assigned) do
+    base =
+      case Map.get(agent, :name) do
+        name when is_binary(name) ->
+          case slugify(name) do
+            "" -> "agent_#{index + 1}"
+            slug -> slug
+          end
+
+        _ ->
+          "agent_#{index + 1}"
+      end
+
+    if MapSet.member?(assigned, base) do
+      Enum.reduce_while(Stream.iterate(2, &(&1 + 1)), nil, fn n, _acc ->
+        candidate = "#{base}_#{n}"
+
+        if MapSet.member?(assigned, candidate) do
+          {:cont, nil}
+        else
+          {:halt, candidate}
+        end
+      end)
+    else
+      base
+    end
   end
 
   # Converts a string-keyed agent map (as decoded from TOML) into an
