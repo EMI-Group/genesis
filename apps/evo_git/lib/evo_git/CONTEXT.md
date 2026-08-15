@@ -44,7 +44,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 
 ### Remote Bootstrap Asset Format
 
-The SSH remote-bootstrap release asset is a **`.tar.xz`** archive: `genesis_remote_<platform>.tar.xz` (asset name, download URL, local cache path, and remote temp file all use `.tar.xz`). This is coordinated with `.github/workflows/build-desktop.yml`, which uploads `genesis_remote_<os>_<arch>.tar.xz` per platform (linux_x64 / linux_arm64 / darwin_arm64 / windows_x64). Extraction uses `tar -xJf` — the remote host needs xz-capable tar (works on all Linux distros with xz-utils, and macOS bsdtar supports xz natively). There is intentionally NO gz fallback: if xz extraction fails it should fail loudly.
+The SSH remote-bootstrap release asset is a **`.tar.xz`** archive: `genesis_remote_<platform>.tar.xz` (asset name, download URL, local cache path, and remote temp file all use `.tar.xz`). This is coordinated with `.github/workflows/build-desktop.yml`, which uploads `genesis_remote_<os>_<arch>.tar.xz` per platform (linux_x64 / linux_arm64 / darwin_arm64 / windows_x64). Extraction uses `tar -xJf` — the remote host needs xz-capable tar (works on all Linux distros with xz-utils, and macOS bsdtar supports xz natively). There is intentionally NO gz fallback: if xz extraction fails it should fail loudly. On NixOS hosts the glibc-linked tarball runs via on-the-fly patchelf patching during bootstrap (`nixos_patch_script/1`, `:patching_binaries` stage) — no new asset variants.
 
 ### Key Overridable Callbacks (via `use EvoGit.Agent`)
 | Callback | Default | Purpose |
