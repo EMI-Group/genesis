@@ -195,6 +195,14 @@ The project includes a GitHub Actions workflow (`.github/workflows/build-desktop
 
 The Tauri Rust shell (`desktop/src-tauri/src/sidecar.rs`) spawns the release launcher script (`bin/genesis_desktop start`) as a child process and handles backend lifecycle with the correct env vars.
 
+### Auto-Update / Push-Update (design analysis — NOT yet implemented)
+
+A full design analysis lives in `docs/auto-update.md`. Recommended direction (decided, pending implementation):
+
+- **Per-platform, convention-respecting**: macOS → in-app updater via `tauri-plugin-updater` (pipeline already signs/notarizes; only the DMG is stapled, `.app.zip` is not); Windows → `tauri-plugin-updater` with **NSIS only** (`installMode: "passive"`; MSI excluded — known updater bugs; no Authenticode signing exists yet); **Linux → package-manager-first**: deb/rpm channels get an apt/dnf repo + in-app "update via your package manager" notification, NO self-install; only the **AppImage** (x64) channel self-updates; portable `.tar.gz` → download link only. Remote daemons (`genesis_remote`): current flow overwrites files under a running daemon — needs stop→swap→start (deferred).
+- **Update timing — two-phase model**: Phase 1 check/download/signature-verify is safe anytime (background); Phase 2 apply (stop backend → install → relaunch) is **gated on task idle** (`TaskRegistry.list_task_ids([:running, :pending, :cancelling, :finalizing]) == []`). Busy → defer or "Apply & gracefully stop tasks" (reuses graceful-cancel: 3-turn grace, worktree git-commit at grace entry, results preserved; grace is NOT wall-clock bounded — LLM retries ~9min, tool cap 30min → generous timeout + `force_kill_task/1` fallback with explicit user warning). A new **`:interrupted`** task status is recommended (codec `@known_atoms` + ~10 hardcoded status lists; schema has no constraints). Backend must stop from inside the BEAM (`System.stop/0` — `bin/genesis_desktop stop` is broken under `RELEASE_DISTRIBUTION=none`); Rust watchdog needs a new update-intent state (currently exit-code-0 = intentional app exit).
+- **Blocker checklist** (in order): minisign keypair + CI secrets, manifest/signature generation in `publish-release` (static JSON per platform, GitHub Releases hosting first, genesis.evox.group Cloudflare worker later), Windows Authenticode cert, macOS `.app.zip` stapling, Linux apt/dnf repo + GPG. No `tauri-plugin-updater` dependency or updater config exists anywhere today. See the doc for the phased plan and open questions.
+
 ### NixOS Local Build
 
 For building and testing the desktop app on NixOS, a `flake.nix` is provided at the repository root:
