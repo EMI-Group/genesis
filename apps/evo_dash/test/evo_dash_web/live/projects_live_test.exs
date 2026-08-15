@@ -2370,6 +2370,154 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       task = EvoGit.TaskRegistry.get_task(task_id)
       refute has_opt?(task, "agent")
     end
+
+    test "renders the Custom Agent mode option", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # 4th mode option next to genesis_new / genesis_existing / evolve_simple.
+      assert render(view) =~ "Custom Agent"
+    end
+
+    test "task_change to custom_agent auto-selects the first custom agent", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      assert assigns(view)[:selected_agent_id] == nil
+
+      html = render_change(view, "task_change", %{"mode" => "custom_agent"})
+
+      assert assigns(view)[:task_mode] == "custom_agent"
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+      assert html =~ ~s(<option value="my-agent" selected)
+
+      # The Auto option is hidden in custom mode (an agent MUST be chosen).
+      refute html =~ "Auto (recommended)"
+    end
+
+    test "task_change to evolve_simple keeps the previously selected agent", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+      render_change(view, "task_change", %{"mode" => "evolve_simple"})
+
+      assert assigns(view)[:task_mode] == "evolve_simple"
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+    end
+
+    test "custom_agent submit without a selected agent flashes an error and starts nothing", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Submit DIRECTLY (no task_change first — it would auto-select the first
+      # agent) so the selected_agent_id assign is still nil.
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "do it",
+          mode: "custom_agent",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "Custom Agent mode requires selecting a custom agent."
+      refute html =~ "task started with ID:"
+    end
+
+    test "custom_agent submit with a selected agent starts an evolve task with mode custom", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "custom_agent",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      assert task.type == :evolve
+      # :mode/:objective are in the Store codec's atomization whitelist, so the
+      # round-tripped opts decode them as atom keys with STRING values; :agent
+      # is not whitelisted, so it stays a string key.
+      assert opt(task, :mode) == "custom"
+      assert opt(task, "agent") == "my-agent"
+      assert opt(task, :objective) == "build me a thing"
+    end
+
+    test "custom_agent mode persists/restores across form state", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Simulate a sessionStorage restore on reload: the node gate passes and
+      # the already-active project skips activate_project's mode re-detection,
+      # so the persisted custom_agent choice survives.
+      render_hook(view, "restore_state", %{
+        "node" => "local",
+        "task_mode" => "custom_agent",
+        "selected_agent_id" => "my-agent",
+        "project" => tmp_dir
+      })
+
+      assert assigns(view)[:task_mode] == "custom_agent"
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+    end
   end
 
   describe "custom agents — none configured" do

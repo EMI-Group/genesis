@@ -217,7 +217,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert model_class(html) =~ "truncate"
     end
 
-    test "mode select keeps its three options and task_change event" do
+    test "mode select keeps its four options and task_change event" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
       assert html =~ ~s(name="mode")
@@ -225,6 +225,8 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ "Initialize Existing"
       assert html =~ "Create New"
       assert html =~ "Evolution"
+      assert html =~ "Custom Agent"
+      assert html =~ ~s(value="custom_agent")
     end
 
     test "Launch button carries the server-rendered data-mode attribute" do
@@ -240,6 +242,76 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         )
 
       assert button_attr(html, "data-mode") == "evolve_simple"
+
+      # custom_agent drives its own violet hover-ring rule via data-mode.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "custom_agent"
+        )
+
+      assert button_attr(html, "data-mode") == "custom_agent"
+    end
+
+    test "custom_agent mode hides the Auto (recommended) option in the agent select" do
+      agents = [%{id: "my-agent", name: "Bug Hunter"}]
+
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "custom_agent",
+          custom_agents: agents
+        )
+
+      # In Custom Agent mode the agent MUST be chosen — the Auto option (empty
+      # value) is hidden so the select can never render an empty choice.
+      assert html =~ "Bug Hunter"
+      refute html =~ "Auto (recommended)"
+
+      # Control: other modes keep the Auto option with the same agents.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          custom_agents: agents
+        )
+
+      assert html =~ "Auto (recommended)"
+    end
+
+    test "custom_agent mode renders the no-agents warning hint" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "custom_agent"
+        )
+
+      assert html =~
+               "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
+
+      assert html =~ "hero-exclamation-triangle"
+    end
+
+    test "custom_agent mode renders the with-agents hint" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "custom_agent",
+          custom_agents: [%{id: "my-agent", name: "Bug Hunter"}]
+        )
+
+      assert html =~ "Runs the selected custom agent as the root agent of an evolution task."
+      assert html =~ "hero-user-circle"
+    end
+
+    test "custom_agent mode uses the evolve-family placeholder" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "custom_agent",
+          disabled: false
+        )
+
+      assert html =~ ~s(placeholder="Describe what you want to change or improve...")
     end
 
     test "textarea keeps AdaptiveInput + phx-update=ignore with no per-keystroke server event" do
@@ -302,6 +374,33 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         )
 
       assert Floki.find(parse(html), "button#objective-file-button") == []
+    end
+  end
+
+  # task_options_tab/1 — the "Task Options" dropdown tab. Mode gating contract:
+  # Build System renders for genesis* modes only; Starting Node / Starting
+  # Commit / Resume from render for the evolve family (evolve* + custom_agent);
+  # the Archive toggle renders for all modes.
+  describe "task_options_tab/1 rendering" do
+    test "custom_agent mode shows evolve-family advanced options and hides the genesis build-system select" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1, mode: "custom_agent")
+
+      assert html =~ "Starting Node"
+      assert html =~ "Starting Commit"
+      assert html =~ "Resume from"
+      refute html =~ "Build System"
+    end
+
+    test "genesis_new mode shows the build-system select and hides advanced options" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1,
+          mode: "genesis_new"
+        )
+
+      assert html =~ "Build System"
+      refute html =~ "Starting Commit"
+      refute html =~ "Resume from"
     end
   end
 
