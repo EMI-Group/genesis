@@ -170,6 +170,12 @@ defmodule EvoGit.Agent.Runner do
     Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
     Process.put(:genesis_repo_root, repo_root)
     Process.put(:evogit_repo_id, repo_id)
+
+    # Custom agents (EvoGit.Agents.Custom) resolve their definition at runtime
+    # from this process-dict key, set from the spec before the agent loop starts
+    # (their callbacks are zero-arity, so the spec cannot be passed directly).
+    Process.put(:custom_agent_id, Keyword.get(spec.opts, :custom_agent_id))
+
     Process.put(:repo_path, worktree_path)
 
     # Request a FRESH worktree from WorktreeManager (1h call timeout —

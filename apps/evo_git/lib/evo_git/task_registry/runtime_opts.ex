@@ -61,6 +61,25 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
         do: Keyword.put(runtime_opts, :model_id, model_id),
         else: runtime_opts
 
+    # Custom agent selection: thread the agents.toml agent id through to the
+    # runtime so genesis/evolve spawn the custom agent as the root agent.
+    agent = Keyword.get(opts, :agent)
+
+    runtime_opts =
+      if is_binary(agent) and agent != "",
+        do: Keyword.put(runtime_opts, :agent, agent),
+        else: runtime_opts
+
+    # Explicit model-lock pass-through (see Helpers.model_id_locked?/1).
+    # Note: dashboard tasks with an explicit model_id are locked implicitly
+    # by Helpers.model_id_locked?/1 at the spawn site.
+    model_id_locked = Keyword.get(opts, :model_id_locked)
+
+    runtime_opts =
+      if model_id_locked,
+        do: Keyword.put(runtime_opts, :model_id_locked, true),
+        else: runtime_opts
+
     # Per-task build system selection: threads the selected build system atom
     # into the runtime opts for genesis tasks.
     build_system = Keyword.get(opts, :build_system)
