@@ -1792,11 +1792,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert Enum.any?(repos, &(&1.id == "remote-posix"))
 
       posix_repo = Enum.find(repos, &(&1.id == "remote-posix"))
-      # Raw path preserved verbatim — never Path.expand-ed against the LOCAL
-      # OS (a Windows dashboard would rewrite it to a drive-letter path).
-      # NOTE: this pin ALSO trips on Windows CI today because of the same
-      # ForeignRepo.new/3 core bug documented below — see the BUG TRIPWIRE
-      # comment on the remote-win assertions.
+      # Raw-preservation contract: remote contexts build the struct via
+      # node-aware ProjectFlow.build_foreign_repo/4, which stores the root
+      # VERBATIM — never Path.expand-ed against the LOCAL OS (a Windows
+      # dashboard would rewrite it to a drive-letter path).
       assert posix_repo.root == "/home/user/repo"
 
       # Windows-style absolute — the node-aware validator also ACCEPTS it
@@ -1811,17 +1810,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       refute html =~ "Path must be absolute."
 
-      # BUG TRIPWIRE (known gap in the cross-OS fix): `EvoGit.Core.ForeignRepo.new/3`
-      # (evo_git core) runs `Path.expand/1` on the root, which MANGLES
-      # Windows-style paths on a POSIX dashboard (cwd-joined). The intended
-      # contract ("stored as the raw trimmed path, never locally expanded")
-      # currently holds only for paths the local OS already treats as
-      # absolute. Once the core bug is fixed, change this assertion to
-      # `assert win_repo.root == "D:\\stuff\\repo"`. (Reported upstream; lib
-      # code is out of scope for this test work.)
+      # Raw-preservation contract: remote contexts store the root verbatim via
+      # node-aware ProjectFlow.build_foreign_repo/4 — a Windows-style path is
+      # never cwd-joined by the LOCAL OS (which `ForeignRepo.new/3` would do).
       repos = assigns(view)[:foreign_repos]
       win_repo = Enum.find(repos, &(&1.id == "remote-win"))
-      assert win_repo.root == Path.expand("D:\\stuff\\repo")
+      assert win_repo.root == "D:\\stuff\\repo"
 
       # Relative input is still rejected on a remote node
       html =

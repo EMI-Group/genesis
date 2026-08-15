@@ -9,7 +9,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
   `normalize_remote_project_path/2` (remote-aware normalization: absolute
   remote paths pass through verbatim, tilde input expands via the injectable
   `:remote_path_expand_runner` seam), `absolute_path_for_node?/2` (the shared
-  node-aware path predicate), and the public
+  node-aware path predicate), the node-aware foreign-repo construction seam
+  `ProjectFlow.build_foreign_repo/4` (local node → `ForeignRepo.new/3`;
+  remote node → RAW root, no local `Path.expand`),
+  `Project.load_foreign_repos/3` (node-aware genesis.toml foreign-repo
+  loading), and the public
   `EvoDashWeb.ProjectsLive.Project.path_suggestions/2,3` (which delegates to
   the private `filesystem_suggestions/1` on the local node and applies the
   node-aware recents filter).
@@ -25,6 +29,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
 
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+  alias EvoGit.Core.ForeignRepo
 
   # A fake remote BEAM node name. The tests never connect to it — it only has
   # to differ from `node()` so the remote branches of the node-aware
@@ -274,6 +279,91 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       refute ProjectFlow.absolute_path_for_node?(@remote_node, 42)
       refute ProjectFlow.absolute_path_for_node?(@remote_node, %{path: "/tmp"})
       refute ProjectFlow.absolute_path_for_node?(@remote_node, ["/tmp"])
+    end
+  end
+
+  describe "build_foreign_repo/4 — node-aware foreign-repo construction" do
+    test "local node (node()) delegates to ForeignRepo.new/3 (exact local semantics)" do
+      opts = [description: "original"]
+
+      assert ProjectFlow.build_foreign_repo(node(), "original", "~/work/repo", opts) ==
+               ForeignRepo.new("original", "~/work/repo", opts)
+
+      assert ProjectFlow.build_foreign_repo(node(), "x", "/tmp/foo", []) ==
+               ForeignRepo.new("x", "/tmp/foo", [])
+    end
+
+    test "nil node is treated as local and delegates to ForeignRepo.new/3" do
+      assert ProjectFlow.build_foreign_repo(nil, "x", "/tmp/foo", description: "d") ==
+               ForeignRepo.new("x", "/tmp/foo", description: "d")
+    end
+
+    test "remote node stores the POSIX root verbatim (no local Path.expand)" do
+      repo =
+        ProjectFlow.build_foreign_repo(@remote_node, "posix", "/home/user/repo",
+          description: "posix repo"
+        )
+
+      assert repo.id == "posix"
+      # `==` equality proves the EXACT input round-tripped: no cwd-join and no
+      # drive-letter rewrite by the dashboard's local OS.
+      assert repo.root == "/home/user/repo"
+      assert repo.description == "posix repo"
+    end
+
+    test "remote node stores the Windows root verbatim (never cwd-joined)" do
+      repo = ProjectFlow.build_foreign_repo(@remote_node, "win", "D:\\stuff\\repo", [])
+
+      assert repo.id == "win"
+      # Pre-fix, a POSIX dashboard's ForeignRepo.new/3 cwd-joined this path.
+      assert repo.root == "D:\\stuff\\repo"
+      assert repo.description == nil
+    end
+
+    test "remote node stores a UNC root verbatim" do
+      repo = ProjectFlow.build_foreign_repo(@remote_node, "unc", "\\\\server\\share", [])
+
+      assert repo.root == "\\\\server\\share"
+    end
+  end
+
+  describe "Project.load_foreign_repos/3 — node-aware genesis.toml loading" do
+    test "remote node keeps the POSIX root verbatim (host-OS independent)" do
+      config = %{
+        "foreign_repos" => %{
+          "original" => %{"path" => "/Source/original-proj", "description" => "legacy"}
+        }
+      }
+
+      assert [%{id: "original", root: "/Source/original-proj", description: "legacy"}] =
+               Project.load_foreign_repos(@remote_node, "/ignored/repo_path", config)
+
+      # `==` equality proves the EXACT input round-tripped: no local
+      # Path.expand (which would mangle it on a Windows dashboard).
+      assert hd(Project.load_foreign_repos(@remote_node, "/ignored/repo_path", config)).root ==
+               "/Source/original-proj"
+    end
+
+    test "remote node keeps a Windows root verbatim" do
+      config = %{"foreign_repos" => %{"win" => %{"path" => "D:\\stuff\\repo"}}}
+
+      assert [%{id: "win", root: "D:\\stuff\\repo", description: nil}] =
+               Project.load_foreign_repos(@remote_node, "/ignored/repo_path", config)
+    end
+
+    test "remote node returns [] for a nil config" do
+      assert Project.load_foreign_repos(@remote_node, "/ignored/repo_path", nil) == []
+    end
+
+    test "local node keeps the existing behavior (delegates to load_foreign_repos/2)" do
+      config = %{
+        "foreign_repos" => %{
+          "original" => %{"path" => "/Source/original-proj", "description" => "legacy"}
+        }
+      }
+
+      assert Project.load_foreign_repos(node(), "/ignored/repo_path", config) ==
+               Project.load_foreign_repos("/ignored/repo_path", config)
     end
   end
 
