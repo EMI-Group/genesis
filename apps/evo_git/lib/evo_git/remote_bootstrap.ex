@@ -20,7 +20,10 @@ defmodule EvoGit.RemoteBootstrap do
       glibc-linked release cannot execute on NixOS hosts (no
       `/lib64/ld-linux-x86-64.so.2`), so bootstrap patches the extracted
       release's ELF binaries with a Nix-built `patchelf` (mirroring the NixOS
-      `vscode-remote-ssh` extension patch pattern).
+      `vscode-remote-ssh` extension patch pattern),
+    * building the remote shell wrapper (`bash_wrap/1`) that makes every
+      remote command execute under bash regardless of the remote user's login
+      shell (fixes bootstrap failures on hosts whose login shell is fish).
 
   **Linux asset rule:** glibc is the default and ONLY published Linux variant.
   Remote tarball names are NEVER suffixed (`genesis_remote_linux_x64.tar.xz`,
@@ -251,6 +254,28 @@ defmodule EvoGit.RemoteBootstrap do
   @spec nixos_patch_script(String.t()) :: String.t()
   def nixos_patch_script(launcher_path) do
     String.replace(@nixos_patch_script_template, "__LAUNCHER__", launcher_path)
+  end
+
+  @doc """
+  Wraps a remote command so it executes under bash regardless of the remote
+  user's login shell.
+
+  OpenSSH executes the remote command via the remote user's login shell
+  (`$SHELL -c "<command>"`). On hosts whose login shell is not POSIX-ish
+  (e.g. fish on NixOS), POSIX constructs like `VAR=...` assignments are
+  rejected at PARSE time and the command fails before it ever runs. Wrapping
+  as `/usr/bin/env bash -c '<escaped>'` forces execution under bash.
+
+  Single quotes inside the command are escaped as `'\\''` — the standard
+  close-quote / escaped-quote / reopen-quote idiom — which parses correctly
+  under fish, zsh, and any POSIX-ish remote shell.
+
+  Pure builder — performs no I/O; the wrapping happens only at the ssh
+  boundary in `EvoGit.RemoteConnection.run_ssh_command/3`.
+  """
+  @spec bash_wrap(String.t()) :: String.t()
+  def bash_wrap(remote_cmd) do
+    "/usr/bin/env bash -c '" <> String.replace(remote_cmd, "'", "'\\''") <> "'"
   end
 
   # --- Private ---
