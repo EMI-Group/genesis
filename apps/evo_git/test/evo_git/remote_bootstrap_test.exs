@@ -254,7 +254,7 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ ~S|mkdir -p "$PATCH_DIR"|
     end
 
-    test "runs all four nix-builds with 2>&1" do
+    test "runs all seven nix-builds with 2>&1" do
       script = RemoteBootstrap.nixos_patch_script(@launcher)
 
       assert script =~ ~S|nix-build "$NIXPKGS" -A patchelf --out-link "$PATCH_DIR/patchelf" 2>&1|
@@ -263,9 +263,22 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~
                ~S|nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1|
 
-      assert script =~ ~S|nix-build "$NIXPKGS" -A openssl --out-link "$PATCH_DIR/openssl" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A openssl.out --out-link "$PATCH_DIR/openssl" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A zlib --out-link "$PATCH_DIR/zlib" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A ncurses --out-link "$PATCH_DIR/ncurses" 2>&1|
+      assert script =~ ~S|nix-build "$NIXPKGS" -A pcre2.out --out-link "$PATCH_DIR/pcre2" 2>&1|
       # nixpkgs comes from NIX_PATH via the angle-bracket lookup path
       assert script =~ ~S|NIXPKGS="<nixpkgs>"|
+    end
+
+    test "aliases the cc-lib out-link so the RPATH cc entry always resolves" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      # nix-build names the out-link "$PATCH_DIR/cc-lib" because the attr
+      # selects the non-default `lib` output; the script aliases it as cc
+      assert script =~ ~S|if [ ! -e "$PATCH_DIR/cc" ]; then|
+      assert script =~ ~S|ln -s "$PATCH_DIR/cc-lib" "$PATCH_DIR/cc"|
+      assert script =~ ~S|fi|
     end
 
     test "reads the interpreter from the bintools nix-support file" do
@@ -274,10 +287,11 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ ~S|INTERPRETER="$(cat "$PATCH_DIR/bintools/nix-support/dynamic-linker")"|
     end
 
-    test "sets the rpath from cc/lib and openssl/lib" do
+    test "sets the rpath from cc, openssl, zlib, ncurses and pcre2 lib dirs" do
       script = RemoteBootstrap.nixos_patch_script(@launcher)
 
-      assert script =~ ~S|RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib"|
+      assert script =~
+               ~S|RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib:$PATCH_DIR/zlib/lib:$PATCH_DIR/ncurses/lib:$PATCH_DIR/pcre2/lib"|
     end
 
     test "loops over release files with an ELF magic check and invokes patchelf" do
@@ -322,6 +336,9 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ "nixos-patch: building bintools..."
       assert script =~ "nixos-patch: building stdenv.cc.cc.lib..."
       assert script =~ "nixos-patch: building openssl..."
+      assert script =~ "nixos-patch: building zlib..."
+      assert script =~ "nixos-patch: building ncurses..."
+      assert script =~ "nixos-patch: building pcre2..."
       assert script =~
                ~S|echo "nixos-patch: patched $count executables, set rpath on $rpath_count ELF files"|
       assert script =~ "set -e"

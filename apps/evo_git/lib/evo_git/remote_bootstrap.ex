@@ -199,11 +199,26 @@ defmodule EvoGit.RemoteBootstrap do
 
   echo "nixos-patch: building stdenv.cc.cc.lib..."
   nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1
+  # nix-build names the out-link "$PATCH_DIR/cc-lib" because the attr selects
+  # the non-default `lib` output of the multi-output gcc derivation; alias it
+  # as "$PATCH_DIR/cc" so the RPATH entry below always resolves.
+  if [ ! -e "$PATCH_DIR/cc" ]; then
+    ln -s "$PATCH_DIR/cc-lib" "$PATCH_DIR/cc"
+  fi
 
   echo "nixos-patch: building openssl..."
-  nix-build "$NIXPKGS" -A openssl --out-link "$PATCH_DIR/openssl" 2>&1
+  nix-build "$NIXPKGS" -A openssl.out --out-link "$PATCH_DIR/openssl" 2>&1
 
-  RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib"
+  echo "nixos-patch: building zlib..."
+  nix-build "$NIXPKGS" -A zlib --out-link "$PATCH_DIR/zlib" 2>&1
+
+  echo "nixos-patch: building ncurses..."
+  nix-build "$NIXPKGS" -A ncurses --out-link "$PATCH_DIR/ncurses" 2>&1
+
+  echo "nixos-patch: building pcre2..."
+  nix-build "$NIXPKGS" -A pcre2.out --out-link "$PATCH_DIR/pcre2" 2>&1
+
+  RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib:$PATCH_DIR/zlib/lib:$PATCH_DIR/ncurses/lib:$PATCH_DIR/pcre2/lib"
 
   count=0
   rpath_count=0
@@ -240,14 +255,26 @@ defmodule EvoGit.RemoteBootstrap do
     * derives the release root via `dirname` twice and creates a patch dir
       `<release>/.nixos-patch` — persisted across re-extractions as GC roots,
       so re-bootstrap `nix-build`s are instant,
-    * runs the four `nix-build "<nixpkgs>"` builds (`patchelf`, `bintools`,
-      `stdenv.cc.cc.lib`, `openssl`) with `2>&1` on each so errors land in
-      stdout; `openssl` is kept regardless — the OTP `:crypto` NIF
-      `crypto.so` is in the release because req_llm → req → finch → mint pull
-      in `:ssl` (harmless when unneeded),
+    * runs the seven `nix-build "<nixpkgs>"` builds (`patchelf`, `bintools`,
+      `stdenv.cc.cc.lib`, `openssl.out`, `zlib`, `ncurses`, `pcre2.out`) with
+      `2>&1` on each so errors land in stdout. Each lib covers the release's
+      NEEDED deps: `cc` (stdenv.cc.cc.lib) = `libstdc++.so.6`/`libgcc_s.so.1`
+      (beam.smp; glibc's `libc.so.6`/`libm.so.6` resolve from the patched
+      interpreter's own directory, so glibc itself is NOT in the RPATH —
+      nix-build names the out-link `<patch_dir>/cc-lib` because the attr
+      selects the non-default `lib` output of the multi-output gcc
+      derivation, so the script aliases it as `<patch_dir>/cc`),
+      `openssl.out` = `libcrypto.so.3`/`libssl.so.3` (the OTP `:crypto` NIF
+      `crypto.so` — the plain `openssl` attr's default `bin` output has no
+      `lib/`, so `.out` is required; `crypto.so` is in the release because
+      req_llm → req → finch → mint pull in `:ssl`, harmless when unneeded),
+      `zlib` = `libz.so.1` (beam.smp, vendored git), `ncurses` =
+      `libtinfo.so.6` (beam.smp), `pcre2.out` = `libpcre2-8.so.0` (vendored
+      git — same `bin`-output trap as openssl, so `.out` is required),
     * reads the Nix dynamic linker from
       `<patch_dir>/bintools/nix-support/dynamic-linker`,
-    * sets `RPATH` to `<patch_dir>/cc/lib:<patch_dir>/openssl/lib`,
+    * sets `RPATH` to
+      `<patch_dir>/cc/lib:<patch_dir>/openssl/lib:<patch_dir>/zlib/lib:<patch_dir>/ncurses/lib:<patch_dir>/pcre2/lib`,
     * loops over every regular file under the release root and detects ELF
       binaries via the `\\x7fELF` magic (`7f454c46` from
       `head -c 4 | od -An -tx1 | tr -d ' \\n'`). Each ELF file is handled three
