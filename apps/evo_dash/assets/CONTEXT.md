@@ -23,6 +23,8 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 | `vendor/daisyui-theme.js` | DaisyUI theme plugin (used twice in `app.css` for dark & light themes). |
 | `vendor/heroicons.js` | Heroicons icon set exposed as Tailwind plugin (`hero-*` classes). |
 | `vendor/topbar.js` | Topbar progress bar library for navigation feedback. |
+| `vendor/highlight.min.js` | highlight.js 11.11.1 core (127,496 B) — `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js`. Imported by `js/app.js` and passed to the `DiffHighlight` hook; the shared instance is ALSO exposed as `window.hljs` by `js/highlight_setup.js` for the language pack (see "Client-side syntax highlighting" below). |
+| `vendor/highlight-elixir.min.js` | highlight.js 11.11.1 Elixir language pack (2,517 B) — `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/elixir.min.js`. cdnjs IIFE form: self-registers on the global `hljs` (`hljs.registerLanguage("elixir", e)`), exports NO module — the `window.hljs` setup must run before this import. |
 | `tsconfig.json` | TypeScript configuration for editor autocompletion of Phoenix/LiveView JS APIs. Maps `*` to `../deps/*` to resolve Phoenix packages. |
 
 ### How to use
