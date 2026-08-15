@@ -293,6 +293,28 @@ defmodule EvoGit.RemoteBootstrapTest do
                ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"|
     end
 
+    test "guards the full patch behind a PT_INTERP probe" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~
+               ~S|if "$PATCH_DIR/patchelf/bin/patchelf" --print-interpreter "$file" >/dev/null 2>&1; then|
+    end
+
+    test "patches shared libraries rpath-only" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      # shared libs are distinguished from static-pie binaries by NEEDED deps
+      assert script =~ ~S|"$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null \| grep -q NEEDED|
+      assert script =~ ~S|echo "nixos-patch: setting rpath on $file"|
+      assert script =~ ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-rpath "$RPATH" "$file"|
+    end
+
+    test "skips truly static binaries" do
+      script = RemoteBootstrap.nixos_patch_script(@launcher)
+
+      assert script =~ ~S|echo "nixos-patch: skipping static binary $file"|
+    end
+
     test "echoes nixos-patch progress markers and uses set -e" do
       script = RemoteBootstrap.nixos_patch_script(@launcher)
 
@@ -300,7 +322,8 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ "nixos-patch: building bintools..."
       assert script =~ "nixos-patch: building stdenv.cc.cc.lib..."
       assert script =~ "nixos-patch: building openssl..."
-      assert script =~ ~S|echo "nixos-patch: patched $count ELF files"|
+      assert script =~
+               ~S|echo "nixos-patch: patched $count executables, set rpath on $rpath_count ELF files"|
       assert script =~ "set -e"
     end
   end
