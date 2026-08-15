@@ -13,9 +13,19 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["devtools", "tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
+# Update-install machinery (the watchdog mirrors tauri-plugin-updater's
+# per-platform install mechanics). flate2/tar unpack the .AppImage.tar.gz /
+# .app.tar.gz updater payloads on Linux/macOS; tempfile stages the NSIS
+# installer on Windows; time formats the update date as ISO 8601. All are
+# already in the lockfile as transitive deps of tauri-plugin-updater.
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"
+time = { version = "0.3", features = ["formatting"] }
 
 [[bin]]
 name = "genesis-desktop"
