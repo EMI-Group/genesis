@@ -292,7 +292,7 @@ defmodule EvoGit.RemoteConnectionTest do
 
           assert output =~ "argv=2\n"
           assert output =~ "arg1=fake@example.com\n"
-          assert output =~ "arg2=#{remote_cmd}\n"
+          assert output =~ "arg2=#{EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)}\n"
           refute output =~ "arg3="
         end)
       end
@@ -305,7 +305,24 @@ defmodule EvoGit.RemoteConnectionTest do
                    EvoGit.RemoteConnection.run_ssh_command("fake@example.com", remote_cmd, 5_000)
 
           assert output =~ "argv=2\n"
-          assert output =~ "arg2=#{remote_cmd}\n"
+          assert output =~ "arg2=#{EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)}\n"
+        end)
+      end
+
+      test "embedded single quotes round-trip through the bash-wrap escaping" do
+        with_fake_ssh(fn ->
+          remote_cmd =
+            "test -d /etc/nixos && echo yes || grep -qi '^ID=nixos' /etc/os-release 2>/dev/null && echo yes || echo no"
+
+          assert {:ok, output, 0} =
+                   EvoGit.RemoteConnection.run_ssh_command("fake@example.com", remote_cmd, 5_000)
+
+          # Exact pinned form of the wrapped command: every `'` in the raw
+          # command becomes `'\''` (close-quote / escaped-quote / reopen-quote).
+          expected_arg2 =
+            "/usr/bin/env bash -c 'test -d /etc/nixos && echo yes || grep -qi '\\''^ID=nixos'\\'' /etc/os-release 2>/dev/null && echo yes || echo no'"
+
+          assert output == "argv=2\narg1=fake@example.com\narg2=#{expected_arg2}\n"
         end)
       end
     end
@@ -313,8 +330,10 @@ defmodule EvoGit.RemoteConnectionTest do
     describe "bootstrap/1 with fake ssh" do
       # Writes a fake `ssh` + fake `scp` onto PATH and returns
       # %{log:, marker:, tarball:}. The fake ssh receives $1 = ssh_target and
-      # $2 = the remote command (ONE argv element), logs every command to the
-      # log file, and dispatches on $2. Daemon state is emulated via a marker
+      # $2 = the bash-wrapped remote command (ONE argv element —
+      # `/usr/bin/env bash -c '<cmd>'`; the wrapping preserves the command
+      # text verbatim), logs every command to the log file, and dispatches on
+      # $2 via CONTAINS patterns. Daemon state is emulated via a marker
       # file: `systemd-run` / `launchctl load` touch it, while
       # `systemctl --user is-active` / `launchctl list` report active /
       # non-empty only when it exists — so the post-start health check
@@ -344,18 +363,18 @@ defmodule EvoGit.RemoteConnectionTest do
           marker="__MARKER__"
           printf '%s\n' "$2" >> "$log"
           case "$2" in
-            "uname -s && uname -m"*) printf 'Linux\nx86_64\n'; exit 0 ;;
-            "uname -s"*) printf '__OS__\n'; exit 0 ;;
-            "systemctl --user is-active"*) if [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
-            "systemctl --user reset-failed"*) exit 0 ;;
-            "systemd-run"*) touch "$marker"; exit 0 ;;
-            "launchctl unload"*) touch "$marker"; exit 0 ;;
-            "launchctl list"*) if [ -f "$marker" ]; then printf '1234\t0\tcom.genesis.remote.test\n'; fi; exit 0 ;;
-            "launchctl"*) exit 0 ;;
-            "test -d /etc/nixos"*) printf '__DETECT__\n'; exit 0 ;;
+            *"uname -s && uname -m"*) printf 'Linux\nx86_64\n'; exit 0 ;;
+            *"uname -s"*) printf '__OS__\n'; exit 0 ;;
+            *"systemctl --user is-active"*) if [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
+            *"systemctl --user reset-failed"*) exit 0 ;;
+            *"systemd-run"*) touch "$marker"; exit 0 ;;
+            *"launchctl unload"*) touch "$marker"; exit 0 ;;
+            *"launchctl list"*) if [ -f "$marker" ]; then printf '1234\t0\tcom.genesis.remote.test\n'; fi; exit 0 ;;
+            *"launchctl"*) exit 0 ;;
+            *"test -d /etc/nixos"*) printf '__DETECT__\n'; exit 0 ;;
             *nix-build*) printf '%s\n' '__PATCH_OUTPUT__'; exit __PATCH_EXIT__ ;;
-            "curl"*|"wget"*) exit 0 ;;
-            "mkdir"*|"tar"*|"chmod"*|"test -f"*) exit 0 ;;
+            *"curl"*|*"wget"*) exit 0 ;;
+            *"mkdir"*|*"tar"*|*"chmod"*|*"test -f"*) exit 0 ;;
             *) exit 0 ;;
           esac
           """
