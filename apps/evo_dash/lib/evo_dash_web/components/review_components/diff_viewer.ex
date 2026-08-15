@@ -75,7 +75,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   # ---------------------------------------------------------------------------
   # diff_viewer/1 — GitHub-style diff viewer (syntax highlighting is applied
-  # client-side by the DiffHighlight JS hook)
+  # client-side by the DiffViewer JS hook)
   # ---------------------------------------------------------------------------
 
   attr(:files, :list, required: true)
@@ -85,7 +85,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   def diff_viewer(assigns) do
     ~H"""
-    <div class="diff-main-content" id="diff-viewer" phx-hook="ScrollToFile DiffHighlight">
+    <div class="diff-main-content" id="diff-viewer" phx-hook="DiffViewer">
       <%= for file <- @files do %>
         <div
           class="diff-file-section"
