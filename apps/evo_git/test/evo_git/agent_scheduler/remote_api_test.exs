@@ -551,6 +551,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert Enum.at(profiles, 1)[:id] == "fast"
 
       # Scheduler settings
+      assert opts[:default_llm_max_concurrency] == 5
       assert opts[:max_tool_concurrency] == 3
       assert opts[:agent_max_retries] == 5
       assert opts[:max_depth] == 10
@@ -572,6 +573,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       opts = RemoteAPI.build_reload_opts(config)
 
+      assert opts[:default_llm_max_concurrency] == 4
       assert Keyword.has_key?(opts, :model_profiles)
       profiles = opts[:model_profiles]
       assert length(profiles) == 1
@@ -598,6 +600,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       opts = RemoteAPI.build_reload_opts(%{})
 
       assert Keyword.has_key?(opts, :model_profiles)
+      refute Keyword.has_key?(opts, :default_llm_max_concurrency)
       profiles = opts[:model_profiles]
       assert length(profiles) == 1
       assert hd(profiles)[:id] == "default"
@@ -608,6 +611,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     test "rejects nil values from the keyword list" do
       config = %{
         scheduler: %{
+          default_llm_max_concurrency: nil,
           max_tool_concurrency: 2,
           agent_max_retries: nil,
           max_agent_depth: nil,
@@ -618,6 +622,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       opts = RemoteAPI.build_reload_opts(config)
 
       # Nil values are rejected
+      refute Keyword.has_key?(opts, :default_llm_max_concurrency)
       refute Keyword.has_key?(opts, :agent_max_retries)
       refute Keyword.has_key?(opts, :max_depth)
 

@@ -208,6 +208,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
 
     [
       model_profiles: model_profiles,
+      default_llm_max_concurrency: Map.get(scheduler, :default_llm_max_concurrency),
       max_tool_concurrency: Map.get(scheduler, :max_tool_concurrency),
       agent_max_retries: Map.get(scheduler, :agent_max_retries),
       max_depth: Map.get(scheduler, :max_agent_depth),
