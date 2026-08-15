@@ -47,9 +47,9 @@ const DiffHighlight = {
         // arrive without the marker; already-processed cells are skipped.
         if (cell.dataset.hl === "1") return;
 
-        // textContent is already HTML-decoded by the DOM, so any previous
-        // Any leftover markup spans are stripped too — the cell holds pure code (the
-        // backend's parse_diff_lines/1 already removed +/- markers).
+        // textContent is already HTML-decoded by the DOM, so the cell holds
+        // pure code (the backend's parse_diff_lines/1 already removed the
+        // +/- markers). Leftover markup spans, if any, are stripped too.
         const code = cell.textContent;
         if (!code.trim()) return; // skip empty/whitespace-only cells
 
