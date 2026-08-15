@@ -10,6 +10,7 @@ defmodule EvoGit.TaskRegistry.MergeContext do
   task's opts.
   """
 
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
 
   @doc """
@@ -44,10 +45,26 @@ defmodule EvoGit.TaskRegistry.MergeContext do
       opts =
         case prev_task.opts do
           prev_opts when is_list(prev_opts) ->
-            # Give the merge agent the same foreign repo access.
+            # Give the merge agent the same foreign repo access. The previous
+            # task's opts came back from the SQLite store, where the Codec JSON
+            # round-trip turned %ForeignRepo{} structs into string-keyed maps —
+            # normalize them back into structs (dropping unparseable entries) so
+            # downstream dot-access (Runtime.Helpers.merge_foreign_repos/2) never
+            # crashes with a KeyError.
             case Keyword.get(prev_opts, :foreign_repos) do
-              nil -> opts
-              foreign_repos -> Keyword.put(opts, :foreign_repos, foreign_repos)
+              nil ->
+                opts
+
+              foreign_repos when is_list(foreign_repos) ->
+                repos =
+                  foreign_repos
+                  |> Enum.map(&ForeignRepo.normalize/1)
+                  |> Enum.reject(&is_nil/1)
+
+                Keyword.put(opts, :foreign_repos, repos)
+
+              _ ->
+                opts
             end
 
           _ ->
