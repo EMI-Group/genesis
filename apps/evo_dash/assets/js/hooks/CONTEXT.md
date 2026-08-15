@@ -11,18 +11,20 @@ JS object with lifecycle callbacks (`mounted`, `updated`, `destroyed`) registere
 ### Hook Registration
 
 All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks:` map
-(line ~591):
+(lines 826-831 — `liveSocket` constructed at 827, `hooks:` map at 830):
 
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
+import LegendTooltip from "./hooks/legend_tooltip.js"
 // ...
-hooks: {...colocatedHooks, TauriDetect, PlatformDetect, PathAutocomplete,
-        DirectoryPicker, StatePersistence, BrowserNotifications, AutoClearFlash,
-        ScrollToFile, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse,
-        NodeSwitchFade, AdaptiveInput}
+hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, PlatformDetect,
+        PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence,
+        BrowserNotifications, AutoClearFlash, ScrollToFile, ClipboardCopy,
+        AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade,
+        AdaptiveInput, LegendTooltip, FocusInput, PaletteList}
 ```
 
 ### Where each hook is defined
