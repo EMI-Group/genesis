@@ -1,20 +1,35 @@
 defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
   @moduledoc """
-  Pure unit tests for the Windows project-open path fix.
+  Pure unit tests for the Windows project-open path fix and the cross-OS
+  remote-project-path fix.
 
   Covers `EvoDashWeb.ProjectsLive.ProjectFlow.normalize_project_path/1` (the
   guard that stops relative input from being `Path.expand`-joined against the
-  BEAM cwd — on the Windows desktop app that cwd is the Tauri install dir) and
-  the public `EvoDashWeb.ProjectsLive.Project.path_suggestions/2,3` (which
-  delegates to the private `filesystem_suggestions/1` on the local node).
+  BEAM cwd — on the Windows desktop app that cwd is the Tauri install dir),
+  `normalize_remote_project_path/2` (remote-aware normalization: absolute
+  remote paths pass through verbatim, tilde input expands via the injectable
+  `:remote_path_expand_runner` seam), `absolute_path_for_node?/2` (the shared
+  node-aware path predicate), and the public
+  `EvoDashWeb.ProjectsLive.Project.path_suggestions/2,3` (which delegates to
+  the private `filesystem_suggestions/1` on the local node and applies the
+  node-aware recents filter).
 
   No LiveView harness or DB setup is required — these are pure functions.
+
+  NOTE: the tests run on Linux CI but must pin the NEW remote behavior
+  regardless of host OS. The remote branches are therefore exercised with a
+  fake non-local node atom so the dashboard's host-OS semantics never leak in.
   """
 
   use ExUnit.Case, async: true
 
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
+
+  # A fake remote BEAM node name. The tests never connect to it — it only has
+  # to differ from `node()` so the remote branches of the node-aware
+  # functions run (the test VM node is `:nonode@nohost`).
+  @remote_node :"genesis_remote@127.0.0.1"
 
   describe "normalize_project_path/1" do
     test "rejects blank and whitespace-only input" do
@@ -112,5 +127,206 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       assert Enum.count(result, &(&1 == "/tmp")) == 1
       refute "Test" in result
     end
+  end
+
+  describe "normalize_remote_project_path/2" do
+    test "passes a POSIX absolute path through verbatim (no local Path.expand)" do
+      path = "/home/user/proj"
+
+      assert {:ok, expanded} = ProjectFlow.normalize_remote_project_path(@remote_node, path)
+
+      # `==` equality proves the EXACT input round-tripped: no cwd-join and no
+      # drive-letter rewrite by the dashboard's local OS. (Pre-fix, a Windows
+      # dashboard classified this as relative and `Path.expand`ed it.)
+      assert expanded == path
+    end
+
+    test "passes Windows-style absolute paths through verbatim" do
+      # Shape-only assertions — the function never touches the filesystem.
+      for windows_path <- ["C:\\Users\\me\\proj", "D:/stuff", "\\\\server\\share"] do
+        assert {:ok, expanded} =
+                 ProjectFlow.normalize_remote_project_path(@remote_node, windows_path)
+
+        assert expanded == windows_path
+      end
+    end
+
+    test "rejects blank and whitespace-only input" do
+      assert {:error, :blank} = ProjectFlow.normalize_remote_project_path(@remote_node, "")
+      assert {:error, :blank} = ProjectFlow.normalize_remote_project_path(@remote_node, "   ")
+      assert {:error, :blank} = ProjectFlow.normalize_remote_project_path(@remote_node, "\t\n ")
+    end
+
+    test "rejects relative input" do
+      # Bare names, relative paths, drive-relative (D:Test), root-relative
+      # (\Test) and non-expandable tilde (~foo / off-Windows ~\foo) inputs
+      # must never be cwd-joined or locally expanded.
+      for relative <- ["foo/bar", "Test", "D:Test", "\\Test", "~foo", "~\\foo"] do
+        assert {:error, :relative} =
+                 ProjectFlow.normalize_remote_project_path(@remote_node, relative)
+      end
+    end
+
+    test "trims surrounding whitespace before evaluating" do
+      assert {:error, :relative} =
+               ProjectFlow.normalize_remote_project_path(@remote_node, "  foo/bar  ")
+
+      assert {:ok, expanded} =
+               ProjectFlow.normalize_remote_project_path(@remote_node, "  /home/user/proj  ")
+
+      assert expanded == "/home/user/proj"
+    end
+
+    test "tilde input is expanded through the injectable remote expand runner" do
+      test_pid = self()
+
+      install_expand_runner(fn node, path ->
+        send(test_pid, {:expand_called, node, path})
+        {:ok, "/remote/home" <> path}
+      end)
+
+      assert {:ok, "/remote/home~/proj"} =
+               ProjectFlow.normalize_remote_project_path(@remote_node, "  ~/proj  ")
+
+      # The seam receives the node and the TRIMMED input — expansion is fully
+      # delegated to the remote runner, never performed against the local
+      # dashboard's home dir.
+      assert_received {:expand_called, @remote_node, "~/proj"}
+    end
+
+    test "bare tilde input is delegated to the runner" do
+      install_expand_runner(fn node, path ->
+        assert node == @remote_node
+        assert path == "~"
+        {:ok, "/remote/home"}
+      end)
+
+      assert {:ok, "/remote/home"} =
+               ProjectFlow.normalize_remote_project_path(@remote_node, "~")
+    end
+
+    test "tilde input falls back to the trimmed input when the runner fails" do
+      install_expand_runner(fn _node, _path -> {:error, :noconnection} end)
+
+      assert {:ok, "~/proj"} =
+               ProjectFlow.normalize_remote_project_path(@remote_node, "~/proj")
+    end
+
+    test "tilde input falls back to the trimmed input on a non-binary runner result" do
+      for bad_result <- [{:ok, 42}, :ok, {:ok, ["not", "a", "binary"]}] do
+        install_expand_runner(fn _node, _path -> bad_result end)
+
+        assert {:ok, "~/proj"} =
+                 ProjectFlow.normalize_remote_project_path(@remote_node, "~/proj")
+      end
+    end
+
+    test "default runner expands tilde via the node-aware RPC chain" do
+      # No seam installed → default_remote_path_expand/2 →
+      # NodeContext.call_remote(node, Path, :expand, [path]). With the LOCAL
+      # node that call executes directly, pinning the end-to-end delegation
+      # shape (local home expansion, not a hardcoded path).
+      assert {:ok, expanded} = ProjectFlow.normalize_remote_project_path(node(), "~/proj")
+      assert expanded == Path.expand("~/proj")
+    end
+  end
+
+  describe "absolute_path_for_node?/2" do
+    test "local node keeps the local Platform.absolute_path?/1 semantics" do
+      # Linux CI: POSIX absolute accepted via Path.type/1.
+      assert ProjectFlow.absolute_path_for_node?(node(), "/home/user/proj")
+      # Windows-style absolutes are platform-independent (regex-based).
+      assert ProjectFlow.absolute_path_for_node?(node(), "C:\\work\\repo")
+      assert ProjectFlow.absolute_path_for_node?(node(), "\\\\server\\share")
+
+      refute ProjectFlow.absolute_path_for_node?(node(), "foo/bar")
+      refute ProjectFlow.absolute_path_for_node?(node(), "D:Test")
+      refute ProjectFlow.absolute_path_for_node?(node(), "\\Test")
+      refute ProjectFlow.absolute_path_for_node?(node(), "")
+    end
+
+    test "local node rejects non-binary input" do
+      refute ProjectFlow.absolute_path_for_node?(node(), nil)
+      refute ProjectFlow.absolute_path_for_node?(node(), 42)
+      refute ProjectFlow.absolute_path_for_node?(node(), %{path: "/tmp"})
+      refute ProjectFlow.absolute_path_for_node?(node(), ["/tmp"])
+    end
+
+    test "remote node accepts POSIX and Windows-style absolute paths" do
+      # The remote node's paths must NOT be judged by the dashboard's host OS:
+      # a Windows dashboard would classify `/home/...` as :volumerelative and
+      # a POSIX dashboard would reject `C:\...`.
+      for path <- ["/home/user/proj", "/", "C:\\Users\\me\\proj", "D:/stuff", "\\\\server\\share"] do
+        assert ProjectFlow.absolute_path_for_node?(@remote_node, path),
+               "expected #{inspect(path)} to be absolute for a remote node"
+      end
+    end
+
+    test "remote node rejects relative paths" do
+      for relative <- ["foo/bar", "Test", "D:Test", "\\Test", "~foo", ""] do
+        refute ProjectFlow.absolute_path_for_node?(@remote_node, relative),
+               "expected #{inspect(relative)} to be rejected for a remote node"
+      end
+    end
+
+    test "remote node rejects non-binary input" do
+      refute ProjectFlow.absolute_path_for_node?(@remote_node, nil)
+      refute ProjectFlow.absolute_path_for_node?(@remote_node, 42)
+      refute ProjectFlow.absolute_path_for_node?(@remote_node, %{path: "/tmp"})
+      refute ProjectFlow.absolute_path_for_node?(@remote_node, ["/tmp"])
+    end
+  end
+
+  describe "path_suggestions/3 — node-aware recents filter" do
+    test "remote node keeps POSIX/Windows-absolute recents and drops relative ones" do
+      recents = [
+        %{path: "/home/user/proj", name: "proj"},
+        %{path: "C:\\work\\repo", name: "repo"},
+        %{path: "relative/repo", name: "rel"},
+        %{path: "D:Test", name: "vol"}
+      ]
+
+      # Remote filesystem suggestions degrade to [] (no real daemon answers
+      # the RPC against the fake node), so the result IS the filtered recents —
+      # pinning the shared node-aware predicate the remote palette path uses.
+      result = Project.path_suggestions(@remote_node, "", recents)
+
+      assert Enum.any?(result, &(&1 == "/home/user/proj"))
+      assert Enum.any?(result, &(&1 == "C:\\work\\repo"))
+      refute Enum.any?(result, &(&1 == "relative/repo"))
+      refute Enum.any?(result, &(&1 == "D:Test"))
+    end
+
+    test "local node recents filtering is unchanged" do
+      recents = [
+        %{path: "/tmp", name: "tmp"},
+        %{path: "relative/repo", name: "rel"}
+      ]
+
+      # Empty input produces no filesystem suggestions on either branch, so
+      # the result is exactly the locally-filtered recents.
+      result = Project.path_suggestions(node(), "", recents)
+
+      assert Enum.any?(result, &(&1 == "/tmp"))
+      refute Enum.any?(result, &(&1 == "relative/repo"))
+    end
+  end
+
+  # Installs a fake for the `:evo_dash, :remote_path_expand_runner` app-env
+  # seam (read at CALL time by `normalize_remote_project_path/2`) and restores
+  # the previous value in on_exit. The seam function receives `(node, path)`
+  # and must return `{:ok, binary}` for its result to be used.
+  defp install_expand_runner(fun) do
+    original = Application.get_env(:evo_dash, :remote_path_expand_runner)
+
+    on_exit(fn ->
+      if is_nil(original) do
+        Application.delete_env(:evo_dash, :remote_path_expand_runner)
+      else
+        Application.put_env(:evo_dash, :remote_path_expand_runner, original)
+      end
+    end)
+
+    Application.put_env(:evo_dash, :remote_path_expand_runner, fun)
   end
 end
