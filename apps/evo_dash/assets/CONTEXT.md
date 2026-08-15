@@ -8,7 +8,7 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 
 - `./js/` → JavaScript source (LiveSocket setup, hooks, topbar)
 - `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
-- `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar)
+- `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar, highlight.js)
 
 ## API Surface
 
@@ -31,6 +31,15 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 - **Add custom CSS**: extend `css/app.css` or create additional files under `css/` (they are auto-scanned by Tailwind).
 - **Add a vendor library**: drop a `.js` file in `vendor/` and import via relative path (e.g., `import "../vendor/my-lib"`).
 - **Update DaisyUI/Heroicons**: replace the corresponding `.js` file in `vendor/` with the latest release.
+- **Update highlight.js**: download `highlight.min.js` and `languages/elixir.min.js` (currently v11.11.1) from `https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/` into `vendor/`, verify the byte counts match the table above (they change with the version — commit them), and run `mix assets.build` to rebuild the bundle. The language pack MUST stay the cdnjs IIFE form (self-registering on the global `hljs`) — see "Client-side syntax highlighting" below; an ES-module pack would break the `window.hljs` load-order contract.
+
+### Client-side syntax highlighting (highlight.js)
+
+The review diff viewer highlights code in the BROWSER (no server-side highlighter): the backend renders escaped plain-text diff lines and stamps `data-language` (Lumis-style names from `EvoGit.Review.language_for_file/1`) on each `.diff-file-section`; the `DiffHighlight` hook highlights the `.diff-split-cell` cells with vendored highlight.js 11.11.1.
+
+- **`js/highlight_setup.js`** — exposes the imported highlight.js instance as `window.hljs` via a module SIDE EFFECT. This is load-bearing: the cdnjs language pack (`vendor/highlight-elixir.min.js`) is NOT an ES module — it is an IIFE that self-registers on the global `hljs` (`hljs.registerLanguage("elixir", e)`) and exports nothing. `app.js` therefore imports `highlight_setup.js` BEFORE the vendored pack import (ESM evaluation is depth-first in import order), so `window.hljs` exists when the pack evaluates; the pack registers "elixir" on that same instance, which the `DiffHighlight` hook also imports (bundler dedup → one shared instance). If the import order is changed, the pack throws `ReferenceError: hljs is not defined` at bundle load.
+- **`js/hooks/diff_highlight.js`** — the `DiffHighlight` hook (registered in `app.js`, attached via `phx-hook="ScrollToFile DiffHighlight"` on `#diff-viewer`). Runs its pass in `mounted()` AND `updated()`; per `.diff-file-section` reads `data-language` (lumis→hljs map: `c_sharp`→`csharp`, `text`→`plaintext`, else passthrough), skips sections with unknown languages, highlights each unmarked `.diff-split-cell` (`dataset.hl === "1"` and empty/whitespace-only cells skipped) via `hljs.highlight` in try/catch (a throw leaves the cell as plain text — never breaks the page), and marks `dataset.hl = "1"`. No-ops gracefully if hljs failed to load.
+- **CSS palette** (`css/app.css`): `.hljs-*` token colors for BOTH themes — light: comment `#6e7781`, keyword `#cf222e`, string `#0a3069`, number/literal/built_in/type `#0550ae`, title/function_/class_/meta `#8250df`, attr/symbol/variable/section/doctag `#953800`, operator/params inherit; dark (`[data-theme="dark"]`): comment `#8b949e`, keyword `#ff7b72`, string `#a5d6ff`, number/literal/built_in/type `#79c0ff`, title/function_/class_/meta `#d2a8ff`, attr/symbol/variable/section/doctag `#ffa657`. The span-neutralizer rules (`.diff-line-content span` / `.diff-split-cell span` → inline, transparent background, inherited font — but NOT `color: inherit`, so token colors show through) keep the injected highlight spans from breaking the diff grid.
 
 ## Constraints
 
