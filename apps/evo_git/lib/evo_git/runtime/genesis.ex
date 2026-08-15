@@ -261,9 +261,19 @@ defmodule EvoGit.Runtime.Genesis do
   # Use the explicitly-specified mode if provided; otherwise auto-detect.
   defp resolve_mode(repo_path, opts) do
     case Keyword.get(opts, :mode) do
-      :new -> :new
-      :existing -> :existing
-      _ -> if Helpers.new_codebase?(repo_path), do: :new, else: :existing
+      :new ->
+        :new
+
+      :existing ->
+        :existing
+
+      mode when mode in [:custom, "custom"] ->
+        raise ArgumentError,
+              "custom mode is evolve-only; use an evolve task " <>
+                "(evogit evolve --mode custom --agent <id>)"
+
+      _ ->
+        if Helpers.new_codebase?(repo_path), do: :new, else: :existing
     end
   end
 end
