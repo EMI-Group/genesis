@@ -1677,6 +1677,47 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == tmp_dir))
     end
 
+    test "remote open_project success path filters recents with the node first (regression)", %{
+      tmp_dir: tmp_dir
+    } do
+      id = save_target!()
+
+      # The remote SUCCESS branch is unreachable through a full LiveView in
+      # tests: a connected fake node atom fails the dir? RPC fast (error
+      # branch — see the test above), and a disconnected target is
+      # gate-blocked (`gate_active?/1` gates `%{phase: :disconnected}`, so the
+      # submit never reaches the recents filter). Call `open_project/2`
+      # directly on a hand-built socket in the test-reachable remote-success
+      # state: `current_node_id` set (routes into `activate_remote_project/2`),
+      # `remote_status` phase `:connected` (gate guard inactive), and
+      # `current_node` = the LOCAL BEAM node so NodeContext delegates to the
+      # real local TaskRegistry/filesystem.
+      socket =
+        %Phoenix.LiveView.Socket{assigns: %{__changed__: nil}, redirected: nil}
+        |> Phoenix.Component.assign(:current_node_id, id)
+        |> Phoenix.Component.assign(:current_node, node())
+        |> Phoenix.Component.assign(:remote_status, %{phase: :connected})
+
+      # Regression: pre-fix, the piped recents filter passed the node ATOM as
+      # the enumerable (`filter_absolute_recent_projects_for_node(recents,
+      # node)`) — Protocol.UndefinedError raised at project_flow.ex:430.
+      # Post-fix, the success branch runs and returns the filtered recents.
+      assert {:noreply, socket} =
+               EvoDashWeb.ProjectsLive.ProjectFlow.open_project(socket, %{"path" => tmp_dir})
+
+      # The node-filtered recents (incl. the freshly registered tmp_dir) were
+      # assigned — the exact output of the fixed filter line.
+      assert Enum.any?(socket.assigns.recent_projects, &(&1.path == tmp_dir))
+
+      # The project was registered in the LOCAL recent-projects store, proving
+      # `activate_remote_project`'s success branch ran end-to-end.
+      assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == tmp_dir))
+
+      # The URL patch preserves the remote node context (`&node=` survives).
+      assert socket.redirected ==
+               {:live, :patch, %{to: "/?project=#{URI.encode(tmp_dir)}&node=#{id}", kind: :push}}
+    end
+
     test "foreign repo path input carries autocomplete wiring and a datalist", %{
       conn: conn,
       tmp_dir: tmp_dir

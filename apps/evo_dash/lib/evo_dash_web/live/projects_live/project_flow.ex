@@ -426,8 +426,10 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
             NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
 
             recent_projects =
-              NodeContext.list_recent_projects(node)
-              |> filter_absolute_recent_projects_for_node(node)
+              filter_absolute_recent_projects_for_node(
+                node,
+                NodeContext.list_recent_projects(node)
+              )
 
             config = NodeContext.read_project_config(node, expanded)
             mode = Project.detect_mode(node, expanded)
