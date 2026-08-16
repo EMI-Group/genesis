@@ -1852,12 +1852,12 @@ button, a, input, textarea, select, summary,
 
 /* --- Launch button: colored hover ring keyed on the selected mode ---
    The Launch button carries a server-side data-mode attribute with values
-   genesis_new | genesis_existing | evolve_simple. Each mode gets its own
-   accent ring (plus a soft outer glow) on hover, framing the daisyUI
-   btn-primary hover state — btn-primary sets no box-shadow, so the ring is
-   additive and the hover bg still shows. Colors are literal oklch values
-   mixed via color-mix so they read on BOTH custom DaisyUI themes (dark +
-   light); never nest oklch(var(--x) / a) (Known Issue (i)). */
+   genesis_new | genesis_existing | evolve_simple | custom_agent. Each mode
+   gets its own accent ring (plus a soft outer glow) on hover, framing the
+   daisyUI btn-primary hover state — btn-primary sets no box-shadow, so the
+   ring is additive and the hover bg still shows. Colors are literal oklch
+   values mixed via color-mix so they read on BOTH custom DaisyUI themes
+   (dark + light); never nest oklch(var(--x) / a) (Known Issue (i)). */
 .input-controls button[data-mode="genesis_new"]:hover {
   box-shadow:
     0 0 0 2px color-mix(in oklch, oklch(0.62 0.19 25) 60%, transparent),
@@ -1876,13 +1876,26 @@ button, a, input, textarea, select, summary,
     0 0 20px -4px color-mix(in oklch, oklch(0.72 0.17 152) 50%, transparent);
 }
 
+.input-controls button[data-mode="custom_agent"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.68 0.17 290) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.68 0.17 290) 50%, transparent);
+}
+
 /* Resumed evolve run: lighter green ring, mirrors the objective-box accent
    in resume state (server sets data-resume="true" when a resume task id is
-   selected; see task_form_components.ex). */
+   selected; see task_form_components.ex). Custom-agent mode is
+   evolve-family, so it gets the same resume-ring treatment in violet. */
 .input-controls button[data-mode="evolve_simple"][data-resume="true"]:hover {
   box-shadow:
     0 0 0 2px color-mix(in oklch, oklch(0.78 0.16 152) 60%, transparent),
     0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 152) 50%, transparent);
+}
+
+.input-controls button[data-mode="custom_agent"][data-resume="true"]:hover {
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, oklch(0.78 0.16 290) 60%, transparent),
+    0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 290) 50%, transparent);
 }
 
 /* --- DirectoryPicker manual-entry fallback hint ---

@@ -146,6 +146,42 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     task
   end
 
+  # Extracts the task id from the "task started with ID: <id>" flash of a
+  # task_submit render, cancels it immediately (stops the spawned wrapper),
+  # registers on_exit cancel+delete cleanup (the shared SQLite store persists
+  # across tests in this file), and returns the id so the test can inspect the
+  # persisted task's opts. Mirrors the inline pattern used by the existing
+  # launch tests.
+  defp cleanup_launched_task(html) do
+    [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
+
+    on_exit(fn ->
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+      try do
+        EvoGit.TaskRegistry.cancel_task(id)
+      rescue
+        _ -> :ok
+      end
+
+      try do
+        EvoGit.TaskRegistry.delete_task(id)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    EvoGit.TaskRegistry.cancel_task(id)
+    id
+  end
+
+  # Decoded task opts are a list of mixed atom/string-key tuples (the Store
+  # codec atomizes only its whitelist), so string keys must be looked up via
+  # Map.new — Access.get/3 and Keyword.has_key?/2 reject non-atom keys on
+  # keyword lists.
+  defp opt(task, key), do: Map.get(Map.new(task.opts || []), key)
+
+  defp has_opt?(task, key), do: Map.has_key?(Map.new(task.opts || []), key)
+
   # Saves a unique remote connection target under the test's isolated
   # XDG_CONFIG_HOME (set_onboarding_completed isolates it per test) and
   # registers cleanup. Returns the target id. Each test uses a unique id so the
@@ -2214,6 +2250,446 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert render(view) =~ "File not found"
       assert assigns(view)[:task_prompt] == before
+    end
+  end
+
+  describe "custom agent selection" do
+    setup do
+      clear_recent_projects()
+
+      # The module-level set_onboarding_completed already isolates
+      # XDG_CONFIG_HOME per test, so agents.toml lands in a temp dir.
+      {:ok, _agent} =
+        EvoGit.CustomAgents.save(%{
+          name: "Bug Hunter",
+          prompt: "You hunt bugs in code.",
+          id: "my-agent"
+        })
+
+      # Bust the ModelSelector persistent_term cache so the new file is seen.
+      EvoGit.CustomAgents.reload()
+      :ok
+    end
+
+    test "renders the agent select with Auto (recommended) + agent name", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # No project open → controls row hidden; open one so the select renders.
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      html = render(view)
+
+      assert html =~ ~s(name="agent")
+      assert html =~ "Auto (recommended)"
+      assert html =~ "Bug Hunter"
+    end
+
+    test "select_agent updates the assign and marks the option selected", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      assert assigns(view)[:selected_agent_id] == nil
+
+      html = render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+      assert html =~ ~s(<option value="my-agent" selected)
+    end
+
+    test "selecting a custom agent threads :agent into the task opts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # The persisted task opts round-trip through EvoGit.Store.Codec, which
+      # atomizes only its known-key whitelist — :agent decodes as a string key.
+      assert opt(task, "agent") == "my-agent"
+    end
+
+    test "Auto (default) threads no :agent opt", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+      refute has_opt?(task, "agent")
+    end
+
+    test "renders the Custom Agent mode option", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # 4th mode option next to genesis_new / genesis_existing / evolve_simple.
+      assert render(view) =~ "Custom Agent"
+    end
+
+    test "task_change to custom_agent auto-selects the first custom agent", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      assert assigns(view)[:selected_agent_id] == nil
+
+      html = render_change(view, "task_change", %{"mode" => "custom_agent"})
+
+      assert assigns(view)[:task_mode] == "custom_agent"
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+      assert html =~ ~s(<option value="my-agent" selected)
+
+      # The Auto option is hidden in custom mode (an agent MUST be chosen).
+      refute html =~ "Auto (recommended)"
+    end
+
+    test "task_change to evolve_simple keeps the previously selected agent", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+      render_change(view, "task_change", %{"mode" => "evolve_simple"})
+
+      assert assigns(view)[:task_mode] == "evolve_simple"
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+    end
+
+    test "custom_agent submit without a selected agent flashes an error and starts nothing", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Submit DIRECTLY (no task_change first — it would auto-select the first
+      # agent) so the selected_agent_id assign is still nil.
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "do it",
+          mode: "custom_agent",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "Custom Agent mode requires selecting a custom agent."
+      refute html =~ "task started with ID:"
+    end
+
+    test "custom_agent submit with a selected agent starts an evolve task with mode custom", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "custom_agent",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      assert task.type == :evolve
+      # :mode/:objective are in the Store codec's atomization whitelist, so the
+      # round-tripped opts decode them as atom keys with STRING values; :agent
+      # is not whitelisted, so it stays a string key.
+      assert opt(task, :mode) == "custom"
+      assert opt(task, "agent") == "my-agent"
+      assert opt(task, :objective) == "build me a thing"
+    end
+
+    test "custom_agent mode persists/restores across form state", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Simulate a sessionStorage restore on reload: the node gate passes and
+      # the already-active project skips activate_project's mode re-detection,
+      # so the persisted custom_agent choice survives.
+      render_hook(view, "restore_state", %{
+        "node" => "local",
+        "task_mode" => "custom_agent",
+        "selected_agent_id" => "my-agent",
+        "project" => tmp_dir
+      })
+
+      assert assigns(view)[:task_mode] == "custom_agent"
+      assert assigns(view)[:selected_agent_id] == "my-agent"
+    end
+  end
+
+  describe "custom agents — none configured" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "agent select is absent", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      html = render(view)
+
+      refute html =~ ~s(name="agent")
+      refute html =~ "Auto (recommended)"
+    end
+  end
+
+  describe "model selection auto/lock semantics" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    # Writes a config.toml with a single model profile into the test's
+    # isolated XDG_CONFIG_HOME (set per test by set_onboarding_completed) so
+    # load_model_profiles has a profile to select.
+    defp write_model_profile_config do
+      config_path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(config_path))
+
+      File.write!(config_path, """
+      [[llm.models]]
+      id = "profile-a"
+      model = {provider = "anthropic", id = "claude-sonnet-5"}
+      concurrency = 3
+      """)
+    end
+
+    test "with a model-selection script, default is Auto (by rules) and submit threads neither key",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      write_model_profile_config()
+      :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
+      EvoGit.CustomAgents.reload()
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # The "" sentinel → the select renders "Auto (by rules)" as selected.
+      assert assigns(view)[:selected_model_id] == ""
+      assert assigns(view)[:model_selection_enabled] == true
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      html = render(view)
+      assert html =~ "Auto (by rules)"
+      assert html =~ ~s(<option value="" selected)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # Neither key may be threaded: the runtime script decides the model.
+      # (String-key checks: :model_id/:model_id_locked are not in the codec's
+      # atomization whitelist, so a round-tripped opts decodes them as strings.)
+      refute has_opt?(task, "model_id")
+      refute has_opt?(task, "model_id_locked")
+      assert task.model_id == nil
+    end
+
+    test "with a model-selection script, an explicit profile choice locks the model", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      write_model_profile_config()
+      :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
+      EvoGit.CustomAgents.reload()
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert assigns(view)[:selected_model_id] == ""
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_change(view, "select_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # An explicit profile choice threads BOTH keys — the runtime script is
+      # deferred. (String-key opts checks: the codec round-trip demotes
+      # non-whitelisted keys; task.model_id is the dedicated column.)
+      assert task.model_id == "profile-a"
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
+    end
+
+    test "without a script the default is the first profile and submit threads :model_id + :model_id_locked",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      write_model_profile_config()
+
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # No script configured → current behavior: first profile is the default
+      # and no "Auto (by rules)" option renders.
+      assert assigns(view)[:selected_model_id] == "profile-a"
+      assert assigns(view)[:model_selection_enabled] == false
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      html = render(view)
+      refute html =~ "Auto (by rules)"
+      assert html =~ ~s(<option value="profile-a" selected)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # The first profile is threaded as :model_id, and the lock flag IS set
+      # (unconditional per the cross-app contract — harmless without a script).
+      assert task.model_id == "profile-a"
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
     end
   end
 

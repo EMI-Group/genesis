@@ -20,15 +20,25 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   Loads available model profiles from the resolved config and selects the
   default (first) profile. Returns `{profiles, selected_id}`. If no profiles
   are configured, returns `{[], nil}`.
+
+  When a model-selection script is configured
+  (`EvoGit.CustomAgents.ModelSelector.enabled?/0`), the default selection is
+  the `""` sentinel — the task form renders "Auto (by rules)" and threads
+  neither `:model_id` nor `:model_id_locked`, so the runtime script decides
+  the model.
   """
   def load_model_profiles do
     config = Process.get(:memo_config_resolve) || Config.resolve()
     profiles = Schema.model_profiles(config)
 
     selected_id =
-      case Schema.default_model_profile(config) do
-        {:ok, profile} -> Map.get(profile, :id)
-        {:error, :not_found} -> nil
+      if EvoGit.CustomAgents.ModelSelector.enabled?() do
+        ""
+      else
+        case Schema.default_model_profile(config) do
+          {:ok, profile} -> Map.get(profile, :id)
+          {:error, :not_found} -> nil
+        end
       end
 
     {profiles, selected_id}

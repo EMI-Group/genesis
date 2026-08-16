@@ -12,7 +12,8 @@ defmodule EvoDashWeb.ThemeColor do
   * `accent_color_for_mode/1,2` — a task-mode → accent color palette used
     for the objective box (`--project-accent`): create-new → red,
     initialize-existing → blue, evolution → green, resumed evolution →
-    lighter green.
+    lighter green, custom-agent → violet (resumed custom-agent → lighter
+    violet).
   """
 
   @default_color "#6366f1"
@@ -46,6 +47,8 @@ defmodule EvoDashWeb.ThemeColor do
     * `"genesis_existing"` → blue `oklch(0.62 0.19 255)`
     * `"evolve_simple"` (and any other `"evolve*"` mode) → green `oklch(0.72 0.17 152)`
     * `"evolve*"` with a non-blank resume → lighter green `oklch(0.78 0.16 152)`
+    * `"custom_agent"` → violet `oklch(0.68 0.17 290)` (custom agents run evolve-family
+      tasks, so a non-blank resume gets the lighter violet `oklch(0.78 0.16 290)`)
 
   Accepts the mode as a binary or atom (atoms are normalized with
   `Atom.to_string/1`). `nil`, `""`, or any unknown mode falls back to
@@ -61,9 +64,10 @@ defmodule EvoDashWeb.ThemeColor do
   Maps a task mode to its accent color, honoring the resume flag.
 
   `resume` is a task id binary or `nil`; a non-blank (trimmed) string means
-  the task is a resume run. Resume only affects the evolve family (resume is
-  an evolve-only concept): a resumed evolve task gets a distinct, lighter
-  green of the same family. Genesis-family modes ignore resume entirely.
+  the task is a resume run. Resume only affects the evolve family and the
+  custom-agent mode (both run evolve-family tasks; resume is an
+  evolve-only concept): a resumed task gets a distinct, lighter color of the
+  same family. Genesis-family modes ignore resume entirely.
   """
   @spec accent_color_for_mode(nil | binary | atom, nil | binary) :: String.t()
   def accent_color_for_mode(nil, _resume), do: default_color()
@@ -86,6 +90,9 @@ defmodule EvoDashWeb.ThemeColor do
       "evolve_simple" ->
         evolve_color(resume?)
 
+      "custom_agent" ->
+        custom_color(resume?)
+
       _ ->
         cond do
           String.starts_with?(mode, "genesis") -> "oklch(0.62 0.19 25)"
@@ -99,6 +106,12 @@ defmodule EvoDashWeb.ThemeColor do
   # same family so the two states stay distinguishable.
   defp evolve_color(true), do: "oklch(0.78 0.16 152)"
   defp evolve_color(false), do: "oklch(0.72 0.17 152)"
+
+  # Custom-agent runs are evolve-family tasks: plain custom → saturated
+  # violet; resumed custom → lighter violet of the same family (mirrors the
+  # evolve green pair).
+  defp custom_color(true), do: "oklch(0.78 0.16 290)"
+  defp custom_color(false), do: "oklch(0.68 0.17 290)"
 
   @doc "Returns the default accent color (indigo-500)."
   @spec default_color :: String.t()

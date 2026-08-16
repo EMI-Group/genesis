@@ -7,6 +7,7 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoGit.Config.Schema
   alias EvoDash.SettingsUtils
   alias EvoDashWeb.SettingsLive.ConfigIO
+  alias EvoDashWeb.SettingsLive.CustomAgentEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
   alias EvoDashWeb.SettingsLive.SearchEvents
@@ -28,7 +29,7 @@ defmodule EvoDashWeb.SettingsLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
       <% else %>
-      <%= if @active_category != :remote_connections do %>
+      <%= if @active_category not in [:remote_connections, :agents] do %>
         <%!-- Config file path display --%>
         <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
           <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
@@ -504,6 +505,52 @@ defmodule EvoDashWeb.SettingsLive do
                 </div>
               </div>
             <% else %>
+              <%!-- Custom Agents UI — same design as category_section but for
+                   the special :agents pseudo-category. Both editors contain
+                   their own <form> elements (save_custom_agent,
+                   save_model_selection_script), so they are NOT wrapped in a
+                   save_category form (nested <form> elements are invalid
+                   HTML). --%>
+              <%= if @active_category == :agents do %>
+              <div class="flex-1 flex flex-col min-w-0">
+                <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
+                  <div class="flex items-center gap-3 mb-1">
+                    <.icon name="hero-user-group" class="size-5 text-base-content/70" />
+                    <h2 class="text-lg font-bold text-base-content">
+                      {gettext("Agents")}
+                    </h2>
+                  </div>
+                  <p class="text-sm text-base-content/60">
+                    {gettext("Create custom agents and configure the per-agent model selection script.")}
+                  </p>
+                </div>
+
+                <div class="p-6 space-y-5">
+                  <%!-- Note about the separate TOML file --%>
+                  <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
+                    <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                    <p class="text-sm text-base-content/80">
+                      {gettext(
+                        "Custom agents are stored in `agents.toml`, next to the main configuration file."
+                      )}
+                    </p>
+                  </div>
+
+                  <EvoDashWeb.SettingsComponents.CustomAgentsEditor.custom_agents_editor
+                    agents={@custom_agents}
+                    editing_agent_id={@editing_agent_id}
+                    model_profiles={@file_config[:llm][:models] || []}
+                  />
+
+                  <EvoDashWeb.SettingsComponents.ModelSelectionEditor.model_selection_editor
+                    script={@model_selection_script}
+                    script_status={@script_status}
+                    script_save_error={@script_save_error}
+                    test_results={@script_test_results}
+                  />
+                </div>
+              </div>
+              <% else %>
               <%!-- category_section renders its own <form phx-submit="save_category">
                  internally. The LLM category's Quick Setup panel and Model
                  Profiles editor contain their own nested forms (save_api_key,
@@ -530,6 +577,7 @@ defmodule EvoDashWeb.SettingsLive do
                 test_profile_id={@test_profile_id}
                 credentials={@credentials}
               />
+              <% end %>
             <% end %>
           <% end %>
         </div>
@@ -555,6 +603,7 @@ defmodule EvoDashWeb.SettingsLive do
     test_profile_id = if models != [], do: ModelProfileHelpers.profile_id(hd(models))
 
     schemas_by_category = Map.put(schemas_by_category, :remote_connections, [])
+    schemas_by_category = Map.put(schemas_by_category, :agents, [])
 
     # Platform-aware schema filtering: hide the sandbox category (or its
     # Linux-only sub-sections) on platforms where they don't apply. This is
@@ -605,6 +654,7 @@ defmodule EvoDashWeb.SettingsLive do
         remote_form_target: nil,
         remote_show_advanced: false
       )
+      |> load_custom_agents_data()
 
     {:ok, socket}
   end
@@ -649,6 +699,7 @@ defmodule EvoDashWeb.SettingsLive do
     category =
       case params["category"] do
         "remote_connections" -> :remote_connections
+        "agents" -> :agents
         cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
         _ -> nil
       end
@@ -675,6 +726,11 @@ defmodule EvoDashWeb.SettingsLive do
       else
         socket
       end
+
+    # Reload the custom-agents data for the (possibly remote) node — cheap
+    # file read locally, single RPC remotely. Keeps the agents category fresh
+    # on every navigation and node switch.
+    socket = load_custom_agents_data(socket)
 
     {:noreply, socket}
   end
@@ -1170,6 +1226,43 @@ defmodule EvoDashWeb.SettingsLive do
     ModelProfileEvents.move_model_profile(socket, params)
   end
 
+  # ── Custom Agents category events (delegated to CustomAgentEvents) ──
+
+  @impl true
+  def handle_event("add_custom_agent", params, socket) do
+    CustomAgentEvents.add_custom_agent(socket, params)
+  end
+
+  @impl true
+  def handle_event("edit_custom_agent", params, socket) do
+    CustomAgentEvents.edit_custom_agent(socket, params)
+  end
+
+  @impl true
+  def handle_event("cancel_edit_custom_agent", params, socket) do
+    CustomAgentEvents.cancel_edit_custom_agent(socket, params)
+  end
+
+  @impl true
+  def handle_event("save_custom_agent", params, socket) do
+    CustomAgentEvents.save_custom_agent(socket, params)
+  end
+
+  @impl true
+  def handle_event("delete_custom_agent", params, socket) do
+    CustomAgentEvents.delete_custom_agent(socket, params)
+  end
+
+  @impl true
+  def handle_event("save_model_selection_script", params, socket) do
+    CustomAgentEvents.save_model_selection_script(socket, params)
+  end
+
+  @impl true
+  def handle_event("test_model_selection_script", params, socket) do
+    CustomAgentEvents.test_model_selection_script(socket, params)
+  end
+
   @impl true
   def handle_event(
         "save_api_key",
@@ -1473,6 +1566,34 @@ defmodule EvoDashWeb.SettingsLive do
            gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
          )}
     end
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: Node-aware custom agents loading
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Loads the custom-agents data (agent definitions, model-selection script,
+  # script compile status) for the currently-viewed node into the socket.
+  #
+  # `EvoDash.NodeContext.list_custom_agents/1` degrades to an empty result on
+  # RPC failure, so an unreachable remote node reads as "no custom agents"
+  # instead of crashing. Public because CustomAgentEvents reloads through it
+  # after every mutation.
+  @doc false
+  def load_custom_agents_data(socket) do
+    node = socket.assigns.current_node
+
+    {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}} =
+      EvoDash.NodeContext.list_custom_agents(node)
+
+    assign(socket,
+      custom_agents: agents,
+      model_selection_script: script || "",
+      script_status: script_status,
+      editing_agent_id: nil,
+      script_save_error: nil,
+      script_test_results: []
+    )
   end
 
   # ───────────────────────────────────────────────────────────────────────────

@@ -202,10 +202,26 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
       branch = "evogit-agent-T1-A1"
 
-      # The monitored pid — exits :normal right after the create returns.
-      spawn(fn ->
-        WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
-      end)
+      # The monitored pid — after the create returns it WAITS for an exit
+      # signal instead of exiting immediately. The manager's monitor-driven
+      # destroy (rm_rf + prune + branch delete) can complete before this test
+      # process gets its first poll below, making the dir unobservable — the
+      # agent must not exit until the test has confirmed creation.
+      agent =
+        spawn(fn ->
+          WorktreeManager.create_worktree_for_agent(
+            agent_id,
+            tmp_dir,
+            wt_path,
+            spec,
+            meta,
+            self()
+          )
+
+          receive do
+            :exit_please -> :ok
+          end
+        end)
 
       # Creation is real git I/O (lazy repo init + leftover destroy + CoW or
       # `git worktree add` + clean/checkout) and production allows up to 1h
@@ -214,10 +230,15 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       wait_until(fn -> File.dir?(wt_path) end, 30_000)
       assert Git.branch_exists?(tmp_dir, branch)
 
-      # Monitor-driven cleanup is async — poll until dir AND branch are gone.
-      wait_until(fn ->
-        not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
-      end)
+      # Release the agent — its :normal exit triggers monitor-driven cleanup,
+      # which is async: poll until dir AND branch are gone (real git I/O, so
+      # use the same 30s deadline as creation rather than the 5s default).
+      send(agent, :exit_please)
+
+      wait_until(
+        fn -> not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch) end,
+        30_000
+      )
     end
 
     test "reclaims the worktree when the agent process crashes", %{
@@ -229,20 +250,38 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
       branch = "evogit-agent-T1-A1"
 
-      # The monitored pid — exits abnormally right after the create returns.
-      spawn(fn ->
-        WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
-        Process.exit(self(), :kill)
-      end)
+      # Same exit-gating as the normal-exit test above: the agent waits for
+      # the test's signal so the manager's monitor-driven destroy cannot race
+      # ahead of the creation observation below.
+      agent =
+        spawn(fn ->
+          WorktreeManager.create_worktree_for_agent(
+            agent_id,
+            tmp_dir,
+            wt_path,
+            spec,
+            meta,
+            self()
+          )
+
+          receive do
+            :exit_please -> Process.exit(self(), :kill)
+          end
+        end)
 
       # Same creation-wait deadline rationale as the normal-exit test above.
       wait_until(fn -> File.dir?(wt_path) end, 30_000)
       assert Git.branch_exists?(tmp_dir, branch)
 
-      # Cleanup is identical for abnormal exits — no reuse semantics.
-      wait_until(fn ->
-        not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
-      end)
+      # Release the agent — its abnormal exit triggers cleanup identical to
+      # the normal-exit case (no reuse semantics), async: poll until dir AND
+      # branch are gone with the same 30s deadline as creation.
+      send(agent, :exit_please)
+
+      wait_until(
+        fn -> not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch) end,
+        30_000
+      )
     end
 
     test "destroys a stale real worktree before creating a fresh one", %{

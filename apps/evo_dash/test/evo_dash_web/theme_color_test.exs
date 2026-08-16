@@ -6,8 +6,9 @@ defmodule EvoDashWeb.ThemeColorTest do
   # Unit tests for `accent_color_for_mode/1,2` — the task-mode → accent color
   # mapping that mirrors the `[data-mode]` hover ring colors in
   # `assets/css/app.css`. Palette: genesis_new (Create New) → red, genesis_existing
-  # (Initialize Existing) → blue, evolve* (Evolution) → green, with a lighter
-  # green variant when a resume task id is set (resume is an evolve-only
+  # (Initialize Existing) → blue, evolve* (Evolution) → green, custom_agent
+  # (Custom Agent) → violet; evolve* and custom_agent get a lighter variant of
+  # their family color when a resume task id is set (resume is an evolve-family
   # concept — genesis ignores it). Any other "genesis*" mode falls back to the
   # family red; any other "evolve*" mode falls back to the family green;
   # nil/""/unknown fall back to the default indigo.
@@ -22,6 +23,10 @@ defmodule EvoDashWeb.ThemeColorTest do
 
     test "evolve_simple maps to green" do
       assert ThemeColor.accent_color_for_mode("evolve_simple") == "oklch(0.72 0.17 152)"
+    end
+
+    test "custom_agent maps to violet" do
+      assert ThemeColor.accent_color_for_mode("custom_agent") == "oklch(0.68 0.17 290)"
     end
 
     test "other genesis* modes fall back to red" do
@@ -39,6 +44,7 @@ defmodule EvoDashWeb.ThemeColorTest do
       assert ThemeColor.accent_color_for_mode(:genesis_existing) == "oklch(0.62 0.19 255)"
       assert ThemeColor.accent_color_for_mode(:evolve_simple) == "oklch(0.72 0.17 152)"
       assert ThemeColor.accent_color_for_mode(:evolve_custom) == "oklch(0.72 0.17 152)"
+      assert ThemeColor.accent_color_for_mode(:custom_agent) == "oklch(0.68 0.17 290)"
     end
 
     test "nil, empty string, and unknown modes fall back to the default color" do
@@ -62,6 +68,16 @@ defmodule EvoDashWeb.ThemeColorTest do
 
       assert ThemeColor.accent_color_for_mode("evolve_advanced", "a1b2c3d4") ==
                "oklch(0.78 0.16 152)"
+    end
+
+    test "custom_agent with a non-blank resume gets the lighter resume violet" do
+      assert ThemeColor.accent_color_for_mode("custom_agent", "a1b2c3d4") ==
+               "oklch(0.78 0.16 290)"
+
+      # nil/blank resume keeps the plain custom violet.
+      assert ThemeColor.accent_color_for_mode("custom_agent", nil) == "oklch(0.68 0.17 290)"
+      assert ThemeColor.accent_color_for_mode("custom_agent", "") == "oklch(0.68 0.17 290)"
+      assert ThemeColor.accent_color_for_mode("custom_agent", "   ") == "oklch(0.68 0.17 290)"
     end
 
     test "genesis modes ignore resume entirely" do

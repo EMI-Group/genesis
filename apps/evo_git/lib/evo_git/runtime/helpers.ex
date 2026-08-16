@@ -165,4 +165,53 @@ defmodule EvoGit.Runtime.Helpers do
         error
     end
   end
+
+  @doc """
+  Resolves the root-agent module and opts for a runtime phase.
+
+  - `:agent` absent (nil) or an empty string → `{default_module, []}` — the
+    phase's built-in root agent runs unchanged.
+  - `:agent` set to a custom agent id → `{EvoGit.Agents.Custom, [custom_agent_id: id]}` —
+    the generic `EvoGit.Agents.Custom` module runs as the root agent and resolves
+    the definition from `agents.toml` at run time.
+  - `:agent` set to an UNKNOWN id → raises `ArgumentError` with a descriptive
+    message. Crashing loudly is intentional: this runs in the task process (not a
+    GenServer), and a bad agent id is a spec error — a silent fallback to the
+    default agent would run the task with the wrong agent.
+  """
+  @spec resolve_root_agent(keyword(), module()) :: {module(), keyword()}
+  def resolve_root_agent(opts, default_module) do
+    case Keyword.get(opts, :agent) do
+      id when id in [nil, ""] ->
+        {default_module, []}
+
+      id ->
+        case EvoGit.CustomAgents.get(id) do
+          nil ->
+            config_dir = EvoGit.Config.config_dir()
+
+            raise ArgumentError,
+                  "Unknown custom agent id '#{id}'. Define it in " <>
+                    "#{config_dir}/agents.toml (config dir: #{config_dir})."
+
+          _definition ->
+            {EvoGit.Agents.Custom, [custom_agent_id: id]}
+        end
+    end
+  end
+
+  @doc """
+  Determines whether the model-selection script must be skipped for this task.
+
+  Returns true when either:
+  - `:model_id` is a non-nil value — a non-nil `:model_id` in runtime opts means
+    a user/dashboard explicitly chose a model, so the model-selection script must
+    NOT override it; or
+  - `:model_id_locked` is explicitly true — a pass-through for cases where the
+    lock exists without an id (e.g. the CLI `-m` bare-model override).
+  """
+  @spec model_id_locked?(keyword()) :: boolean()
+  def model_id_locked?(opts) do
+    Keyword.get(opts, :model_id_locked, false) || not is_nil(Keyword.get(opts, :model_id))
+  end
 end

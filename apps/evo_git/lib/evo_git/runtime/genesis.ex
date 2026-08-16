@@ -43,12 +43,20 @@ defmodule EvoGit.Runtime.Genesis do
 
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
 
-    case AgentSpec.new(context_node, phylo_node, ContextExtractor, objective,
+    {agent_module, agent_opts} =
+      Helpers.resolve_root_agent(opts, ContextExtractor)
+
+    case AgentSpec.new(context_node, phylo_node, agent_module, objective,
            foreign_repos: foreign_repos,
            archive: Keyword.get(opts, :archive, false),
            task_id: Keyword.get(opts, :task_id),
-           model_id: Keyword.get(opts, :model_id)
+           model_id: Keyword.get(opts, :model_id),
+           model_id_locked: Helpers.model_id_locked?(opts)
          )
+         |> then(fn spec ->
+           # merge custom_agent_id into the spec opts when present
+           %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
+         end)
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(Keyword.get(opts, :task_id))
@@ -99,13 +107,21 @@ defmodule EvoGit.Runtime.Genesis do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load("./", repo_path)
 
+    {agent_module, agent_opts} =
+      Helpers.resolve_root_agent(opts, Architect)
+
     architect_spec =
-      AgentSpec.new(context_node, phylo_node, Architect, objective,
+      AgentSpec.new(context_node, phylo_node, agent_module, objective,
         foreign_repos: foreign_repos,
         archive: Keyword.get(opts, :archive, false),
         task_id: task_id,
-        model_id: Keyword.get(opts, :model_id)
+        model_id: Keyword.get(opts, :model_id),
+        model_id_locked: Helpers.model_id_locked?(opts)
       )
+      |> then(fn spec ->
+        # merge custom_agent_id into the spec opts when present
+        %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
+      end)
 
     case AgentScheduler.run_agent(architect_spec) do
       {:ok, architect_output} ->
@@ -169,13 +185,21 @@ defmodule EvoGit.Runtime.Genesis do
     Call complete_task only when the codebase is complete, functional, and polished — when you can confidently say the original objective has been 100% delivered.
     """
 
+    {agent_module, agent_opts} =
+      Helpers.resolve_root_agent(opts, Manager)
+
     manager_spec =
-      AgentSpec.new(context_node, phylo_node, Manager, impl_objective,
+      AgentSpec.new(context_node, phylo_node, agent_module, impl_objective,
         foreign_repos: foreign_repos,
         archive: Keyword.get(opts, :archive, false),
         task_id: task_id,
-        model_id: Keyword.get(opts, :model_id)
+        model_id: Keyword.get(opts, :model_id),
+        model_id_locked: Helpers.model_id_locked?(opts)
       )
+      |> then(fn spec ->
+        # merge custom_agent_id into the spec opts when present
+        %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
+      end)
 
     case AgentScheduler.run_agent(manager_spec) do
       {:ok, manager_output} ->
@@ -237,9 +261,19 @@ defmodule EvoGit.Runtime.Genesis do
   # Use the explicitly-specified mode if provided; otherwise auto-detect.
   defp resolve_mode(repo_path, opts) do
     case Keyword.get(opts, :mode) do
-      :new -> :new
-      :existing -> :existing
-      _ -> if Helpers.new_codebase?(repo_path), do: :new, else: :existing
+      :new ->
+        :new
+
+      :existing ->
+        :existing
+
+      mode when mode in [:custom, "custom"] ->
+        raise ArgumentError,
+              "custom mode is evolve-only; use an evolve task " <>
+                "(evogit evolve --mode custom --agent <id>)"
+
+      _ ->
+        if Helpers.new_codebase?(repo_path), do: :new, else: :existing
     end
   end
 end

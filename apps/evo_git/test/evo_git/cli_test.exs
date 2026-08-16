@@ -1,6 +1,8 @@
 defmodule EvoGit.CLITest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureIO
+
   describe "foreign repo parsing" do
     test "parses name:path format" do
       opts = [foreign_repo: "original:/Source/original-proj"]
@@ -65,6 +67,34 @@ defmodule EvoGit.CLITest do
 
       basename = Enum.find(repos, &(&1.id == "b-project"))
       assert basename.root == Path.expand("/Source/b-project")
+    end
+  end
+
+  describe "agent flag parsing (--agent)" do
+    test "parses --agent <id> for evolve" do
+      {opts, argv} =
+        EvoGit.CLI.Parser.parse_args(["--agent", "code-reviewer", "evolve", "fix x"])
+
+      assert opts[:agent] == "code-reviewer"
+      assert argv == ["evolve", "fix x"]
+    end
+
+    test "parses --agent <id> for genesis" do
+      {opts, argv} =
+        EvoGit.CLI.Parser.parse_args(["genesis", "make a thing", "--agent", "architect"])
+
+      assert opts[:agent] == "architect"
+      assert argv == ["genesis", "make a thing"]
+    end
+
+    test "returns nil when --agent is not passed" do
+      {opts, _argv} = EvoGit.CLI.Parser.parse_args(["evolve", "fix x"])
+      assert opts[:agent] == nil
+    end
+
+    test "supports --agent=<id> syntax" do
+      {opts, _argv} = EvoGit.CLI.Parser.parse_args(["evolve", "fix x", "--agent=code-reviewer"])
+      assert opts[:agent] == "code-reviewer"
     end
   end
 
@@ -273,6 +303,7 @@ defmodule EvoGit.CLITest do
 
       profile = hd(decoded_models)
       assert profile["id"] == "default"
+
       assert profile["model"] == %{
                "provider" => "openai",
                "id" => "gpt-5.5",
@@ -314,6 +345,35 @@ defmodule EvoGit.CLITest do
       profile = hd(decoded_models)
       assert profile["id"] == "default"
       assert profile["model"] == %{"provider" => "anthropic", "id" => "claude-sonnet-4"}
+    end
+  end
+
+  describe "evolve custom-mode dispatch" do
+    test "--mode custom without --agent prints a clear error" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["evolve", "fix x", "--mode", "custom"])
+        end)
+
+      assert output =~ "requires --agent"
+    end
+
+    test "invalid evolve mode prints an error" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["evolve", "fix x", "--mode", "bogus"])
+        end)
+
+      assert output =~ "Invalid mode for evolve. Use 'simple' or 'custom'."
+    end
+
+    test "genesis --mode custom prints the evolve-only error" do
+      output =
+        capture_io(fn ->
+          EvoGit.CLI.main(["genesis", "make a thing", "--mode", "custom"])
+        end)
+
+      assert output =~ "custom mode is evolve-only"
     end
   end
 end

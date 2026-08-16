@@ -30,6 +30,7 @@ defmodule EvoGit.CLI.Parser do
           model: :string,
           mode: :string,
           foreign_repo: [:string, :keep],
+          agent: :string,
           node: :string,
           starting_commit: :string,
           archive: :boolean,

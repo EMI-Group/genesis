@@ -3,7 +3,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   Agent registration, dispatching, and queue processing for the AgentScheduler.
 
   Handles creating agent entries in ETS, dispatching agents to worktrees,
-  auto-committing pending changes, and processing the agent queue.
+  auto-committing pending changes, and processing the agent queue. Model
+  selection for registered agents can be driven by the user model-selection
+  script (`EvoGit.CustomAgents.ModelSelector`) and custom agent defaults
+  (`EvoGit.CustomAgents`).
   """
 
   require Logger
@@ -65,10 +68,13 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # Resolve repo root from the spec's own data (avoids reading shared mutable state)
     agent_repo_root = resolve_agent_repo_root(spec, state)
 
-    # Resolve the model profile for this agent from spec.model_id,
-    # falling back to the default profile from state.model_profiles.
+    # Resolve the effective model id for this agent (user-locked model >
+    # model-selection script > spec.model_id / custom-agent default), then map
+    # it to a profile, falling back to the default profile from state.model_profiles.
+    spec_model_id = effective_model_id(state, spec, parent_id, depth, task_id)
+
     {resolved_model_id, resolved_model, resolved_params} =
-      resolve_model_for_agent(state, spec.model_id)
+      resolve_model_for_agent(state, spec_model_id)
 
     Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
@@ -78,7 +84,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       model_id: resolved_model_id,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
-      max_turns: if(is_nil(parent_id), do: state.max_turns_root, else: state.max_turns),
+      max_turns: resolve_max_turns(state, spec, parent_id),
       parent_id: parent_id,
       objective: spec.objective,
       repo_id: spec.repo_id,
@@ -353,6 +359,142 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         {resolved_id, model, params}
     end
   end
+
+  # --- Effective Model / Max-Turns Resolution ---
+
+  # Computes the effective model id for a newly-registered agent.
+  #
+  # Priority order (highest wins):
+  #
+  # 1. **User-locked model** — `spec.opts[:model_id_locked]` is `true` (set by the
+  #    CLI `-m` flag): the user's explicit model choice wins over everything, so
+  #    `spec.model_id` is returned immediately without consulting the script.
+  # 2. **Model-selection script** — the user Elixir script from `agents.toml`
+  #    (`EvoGit.CustomAgents.ModelSelector.select_model/1`): its returned id is
+  #    used as-is. An unknown id keeps `resolve_model_for_agent/2`'s existing
+  #    warn-and-fall-back-to-default behavior.
+  # 3. **`spec.model_id` / custom-agent default** — the caller-supplied model id;
+  #    when nil/empty and the spec carries a `:custom_agent_id`, the custom agent
+  #    definition's `:model_id` is used instead.
+  # 4. **Default profile** — `nil` reaches `resolve_model_for_agent/2`, which
+  #    picks the scheduler's default profile.
+  #
+  # This runs in the scheduler GenServer and NEVER raises: a missing custom
+  # agent definition is logged and treated as nil; script failures surface as
+  # `{:error, reason}` from `select_model/1` and are logged with a fallback to
+  # the base id.
+  @spec effective_model_id(
+          State.t(),
+          AgentSpec.t(),
+          pos_integer() | nil,
+          non_neg_integer(),
+          String.t() | nil
+        ) :: String.t() | nil
+  defp effective_model_id(_state, %AgentSpec{} = spec, parent_id, depth, task_id) do
+    base_id =
+      case spec.model_id do
+        id when is_binary(id) and id != "" ->
+          id
+
+        _ ->
+          case custom_agent_id(spec) do
+            nil ->
+              nil
+
+            custom_id ->
+              case EvoGit.CustomAgents.get(custom_id) do
+                nil ->
+                  Logger.warning(
+                    "AgentScheduler: custom agent id #{inspect(custom_id)} not found; " <>
+                      "falling back to default model"
+                  )
+
+                  nil
+
+                definition ->
+                  Map.get(definition, :model_id)
+              end
+          end
+      end
+
+    if Keyword.get(spec.opts, :model_id_locked, false) == true do
+      base_id
+    else
+      attrs = %{
+        agent_type: if(custom_id?(spec), do: :custom, else: spec.agent_module),
+        custom_agent_id: custom_agent_id(spec),
+        depth: depth,
+        parent_id: parent_id,
+        task_id: task_id,
+        objective: spec.objective
+      }
+
+      case EvoGit.CustomAgents.ModelSelector.select_model(attrs) do
+        {:ok, nil} ->
+          base_id
+
+        {:ok, model_id} ->
+          model_id
+
+        {:error, reason} ->
+          Logger.warning(
+            "AgentScheduler: model selection script failed for agent " <>
+              "(task #{inspect(task_id)}): #{inspect(reason)}; using default model"
+          )
+
+          base_id
+      end
+    end
+  end
+
+  # Resolves the max-turns cap for a newly-registered agent.
+  #
+  # Custom agents are root-only in this version: when the agent is a root
+  # (`parent_id` is nil) whose spec carries a `:custom_agent_id`, the custom
+  # agent definition's positive-integer `:max_turns` override wins. A missing
+  # definition is logged and falls back to `state.max_turns_root`. Subagents
+  # (parent_id set) always use `state.max_turns` — they are never custom agents
+  # in this version, but the default is kept defensive against a custom id
+  # sneaking into a subagent spec.
+  @spec resolve_max_turns(State.t(), AgentSpec.t(), pos_integer() | nil) :: pos_integer()
+  defp resolve_max_turns(%State{} = state, %AgentSpec{} = spec, parent_id) do
+    if is_nil(parent_id) do
+      case custom_agent_id(spec) do
+        nil ->
+          state.max_turns_root
+
+        custom_id ->
+          case EvoGit.CustomAgents.get(custom_id) do
+            %{max_turns: max_turns} when is_integer(max_turns) and max_turns > 0 ->
+              max_turns
+
+            nil ->
+              Logger.warning(
+                "AgentScheduler: custom agent id #{inspect(custom_id)} not found; " <>
+                  "falling back to default max turns"
+              )
+
+              state.max_turns_root
+
+            _definition ->
+              state.max_turns_root
+          end
+      end
+    else
+      state.max_turns
+    end
+  end
+
+  # Returns the custom agent id from spec.opts when it is a non-empty binary,
+  # nil otherwise.
+  defp custom_agent_id(spec) do
+    case Keyword.get(spec.opts, :custom_agent_id) do
+      id when is_binary(id) and id != "" -> id
+      _ -> nil
+    end
+  end
+
+  defp custom_id?(spec), do: custom_agent_id(spec) != nil
 
   # --- Repo Root Resolution ---
 

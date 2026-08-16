@@ -61,6 +61,25 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
         do: Keyword.put(runtime_opts, :model_id, model_id),
         else: runtime_opts
 
+    # Custom agent selection: thread the agents.toml agent id through to the
+    # runtime so genesis/evolve spawn the custom agent as the root agent.
+    agent = Keyword.get(opts, :agent)
+
+    runtime_opts =
+      if is_binary(agent) and agent != "",
+        do: Keyword.put(runtime_opts, :agent, agent),
+        else: runtime_opts
+
+    # Explicit model-lock pass-through (see Helpers.model_id_locked?/1).
+    # Note: dashboard tasks with an explicit model_id are locked implicitly
+    # by Helpers.model_id_locked?/1 at the spawn site.
+    model_id_locked = Keyword.get(opts, :model_id_locked)
+
+    runtime_opts =
+      if model_id_locked,
+        do: Keyword.put(runtime_opts, :model_id_locked, true),
+        else: runtime_opts
+
     # Per-task build system selection: threads the selected build system atom
     # into the runtime opts for genesis tasks.
     build_system = Keyword.get(opts, :build_system)
@@ -77,6 +96,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   Converts an evolution mode string to its atom form.
   """
   def evolution_mode_atom("simple"), do: :simple
+  def evolution_mode_atom("custom"), do: :custom
 
   def evolution_mode_atom(other),
     do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
@@ -87,14 +107,19 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
   def genesis_mode_atom("new"), do: :new
   def genesis_mode_atom("existing"), do: :existing
 
+  def genesis_mode_atom("custom"),
+    do:
+      raise(ArgumentError, "custom mode is evolve-only; use an evolve task with mode \"custom\"")
+
   def genesis_mode_atom(other),
     do: raise(ArgumentError, "invalid genesis mode: #{inspect(other)}")
 
   @doc """
   Dispatches to the correct mode resolver based on the task type, mirroring
   the core CLI (`apps/evo_git/lib/evo_git/cli.ex`) which has separate
-  `genesis_mode_atom/1` (new/existing) and `evolution_mode_atom/1` (simple)
-  functions.
+  `genesis_mode_atom/1` (new/existing) and `evolution_mode_atom/1`
+  (simple/custom) functions. Note: genesis tasks with mode "custom" raise a
+  specific evolve-only error instead of the generic invalid-mode error.
   """
   def mode_atom(:genesis, mode), do: genesis_mode_atom(mode)
   def mode_atom(:evolve, mode), do: evolution_mode_atom(mode)

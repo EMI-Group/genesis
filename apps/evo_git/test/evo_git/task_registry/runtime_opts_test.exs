@@ -30,13 +30,19 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
       refute Keyword.has_key?(runtime_opts, :archive)
       refute Keyword.has_key?(runtime_opts, :model_id)
       refute Keyword.has_key?(runtime_opts, :build_system)
+      refute Keyword.has_key?(runtime_opts, :agent)
+      refute Keyword.has_key?(runtime_opts, :model_id_locked)
     end
 
     test "returns {nil, runtime_opts} with minimal opts for a genesis task" do
       # Genesis tasks require an explicit mode ("new" or "existing"); the
       # default "simple" is invalid for genesis.
       {first, runtime_opts} =
-        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo", mode: "new"], "task-2", :genesis)
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", mode: "new"],
+          "task-2",
+          :genesis
+        )
 
       assert first == nil
       assert Keyword.get(runtime_opts, :repo_path) == "/tmp/repo"
@@ -100,6 +106,64 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
       refute Keyword.has_key?(runtime_opts, :model_id)
     end
 
+    test "threads :agent when it is a non-empty string" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", agent: "code_reviewer"],
+          "task-6a",
+          :evolve
+        )
+
+      assert Keyword.get(runtime_opts, :agent) == "code_reviewer"
+    end
+
+    test "omits :agent when it is an empty string" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", agent: ""],
+          "task-6b",
+          :evolve
+        )
+
+      refute Keyword.has_key?(runtime_opts, :agent)
+    end
+
+    test "omits :agent when it is absent" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-6c", :evolve)
+
+      refute Keyword.has_key?(runtime_opts, :agent)
+    end
+
+    test "threads :model_id_locked as true when it is truthy" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", model_id_locked: true],
+          "task-6d",
+          :evolve
+        )
+
+      assert Keyword.get(runtime_opts, :model_id_locked) == true
+    end
+
+    test "omits :model_id_locked when it is absent" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-6e", :evolve)
+
+      refute Keyword.has_key?(runtime_opts, :model_id_locked)
+    end
+
+    test "omits :model_id_locked when it is false" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", model_id_locked: false],
+          "task-6f",
+          :evolve
+        )
+
+      refute Keyword.has_key?(runtime_opts, :model_id_locked)
+    end
+
     test "genesis mode \"new\" maps to :new" do
       {_first, runtime_opts} =
         RuntimeOpts.build_common_runtime_opts(
@@ -133,6 +197,18 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
       assert Keyword.get(runtime_opts, :mode) == :simple
     end
 
+    test "evolve mode \"custom\" maps to :custom and threads :agent" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", mode: "custom", agent: "some_id"],
+          "task-12",
+          :evolve
+        )
+
+      assert Keyword.get(runtime_opts, :mode) == :custom
+      assert Keyword.get(runtime_opts, :agent) == "some_id"
+    end
+
     test "first tuple element is always nil" do
       {first, _runtime_opts} =
         RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-10", :evolve)
@@ -150,6 +226,10 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
   describe "evolution_mode_atom/1" do
     test "converts \"simple\" to :simple" do
       assert RuntimeOpts.evolution_mode_atom("simple") == :simple
+    end
+
+    test "converts \"custom\" to :custom" do
+      assert RuntimeOpts.evolution_mode_atom("custom") == :custom
     end
 
     test "raises ArgumentError for invalid string values" do
@@ -170,6 +250,12 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
 
     test "converts \"existing\" to :existing" do
       assert RuntimeOpts.genesis_mode_atom("existing") == :existing
+    end
+
+    test "raises the evolve-only error for \"custom\"" do
+      assert_raise ArgumentError, ~r/custom mode is evolve-only/, fn ->
+        RuntimeOpts.genesis_mode_atom("custom")
+      end
     end
 
     test "raises ArgumentError for invalid string values" do
@@ -194,6 +280,16 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
 
     test "dispatches evolve + \"simple\" to :simple" do
       assert RuntimeOpts.mode_atom(:evolve, "simple") == :simple
+    end
+
+    test "dispatches evolve + \"custom\" to :custom" do
+      assert RuntimeOpts.mode_atom(:evolve, "custom") == :custom
+    end
+
+    test "raises the evolve-only error for genesis + \"custom\"" do
+      assert_raise ArgumentError, ~r/custom mode is evolve-only/, fn ->
+        RuntimeOpts.mode_atom(:genesis, "custom")
+      end
     end
 
     test "propagates ArgumentError for invalid genesis modes" do

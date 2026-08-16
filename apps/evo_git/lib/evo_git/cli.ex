@@ -41,32 +41,53 @@ defmodule EvoGit.CLI do
           end
 
         if proceed? do
-          runtime_opts = [
-            repo_path: repo_path,
-            mode: genesis_mode_atom(mode),
-            archive: opts[:archive] == true
-          ]
+          case validate_custom_agent(opts[:agent]) do
+            :ok ->
+              runtime_opts = [
+                repo_path: repo_path,
+                mode: genesis_mode_atom(mode),
+                archive: opts[:archive] == true
+              ]
 
-          runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
+              runtime_opts = EvoGit.CLI.Parser.maybe_put(runtime_opts, :agent, opts[:agent])
+              runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
 
-          foreign_repos = EvoGit.CLI.Parser.parse_foreign_repos(opts)
-          runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
+              runtime_opts =
+                if opts[:model] do
+                  Keyword.put(runtime_opts, :model_id_locked, true)
+                else
+                  runtime_opts
+                end
 
-          runtime_opts =
-            if mode == "new" do
-              build_system = resolve_build_system(opts)
-              Keyword.put(runtime_opts, :build_system, build_system)
-            else
-              runtime_opts
-            end
+              foreign_repos = EvoGit.CLI.Parser.parse_foreign_repos(opts)
+              runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
 
-          Genesis.run(prompt || "", runtime_opts)
+              runtime_opts =
+                if mode == "new" do
+                  build_system = resolve_build_system(opts)
+                  Keyword.put(runtime_opts, :build_system, build_system)
+                else
+                  runtime_opts
+                end
+
+              Genesis.run(prompt || "", runtime_opts)
+
+            {:error, msg} ->
+              IO.puts("Error: #{msg}")
+          end
         else
           IO.puts("Aborting.")
         end
       end
     else
-      IO.puts("Error: Invalid mode for genesis. Use 'new' or 'existing'.")
+      if mode == "custom" do
+        IO.puts(
+          "Error: custom mode is evolve-only; use: evogit evolve --mode custom --agent <id> <objective>"
+        )
+      else
+        IO.puts("Error: Invalid mode for genesis. Use 'new' or 'existing'.")
+      end
+
       print_help()
     end
   end
@@ -76,28 +97,48 @@ defmodule EvoGit.CLI do
     mode = String.downcase(mode)
     objective = get_input(rest, opts)
 
-    if mode == "simple" do
-      if objective do
-        runtime_opts = []
-        runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
-        runtime_opts = Keyword.put(runtime_opts, :mode, evolution_mode_atom(mode))
-
-        foreign_repos = EvoGit.CLI.Parser.parse_foreign_repos(opts)
-        runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
-        runtime_opts = EvoGit.CLI.Parser.maybe_put(runtime_opts, :node_path, opts[:node])
-
-        runtime_opts = Keyword.put(runtime_opts, :starting_commit, opts[:starting_commit])
-        runtime_opts = Keyword.put(runtime_opts, :archive, opts[:archive] == true)
-
-        runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
-
-        Evolution.run(objective, runtime_opts)
+    if mode in ["simple", "custom"] do
+      if mode == "custom" and (is_nil(opts[:agent]) or opts[:agent] == "") do
+        IO.puts(
+          "Error: --mode custom requires --agent <id> to select the custom agent (defined in agents.toml)."
+        )
       else
-        IO.puts("Error: Evolve requires an objective (via argument or --file).")
-        print_help()
+        if objective do
+          case validate_custom_agent(opts[:agent]) do
+            :ok ->
+              runtime_opts = []
+              runtime_opts = Keyword.put(runtime_opts, :repo_path, opts[:path] || File.cwd!())
+              runtime_opts = Keyword.put(runtime_opts, :mode, evolution_mode_atom(mode))
+
+              foreign_repos = EvoGit.CLI.Parser.parse_foreign_repos(opts)
+              runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
+              runtime_opts = EvoGit.CLI.Parser.maybe_put(runtime_opts, :node_path, opts[:node])
+
+              runtime_opts = Keyword.put(runtime_opts, :starting_commit, opts[:starting_commit])
+              runtime_opts = Keyword.put(runtime_opts, :archive, opts[:archive] == true)
+
+              runtime_opts = EvoGit.CLI.Parser.maybe_put(runtime_opts, :agent, opts[:agent])
+              runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
+
+              runtime_opts =
+                if opts[:model] do
+                  Keyword.put(runtime_opts, :model_id_locked, true)
+                else
+                  runtime_opts
+                end
+
+              Evolution.run(objective, runtime_opts)
+
+            {:error, msg} ->
+              IO.puts("Error: #{msg}")
+          end
+        else
+          IO.puts("Error: Evolve requires an objective (via argument or --file).")
+          print_help()
+        end
       end
     else
-      IO.puts("Error: Invalid mode for evolve. Use 'simple'.")
+      IO.puts("Error: Invalid mode for evolve. Use 'simple' or 'custom'.")
       print_help()
     end
   end
@@ -244,9 +285,31 @@ defmodule EvoGit.CLI do
   defp parse_int(_), do: nil
 
   defp evolution_mode_atom("simple"), do: :simple
+  defp evolution_mode_atom("custom"), do: :custom
 
   defp evolution_mode_atom(other),
     do: raise(ArgumentError, "invalid evolution mode: #{inspect(other)}")
+
+  # Validates a --agent custom-agent id against agents.toml. Returns :ok or
+  # {:error, message}. Defensive: when EvoGit.CustomAgents is not loaded
+  # (shouldn't happen), the error message tells the user the id is unknown.
+  defp validate_custom_agent(nil), do: :ok
+
+  defp validate_custom_agent(id) do
+    if Code.ensure_loaded?(EvoGit.CustomAgents) do
+      case apply(EvoGit.CustomAgents, :get, [id]) do
+        nil -> {:error, unknown_agent_message(id)}
+        _definition -> :ok
+      end
+    else
+      {:error, unknown_agent_message(id)}
+    end
+  end
+
+  defp unknown_agent_message(id) do
+    agents_path = Path.join(EvoGit.Config.config_dir(), "agents.toml")
+    "Unknown custom agent id '#{id}'. Define it in #{agents_path}."
+  end
 
   # ── Backward-compatible test-wrappers ──────────────────────────────────────
 
@@ -255,6 +318,9 @@ defmodule EvoGit.CLI do
 
   @doc false
   defdelegate do_parse_foreign_repos(opts), to: EvoGit.CLI.Parser
+
+  @doc false
+  def do_validate_custom_agent(id), do: validate_custom_agent(id)
 
   @doc false
   defdelegate do_add_model_profile(config, model), to: EvoGit.CLI.Setup
@@ -280,8 +346,10 @@ defmodule EvoGit.CLI do
                    'new'      (Default) Start a new codebase. Requires a <prompt>.
                    'existing' Analyze an existing codebase. <prompt> is optional.
       evolve     Mutate the codebase based on an objective.
-                 Mode:
+                 Modes:
                    'simple'   (Default) Top-down evolution for clear tasks.
+                   'custom'   Run a custom agent (defined in agents.toml) as
+                              the root agent. Requires --agent <id>.
       setup      Configure LLM provider and API key interactively.
                  A guided wizard helps you select a provider, choose a
                  model, and set your API key without manual file editing.
@@ -296,7 +364,9 @@ defmodule EvoGit.CLI do
       -m, --model <model>         Override the LLM model (default profile).
                                   Format: "provider:model" (e.g. "anthropic:claude-sonnet-4-20250514")
                                   or "id:provider:model" to target a specific profile by id.
-      -d, --mode <mode>           Execution mode (new/existing for genesis, simple for evolve).
+          --agent <id>            Use a custom agent (defined in agents.toml) as the
+                                  root agent for the task.
+      -d, --mode <mode>           Execution mode (new/existing for genesis, simple/custom for evolve).
       -b, --build-system <name>   Build system for dependency caching in worktrees (genesis 'new'
                                   mode only). One of: elixir, node, python, rust, go, none.
                                   If omitted, prompts interactively.
@@ -366,10 +436,16 @@ defmodule EvoGit.CLI do
         macOS:   ~/Library/Application Support/genesis/config.toml
         Windows: %APPDATA%\\genesis\\config.toml
 
+      agents.toml lives next to config.toml and defines custom agents plus an
+      optional model-selection script (select one with --agent <id>). Run a
+      custom agent as the root agent via:
+        evogit evolve --mode custom --agent <id> <objective>
+
     Examples:
       evogit genesis "Create a snake game in Python" --mode new
       evogit genesis --mode existing -p /path/to/legacy/repo
       evogit evolve "Fix the login bug" --mode simple
+      evogit evolve "Fix the login bug" --mode custom --agent code-reviewer
     """)
   end
 end

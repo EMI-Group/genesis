@@ -417,6 +417,11 @@ defmodule EvoDashWeb.HelpersTest do
       assert mode_description("evolve_simple") =~ "codebase"
     end
 
+    test "returns description for custom_agent" do
+      assert mode_description("custom_agent") =~ "root agent"
+      assert mode_description("custom_agent") =~ "custom agent"
+    end
+
     test "returns empty string for unknown mode" do
       assert mode_description("unknown_mode") == ""
     end
@@ -433,6 +438,11 @@ defmodule EvoDashWeb.HelpersTest do
 
     test "returns message for evolve_simple" do
       assert mode_info_message("evolve_simple") =~ "Evolution mode"
+    end
+
+    test "returns message for custom_agent" do
+      assert mode_info_message("custom_agent") =~ "Custom Agent"
+      assert mode_info_message("custom_agent") =~ "requires picking a custom agent"
     end
 
     test "returns empty string for unknown mode" do

@@ -2,11 +2,11 @@
 
 ## Intent
 
-Sub-component modules extracted from `EvoDashWeb.SettingsComponents` to keep each component focused: `CategoryMetadata` (pure helpers for display names, icons, schema matching, API key hints), `SettingCard` (schema-driven form field component with type-dispatched input controls), `ModelProfilesEditor` (list editor for `[[llm.models]]` profiles with inline edit form), `Sidebar` (settings sidebar with search filter and category navigation), `SearchResults` (search results grouped by category).
+Sub-component modules extracted from `EvoDashWeb.SettingsComponents` to keep each component focused: `CategoryMetadata` (pure helpers for display names, icons, schema matching, API key hints), `SettingCard` (schema-driven form field component with type-dispatched input controls), `ModelProfilesEditor` (list editor for `[[llm.models]]` profiles with inline edit form), `CustomAgentsEditor` (list editor for `agents.toml` custom agents with inline edit form), `ModelSelectionEditor` (model-selection script editor with contract help + compile-error display), `Sidebar` (settings sidebar with search filter and category navigation), `SearchResults` (search results grouped by category).
 
 ## Routing Table
 
-None — leaf directory (five module files).
+None — leaf directory (seven module files).
 
 ## API Surface
 
@@ -17,6 +17,8 @@ None — leaf directory (five module files).
 | `CategoryMetadata` | Pure helper functions (display names, icons, schema matching, API key hints) |
 | `SettingCard` | Schema-driven form field component with type-dispatched input controls |
 | `ModelProfilesEditor` | List editor for `[[llm.models]]` profiles with inline edit form |
+| `CustomAgentsEditor` | List editor for `agents.toml` custom agents (`custom_agents_editor/1`): rows with id/type/level/model badges + prompt preview, inline edit form (name, description, prompt, agent_type, delegation_level, model_id select, max_turns, tools/subagents checkboxes), delete with data-confirm |
+| `ModelSelectionEditor` | Model-selection script editor (`model_selection_editor/1`): textarea form, collapsible contract help, copyable example, compile-error box, Test script results |
 | `Sidebar` | Settings sidebar with search filter and category navigation |
 | `SearchResults` | Search results grouped by category |
 
