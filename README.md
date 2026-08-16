@@ -33,10 +33,9 @@ You do not hand-design an agent team, pre-build a task tree, or keep one coding 
 
 ## ✨ Key Features
 
-* ⚙️ **Git-native evolution** — every accepted change is a Git commit; development unfolds as a fully traceable version graph.
-* 🧠 **Recursive multi-agent development** — Genesis spawns and orchestrates agents on demand: managers decompose work, executors implement it, results validated before acceptance. One objective in — no hand-designed team or task tree.
-* 🌿 **Transparent lineage** — every commit, branch, and merge is version-controlled and inspectable; the live dashboard shows the agent tree as work unfolds.
-* 🖥️ **Native desktop app** — cross-platform desktop dashboard to launch and supervise development, with isolated local workspaces and native sandboxing.
+* 🧭 **Long-horizon autonomous evolution** — Genesis is built around a recursive agent hierarchy: managers decompose objectives, executors implement at the leaves, and every accepted result becomes the foundation of the next round. Development runs for hundreds of hours and grows to hundreds of thousands of lines of code — the compiler demo below went from an implementation-empty repository to a 248,989-line, fully validated C compiler in one continuous run.
+* 🪶 **Transient agents, persistent world** — each agent lives for exactly one task: it spawns with a fresh, narrowly scoped context, does its job, and disappears. No long-running session to keep alive, no growing context window — context stays small, so every call uses fewer tokens and results stay reliable. Agents come and go; the software world persists.
+* 🌳 **Git-native workflow** — Genesis is built on top of Git: every accepted change is a real commit, every agent branch and merge is a real Git object, and the repository itself is the only state. Inspect anything with plain `git log`, `git diff`, `git merge` — no hidden databases, no custom formats, no special magic.
 
 ---
 
