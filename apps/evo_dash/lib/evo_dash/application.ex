@@ -14,6 +14,10 @@ defmodule EvoDash.Application do
       # Serializes native :wx directory-dialog usage (Browse buttons). Starts no
       # wx server at boot — wx is initialized lazily on the first pick.
       EvoDash.DirectoryPicker,
+      # Auto-update state hub for the Tauri updater integration — holds the
+      # update phase/versions/error state and broadcasts transitions on
+      # EvoGit.PubSub's "updates" topic.
+      EvoDash.UpdateStatus,
       EvoDashWeb.Endpoint
     ]
 
