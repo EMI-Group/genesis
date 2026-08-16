@@ -31,6 +31,15 @@ You do not hand-design an agent team, pre-build a task tree, or keep one coding 
 
 ---
 
+## ✨ Key Features
+
+* ⚙️ **Git-native evolution** — every accepted change is a Git commit; development unfolds as a fully traceable version graph.
+* 🧠 **Recursive multi-agent development** — Genesis spawns and orchestrates agents on demand: managers decompose work, executors implement it, results validated before acceptance. One objective in — no hand-designed team or task tree.
+* 🌿 **Transparent lineage** — every commit, branch, and merge is version-controlled and inspectable; the live dashboard shows the agent tree as work unfolds.
+* 🖥️ **Native desktop app** — cross-platform desktop dashboard to launch and supervise development, with isolated local workspaces and native sandboxing.
+
+---
+
 ## Built with Genesis
 
 Three regimes. One developmental principle.
