@@ -39,7 +39,9 @@
 //! is confirmed dead (the same wait-then-kill used by the quit path).
 
 use std::net::{SocketAddr, TcpStream};
-use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -768,6 +770,7 @@ impl BackendManager {
 fn install_payload(payload: &DownloadedUpdate, app: &AppHandle) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
+        let _ = app;
         install_windows_nsis(payload)
     }
     #[cfg(target_os = "linux")]
@@ -847,7 +850,7 @@ fn install_windows_nsis(payload: &DownloadedUpdate) -> std::io::Result<()> {
     installer.write_all(&payload.bytes)?;
     // Keep the file after this function returns: the installer must outlive
     // the app process (we exit right after spawning it).
-    let installer_path = installer.into_temp_path().keep().to_path_buf();
+    let installer_path = installer.into_temp_path().keep()?;
 
     // CREATE_NO_WINDOW (0x08000000) — same flag the sidecar's
     // `launcher_command` applies, so the NSIS installer does not pop a
