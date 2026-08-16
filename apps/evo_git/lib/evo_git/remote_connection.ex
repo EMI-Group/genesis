@@ -82,7 +82,17 @@ defmodule EvoGit.RemoteConnection do
   @supervisor EvoGit.RemoteConnection.Supervisor
   @pubsub_topic "remote_connections"
   @heartbeat_interval_ms 10_000
-  @tunnel_settle_ms 500
+  # Wait budget for the SSH tunnel to start forwarding the local port before
+  # Node.connect. Measured need is ~1.5s (an `ssh -L` forward can take that
+  # long to start listening on the local port); a fixed 500ms sleep made
+  # Node.connect fail instantly with econnrefused on slower tunnels.
+  @tunnel_wait_timeout_ms 10_000
+  @tunnel_poll_interval_ms 100
+  # The :connect handler can legitimately block for up to @tunnel_wait_timeout_ms
+  # while the tunnel becomes ready, so the GenServer.call in connect/1 must
+  # allow that budget plus headroom (a default 5s call timeout would exit with
+  # :timeout while the handler is still waiting for the tunnel).
+  @connect_call_timeout_ms @tunnel_wait_timeout_ms + 15_000
   @launch_receive_timeout_ms 5_000
   # 900s — bootstrap now stages the release either by uploading a local tarball
   # (scp) OR by probing the remote platform and downloading the release tarball
@@ -192,7 +202,7 @@ defmodule EvoGit.RemoteConnection do
   def connect(target_id) do
     with {:ok, target} <- fetch_target(target_id),
          {:ok, pid} <- ensure_started(target) do
-      GenServer.call(pid, :connect)
+      GenServer.call(pid, :connect, @connect_call_timeout_ms)
     end
   end
 
@@ -423,42 +433,54 @@ defmodule EvoGit.RemoteConnection do
         cmd = build_tunnel_command(target, local_port, remote_port)
         port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
 
-        # Give the SSH tunnel time to establish.
-        Process.sleep(@tunnel_settle_ms)
+        # Give the SSH tunnel time to establish: poll the local forwarded port
+        # for TCP readiness (bounded) instead of a fixed sleep — `ssh -L` can
+        # take well over a second to start listening, and a too-early
+        # Node.connect fails instantly with econnrefused.
+        case wait_for_tunnel(port, local_port, @tunnel_wait_timeout_ms,
+               poll_interval: @tunnel_poll_interval_ms
+             ) do
+          :ok ->
+            # Register the SSH tunnel's local port with our EPMD-less module so
+            # that when Node.connect asks port_please for this node name, EpmdDist
+            # returns local_port (which the SSH tunnel forwards to remote_port 9000).
+            node_name = remote_node_name(target)
+            EvoGit.EpmdDist.register_target(node_name, local_port)
 
-        # Register the SSH tunnel's local port with our EPMD-less module so
-        # that when Node.connect asks port_please for this node name, EpmdDist
-        # returns local_port (which the SSH tunnel forwards to remote_port 9000).
-        node_name = remote_node_name(target)
-        EvoGit.EpmdDist.register_target(node_name, local_port)
+            # The node name is just name@host — NO port suffix. The port is
+            # resolved by EpmdDist.port_please/2 via the registration above.
+            remote_node = String.to_atom(node_name)
 
-        # The node name is just name@host — NO port suffix. The port is
-        # resolved by EpmdDist.port_please/2 via the registration above.
-        remote_node = String.to_atom(node_name)
+            case Node.connect(remote_node) do
+              true ->
+                ref = schedule_heartbeat()
 
-        case Node.connect(remote_node) do
-          true ->
-            ref = schedule_heartbeat()
+                new_state = %__MODULE__{
+                  connecting
+                  | phase: :connected,
+                    ssh_tunnel_port: port,
+                    tunnel_local_port: local_port,
+                    node: Atom.to_string(remote_node),
+                    heartbeat_ref: ref,
+                    last_error: nil
+                }
 
-            new_state = %__MODULE__{
-              connecting
-              | phase: :connected,
-                ssh_tunnel_port: port,
-                tunnel_local_port: local_port,
-                node: Atom.to_string(remote_node),
-                heartbeat_ref: ref,
-                last_error: nil
-            }
+                broadcast_status(state.target, new_state)
+                {:ok, new_state}
 
-            broadcast_status(state.target, new_state)
-            {:ok, new_state}
+              result when result in [false, :ignored] ->
+                EvoGit.EpmdDist.unregister_target(node_name)
+                close_port(port)
+                reason = {:node_connect_failed, inspect(remote_node)}
+                new_state = %{connecting | phase: :error, last_error: format_error(reason)}
+                {:error, reason, new_state}
+            end
 
-          result when result in [false, :ignored] ->
-            EvoGit.EpmdDist.unregister_target(node_name)
+          {:error, reason} ->
             close_port(port)
-            reason = {:node_connect_failed, inspect(remote_node)}
-            new_state = %{connecting | phase: :error, last_error: format_error(reason)}
-            {:error, reason, new_state}
+            error = {:tunnel_not_ready, reason}
+            new_state = %{connecting | phase: :error, last_error: format_error(error)}
+            {:error, error, new_state}
         end
 
       {:error, reason} ->
@@ -1345,6 +1367,80 @@ defmodule EvoGit.RemoteConnection do
 
       {:error, reason} ->
         {:error, {:port_bind_failed, reason}}
+    end
+  end
+
+  # Waits (bounded) for the SSH tunnel's local forwarded port to accept TCP
+  # connections, so Node.connect doesn't race the `ssh -L` startup.
+  #
+  # Polls `local_port` every `poll_interval` ms (opts, default 100) until a
+  # TCP connect succeeds — the probe socket is closed immediately, which the
+  # `ssh -N` forward handles gracefully. Fails fast when the tunnel Port
+  # dies: `Port.info/1` returning nil (works regardless of the caller's
+  # trap_exit flag), a received `{:exit_status, status}`, or a received
+  # `{:EXIT, port, reason}` (only delivered to trap_exit processes). Port
+  # output (`{port, {:data, data}}`) is drained into the error reason so ssh
+  # stderr is available for diagnosability.
+  #
+  # Returns `:ok` | `{:error, reason}`:
+  #
+  #   * `{:ssh_exited, status_or_reason, ssh_output}` — tunnel port died early
+  #   * `{:timeout, ssh_output}` — budget exhausted, port still alive
+  #
+  # `@doc false`: public only so tests can drive it directly with tiny
+  # timeouts; it is an implementation detail of `do_connect_distributed/1`.
+  @doc false
+  @spec wait_for_tunnel(port(), :inet.port_number(), non_neg_integer(), keyword()) ::
+          :ok | {:error, term()}
+  def wait_for_tunnel(port, local_port, timeout_ms, opts \\ []) do
+    poll_interval = Keyword.get(opts, :poll_interval, 100)
+    wait_for_tunnel(port, local_port, timeout_ms, poll_interval, "")
+  end
+
+  defp wait_for_tunnel(port, local_port, remaining_ms, poll_interval, ssh_output) do
+    if Port.info(port) == nil do
+      {:error, {:ssh_exited, :port_info_nil, ssh_output}}
+    else
+      case tcp_ready?(local_port) do
+        :ok ->
+          :ok
+
+        :not_ready ->
+          wait = min(poll_interval, remaining_ms)
+
+          receive do
+            {^port, {:data, data}} ->
+              wait_for_tunnel(port, local_port, remaining_ms, poll_interval, ssh_output <> data)
+
+            {^port, {:exit_status, status}} ->
+              {:error, {:ssh_exited, status, ssh_output}}
+
+            {:EXIT, ^port, reason} ->
+              {:error, {:ssh_exited, reason, ssh_output}}
+          after
+            wait ->
+              remaining = remaining_ms - wait
+
+              if remaining <= 0 do
+                {:error, {:timeout, ssh_output}}
+              else
+                wait_for_tunnel(port, local_port, remaining, poll_interval, ssh_output)
+              end
+          end
+      end
+    end
+  end
+
+  defp tcp_ready?(local_port) do
+    case :gen_tcp.connect({127, 0, 0, 1}, local_port, [:inet, :binary, {:active, false}], 250) do
+      {:ok, socket} ->
+        # Readiness probe — close immediately, we only need to know the
+        # forwarded port is accepting connections.
+        :gen_tcp.close(socket)
+        :ok
+
+      {:error, _reason} ->
+        :not_ready
     end
   end
 

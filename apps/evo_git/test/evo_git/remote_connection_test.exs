@@ -225,6 +225,120 @@ defmodule EvoGit.RemoteConnectionTest do
     end
   end
 
+  # The dummy live/dying Port commands (`sleep`, `false`) are POSIX — Windows
+  # has no equivalent `sh -c` builtins, so these unit tests of the tunnel
+  # readiness helper are skipped there.
+  if not match?({:win32, _}, :os.type()) do
+    describe "wait_for_tunnel/4 — tunnel readiness helper" do
+      # A long-running dummy process standing in for the `ssh -L` tunnel Port.
+      defp open_live_dummy_port do
+        port = Port.open({:spawn, "sleep 30"}, [:binary, :exit_status, :stream])
+        on_exit(fn -> if Port.info(port) != nil, do: Port.close(port) end)
+        port
+      end
+
+      # Opens a TCP listener on the given 127.0.0.1 port, retrying briefly —
+      # the port was reserved-then-closed right before, so a sibling test
+      # could in theory have grabbed it.
+      defp listen_with_retry(local_port, attempts \\ 50) do
+        case :gen_tcp.listen(local_port, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}]) do
+          {:ok, socket} ->
+            {:ok, socket}
+
+          {:error, :eaddrinuse} when attempts > 0 ->
+            Process.sleep(20)
+            listen_with_retry(local_port, attempts - 1)
+
+          {:error, reason} ->
+            flunk("could not bind listener on 127.0.0.1:#{local_port}: #{inspect(reason)}")
+        end
+      end
+
+      test "returns :ok when the local port is TCP-ready" do
+        # Bind a real listener first to obtain a free 127.0.0.1 port.
+        {:ok, listener} =
+          :gen_tcp.listen(0, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}])
+
+        {:ok, local_port} = :inet.port(listener)
+        on_exit(fn -> :gen_tcp.close(listener) end)
+
+        port = open_live_dummy_port()
+
+        assert :ok =
+                 EvoGit.RemoteConnection.wait_for_tunnel(port, local_port, 2_000,
+                   poll_interval: 25
+                 )
+      end
+
+      test "keeps polling until a listener appears on the port" do
+        # Reserve a free port, then close it again — the real listener only
+        # appears after a short delay, so the helper's first probes must fail
+        # and the poll loop is actually exercised.
+        {:ok, probe} = :gen_tcp.listen(0, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}])
+        {:ok, local_port} = :inet.port(probe)
+        :gen_tcp.close(probe)
+
+        test_pid = self()
+
+        # spawn_link: the delayed listener dies with the test process even if
+        # it crashes mid-test. `:stop` is sent from on_exit only (an
+        # on_exit callback runs in the OnExitHandler process, where
+        # Task.await/2 is forbidden — the listener must not be a Task).
+        listener_pid =
+          spawn_link(fn ->
+            Process.sleep(150)
+            {:ok, listener} = listen_with_retry(local_port)
+            send(test_pid, {:listener_up, listener})
+
+            receive do
+              :stop -> :gen_tcp.close(listener)
+            end
+          end)
+
+        on_exit(fn -> send(listener_pid, :stop) end)
+
+        port = open_live_dummy_port()
+
+        assert :ok =
+                 EvoGit.RemoteConnection.wait_for_tunnel(port, local_port, 2_000,
+                   poll_interval: 25
+                 )
+      end
+
+      test "returns {:error, {:timeout, _}} when nothing listens before the budget" do
+        port = open_live_dummy_port()
+        {:ok, free_port} = EvoGit.RemoteConnection.find_free_port()
+
+        assert {:error, {:timeout, output}} =
+                 EvoGit.RemoteConnection.wait_for_tunnel(port, free_port, 200, poll_interval: 25)
+
+        # The dummy `sleep` process prints nothing, so the drained ssh output
+        # (surfaced for diagnosability) is empty.
+        assert output == ""
+      end
+
+      test "fails fast when the ssh port dies before readiness" do
+        # `false` exits immediately with status 1 — standing in for an ssh
+        # that died before the tunnel came up.
+        port = Port.open({:spawn, "false"}, [:binary, :exit_status, :stream])
+        on_exit(fn -> if Port.info(port) != nil, do: Port.close(port) end)
+
+        {:ok, free_port} = EvoGit.RemoteConnection.find_free_port()
+
+        assert {:error, {:ssh_exited, status_or_reason, output}} =
+                 EvoGit.RemoteConnection.wait_for_tunnel(port, free_port, 2_000,
+                   poll_interval: 25
+                 )
+
+        assert output == ""
+        # Death is detected either via the exit-status message (status 1) or
+        # via Port.info/1 going nil (:port_info_nil) — both are valid
+        # depending on the race between port death and the first poll.
+        assert status_or_reason in [1, :port_info_nil]
+      end
+    end
+  end
+
   describe "build_tunnel_command/1 — internal behavior" do
     # The function is private, but we can test the port-separation logic
     # by verifying the GenServer's connection flow doesn't produce port conflicts.
