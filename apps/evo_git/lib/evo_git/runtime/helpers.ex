@@ -2,6 +2,7 @@ defmodule EvoGit.Runtime.Helpers do
   @moduledoc "Shared helper functions for runtime phases."
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
+  alias EvoGit.Core.ForeignRepo
   require Logger
 
   @doc """
@@ -116,12 +117,29 @@ defmodule EvoGit.Runtime.Helpers do
   @doc """
   Merges two foreign repo lists. CLI repos take precedence over TOML repos
   when there's an id conflict.
+
+  Both lists are normalized via `EvoGit.Core.ForeignRepo.normalize/1` before
+  merging — entries may arrive as `%ForeignRepo{}` structs, atom-keyed maps, or
+  string-keyed maps (opts persisted to SQLite round-trip through JSON via
+  `EvoGit.Store.Codec`, which turns structs into string-keyed maps), and
+  dot-accessing `.id` on raw map entries would crash. Unparseable entries are
+  dropped.
   """
   def merge_foreign_repos(toml_repos, cli_repos) do
+    toml_repos = normalize_foreign_repos(toml_repos)
+    cli_repos = normalize_foreign_repos(cli_repos)
     toml_map = Map.new(toml_repos, &{&1.id, &1})
     cli_map = Map.new(cli_repos, &{&1.id, &1})
     Map.merge(toml_map, cli_map) |> Map.values()
   end
+
+  defp normalize_foreign_repos(repos) when is_list(repos) do
+    repos
+    |> Enum.map(&ForeignRepo.normalize/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp normalize_foreign_repos(_other), do: []
 
   @doc """
   Loads foreign repos for a runtime phase: `genesis.toml` defaults merged with

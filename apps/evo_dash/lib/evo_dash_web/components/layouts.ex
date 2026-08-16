@@ -46,6 +46,13 @@ defmodule EvoDashWeb.Layouts do
       "when true, renders the desktop tray quit confirmation dialog (seeded by EvoDashWeb.LiveHooks.DesktopQuit)"
   )
 
+  attr(:update_status, :map,
+    default: nil,
+    doc:
+      "the EvoDash.UpdateStatus state map (seeded by EvoDashWeb.LiveHooks.UpdateStatus); " <>
+        "drives the notification dot on the System sidebar item when the phase is :available or :ready"
+  )
+
   slot(:inner_block, required: true)
 
   def app(assigns) do
@@ -138,6 +145,7 @@ defmodule EvoDashWeb.Layouts do
             navigate={with_node_param(~p"/system", @current_node_id)}
             current={@current_page == :system}
             icon="hero-server-stack"
+            notification={update_status_notification(@update_status)}
           >{gettext("System")}</.sidebar_nav_link>
 
           <!-- Task Indicators Section -->
@@ -225,6 +233,13 @@ defmodule EvoDashWeb.Layouts do
             {render_slot(@inner_block)}
           </main>
         </div>
+        <%!-- The UpdateStatus hook wrapper bridges the Tauri updater to the
+             server (startup + periodic checks, phx:update_* event listeners).
+             Hooks only mount on elements inside the LiveView root DOM, and
+             this wrapper is part of the shared app layout, so it is
+             re-established on every page navigation. A no-op outside the
+             Tauri desktop shell. --%>
+        <div id="update-status-hook" phx-hook="UpdateStatus" />
       </div>
 
       <!-- Config Warning Banner -->
@@ -386,6 +401,10 @@ defmodule EvoDashWeb.Layouts do
   attr(:navigate, :string, required: true)
   attr(:current, :boolean, default: false)
   attr(:icon, :string, required: true)
+  attr(:notification, :atom,
+    default: nil,
+    doc: "a phase atom (:available, :ready) that renders a notification dot at the right edge"
+  )
   slot(:inner_block, required: true)
 
   defp sidebar_nav_link(assigns) do
@@ -409,9 +428,27 @@ defmodule EvoDashWeb.Layouts do
       }
       />
       <span class="sidebar-label">{render_slot(@inner_block)}</span>
+      <%= if @notification do %>
+        <span
+          class={["ml-auto w-2.5 h-2.5 rounded-full shrink-0", update_notification_dot(@notification)]}
+          title={if @notification == :ready, do: gettext("Update ready to install"), else: gettext("Update available")}
+        ></span>
+      <% end %>
     </.link>
     """
   end
+
+  # Tailwind color class for the System sidebar item's update notification dot:
+  # :available → static amber, :ready → blue with a ping animation (mirrors the
+  # task-status dot conventions above). Any other phase renders no dot.
+  defp update_notification_dot(:available), do: "bg-amber-500"
+  defp update_notification_dot(:ready), do: "bg-blue-500 animate-ping"
+  defp update_notification_dot(_), do: "bg-slate-400"
+
+  # Notification phase for the System nav link: nil unless the update status
+  # phase is :available (amber dot) or :ready (blue ping dot).
+  defp update_status_notification(%{phase: phase}) when phase in [:available, :ready], do: phase
+  defp update_status_notification(_), do: nil
 
   # Compact theme toggle for sidebar bottom bar — a single button with a dropdown
   # containing the three theme options: system, light, dark.

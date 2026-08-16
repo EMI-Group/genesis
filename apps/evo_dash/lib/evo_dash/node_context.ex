@@ -870,6 +870,47 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Resolves the GitHub upstream (owner/repo/url) of a repository on the given
+  node.
+
+  Delegates to `EvoGit.RemoteNode.github_upstream/2`. Returns
+  `{:ok, %{owner: String.t(), repo: String.t(), url: String.t(),
+  gh_available: boolean()}}` or `{:error, reason}`. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec github_upstream(node(), String.t()) :: term()
+  def github_upstream(node, repo_path) do
+    EvoGit.RemoteNode.github_upstream(node, repo_path)
+  end
+
+  @doc """
+  Lists GitHub issues of a repository's upstream on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_github_issues/3` with default opts
+  `[]` (backend defaults: `state: "open"`, `limit: 100`). Returns
+  `{:ok, [issue_map]}` or `{:error, reason}`. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec list_github_issues(node(), String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def list_github_issues(node, repo_path, opts \\ []) do
+    EvoGit.RemoteNode.list_github_issues(node, repo_path, opts)
+  end
+
+  @doc """
+  Fetches a GitHub issue of a repository's upstream on the given node and
+  composes it into a deterministic Markdown string.
+
+  Delegates to `EvoGit.RemoteNode.github_issue_markdown/3`. Returns
+  `{:ok, markdown}` or `{:error, reason}`. On RPC failure, returns
+  `{:error, {kind, reason}}`.
+  """
+  @spec github_issue_markdown(node(), String.t(), integer() | String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def github_issue_markdown(node, repo_path, number) do
+    EvoGit.RemoteNode.github_issue_markdown(node, repo_path, number)
+  end
+
+  @doc """
   Checks whether a branch exists in a repository on the given node.
 
   Delegates to `EvoGit.RemoteNode.branch_exists?/3`. Returns a boolean. On

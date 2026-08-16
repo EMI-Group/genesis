@@ -207,7 +207,11 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
       end)
 
-      wait_until(fn -> File.dir?(wt_path) end)
+      # Creation is real git I/O (lazy repo init + leftover destroy + CoW or
+      # `git worktree add` + clean/checkout) and production allows up to 1h
+      # for it (`@worktree_call_timeout`) — under load on slow machines 5s
+      # (the helper default) is not enough and the test flakes.
+      wait_until(fn -> File.dir?(wt_path) end, 30_000)
       assert Git.branch_exists?(tmp_dir, branch)
 
       # Monitor-driven cleanup is async — poll until dir AND branch are gone.
@@ -231,7 +235,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         Process.exit(self(), :kill)
       end)
 
-      wait_until(fn -> File.dir?(wt_path) end)
+      # Same creation-wait deadline rationale as the normal-exit test above.
+      wait_until(fn -> File.dir?(wt_path) end, 30_000)
       assert Git.branch_exists?(tmp_dir, branch)
 
       # Cleanup is identical for abnormal exits — no reuse semantics.

@@ -6,7 +6,7 @@ Support modules extracted from `EvoDashWeb.ProjectsLive` to keep the main LiveVi
 
 ## Routing Table
 
-None — leaf directory (four module files: `state_persistence.ex`, `project.ex`, `project_flow.ex`, `assigns.ex`).
+None — leaf directory (five module files: `state_persistence.ex`, `project.ex`, `project_flow.ex`, `assigns.ex`, `github.ex`).
 
 ## API Surface
 

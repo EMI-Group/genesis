@@ -101,6 +101,33 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "GitHub issue delegates (local node, shape checks)" do
+    # The GitHub delegates run the real EvoGit.Adapters.GitHub prelude against
+    # a nonexistent repo path — the File.dir?/1 guard fails FIRST, so gh/git
+    # are never invoked (no shell-out, no network). Only the passthrough
+    # shapes are asserted, matching the "review git wrappers" convention
+    # above.
+    test "github_upstream/2 passes the adapter error through verbatim" do
+      assert EvoDash.NodeContext.github_upstream(node(), "/nonexistent") ==
+               {:error, {:enoent, "/nonexistent"}}
+    end
+
+    test "list_github_issues/3 with default opts passes the adapter error through verbatim" do
+      assert EvoDash.NodeContext.list_github_issues(node(), "/nonexistent") ==
+               {:error, {:enoent, "/nonexistent"}}
+    end
+
+    test "list_github_issues/3 accepts an explicit state opt" do
+      assert EvoDash.NodeContext.list_github_issues(node(), "/nonexistent", state: "closed") ==
+               {:error, {:enoent, "/nonexistent"}}
+    end
+
+    test "github_issue_markdown/3 passes the adapter error through verbatim" do
+      assert EvoDash.NodeContext.github_issue_markdown(node(), "/nonexistent", 42) ==
+               {:error, {:enoent, "/nonexistent"}}
+    end
+  end
+
   describe "get_resolved_config/1 (local node, real paths)" do
     test "returns the full resolved config map with scheduler/llm keys" do
       assert {:ok, config} = EvoDash.NodeContext.get_resolved_config(node())

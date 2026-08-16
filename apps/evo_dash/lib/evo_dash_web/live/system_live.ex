@@ -34,467 +34,735 @@ defmodule EvoDashWeb.SystemLive do
       running_tasks={@running_tasks}
       pending_tasks={@pending_tasks}
       desktop_quit_confirm={@desktop_quit_confirm}
+      update_status={@update_status}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
-        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+        {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-      <!-- Scheduler Control banner -->
-      <div class="p-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div class="flex items-center gap-3">
-          <.icon
-            name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-            class={"size-5 " <> if(@scheduler_paused, do: "text-warning", else: "text-success")}
-          />
-          <div>
-            <h2 class="text-base font-bold tracking-tight">
-              {if @scheduler_paused,
-                do: gettext("Scheduler Paused"),
-                else: gettext("Scheduler Active")} <% # zh_CN: "调度器" %>
-            </h2>
-            <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
-              <%= if @scheduler_paused do %>
-                {gettext(
-                  "Running agents continue. No new slots or agents will be granted until resumed."
-                )} <% # zh_CN: "智能体" %>
-              <% else %>
-                {gettext("Agents and slots are being granted normally.")} <% # zh_CN: "智能体" %>
-              <% end %>
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          phx-click="toggle_pause"
-          class={[
-            "btn rounded-md font-medium shrink-0",
-            if(@scheduler_paused,
-              do: "bg-success/20 hover:bg-success/30 text-success-content",
-              else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
-            )
-          ]}
-        >
-          <.icon name={if @scheduler_paused, do: "hero-play", else: "hero-pause"} class="size-5 mr-2" />
-          {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
-        </button>
-      </div>
-
-      <!-- System Control section (destructive actions) -->
-      <div class="border border-error/30 bg-error/5 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div class="flex items-start gap-3">
-          <.icon name="hero-power" class="size-5 text-error shrink-0" />
-          <div>
-            <h2 class="text-base font-bold tracking-tight text-error mb-0.5">
-              {gettext("System Control")}
-            </h2>
-            <p class="text-sm text-base-content/60 max-w-lg">
-              {gettext(
-                "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
-              )} <% # zh_CN: "平滑重启", "运行时" %>
-            </p>
-          </div>
-        </div>
-        <div class="flex flex-col sm:flex-row gap-3 shrink-0">
-          <button
-            type="button"
-            phx-click="request_restart"
-            class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
-          >
-            <.icon name="hero-arrow-path" class="size-5" />
-            {gettext("Restart System")}
-          </button>
-          <button
-            type="button"
-            phx-click="request_stop"
-            class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
-          >
-            <.icon name="hero-power" class="size-5" />
-            {gettext("Stop System")}
-          </button>
-        </div>
-      </div>
-
-      <!-- System Self-Check -->
-      <div>
-        <div class="p-4 border-b border-slate-200 dark:border-slate-800">
-          <div class="flex items-center justify-between mb-4">
-            <div class="flex items-center gap-3">
-              <.icon name="hero-shield-check" class="size-5 text-success" />
-              <div>
-                <h2 class="font-bold text-base">{gettext("System Self-Check")}</h2>
-                <p class="text-sm text-base-content/60">
-                  {gettext("System status and health overview")}
-                </p>
-              </div>
+        <!-- Scheduler Control banner -->
+        <div class="p-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div class="flex items-center gap-3">
+            <.icon
+              name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
+              class={"size-5 " <> if(@scheduler_paused, do: "text-warning", else: "text-success")}
+            />
+            <div>
+              <h2 class="text-base font-bold tracking-tight">
+                {if @scheduler_paused,
+                  do: gettext("Scheduler Paused"),
+                  else: gettext("Scheduler Active")} <% # zh_CN: "调度器" %>
+              </h2>
+              <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
+                <%= if @scheduler_paused do %>
+                  {gettext(
+                    "Running agents continue. No new slots or agents will be granted until resumed."
+                  )} <% # zh_CN: "智能体" %>
+                <% else %>
+                  {gettext("Agents and slots are being granted normally.")} <% # zh_CN: "智能体" %>
+                <% end %>
+              </p>
             </div>
+          </div>
+          <button
+            type="button"
+            phx-click="toggle_pause"
+            class={[
+              "btn rounded-md font-medium shrink-0",
+              if(@scheduler_paused,
+                do: "bg-success/20 hover:bg-success/30 text-success-content",
+                else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
+              )
+            ]}
+          >
+            <.icon
+              name={if @scheduler_paused, do: "hero-play", else: "hero-pause"}
+              class="size-5 mr-2"
+            />
+            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
+          </button>
+        </div>
+
+        <!-- System Control section (destructive actions) -->
+        <div class="border border-error/30 bg-error/5 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div class="flex items-start gap-3">
+            <.icon name="hero-power" class="size-5 text-error shrink-0" />
+            <div>
+              <h2 class="text-base font-bold tracking-tight text-error mb-0.5">
+                {gettext("System Control")}
+              </h2>
+              <p class="text-sm text-base-content/60 max-w-lg">
+                {gettext(
+                  "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
+                )} <% # zh_CN: "平滑重启", "运行时" %>
+              </p>
+            </div>
+          </div>
+          <div class="flex flex-col sm:flex-row gap-3 shrink-0">
             <button
-              phx-click="rerun_checks"
-              class="btn btn-ghost btn-sm gap-2"
-              disabled={@system_checks_status == :checking}
+              type="button"
+              phx-click="request_restart"
+              class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
             >
-              <.icon
-                name="hero-arrow-path"
-                class={"size-4 #{if @system_checks_status == :checking, do: "animate-spin"}"}
-              />
-              {if @system_checks_status == :checking,
-                do: gettext("Checking..."),
-                else: gettext("Re-check")}
+              <.icon name="hero-arrow-path" class="size-5" />
+              {gettext("Restart System")}
+            </button>
+            <button
+              type="button"
+              phx-click="request_stop"
+              class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
+            >
+              <.icon name="hero-power" class="size-5" />
+              {gettext("Stop System")}
             </button>
           </div>
+        </div>
 
-          <!-- Overall health banner: merges all checks into one status light -->
-          <% health = Status.overall_health(health_checks(assigns)) %>
+        <%= if @update_card_visible do %>
+          <!-- Software Update card (desktop shell only; hidden on remote nodes) -->
           <div
-            class={"rounded-lg border p-4 mb-4 flex items-start gap-3 #{health_banner_class(health.status)}"}
+            id="software-update-card"
+            class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6"
           >
-            <%= case health.status do %>
-              <% :ok -> %>
-                <.icon name="hero-check-circle-solid" class="size-6 text-success shrink-0" />
-              <% :warning -> %>
-                <.icon name="hero-exclamation-triangle-solid" class="size-6 text-warning shrink-0" />
-              <% :error -> %>
-                <.icon name="hero-x-circle-solid" class="size-6 text-error shrink-0" />
-              <% :loading -> %>
-                <.icon name="hero-arrow-path" class="size-6 text-base-content/40 animate-spin shrink-0" />
-            <% end %>
-            <div class="flex-1 min-w-0">
-              <h3 class="font-bold text-sm">
-                <%= case health.status do %>
-                  <% :ok -> %>
-                    {gettext("System running correctly")}
-                  <% :warning -> %>
-                    {gettext("System running, but needs attention")}
-                  <% :error -> %>
-                    {gettext("System needs attention")}
-                  <% :loading -> %>
-                    {gettext("Checking system health...")}
-                <% end %>
-              </h3>
-              <%= if health.reasons != [] do %>
-                <ul class="mt-1.5 space-y-1 text-sm">
-                  <%= for reason <- health.reasons do %>
-                    <li class="flex items-start gap-1.5 text-base-content/70">
-                      <.icon
-                        name="hero-exclamation-circle"
-                        class="size-3.5 text-base-content/50 shrink-0 mt-0.5"
-                      />
-                      <span>{reason}</span>
-                    </li>
+            <div class="flex items-start justify-between gap-4">
+              <div class="flex items-start gap-3">
+                <.icon name="hero-arrow-down-tray" class="size-5 text-info shrink-0" />
+                <div>
+                  <h2 class="text-base font-bold tracking-tight">
+                    {gettext("Software Update")} <% # zh_CN: "软件更新" %>
+                  </h2>
+                  <p class="text-sm text-base-content/60 mt-0.5">
+                    {gettext("Check for and install the latest Genesis release.")} <% # zh_CN: "检查并安装最新版 Genesis" %>
+                  </p>
+                </div>
+              </div>
+              <button
+                id="update-check-now"
+                type="button"
+                phx-click="check_for_updates"
+                class="btn btn-ghost btn-sm rounded-md gap-2 shrink-0"
+                disabled={@update_status.phase in [:checking, :applying]}
+              >
+                <.icon
+                  name="hero-arrow-path"
+                  class={"size-4 #{if @update_status.phase == :checking, do: "animate-spin"}"}
+                />
+                {if @update_status.phase == :checking,
+                  do: gettext("Checking..."),
+                  else: gettext("Check now")} <% # zh_CN: "立即检查" %>
+              </button>
+            </div>
+
+            <div class="mt-3">
+              <%= case @update_status.phase do %>
+                <% :idle -> %>
+                  <p class="text-sm text-base-content/60">
+                    {gettext("Update information will appear here after the first check.")} <% # zh_CN: "首次检查后此处会显示更新信息" %>
+                  </p>
+                <% :checking -> %>
+                  <div class="flex items-center gap-3 py-1">
+                    <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
+                    <span class="text-sm text-base-content/60">{gettext("Checking for updates…")}</span>
+                    <%= if @update_status.last_checked_at do %>
+                      <span class="text-xs text-base-content/40">
+                        {gettext("Last checked")} {EvoDashWeb.Helpers.format_datetime(
+                          @update_status.last_checked_at
+                        )}
+                      </span>
+                    <% end %>
+                  </div>
+                <% :up_to_date -> %>
+                  <div class="flex items-center gap-2 py-1">
+                    <.icon name="hero-check-circle" class="size-4 text-success" />
+                    <span class="text-sm">
+                      {gettext("Genesis %{version} is up to date",
+                        version: @update_status.current_version
+                      )} <% # zh_CN: "已是最新版本" %>
+                    </span>
+                  </div>
+                  <p class="text-xs text-base-content/40 mt-1">
+                    {gettext("Last checked")} {EvoDashWeb.Helpers.format_datetime(
+                      @update_status.last_checked_at
+                    )}
+                  </p>
+                <% :available -> %>
+                  <div class="flex items-center gap-2 py-1">
+                    <span class="size-2 rounded-full bg-warning shrink-0"></span>
+                    <span class="text-sm font-medium">
+                      {gettext("Version %{version} is available",
+                        version: @update_status.latest_version
+                      )} <% # zh_CN: "发现新版本" %>
+                    </span>
+                  </div>
+                  <%= if @update_status.notes do %>
+                    <p class="text-xs text-base-content/60 mt-1 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                      {@update_status.notes}
+                    </p>
                   <% end %>
-                </ul>
-              <% else %>
-                <%= if health.status == :ok do %>
-                  <p class="text-sm text-base-content/60">{gettext("All self-checks passed.")}</p>
-                <% end %>
+                  <div class="mt-3">
+                    <%= if @update_status.notify_only do %>
+                      <!-- Linux deb/rpm/portable installs: no self-install per plan §3 -->
+                      <p class="text-sm text-base-content/60 flex items-center gap-2">
+                        <.icon name="hero-information-circle" class="size-4 text-info shrink-0" />
+                        {gettext("Update via your package manager")} <% # zh_CN: "请通过系统包管理器更新（deb/rpm/便携版不自动安装）" %>
+                      </p>
+                    <% else %>
+                      <button
+                        id="update-download"
+                        type="button"
+                        phx-click="download_update"
+                        class="btn btn-primary btn-sm rounded-md gap-2"
+                      >
+                        <.icon name="hero-arrow-down-tray" class="size-4" />
+                        {gettext("Download")} <% # zh_CN: "下载" %>
+                      </button>
+                    <% end %>
+                  </div>
+                <% :ready -> %>
+                  <div class="flex items-center gap-2 py-1">
+                    <span class="relative flex size-2 shrink-0">
+                      <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-info opacity-75"></span>
+                      <span class="relative inline-flex size-2 rounded-full bg-info"></span>
+                    </span>
+                    <span class="text-sm font-medium">
+                      {gettext("Update ready — version %{version}",
+                        version: @update_status.latest_version
+                      )} <% # zh_CN: "更新已就绪" %>
+                    </span>
+                  </div>
+                  <div class="mt-3">
+                    <button
+                      id="update-restart"
+                      type="button"
+                      phx-click="request_apply_update"
+                      class="btn btn-primary btn-sm rounded-md gap-2"
+                    >
+                      <.icon name="hero-arrow-path" class="size-4" />
+                      {gettext("Restart & Update")} <% # zh_CN: "重启并更新" %>
+                    </button>
+                  </div>
+                <% :error -> %>
+                  <div class="flex items-center gap-2 py-1">
+                    <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
+                    <%= if @update_status.error == "not_configured" do %>
+                      <span class="text-sm text-base-content/70">
+                        {gettext("Automatic updates are not configured yet")} <% # zh_CN: "尚未配置自动更新（缺少更新签名密钥等）" %>
+                      </span>
+                    <% else %>
+                      <span class="text-sm text-error">{gettext("Check failed")}</span>
+                    <% end %>
+                  </div>
+                  <div class="mt-3">
+                    <button
+                      id="update-retry"
+                      type="button"
+                      phx-click="check_for_updates"
+                      class="btn btn-ghost btn-sm rounded-md gap-2"
+                    >
+                      <.icon name="hero-arrow-path" class="size-4" />
+                      {gettext("Retry")} <% # zh_CN: "重试" %>
+                    </button>
+                  </div>
+                <% :applying -> %>
+                  <div class="flex items-center gap-3 py-1">
+                    <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
+                    <span class="text-sm text-base-content/60">{gettext("Applying update…")} <% # zh_CN: "正在应用更新" %></span>
+                  </div>
               <% end %>
             </div>
           </div>
+        <% end %>
 
-          <div class="space-y-3">
-            <%= if @system_checks_status == :checking do %>
-              <div class="flex items-center gap-3 py-6 justify-center">
-                <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
-                <span class="text-sm text-base-content/60">{gettext("Checking system status...")}</span>
+        <!-- System Self-Check -->
+        <div>
+          <div class="p-4 border-b border-slate-200 dark:border-slate-800">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-3">
+                <.icon name="hero-shield-check" class="size-5 text-success" />
+                <div>
+                  <h2 class="font-bold text-base">{gettext("System Self-Check")}</h2>
+                  <p class="text-sm text-base-content/60">
+                    {gettext("System status and health overview")}
+                  </p>
+                </div>
               </div>
-            <% else %>
-              <!-- Check terms in a responsive grid (1 col mobile → 3 cols wide) -->
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <!-- Configuration cell -->
-                <.check_cell
-                  title={gettext("Configuration")}
-                  icon="hero-cog-6-tooth"
-                  status={if Status.config_ok?(@config_status), do: :ok, else: :error}
-                >
-                  <:details>
-                    <p class="text-xs text-base-content/60 mb-2">
-                      {gettext(
-                        "Verifies that the required settings — LLM provider, model, and API key — are configured."
-                      )}
-                    </p>
-                    <%= if Status.config_ok?(@config_status) do %>
-                      <span class="text-sm text-success">{gettext("All configured")}</span>
-                    <% else %>
-                      <div class="flex flex-wrap gap-1.5">
-                        <%= for item <- (@config_status[:missing] || []) do %>
-                          <span class="badge badge-warning badge-sm gap-1">
-                            <.icon name="hero-x-mark" class="size-3" />
-                            {Status.format_config_item(item)}
-                          </span>
-                        <% end %>
-                      </div>
-                    <% end %>
-                    <%= if @config_status != nil and @config_status[:validation_errors] not in [[], nil] do %>
-                      <div class="mt-1 text-xs text-warning">
-                        {ngettext(
-                          "%{count} validation warning",
-                          "%{count} validation warnings",
-                          length(@config_status.validation_errors)
-                        )}
-                      </div>
-                    <% end %>
-                  </:details>
-                  <:fix>
-                    {gettext("Fix the missing or invalid settings in Settings.")}
-                    <.link
-                      navigate={with_node_param(~p"/settings", @current_node_id)}
-                      class="link link-primary ml-1"
-                    >
-                      {gettext("Open Settings")}
-                    </.link>
-                  </:fix>
-                </.check_cell>
+              <button
+                phx-click="rerun_checks"
+                class="btn btn-ghost btn-sm gap-2"
+                disabled={@system_checks_status == :checking}
+              >
+                <.icon
+                  name="hero-arrow-path"
+                  class={"size-4 #{if @system_checks_status == :checking, do: "animate-spin"}"}
+                />
+                {if @system_checks_status == :checking,
+                  do: gettext("Checking..."),
+                  else: gettext("Re-check")}
+              </button>
+            </div>
 
-                <!-- Required Tools cell -->
-                <.check_cell
-                  title={gettext("Required Tools")}
-                  icon="brand-git"
-                  status={Status.tools_status(@tool_check)}
-                >
-                  <:details>
-                    <p class="text-xs text-base-content/60 mb-2">
-                      {gettext(
-                        "Checks that the git and ripgrep command-line tools are installed and available on your PATH."
-                      )}
-                    </p>
-                    <div class="flex flex-wrap gap-3">
-                      <.tool_badge name="git" check={@tool_check.git} />
-                      <.tool_badge name="rg (ripgrep)" check={@tool_check.rg} />
-                    </div>
-                  </:details>
-                  <:fix>
-                    <%= if @tool_check.git.available == false do %>
-                      <div>{gettext("Install git and make sure it is available on your PATH.")}</div>
+            <!-- Overall health banner: merges all checks into one status light -->
+            <% health = Status.overall_health(health_checks(assigns)) %>
+            <div class={"rounded-lg border p-4 mb-4 flex items-start gap-3 #{health_banner_class(health.status)}"}>
+              <%= case health.status do %>
+                <% :ok -> %>
+                  <.icon name="hero-check-circle-solid" class="size-6 text-success shrink-0" />
+                <% :warning -> %>
+                  <.icon name="hero-exclamation-triangle-solid" class="size-6 text-warning shrink-0" />
+                <% :error -> %>
+                  <.icon name="hero-x-circle-solid" class="size-6 text-error shrink-0" />
+                <% :loading -> %>
+                  <.icon
+                    name="hero-arrow-path"
+                    class="size-6 text-base-content/40 animate-spin shrink-0"
+                  />
+              <% end %>
+              <div class="flex-1 min-w-0">
+                <h3 class="font-bold text-sm">
+                  <%= case health.status do %>
+                    <% :ok -> %>
+                      {gettext("System running correctly")}
+                    <% :warning -> %>
+                      {gettext("System running, but needs attention")}
+                    <% :error -> %>
+                      {gettext("System needs attention")}
+                    <% :loading -> %>
+                      {gettext("Checking system health...")}
+                  <% end %>
+                </h3>
+                <%= if health.reasons != [] do %>
+                  <ul class="mt-1.5 space-y-1 text-sm">
+                    <%= for reason <- health.reasons do %>
+                      <li class="flex items-start gap-1.5 text-base-content/70">
+                        <.icon
+                          name="hero-exclamation-circle"
+                          class="size-3.5 text-base-content/50 shrink-0 mt-0.5"
+                        />
+                        <span>{reason}</span>
+                      </li>
                     <% end %>
-                    <%= if @tool_check.rg.available == false do %>
-                      <div>{gettext("Install ripgrep and make sure it is available on your PATH.")}</div>
-                    <% end %>
-                  </:fix>
-                </.check_cell>
+                  </ul>
+                <% else %>
+                  <%= if health.status == :ok do %>
+                    <p class="text-sm text-base-content/60">{gettext("All self-checks passed.")}</p>
+                  <% end %>
+                <% end %>
+              </div>
+            </div>
 
-                <!-- Sandbox cell (hidden on Windows/unknown platforms) -->
-                <% # zh_CN: "沙箱" %>
-                <%= if EvoDashWeb.PlatformInfo.show_sandbox?(@platform_os) do %>
+            <div class="space-y-3">
+              <%= if @system_checks_status == :checking do %>
+                <div class="flex items-center gap-3 py-6 justify-center">
+                  <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
+                  <span class="text-sm text-base-content/60">{gettext("Checking system status...")}</span>
+                </div>
+              <% else %>
+                <!-- Check terms in a responsive grid (1 col mobile → 3 cols wide) -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <!-- Configuration cell -->
                   <.check_cell
-                    title={gettext("Sandbox")}
-                    icon="hero-lock-closed"
-                    status={Status.sandbox_status(@sandbox_check)}
+                    title={gettext("Configuration")}
+                    icon="hero-cog-6-tooth"
+                    status={if Status.config_ok?(@config_status), do: :ok, else: :error}
                   >
                     <:details>
                       <p class="text-xs text-base-content/60 mb-2">
                         {gettext(
-                          "Checks that agent commands can be isolated in a sandbox to protect your system."
+                          "Verifies that the required settings — LLM provider, model, and API key — are configured."
                         )}
                       </p>
-                      <div class="flex flex-wrap gap-2 items-center">
-                        <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :bwrap -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
-                          {Status.format_backend(@sandbox_check.backend)}
-                        </span>
-                        <span class="text-sm text-base-content/60">
-                          {if @sandbox_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
-                        </span>
-                        <%= if @sandbox_check.backend != :none do %>
-                          <span class="text-xs text-base-content/40">
-                            {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
-                              do: "✓",
-                              else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
-                              do: "✓",
-                              else: "✗"}
-                          </span>
-                        <% end %>
-                      </div>
-                    </:details>
-                    <:fix>
-                      <%= case @sandbox_check.backend do %>
-                        <% :systemd_run -> %>
-                          {gettext("Enable or install systemd-run. Sandboxing requires a systemd user session.")}
-                        <% :sandbox_exec -> %>
-                          {gettext("Sandbox-exec sandboxing is unavailable on this system.")}
-                        <% _ -> %>
-                          {gettext("No sandbox backend is available on this system.")}
+                      <%= if Status.config_ok?(@config_status) do %>
+                        <span class="text-sm text-success">{gettext("All configured")}</span>
+                      <% else %>
+                        <div class="flex flex-wrap gap-1.5">
+                          <%= for item <- (@config_status[:missing] || []) do %>
+                            <span class="badge badge-warning badge-sm gap-1">
+                              <.icon name="hero-x-mark" class="size-3" />
+                              {Status.format_config_item(item)}
+                            </span>
+                          <% end %>
+                        </div>
                       <% end %>
-                    </:fix>
-                  </.check_cell>
-                <% end %>
-
-                <!-- Nix Environment cell (gated on nix enabled in config AND binary available) -->
-                <%= if @nix_check != nil and @nix_check.enabled and @nix_check.available do %>
-                  <.check_cell
-                    title={gettext("Nix Environment")}
-                    icon="brand-nix"
-                    status={Status.nix_status(@nix_check)}
-                  >
-                    <:details>
-                      <p class="text-xs text-base-content/60 mb-2">
-                        {gettext("Checks the Nix development environment used for reproducible builds.")}
-                      </p>
-                      <div class="flex flex-wrap gap-2 items-center">
-                        <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
-                          {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
-                        </span>
-                        <span class="text-sm text-base-content/60">
-                          {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
-                        </span>
-                        <span class="text-sm text-base-content/60">
-                          {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
-                        </span>
-                        <%= if @nix_check.flake_present do %>
-                          <span class="text-xs text-base-content/40">
-                            {gettext("Flake valid")}: {if @nix_check.dev_env_built, do: "✓", else: "✗"}
-                          </span>
-                        <% end %>
-                      </div>
-                      <%= if @nix_check[:error] do %>
-                        <div class="mt-1 text-xs text-error/80">
-                          <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
-                          {@nix_check.error}
+                      <%= if @config_status != nil and @config_status[:validation_errors] not in [[], nil] do %>
+                        <div class="mt-1 text-xs text-warning">
+                          {ngettext(
+                            "%{count} validation warning",
+                            "%{count} validation warnings",
+                            length(@config_status.validation_errors)
+                          )}
                         </div>
                       <% end %>
                     </:details>
                     <:fix>
-                      {gettext(
-                        "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
-                      )}
+                      {gettext("Fix the missing or invalid settings in Settings.")}
+                      <.link
+                        navigate={with_node_param(~p"/settings", @current_node_id)}
+                        class="link link-primary ml-1"
+                      >
+                        {gettext("Open Settings")}
+                      </.link>
                     </:fix>
                   </.check_cell>
+
+                  <!-- Required Tools cell -->
+                  <.check_cell
+                    title={gettext("Required Tools")}
+                    icon="brand-git"
+                    status={Status.tools_status(@tool_check)}
+                  >
+                    <:details>
+                      <p class="text-xs text-base-content/60 mb-2">
+                        {gettext(
+                          "Checks that the git and ripgrep command-line tools are installed and available on your PATH."
+                        )}
+                      </p>
+                      <div class="flex flex-wrap gap-3">
+                        <.tool_badge name="git" check={@tool_check.git} />
+                        <.tool_badge name="rg (ripgrep)" check={@tool_check.rg} />
+                      </div>
+                    </:details>
+                    <:fix>
+                      <%= if @tool_check.git.available == false do %>
+                        <div>
+                          {gettext("Install git and make sure it is available on your PATH.")}
+                        </div>
+                      <% end %>
+                      <%= if @tool_check.rg.available == false do %>
+                        <div>
+                          {gettext("Install ripgrep and make sure it is available on your PATH.")}
+                        </div>
+                      <% end %>
+                    </:fix>
+                  </.check_cell>
+
+                  <!-- Sandbox cell (hidden on Windows/unknown platforms) -->
+                  <% # zh_CN: "沙箱" %>
+                  <%= if EvoDashWeb.PlatformInfo.show_sandbox?(@platform_os) do %>
+                    <.check_cell
+                      title={gettext("Sandbox")}
+                      icon="hero-lock-closed"
+                      status={Status.sandbox_status(@sandbox_check)}
+                    >
+                      <:details>
+                        <p class="text-xs text-base-content/60 mb-2">
+                          {gettext(
+                            "Checks that agent commands can be isolated in a sandbox to protect your system."
+                          )}
+                        </p>
+                        <div class="flex flex-wrap gap-2 items-center">
+                          <span class={"badge badge-sm #{case @sandbox_check.backend do :systemd_run -> "badge-success"; :bwrap -> "badge-success"; :sandbox_exec -> "badge-info"; _ -> "badge-ghost" end}"}>
+                            {Status.format_backend(@sandbox_check.backend)}
+                          </span>
+                          <span class="text-sm text-base-content/60">
+                            {if @sandbox_check.enabled,
+                              do: gettext("Enabled"),
+                              else: gettext("Disabled")}
+                          </span>
+                          <%= if @sandbox_check.backend != :none do %>
+                            <span class="text-xs text-base-content/40">
+                              {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
+                                do: "✓",
+                                else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
+                                do: "✓",
+                                else: "✗"}
+                            </span>
+                          <% end %>
+                        </div>
+                      </:details>
+                      <:fix>
+                        <%= case @sandbox_check.backend do %>
+                          <% :systemd_run -> %>
+                            {gettext(
+                              "Enable or install systemd-run. Sandboxing requires a systemd user session."
+                            )}
+                          <% :sandbox_exec -> %>
+                            {gettext("Sandbox-exec sandboxing is unavailable on this system.")}
+                          <% _ -> %>
+                            {gettext("No sandbox backend is available on this system.")}
+                        <% end %>
+                      </:fix>
+                    </.check_cell>
+                  <% end %>
+
+                  <!-- Nix Environment cell (gated on nix enabled in config AND binary available) -->
+                  <%= if @nix_check != nil and @nix_check.enabled and @nix_check.available do %>
+                    <.check_cell
+                      title={gettext("Nix Environment")}
+                      icon="brand-nix"
+                      status={Status.nix_status(@nix_check)}
+                    >
+                      <:details>
+                        <p class="text-xs text-base-content/60 mb-2">
+                          {gettext(
+                            "Checks the Nix development environment used for reproducible builds."
+                          )}
+                        </p>
+                        <div class="flex flex-wrap gap-2 items-center">
+                          <span class={"badge badge-sm #{if @nix_check.enabled, do: "badge-success", else: "badge-ghost"}"}>
+                            {if @nix_check.enabled, do: gettext("Enabled"), else: gettext("Disabled")}
+                          </span>
+                          <span class="text-sm text-base-content/60">
+                            {gettext("Binary")}: {if @nix_check.available, do: "✓", else: "✗"}
+                          </span>
+                          <span class="text-sm text-base-content/60">
+                            {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
+                          </span>
+                          <%= if @nix_check.flake_present do %>
+                            <span class="text-xs text-base-content/40">
+                              {gettext("Flake valid")}: {if @nix_check.dev_env_built,
+                                do: "✓",
+                                else: "✗"}
+                            </span>
+                          <% end %>
+                        </div>
+                        <%= if @nix_check[:error] do %>
+                          <div class="mt-1 text-xs text-error/80">
+                            <.icon name="hero-exclamation-triangle" class="size-3 inline -mt-0.5" />
+                            {@nix_check.error}
+                          </div>
+                        <% end %>
+                      </:details>
+                      <:fix>
+                        {gettext(
+                          "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
+                        )}
+                      </:fix>
+                    </.check_cell>
+                  <% end %>
+
+                  <!-- LLM Connection cell -->
+                  <.check_cell
+                    title={gettext("LLM Connection")}
+                    icon="hero-chat-bubble-left-right"
+                    status={:info}
+                  >
+                    <:details>
+                      <p class="text-xs text-base-content/60 mb-2">
+                        {gettext(
+                          "Check that your LLM provider is reachable with the configured API key."
+                        )}
+                      </p>
+                      <div class="flex items-center gap-3">
+                        <span class="text-sm text-base-content/60">{gettext(
+                          "LLM connection testing is now available on the Settings page."
+                        )}</span>
+                        <.link
+                          navigate={
+                            ~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"
+                          }
+                          class="btn btn-primary btn-sm gap-2"
+                        >
+                          <.icon name="hero-sparkles" class="size-4" />
+                          {gettext("Test in Settings")}
+                        </.link>
+                      </div>
+                    </:details>
+                  </.check_cell>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib) -->
+        <Charts.charts_section samples={@chart_samples} paused={@scheduler_paused} />
+
+        <!-- System Dashboard -->
+        <div class="mt-4">
+          <.link navigate={with_node_param(~p"/dashboard", @current_node_id)} class="block">
+            <div class="rounded-lg border border-base-200 bg-base-100 p-4 hover:border-base-300 transition-colors">
+              <div class="flex items-center gap-3">
+                <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
+                <div class="flex-1">
+                  <h3 class="font-semibold text-base">{gettext("System Dashboard")}</h3>
+                  <p class="text-sm text-base-content/60 mt-0.5">
+                    {gettext("View system metrics, processes, and application telemetry")}
+                  </p>
+                </div>
+                <.icon name="hero-arrow-right" class="size-5 text-base-content/30" />
+              </div>
+            </div>
+          </.link>
+        </div>
+
+        <!-- Restart confirmation modal -->
+        <%= if @show_restart_confirm do %>
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+                <h3 class="text-lg font-bold">{gettext("Restart System?")}</h3>
+              </div>
+
+              <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                <%= if @remote? do %>
+                  {gettext(
+                    "This will gracefully restart the remote node's Erlang VM. All applications on the remote node will be torn down and restarted."
+                  )}
+                <% else %>
+                  {gettext(
+                    "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
+                  )} <% # zh_CN: "平滑重启" %>
                 <% end %>
+              </p>
+              <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
+                {gettext(
+                  "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
+                )} <% # zh_CN: "运行时", "调度器", "智能体" %>
+              </p>
 
-                <!-- LLM Connection cell -->
-                <.check_cell
-                  title={gettext("LLM Connection")}
-                  icon="hero-chat-bubble-left-right"
-                  status={:info}
+              <div class="flex justify-end gap-3 pt-2">
+                <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_restart">
+                  {gettext("Cancel")}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-error rounded-md px-6 gap-2"
+                  phx-click="confirm_restart"
                 >
-                  <:details>
-                    <p class="text-xs text-base-content/60 mb-2">
-                      {gettext("Check that your LLM provider is reachable with the configured API key.")}
-                    </p>
-                    <div class="flex items-center gap-3">
-                      <span class="text-sm text-base-content/60">{gettext(
-                        "LLM connection testing is now available on the Settings page."
-                      )}</span>
-                      <.link
-                        navigate={~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"}
-                        class="btn btn-primary btn-sm gap-2"
-                      >
-                        <.icon name="hero-sparkles" class="size-4" />
-                        {gettext("Test in Settings")}
-                      </.link>
-                    </div>
-                  </:details>
-                </.check_cell>
+                  <.icon name="hero-arrow-path" class="size-4.5" />
+                  {gettext("Restart System")}
+                </button>
               </div>
-            <% end %>
+            </div>
           </div>
-        </div>
-      </div>
+        <% end %>
 
-      <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib) -->
-      <Charts.charts_section samples={@chart_samples} paused={@scheduler_paused} />
+        <!-- Stop confirmation modal -->
+        <%= if @show_stop_confirm do %>
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+                <h3 class="text-lg font-bold">{gettext("Stop System?")}</h3>
+              </div>
 
-      <!-- System Dashboard -->
-      <div class="mt-4">
-        <.link navigate={with_node_param(~p"/dashboard", @current_node_id)} class="block">
-          <div class="rounded-lg border border-base-200 bg-base-100 p-4 hover:border-base-300 transition-colors">
-            <div class="flex items-center gap-3">
-              <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
-              <div class="flex-1">
-                <h3 class="font-semibold text-base">{gettext("System Dashboard")}</h3>
-                <p class="text-sm text-base-content/60 mt-0.5">
-                  {gettext("View system metrics, processes, and application telemetry")}
+              <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                <%= if @remote? do %>
+                  {gettext(
+                    "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
+                  )}
+                <% else %>
+                  {gettext(
+                    "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
+                  )}
+                <% end %>
+              </p>
+              <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
+                {gettext(
+                  "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
+                )}
+              </p>
+
+              <div class="flex justify-end gap-3 pt-2">
+                <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_stop">
+                  {gettext("Cancel")}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-error rounded-md px-6 gap-2"
+                  phx-click="confirm_stop"
+                >
+                  <.icon name="hero-power" class="size-4.5" />
+                  {gettext("Stop System")}
+                </button>
+              </div>
+            </div>
+          </div>
+        <% end %>
+
+        <%= if @update_card_visible and @update_apply_busy_count != nil do %>
+          <!-- Software Update busy-apply modal (tasks still running) -->
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-black/50 backdrop-blur-sm"></div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-clock" class="size-5 text-warning" />
+                <h3 class="text-lg font-bold">{gettext("Tasks still running")}</h3>
+              </div>
+
+              <%= if @update_winddown do %>
+                <!-- Wind-down in progress: graceful cancels are running; no buttons -->
+                <div class="flex items-center gap-3 py-2">
+                  <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
+                  <span class="text-sm text-base-content/60">{gettext("Stopping tasks…")} <% # zh_CN: "正在优雅停止任务（保存工作并退出）" %></span>
+                </div>
+              <% else %>
+                <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                  {gettext("%{count} task(s) still running", count: @update_apply_busy_count)} <% # zh_CN: "任务计数：用 task(s) 表达单复数，避免拆分复数形式" %>
                 </p>
+                <p class="text-sm text-base-content/60 mb-5 leading-relaxed">
+                  {gettext(
+                    "The update can only be applied when no tasks are running. Gracefully stopping tasks asks their agents to save their work and finish; results are preserved for review."
+                  )} <% # zh_CN: "优雅停止：智能体保存工作后正常退出，结果保留可审阅" %>
+                </p>
+
+                <div class="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    class="btn btn-ghost rounded-md px-6"
+                    phx-click="defer_apply_update"
+                  >
+                    {gettext("Defer")} <% # zh_CN: "稍后处理" %>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-primary rounded-md px-6 gap-2"
+                    phx-click="confirm_apply_graceful"
+                  >
+                    <.icon name="hero-check" class="size-4.5" />
+                    {gettext("Apply & gracefully stop tasks")} <% # zh_CN: "应用更新并优雅停止任务" %>
+                  </button>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+
+        <%= if @update_card_visible and @update_force_kill_count != nil do %>
+          <!-- Software Update force-kill modal (wind-down timed out) -->
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              class="fixed inset-0 bg-black/50 backdrop-blur-sm"
+              phx-click="cancel_force_kill_update"
+            >
+            </div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+                <h3 class="text-lg font-bold">{gettext("Force Kill & Update?")}</h3>
               </div>
-              <.icon name="hero-arrow-right" class="size-5 text-base-content/30" />
+
+              <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                {gettext("%{count} task(s) still running after waiting",
+                  count: @update_force_kill_count
+                )} <% # zh_CN: "等待后仍有任务在运行" %>
+              </p>
+              <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
+                {gettext("In-flight work will be lost and tasks will need manual review.")} <% # zh_CN: "未保存的工作将丢失，任务需人工复核" %>
+              </p>
+
+              <div class="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  class="btn btn-ghost rounded-md px-6"
+                  phx-click="cancel_force_kill_update"
+                >
+                  {gettext("Cancel")}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-error rounded-md px-6 gap-2"
+                  phx-click="confirm_force_kill_update"
+                >
+                  <.icon name="hero-power" class="size-4.5" />
+                  {gettext("Force Kill & Update")} <% # zh_CN: "强制终止任务并更新" %>
+                </button>
+              </div>
             </div>
           </div>
-        </.link>
-      </div>
-
-      <!-- Restart confirmation modal -->
-      <%= if @show_restart_confirm do %>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
-          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
-            <div class="flex items-center gap-3 mb-4">
-              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              <h3 class="text-lg font-bold">{gettext("Restart System?")}</h3>
-            </div>
-
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              <%= if @remote? do %>
-                {gettext(
-                  "This will gracefully restart the remote node's Erlang VM. All applications on the remote node will be torn down and restarted."
-                )}
-              <% else %>
-                {gettext(
-                  "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
-                )} <% # zh_CN: "平滑重启" %>
-              <% end %>
-            </p>
-            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext(
-                "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
-              )} <% # zh_CN: "运行时", "调度器", "智能体" %>
-            </p>
-
-            <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_restart">
-                {gettext("Cancel")}
-              </button>
-              <button
-                type="button"
-                class="btn btn-error rounded-md px-6 gap-2"
-                phx-click="confirm_restart"
-              >
-                <.icon name="hero-arrow-path" class="size-4.5" />
-                {gettext("Restart System")}
-              </button>
-            </div>
-          </div>
-        </div>
-      <% end %>
-
-      <!-- Stop confirmation modal -->
-      <%= if @show_stop_confirm do %>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
-          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
-            <div class="flex items-center gap-3 mb-4">
-              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              <h3 class="text-lg font-bold">{gettext("Stop System?")}</h3>
-            </div>
-
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              <%= if @remote? do %>
-                {gettext(
-                  "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
-                )}
-              <% else %>
-                {gettext(
-                  "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
-                )}
-              <% end %>
-            </p>
-            <p class="text-sm text-error/80 font-semibold mb-5 leading-relaxed">
-              {gettext(
-                "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
-              )}
-            </p>
-
-            <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="cancel_stop">
-                {gettext("Cancel")}
-              </button>
-              <button
-                type="button"
-                class="btn btn-error rounded-md px-6 gap-2"
-                phx-click="confirm_stop"
-              >
-                <.icon name="hero-power" class="size-4.5" />
-                {gettext("Stop System")}
-              </button>
-            </div>
-          </div>
-        </div>
-      <% end %>
+        <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -504,6 +772,11 @@ defmodule EvoDashWeb.SystemLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "scheduler_config")
+      # Software Update card: subscribe to `EvoDash.UpdateStatus` hub
+      # transitions. Idempotent to subscribe from the same pid, so this stays
+      # correct even after workstream B's on_mount hook adds a second
+      # subscription to the same topic.
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "updates")
       spawn_system_checks(socket)
       Process.send_after(self(), :system_chart_tick, 3000)
     end
@@ -524,7 +797,14 @@ defmodule EvoDashWeb.SystemLive do
         chart_samples: [],
         chart_node: nil,
         chart_config_cache: nil,
-        chart_tick_count: 0
+        chart_tick_count: 0,
+        # Software Update card assigns (visibility is recomputed in
+        # handle_params/3 after assign_node; modal ids are nil-guarded no-ops).
+        update_card_visible: false,
+        update_status: EvoDash.UpdateStatus.get(),
+        update_apply_busy_count: nil,
+        update_force_kill_count: nil,
+        update_winddown: false
       )
 
     {:ok, socket}
@@ -568,6 +848,28 @@ defmodule EvoDashWeb.SystemLive do
         |> assign(:chart_samples, [])
         |> assign(:chart_config_cache, nil)
         |> assign(:chart_tick_count, 0)
+      else
+        socket
+      end
+
+    # Software Update card: visibility is desktop-only and hidden on remote
+    # nodes. The mount-triggered check fires once — the `phase == :idle` guard
+    # makes re-triggers on patches impossible (after the first check the hub
+    # leaves :idle until explicitly reset).
+    socket =
+      assign(
+        socket,
+        :update_card_visible,
+        EvoDashWeb.SystemLive.UpdateCard.visible?(socket.assigns.current_node)
+      )
+
+    socket =
+      if socket.assigns.update_card_visible and connected?(socket) and
+           EvoDash.UpdateStatus.phase() == :idle do
+        EvoDash.UpdateStatus.check_started()
+        socket = Phoenix.LiveView.push_event(socket, "update_check_requested", %{})
+        EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self())
+        socket
       else
         socket
       end
@@ -746,6 +1048,112 @@ defmodule EvoDashWeb.SystemLive do
     {:noreply, socket}
   end
 
+  # --- Software Update card events (all no-ops unless the card is visible) ---
+
+  @impl true
+  def handle_event("check_for_updates", _params, socket) do
+    if update_card_visible?(socket) do
+      EvoDash.UpdateStatus.check_started()
+      socket = Phoenix.LiveView.push_event(socket, "update_check_requested", %{})
+      EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self())
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("download_update", _params, socket) do
+    if update_card_visible?(socket) do
+      {:noreply, Phoenix.LiveView.push_event(socket, "update_download_requested", %{})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("request_apply_update", _params, socket) do
+    if update_card_visible?(socket) do
+      count = length(EvoDashWeb.SystemLive.UpdateCard.active_task_ids(:gate))
+
+      if count == 0 do
+        # No tasks running — apply directly (no modal).
+        {:noreply, EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)}
+      else
+        {:noreply, assign(socket, :update_apply_busy_count, count)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("confirm_apply_update", _params, socket) do
+    # (Idle-confirm modal variant — unused today; kept for the event surface.)
+    if update_card_visible?(socket) do
+      {:noreply, EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("defer_apply_update", _params, socket) do
+    if update_card_visible?(socket) do
+      {:noreply, assign(socket, :update_apply_busy_count, nil)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("confirm_apply_graceful", _params, socket) do
+    if update_card_visible?(socket) do
+      # Graceful-cancel every active task, then wind down: poll until the list
+      # empties (or the deadline passes), then apply.
+      for id <- EvoDashWeb.SystemLive.UpdateCard.active_task_ids(:gate) do
+        EvoDashWeb.SystemLive.UpdateCard.graceful_cancel(id)
+      end
+
+      EvoDashWeb.SystemLive.UpdateCard.start_winddown(self())
+
+      {:noreply,
+       socket
+       |> assign(:update_apply_busy_count, nil)
+       |> assign(:update_winddown, true)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("confirm_force_kill_update", _params, socket) do
+    if update_card_visible?(socket) do
+      EvoDashWeb.SystemLive.UpdateCard.force_kill_all()
+
+      socket =
+        socket
+        |> assign(:update_force_kill_count, nil)
+        |> assign(:update_winddown, false)
+
+      {:noreply, EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_force_kill_update", _params, socket) do
+    if update_card_visible?(socket) do
+      {:noreply,
+       socket
+       |> assign(:update_force_kill_count, nil)
+       |> assign(:update_winddown, false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
@@ -759,6 +1167,52 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def handle_info({:scheduler_config_updated}, socket) do
     {:noreply, assign(socket, :scheduler_paused, load_paused_state())}
+  end
+
+  # --- Software Update card messages ---
+
+  @impl true
+  def handle_info({:update_status, state}, socket) do
+    # Hub transition broadcast. (In the merged system, workstream B's on_mount
+    # :handle_info interceptor consumes this message first, making this clause
+    # a no-op there — kept for self-containment.)
+    {:noreply, assign(socket, :update_status, state)}
+  end
+
+  @impl true
+  def handle_info({:update_check_result, payload}, socket) do
+    # The check-runner seam's send-pattern: feeds the hub, which broadcasts
+    # the resulting state back to this view.
+    EvoDash.UpdateStatus.handle_check_result(payload)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:update_winddown_complete}, socket) do
+    # All tasks gracefully stopped — apply the update now.
+    socket = assign(socket, :update_winddown, false)
+    {:noreply, EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)}
+  end
+
+  @impl true
+  def handle_info({:update_winddown_timeout, count}, socket) do
+    # Wind-down deadline passed with tasks still active — offer the user the
+    # force-kill fallback (in-flight work will be lost).
+    {:noreply,
+     socket
+     |> assign(:update_winddown, false)
+     |> assign(:update_force_kill_count, count)}
+  end
+
+  @impl true
+  def handle_info({:update_winddown_error, _reason}, socket) do
+    {:noreply,
+     socket
+     |> assign(:update_winddown, false)
+     |> put_flash(
+       :error,
+       gettext("Failed to stop running tasks. The update was not applied.")
+     )}
   end
 
   @impl true
@@ -831,6 +1285,12 @@ defmodule EvoDashWeb.SystemLive do
 
   defp load_paused_state do
     Map.get(EvoGit.AgentScheduler.get_config(), :paused, false)
+  end
+
+  # Gate for the Software Update card's event handlers — all update events are
+  # no-ops unless the card is visible (desktop shell + local node).
+  defp update_card_visible?(socket) do
+    socket.assigns[:update_card_visible] || false
   end
 
   # Samples scheduler status into the chart ring buffer. Per tick: agent

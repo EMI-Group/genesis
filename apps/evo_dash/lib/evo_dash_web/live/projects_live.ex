@@ -15,7 +15,8 @@ defmodule EvoDashWeb.ProjectsLive do
     Assigns,
     ProjectFlow,
     RemoteView,
-    AttachFile
+    AttachFile,
+    GitHub
   }
 
   alias EvoDashWeb.ThemeColor
@@ -46,6 +47,7 @@ defmodule EvoDashWeb.ProjectsLive do
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
         desktop_quit_confirm={@desktop_quit_confirm}
+        update_status={@update_status}
       >
         <%!--
           Full-bleed Phoenix LiveDashboard: no header chrome — the iframe
@@ -71,6 +73,7 @@ defmodule EvoDashWeb.ProjectsLive do
         running_tasks={@running_tasks}
         pending_tasks={@pending_tasks}
         desktop_quit_confirm={@desktop_quit_confirm}
+        update_status={@update_status}
       >
         <%!--
           --project-accent carries the TASK-MODE accent: genesis_new → red,
@@ -146,6 +149,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     new_repo_description={@new_repo_description}
                     disabled={is_nil(@active_project)}
                     show_configure_dropdown={@show_configure_dropdown}
+                    github_status={@github_status}
                   />
 
                   <%!-- No-project page dim: purely visual (position: fixed,
@@ -279,6 +283,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     new_repo_description={@new_repo_description}
                     disabled={is_nil(@active_project)}
                     show_configure_dropdown={@show_configure_dropdown}
+                    github_status={@github_status}
                   />
 
                   <div class="mt-2 mb-4 rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-2">
@@ -403,6 +408,7 @@ defmodule EvoDashWeb.ProjectsLive do
                   path_suggestions={@path_suggestions}
                   tauri_detected={@tauri_detected}
                   platform={@platform}
+                  github_status={@github_status}
                 />
                 <RemoteView.connecting_state current_node_name={@current_node_name} />
               <% true -> %>
@@ -423,6 +429,7 @@ defmodule EvoDashWeb.ProjectsLive do
                   path_suggestions={@path_suggestions}
                   tauri_detected={@tauri_detected}
                   platform={@platform}
+                  github_status={@github_status}
                 />
                 <RemoteView.error_state
                   current_node_name={@current_node_name}
@@ -430,6 +437,19 @@ defmodule EvoDashWeb.ProjectsLive do
                 />
             <% end %>
             <%!-- end of node-context cond --%>
+
+            <%!-- GitHub issues modal — rendered OUTSIDE the node-context cond
+                 so it works in both the local and remote-connected branches.
+                 It can only be opened from those branches anyway: the top-bar
+                 GitHub button renders only after the async upstream check
+                 resolves :ok, and project/node switches reset the flag. --%>
+            <%= if @github_modal_open do %>
+              <EvoDashWeb.GitHubComponents.issues_modal
+                github_status={@github_status}
+                issues={@github_issues}
+                fixing={@github_fixing}
+              />
+            <% end %>
           </div>
         </div>
       </EvoDashWeb.Layouts.app>
@@ -539,7 +559,15 @@ defmodule EvoDashWeb.ProjectsLive do
           # file dialog opens (see handle_event("file_pick")) so the picked
           # file's text can be appended even if the user keeps typing while
           # the dialog is open.
-          file_pick_bases: %{}
+          file_pick_bases: %{},
+          # GitHub issue integration: async-detected upstream status, issues
+          # modal state, and the issue number whose markdown is being fetched
+          # (per-row "Fix" spinner). All GitHub data access is async via
+          # EvoDashWeb.ProjectsLive.GitHub — never on the page-load path.
+          github_status: nil,
+          github_modal_open: false,
+          github_issues: GitHub.idle_issues(),
+          github_fixing: nil
         )
 
       socket = Assigns.assign_form_defaults(socket)
@@ -598,10 +626,18 @@ defmodule EvoDashWeb.ProjectsLive do
     # (file_pick_bases) is per-node client state — clear it alongside the
     # other client state on node switches (mirrors the StatePersistence
     # clearing above; that module owns task_prompt and friends, this assign
-    # is LiveView-local).
+    # is LiveView-local). The GitHub issue state is per-node too: a stale
+    # :ok status from the previous node must never render the GitHub button
+    # for the wrong node (results are stale-guarded on node, but an already
+    # resolved status would survive the switch otherwise).
     socket =
       if prev_node_id != socket.assigns[:current_node_id] do
-        assign(socket, :file_pick_bases, %{})
+        socket
+        |> assign(:file_pick_bases, %{})
+        |> assign(:github_status, nil)
+        |> assign(:github_modal_open, false)
+        |> assign(:github_issues, GitHub.idle_issues())
+        |> assign(:github_fixing, nil)
       else
         socket
       end
@@ -770,6 +806,12 @@ defmodule EvoDashWeb.ProjectsLive do
         _ ->
           socket
       end
+
+    # Async GitHub-upstream detection (never runs synchronously — spawns a
+    # supervised Task). Runs AFTER project restoration above so
+    # `active_project_path`/`task_mode` are settled; no-ops when no project
+    # is active, the mode is genesis_new, or a status is already present.
+    socket = GitHub.maybe_check(socket)
 
     {:noreply, socket}
   end
@@ -989,6 +1031,32 @@ defmodule EvoDashWeb.ProjectsLive do
      socket
      |> assign(:selected_agent_id, id)
      |> StatePersistence.maybe_persist_state()}
+  end
+
+  # --- GitHub Issues Events ---
+  #
+  # Thin wrappers around EvoDashWeb.ProjectsLive.GitHub (all GitHub data
+  # access is async via EvoDash.TaskSupervisor and node-aware via
+  # EvoDash.NodeContext — the dashboard never calls gh/git directly).
+
+  @impl true
+  def handle_event("open_github_issues", _params, socket) do
+    {:noreply, GitHub.open_modal(socket)}
+  end
+
+  @impl true
+  def handle_event("close_github_modal", _params, socket) do
+    {:noreply, GitHub.close_modal(socket)}
+  end
+
+  @impl true
+  def handle_event("github_filter_state", %{"state" => state}, socket) do
+    {:noreply, GitHub.filter_state(socket, state)}
+  end
+
+  @impl true
+  def handle_event("github_fix_issue", %{"number" => number}, socket) do
+    {:noreply, GitHub.fix_issue(socket, number)}
   end
 
   # Flash acknowledgement for the ClipboardCopy hook (example task copy button)
@@ -1670,6 +1738,28 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, assign(socket, :config_status, config_status())}
   end
 
+  # --- GitHub Issues async results ---
+  #
+  # Messages from EvoDashWeb.ProjectsLive.GitHub's supervised Tasks. The
+  # handlers are stale-guarded on project path + node (+ filter state for the
+  # issue list) so a result for a previous project/node never lands on the
+  # current view.
+
+  @impl true
+  def handle_info({:github_status_result, path, node, result}, socket) do
+    {:noreply, GitHub.handle_status_result(socket, path, node, result)}
+  end
+
+  @impl true
+  def handle_info({:github_issues_result, path, node, state, result}, socket) do
+    {:noreply, GitHub.handle_issues_result(socket, path, node, state, result)}
+  end
+
+  @impl true
+  def handle_info({:github_fix_result, path, node, number, result}, socket) do
+    {:noreply, GitHub.handle_fix_result(socket, path, node, number, result)}
+  end
+
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
   #
   # Looks up the task by id, extracts `task.opts[:foreign_repos]`, and converts the
@@ -1849,6 +1939,7 @@ defmodule EvoDashWeb.ProjectsLive do
       )
     else
       node = socket.assigns[:current_node]
+      project_changed? = socket.assigns[:active_project_path] != expanded
 
       if EvoDash.NodeContext.dir?(node, expanded) do
         EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
@@ -1865,6 +1956,9 @@ defmodule EvoDashWeb.ProjectsLive do
         |> assign(:palette_mode, :menu)
         |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
         |> assign(:active_project_path, expanded)
+        # `project_changed?` is computed from the PRE-assign socket above.
+        |> maybe_reset_github_state(project_changed?)
+        |> GitHub.maybe_check()
         |> push_patch(to: project_url(socket, expanded))
       else
         socket
@@ -1995,6 +2089,24 @@ defmodule EvoDashWeb.ProjectsLive do
       show_add_foreign_repo_form: false
     )
     |> Project.maybe_put_flash_mode_info(mode_info)
+    # `is_project_change` is computed from the PRE-assign socket above.
+    |> maybe_reset_github_state(is_project_change)
+    |> GitHub.maybe_check()
+  end
+
+  # Resets the GitHub issue integration state when the active project path
+  # CHANGES (same-path re-activations keep the resolved status/modal). The
+  # async detection re-runs via `GitHub.maybe_check/1` after the reset.
+  defp maybe_reset_github_state(socket, project_changed?) do
+    if project_changed? do
+      socket
+      |> assign(:github_status, nil)
+      |> assign(:github_modal_open, false)
+      |> assign(:github_issues, GitHub.idle_issues())
+      |> assign(:github_fixing, nil)
+    else
+      socket
+    end
   end
 
   # do_task_submit/4 — builds the start_task opts and launches the task.

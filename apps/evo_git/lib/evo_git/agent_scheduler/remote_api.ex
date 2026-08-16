@@ -856,6 +856,59 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Gets the GitHub upstream information (owner/repo parsed from the `origin`
+  remote URL) for a repository on the remote node.
+
+  Delegates to `EvoGit.Adapters.GitHub.github_upstream/1`. `repo_path` is the
+  absolute path of the repository. Runs on the REMOTE node when called via
+  `:erpc.call/5`.
+
+  Returns `{:ok, %{owner: String.t(), repo: String.t(), url: String.t(),
+  gh_available: boolean()}}` on success, or `{:error, {:enoent, repo_path}}`
+  / `{:error, :no_github_upstream}` / `{:error, {:code, code, output}}`.
+  """
+  @spec github_upstream(String.t()) ::
+          {:ok, %{owner: String.t(), repo: String.t(), url: String.t(), gh_available: boolean()}}
+          | {:error, term()}
+  def github_upstream(repo_path) do
+    EvoGit.Adapters.GitHub.github_upstream(repo_path)
+  end
+
+  @doc """
+  Lists GitHub issues of a repository's upstream on the remote node.
+
+  Delegates to `EvoGit.Adapters.GitHub.list_github_issues/2`. `repo_path` is
+  the absolute path of the repository, `opts` the option list (`:state`
+  default `"open"`, `:limit` default 100). Runs on the REMOTE node when
+  called via `:erpc.call/5`.
+
+  Returns `{:ok, [issue_map]}` on success; the error shapes of
+  `EvoGit.Adapters.GitHub.list_github_issues/2` are passed through verbatim.
+  """
+  @spec list_github_issues(String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
+  def list_github_issues(repo_path, opts \\ []) do
+    EvoGit.Adapters.GitHub.list_github_issues(repo_path, opts)
+  end
+
+  @doc """
+  Fetches a GitHub issue of a repository's upstream on the remote node and
+  composes it into a deterministic Markdown string.
+
+  Delegates to `EvoGit.Adapters.GitHub.github_issue_markdown/2`. `repo_path`
+  is the absolute path of the repository, `number` the issue number. Runs on
+  the REMOTE node when called via `:erpc.call/5`.
+
+  Returns `{:ok, markdown}` on success; the error shapes of
+  `EvoGit.Adapters.GitHub.github_issue_markdown/2` are passed through
+  verbatim.
+  """
+  @spec github_issue_markdown(String.t(), integer() | String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def github_issue_markdown(repo_path, number) do
+    EvoGit.Adapters.GitHub.github_issue_markdown(repo_path, number)
+  end
+
+  @doc """
   Checks whether a branch exists in a repository on the remote node.
 
   Delegates to `EvoGit.Review.branch_exists?/2`. `repo_path` is the absolute
