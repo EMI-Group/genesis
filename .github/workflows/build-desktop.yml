@@ -930,5 +930,5 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ needs.prepare.outputs.release_tag }}"
-          gh release edit "${TAG}" --draft=false
+          gh release edit "${TAG}" --draft=false --repo "${{ github.repository }}"
           echo "Release ${TAG} is now public with all artifacts attached."
