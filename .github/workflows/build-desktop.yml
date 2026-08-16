@@ -372,7 +372,7 @@ jobs:
             echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
             UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}" "${UPDATER_ARGS[@]}"
+          tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}" ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
 
       - name: Stage artifacts
         run: |
@@ -602,7 +602,7 @@ jobs:
             echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
             UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          tauri build --target aarch64-apple-darwin --bundles app,dmg "${UPDATER_ARGS[@]}"
+          tauri build --target aarch64-apple-darwin --bundles app,dmg ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
 
       - name: Notarize and verify macOS artifacts
         run: |
@@ -780,7 +780,7 @@ jobs:
             echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
             UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
           fi
-          tauri build --target x86_64-pc-windows-msvc "${UPDATER_ARGS[@]}"
+          tauri build --target x86_64-pc-windows-msvc ${UPDATER_ARGS[@]+"${UPDATER_ARGS[@]}"}
 
       - name: Stage artifacts
         run: |
