@@ -2,6 +2,36 @@ defmodule EvoDashWeb.SystemLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
+  setup do
+    # Software Update card tests share the global `EvoDash.UpdateStatus` hub —
+    # reset it so tests are independent, and pin the notify-only seam to false
+    # so the full download flow is testable regardless of the host platform
+    # (Linux CI without APPIMAGE would otherwise be notify-only). Capture the
+    # original values of every update-related env key so test-body mutations
+    # are restored (same restore_env_value/2 pattern as
+    # test/evo_dash/update_status_test.exs, handling a stored `false`
+    # correctly).
+    keys = [
+      :update_notify_only_override,
+      :desktop_release,
+      :update_check_runner,
+      :update_check_timeout,
+      :update_active_task_ids,
+      :update_winddown_timeout,
+      :update_winddown_poll_ms
+    ]
+
+    originals = Map.new(keys, fn key -> {key, Application.get_env(:evo_dash, key)} end)
+    Application.put_env(:evo_dash, :update_notify_only_override, false)
+    EvoDash.UpdateStatus.reset()
+
+    on_exit(fn ->
+      Enum.each(originals, fn {key, original} -> restore_env_value(key, original) end)
+    end)
+
+    :ok
+  end
+
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
   # state (same pattern as projects_live_test.exs / welcome_live_test.exs).
@@ -683,6 +713,420 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
   end
 
+  describe "software update card" do
+    # These tests drive the shared `EvoDash.UpdateStatus` hub (a global
+    # GenServer), so this file must stay `async: false` (it already is). The
+    # setup block resets the hub and captures/restores every update-related env
+    # key; each test additionally re-syncs the hub to :idle before mounting.
+    #
+    # Timing helpers:
+    #   * `await_hub_phase/2` — polls the hub directly. Used to synchronize hub
+    #     state BEFORE mounting: a cast followed by a call from the same
+    #     process is ordered, so once `phase()` reports the target the hub is
+    #     there and the mount's `get()` cannot observe a stale phase.
+    #   * `await_update_phase/2` — polls the LiveView's `@update_status` assign
+    #     (the hub broadcast is assigned via the `{:update_status, state}`
+    #     handle_info).
+    #   * `await_view_assign/3` — polls any socket assign (modal flags).
+
+    test "card is hidden when not running in the desktop shell", %{conn: conn} do
+      Application.delete_env(:evo_dash, :desktop_release)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view)[:update_card_visible] == false
+      refute html =~ "Software Update"
+    end
+
+    test "every update state renders in the card", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      # A no-op runner keeps the mount-triggered check's result from arriving
+      # (the states below are driven directly via the hub); the huge timeout
+      # makes the parallel never-wedge watchdog a harmless long sleep that
+      # never fires during the suite.
+      Application.put_env(:evo_dash, :update_check_runner, fn _ -> :ok end)
+      Application.put_env(:evo_dash, :update_check_timeout, 2_000_000)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      # :idle — the initial render: the mount-triggered check's broadcast is
+      # processed only after the initial render is sent, so the returned html
+      # still shows the :idle branch.
+      assert html =~ "Software Update"
+      assert html =~ "Check now"
+      assert html =~ "Update information will appear here after the first check."
+
+      # :checking — the mount-triggered check left the hub at :checking
+      await_update_phase(view, :checking)
+      html = render(view)
+      assert html =~ "Checking for updates…"
+
+      # :up_to_date
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "up_to_date",
+        "current_version" => "0.1.0"
+      })
+
+      await_update_phase(view, :up_to_date)
+      html = render(view)
+      assert html =~ "is up to date"
+      assert html =~ "Last checked"
+
+      # :available
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "available",
+        "version" => "1.2.3",
+        "body" => "release notes",
+        "current_version" => "0.1.0"
+      })
+
+      await_update_phase(view, :available)
+      html = render(view)
+      assert html =~ "Version 1.2.3 is available"
+      assert html =~ ~s(id="update-download")
+
+      # :ready
+      EvoDash.UpdateStatus.handle_download_result(%{"status" => "ready"})
+      await_update_phase(view, :ready)
+      html = render(view)
+      assert html =~ "Update ready"
+      assert html =~ ~s(id="update-restart")
+
+      # :error (generic failure)
+      EvoDash.UpdateStatus.handle_check_result(%{"status" => "error", "error" => "boom"})
+      await_update_phase(view, :error)
+      html = render(view)
+      assert html =~ "Check failed"
+      assert html =~ ~s(id="update-retry")
+
+      # :error with error == "not_configured" → friendly pre-key message
+      EvoDash.UpdateStatus.handle_check_result(%{"status" => "not_configured"})
+      await_update_phase(view, :error)
+      html = render(view)
+      assert html =~ "Automatic updates are not configured yet"
+      refute html =~ "Check failed"
+
+      # :applying — the header Check-now button is disabled
+      EvoDash.UpdateStatus.applying()
+      await_update_phase(view, :applying)
+      html = render(view)
+      assert html =~ "Applying update…"
+
+      [check_now_button] =
+        Floki.find(Floki.parse_document!(html), ~s(button[id="update-check-now"]))
+
+      assert Floki.attribute(check_now_button, "disabled") != []
+    end
+
+    test "notify-only mode shows the package-manager message instead of a Download button", %{
+      conn: conn
+    } do
+      reset_hub_to_idle()
+      set_desktop()
+      Application.put_env(:evo_dash, :update_notify_only_override, true)
+
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "available",
+        "version" => "1.2.3",
+        "body" => "notes",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:available)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view).update_status.notify_only == true
+      assert html =~ "Version 1.2.3 is available"
+      assert html =~ "Update via your package manager"
+      refute html =~ ~s(id="update-download")
+    end
+
+    test "Check now flow: the click triggers a check that resolves to up-to-date", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      # Drive the hub to :up_to_date BEFORE mounting so the mount-triggered
+      # check does not fire — its :checking phase would disable the Check-now
+      # button. The click below is therefore the only check in this test.
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "up_to_date",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:up_to_date)
+
+      # The delayed result gives the :checking phase a deterministic observation
+      # window.
+      Application.put_env(:evo_dash, :update_check_runner, fn pid ->
+        Process.sleep(300)
+
+        send(
+          pid,
+          {:update_check_result, %{"status" => "up_to_date", "current_version" => "0.1.0"}}
+        )
+      end)
+
+      # Timeout watchdog fires after the result landed (phase :up_to_date → no-op).
+      Application.put_env(:evo_dash, :update_check_timeout, 400)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      view |> element("#update-check-now") |> render_click()
+
+      await_update_phase(view, :checking)
+      await_update_phase(view, :up_to_date)
+
+      html = render(view)
+      assert html =~ "is up to date"
+
+      # Let the parallel timeout watchdog fire (no-op on :up_to_date) before
+      # the test ends so no stray task mutates the shared hub later.
+      Process.sleep(100)
+    end
+
+    test "a check that never resolves times out and shows the error state", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      # Count runner invocations in a public ETS table so the Retry re-run is
+      # provable without racing the short :checking observation window (the
+      # 50ms timeout is too fast to await on the view assign reliably).
+      :ets.new(:update_check_runs, [:named_table, :public, :set])
+      :ets.insert(:update_check_runs, {:count, 0})
+
+      Application.put_env(:evo_dash, :update_check_runner, fn _ ->
+        :ets.update_counter(:update_check_runs, :count, 1)
+        :ok
+      end)
+
+      Application.put_env(:evo_dash, :update_check_timeout, 50)
+
+      on_exit(fn ->
+        if :ets.info(:update_check_runs) != :undefined do
+          :ets.delete(:update_check_runs)
+        end
+      end)
+
+      # Drive the hub to :up_to_date BEFORE mounting so the mount-triggered
+      # check does not fire (its :checking phase would disable the Check-now
+      # button). The click below is therefore the only check in this test.
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "up_to_date",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:up_to_date)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      view |> element("#update-check-now") |> render_click()
+
+      # The runner never reports, so only the timeout watchdog can end
+      # :checking — the never-wedge invariant.
+      await_update_phase(view, :error)
+
+      html = render(view)
+      assert html =~ "Check failed"
+      assert html =~ ~s(id="update-retry")
+
+      # Retry re-runs the check: poll until the runner is invoked a second time
+      # (deterministic — the short :checking window is not awaited), then the
+      # 50ms watchdog bounds the retry too: the UI can never wedge on a spinner.
+      view |> element("#update-retry") |> render_click()
+
+      await_ets_count(:update_check_runs, :count, 2)
+      await_update_phase(view, :error)
+    end
+
+    test "mounting the page with an idle hub triggers a check automatically", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      Application.put_env(:evo_dash, :update_check_runner, fn pid ->
+        send(
+          pid,
+          {:update_check_result, %{"status" => "up_to_date", "current_version" => "0.1.0"}}
+        )
+      end)
+
+      Application.put_env(:evo_dash, :update_check_timeout, 500)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      await_update_phase(view, :up_to_date)
+
+      html = render(view)
+      assert html =~ "is up to date"
+    end
+
+    test "Download pushes the download request and a ready result arms the apply button", %{
+      conn: conn
+    } do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_available()
+
+      {:ok, view, html} = live(conn, ~p"/system")
+      assert html =~ "Version 1.2.3 is available"
+
+      view |> element("#update-download") |> render_click()
+
+      assert_push_event(view, "update_download_requested", %{}, 1_000)
+
+      EvoDash.UpdateStatus.handle_download_result(%{"status" => "ready"})
+      await_update_phase(view, :ready)
+
+      html = render(view)
+      # HTML-escaped `&` (HEEx renders `&` as `&amp;`).
+      assert html =~ "Restart &amp; Update"
+    end
+
+    test "applying with no active tasks proceeds immediately", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      Application.put_env(:evo_dash, :update_active_task_ids, [])
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      view |> element("#update-restart") |> render_click()
+
+      await_update_phase(view, :applying)
+      assert_push_event(view, "update_apply_requested", %{}, 1_000)
+    end
+
+    test "applying with active tasks shows the busy modal and Defer keeps the update ready", %{
+      conn: conn
+    } do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      Application.put_env(:evo_dash, :update_active_task_ids, ["task-1", "task-2"])
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      view |> element("#update-restart") |> render_click()
+
+      assert await_view_assign(view, :update_apply_busy_count, 2) == :ok
+      html = render(view)
+      assert html =~ "2 task(s) still running"
+
+      render_click(view, "defer_apply_update")
+
+      assert await_view_assign(view, :update_apply_busy_count, nil) == :ok
+      assert EvoDash.UpdateStatus.phase() == :ready
+
+      html = render(view)
+      refute html =~ "task(s) still running"
+    end
+
+    test "applying with active tasks can gracefully stop them and then apply", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      # :gate sees one active task (busy modal); :winddown_poll sees none, so
+      # the wind-down completes on its first poll and the update applies. The
+      # graceful cancel of the fake id errors harmlessly.
+      Application.put_env(:evo_dash, :update_active_task_ids, fn
+        :gate -> ["task-1"]
+        :winddown_poll -> []
+      end)
+
+      Application.put_env(:evo_dash, :update_winddown_poll_ms, 20)
+      Application.put_env(:evo_dash, :update_winddown_timeout, 500)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      view |> element("#update-restart") |> render_click()
+      assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
+
+      render_click(view, "confirm_apply_graceful")
+
+      await_update_phase(view, :applying)
+    end
+
+    test "a wind-down that times out offers the force-kill fallback", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+      Application.put_env(:evo_dash, :update_active_task_ids, fn _ -> ["task-1"] end)
+      Application.put_env(:evo_dash, :update_winddown_poll_ms, 20)
+      Application.put_env(:evo_dash, :update_winddown_timeout, 100)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      view |> element("#update-restart") |> render_click()
+      assert await_view_assign(view, :update_apply_busy_count, 1) == :ok
+
+      render_click(view, "confirm_apply_graceful")
+
+      assert await_view_assign(view, :update_force_kill_count, 1) == :ok
+      html = render(view)
+      # HTML-escaped `&` (HEEx renders `&` as `&amp;`).
+      assert html =~ "Force Kill &amp; Update?"
+      assert html =~ "1 task(s) still running after waiting"
+      assert html =~ "In-flight work will be lost"
+
+      render_click(view, "confirm_force_kill_update")
+
+      await_update_phase(view, :applying)
+    end
+
+    test "card is hidden when viewing a remote node", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      # Isolate the config dir via XDG_CONFIG_HOME so the saved target never
+      # touches the developer's real ~/.config/genesis/ (same pattern as the
+      # "LLM Test in Settings link" test).
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_system_live_xdg_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      id = "test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{ssh_target: "user@host", id: id, name: "Test Target"})
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.RemoteConnections.delete(id)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      start_supervised!(
+        {EvoDashWeb.SystemLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, html} = live(conn, "/system?node=" <> id)
+
+      assert assigns(view)[:remote?] == true
+      assert assigns(view)[:update_card_visible] == false
+      refute html =~ "Software Update"
+    end
+  end
+
   # Floki-scopes the self-check term grid so disclosure assertions never see
   # the app layout's sidebar `<details>` theme dropdown (layouts.ex). The grid
   # container is `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">`
@@ -696,6 +1140,140 @@ defmodule EvoDashWeb.SystemLiveTest do
       )
 
     grid
+  end
+
+  # --- Software Update card test helpers ------------------------------------
+
+  # Restores an Application env (handles a stored `false` value correctly —
+  # `if value` would wrongly delete it). Mirrors update_status_test.exs.
+  defp restore_env_value(key, original) do
+    if original != nil do
+      Application.put_env(:evo_dash, key, original)
+    else
+      Application.delete_env(:evo_dash, key)
+    end
+  end
+
+  # The desktop-shell flag for the update card (restored by the setup on_exit).
+  defp set_desktop do
+    Application.put_env(:evo_dash, :desktop_release, true)
+  end
+
+  # Resets the shared hub and synchronizes: the reset is a cast, so the
+  # following `phase()` call (same process) is guaranteed to observe it.
+  defp reset_hub_to_idle do
+    EvoDash.UpdateStatus.reset()
+    assert await_hub_phase(:idle) == :ok
+  end
+
+  # Polls the hub until it reaches the given phase. A cast followed by a call
+  # from this process is ordered, so the first poll already reflects the cast.
+  defp await_hub_phase(phase, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_hub_phase(phase, deadline)
+  end
+
+  defp do_await_hub_phase(phase, deadline) do
+    if EvoDash.UpdateStatus.phase() == phase do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        flunk("update hub did not reach phase #{inspect(phase)} within the test timeout")
+      else
+        Process.sleep(10)
+        do_await_hub_phase(phase, deadline)
+      end
+    end
+  end
+
+  # Polls the LiveView's `@update_status` assign until its phase matches (the
+  # hub broadcast is assigned via the `{:update_status, state}` handle_info).
+  defp await_update_phase(view, phase, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_update_phase(view, phase, deadline)
+  end
+
+  defp do_await_update_phase(view, phase, deadline) do
+    if assigns(view).update_status.phase == phase do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        got = assigns(view).update_status.phase
+
+        flunk(
+          "update status did not reach phase #{inspect(phase)} within the test timeout (got #{inspect(got)})"
+        )
+      else
+        Process.sleep(10)
+        do_await_update_phase(view, phase, deadline)
+      end
+    end
+  end
+
+  # Polls any socket assign until it equals the expected value (modal flags).
+  defp await_view_assign(view, key, value, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_view_assign(view, key, value, deadline)
+  end
+
+  # Polls an ETS integer counter until it reaches the expected value (used for
+  # deterministic proofs where a transient phase window is too short to await).
+  defp await_ets_count(table, key, expected, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_ets_count(table, key, expected, deadline)
+  end
+
+  defp do_await_ets_count(table, key, expected, deadline) do
+    if :ets.lookup_element(table, key, 2) >= expected do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        got = :ets.lookup_element(table, key, 2)
+
+        flunk(
+          "ETS counter #{inspect(key)} did not reach #{expected} within the test timeout (got #{got})"
+        )
+      else
+        Process.sleep(10)
+        do_await_ets_count(table, key, expected, deadline)
+      end
+    end
+  end
+
+  defp do_await_view_assign(view, key, value, deadline) do
+    if assigns(view)[key] == value do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        got = assigns(view)[key]
+
+        flunk(
+          "assign #{inspect(key)} did not reach #{inspect(value)} within the test timeout (got #{inspect(got)})"
+        )
+      else
+        Process.sleep(10)
+        do_await_view_assign(view, key, value, deadline)
+      end
+    end
+  end
+
+  # Drives the hub to :available (synchronized) — shared setup for the
+  # download/apply tests.
+  defp drive_hub_to_available do
+    EvoDash.UpdateStatus.handle_check_result(%{
+      "status" => "available",
+      "version" => "1.2.3",
+      "body" => "release notes",
+      "current_version" => "0.1.0"
+    })
+
+    await_hub_phase(:available)
+  end
+
+  defp drive_hub_to_ready do
+    drive_hub_to_available()
+    EvoDash.UpdateStatus.handle_download_result(%{"status" => "ready"})
+    await_hub_phase(:ready)
   end
 end
 

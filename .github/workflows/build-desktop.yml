@@ -55,7 +55,7 @@ permissions:
 #   prepare             publish flag, release tag, linux matrix JSON
 #   build-linux         ubuntu-24.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
 #   build-linux-remote  ubuntu-22.04 (+ arm) — dedicated genesis_remote glibc build (default)
-#   build-macos-arm64   macos-15 — dmg, app.zip (signed + notarized)
+#   build-macos-arm64   macos-15 — dmg, app.zip, app.tar.gz updater payload (signed + notarized)
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
 #   publish-release     single writer for GitHub Release assets
 #
@@ -63,6 +63,9 @@ permissions:
 #
 # macOS secrets: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
 # APPLE_SIGNING_IDENTITY, APPLE_API_ISSUER, APPLE_API_KEY, APPLE_API_KEY_P8_BASE64
+# Updater (all desktop jobs): TAURI_SIGNING_PRIVATE_KEY,
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD (minisign; optional pre-key — when absent,
+# updater artifacts are disabled via --config)
 # Nested ERTS/NIFs: desktop/scripts/sign-macos-nested.sh
 #
 # Artifact names: genesis_{desktop|remote}_{platform}_{arch}.{format}
@@ -359,13 +362,22 @@ jobs:
           version: ${{ env.TAURI_CLI_VERSION }}
 
       - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd desktop/src-tauri
-          tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}"
+          UPDATER_ARGS=()
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
+            UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          tauri build --target "${{ matrix.rust_target }}" --bundles "${{ matrix.bundles }}" "${UPDATER_ARGS[@]}"
 
       - name: Stage artifacts
         run: |
           set -euo pipefail
+          shopt -s nullglob
           mkdir -p dist
           BUNDLE_DIR="desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
           PREFIX="genesis_desktop_linux_${{ matrix.arch }}"
@@ -375,6 +387,16 @@ jobs:
             mv "${BUNDLE_DIR}/appimage/"*.AppImage "dist/${PREFIX}.AppImage"
             tar -czf "dist/${PREFIX}.tar.gz" \
               -C "desktop/src-tauri/target/${{ matrix.rust_target }}/release" genesis-desktop
+            UPDATER_PAYLOADS=("${BUNDLE_DIR}/appimage/"*.AppImage.tar.gz)
+            if [[ "${#UPDATER_PAYLOADS[@]}" -gt 0 ]]; then
+              mv "${UPDATER_PAYLOADS[0]}" "dist/${PREFIX}.AppImage.tar.gz"
+              UPDATER_SIGS=("${BUNDLE_DIR}/appimage/"*.AppImage.tar.gz.sig)
+              if [[ "${#UPDATER_SIGS[@]}" -gt 0 ]]; then
+                mv "${UPDATER_SIGS[0]}" "dist/${PREFIX}.AppImage.tar.gz.sig"
+              else
+                echo "warning: AppImage updater payload staged without .sig" >&2
+              fi
+            fi
           fi
 
       - name: Upload workflow artifacts
@@ -565,6 +587,9 @@ jobs:
             desktop/src-tauri/resources/genesis-backend
 
       - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           : "${APPLE_SIGNING_IDENTITY:?}"
@@ -572,7 +597,12 @@ jobs:
           : "${APPLE_API_KEY:?}"
           : "${APPLE_API_KEY_PATH:?}"
           cd desktop/src-tauri
-          tauri build --target aarch64-apple-darwin --bundles app,dmg
+          UPDATER_ARGS=()
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
+            UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          tauri build --target aarch64-apple-darwin --bundles app,dmg "${UPDATER_ARGS[@]}"
 
       - name: Notarize and verify macOS artifacts
         run: |
@@ -590,10 +620,24 @@ jobs:
             exit 1
           }
           ./desktop/scripts/notarize-macos-dmg.sh "${DMG_BUNDLES[0]}"
+          # The app.zip is both the notarization submission vehicle and the
+          # distribution artifact — it stays in dist/ for upload.
+          mkdir -p dist
+          ditto -c -k --keepParent "${APP_BUNDLES[0]}" \
+            "dist/genesis_desktop_darwin_arm64.app.zip"
+          xcrun notarytool submit "dist/genesis_desktop_darwin_arm64.app.zip" \
+            --issuer "${APPLE_API_ISSUER}" \
+            --key-id "${APPLE_API_KEY}" \
+            --key "${APPLE_API_KEY_PATH}" \
+            --wait
+          xcrun stapler staple "${APP_BUNDLES[0]}"
           ./desktop/scripts/verify-macos-artifacts.sh \
             "${APP_BUNDLES[0]}" "${DMG_BUNDLES[0]}"
 
       - name: Stage artifacts
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -610,10 +654,18 @@ jobs:
           }
           mkdir -p dist
           mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_darwin_arm64.dmg"
-          ditto -c -k --keepParent "${APP_BUNDLES[0]}" \
-            "dist/genesis_desktop_darwin_arm64.app.zip"
           tar -cJf "dist/genesis_remote_darwin_arm64.tar.xz" \
             -C _build/prod/rel genesis_remote
+          if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            # Re-create the updater payload from the NOW-STAPLED app — tauri's
+            # build-time payload predates notarization and is discarded.
+            APP_NAME="$(basename "${APP_BUNDLES[0]}")"
+            tar -czf "dist/genesis_desktop_darwin_arm64.app.tar.gz" \
+              -C "${BUNDLE_DIR}/macos" "${APP_NAME}"
+            tauri signer sign "dist/genesis_desktop_darwin_arm64.app.tar.gz"
+          else
+            echo "skipping macOS updater payload (no signing key)"
+          fi
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -718,17 +770,33 @@ jobs:
           version: ${{ env.TAURI_CLI_VERSION }}
 
       - name: Build Tauri app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd desktop/src-tauri
-          tauri build --target x86_64-pc-windows-msvc
+          UPDATER_ARGS=()
+          if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+            echo "no TAURI_SIGNING_PRIVATE_KEY — disabling updater artifacts" >&2
+            UPDATER_ARGS=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          fi
+          tauri build --target x86_64-pc-windows-msvc "${UPDATER_ARGS[@]}"
 
       - name: Stage artifacts
         run: |
           set -euo pipefail
+          shopt -s nullglob
           mkdir -p dist
           BUNDLE_DIR="desktop/src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
           mv "${BUNDLE_DIR}/msi/"*.msi "dist/genesis_desktop_windows_x64.msi"
           mv "${BUNDLE_DIR}/nsis/"*.exe "dist/genesis_desktop_windows_x64.exe"
+          # The NSIS installer IS the updater payload — only its .sig is extra.
+          # The .msi.sig in bundle/msi is deliberately NOT staged (MSI is
+          # excluded from the updater feed).
+          NSIS_SIGS=("${BUNDLE_DIR}/nsis/"*.exe.sig)
+          if [[ "${#NSIS_SIGS[@]}" -gt 0 ]]; then
+            mv "${NSIS_SIGS[0]}" "dist/genesis_desktop_windows_x64.exe.sig"
+          fi
           tar -cJf "dist/genesis_remote_windows_x64.tar.xz" \
             -C _build/prod/rel genesis_remote
 
@@ -769,6 +837,71 @@ jobs:
           pattern: genesis-*
           path: dist
           merge-multiple: true
+
+      - name: Generate updater manifest (latest.json)
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+          RELEASE_NOTES: ${{ github.event.release.body || '' }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # On the tag-push trigger there is no release event, and the draft
+          # release is only created by the upload step AFTER this one — so on
+          # first publish there are no notes yet; on re-runs the release (and
+          # its body) already exists and is reused below.
+          if [[ -z "${RELEASE_NOTES:-}" ]]; then
+            RELEASE_NOTES="$(gh api "repos/${REPO}/releases/tags/${RELEASE_TAG}" -q .body 2>/dev/null || true)"
+          fi
+          export RELEASE_NOTES
+          cd dist
+          python3 - <<'PY'
+          import datetime, json, os, sys
+
+          tag = os.environ["RELEASE_TAG"]
+          repo = os.environ["REPO"]
+          version = tag[1:] if tag.startswith("v") else tag
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+          entries = {
+              "darwin-aarch64": (
+                  "genesis_desktop_darwin_arm64.app.tar.gz",
+                  "genesis_desktop_darwin_arm64.app.tar.gz.sig",
+              ),
+              "linux-x86_64": (
+                  "genesis_desktop_linux_x64.AppImage.tar.gz",
+                  "genesis_desktop_linux_x64.AppImage.tar.gz.sig",
+              ),
+              "windows-x86_64": (
+                  "genesis_desktop_windows_x64.exe",
+                  "genesis_desktop_windows_x64.exe.sig",
+              ),
+          }
+          platforms = {}
+          for key, (payload, sig) in entries.items():
+              if os.path.exists(payload) and os.path.exists(sig):
+                  # The FULL .sig content is a single base64 blob that embeds
+                  # the untrusted/trusted comment headers; strip the trailing
+                  # newline for clean JSON.
+                  signature = open(sig).read().strip()
+                  platforms[key] = {
+                      "url": f"{base_url}/{payload}",
+                      "signature": signature,
+                  }
+                  print(f"included {key}: {payload}")
+          if not platforms:
+              print("no signed updater payloads found — latest.json not written")
+              sys.exit(0)
+          manifest = {
+              "version": version,
+              "notes": os.environ.get("RELEASE_NOTES", ""),
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": platforms,
+          }
+          with open("latest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          print(f"wrote latest.json for version {version}")
+          PY
 
       # Draft → publish ordering: the draft is invisible to the public and to
       # releases/latest; the FINAL `gh release edit --draft=false` step only

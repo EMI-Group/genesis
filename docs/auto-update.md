@@ -201,11 +201,11 @@ Two viable options (or both — the Cloudflare worker can front either):
 
 ## 8. Phased implementation plan
 
-- **Phase 0 — Keys & feed plumbing (no client code):** generate minisign keys; add manifest/signature generation to `publish-release`; host manifest (GitHub releases first, Cloudflare worker later); add Windows signing + macOS zip stapling. Verify by curling the manifest and checking signatures with the Tauri CLI.
-- **Phase 1 — Client check (read-only):** add `tauri-plugin-updater` (Cargo + `plugins.updater` config + `updater:default` capability); Settings → Updates category (mirror `:remote_connections` pseudo-category) with current/latest version, changelog, "Check now" button (MergeCheck-style async with an `:update_check_runner` seam); background check on startup + interval; sidebar version display. **No apply path yet** — this is safe to ship.
-- **Phase 2 — Safe apply:** `:interrupted` status plumbing; idle gate + graceful wind-down in core (new `EvoGit.UpdateGate` module or TaskRegistry helpers); Rust `install_update` command + watchdog update-intent state (stop → install → relaunch); dashboard apply modal with the busy-task warning ("Apply later" / "Apply & gracefully stop tasks" / force warning).
-- **Phase 3 — Linux package-manager channels:** apt (and dnf) repo publishing in CI; in-app "update via your package manager" notification for deb/rpm installs (detect install method at runtime); AppImage channel already covered by Phase 2.
-- **Phase 4 — Polish:** staged rollout/channels, update failure rollback verification, remote-daemon update flow (§6), optional Sparkle migration for macOS native UX.
+- **Phase 0 — Keys & feed plumbing:** **DONE except the keypair/secrets (user-owned)** — `publish-release` generates and uploads `latest.json` (GitHub Releases hosting), build jobs sign updater payloads when the key env is present, macOS staples the `.app` + repacks/re-signs the updater `.app.tar.gz`. Remaining: the minisign keypair itself, Windows Authenticode, apt/dnf repos.
+- **Phase 1 — Client check (read-only):** **DONE** — `tauri-plugin-updater` dep + `plugins.updater` config + `bundle.createUpdaterArtifacts`; `check_update`/`download_update`/`begin_update` commands; System page Software Update card with `:update_check_runner` seam; background check (startup 30s + ~6h + page mount) with auto-download; sidebar notification dot (amber/blue). Note: implemented on the System page (per the §11 product decision) rather than a Settings → Updates category; no `updater:default` capability was needed (custom commands).
+- **Phase 2 — Safe apply:** **DONE except `:interrupted` status** (v1 fallback = `:cancelled` + review page, §9 #7) — idle gate + graceful wind-down implemented in the dashboard (`TaskRegistry.list_task_ids` via the node-aware path, graceful-cancel all with ~35min budget + user-warned `force_kill_task/1` fallback; no `EvoGit.UpdateGate` core module — the gate lives in `SystemLive`/`EvoDash.UpdateStatus`); watchdog update-intent state (stop → install → relaunch); apply modal with Defer / "Apply & gracefully stop tasks" / force warning.
+- **Phase 3 — Linux package-manager channels:** **DEFERRED** — deb/rpm installs are notify-only today (detected via `APPIMAGE` env nil; card shows "update via your package manager", no self-install). apt/dnf repo publishing + GPG not started.
+- **Phase 4 — Polish:** **DEFERRED** — staged rollout/channels, update failure rollback verification, remote-daemon update flow (§6), optional Sparkle migration.
 
 ---
 
@@ -217,7 +217,7 @@ Two viable options (or both — the Cloudflare worker can front either):
 4. **Staged rollout:** beta/stable channel split? — **DEFERRED** (manifest variants `latest.json`/`beta.json` later; the Cloudflare worker can do percentage rollout).
 5. **macOS:** official updater plugin vs Sparkle — **DECIDED: official plugin** (§1.1); Sparkle only if a native macOS update panel becomes a hard requirement.
 6. **Remote daemons:** include the remote-update flow (§6) in this effort or defer? — **DEFERRED** (separate stop→swap→start flow).
-7. **`:interrupted` status vs `:cancelled` + reason metadata:** — **RECOMMENDED: `:interrupted`** for Phase 2 (codec `@known_atoms` + ~10 hardcoded lists, verified feasible); v1 fallback = `:cancelled` + update `reason` in opts/metadata if time-boxed.
+7. **`:interrupted` status vs `:cancelled` + reason metadata:** — **v1 fallback CHOSEN** (`:cancelled` + the review page, results preserved; no reason metadata written); `:interrupted` remains the recommended upgrade for later polish (codec `@known_atoms` + ~10 hardcoded lists, verified feasible).
 
 ---
 

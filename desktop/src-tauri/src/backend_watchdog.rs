@@ -27,12 +27,22 @@
 //! after a quit has begun. A clean `Some(0)` child exit is also treated as
 //! intentional (the release backend only exits with code 0 on a deliberate
 //! stop).
+//!
+//! Auto-update: the `begin_update` Tauri command sets a separate
+//! `update_intent` flag (flag only, kills nothing, like `begin_quit`). When
+//! the watchdog then observes an intentional child exit with the update flag
+//! set, it does NOT exit the app: it runs the installer for the payload
+//! stashed by the `download_update` command (a process-global slot, see
+//! [`set_downloaded_update`]) and relaunches the new bundle. The update flag
+//! suppresses the crash-restart loop at every stage, exactly like
+//! `shutdown_requested()`, and the install only runs after the backend child
+//! is confirmed dead (the same wait-then-kill used by the quit path).
 
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
@@ -149,6 +159,61 @@ pub fn classify_exit(intentional: bool, status: Option<i32>) -> ExitKind {
     }
 }
 
+/// Decides whether the watchdog should run the update install path instead of
+/// exiting the app: the backend exit must have been intentional AND the user
+/// must have armed the update intent via the `begin_update` command.
+pub fn should_install_update(intentional: bool, update_requested: bool) -> bool {
+    intentional && update_requested
+}
+
+// ---------------------------------------------------------------------------
+// Downloaded-update storage (process-global)
+// ---------------------------------------------------------------------------
+
+/// A fully downloaded (and minisign-verified) update payload, stashed by the
+/// `download_update` Tauri command and consumed by the watchdog's
+/// update-intent flow once the backend child is confirmed dead.
+pub struct DownloadedUpdate {
+    /// Version of the downloaded bundle.
+    pub version: String,
+    /// Raw updater payload bytes (the same bytes `Update::download` verified):
+    /// an NSIS `.exe` on Windows, a `.AppImage.tar.gz` on Linux, an
+    /// `.app.tar.gz` on macOS.
+    pub bytes: Vec<u8>,
+}
+
+/// Process-global slot for the downloaded payload. The `download_update`
+/// command runs in Tauri's async command context while the watchdog consumes
+/// it from a plain `std::thread`, so the slot is a `OnceLock<Mutex<Option<_>>>`
+/// shared across both. A process-global (rather than a field on
+/// [`BackendManager`]) keeps the manager's constructor unchanged and makes the
+/// payload independent of the manager's lifecycle.
+static DOWNLOADED_UPDATE: OnceLock<Mutex<Option<DownloadedUpdate>>> = OnceLock::new();
+
+fn downloaded_update_slot() -> &'static Mutex<Option<DownloadedUpdate>> {
+    DOWNLOADED_UPDATE.get_or_init(|| Mutex::new(None))
+}
+
+/// Stores the verified update payload for the watchdog's install step.
+pub fn set_downloaded_update(version: String, bytes: Vec<u8>) {
+    let byte_len = bytes.len();
+    let mut slot = downloaded_update_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *slot = Some(DownloadedUpdate { version, bytes });
+    println!(
+        "[desktop] update payload staged in memory ({byte_len} bytes) — it will be installed after the backend stops"
+    );
+}
+
+/// Takes the stored payload, leaving the slot empty (one install per cycle).
+pub fn take_downloaded_update() -> Option<DownloadedUpdate> {
+    downloaded_update_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+}
+
 // ---------------------------------------------------------------------------
 // TCP readiness probe (pure-ish, std only)
 // ---------------------------------------------------------------------------
@@ -229,20 +294,24 @@ enum ExitObservation {
     Exited(Option<i32>),
     /// No child in state (e.g. the initial spawn failed).
     Missing,
-    /// Intentional shutdown requested while waiting.
+    /// Intentional shutdown OR update intent requested while waiting.
     Shutdown,
 }
 
 /// Managed state for the backend child process and the watchdog.
 ///
 /// Registered via `app.manage` (wrapped in an `Arc` shared with the watchdog
-/// thread); the tray-quit handler, the `begin_quit` command, and the watchdog
-/// share it. The current child lives in a [`Mutex`] so the quit handler can
-/// take and kill it while the watchdog is polling, and the
-/// `intentional_shutdown` flag tells the watchdog to stop restarting.
+/// thread); the tray-quit handler, the `begin_quit` / `begin_update`
+/// commands, and the watchdog share it. The current child lives in a [`Mutex`]
+/// so the quit handler can take and kill it while the watchdog is polling, and
+/// the `intentional_shutdown` flag tells the watchdog to stop restarting. The
+/// separate `update_intent` flag arms the auto-update flow: when the backend
+/// then exits intentionally, the watchdog installs the staged payload and
+/// relaunches the new bundle instead of exiting the app.
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
     intentional_shutdown: AtomicBool,
+    update_intent: AtomicBool,
     policy: Mutex<RestartPolicy>,
     launcher_path: PathBuf,
     env: Vec<(String, String)>,
@@ -260,6 +329,7 @@ impl BackendManager {
         Self {
             child: Mutex::new(None),
             intentional_shutdown: AtomicBool::new(false),
+            update_intent: AtomicBool::new(false),
             policy: Mutex::new(RestartPolicy::new()),
             launcher_path,
             env,
@@ -317,21 +387,109 @@ impl BackendManager {
         self.intentional_shutdown.load(Ordering::SeqCst)
     }
 
-    /// Finalizes an intentional shutdown from the watchdog thread.
+    /// Arms the auto-update flow WITHOUT killing the child.
     ///
+    /// Invoked by the dashboard's JavaScript via the `begin_update` Tauri
+    /// command right before the backend calls `System.stop/0` from inside the
+    /// BEAM. It only sets the `update_intent` flag — exactly like
+    /// [`Self::begin_quit`] it kills nothing; the backend stops itself
+    /// gracefully. When the watchdog then observes an intentional child exit,
+    /// it installs the staged update payload and relaunches the new bundle
+    /// instead of exiting the app.
+    pub fn begin_update(&self) {
+        self.update_intent.store(true, Ordering::SeqCst);
+        println!(
+            "[desktop] update confirmed — backend stopping gracefully; watchdog will install the staged update and relaunch"
+        );
+    }
+
+    /// True once the user has armed the auto-update flow (`begin_update`).
+    pub fn update_requested(&self) -> bool {
+        self.update_intent.load(Ordering::SeqCst)
+    }
+
     /// Waits up to [`SHUTDOWN_CHILD_WAIT`] for the child to actually exit on
     /// its own (the backend was told to stop gracefully and normally exits in
     /// well under a second), then force-kills it as a fallback if the graceful
     /// BEAM stop hung (`kill_current_child` is a no-op when the child was
-    /// already reaped), and finally exits the app — `AppHandle::exit` is
-    /// thread-safe, so calling it from the watchdog thread is fine.
-    fn finish_shutdown(&self, app: &AppHandle) {
+    /// already reaped). The child is guaranteed dead when this returns, which
+    /// is the precondition for the update-install path (no file replacement
+    /// may happen while the backend maps files from inside the bundle).
+    fn wait_for_child_exit_then_kill(&self) {
         let deadline = Instant::now() + SHUTDOWN_CHILD_WAIT;
         while self.child_alive() && Instant::now() < deadline {
             std::thread::sleep(MONITOR_INTERVAL);
         }
         self.kill_current_child();
-        app.exit(0);
+    }
+
+    /// Finalizes an intentional exit from the watchdog thread: waits for the
+    /// backend child to be confirmed dead (the backend was told to stop
+    /// gracefully and normally exits in well under a second; force-kill is the
+    /// fallback if the graceful BEAM stop hung — `kill_current_child` is a
+    /// no-op when the child was already reaped), then either installs the
+    /// staged update and relaunches the new bundle (update intent armed) or
+    /// exits the app (plain quit — unchanged pre-update behavior).
+    /// `AppHandle::exit` is thread-safe, so calling it from the watchdog
+    /// thread is fine. Every exit path ends the process — never returns to
+    /// the caller.
+    fn finish_shutdown(&self, app: &AppHandle) {
+        self.wait_for_child_exit_then_kill();
+        if self.update_requested() {
+            self.install_and_relaunch(app);
+        } else {
+            app.exit(0);
+        }
+    }
+
+    /// Consumes the downloaded payload from the process-global slot and runs
+    /// the platform's install step, then relaunches the updated bundle (Unix)
+    /// or exits so the spawned NSIS installer's own relaunch takes over
+    /// (Windows). Always ends the process.
+    ///
+    /// Invariants (auto-update plan §4.5): the backend child is confirmed dead
+    /// before any file replacement (callers route through
+    /// [`Self::finish_shutdown`] or have already reaped/killed it),
+    /// and the crash-restart loop is suppressed by the `update_requested`
+    /// checks at every watchdog stage.
+    fn install_and_relaunch(&self, app: &AppHandle) {
+        let Some(payload) = take_downloaded_update() else {
+            // No payload: either the download never succeeded or it was
+            // already consumed. Never relaunch into nothing — log and exit.
+            eprintln!(
+                "[desktop] update requested but no downloaded payload is available — exiting without updating"
+            );
+            app.exit(0);
+            return;
+        };
+        println!(
+            "[desktop] installing update {} ({} bytes)",
+            payload.version,
+            payload.bytes.len()
+        );
+        match install_payload(&payload, app) {
+            Ok(()) => {
+                #[cfg(not(windows))]
+                {
+                    // Unix: the payload is now in place — relaunch the new
+                    // bundle detached, then exit. Windows: the NSIS installer
+                    // (spawned by `install_payload`) relaunches the app
+                    // itself, so we only exit.
+                    if let Some(exe) = relaunch_executable(app) {
+                        println!("[desktop] relaunching updated app: {}", exe.display());
+                        spawn_detached(&exe);
+                    }
+                }
+                app.exit(0);
+            }
+            Err(err) => {
+                // The old bundle was restored where the platform's install
+                // step supports it (Linux/macOS mirror the plugin's backup
+                // dance). The app stays dead — log loudly and exit.
+                eprintln!("[desktop] update install failed: {err}; exiting without relaunch");
+                app.exit(0);
+            }
+        }
     }
 
     /// Runs the watchdog loop until intentional shutdown.
@@ -343,7 +501,8 @@ impl BackendManager {
         loop {
             // Covers every path that loops back here (e.g. `wait_until_ready`
             // timing out or `show_backend` bailing early): on shutdown, wait
-            // for the child to exit and then exit the app.
+            // for the child to exit and then either install the staged update
+            // and relaunch (update intent) or exit the app (plain quit).
             if self.shutdown_requested() {
                 self.finish_shutdown(&app);
                 return;
@@ -360,13 +519,20 @@ impl BackendManager {
             };
 
             // A clean code-0 exit is a deliberate stop (dashboard graceful
-            // `System.stop/0` — the quit flow or the System page's Stop
-            // button): exit the app instead of restarting the backend.
+            // `System.stop/0` — the quit flow, the System page's Stop button,
+            // or the update flow): exit the app instead of restarting the
+            // backend — or, when the update flag is armed, install the staged
+            // payload and relaunch the new bundle. The child is already
+            // reaped here, so no extra wait is needed before the install.
             let kind = classify_exit(false, status);
             if kind == ExitKind::Intentional {
                 println!(
                     "[desktop] backend exited cleanly (code 0) — treating as intentional shutdown"
                 );
+                if should_install_update(true, self.update_requested()) {
+                    self.install_and_relaunch(&app);
+                    return;
+                }
                 self.kill_current_child();
                 app.exit(0);
                 return;
@@ -399,13 +565,19 @@ impl BackendManager {
                 eprintln!("[desktop] failed to respawn backend: {err}");
                 continue; // failure path again, with the next backoff delay
             }
-            // A quit may have raced the respawn: kill the fresh child and stop
-            // IMMEDIATELY. Do NOT use `finish_shutdown`'s 15s graceful-stop
-            // wait here — the child was just spawned and cannot have completed
-            // a graceful stop yet, so waiting would only delay the exit.
-            if self.shutdown_requested() {
+            // A quit/update may have raced the respawn: kill the fresh child
+            // and stop IMMEDIATELY. Do NOT use `finish_shutdown`'s 15s
+            // graceful-stop wait here — the child was just spawned and
+            // cannot have completed a graceful stop yet, so waiting would only
+            // delay the exit. It IS confirmed dead right after the kill, which
+            // is all the update-install path requires.
+            if self.shutdown_requested() || self.update_requested() {
                 self.kill_current_child();
-                app.exit(0);
+                if self.update_requested() {
+                    self.install_and_relaunch(&app);
+                } else {
+                    app.exit(0);
+                }
                 return;
             }
 
@@ -425,13 +597,14 @@ impl BackendManager {
 
     /// Blocks until the stored child exits, reaping it via `try_wait`.
     ///
-    /// Returns [`ExitObservation::Shutdown`] if an intentional shutdown is
-    /// requested while waiting, [`ExitObservation::Missing`] if there is no
-    /// child in state, or [`ExitObservation::Exited`] with the exit code once
-    /// the child is gone.
+    /// Returns [`ExitObservation::Shutdown`] if an intentional shutdown OR an
+    /// update intent is requested while waiting (both stop the restart loop;
+    /// the caller distinguishes them via `update_requested()`),
+    /// [`ExitObservation::Missing`] if there is no child in state, or
+    /// [`ExitObservation::Exited`] with the exit code once the child is gone.
     fn wait_for_exit(&self) -> ExitObservation {
         loop {
-            if self.shutdown_requested() {
+            if self.shutdown_requested() || self.update_requested() {
                 return ExitObservation::Shutdown;
             }
             let mut guard = self.lock_child();
@@ -461,7 +634,7 @@ impl BackendManager {
     fn wait_until_ready(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            if self.shutdown_requested() {
+            if self.shutdown_requested() || self.update_requested() {
                 return false;
             }
             if !self.child_alive() {
@@ -495,11 +668,11 @@ impl BackendManager {
     }
 
     /// Sleeps for `duration`, returning early with `false` if an intentional
-    /// shutdown is requested mid-sleep.
+    /// shutdown or an update intent is requested mid-sleep.
     fn sleep_interruptible(&self, duration: Duration) -> bool {
         let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
-            if self.shutdown_requested() {
+            if self.shutdown_requested() || self.update_requested() {
                 return false;
             }
             std::thread::sleep(MONITOR_INTERVAL);
@@ -539,10 +712,10 @@ impl BackendManager {
     /// Reloads the dashboard by navigating to the backend URL. Retries until
     /// the window accepts the navigation (it is created only after Tauri's
     /// setup completes, so an early recovery must wait for it), the backend
-    /// dies again, or a quit is requested.
+    /// dies again, or a quit/update is requested.
     fn show_backend(&self, app: &AppHandle) {
         while !self.navigate(app, &self.backend_url) {
-            if self.shutdown_requested() {
+            if self.shutdown_requested() || self.update_requested() {
                 return;
             }
             if !self.child_alive() {
@@ -563,6 +736,321 @@ impl BackendManager {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-platform install machinery
+//
+// Mirrors tauri-plugin-updater 2.10.1's `Update::install_inner` semantics per
+// platform (the plugin's source was the reference; the watchdog is a plain
+// std::thread with no async runtime, so the plugin's spawn/file operations are
+// replicated directly rather than calling into it):
+//
+// - Windows (NSIS): the payload is staged to a temp `.exe` and spawned with
+//   the plugin's NSIS args (`/P /R /UPDATE /ARGS`). The NSIS installer
+//   relaunches the app itself (its `.onInstSuccess` handler runs
+//   `RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" "$R0"` when `/UPDATE /R` are
+//   passed), so the watchdog only exits after spawning it.
+// - Linux (AppImage): the running AppImage file is renamed to a same-device
+//   temp backup, the `.tar.gz` payload is unpacked and its `.AppImage` entry
+//   written to the original path, and the backup is restored on any failure.
+// - macOS: the `.app.tar.gz` payload is extracted to a temp dir (skipping the
+//   archive's top-level component), the current `.app` bundle is renamed to a
+//   backup, and the new bundle is moved into place (plus `touch`). The
+//   plugin's AppleScript elevation for permission-denied installs is
+//   deliberately NOT replicated — the watchdog fails loudly instead.
+// ---------------------------------------------------------------------------
+
+/// Runs the install step for the current platform. On success the running
+/// bundle has been replaced (Unix) or the NSIS installer has been spawned
+/// (Windows); the caller (`BackendManager::install_and_relaunch`) then
+/// relaunches/exits.
+fn install_payload(payload: &DownloadedUpdate, app: &AppHandle) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        install_windows_nsis(payload)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        install_linux_appimage(payload, app)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        install_macos_app(payload, app)
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (payload, app);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "auto-update is not supported on this platform",
+        ))
+    }
+}
+
+/// The executable to relaunch after a successful install (Unix).
+///
+/// On Linux this is the AppImage file (`APPIMAGE` env var) when running from
+/// one — `std::env::current_exe()` would point inside the read-only FUSE
+/// mount (`/tmp/.mount_*`), NOT at the file that was just replaced — falling
+/// back to `current_exe()` in dev builds. On macOS the bundle swap keeps the
+/// same exe path inside the new `.app`, so `current_exe()` is correct.
+#[cfg(not(windows))]
+fn relaunch_executable(app: &AppHandle) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(appimage) = app.env().appimage.clone() {
+            return Some(PathBuf::from(appimage));
+        }
+    }
+    std::env::current_exe().ok()
+}
+
+/// Spawns `exe` detached from the current process — the watchdog exits the
+/// app right after, so the child must survive it. On Unix the child is put in
+/// its own process group so no parent-side signal delivery can reach it.
+#[cfg(not(windows))]
+fn spawn_detached(exe: &Path) {
+    let mut command = std::process::Command::new(exe);
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    match command.spawn() {
+        Ok(_) => println!("[desktop] updated app spawned (pid ready)"),
+        Err(err) => eprintln!(
+            "[desktop] failed to spawn updated app {}: {err}",
+            exe.display()
+        ),
+    }
+}
+
+/// Windows: stage the NSIS installer payload to a temp `.exe` and spawn it
+/// with the plugin's exact NSIS args. The spawned installer replaces the app
+/// and relaunches it itself; this function returns once the spawn succeeded.
+#[cfg(target_os = "windows")]
+fn install_windows_nsis(payload: &DownloadedUpdate) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::windows::process::CommandExt;
+
+    // Stage the payload next to the running exe (same volume as the install
+    // dir; the installer runs from here).
+    let mut installer = tempfile::Builder::new()
+        .prefix("genesis-desktop-updater-")
+        .suffix(".exe")
+        .tempfile()?;
+    installer.write_all(&payload.bytes)?;
+    // Keep the file after this function returns: the installer must outlive
+    // the app process (we exit right after spawning it).
+    let installer_path = installer.into_temp_path().keep().to_path_buf();
+
+    // CREATE_NO_WINDOW (0x08000000) — same flag the sidecar's
+    // `launcher_command` applies, so the NSIS installer does not pop a
+    // console window (the app is a GUI-subsystem process).
+    let spawned = std::process::Command::new(&installer_path)
+        .args(["/P", "/R", "/UPDATE", "/ARGS"])
+        .creation_flags(0x0800_0000)
+        .spawn();
+    match spawned {
+        Ok(_) => {
+            println!(
+                "[desktop] NSIS installer spawned ({}); it will relaunch the app itself",
+                installer_path.display()
+            );
+            Ok(())
+        }
+        Err(err) => {
+            let _ = std::fs::remove_file(&installer_path);
+            Err(err)
+        }
+    }
+}
+
+/// The path of the running bundle that an update replaces.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn update_extract_path(app: &AppHandle) -> std::io::Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        // The AppImage file itself when running from one; `current_exe()`
+        // only in dev builds (no APPIMAGE env var).
+        if let Some(appimage) = app.env().appimage.clone() {
+            return Ok(PathBuf::from(appimage));
+        }
+        std::env::current_exe()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Walk up from `.../<App>.app/Contents/MacOS/<exe>` to the `.app`
+        // bundle directory (mirrors the plugin's `extract_path_from_executable`).
+        let exe = std::env::current_exe()?;
+        let mut dir = exe.parent();
+        while let Some(d) = dir {
+            if d.extension().is_some_and(|ext| ext == "app") {
+                return Ok(d.to_path_buf());
+            }
+            dir = d.parent();
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "cannot determine the .app bundle path from the current executable",
+        ))
+    }
+}
+
+/// Linux: replace the running AppImage file with the payload's `.AppImage`
+/// entry, mirroring the plugin's `install_appimage` — backup-rename to a
+/// same-device temp dir (chmod 0700), unpack the `.tar.gz` payload, write the
+/// `.AppImage` entry to the original path, restore the backup on any failure.
+/// The plugin's non-gzip direct-write fallback is omitted: updater payloads
+/// are always `.tar.gz` archives.
+#[cfg(target_os = "linux")]
+fn install_linux_appimage(payload: &DownloadedUpdate, app: &AppHandle) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let extract_path = update_extract_path(app)?;
+    let extract_meta = std::fs::metadata(&extract_path)?;
+
+    // Same-device temp locations, in order of preference (the rename of the
+    // running AppImage must not cross a mount boundary).
+    let tmp_locations = [
+        std::env::temp_dir(),
+        extract_path.parent().map(PathBuf::from).unwrap_or_default(),
+    ];
+
+    for tmp_location in tmp_locations {
+        let Ok(tmp_dir) = tempfile::Builder::new()
+            .prefix("tauri_current_app")
+            .tempdir_in(&tmp_location)
+        else {
+            continue;
+        };
+        let Ok(tmp_meta) = tmp_dir.path().metadata() else {
+            continue;
+        };
+        if extract_meta.dev() != tmp_meta.dev() {
+            continue;
+        }
+        let mut perms = tmp_meta.permissions();
+        perms.set_mode(0o700);
+        std::fs::set_permissions(tmp_dir.path(), perms)?;
+
+        // Create a backup of the current AppImage.
+        let backup = tmp_dir.path().join("current_app.AppImage");
+        std::fs::rename(&extract_path, &backup)?;
+
+        // Unpack the payload; the `.AppImage` entry replaces the original
+        // file. Restore the backup on any failure (mirrors the plugin's
+        // early-return/restore behavior).
+        let result = (|| -> std::io::Result<()> {
+            let decoder = flate2::read::GzDecoder::new(std::io::Cursor::new(&payload.bytes));
+            let mut archive = tar::Archive::new(decoder);
+            for mut entry in archive.entries()?.flatten() {
+                let Ok(path) = entry.path() else {
+                    continue;
+                };
+                if path.extension() == Some(std::ffi::OsStr::new("AppImage")) {
+                    entry.unpack(&extract_path)?;
+                    return Ok(());
+                }
+            }
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "no .AppImage entry found in the update payload",
+            ))
+        })();
+
+        match result {
+            Ok(()) => {
+                println!("[desktop] AppImage replaced at {}", extract_path.display());
+                return Ok(());
+            }
+            Err(err) => {
+                let _ = std::fs::rename(&backup, &extract_path);
+                return Err(err);
+            }
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        "no same-device temp directory available for the AppImage swap",
+    ))
+}
+
+/// macOS: swap the running `.app` bundle with the payload's extracted bundle,
+/// mirroring the plugin's macOS `install_inner`. The `.app.tar.gz` payload is
+/// extracted to a temp dir skipping the archive's first path component (the
+/// top-level `.app` directory); the current bundle is renamed to a backup and
+/// the new one moved into place, then `touch`ed. Permission-denied installs
+/// are NOT escalated via AppleScript (the plugin uses osakit) — the watchdog
+/// is a plain std::thread and fails loudly instead.
+#[cfg(target_os = "macos")]
+fn install_macos_app(payload: &DownloadedUpdate, app: &AppHandle) -> std::io::Result<()> {
+    use flate2::read::GzDecoder;
+
+    let extract_path = update_extract_path(app)?;
+    let tmp_backup_dir = tempfile::Builder::new()
+        .prefix("tauri_current_app")
+        .tempdir()?;
+    let tmp_extract_dir = tempfile::Builder::new()
+        .prefix("tauri_updated_app")
+        .tempdir()?;
+
+    // Extract the payload into the temp dir, skipping the first path
+    // component (the archive's top-level directory, e.g. "EvoX Genesis.app").
+    let decoder = GzDecoder::new(std::io::Cursor::new(&payload.bytes));
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let collected: PathBuf = entry.path()?.iter().skip(1).collect();
+        let extraction_path = tmp_extract_dir.path().join(collected);
+        if let Some(parent) = extraction_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Err(err) = entry.unpack(&extraction_path) {
+            let _ = std::fs::remove_dir_all(tmp_extract_dir.path());
+            return Err(err);
+        }
+    }
+
+    // Move the current app to the backup location.
+    match std::fs::rename(&extract_path, tmp_backup_dir.path().join("current_app")) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+            let _ = std::fs::remove_dir_all(tmp_extract_dir.path());
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "cannot replace {}: permission denied (the app bundle is not writable by the current user) — grant write permission or reinstall",
+                    extract_path.display()
+                ),
+            ));
+        }
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(tmp_extract_dir.path());
+            return Err(err);
+        }
+    }
+
+    // Move the new app into place.
+    if extract_path.exists() {
+        std::fs::remove_dir_all(&extract_path)?;
+    }
+    std::fs::rename(tmp_extract_dir.path(), &extract_path)?;
+    let _ = std::process::Command::new("touch")
+        .arg(&extract_path)
+        .status();
+
+    println!(
+        "[desktop] .app bundle replaced at {}",
+        extract_path.display()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -676,6 +1164,64 @@ mod tests {
         );
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn begin_update_sets_flag_without_killing_child() {
+        let manager = BackendManager::new(
+            PathBuf::from("/nonexistent"),
+            vec![],
+            9999,
+            "http://localhost:9999".to_string(),
+        );
+        let child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        *manager.child.lock().unwrap() = Some(child);
+
+        manager.begin_update();
+
+        assert!(manager.update_requested());
+        // `begin_update` only sets the flag — the child must still be running
+        // so the backend can finish its graceful stop on its own.
+        let mut child = manager
+            .child
+            .lock()
+            .unwrap()
+            .take()
+            .expect("child still present");
+        assert!(
+            matches!(child.try_wait(), Ok(None)),
+            "begin_update must not kill the child"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn should_install_update_requires_intentional_exit_and_update_intent() {
+        // Both conditions are required: a crash with the update flag armed
+        // must NOT trigger the install path (the update flow only runs after
+        // the backend stopped itself deliberately), and an intentional exit
+        // without the update flag is a plain quit.
+        assert!(!should_install_update(false, false));
+        assert!(!should_install_update(false, true));
+        assert!(!should_install_update(true, false));
+        assert!(should_install_update(true, true));
+    }
+
+    #[test]
+    fn downloaded_update_slot_stores_and_takes_once() {
+        assert!(take_downloaded_update().is_none());
+        set_downloaded_update("9.9.9".to_string(), vec![1, 2, 3]);
+        let taken = take_downloaded_update().expect("payload present");
+        assert_eq!(taken.version, "9.9.9");
+        assert_eq!(taken.bytes, vec![1, 2, 3]);
+        // The slot is single-shot: a second take is empty, so a stale payload
+        // can never be installed twice.
+        assert!(take_downloaded_update().is_none());
     }
 
     #[test]
