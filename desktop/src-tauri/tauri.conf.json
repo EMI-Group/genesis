@@ -50,7 +50,7 @@
       "endpoints": [
         "https://github.com/EMI-Group/genesis/releases/latest/download/latest.json"
       ],
-      "pubkey": "REPLACE_WITH_TAURI_SIGNER_GENERATED_PUBLIC_KEY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZFRDc4NDYwNzEyN0M0QUUKUldTdXhDZHhZSVRYYmg2Z25Pb3FmazZ3c3E1YkFLdExDS0dKM3BXL2VCMXlWcUpsSXlOZGtLeDAK",
       "windows": {
         "installMode": "passive"
       }
