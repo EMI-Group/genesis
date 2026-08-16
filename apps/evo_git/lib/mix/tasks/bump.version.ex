@@ -15,6 +15,12 @@ defmodule Mix.Tasks.Bump.Version do
   version dynamically from `VERSION`, so they pick up the new value on the next
   compile.
 
+  After a successful bump the task interactively asks whether to commit the
+  updated files. If confirmed, only the touched files are staged and committed
+  (never `git add -A`). If declined, or if git fails (not a git repository,
+  missing identity, ...), the bump itself still succeeded and the manual
+  commit command is printed.
+
   ## Usage
 
       mix bump.version 0.2.0
@@ -60,12 +66,16 @@ defmodule Mix.Tasks.Bump.Version do
       Mix.shell().info("Version is already #{version} — nothing to do.")
     else
       Mix.shell().info("Bumping version: #{current} → #{version}")
-      write_version_file(version)
-      sync_tauri(version)
-      sync_cargo(version)
-      sync_readme(version)
+
+      touched_files =
+        write_version_file(version) ++
+          sync_tauri(version) ++
+          sync_cargo(version) ++
+          sync_readme(version)
+
       Mix.shell().info("✓ Version bumped to #{version}")
       print_summary(version)
+      maybe_commit(touched_files, version)
     end
   end
 
@@ -95,6 +105,7 @@ defmodule Mix.Tasks.Bump.Version do
   defp write_version_file(version) do
     File.write!(@version_file, "#{version}\n")
     Mix.shell().info("  ✓ #{@version_file}")
+    [@version_file]
   end
 
   # --- Tauri manifest -----------------------------------------------------
@@ -118,6 +129,9 @@ defmodule Mix.Tasks.Bump.Version do
 
       File.write!(@tauri_conf, updated)
       Mix.shell().info("  ✓ #{@tauri_conf}")
+      [@tauri_conf]
+    else
+      []
     end
   end
 
@@ -140,7 +154,9 @@ defmodule Mix.Tasks.Bump.Version do
       # The lockfile mirrors the package version. Update it in place so the
       # bump doesn't require a `cargo build` to stay consistent. We only touch
       # the genesis-desktop entry, leaving all dependency entries untouched.
-      sync_cargo_lock(version)
+      [@cargo_toml | sync_cargo_lock(version)]
+    else
+      []
     end
   end
 
@@ -157,6 +173,9 @@ defmodule Mix.Tasks.Bump.Version do
 
       File.write!(@cargo_lock, updated)
       Mix.shell().info("  ✓ #{@cargo_lock}")
+      [@cargo_lock]
+    else
+      []
     end
   end
 
@@ -179,7 +198,83 @@ defmodule Mix.Tasks.Bump.Version do
 
       File.write!(@readme, updated)
       Mix.shell().info("  ✓ #{@readme}")
+      [@readme]
+    else
+      []
     end
+  end
+
+  # --- Interactive commit -------------------------------------------------
+
+  # Asks whether to commit the bumped files. Only ever stages the files that
+  # were actually touched — never `git add -A`.
+  defp maybe_commit(files, version) do
+    if Mix.shell().yes?("Commit the version bump files now? [Yn]") do
+      do_commit(files, version)
+    else
+      print_manual_commit(files, version)
+    end
+  end
+
+  defp do_commit(files, version) do
+    case git(["add", "--" | files]) do
+      {:ok, _output} ->
+        case git(["diff", "--cached", "--quiet"]) do
+          # Exit 0: nothing is staged (e.g. the content was already committed).
+          {:ok, _output} ->
+            Mix.shell().info("No changes to commit")
+
+          # Exit 1: staged changes exist — proceed with the commit.
+          {:error, 1, _output} ->
+            commit(files, version)
+
+          {:error, _code, output} ->
+            warn_git_failure("git diff --cached --quiet", output)
+            print_manual_commit(files, version)
+        end
+
+      {:error, _code, output} ->
+        warn_git_failure("git add", output)
+        print_manual_commit(files, version)
+    end
+  end
+
+  defp commit(files, version) do
+    case git(["commit", "-m", "Bump version to #{version}"]) do
+      {:ok, output} ->
+        Mix.shell().info(String.trim(output))
+
+        # A concise one-line summary of the new commit.
+        case git(["log", "-1", "--oneline"]) do
+          {:ok, log} -> Mix.shell().info(String.trim(log))
+          {:error, _code, _output} -> :ok
+        end
+
+      {:error, _code, output} ->
+        warn_git_failure("git commit", output)
+        print_manual_commit(files, version)
+    end
+  end
+
+  # Runs git in the project root, capturing stderr into the output so failures
+  # can be reported verbatim. Returns {:ok, output} or {:error, code, output}.
+  defp git(args) do
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {output, 0} -> {:ok, output}
+      {output, code} -> {:error, code, output}
+    end
+  end
+
+  defp warn_git_failure(step, output) do
+    Mix.shell().error("⚠ #{step} failed (the version bump itself succeeded):")
+    Mix.shell().error(String.trim(output))
+  end
+
+  defp print_manual_commit(files, version) do
+    Mix.shell().info("""
+    Commit the bumped files manually:
+      git add #{Enum.join(files, " ")} && git commit -m "Bump version to #{version}"
+    """)
   end
 
   # --- Summary ------------------------------------------------------------
@@ -193,7 +288,11 @@ defmodule Mix.Tasks.Bump.Version do
     Next steps:
       1. Run `mix compile` to confirm everything builds with version #{version}.
       2. If building the desktop app, run `cargo build` to refresh Cargo.lock.
-      3. Commit the changes: git add -A && git commit -m "Bump version to #{version}"
+      3. The task now asks whether to commit the bumped files. If you skip it,
+         stage only the version files and commit them manually:
+         git add VERSION desktop/src-tauri/tauri.conf.json desktop/src-tauri/Cargo.toml
+           desktop/src-tauri/Cargo.lock README.md
+         git commit -m "Bump version to #{version}"
       4. Tag the release: git tag v#{version}
     """)
   end
