@@ -71,6 +71,20 @@ defmodule EvoGit.Application do
         children
       end
 
+    # Desktop mode: monitor the Tauri shell's OS pid (EVOGIT_PARENT_PID) and
+    # exit the VM when the shell dies, so an orphaned backend never holds the
+    # port. Gated on the env vars ONLY — the sidecar sets both, while
+    # manually-launched releases and the genesis_remote daemon set neither
+    # (the module's own init-disabled logic is belt-and-suspenders for direct
+    # starts).
+    children =
+      if System.get_env("EVOGIT_DESKTOP") == "1" and
+           System.get_env("EVOGIT_PARENT_PID") not in [nil, ""] do
+        children ++ [{EvoGit.DesktopParentMonitor, []}]
+      else
+        children
+      end
+
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: EvoGit.Supervisor]

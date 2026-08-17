@@ -389,6 +389,14 @@ impl BackendManager {
         self.intentional_shutdown.load(Ordering::SeqCst)
     }
 
+    /// The backend URL the WebView connects to (resolved once at startup with
+    /// the dynamic port). The tray-quit handler probes this URL — with a
+    /// dynamic port the environment no longer reflects the actual port, so
+    /// recomputing it would probe a stale URL.
+    pub fn backend_url(&self) -> &str {
+        &self.backend_url
+    }
+
     /// Arms the auto-update flow WITHOUT killing the child.
     ///
     /// Invoked by the dashboard's JavaScript via the `begin_update` Tauri
