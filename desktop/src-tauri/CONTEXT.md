@@ -131,6 +131,16 @@ cd desktop/src-tauri && npx --yes @tauri-apps/cli@^2 icon "$TMP/evox_1024.png"
 
 ## Known Issues
 
+### Linux `check_update` always fails ("Check failed") when `latest.json` lacks a `linux-x86_64` platform entry
+
+The v0.10.9 release (Aug 16 2026) published `latest.json` with `platforms` containing ONLY `darwin-aarch64` and `windows-x86_64` — no `linux-x86_64`. Root cause chain (verified end-to-end):
+
+1. The release assets show the Linux desktop job produced `genesis_desktop_linux_x64.AppImage` WITHOUT the `.AppImage.tar.gz` updater payload and WITHOUT a `.sig` (only darwin/windows got signed payloads). The CI Linux step falls back to `--config '{"bundle":{"createUpdaterArtifacts":false}}'` when `TAURI_SIGNING_PRIVATE_KEY` is absent (`.github/workflows/build-desktop.yml`), so no signed Linux payload exists.
+2. The `publish-release` job's manifest generator only adds a `linux-x86_64` key when `genesis_desktop_linux_x64.AppImage.tar.gz` + `.sig` assets exist — they don't → key omitted.
+3. On the Linux desktop app, the plugin `check()` (`Updater.check`, deps/tauri-plugin-updater-2.10.1/src/updater.rs:386-566) calls `get_urls` (updater.rs:536) **BEFORE** the version comparison; with no matching platform key it returns `Error::TargetsNotFound(["linux-x86_64-appimage", "linux-x86_64"])` (AppImage build; plain binary tries only `linux-x86_64`) → `check_update` returns `{status: "error", error: "Update check failed: None of the fallback platforms ..."}` → dashboard renders "Check failed".
+
+**Important ordering gotcha**: `get_urls` runs unconditionally BEFORE the `release.version > current_version` check (updater.rs:530-538), so a missing platform key errors out even when the published version is <= the running version (v0.10.9 == v0.10.9 would otherwise be `up_to_date`). Additionally, ANY malformed platform entry in the manifest (invalid `url` string — parsed as `url::Url` — or missing `url`/`signature` fields) fails deserialization of the WHOLE manifest → `error` for every platform. Also note the v0.10.9 `latest.json` `notes` field contains a JSON-encoded GitHub 404 object (release-body fetch failed in the publish job) — harmless for check status (`notes` is `Option<String>`), but the changelog shows garbage if an update is ever available. Fix: publish a signed Linux payload (re-run the Linux job with `TAURI_SIGNING_PRIVATE_KEY` set so `.AppImage.tar.gz` + `.sig` are staged) and regenerate `latest.json`.
+
 ### AppImage bundling on Linux CI — the release's wx NIFs need the wxWidgets 3.2 runtime
 
 The `genesis_desktop` release includes OTP's `wx` app (`wx: :load` in root `mix.exs` — wx-based directory picker). Its NIFs under `resources/genesis-backend/lib/wx-*/priv/` link against wxWidgets 3.2 sonames and `libGLU.so.1`:
