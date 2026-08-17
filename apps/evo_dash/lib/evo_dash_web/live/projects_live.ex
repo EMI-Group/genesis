@@ -16,7 +16,8 @@ defmodule EvoDashWeb.ProjectsLive do
     ProjectFlow,
     RemoteView,
     AttachFile,
-    GitHub
+    GitHub,
+    AsyncLoad
   }
 
   alias EvoDashWeb.ThemeColor
@@ -526,7 +527,7 @@ defmodule EvoDashWeb.ProjectsLive do
       # agent select and the model select's "Auto (by rules)" option.
       # Node-aware (reads the node being viewed), degrading gracefully.
       {custom_agents, model_selection_enabled} =
-        load_custom_agents(socket.assigns[:current_node])
+        AsyncLoad.load_custom_agents(socket.assigns[:current_node])
 
       build_systems = EvoGit.Runtime.WorktreeInitScript.build_systems()
 
@@ -605,57 +606,17 @@ defmodule EvoDashWeb.ProjectsLive do
     socket = assign(socket, :current_path, ~p"/")
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
 
-    # Reload the node's custom agents + model-selection script state on every
-    # handle_params run (cheap stat-cached file read) so edits made on the
-    # Settings page (agents.toml / model-selection script) are picked up on
-    # navigation and node switches.
-    {custom_agents, model_selection_enabled} =
-      load_custom_agents(socket.assigns.current_node)
-
-    socket =
-      assign(socket,
-        custom_agents: custom_agents,
-        model_selection_enabled: model_selection_enabled
-      )
-
-    # Reload the node's model profiles + default selection on every
-    # handle_params run (mirrors the custom_agents reload above) so
-    # @model_profiles/@selected_model_id always match the node being viewed —
-    # a remote node's profiles come from ITS config.toml (the local
-    # :memo_config_resolve memo is bypassed for remote nodes inside
-    # Project.load_model_profiles/1). On a node switch, a model selection
-    # carried from another node is validated against the new node's profiles:
-    # it is kept only when it names a profile that exists there, otherwise it
-    # is reset to the new node's default ("" when its model-selection script
-    # is enabled, else the first profile id, or nil). A stale id would
-    # otherwise be threaded into do_task_submit and the remote runtime would
-    # silently fall back to its default model. Same-node navigations never
-    # clobber the user's explicit choice (that assign is owned by the
-    # select_model event / restore_state on the same node). This runs BEFORE
-    # StatePersistence.maybe_clear_state_on_node_switch below so the
-    # re-persisted per-node state carries the validated selection.
-    {model_profiles, default_selected_model_id} =
-      Project.load_model_profiles(socket.assigns.current_node)
-
-    selected_model_id =
-      if prev_node_id != socket.assigns[:current_node_id] do
-        carried = socket.assigns[:selected_model_id]
-
-        if is_binary(carried) and carried != "" and
-             Enum.any?(model_profiles, &(Map.get(&1, :id) == carried)) do
-          carried
-        else
-          default_selected_model_id
-        end
-      else
-        socket.assigns[:selected_model_id]
-      end
-
-    socket =
-      assign(socket,
-        model_profiles: model_profiles,
-        selected_model_id: selected_model_id
-      )
+    # Node-aware refresh (custom agents + model-selection script state, model
+    # profiles + the node-switch `selected_model_id` validation, remote
+    # agents / remote project config, and recent projects) now runs in ONE
+    # async task so the LiveView process never blocks on cross-node RPCs —
+    # see EvoDashWeb.ProjectsLive.AsyncLoad. The spawn sits after the
+    # node-switch clearing and the project-activation block below so it
+    # captures the post-clear, post-activation active project path; mount/3
+    # already seeded every affected assign with safe defaults, and the async
+    # result (a stale-guarded
+    # `{:async_project_load, node, prev_node_id, path, results}` message)
+    # overrides them a frame later.
 
     # Each node context (local + each remote target) has its own persisted
     # dashboard state; switching nodes clears the client-side state and
@@ -685,74 +646,6 @@ defmodule EvoDashWeb.ProjectsLive do
         |> assign(:github_fixing, nil)
       else
         socket
-      end
-
-    # When viewing a connected remote node, the dashboard shows the remote
-    # node's active agents instead of local tasks/projects. Load them here so
-    # the render branch has the data (connected contexts only — pending/error
-    # contexts render connecting/error states without agent data).
-    socket =
-      if socket.assigns.remote? do
-        socket =
-          assign(
-            socket,
-            :remote_agents,
-            NodeContext.list_agents(socket.assigns.current_node)
-          )
-
-        # When a remote project is active, load its config
-        if socket.assigns[:active_project_path] do
-          path = socket.assigns.active_project_path
-          node = socket.assigns.current_node
-
-          config = NodeContext.read_project_config(node, path)
-
-          {project_config, worktree_script, commands} =
-            Project.load_project_config(node, path, config)
-
-          foreign_repos = Project.load_foreign_repos(node, path, config)
-          mode = Project.detect_mode(node, path)
-          mode_info = mode_info_message(mode)
-
-          socket
-          |> assign(:project_config, project_config)
-          |> assign(:worktree_script, worktree_script)
-          |> assign(:commands, commands)
-          |> assign(:foreign_repos, foreign_repos)
-          |> assign(:task_mode, mode)
-          |> assign(:task_mode_info, mode_info)
-        else
-          socket
-        end
-      else
-        socket
-      end
-
-    # Reload recent projects from the correct node on every handle_params run.
-    # When connected to a remote node, load via RPC; in a pending/error remote
-    # context no recents are shown (local recents must never leak into a
-    # remote view); when local, load from the local TaskRegistry.
-    socket =
-      cond do
-        socket.assigns.remote? ->
-          assign(
-            socket,
-            :recent_projects,
-            filter_absolute_recent_projects_for_node(
-              socket.assigns.current_node,
-              EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
-            )
-          )
-
-        socket.assigns[:current_node_id] != nil ->
-          assign(socket, :recent_projects, [])
-
-        true ->
-          assign(
-            socket,
-            :recent_projects,
-            filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
-          )
       end
 
     project_path = params["project"]
@@ -825,6 +718,17 @@ defmodule EvoDashWeb.ProjectsLive do
           socket
         end
       end
+
+    # Spawn the grouped async node-aware load (custom agents, model profiles,
+    # remote agents / remote project config, recent projects — see the
+    # comment above and EvoDashWeb.ProjectsLive.AsyncLoad). The spawn runs
+    # AFTER the node-switch state clearing AND the project-activation block
+    # above, so it captures the post-clear, post-activation active project
+    # path — the identity the AsyncLoad stale-guard compares against, so a
+    # result spawned for the very activation that just happened is never
+    # dropped as "stale" (and a remote→local switch can never keep a remote
+    # node's agents/model profiles/recents after a local project activates).
+    socket = AsyncLoad.maybe_spawn(socket, prev_node_id)
 
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
     socket =
@@ -1616,23 +1520,6 @@ defmodule EvoDashWeb.ProjectsLive do
 
   defp truncate_output(output), do: String.trim(output)
 
-  # Loads the node's custom agents (agents.toml) and whether its
-  # model-selection script is configured, for the task form's agent select
-  # and the model select's "Auto (by rules)" option. Node-aware: reads the
-  # node being viewed (local call or :erpc) via EvoDash.NodeContext, which
-  # degrades to empty agents on transport failure. A configured-but-broken
-  # script still counts as enabled (script non-nil), matching
-  # EvoGit.CustomAgents.ModelSelector.enabled?/0 semantics.
-  defp load_custom_agents(node) do
-    case EvoDash.NodeContext.list_custom_agents(node) do
-      {:ok, %{agents: agents, model_selection_script: script}} ->
-        {agents, is_binary(script) and script != ""}
-
-      _ ->
-        {[], false}
-    end
-  end
-
   # --- PubSub Handlers ---
 
   # Results from the async directory picker (EvoDash.DirectoryPicker sends
@@ -1803,6 +1690,22 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_info({:github_fix_result, path, node, number, result}, socket) do
     {:noreply, GitHub.handle_fix_result(socket, path, node, number, result)}
+  end
+
+  # Async node-aware loads spawned by AsyncLoad.maybe_spawn/2 in
+  # handle_params/3 (custom agents, model profiles + the selected_model_id
+  # switch validation, remote agents / remote project config, recent
+  # projects). The handler drops stale results (wrong node or active project)
+  # in AsyncLoad.handle_result/5, then re-runs GitHub.maybe_check/1: the
+  # remote task_mode now arrives via this continuation (it used to be
+  # assigned synchronously before the maybe_check call at the end of
+  # handle_params), so the remote upstream-detection needs this second kick —
+  # maybe_check is self-guarding (no-ops once a status is present), so the
+  # extra call is harmless on every other path.
+  @impl true
+  def handle_info({:async_project_load, node, prev_node_id, path, results}, socket) do
+    socket = AsyncLoad.handle_result(socket, node, prev_node_id, path, results)
+    {:noreply, GitHub.maybe_check(socket)}
   end
 
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
@@ -2035,13 +1938,10 @@ defmodule EvoDashWeb.ProjectsLive do
   # `Path.expand`ed bare folder names against the Tauri install dir) must
   # never render in the palette, feed auto-load, or reach path suggestions.
   # Applied at every `:recent_projects` assignment site in this module.
+  # Implementation lives in EvoDashWeb.ProjectsLive.AsyncLoad (shared with
+  # the async handle_params load).
   defp filter_absolute_recent_projects(recent_projects) do
-    Enum.filter(recent_projects, fn project ->
-      case project do
-        %{path: path} when is_binary(path) -> Platform.absolute_path?(path)
-        _ -> false
-      end
-    end)
+    AsyncLoad.filter_absolute_recent_projects(recent_projects)
   end
 
   # Node-aware variant of the filter above, used ONLY at the remote recents
@@ -2052,12 +1952,7 @@ defmodule EvoDashWeb.ProjectsLive do
   # or Windows-absolute paths so remote recents survive a dashboard running
   # on a different OS (e.g. `/home/user/repo` on a Windows dashboard).
   defp filter_absolute_recent_projects_for_node(node, recent_projects) do
-    Enum.filter(recent_projects, fn project ->
-      case project do
-        %{path: path} -> ProjectFlow.absolute_path_for_node?(node, path)
-        _ -> false
-      end
-    end)
+    AsyncLoad.filter_absolute_recent_projects_for_node(node, recent_projects)
   end
 
   # The add-foreign-repo form is reachable in remote mode (RemoteView renders
