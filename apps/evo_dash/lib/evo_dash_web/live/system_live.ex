@@ -133,6 +133,13 @@ defmodule EvoDashWeb.SystemLive do
                   <p class="text-sm text-base-content/60 mt-0.5">
                     {gettext("Check for and install the latest Genesis release.")} <% # zh_CN: "检查并安装最新版 Genesis" %>
                   </p>
+                  <%= if @update_status.current_version do %>
+                    <p class="text-xs text-base-content/40 mt-1">
+                      {gettext("Current version: %{version}",
+                        version: @update_status.current_version
+                      )} <% # zh_CN: "当前版本" %>
+                    </p>
+                  <% end %>
                 </div>
               </div>
               <button
@@ -242,25 +249,22 @@ defmodule EvoDashWeb.SystemLive do
                   </div>
                 <% :error -> %>
                   <div class="flex items-center gap-2 py-1">
-                    <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
-                    <%= if @update_status.error == "not_configured" do %>
-                      <span class="text-sm text-base-content/70">
-                        {gettext("Automatic updates are not configured yet")} <% # zh_CN: "尚未配置自动更新（缺少更新签名密钥等）" %>
-                      </span>
-                    <% else %>
-                      <span class="text-sm text-error">{gettext("Check failed")}</span>
+                    <%= case @update_status.error do %>
+                      <% "not_available" -> %>
+                        <!-- latest.json fetched but no auto-update payload for this platform -->
+                        <.icon name="hero-information-circle" class="size-4 text-info shrink-0" />
+                        <span class="text-sm text-info">
+                          {gettext("No auto update on this platform")} <% # zh_CN: "当前平台没有可用的自动更新（未发布对应平台的安装包）" %>
+                        </span>
+                      <% "not_configured" -> %>
+                        <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
+                        <span class="text-sm text-base-content/70">
+                          {gettext("Automatic updates are not configured yet")} <% # zh_CN: "尚未配置自动更新（缺少更新签名密钥等）" %>
+                        </span>
+                      <% _ -> %>
+                        <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
+                        <span class="text-sm text-error">{gettext("Check failed")}</span>
                     <% end %>
-                  </div>
-                  <div class="mt-3">
-                    <button
-                      id="update-retry"
-                      type="button"
-                      phx-click="check_for_updates"
-                      class="btn btn-ghost btn-sm rounded-md gap-2"
-                    >
-                      <.icon name="hero-arrow-path" class="size-4" />
-                      {gettext("Retry")} <% # zh_CN: "重试" %>
-                    </button>
                   </div>
                 <% :applying -> %>
                   <div class="flex items-center gap-3 py-1">

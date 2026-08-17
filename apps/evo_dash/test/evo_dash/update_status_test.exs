@@ -27,7 +27,7 @@ defmodule EvoDash.UpdateStatusTest do
 
       assert state.phase == :idle
       assert state.notify_only == true
-      assert state.current_version == nil
+      assert state.current_version == app_version()
       assert state.latest_version == nil
       assert state.notes == nil
       assert state.date == nil
@@ -137,6 +137,59 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.error == "not_configured"
     end
 
+    test "\"not_available\" sets the error sentinel and stores current_version" do
+      UpdateStatus.handle_check_result(%{
+        "status" => "not_available",
+        "current_version" => "0.1.0"
+      })
+
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "not_available"
+      assert state.current_version == "0.1.0"
+    end
+
+    test "error paths store current_version so the version stays populated" do
+      # not_configured
+      UpdateStatus.handle_check_result(%{
+        "status" => "not_configured",
+        "current_version" => "0.2.0"
+      })
+
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "not_configured"
+      assert state.current_version == "0.2.0"
+
+      # not_available
+      UpdateStatus.handle_check_result(%{
+        "status" => "not_available",
+        "current_version" => "0.2.0"
+      })
+
+      assert UpdateStatus.get().current_version == "0.2.0"
+
+      # generic error
+      UpdateStatus.handle_check_result(%{
+        "status" => "error",
+        "error" => "boom",
+        "current_version" => "0.2.0"
+      })
+
+      assert UpdateStatus.get().current_version == "0.2.0"
+    end
+
+    test "error paths without current_version keep the seeded version" do
+      UpdateStatus.handle_check_result(%{"status" => "not_configured"})
+      assert UpdateStatus.get().current_version == app_version()
+
+      UpdateStatus.handle_check_result(%{"status" => "not_available"})
+      assert UpdateStatus.get().current_version == app_version()
+
+      UpdateStatus.handle_check_result(%{"status" => "error", "error" => "boom"})
+      assert UpdateStatus.get().current_version == app_version()
+    end
+
     test "\"error\" uses the payload error" do
       UpdateStatus.handle_check_result(%{"status" => "error", "error" => "network down"})
       state = UpdateStatus.get()
@@ -176,6 +229,7 @@ defmodule EvoDash.UpdateStatusTest do
         %{"status" => "up_to_date"},
         %{"status" => "error", "error" => "boom"},
         %{"status" => "not_configured"},
+        %{"status" => "not_available"},
         %{"status" => "weird"},
         %{},
         nil
@@ -424,6 +478,15 @@ defmodule EvoDash.UpdateStatusTest do
       Application.put_env(:evo_dash, key, original)
     else
       Application.delete_env(:evo_dash, key)
+    end
+  end
+
+  # The seeded current_version: the :evo_git app version (nil when not loaded).
+  # Mirrors EvoDash.UpdateStatus.app_version/0.
+  defp app_version do
+    case Application.spec(:evo_git, :vsn) do
+      nil -> nil
+      vsn -> to_string(vsn)
     end
   end
 
