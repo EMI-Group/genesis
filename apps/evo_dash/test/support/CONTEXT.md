@@ -6,7 +6,7 @@ Test support modules for the EvoDash test suite. Provides shared test cases and 
 
 ## Routing Table
 
-None — leaf directory (single file: `conn_case.ex`).
+None — leaf directory (test support modules only).
 
 ## API Surface
 
