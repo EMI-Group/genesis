@@ -7,6 +7,14 @@ defmodule EvoDashWeb.NodeAwareTest do
   # This avoids booting a real LiveView or remote node — we only test the
   # pure transition-detection logic in the hook.
   #
+  # The sidebar Active Tasks load is ASYNC: `load_running_and_pending_tasks/1`
+  # / `assign_node/2` spawn a fetch on `EvoDash.TaskSupervisor` whose captured
+  # `view_pid` IS the test process, so tests assert on the
+  # `{:node_aware_active_tasks, seq, node_id, node, {running, pending}}`
+  # message via `assert_receive`/`refute_receive` (send-pattern), and the
+  # stale-guard seam `handle_tasks_result/2` is tested directly (pure socket
+  # in/out).
+  #
   # async: false — the assign_node remote-target tests mutate the global
   # XDG_CONFIG_HOME env var (to isolate EvoGit.RemoteConnections, same pattern
   # as evo_git's remote_connections_test.exs) and register a fake connection
@@ -30,7 +38,8 @@ defmodule EvoDashWeb.NodeAwareTest do
         current_path: "/agents",
         connection_statuses: %{},
         running_tasks: [],
-        pending_tasks: []
+        pending_tasks: [],
+        tasks_load_seq: 0
       }
       |> Map.merge(overrides)
 
@@ -395,12 +404,16 @@ defmodule EvoDashWeb.NodeAwareTest do
   end
 
   describe "load_running_and_pending_tasks/1 — node-aware source" do
-    # These tests verify that the function reads tasks from the correct node:
-    # local `TaskRegistry.list_tasks_summary([:running, :pending, :finalizing,
-    # :completed])` for the local node, and
+    # These tests verify that the function spawns an async fetch from the
+    # correct node: local `TaskRegistry.list_tasks_summary([:running, :pending,
+    # :finalizing, :cancelling, :completed])` for the local node, and
     # `EvoDash.NodeContext.list_tasks_summary(node, statuses)` (RPC) for a
-    # remote node. The remote path fails fast (noconnection) when the target
-    # node doesn't exist, so it returns `[]` quickly without a timeout.
+    # remote node. The spawned task's captured `view_pid` IS the test process,
+    # so the assertions use `assert_receive {:node_aware_active_tasks, seq,
+    # node_id, node, {running, pending}}` on the message payload (the socket
+    # itself comes back unchanged — the load is async). The remote path fails
+    # fast (noconnection) when the target node doesn't exist, so it returns []
+    # quickly without a timeout.
 
     setup :setup_isolated_registry
 
@@ -416,17 +429,26 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       # current_node_id: nil marks a pure-local context — the socket builder
       # default ("gpu-server") would be a pending remote context (empty lists).
-      sock = socket(%{current_node: node(), current_node_id: nil})
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
 
       result = NodeAware.load_running_and_pending_tasks(sock)
 
+      # Async: the socket is returned unchanged (only the seq is bumped) —
+      # previous sidebar content is kept until the result message arrives.
+      assert result.assigns[:running_tasks] == []
+      assert result.assigns[:pending_tasks] == []
+      assert result.assigns[:tasks_load_seq] == 1
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+
       # The running task appears in running_tasks
-      assert length(result.assigns[:running_tasks]) == 1
-      assert hd(result.assigns[:running_tasks]).status == :running
+      assert length(running) == 1
+      assert hd(running).status == :running
 
       # The completed task with a branch appears in pending_tasks (reviewable)
-      assert length(result.assigns[:pending_tasks]) == 1
-      assert hd(result.assigns[:pending_tasks]).status == :completed
+      assert length(pending) == 1
+      assert hd(pending).status == :completed
     end
 
     test "local node: pending, running, and finalizing all go to running_tasks" do
@@ -434,12 +456,16 @@ defmodule EvoDashWeb.NodeAwareTest do
       insert_fixture!(EvoGit.Store, id: "r1", status: :running)
       insert_fixture!(EvoGit.Store, id: "f1", status: :finalizing)
 
-      sock = socket(%{current_node: node(), current_node_id: nil})
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
 
-      result = NodeAware.load_running_and_pending_tasks(sock)
+      NodeAware.load_running_and_pending_tasks(sock)
 
-      ids = Enum.map(result.assigns[:running_tasks], & &1.id) |> Enum.sort()
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+
+      ids = Enum.map(running, & &1.id) |> Enum.sort()
       assert ids == ["f1", "p1", "r1"]
+      assert pending == []
     end
 
     test "local node: a :cancelling task shows in running_tasks" do
@@ -448,12 +474,16 @@ defmodule EvoDashWeb.NodeAwareTest do
       # be nil for in-flight statuses (the fixture helper defaults it to now).
       insert_fixture!(EvoGit.Store, id: "c1", status: :cancelling, finished_at: nil)
 
-      sock = socket(%{current_node: node(), current_node_id: nil})
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
 
-      result = NodeAware.load_running_and_pending_tasks(sock)
+      NodeAware.load_running_and_pending_tasks(sock)
 
-      assert Enum.any?(result.assigns[:running_tasks], &(&1.id == "c1"))
-      assert hd(result.assigns[:running_tasks]).status == :cancelling
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+
+      assert Enum.any?(running, &(&1.id == "c1"))
+      assert hd(running).status == :cancelling
+      assert pending == []
     end
 
     test "remote node: uses EvoDash.NodeContext.list_tasks_summary/2 (RPC), not local" do
@@ -465,22 +495,29 @@ defmodule EvoDashWeb.NodeAwareTest do
       remote_node = :"nonexistent_remote_test@127.0.0.1"
       sock = socket(%{current_node: remote_node})
 
-      result = NodeAware.load_running_and_pending_tasks(sock)
+      NodeAware.load_running_and_pending_tasks(sock)
+
+      assert_receive {:node_aware_active_tasks, 1, "gpu-server", ^remote_node,
+                      {running, pending}},
+                     1000
 
       # No tasks from the local registry should leak through to the remote view.
-      assert result.assigns[:running_tasks] == []
-      assert result.assigns[:pending_tasks] == []
+      assert running == []
+      assert pending == []
     end
 
     test "fallback to node() when current_node assign is absent" do
       # When current_node is not set, it should fall back to node() (local).
       insert_fixture!(EvoGit.Store, id: "should-show", status: :running)
 
+      current_node = node()
       sock = socket(%{current_node: nil, current_node_id: nil})
 
-      result = NodeAware.load_running_and_pending_tasks(sock)
+      NodeAware.load_running_and_pending_tasks(sock)
 
-      assert Enum.any?(result.assigns[:running_tasks], &(&1.id == "should-show"))
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+
+      assert Enum.any?(running, &(&1.id == "should-show"))
     end
 
     test "pending remote context: assigns empty running/pending (local tasks hidden)" do
@@ -490,56 +527,201 @@ defmodule EvoDashWeb.NodeAwareTest do
       insert_fixture!(EvoGit.Store, id: "local-hidden", status: :running)
       insert_fixture!(EvoGit.Store, id: "local-hidden-2", status: :completed)
 
-      sock = socket(%{current_node: node(), current_node_id: "gpu-server"})
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: "gpu-server"})
 
-      result = NodeAware.load_running_and_pending_tasks(sock)
+      NodeAware.load_running_and_pending_tasks(sock)
 
-      assert result.assigns[:running_tasks] == []
-      assert result.assigns[:pending_tasks] == []
+      assert_receive {:node_aware_active_tasks, 1, "gpu-server", ^current_node,
+                      {running, pending}},
+                     1000
+
+      assert running == []
+      assert pending == []
     end
   end
 
   describe "assign_node/2 — reloads sidebar tasks on node switch" do
-    # assign_node/2 calls load_running_and_pending_tasks/1 after setting the
-    # node assigns, so the sidebar refreshes on every handle_params / node
-    # switch. We verify the running_tasks/pending_tasks assigns are populated.
+    # assign_node/2 sets the node-context assigns synchronously and triggers the
+    # ASYNC sidebar load after them (dedup-guarded by :tasks_node_loaded). The
+    # spawned task's captured view_pid IS the test process, so we assert on the
+    # `{:node_aware_active_tasks, seq, node_id, node, {running, pending}}`
+    # message payload instead of the returned socket's assigns.
 
     setup :setup_isolated_registry
 
     test "loads tasks when resolving to local node" do
       insert_fixture!(EvoGit.Store, id: "running-1", status: :running)
 
-      sock = socket(%{})
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
 
       result = NodeAware.assign_node(sock, %{})
 
-      assert Enum.any?(result.assigns[:running_tasks], &(&1.id == "running-1"))
+      # Node-context assigns are set synchronously...
+      assert result.assigns[:current_node_id] == nil
+      assert result.assigns[:current_node] == current_node
+      assert result.assigns[:tasks_node_loaded] == {nil, current_node}
+
+      # ...and the sidebar load arrives asynchronously.
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+
+      assert Enum.any?(running, &(&1.id == "running-1"))
+      assert pending == []
     end
 
     test "loads tasks when resolving to local via node=local param" do
       insert_fixture!(EvoGit.Store, id: "running-2", status: :running)
 
-      sock = socket(%{})
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
 
-      result = NodeAware.assign_node(sock, %{"node" => "local"})
+      NodeAware.assign_node(sock, %{"node" => "local"})
 
-      assert Enum.any?(result.assigns[:running_tasks], &(&1.id == "running-2"))
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+
+      assert Enum.any?(running, &(&1.id == "running-2"))
     end
 
-    test "remote node: does not show local tasks (RPC returns [])" do
+    test "unknown node param falls back to local and loads local tasks" do
       insert_fixture!(EvoGit.Store, id: "local-only-assign", status: :running)
 
-      # Unknown target id falls back to local — so we use a known-but-pending
-      # target to test remote. Since no target is saved, "unknown-id" resolves
-      # to :local. We test the remote path via the pending socket directly.
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
 
-      sock = socket(%{})
+      NodeAware.assign_node(sock, %{"node" => "unknown-id"})
 
-      # An unknown node param resolves to :local (target not found)
-      result = NodeAware.assign_node(sock, %{"node" => "unknown-id"})
+      # An unknown node param resolves to :local (target not found), so the
+      # local task shows up.
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
 
-      # Falls back to local, so the local task shows up
-      assert Enum.any?(result.assigns[:running_tasks], &(&1.id == "local-only-assign"))
+      assert Enum.any?(running, &(&1.id == "local-only-assign"))
+    end
+  end
+
+  describe "async sidebar delivery + stale-guard" do
+    # End-to-end async pipeline: load → `{:node_aware_active_tasks, ...}`
+    # message → `handle_tasks_result/2` (the attached `:handle_info` hook's
+    # stale-guard seam) → assigns.
+
+    setup :setup_isolated_registry
+
+    test "async delivery populates the sidebar (previous content kept until the result arrives)" do
+      # Insert a running task and a completed task with a branch (reviewable)
+      insert_fixture!(EvoGit.Store, status: :running)
+
+      insert_fixture!(EvoGit.Store,
+        status: :completed,
+        result: {:ok, %{branch_name: "feature-1"}},
+        review_status: nil
+      )
+
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
+
+      result = NodeAware.load_running_and_pending_tasks(sock)
+
+      # The socket is returned unchanged — previous sidebar content stays
+      # visible until the fresh result arrives.
+      assert result.assigns[:running_tasks] == []
+      assert result.assigns[:pending_tasks] == []
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+
+      assert length(running) == 1
+      assert hd(running).status == :running
+      assert length(pending) == 1
+      assert hd(pending).status == :completed
+
+      # Applying the message through the stale-guard populates the assigns.
+      socket =
+        NodeAware.handle_tasks_result(
+          result,
+          {:node_aware_active_tasks, 1, nil, current_node, {running, pending}}
+        )
+
+      assert length(socket.assigns[:running_tasks]) == 1
+      assert hd(socket.assigns[:running_tasks]).status == :running
+      assert length(socket.assigns[:pending_tasks]) == 1
+      assert hd(socket.assigns[:pending_tasks]).status == :completed
+    end
+
+    test "stale result for a different node is dropped (assigns unchanged)" do
+      current_node = node()
+
+      sock =
+        socket(%{
+          current_node: current_node,
+          current_node_id: nil,
+          running_tasks: [%{id: "keep"}],
+          pending_tasks: [%{id: "keep-pending"}]
+        })
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 1, "other-node", :"other_remote@127.0.0.1",
+           {[%{id: "stale"}], []}}
+        )
+
+      assert result.assigns[:running_tasks] == [%{id: "keep"}]
+      assert result.assigns[:pending_tasks] == [%{id: "keep-pending"}]
+    end
+
+    test "outdated seq is dropped (assigns unchanged)" do
+      current_node = node()
+
+      sock =
+        socket(%{
+          current_node: current_node,
+          current_node_id: nil,
+          tasks_load_seq: 3,
+          running_tasks: [%{id: "keep"}],
+          pending_tasks: []
+        })
+
+      # seq 2 < the current :tasks_load_seq (3) — a newer load was spawned.
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 2, nil, current_node, {[%{id: "stale"}], []}}
+        )
+
+      assert result.assigns[:running_tasks] == [%{id: "keep"}]
+      assert result.assigns[:pending_tasks] == []
+    end
+
+    test "matching seq and node context assigns the payload" do
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil, tasks_load_seq: 1})
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 1, nil, current_node, {[%{id: "fresh"}], []}}
+        )
+
+      assert result.assigns[:running_tasks] == [%{id: "fresh"}]
+      assert result.assigns[:pending_tasks] == []
+    end
+
+    test "node switch triggers a fresh load; same context does not re-spawn" do
+      insert_fixture!(EvoGit.Store, id: "running-1", status: :running)
+
+      current_node = node()
+      sock = socket(%{current_node: current_node, current_node_id: nil})
+
+      # First assign_node with the local context spawns a load.
+      result = NodeAware.assign_node(sock, %{})
+      assert result.assigns[:tasks_node_loaded] == {nil, current_node}
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+      assert Enum.any?(running, &(&1.id == "running-1"))
+
+      # A second assign_node with the SAME context must NOT re-spawn (the
+      # :tasks_node_loaded dedup guard skips it — no new message arrives).
+      NodeAware.assign_node(result, %{})
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
     end
   end
 
@@ -548,6 +730,12 @@ defmodule EvoDashWeb.NodeAwareTest do
     # EvoGit.RemoteConnections (a TOML file under the config dir), so these
     # tests isolate XDG_CONFIG_HOME to avoid touching the developer's real
     # ~/.config/genesis/ and save a dedicated test target.
+    #
+    # The node-context assigns (current_node_id/current_node/remote_status) are
+    # set synchronously and asserted directly. Each assign_node call ALSO
+    # triggers an async sidebar load whose result message
+    # (`{:node_aware_active_tasks, ...}`) lands in the test-process mailbox as
+    # a stray message — harmless, but be aware.
     setup :setup_isolated_registry
     setup :isolate_config_dir
 

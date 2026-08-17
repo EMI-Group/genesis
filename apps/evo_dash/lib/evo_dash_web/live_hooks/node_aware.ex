@@ -10,13 +10,30 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   The domain foundation lives in `EvoDash.NodeContext` — this module only calls
   it, never modifies it.
 
-  ## Unified sidebar "Active Tasks" loader
+  ## Unified sidebar "Active Tasks" loader (ASYNC)
 
   This module is the SINGLE implementation of the sidebar Active Tasks loading
   for the whole dashboard (ProjectsLive's old `Assigns.assign_running_and_pending_tasks/1`
-  duplicate was removed): `fetch_active_tasks/1` (node-aware fetch with the
-  pending-remote empty-list guard) → `partition_active_tasks/1` (pure) →
-  `assign_active_tasks/1` (assigns `:running_tasks`/`:pending_tasks`).
+  duplicate was removed). The load is ASYNC so a remote node's `:erpc`-routed
+  fetch (up to 30s) never blocks the LiveView process:
+
+  `load_running_and_pending_tasks/1` / `assign_active_tasks/1` /
+  `reload_tasks/1` capture the view pid, the node context, and the next
+  `:tasks_load_seq` value, bump the `:tasks_load_seq` assign, and spawn a
+  supervised fetch on `EvoDash.TaskSupervisor` — returning the socket
+  UNCHANGED (the previous sidebar content stays visible until the fresh result
+  arrives; no loading indicator). The spawned task runs
+  `fetch_active_tasks/2` (node-aware fetch with the pending-remote empty-list
+  guard) → `partition_active_tasks/1` (pure) and sends
+  `{:node_aware_active_tasks, seq, node_id, node, {running, pending}}` back to
+  the view. The attached `:handle_info` hook (installed by `on_mount/4` via
+  `attach_hook(:node_aware_active_tasks, :handle_info, &handle_info/2)`) routes
+  the message through the stale-guard `handle_tasks_result/2`, which DROPS the
+  result when the node context or the seq no longer matches (the user switched
+  nodes mid-flight, or a newer load was spawned — only the latest request's
+  result is ever applied), and only then assigns `:running_tasks`/
+  `:pending_tasks`.
+
   `load_running_and_pending_tasks/1` is the delegating public entry point used
   by `on_mount/4`, `assign_node/2`, `reload_tasks/1`, and ProjectsLive's
   task-mutation event handlers. `show_review_button?/1` is public and
@@ -24,6 +41,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   """
 
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
+  import Phoenix.LiveView, only: [attach_hook: 4]
 
   alias EvoGit.TaskRegistry
 
@@ -36,13 +54,17 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   @active_statuses [:running, :pending, :finalizing, :cancelling, :completed]
 
   @doc """
-  On-mount hook — sets initial node-context assigns and subscribes to
-  connection-status broadcasts when the LiveView socket is connected.
+  On-mount hook — sets initial node-context assigns, attaches the async
+  sidebar-load `:handle_info` hook, and subscribes to connection-status
+  broadcasts when the LiveView socket is connected.
 
   The sidebar Active Tasks load is gated behind `connected?/1` (dead-render
   skip): on the dead HTTP render the empty-list assigns seeded by `assign_new`
   are kept and NO query fires; the connected mount's reload (or the first
-  `handle_params` → `assign_node/2`) fetches the real sidebar data.
+  `handle_params` → `assign_node/2`) fetches the real sidebar data. The load
+  itself is async — it spawns on `EvoDash.TaskSupervisor` and returns the
+  socket unchanged; the fresh result arrives later via the attached
+  `:handle_info` hook (see `handle_info/2` + `handle_tasks_result/2`).
   """
   def on_mount(:default, _params, _session, socket) do
     socket =
@@ -56,6 +78,13 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:running_tasks, fn -> [] end)
       |> assign_new(:pending_tasks, fn -> [] end)
       |> assign_new(:tasks_reload_pending, fn -> false end)
+      |> assign_new(:tasks_load_seq, fn -> 0 end)
+      # Attached `:handle_info` hook — intercepts async sidebar-load results
+      # (`{:node_aware_active_tasks, ...}`) before the LiveView's own
+      # handle_info; every other message passes through (catch-all
+      # `{:cont, socket}`). Attached on BOTH the dead-render and connected
+      # paths (same pattern as `EvoDashWeb.LiveHooks.DesktopQuit`).
+      |> attach_hook(:node_aware_active_tasks, :handle_info, &handle_info/2)
 
     socket =
       if Phoenix.LiveView.connected?(socket) do
@@ -63,7 +92,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, @tasks_topic)
 
         # Load initial running/pending tasks for all live views (connected mount
-        # only — see the dead-render skip note in the doc above).
+        # only — see the dead-render skip note in the doc above). Async: the
+        # socket is returned unchanged and the result arrives via the attached
+        # `:handle_info` hook.
         load_running_and_pending_tasks(socket)
       else
         socket
@@ -80,22 +111,29 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Loads active tasks from the current node and assigns them to the socket.
+  Loads active tasks from the current node ASYNCHRONOUSLY.
 
   The single unified entry point for the sidebar "Active Tasks" loading, used
   by `on_mount/4`, `assign_node/2`, `reload_tasks/1`, and ProjectsLive's
-  task-mutation event handlers. Delegates to `fetch_active_tasks/1` +
-  `assign_active_tasks/1` (see their docs for the node-aware fetch semantics).
+  task-mutation event handlers. Spawns a supervised fetch on
+  `EvoDash.TaskSupervisor` and returns the socket unchanged — the previous
+  sidebar content stays visible until the fresh result arrives via the
+  attached `:handle_info` hook + `handle_tasks_result/2` stale-guard. The
+  spawned fetch is `fetch_active_tasks/2` → `partition_active_tasks/1` (see
+  their docs for the node-aware fetch semantics).
   """
-  def load_running_and_pending_tasks(socket), do: assign_active_tasks(socket)
+  def load_running_and_pending_tasks(socket), do: request_tasks_load(socket)
 
   @doc """
-  Fetches the active-task summaries from the current node as `{running, pending}`.
+  Fetches the active-task summaries from the given node context as
+  `{running, pending}`. Context-based (no socket I/O) so it can run inside the
+  spawned async load task.
 
-  Node-aware: reads `socket.assigns[:current_node]` (falling back to `node()`)
-  and `socket.assigns[:current_node_id]`. Local node →
+  Node-aware: `current_node` is the BEAM node to query, `current_node_id` is
+  the selected connection-target id. Local node →
   `TaskRegistry.list_tasks_summary(@active_statuses)`; remote node →
-  `EvoDash.NodeContext.list_tasks_summary(current_node, @active_statuses)` (RPC).
+  `EvoDash.NodeContext.list_tasks_summary(current_node, @active_statuses)`
+  (RPC).
 
   Pending-remote guard: when a remote context was requested
   (`current_node_id != nil`) but `current_node` still points at the local BEAM
@@ -104,10 +142,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   The summaries are passed through `partition_active_tasks/1`.
   """
-  def fetch_active_tasks(socket) do
-    current_node = socket.assigns[:current_node] || node()
-
-    if socket.assigns[:current_node_id] != nil and current_node == node() do
+  def fetch_active_tasks(current_node, current_node_id) do
+    if current_node_id != nil and current_node == node() do
       {[], []}
     else
       summaries =
@@ -119,6 +155,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
       partition_active_tasks(summaries)
     end
+  end
+
+  @doc """
+  Socket-based wrapper of `fetch_active_tasks/2` — reads `current_node`
+  (falling back to `node()`) and `current_node_id` from the socket assigns.
+  Kept for API compatibility.
+  """
+  def fetch_active_tasks(socket) do
+    fetch_active_tasks(socket.assigns[:current_node] || node(), socket.assigns[:current_node_id])
   end
 
   @doc """
@@ -144,15 +189,102 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Assigns `:running_tasks` and `:pending_tasks` on the socket from the current
-  node's active-task summaries (fetched via `fetch_active_tasks/1`).
+  Async sidebar reload used by ProjectsLive's task-mutation event handlers
+  (task_submit, cancel_task, clear_task_history, delete_task, GitHub-issue
+  fix). Spawns the same supervised fetch as `load_running_and_pending_tasks/1`
+  and returns the socket unchanged; the fresh `:running_tasks`/`:pending_tasks`
+  arrive via the attached `:handle_info` hook.
   """
-  def assign_active_tasks(socket) do
-    {running_tasks, pending_tasks} = fetch_active_tasks(socket)
+  def assign_active_tasks(socket), do: request_tasks_load(socket)
+
+  # Shared async sidebar-load spawner for `load_running_and_pending_tasks/1`,
+  # `assign_active_tasks/1`, and `reload_tasks/1` (via the former). Captures
+  # the view pid, node context, and the next `:tasks_load_seq` BEFORE spawning,
+  # bumps the seq assign (so only the latest request's result is ever applied),
+  # then spawns a supervised fetch on `EvoDash.TaskSupervisor` (same pattern as
+  # SettingsLive's LLM test / ReviewLive.MergeCheck's check_merge). Returns the
+  # socket unchanged — the previous sidebar content stays visible until the
+  # fresh result arrives via the attached `:handle_info` hook.
+  defp request_tasks_load(socket) do
+    view_pid = self()
+    current_node = socket.assigns[:current_node] || node()
+    current_node_id = socket.assigns[:current_node_id]
+    seq = Map.get(socket.assigns, :tasks_load_seq, 0) + 1
+
+    socket = assign(socket, :tasks_load_seq, seq)
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      {running, pending} =
+        try do
+          fetch_active_tasks(current_node, current_node_id)
+        rescue
+          # (1) Do we expect this error? Any unexpected failure inside a
+          # fire-and-forget supervised task (e.g. a crashed TaskRegistry) — the
+          # spawned fn must NEVER raise, or the result message would never be
+          # sent and the sidebar refresh would be silently lost.
+          # (2) Is try/rescue the cleanest approach? Yes — this is a deliberate
+          # async-boundary rescue (same pattern as MergeCheck's spawned
+          # check_merge task); the sync path's defensive mode for fetch
+          # failures is empty lists (NodeContext returns [] on RPC failure),
+          # so `{[], []}` mirrors it.
+          _ -> {[], []}
+        end
+
+      send(
+        view_pid,
+        {:node_aware_active_tasks, seq, current_node_id, current_node, {running, pending}}
+      )
+    end)
 
     socket
-    |> Phoenix.Component.assign(:running_tasks, running_tasks)
-    |> Phoenix.Component.assign(:pending_tasks, pending_tasks)
+  end
+
+  @doc """
+  Stale-guarded application of an async sidebar-load result (PURE socket
+  in/out — the testable seam of the attached `:handle_info` hook).
+
+  Drops the result (returns the socket unchanged) when ANY of the following
+  holds:
+    * `node_id` != the current `:current_node_id` assign (the user switched
+      nodes while the fetch was in flight), or
+    * `node` != the current `:current_node` assign (same), or
+    * `seq` != the current `:tasks_load_seq` assign (a newer load was spawned
+      since — only the latest request's result is ever applied).
+
+  Otherwise assigns `:running_tasks`/`:pending_tasks` from the payload.
+  """
+  def handle_tasks_result(
+        socket,
+        {:node_aware_active_tasks, seq, node_id, node, {running, pending}}
+      ) do
+    if node_id != socket.assigns[:current_node_id] or
+         node != socket.assigns[:current_node] or
+         seq != Map.get(socket.assigns, :tasks_load_seq, 0) do
+      # Stale — a node switch or a newer load superseded this result.
+      socket
+    else
+      socket
+      |> assign(:running_tasks, running)
+      |> assign(:pending_tasks, pending)
+    end
+  end
+
+  @doc """
+  Attached `:handle_info` hook (installed by `on_mount/4` via
+  `attach_hook(:node_aware_active_tasks, :handle_info, &handle_info/2)`).
+
+  Intercepts async sidebar-load results and routes them through the stale-guard
+  `handle_tasks_result/2`, returning `{:halt, socket}` so the LiveView's own
+  `handle_info` never sees them. All other messages pass through with
+  `{:cont, socket}` (the LiveView's own `handle_info` runs as usual — e.g.
+  `:node_aware_reload_tasks`).
+  """
+  def handle_info({:node_aware_active_tasks, _seq, _node_id, _node, _tasks} = message, socket) do
+    {:halt, handle_tasks_result(socket, message)}
+  end
+
+  def handle_info(_message, socket) do
+    {:cont, socket}
   end
 
   @doc """
@@ -179,6 +311,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   data comes from the local node but `@current_node_id` is preserved so that
   `handle_connection_status/2` can re-resolve once the connection completes.
   Unknown ids fall back to local.
+
+  The sidebar reload this triggers is ASYNC (spawn → `:node_aware_active_tasks`
+  message → `handle_tasks_result/2` stale-guard — see
+  `load_running_and_pending_tasks/1`); the node-context assigns themselves are
+  set synchronously.
   """
   def assign_node(socket, params) do
     node_param = params["node"]
@@ -218,7 +355,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
     # Reload sidebar tasks from the (possibly changed) node so the "Active
     # Tasks" section always reflects the node being viewed. This runs on every
-    # `handle_params` call, including node switches.
+    # `handle_params` call, including node switches. The load itself is async
+    # (see `load_running_and_pending_tasks/1`) — the guard below is set
+    # synchronously and the fresh result arrives later via the attached
+    # `:handle_info` hook (the stale-guard drops results from a previous node
+    # context if the user switches again mid-flight).
     #
     # Dedup guard: skip the reload when the node context hasn't changed since
     # the last `handle_params` call (e.g. on_mount already loaded local tasks,
@@ -423,8 +564,11 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Executes the debounced task reload: reloads running/pending tasks from the
-  current node and clears the `:tasks_reload_pending` flag. Returns the socket.
+  Executes the debounced task reload: spawns the async sidebar load for the
+  current node and clears the `:tasks_reload_pending` flag. Returns the socket
+  unchanged — the previous sidebar content stays visible until the fresh
+  result arrives via the attached `:handle_info` hook. LiveViews call this
+  from their `handle_info(:node_aware_reload_tasks, socket)` clause.
   """
   def reload_tasks(socket) do
     socket
