@@ -30,7 +30,7 @@ None — leaf directory (eight module files: `state_persistence.ex`, `project.ex
 
 ## Performance Notes — Blocking I/O in support modules
 
-The ~1-2s "GET /" load and ~25MB page memory are driven by synchronous I/O in the LiveView process. File:line refs are current.
+The ~1-2s "GET /" load and ~25MB page memory are driven by synchronous I/O in the LiveView process. File:line refs are current. **Workstream #3 (async node-aware loads) removed the remote-node blockers**: every NODE-AWARE load that used to run synchronously in `handle_params/3` (custom agents, model profiles, remote agents, remote project config/mode, recent projects) now runs in ONE `EvoDash.TaskSupervisor` task per handle_params run via `AsyncLoad.maybe_spawn/2`, and remote project activation runs via `ProjectFlow.spawn_remote_project_activation/2` — see "Async Node-Aware Loads" below. Local-only I/O (SQLite, config, FS) remains synchronous.
 
 ### Per-module I/O inventory (ALL synchronous in the LiveView process unless noted)
 
