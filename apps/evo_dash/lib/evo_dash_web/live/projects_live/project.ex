@@ -26,13 +26,69 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   the `""` sentinel — the task form renders "Auto (by rules)" and threads
   neither `:model_id` nor `:model_id_locked`, so the runtime script decides
   the model.
+
+  Local-node convenience — delegates to `load_model_profiles/1` with
+  `node()`.
   """
   def load_model_profiles do
-    config = Process.get(:memo_config_resolve) || Config.resolve()
+    load_model_profiles(node())
+  end
+
+  @doc """
+  Node-aware variant of `load_model_profiles/0`: resolves the model profiles
+  from the config of the node being viewed — the node that will actually run
+  the launched task.
+
+  - **Local node**: keeps the existing `Config.resolve()` path with the
+    `:memo_config_resolve` Process-dict memo (set in `ProjectsLive.mount/3`).
+    The memo is LOCAL-only — it is never consulted for remote nodes.
+  - **Remote node**: resolves the config via
+    `EvoDash.NodeContext.get_resolved_config/1` (the remote daemon's own
+    config.toml, atom-keyed — the same shape `Schema.model_profiles/1` and
+    `Schema.default_model_profile/1` operate on) and derives the
+    model-selection-script state from the remote node's own `agents.toml` via
+    `EvoDash.NodeContext.list_custom_agents/1`. On RPC failure degrades to
+    `{[], nil}` — never crashes the page (mirrors the degraded
+    `load_custom_agents/1` behavior).
+  """
+  def load_model_profiles(nil), do: load_model_profiles(node())
+
+  def load_model_profiles(node) do
+    if node == node() do
+      config = Process.get(:memo_config_resolve) || Config.resolve()
+
+      load_model_profiles_from_config(
+        config,
+        EvoGit.CustomAgents.ModelSelector.enabled?()
+      )
+    else
+      case NodeContext.get_resolved_config(node) do
+        {:ok, config} ->
+          load_model_profiles_from_config(config, remote_model_selection_enabled?(node))
+
+        {:error, _reason} ->
+          {[], nil}
+      end
+    end
+  end
+
+  @doc """
+  Pure selection logic shared by the local and remote paths of
+  `load_model_profiles/1`: given a resolved config map (the shape returned by
+  `EvoGit.Config.resolve/0`, e.g. `%{llm: %{models: [...]}}`) and whether the
+  node's model-selection script is enabled, returns `{profiles, selected_id}`.
+
+  `selected_id` is the `""` sentinel ("Auto (by rules)") when the script is
+  enabled, else the first profile's id, or `nil` when no profiles exist.
+  Exposed for unit testing the node-aware selection logic with an injected
+  config map (remote RPC results cannot be injected in tests).
+  """
+  def load_model_profiles_from_config(config, model_selection_enabled)
+      when is_map(config) and is_boolean(model_selection_enabled) do
     profiles = Schema.model_profiles(config)
 
     selected_id =
-      if EvoGit.CustomAgents.ModelSelector.enabled?() do
+      if model_selection_enabled do
         ""
       else
         case Schema.default_model_profile(config) do
@@ -42,6 +98,18 @@ defmodule EvoDashWeb.ProjectsLive.Project do
       end
 
     {profiles, selected_id}
+  end
+
+  # Whether the node being viewed has a model-selection script configured.
+  # Node-aware: reads the node's own agents.toml via EvoDash.NodeContext
+  # (which degrades to no-script on transport failure). Mirrors the
+  # `EvoGit.CustomAgents.ModelSelector.enabled?/0` semantics used on the
+  # local node — a configured-but-broken script still counts as enabled.
+  defp remote_model_selection_enabled?(node) do
+    case NodeContext.list_custom_agents(node) do
+      {:ok, %{model_selection_script: script}} -> is_binary(script) and script != ""
+      _ -> false
+    end
   end
 
   @doc """

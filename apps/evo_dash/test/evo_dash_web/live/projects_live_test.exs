@@ -2734,6 +2734,63 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  describe "node-aware model profiles" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "a remote PENDING context still serves the LOCAL node's model profiles", %{
+      conn: conn
+    } do
+      write_model_profile_config()
+
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Pending remote context: @current_node stays the LOCAL node while
+      # @current_node_id names the target (NodeAware pending branch) — so
+      # handle_params resolves the profiles from the LOCAL config (the task
+      # would actually run locally; the remote daemon is not reachable yet).
+      assert assigns(view)[:remote?] == false
+      assert assigns(view)[:current_node_id] == id
+      assert assigns(view)[:model_profiles] != []
+      assert assigns(view)[:selected_model_id] == "profile-a"
+    end
+
+    test "a connected fake remote node degrades to empty profiles (no crash, no Auto option)", %{
+      conn: conn
+    } do
+      write_model_profile_config()
+
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # The fake BEAM node can never answer :erpc (fails immediately with
+      # {:erpc, :noconnection}) — get_resolved_config fails fast and
+      # Project.load_model_profiles/1 degrades to {[], nil} (documented
+      # branch). The carried local selection is reset to the node's default
+      # (nil — no profiles).
+      assert assigns(view)[:remote?] == true
+      assert assigns(view)[:model_profiles] == []
+      assert assigns(view)[:selected_model_id] == nil
+
+      html = render(view)
+      refute html =~ "Auto (by rules)"
+    end
+  end
+
   describe "GitHub issue integration" do
     # All three async GitHub runners (resolved from application env at spawn
     # time by EvoDashWeb.ProjectsLive.GitHub) are stubbed for every test in

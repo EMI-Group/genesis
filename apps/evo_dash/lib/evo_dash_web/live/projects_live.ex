@@ -514,7 +514,13 @@ defmodule EvoDashWeb.ProjectsLive do
       # config warning banner can appear a frame later.
       config_status = nil
 
-      {model_profiles, selected_model_id} = Project.load_model_profiles()
+      # Node-aware: at mount the NodeAware on_mount hook has seeded
+      # current_node to the LOCAL node (the ?node= param is resolved later in
+      # handle_params), so this is the local config path — but the node is
+      # threaded explicitly so the loader never consults the local
+      # :memo_config_resolve memo for a remote context.
+      {model_profiles, selected_model_id} =
+        Project.load_model_profiles(socket.assigns[:current_node])
 
       # Custom agents + model-selection script state for the task form's
       # agent select and the model select's "Auto (by rules)" option.
@@ -610,6 +616,45 @@ defmodule EvoDashWeb.ProjectsLive do
       assign(socket,
         custom_agents: custom_agents,
         model_selection_enabled: model_selection_enabled
+      )
+
+    # Reload the node's model profiles + default selection on every
+    # handle_params run (mirrors the custom_agents reload above) so
+    # @model_profiles/@selected_model_id always match the node being viewed —
+    # a remote node's profiles come from ITS config.toml (the local
+    # :memo_config_resolve memo is bypassed for remote nodes inside
+    # Project.load_model_profiles/1). On a node switch, a model selection
+    # carried from another node is validated against the new node's profiles:
+    # it is kept only when it names a profile that exists there, otherwise it
+    # is reset to the new node's default ("" when its model-selection script
+    # is enabled, else the first profile id, or nil). A stale id would
+    # otherwise be threaded into do_task_submit and the remote runtime would
+    # silently fall back to its default model. Same-node navigations never
+    # clobber the user's explicit choice (that assign is owned by the
+    # select_model event / restore_state on the same node). This runs BEFORE
+    # StatePersistence.maybe_clear_state_on_node_switch below so the
+    # re-persisted per-node state carries the validated selection.
+    {model_profiles, default_selected_model_id} =
+      Project.load_model_profiles(socket.assigns.current_node)
+
+    selected_model_id =
+      if prev_node_id != socket.assigns[:current_node_id] do
+        carried = socket.assigns[:selected_model_id]
+
+        if is_binary(carried) and carried != "" and
+             Enum.any?(model_profiles, &(Map.get(&1, :id) == carried)) do
+          carried
+        else
+          default_selected_model_id
+        end
+      else
+        socket.assigns[:selected_model_id]
+      end
+
+    socket =
+      assign(socket,
+        model_profiles: model_profiles,
+        selected_model_id: selected_model_id
       )
 
     # Each node context (local + each remote target) has its own persisted
