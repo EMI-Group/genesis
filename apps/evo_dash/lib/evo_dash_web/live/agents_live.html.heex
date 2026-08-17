@@ -18,7 +18,7 @@
           <%= if @agents_loading do %>
             <div class="text-center py-16 text-base-content/50">
               <.icon name="hero-arrow-path" class="size-20 mx-auto mb-4 opacity-40 animate-spin" />
-              <%# 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 %>
+              <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
               <p class="text-lg"><%= gettext("Loading agents…") %></p>
             </div>
           <% else %>
