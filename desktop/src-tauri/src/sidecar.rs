@@ -75,7 +75,8 @@ pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
 /// Environment variables passed to the sidecar process.
 ///
 /// These configure the Phoenix backend to run as a local, single-user
-/// server (no distributed Erlang, fixed port, server mode enabled).
+/// server (no distributed Erlang, dynamic port resolved once at startup,
+/// server mode enabled).
 ///
 /// The bind address defaults to `127.0.0.1` (localhost only) for security.
 /// Users can override it by setting the `EVOGIT_BIND` environment variable
