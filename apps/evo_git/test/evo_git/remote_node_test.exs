@@ -397,4 +397,64 @@ defmodule EvoGit.RemoteNodeTest do
       assert EvoGit.AgentScheduler.RemoteAPI.list_tasks_summary() == []
     end
   end
+
+  describe "rpc_timeout/0 — :remote_rpc_timeout env override" do
+    # The RPC timeout is read from app env at CALL time (call_remote/4 →
+    # rpc_timeout/0), so tests can pin it without recompiling. The env key is
+    # new and read by no other code, but we restore it in on_exit anyway.
+    defp restore_rpc_timeout_env(previous) do
+      if previous == nil do
+        Application.delete_env(:evo_git, :remote_rpc_timeout)
+      else
+        Application.put_env(:evo_git, :remote_rpc_timeout, previous)
+      end
+    end
+
+    test "defaults to 30_000 ms when the env key is unset" do
+      previous = Application.get_env(:evo_git, :remote_rpc_timeout)
+      on_exit(fn -> restore_rpc_timeout_env(previous) end)
+      Application.delete_env(:evo_git, :remote_rpc_timeout)
+
+      assert RemoteNode.rpc_timeout() == 30_000
+    end
+
+    test "honors the env override at call time" do
+      previous = Application.get_env(:evo_git, :remote_rpc_timeout)
+      on_exit(fn -> restore_rpc_timeout_env(previous) end)
+      Application.put_env(:evo_git, :remote_rpc_timeout, 1)
+
+      assert RemoteNode.rpc_timeout() == 1
+
+      # The env-derived value is what call_remote/4 passes to :erpc.call/5:
+      # with the tiny override in effect, the remote path still runs and
+      # normalizes the (immediate) noconnection failure into {:error, _}.
+      assert {:error, _} = RemoteNode.call_remote(@fake_remote, :erlang, :node, [])
+    end
+
+    test "a tiny timeout makes a slow :erpc.call fail with :timeout" do
+      # Mechanism test (no second BEAM node needed): :erpc.call/5 respects the
+      # timeout even when the target is the local node, so a sleeping function
+      # plus a tiny timeout must fail fast with {:erpc, :timeout} — the exact
+      # failure call_remote/4 normalizes into {:error, ...}. The same call
+      # succeeds when given enough time, proving the timeout value is what
+      # differentiates. This mirrors the production shape: a remote function
+      # that sleeps longer than the RPC timeout.
+      started = System.monotonic_time(:millisecond)
+
+      caught =
+        try do
+          :erpc.call(node(), :timer, :sleep, [500], 100)
+          nil
+        catch
+          kind, reason -> {kind, reason}
+        end
+
+      elapsed = System.monotonic_time(:millisecond) - started
+      assert caught == {:error, {:erpc, :timeout}}
+      assert elapsed < 400
+
+      # Control: a generous timeout lets the same call complete.
+      assert :ok = :erpc.call(node(), :timer, :sleep, [10], 5_000)
+    end
+  end
 end

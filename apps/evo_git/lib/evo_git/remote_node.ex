@@ -11,8 +11,11 @@ defmodule EvoGit.RemoteNode do
   All functions are safe to call from any process.
   """
 
-  # RPC timeout (milliseconds) for cross-node :erpc.call/5.
-  @default_rpc_timeout 10_000
+  # Default RPC timeout (milliseconds) for cross-node :erpc.call/5 — used as
+  # the fallback when the `:remote_rpc_timeout` application env key is unset.
+  # The env key is read at CALL time (see rpc_timeout/0), so the timeout can
+  # be tuned at runtime (e.g. via config or tests) without recompiling.
+  @default_rpc_timeout 30_000
 
   @doc """
   Evaluates `apply(module, function, args)` on the given node, returning
@@ -23,7 +26,11 @@ defmodule EvoGit.RemoteNode do
   so local bugs surface truthfully.
 
   For a **remote node**, the call is routed through `:erpc.call/5` with a
-  bounded timeout (`#{@default_rpc_timeout}` ms). `:erpc.call/5` returns the
+  bounded timeout. The timeout is read at call time from the application env
+  key `:remote_rpc_timeout` (`Application.get_env(:evo_git,
+  :remote_rpc_timeout, #{@default_rpc_timeout})` — default
+  `#{@default_rpc_timeout}` ms = 30 s), so it can be tuned at runtime without
+  recompiling. `:erpc.call/5` returns the
   bare result on success, but *raises/throws* on every failure mode: an erpc
   failure (node down, timeout) raises `{erpc, reason}`, and a remote-function
   failure re-raises the original exception/exit/throw. All of these are
@@ -46,12 +53,22 @@ defmodule EvoGit.RemoteNode do
       # mode is normalized into {:error, reason} here. This is the correct
       # pattern for a boundary with untrusted/remote execution.
       try do
-        result = :erpc.call(node, module, function, args, @default_rpc_timeout)
+        result = :erpc.call(node, module, function, args, rpc_timeout())
         {:ok, result}
       catch
         kind, reason -> {:error, {kind, reason}}
       end
     end
+  end
+
+  @doc false
+  # Resolves the cross-node RPC timeout at CALL time from the application env
+  # key `:remote_rpc_timeout`, falling back to `@default_rpc_timeout` (30 s)
+  # when unset. Public (`@doc false`) so tests can pin the env override; the
+  # local-node path of call_remote/4 never uses this value.
+  @spec rpc_timeout() :: pos_integer()
+  def rpc_timeout do
+    Application.get_env(:evo_git, :remote_rpc_timeout, @default_rpc_timeout)
   end
 
   @doc """
