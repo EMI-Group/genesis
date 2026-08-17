@@ -516,7 +516,7 @@
                     <%= if @history_loading_agent_id == agent.id do %>
                       <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center flex items-center justify-center gap-2">
                         <.icon name="hero-arrow-path" class="size-4 animate-spin" />
-                        <%# 对话历史加载中提示：选中智能体后异步拉取历史时的过渡态 %>
+                        <%!-- 对话历史加载中提示：选中智能体后异步拉取历史时的过渡态 --%>
                         <span><%= gettext("Loading history…") %></span>
                       </div>
                     <% else %>
