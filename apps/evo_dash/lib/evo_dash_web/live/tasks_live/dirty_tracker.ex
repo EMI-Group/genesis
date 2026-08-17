@@ -112,10 +112,11 @@ defmodule EvoDashWeb.TasksLive.DirtyTracker do
     if max_updated_at(snapshot) > tracker.last_seen_updated_at do
       {:reload, advance(tracker, snapshot)}
     else
-      # Nothing new (or a snapshot whose max equals the baseline — e.g. a
-      # status change on an already-seen task does not advance the baseline,
-      # so it is picked up by the periodic :resync). Empty snapshots take
-      # this branch too: max "" never exceeds a seeded baseline.
+      # Nothing new (or a snapshot whose max equals the baseline — e.g. an
+      # identical snapshot, or deletions only: a status change DOES bump the
+      # row's updated_at above the baseline, so it reloads; the periodic
+      # :resync covers the equal-max blind spots). Empty snapshots take this
+      # branch too: max "" never exceeds a seeded baseline.
       if tracker.ticks_since_full_resync + 1 >= tracker.full_resync_every do
         {:resync, %{tracker | ticks_since_full_resync: 0}}
       else
