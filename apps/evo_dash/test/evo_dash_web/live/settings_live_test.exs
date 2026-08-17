@@ -1693,10 +1693,32 @@ defmodule EvoDashWeb.SettingsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, html} = live(conn, "/settings?node=" <> id)
+      {:ok, view, _html} = live(conn, "/settings?node=" <> id)
 
       # The node context resolved to the (unreachable) remote node.
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+
+      # The config load now runs in an async supervised task (NodeData) outside
+      # the LiveView process, so its result arrives as a message. Deliver it
+      # deterministically (direct-send + render, the same pattern as the LLM
+      # connection test) instead of racing the task's message. The real task
+      # delivers the same values (erpc fails fast with :nodedown), so a
+      # duplicate delivery is an idempotent no-op.
+      node = :"genesis_remote@127.0.0.1"
+
+      send(
+        view.pid,
+        {:settings_node_data_loaded, node,
+         %{
+           file_config: %{},
+           config_status: EvoDash.NodeContext.get_remote_config_status(node),
+           remote_config_error: :nodedown,
+           custom_agents: %{agents: [], model_selection_script: "", script_status: :ok}
+         }}
+      )
+
+      html = render(view)
+
       assert is_binary(assigns(view)[:remote_config_error])
       # No config was loaded — an empty map, not a misleading subset.
       assert assigns(view)[:file_config] == %{}
@@ -1707,6 +1729,45 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # ...and the bogus "No LLM Model Configured" box must NOT fire on top of it.
       refute html =~ "No LLM Model Configured"
+    end
+
+    test "stale async result for a different node is dropped", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.SettingsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/settings?node=" <> id)
+      assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+
+      # Deliver a result tagged with a DIFFERENT node than the one currently
+      # viewed — simulates a load that was requested for a node the user has
+      # since left. The stale-guard in handle_info must drop it: none of the
+      # sentinel values may appear in the assigns, regardless of whether the
+      # real in-flight load for the current node has landed yet.
+      send(
+        view.pid,
+        {:settings_node_data_loaded, :some_other_node@host,
+         %{
+           file_config: %{"llm" => %{"model" => "stale-sentinel"}},
+           config_status: %{ok?: true, warnings: [], validation_errors: []},
+           remote_config_error: "stale-error",
+           custom_agents: %{
+             agents: [%{"id" => "stale-agent"}],
+             model_selection_script: "stale-script",
+             script_status: :ok
+           }
+         }}
+      )
+
+      render(view)
+
+      refute assigns(view)[:file_config] == %{"llm" => %{"model" => "stale-sentinel"}}
+      refute assigns(view)[:remote_config_error] == "stale-error"
+      refute assigns(view)[:model_selection_script] == "stale-script"
+      refute assigns(view)[:custom_agents] == [%{"id" => "stale-agent"}]
     end
 
     test "local node keeps remote_config_error nil and shows no error banner", %{conn: conn} do
