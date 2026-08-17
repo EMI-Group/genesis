@@ -375,6 +375,27 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # No foreign repos registered (scheduler not running in tests)
       assert html =~ "No foreign repositories registered"
     end
+
+    test "local project opening stays synchronous (no async loading flag)", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # The local flow is unchanged: the assigns apply synchronously (via the
+      # push_patch -> handle_params turn) and no remote loading flag is ever
+      # set (AsyncLoad only touches node-aware loads, not local activation).
+      assert assigns(view)[:remote_project_loading] == nil
+      assert assigns(view)[:active_project] != nil
+      assert assigns(view)[:active_project_path] == tmp_dir
+    end
   end
 
   describe "opening project via URL params" do
@@ -1660,17 +1681,39 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
       # NOTE: the remote success path (dir? RPC → true → push_patch carrying
-      # `&node=`) is UNREACHABLE in tests — there is no real remote daemon to
-      # answer the dir? RPC, and the fake BEAM node fails it fast. Remote URL
-      # behavior is therefore covered by this error path (proves the node-aware
-      # validation branch ran) plus the switch_to_local inverse (patches
-      # WITHOUT `?node=`) in the test above.
+      # `&node=`) is UNREACHABLE through a full LiveView in tests — there is
+      # no real remote daemon to answer the dir? RPC, and the fake BEAM node
+      # fails it fast. Remote URL behavior is therefore covered by this error
+      # path (proves the node-aware validation branch ran) plus the
+      # switch_to_local inverse (patches WITHOUT `?node=`) in the test above,
+      # and the deterministic success path is covered by the raw-socket test
+      # below.
       html =
         view
         |> element("form[phx-submit='open_project']")
         |> render_submit(%{path: tmp_dir})
 
+      # The activation is ASYNC: the submit returns with the loading flag set
+      # and the banner rendered (deterministic — same turn as the submit).
+      # The event-turn html deterministically shows the loading banner; the
+      # in-flight flag may already have been cleared by the fast task's error
+      # message, so it is NOT asserted here.
+      assert html =~ "Loading project"
+
+      # Inject the deterministic error result — the real spawned task sends
+      # the same `{:error, :not_a_directory}` (dir? RPC fails fast against the
+      # fake node), so whichever message arrives first the flash is set and
+      # the second one is dropped by the stale-guard (loading flag already
+      # nil).
+      send(
+        view.pid,
+        {:async_remote_project, :"genesis_remote@127.0.0.1", tmp_dir, {:error, :not_a_directory}}
+      )
+
+      html = render_async(view)
+
       assert html =~ "Directory does not exist on the remote node: #{tmp_dir}"
+      assert assigns(view)[:remote_project_loading] == nil
 
       # The failed remote validation must NOT register the path in the LOCAL
       # recent-project list (proves the remote branch ran, not the local one)
@@ -1686,31 +1729,58 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # tests: a connected fake node atom fails the dir? RPC fast (error
       # branch — see the test above), and a disconnected target is
       # gate-blocked (`gate_active?/1` gates `%{phase: :disconnected}`, so the
-      # submit never reaches the recents filter). Call `open_project/2`
-      # directly on a hand-built socket in the test-reachable remote-success
-      # state: `current_node_id` set (routes into `activate_remote_project/2`),
+      # submit never reaches the activation). Call `open_project/2` directly
+      # on a hand-built socket in the test-reachable remote-success state:
+      # `current_node_id` set (routes into the remote activation path),
       # `remote_status` phase `:connected` (gate guard inactive), and
-      # `current_node` = the LOCAL BEAM node so NodeContext delegates to the
-      # real local TaskRegistry/filesystem.
+      # `current_node` = the LOCAL BEAM node so the spawned activation task's
+      # NodeContext calls short-circuit to the real local
+      # TaskRegistry/filesystem (no :erpc).
       socket =
         %Phoenix.LiveView.Socket{assigns: %{__changed__: nil}, redirected: nil}
         |> Phoenix.Component.assign(:current_node_id, id)
         |> Phoenix.Component.assign(:current_node, node())
         |> Phoenix.Component.assign(:remote_status, %{phase: :connected})
 
-      # Regression: pre-fix, the piped recents filter passed the node ATOM as
-      # the enumerable (`filter_absolute_recent_projects_for_node(recents,
-      # node)`) — Protocol.UndefinedError raised at project_flow.ex:430.
-      # Post-fix, the success branch runs and returns the filtered recents.
+      # open_project/2 now returns IMMEDIATELY: the RPC-heavy sequence runs in
+      # a spawned task, so the socket only carries the loading flag + closed
+      # palette; the recents/active_project assigns arrive via the async
+      # continuation.
       assert {:noreply, socket} =
                EvoDashWeb.ProjectsLive.ProjectFlow.open_project(socket, %{"path" => tmp_dir})
 
+      assert socket.assigns[:remote_project_loading] == tmp_dir
+      assert socket.assigns[:project_palette_open] == false
+      assert socket.assigns[:palette_mode] == :menu
+      assert socket.assigns[:active_project] == nil
+      assert socket.assigns[:recent_projects] == nil
+      refute socket.redirected
+
+      # The task captured `view_pid = self()` — THIS test process — so its
+      # result message lands in the test-process mailbox.
+      local_node = node()
+
+      assert_receive {:async_remote_project, ^local_node, ^tmp_dir, {:ok, results}}, 2000
+
+      # Apply the continuation directly (handle_info is a public callback).
+      socket =
+        EvoDashWeb.ProjectsLive.handle_info(
+          {:async_remote_project, local_node, tmp_dir, {:ok, results}},
+          socket
+        )
+        |> elem(1)
+
       # The node-filtered recents (incl. the freshly registered tmp_dir) were
       # assigned — the exact output of the fixed filter line.
-      assert Enum.any?(socket.assigns.recent_projects, &(&1.path == tmp_dir))
+      assert Enum.any?(socket.assigns[:recent_projects], &(&1.path == tmp_dir))
+      assert socket.assigns[:active_project] == %{path: tmp_dir, name: Path.basename(tmp_dir)}
+      assert socket.assigns[:active_project_path] == tmp_dir
+      assert socket.assigns[:remote_project_loading] == nil
+      assert socket.assigns[:show_add_foreign_repo_form] == false
+      assert socket.assigns[:task_mode] == "genesis_new"
 
       # The project was registered in the LOCAL recent-projects store, proving
-      # `activate_remote_project`'s success branch ran end-to-end.
+      # the activation task's success branch ran end-to-end.
       assert Enum.any?(EvoGit.TaskRegistry.list_recent_projects(), &(&1.path == tmp_dir))
 
       # The URL patch preserves the remote node context (`&node=` survives).
@@ -1831,7 +1901,24 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         |> render_submit(%{path: "/home/user/proj"})
 
       refute html =~ "Enter a full path"
+      # The activation is ASYNC: the event-turn html deterministically shows
+      # the loading banner (the in-flight flag may already be cleared by the
+      # fast task's error message — not asserted here).
+      assert html =~ "Loading project"
+
+      # Inject the deterministic error result (the real task's message is a
+      # harmless duplicate — the later one is dropped by the stale-guard once
+      # the loading flag clears).
+      send(
+        view.pid,
+        {:async_remote_project, :"genesis_remote@127.0.0.1", "/home/user/proj",
+         {:error, :not_a_directory}}
+      )
+
+      html = render_async(view)
+
       assert html =~ "Directory does not exist on the remote node: /home/user/proj"
+      assert assigns(view)[:remote_project_loading] == nil
 
       # The failed remote validation must NOT register the path locally
       # (proves the remote branch ran, not the local one)
@@ -1839,6 +1926,128 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                EvoGit.TaskRegistry.list_recent_projects(),
                &(&1.path == "/home/user/proj")
              )
+    end
+
+    test "async project load drops results from a stale node", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # Wait for the real async load so the assigns are settled (the mount-
+      # seeded degraded values equal the async degraded results either way).
+      render_async(view)
+      assert assigns(view)[:custom_agents] == []
+
+      # Forged result from a DIFFERENT node — dropped entirely by the
+      # stale-guard (AsyncLoad.handle_result/5 compares the captured node
+      # against the socket's current node).
+      send(
+        view.pid,
+        {:async_project_load, :"different_node@127.0.0.1", nil, nil,
+         %{
+           custom_agents: [%{id: "stale"}],
+           model_selection_enabled: true,
+           model_profiles: [],
+           default_selected_model_id: nil,
+           recent_projects: []
+         }}
+      )
+
+      render_async(view)
+
+      refute Enum.any?(assigns(view)[:custom_agents], &(&1.id == "stale"))
+      assert assigns(view)[:custom_agents] == []
+    end
+
+    test "async project load drops results for a stale project path", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      render_async(view)
+      assert assigns(view)[:active_project_path] == nil
+
+      # Forged result captured for a DIFFERENT project path than the socket's
+      # active project (nil here) — dropped.
+      send(
+        view.pid,
+        {:async_project_load, :"genesis_remote@127.0.0.1", nil, "/some/other/path",
+         %{
+           custom_agents: [%{id: "stale"}],
+           model_selection_enabled: true,
+           model_profiles: [],
+           default_selected_model_id: nil,
+           recent_projects: []
+         }}
+      )
+
+      render_async(view)
+
+      refute Enum.any?(assigns(view)[:custom_agents], &(&1.id == "stale"))
+      assert assigns(view)[:custom_agents] == []
+    end
+
+    test "async remote project activation drops results for a stale path", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      html =
+        view
+        |> element("form[phx-submit='open_project']")
+        |> render_submit(%{path: tmp_dir})
+
+      # The event-turn html deterministically shows the loading banner (the
+      # in-flight flag may already be cleared by the fast task's error message
+      # — not asserted here).
+      assert html =~ "Loading project"
+
+      # Forged SUCCESS result captured for a DIFFERENT path — dropped by the
+      # stale-guard (the captured path must equal the in-flight
+      # remote_project_loading), so the /wrong/path project never activates.
+      # The real task's {:error, :not_a_directory} is processed in any order
+      # and never sets active_project either.
+      send(
+        view.pid,
+        {:async_remote_project, :"genesis_remote@127.0.0.1", "/wrong/path",
+         {:ok,
+          %{
+            recent_projects: [],
+            active_project: %{path: "/wrong/path", name: "wrong"},
+            active_project_path: "/wrong/path",
+            task_mode: "genesis_new",
+            task_mode_info: nil,
+            project_config: nil,
+            worktree_script: nil,
+            commands: [],
+            foreign_repos: []
+          }}}
+      )
+
+      render_async(view)
+
+      assert assigns(view)[:active_project] == nil
+      assert assigns(view)[:active_project_path] == nil
     end
 
     test "add_foreign_repo accepts POSIX/Windows paths on a remote node, raw-preserved", %{
@@ -2776,6 +2985,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       )
 
       {:ok, view, _html} = live(conn, "/?node=" <> id)
+
+      # handle_params spawns the grouped async load; mount/3 seeds the LOCAL
+      # profiles first, so wait for the async (degraded) result to apply.
+      render_async(view)
 
       # The fake BEAM node can never answer :erpc (fails immediately with
       # {:erpc, :noconnection}) — get_resolved_config fails fast and
