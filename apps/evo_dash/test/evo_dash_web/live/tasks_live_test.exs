@@ -54,32 +54,15 @@ defmodule EvoDashWeb.TasksLiveTest do
     id
   end
 
-  # Waits for the async page load (start_async_page_load/4) to finish and
-  # returns the rendered HTML. The load runs in a Task.Supervisor child — NOT
-  # a LiveView `start_async` task — so render_async/2 would return immediately
-  # without waiting; polling the test proxy's cached tree (updated by channel
-  # diffs as they arrive) until the loading placeholder disappears is the
-  # deterministic flush (mirrors flush_review_load/2 in review_live_test.exs).
-  defp flush_tasks_load(view, timeout \\ 5000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    flush_loop = fn flush_loop ->
-      html = render(view)
-
-      if html =~ "Loading tasks..." do
-        if System.monotonic_time(:millisecond) >= deadline do
-          flunk("timed out waiting for the async task load to finish")
-        else
-          Process.sleep(10)
-          flush_loop.(flush_loop)
-        end
-      else
-        html
-      end
-    end
-
-    flush_loop.(flush_loop)
-  end
+  # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
+  defp flush_tasks_load(view, timeout \\ 5000),
+    do:
+      EvoDashWeb.TestHelpers.flush_loading(
+        view,
+        "Loading tasks...",
+        "timed out waiting for the async task load to finish",
+        timeout
+      )
 
   describe "task search" do
     test "renders the search input", %{conn: conn} do

@@ -1137,32 +1137,15 @@ defmodule EvoDashWeb.ReviewLiveTest do
     task_id
   end
 
-  # Waits for the async review-data load (EvoDashWeb.ReviewLive.LoadData) to
-  # finish and returns the rendered HTML. The load runs in a plain
-  # Task.Supervisor child — NOT a LiveView `start_async` task — so
-  # render_async/2 would return immediately without waiting; polling the
-  # test proxy's cached tree (updated by channel diffs as they arrive) until
-  # the spinner disappears is the deterministic flush.
-  defp flush_review_load(view, timeout \\ 5000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    flush_loop = fn flush_loop ->
-      html = render(view)
-
-      if html =~ "Loading review data..." do
-        if System.monotonic_time(:millisecond) >= deadline do
-          flunk("timed out waiting for the async review-data load to finish")
-        else
-          Process.sleep(10)
-          flush_loop.(flush_loop)
-        end
-      else
-        html
-      end
-    end
-
-    flush_loop.(flush_loop)
-  end
+  # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
+  defp flush_review_load(view, timeout \\ 5000),
+    do:
+      EvoDashWeb.TestHelpers.flush_loading(
+        view,
+        "Loading review data...",
+        "timed out waiting for the async review-data load to finish",
+        timeout
+      )
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
   # Used to synchronize on LiveView state changes that follow directly-sent

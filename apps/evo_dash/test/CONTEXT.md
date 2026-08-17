@@ -22,6 +22,7 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
   - Verified routes via `use EvoDashWeb, :verified_routes`
   - Imports: `Plug.Conn`, `Phoenix.ConnTest`, and the case module itself
   - Default setup returning a built `%Conn{}`
+- `test_helpers.ex` — `EvoDashWeb.TestHelpers`: shared `flush_loading/4` — polls the LiveView test proxy's rendered HTML until a loading marker disappears (async `Task.Supervisor`-backed page loads) or `flunk`s on timeout. The LiveView test files' private `flush_*_load` helpers are one-line delegates to it.
 
 ### `evo_dash/`
 - `markdown_render_test.exs` — `EvoDash.MarkdownRenderTest` — Markdown-to-HTML rendering edge cases (nil, empty, headings, code blocks, tables, bold).

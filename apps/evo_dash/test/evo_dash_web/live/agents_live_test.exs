@@ -573,32 +573,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # system_live_test / welcome_live_test / settings_live_agents_test).
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
-  # Waits for the async page load (EvoDashWeb.AgentsLive.LoadData) to finish
-  # and returns the rendered HTML. The load runs in a Task.Supervisor child —
-  # NOT a LiveView `start_async` task — so render_async/2 returns immediately
-  # without waiting; polling the test proxy's cached tree (updated by channel
-  # diffs as they arrive) until the loading state disappears is the
-  # deterministic flush (same idiom as review_live_test's flush_review_load).
-  defp flush_agents_load(view, timeout \\ 5000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-
-    flush_loop = fn flush_loop ->
-      html = render(view)
-
-      if html =~ "Loading agents…" do
-        if System.monotonic_time(:millisecond) >= deadline do
-          flunk("timed out waiting for the async agents load to finish")
-        else
-          Process.sleep(10)
-          flush_loop.(flush_loop)
-        end
-      else
-        html
-      end
-    end
-
-    flush_loop.(flush_loop)
-  end
+  # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
+  defp flush_agents_load(view, timeout \\ 5000),
+    do:
+      EvoDashWeb.TestHelpers.flush_loading(
+        view,
+        "Loading agents…",
+        "timed out waiting for the async agents load to finish",
+        timeout
+      )
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
   # Used to synchronize on LiveView state changes that follow directly-sent
