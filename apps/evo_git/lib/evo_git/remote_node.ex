@@ -1009,11 +1009,11 @@ defmodule EvoGit.RemoteNode do
   routes the call through `:erpc` via `call_remote/4` so the review operation
   runs inside the remote VM against the remote filesystem.
 
-  Returns the branch name (`main` → `master` → `dev` → `prod` → current →
-  first local branch) or `{:error, :no_branch_found}`. On RPC failure,
+  Returns `{:ok, branch_name}` (`main` → `master` → `dev` → `prod` → current
+  → first local branch) or `{:error, :no_branch_found}`. On RPC failure,
   returns `{:error, {kind, reason}}`.
   """
-  @spec default_merge_target(node(), String.t()) :: String.t() | {:error, term()}
+  @spec default_merge_target(node(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def default_merge_target(node, repo_path) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.default_merge_target(repo_path)

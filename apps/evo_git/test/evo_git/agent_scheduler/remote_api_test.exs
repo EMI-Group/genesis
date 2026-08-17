@@ -211,6 +211,38 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert is_nil(summary.model_id)
     end
 
+    test "includes message_count for an agent with a populated context" do
+      message1 = %ReqLLM.Message{role: :user, content: [ReqLLM.Message.ContentPart.text("one")]}
+
+      message2 = %ReqLLM.Message{
+        role: :assistant,
+        content: [ReqLLM.Message.ContentPart.text("two")]
+      }
+
+      context = %ReqLLM.Context{messages: [message1, message2]}
+
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(context: context))
+
+      [summary] = RemoteAPI.list_agents()
+      assert summary.message_count == 2
+    end
+
+    test "message_count is 0 for an agent with no context" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(context: nil))
+
+      [summary] = RemoteAPI.list_agents()
+      assert summary.message_count == 0
+    end
+
+    test "message_count is 0 for agents registered in sched_meta but missing agent_state" do
+      put_sched_meta(5, %SchedMeta{id: 5, depth: 0, spec: agent_spec()})
+
+      [summary] = RemoteAPI.list_agents()
+      assert summary.message_count == 0
+    end
+
     test "includes repo_root, context_path, worktree, commits, and task fields from state" do
       phylo = %PhyloGraphNode{
         repo: "/tmp/test",

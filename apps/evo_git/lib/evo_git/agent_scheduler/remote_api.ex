@@ -804,10 +804,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   absolute path of the repository. Runs on the REMOTE node when called via
   `:erpc.call/5`.
 
-  Returns the branch name (`main` → `master` → `dev` → `prod` → current →
-  first local branch) or `{:error, :no_branch_found}`.
+  Returns `{:ok, branch_name}` (`main` → `master` → `dev` → `prod` → current
+  → first local branch) or `{:error, :no_branch_found}`.
   """
-  @spec default_merge_target(String.t()) :: String.t() | {:error, atom()}
+  @spec default_merge_target(String.t()) :: {:ok, String.t()} | {:error, :no_branch_found}
   def default_merge_target(repo_path) do
     EvoGit.Review.default_merge_target(repo_path)
   end
@@ -1003,6 +1003,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       usage: Usage.zero(),
       total_tokens: 0,
       compression_count: 0,
+      message_count: 0,
       objective: spec.objective,
       result: nil,
       agent_module: spec.agent_module,
@@ -1037,6 +1038,11 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       usage: usage,
       total_tokens: state.total_tokens,
       compression_count: state.compression_count,
+      message_count:
+        case state.context do
+          %ReqLLM.Context{messages: messages} -> length(messages)
+          _ -> 0
+        end,
       objective: objective,
       result: nil,
       agent_module: meta.spec.agent_module,
