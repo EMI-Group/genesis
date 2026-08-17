@@ -186,21 +186,30 @@ defmodule EvoDashWeb.TasksLive do
         <% end %>
       </div>
 
-      <!-- Task Count -->
-      <div class="flex items-center justify-between mb-4">
-        <p class="text-sm text-base-content/60">
-          {dngettext(
-            "default",
-            "%{count} task found",
-            "%{count} tasks found",
-            length(@filtered_tasks)
-          )}
-        </p>
-      </div>
+      <!-- Task Count (hidden while a load is in flight — otherwise the stale
+           count flashes "0 tasks found" during every filter/navigation) -->
+      <%= if not @tasks_loading do %>
+        <div class="flex items-center justify-between mb-4">
+          <p class="text-sm text-base-content/60">
+            {dngettext(
+              "default",
+              "%{count} task found",
+              "%{count} tasks found",
+              length(@filtered_tasks)
+            )}
+          </p>
+        </div>
+      <% end %>
 
       <!-- Task List -->
       <div class="space-y-4 lg:space-y-5">
-        <%= if @filtered_tasks == [] do %>
+        <%= if @tasks_loading do %>
+          <div class="text-center py-12 sm:py-16 text-base-content/50">
+            <.icon name="hero-arrow-path" class="size-10 mx-auto mb-4 opacity-50 animate-spin" />
+            <p class="text-lg font-medium">{gettext("Loading tasks...")}</p>
+          </div>
+        <% else %>
+          <%= if @filtered_tasks == [] do %>
           <div class="text-center py-12 sm:py-16 text-base-content/50">
             <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
             <p class="text-lg font-medium">{gettext("No tasks found")}</p>
@@ -225,6 +234,7 @@ defmodule EvoDashWeb.TasksLive do
               />
             </div>
           <% end %>
+        <% end %>
         <% end %>
       </div>
 
@@ -427,7 +437,15 @@ defmodule EvoDashWeb.TasksLive do
         total_pages: 1,
         # Dirty-check state for remote-node polling; seeded in handle_params
         # (never used on the local node).
-        dirty_tracker: nil
+        dirty_tracker: nil,
+        # Async page-load state: tasks_load_seq is the monotonic spawn counter
+        # for the in-flight page-load task (stale-guard), tasks_loading drives
+        # the loading placeholder.
+        tasks_load_seq: 0,
+        tasks_loading: false,
+        # Monotonic spawn counter for the remote-poll dirty-check tasks
+        # (stale-guard for out-of-order tick results).
+        poll_seq: 0
       )
 
     {:ok, socket}
@@ -450,8 +468,16 @@ defmodule EvoDashWeb.TasksLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
-      |> seed_dirty_tracker()
-      |> load_page_into_socket(requested_page)
+
+    # The dirty tracker is seeded (async, inside the page-load task) only when
+    # it is missing or bound to a different node — pagination/filter
+    # push_patches keep the same node, so the tracker is left untouched (no
+    # extra summary fetch per page turn).
+    seed? =
+      (tracker = socket.assigns[:dirty_tracker]) == nil or
+        tracker.node != socket.assigns.current_node
+
+    socket = start_async_page_load(socket, requested_page, seed?, true)
 
     socket =
       if previous_node_ctx != nil and previous_node_ctx != socket.assigns[:tasks_node_loaded] do
@@ -521,34 +547,96 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
+  def handle_info({:tasks_page_loaded, seq, node, result}, socket) do
+    if seq < socket.assigns.tasks_load_seq or node != socket.assigns.current_node do
+      # Stale page-load result — a newer load was started after this one was
+      # spawned (or the user switched nodes). Drop it: the newest in-flight
+      # load will apply its own result (and clear the loading state).
+      {:noreply, socket}
+    else
+      socket = assign(socket, :tasks_loading, false)
+
+      case result do
+        {:ok, m} ->
+          socket =
+            socket
+            |> assign(:tasks, m.tasks)
+            |> assign(:current_page, m.current_page)
+            |> assign(:total_count, m.total_count)
+            |> assign(:total_pages, m.total_pages)
+            |> assign(:project_paths, m.project_paths)
+            |> assign(:filtered_tasks, m.tasks)
+
+          socket =
+            if m.ids_snapshot != nil do
+              maybe_seed_tracker(socket, m.ids_snapshot)
+            else
+              socket
+            end
+
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, gettext("Failed to load tasks."))}
+      end
+    end
+  end
+
+  @impl true
   def handle_info(:remote_poll, socket) do
     current_node = socket.assigns.current_node
 
     if current_node != node() do
-      # Still viewing a remote node — reschedule first, then run one dirty
-      # check. Each tick transfers only the lightweight changed-since
-      # summaries (usually []) over :erpc; the full page of TaskInfo structs
-      # is fetched only when the tracker reports :reload or :resync.
+      # Still viewing a remote node — reschedule FIRST (steady 3s cadence even
+      # while a dirty-check task is in flight, system_live precedent), then
+      # spawn the dirty check async. Each tick transfers only the lightweight
+      # `list_task_ids` snapshot (3 keys per row: id/status/updated_at) over
+      # `:erpc`; the full page of TaskInfo structs is fetched only when the
+      # tracker reports :reload or :resync.
       Process.send_after(self(), :remote_poll, 3_000)
 
+      seq = socket.assigns.poll_seq + 1
+      socket = assign(socket, :poll_seq, seq)
+
+      parent = self()
+      statuses = statuses_for_filter(socket.assigns.status_filter)
+
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        ids =
+          try do
+            EvoDash.NodeContext.list_task_ids(current_node, statuses)
+          rescue
+            # (1) Do we expect this error? YES — the tick crosses the node
+            #     boundary: the remote daemon may be dead/disappearing
+            #     mid-poll.
+            # (2) Is try/rescue the cleanest approach? YES — without it the
+            #     tick wedges and the 3s poll chain dies; an empty snapshot is
+            #     the safe fallback (the tracker treats it as no-change).
+            _ -> []
+          end
+
+        send(parent, {:tasks_poll_result, seq, current_node, ids})
+      end)
+
+      {:noreply, socket}
+    else
+      # Switched back to local — stop polling (PubSub handles local updates).
+      {:noreply, assign(socket, :remote_poll_timer, false)}
+    end
+  end
+
+  @impl true
+  def handle_info({:tasks_poll_result, seq, node, ids}, socket) do
+    if seq < socket.assigns.poll_seq or node != socket.assigns.current_node do
+      # Stale/out-of-order tick result (older spawn or a previously-viewed
+      # node) — drop it. Ticks never overlap in the LiveView (seq is
+      # monotonic), so a dropped result is never the latest one.
+      {:noreply, socket}
+    else
+      socket = maybe_seed_tracker(socket, ids)
+
       tracker = socket.assigns[:dirty_tracker]
-
-      # Belt-and-braces: normally handle_params already seeded the tracker for
-      # this node; if not (e.g. the LiveView was mounted before this feature),
-      # seed now so the `since` baseline is never nil.
-      tracker =
-        if is_nil(tracker) or tracker.node != current_node do
-          summaries = EvoDash.NodeContext.list_task_ids(current_node)
-
-          DirtyTracker.seed(DirtyTracker.new(), current_node, summaries)
-        else
-          tracker
-        end
-
-      changed =
-        EvoDash.NodeContext.list_tasks_changed_since(current_node, tracker.last_seen_updated_at)
-
-      {action, tracker} = DirtyTracker.evaluate(tracker, changed)
+      {action, tracker} = DirtyTracker.evaluate(tracker, ids)
       socket = assign(socket, :dirty_tracker, tracker)
 
       case action do
@@ -557,15 +645,15 @@ defmodule EvoDashWeb.TasksLive do
           {:noreply, socket}
 
         :reload ->
-          {:noreply, reload_current_page(socket)}
+          # Something changed — reload in the background (no loading state;
+          # stale data stays until fresh arrives).
+          {:noreply, start_async_page_load(socket, socket.assigns.current_page, false, false)}
 
         :resync ->
-          # Periodic full re-sync (deletion safeguard) — same reload as :reload.
-          {:noreply, reload_current_page(socket)}
+          # Periodic full re-sync (deletion safeguard) — same background
+          # reload as :reload.
+          {:noreply, start_async_page_load(socket, socket.assigns.current_page, false, false)}
       end
-    else
-      # Switched back to local — stop polling (PubSub handles local updates).
-      {:noreply, assign(socket, :remote_poll_timer, false)}
     end
   end
 
@@ -583,7 +671,7 @@ defmodule EvoDashWeb.TasksLive do
      socket
      |> assign(:status_filter, status_filter)
      |> assign(:project_filter, project_filter)
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -591,7 +679,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, filter)
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -599,7 +687,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, query)
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   # Prevents page reload when pressing Enter in the filter/search form
@@ -628,7 +716,7 @@ defmodule EvoDashWeb.TasksLive do
        search_query: "",
        review_status_filter: "all"
      )
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -636,7 +724,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:status_filter, "all")
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -644,7 +732,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:project_filter, "all")
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -652,7 +740,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, "")
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -660,7 +748,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, "all")
-     |> load_page_into_socket(1)}
+     |> start_async_page_load(1, false, true)}
   end
 
   @impl true
@@ -687,7 +775,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:expanded_task_ids, MapSet.new())
-     |> load_page_into_socket(1)}
+     |> sync_apply_page(1)}
   end
 
   @impl true
@@ -901,14 +989,19 @@ defmodule EvoDashWeb.TasksLive do
     Enum.to_list(start_page..end_page)
   end
 
-  # Reloads the current page's tasks into the socket assigns and recomputes
-  # the filtered view. Used by PubSub handlers and mutating events so the UI
-  # stays consistent after changes.
+  # Reloads the current page's tasks synchronously (no loading state, no seq
+  # bump). Used by mutating events (cancel/force-kill/delete/clear-history)
+  # and the :node_aware_reload_tasks PubSub debounce so the UI reflects
+  # changes immediately — the remote-poll path reloads async instead.
   defp reload_current_page(socket) do
-    load_page_into_socket(socket, socket.assigns.current_page)
+    sync_apply_page(socket, socket.assigns.current_page)
   end
 
-  defp load_page_into_socket(socket, page) do
+  # Synchronous fetch + apply of one page: the page of tasks, the pagination
+  # counters, the project paths, and the filtered view. Deliberately does NOT
+  # touch :tasks_loading or :tasks_load_seq (the async page-load path owns
+  # those).
+  defp sync_apply_page(socket, page) do
     node = socket.assigns.current_node
     filters = build_filters_from_assigns(socket)
 
@@ -924,6 +1017,109 @@ defmodule EvoDashWeb.TasksLive do
     |> assign(:filtered_tasks, tasks)
   end
 
+  # Spawns one async page load in a supervised Task (same pattern as
+  # review_live's start_async_load/2 and SettingsLive's LLM test) so the
+  # LiveView never blocks on cross-node RPCs. The result arrives later as a
+  # `{:tasks_page_loaded, seq, node, result}` message; `tasks_load_seq` is
+  # monotonic (incremented per spawn), so stale results from superseded loads
+  # are dropped by the handle_info stale-guard.
+  #
+  # When `seed?`, the task ALSO fetches the `list_task_ids` snapshot (3-key
+  # id/status/updated_at projection, status-filtered) for the dirty tracker —
+  # this is the handle_params seed on node switch (tracker missing or bound to
+  # a different node). `show_loading?` controls the loading placeholder:
+  # user-initiated loads (handle_params, filters) show it; background refresh
+  # reloads from the remote poll do not (no UI flash every ~30s resync — stale
+  # data stays until the fresh page arrives).
+  defp start_async_page_load(socket, page, seed?, show_loading?) do
+    seq = socket.assigns.tasks_load_seq + 1
+    socket = assign(socket, :tasks_load_seq, seq)
+    socket = if show_loading?, do: assign(socket, :tasks_loading, true), else: socket
+
+    parent = self()
+    node = socket.assigns.current_node
+    page_size = socket.assigns.page_size
+    filters = build_filters_from_assigns(socket)
+    statuses = statuses_for_filter(filters[:status])
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result =
+        try do
+          ids =
+            if seed? do
+              EvoDash.NodeContext.list_task_ids(node, statuses)
+            else
+              nil
+            end
+
+          {tasks, current_page, total_count, total_pages} =
+            load_page(node, page, page_size, filters)
+
+          paths = EvoDash.NodeContext.get_unique_paths(node)
+
+          {:ok,
+           %{
+             tasks: tasks,
+             current_page: current_page,
+             total_count: total_count,
+             total_pages: total_pages,
+             project_paths: paths,
+             ids_snapshot: ids
+           }}
+        rescue
+          # (1) Do we expect this error? YES — the load crosses the node
+          #     boundary: the RPC target may be a dead/disappearing remote
+          #     daemon, or the task store may be mid-restart.
+          # (2) Is try/rescue the cleanest approach? YES — without it the page
+          #     would wedge at the loading state forever with no message;
+          #     mirrors the justified rescue in review_live.ex
+          #     start_async_load/2.
+          _ -> {:error, :load_failed}
+        end
+
+      send(parent, {:tasks_page_loaded, seq, node, result})
+    end)
+
+    socket
+  end
+
+  # Seeds the dirty tracker when it is missing or bound to a different node.
+  # Belt-and-braces: normally the page-load seed (handle_params on node
+  # switch) already bound it; if not (e.g. the LiveView was mounted before
+  # this feature, or the first load's result raced), the poll result seeds now
+  # so the baseline is never nil. No-op otherwise — preserves the "no reseed
+  # on pagination/filter" behavior (the tracker keeps advancing across them).
+  defp maybe_seed_tracker(socket, ids) do
+    current_node = socket.assigns.current_node
+    tracker = socket.assigns[:dirty_tracker]
+
+    if is_nil(tracker) or tracker.node != current_node do
+      assign(
+        socket,
+        :dirty_tracker,
+        DirtyTracker.seed(DirtyTracker.new(), current_node, ids)
+      )
+    else
+      socket
+    end
+  end
+
+  # Whitelist lookup (per codebase atom policy — never String.to_atom) from a
+  # status-filter string to the status atoms used by `list_task_ids`. "all"
+  # and unknown values map to `[]` (all statuses).
+  @statuses_by_filter %{
+    "running" => [:running],
+    "pending" => [:pending],
+    "cancelling" => [:cancelling],
+    "completed" => [:completed],
+    "failed" => [:failed],
+    "cancelled" => [:cancelled]
+  }
+
+  defp statuses_for_filter(status) do
+    Map.get(@statuses_by_filter, status, [])
+  end
+
   defp build_filters_from_assigns(socket) do
     [
       status: socket.assigns.status_filter,
@@ -931,35 +1127,6 @@ defmodule EvoDashWeb.TasksLive do
       review_status: socket.assigns.review_status_filter,
       search: socket.assigns.search_query
     ]
-  end
-
-  # Seeds the dirty tracker when viewing a remote node after a node switch.
-  # The tracker gates whether each :remote_poll tick needs a full page reload;
-  # the baseline snapshot is taken BEFORE load_page_into_socket to minimize the
-  # baseline/page-load race window (sub-millisecond; any missed change is
-  # re-detected by the next tick). Pagination/filter push_patches keep the same
-  # node, so the tracker is left untouched (no extra summary fetch per page
-  # turn). On the local node the tracker is never used.
-  defp seed_dirty_tracker(socket) do
-    current_node = socket.assigns.current_node
-
-    if current_node != node() do
-      tracker = socket.assigns[:dirty_tracker]
-
-      if is_nil(tracker) or tracker.node != current_node do
-        summaries = EvoDash.NodeContext.list_task_ids(current_node)
-
-        assign(
-          socket,
-          :dirty_tracker,
-          DirtyTracker.seed(DirtyTracker.new(), current_node, summaries)
-        )
-      else
-        socket
-      end
-    else
-      socket
-    end
   end
 
   defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"

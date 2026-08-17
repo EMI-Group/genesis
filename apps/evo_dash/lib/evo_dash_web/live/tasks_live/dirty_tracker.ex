@@ -6,19 +6,24 @@ defmodule EvoDashWeb.TasksLive.DirtyTracker do
   3s (`:remote_poll`) because cross-node PubSub may be unreliable. Instead of
   transferring the full paginated page of `EvoGit.TaskInfo` structs (plus the
   COUNT and DISTINCT-project-paths queries) over `:erpc` on every tick, each
-  tick first fetches only the lightweight changed-since summaries (usually
-  `[]`) and reloads the full page only when something actually changed.
+  tick first fetches only the lightweight `list_task_ids` snapshot (3-key
+  projections: `id`, `status`, `updated_at`) and reloads the full page only
+  when something actually changed.
 
   This module tracks the baseline `updated_at` timestamp (fixed-precision ISO
   strings — lexicographic comparison is chronological) and the ticks elapsed
-  since the last full re-sync.
+  since the last full re-sync. It deliberately retains ONLY the timestamp —
+  never the id set: holding the full remote task list in memory is exactly
+  what the dirty check avoids (and id-set diffing would add memory and
+  per-tick work without improving staleness bounds).
 
   ## Deletion reconcile
 
-  A changed-since query cannot detect *deleted* tasks (they no longer have an
-  `updated_at` to compare). To bound deletion staleness, the tracker forces a
-  full re-sync every `full_resync_every` ticks (default 10 ticks = ~30s at the
-  3s cadence): the `:resync` action triggers the same full page reload as
+  A timestamp baseline cannot detect *deleted* tasks (they no longer have an
+  `updated_at` to compare), and the tracker deliberately does NOT reconcile id
+  sets across ticks. To bound deletion staleness, the tracker forces a full
+  re-sync every `full_resync_every` ticks (default 10 ticks = ~30s at the 3s
+  cadence): the `:resync` action triggers the same full page reload as
   `:reload`, refreshing the task set, count, and project paths. This is chosen
   over per-tick count comparisons (an extra RPC per tick) and id-set
   reconciliation (requires holding the full remote task list in memory —
@@ -47,26 +52,26 @@ defmodule EvoDashWeb.TasksLive.DirtyTracker do
   end
 
   @doc """
-  Seeds the tracker for a node from task summaries: binds the node, advances
-  the baseline to the max `:updated_at` (the `""` sentinel when the list is
-  empty), and resets the resync tick counter.
+  Seeds the tracker for a node from a `list_task_ids` snapshot (`%{id, status,
+  updated_at}` maps): binds the node, advances the baseline to the max
+  `:updated_at` (the `""` sentinel when the list is empty), and resets the
+  resync tick counter.
   """
   @spec seed(t(), node(), [map()]) :: t()
-  def seed(tracker, node, summaries) do
+  def seed(tracker, node, snapshot) do
     %{
       tracker
       | node: node,
-        last_seen_updated_at: max_updated_at(summaries),
+        last_seen_updated_at: max_updated_at(snapshot),
         ticks_since_full_resync: 0
     }
   end
 
   @doc """
-  Returns the max `:updated_at` string across task summary maps, or `""` for
-  an empty list. Fixed-precision ISO strings sort lexicographically in
-  chronological order, so plain string comparison is correct. `""` is the
-  "nothing seen yet" sentinel — all real `updated_at` strings are non-empty
-  and sort greater.
+  Returns the max `:updated_at` string across task maps, or `""` for an empty
+  list. Fixed-precision ISO strings sort lexicographically in chronological
+  order, so plain string comparison is correct. `""` is the "nothing seen yet"
+  sentinel — all real `updated_at` strings are non-empty and sort greater.
   """
   @spec max_updated_at([map()]) :: String.t()
   def max_updated_at(tasks) do
@@ -77,45 +82,52 @@ defmodule EvoDashWeb.TasksLive.DirtyTracker do
   end
 
   @doc """
-  Evaluates one poll tick against the changed-since summaries.
+  Evaluates one poll tick against the full `list_task_ids` snapshot.
 
   Returns `{action, tracker}`:
 
-  - changed non-empty → `{:reload, tracker}` with the baseline advanced to
-    `max_updated_at(changed)` and the resync counter reset. Changed is *all*
-    tasks with `updated_at` greater than the old baseline, so its max IS the
-    new global max — no extra summary fetch is needed after a reload.
-  - changed empty and `ticks_since_full_resync + 1 >= full_resync_every` →
-    `{:resync, tracker}` with the counter reset (deletion safeguard).
-  - changed empty otherwise → `{:noop, tracker}` with the counter incremented.
-  - unseeded baseline (`last_seen_updated_at == nil`): seeds from changed
-    (`max_updated_at`), `{:reload, ...}` when changed is non-empty, else
+  - snapshot's max `updated_at` > baseline → `{:reload, tracker}` with the
+    baseline advanced to `max_updated_at(snapshot)` and the resync counter
+    reset. The snapshot IS the full remote task list, so its max IS the new
+    global max — no extra fetch is needed after a reload.
+  - snapshot's max `updated_at` <= baseline (nothing new; includes the empty
+    snapshot, whose max is the `""` sentinel) and
+    `ticks_since_full_resync + 1 >= full_resync_every` → `{:resync, tracker}`
+    with the counter reset (deletion safeguard).
+  - snapshot's max `updated_at` <= baseline otherwise → `{:noop, tracker}`
+    with the counter incremented.
+  - unseeded baseline (`last_seen_updated_at == nil`): seeds from the snapshot
+    (`max_updated_at`), `{:reload, ...}` when the snapshot is non-empty, else
     `{:noop, tracker}` — belt-and-braces; the LiveView normally seeds first.
   """
   @spec evaluate(t(), [map()]) :: {:reload | :resync | :noop, t()}
-  def evaluate(%__MODULE__{last_seen_updated_at: nil} = tracker, changed) do
-    case changed do
+  def evaluate(%__MODULE__{last_seen_updated_at: nil} = tracker, snapshot) do
+    case snapshot do
       [] -> {:noop, tracker}
-      _ -> {:reload, advance(tracker, changed)}
+      _ -> {:reload, advance(tracker, snapshot)}
     end
   end
 
-  def evaluate(%__MODULE__{} = tracker, []) do
-    if tracker.ticks_since_full_resync + 1 >= tracker.full_resync_every do
-      {:resync, %{tracker | ticks_since_full_resync: 0}}
+  def evaluate(%__MODULE__{} = tracker, snapshot) do
+    if max_updated_at(snapshot) > tracker.last_seen_updated_at do
+      {:reload, advance(tracker, snapshot)}
     else
-      {:noop, %{tracker | ticks_since_full_resync: tracker.ticks_since_full_resync + 1}}
+      # Nothing new (or a snapshot whose max equals the baseline — e.g. a
+      # status change on an already-seen task does not advance the baseline,
+      # so it is picked up by the periodic :resync). Empty snapshots take
+      # this branch too: max "" never exceeds a seeded baseline.
+      if tracker.ticks_since_full_resync + 1 >= tracker.full_resync_every do
+        {:resync, %{tracker | ticks_since_full_resync: 0}}
+      else
+        {:noop, %{tracker | ticks_since_full_resync: tracker.ticks_since_full_resync + 1}}
+      end
     end
   end
 
-  def evaluate(%__MODULE__{} = tracker, changed) do
-    {:reload, advance(tracker, changed)}
-  end
-
-  defp advance(tracker, changed) do
+  defp advance(tracker, snapshot) do
     %{
       tracker
-      | last_seen_updated_at: max_updated_at(changed),
+      | last_seen_updated_at: max_updated_at(snapshot),
         ticks_since_full_resync: 0
     }
   end

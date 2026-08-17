@@ -90,21 +90,59 @@ defmodule EvoDashWeb.TasksLive.DirtyTrackerTest do
   end
 
   describe "evaluate/2" do
-    test "reloads, advances baseline to max changed, and resets the tick counter" do
+    test "reloads when the snapshot has a newer row, advances the baseline, and resets the tick counter" do
       tracker =
         DirtyTracker.seed(DirtyTracker.new(), :remote_node, [
           %{id: "a", updated_at: "2026-01-01T00:00:00.000000Z"}
         ])
 
-      changed = [
-        %{id: "b", updated_at: "2026-01-01T00:01:00.000000Z"},
-        %{id: "c", updated_at: "2026-01-01T00:02:00.000000Z"}
+      snapshot = [
+        %{id: "a", status: :completed, updated_at: "2026-01-01T00:00:00.000000Z"},
+        %{id: "b", status: :running, updated_at: "2026-01-01T00:01:00.000000Z"},
+        %{id: "c", status: :pending, updated_at: "2026-01-01T00:02:00.000000Z"}
       ]
 
-      {action, tracker} = DirtyTracker.evaluate(tracker, changed)
+      {action, tracker} = DirtyTracker.evaluate(tracker, snapshot)
 
       assert action == :reload
       assert tracker.last_seen_updated_at == "2026-01-01T00:02:00.000000Z"
+      assert tracker.ticks_since_full_resync == 0
+      assert tracker.node == :remote_node
+    end
+
+    test "a non-empty snapshot whose max equals the baseline noops" do
+      tracker =
+        DirtyTracker.seed(DirtyTracker.new(), :remote_node, [
+          %{id: "a", status: :completed, updated_at: "2026-01-01T00:00:00.000000Z"}
+        ])
+
+      # Same max as the baseline (e.g. a status change on the already-seen
+      # task, or no new rows at all): no reload, the resync counter advances.
+      {action, tracker} =
+        DirtyTracker.evaluate(tracker, [
+          %{id: "a", status: :failed, updated_at: "2026-01-01T00:00:00.000000Z"}
+        ])
+
+      assert action == :noop
+      assert tracker.ticks_since_full_resync == 1
+      assert tracker.last_seen_updated_at == "2026-01-01T00:00:00.000000Z"
+    end
+
+    test "a snapshot with a newer row reloads" do
+      tracker =
+        DirtyTracker.seed(DirtyTracker.new(), :remote_node, [
+          %{id: "a", status: :completed, updated_at: "2026-01-01T00:00:00.000000Z"}
+        ])
+
+      snapshot = [
+        %{id: "a", status: :completed, updated_at: "2026-01-01T00:00:00.000000Z"},
+        %{id: "b", status: :running, updated_at: "2026-01-01T00:05:00.000000Z"}
+      ]
+
+      {action, tracker} = DirtyTracker.evaluate(tracker, snapshot)
+
+      assert action == :reload
+      assert tracker.last_seen_updated_at == "2026-01-01T00:05:00.000000Z"
       assert tracker.ticks_since_full_resync == 0
       assert tracker.node == :remote_node
     end
@@ -148,7 +186,7 @@ defmodule EvoDashWeb.TasksLive.DirtyTrackerTest do
       assert tracker.ticks_since_full_resync == 1
     end
 
-    test "a change between noop ticks resets the resync counter" do
+    test "a newer row between noop ticks resets the resync counter" do
       tracker =
         DirtyTracker.seed(DirtyTracker.new(full_resync_every: 3), :remote_node, [
           %{id: "a", updated_at: "2026-01-01T00:00:00.000000Z"}
@@ -158,23 +196,26 @@ defmodule EvoDashWeb.TasksLive.DirtyTrackerTest do
       {_action, tracker} = DirtyTracker.evaluate(tracker, [])
 
       {action, tracker} =
-        DirtyTracker.evaluate(tracker, [%{id: "b", updated_at: "2026-01-01T00:01:00.000000Z"}])
+        DirtyTracker.evaluate(tracker, [
+          %{id: "a", status: :completed, updated_at: "2026-01-01T00:00:00.000000Z"},
+          %{id: "b", status: :running, updated_at: "2026-01-01T00:01:00.000000Z"}
+        ])
 
       assert action == :reload
       assert tracker.ticks_since_full_resync == 0
     end
 
-    test "unseeded tracker with changes seeds from changed and reloads" do
-      changed = [%{id: "a", updated_at: "2026-01-01T00:00:00.000000Z"}]
+    test "unseeded tracker with a non-empty snapshot seeds and reloads" do
+      snapshot = [%{id: "a", status: :completed, updated_at: "2026-01-01T00:00:00.000000Z"}]
 
-      {action, tracker} = DirtyTracker.evaluate(DirtyTracker.new(), changed)
+      {action, tracker} = DirtyTracker.evaluate(DirtyTracker.new(), snapshot)
 
       assert action == :reload
       assert tracker.last_seen_updated_at == "2026-01-01T00:00:00.000000Z"
       assert tracker.ticks_since_full_resync == 0
     end
 
-    test "unseeded tracker with no changes noops" do
+    test "unseeded tracker with an empty snapshot noops" do
       {action, tracker} = DirtyTracker.evaluate(DirtyTracker.new(), [])
 
       assert action == :noop

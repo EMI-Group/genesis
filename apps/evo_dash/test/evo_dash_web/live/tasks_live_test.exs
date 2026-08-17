@@ -54,6 +54,33 @@ defmodule EvoDashWeb.TasksLiveTest do
     id
   end
 
+  # Waits for the async page load (start_async_page_load/4) to finish and
+  # returns the rendered HTML. The load runs in a Task.Supervisor child — NOT
+  # a LiveView `start_async` task — so render_async/2 would return immediately
+  # without waiting; polling the test proxy's cached tree (updated by channel
+  # diffs as they arrive) until the loading placeholder disappears is the
+  # deterministic flush (mirrors flush_review_load/2 in review_live_test.exs).
+  defp flush_tasks_load(view, timeout \\ 5000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    flush_loop = fn flush_loop ->
+      html = render(view)
+
+      if html =~ "Loading tasks..." do
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("timed out waiting for the async task load to finish")
+        else
+          Process.sleep(10)
+          flush_loop.(flush_loop)
+        end
+      else
+        html
+      end
+    end
+
+    flush_loop.(flush_loop)
+  end
+
   describe "task search" do
     test "renders the search input", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/tasks")
@@ -67,8 +94,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "refactor the auth module", path: "/tmp/proj"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "search_tasks", %{"search_query" => "database"})
+      _html = render_hook(view, "search_tasks", %{"search_query" => "database"})
+      html = flush_tasks_load(view)
 
       assert html =~ "write a database migration"
       refute html =~ "build a web app"
@@ -80,8 +109,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [objective: "add dark mode toggle"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "search_tasks", %{"search_query" => "login"})
+      _html = render_hook(view, "search_tasks", %{"search_query" => "login"})
+      html = flush_tasks_load(view)
 
       assert html =~ "fix the login bug"
       refute html =~ "add dark mode toggle"
@@ -92,8 +123,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "beta task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "search_tasks", %{"search_query" => id1})
+      _html = render_hook(view, "search_tasks", %{"search_query" => id1})
+      html = flush_tasks_load(view)
 
       assert html =~ "alpha task"
       refute html =~ "beta task"
@@ -104,11 +137,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "beta task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
       # First narrow down
       _html = render_hook(view, "search_tasks", %{"search_query" => "alpha"})
+      flush_tasks_load(view)
       # Then clear
-      html = render_hook(view, "search_tasks", %{"search_query" => ""})
+      _html = render_hook(view, "search_tasks", %{"search_query" => ""})
+      html = flush_tasks_load(view)
 
       assert html =~ "alpha task"
       assert html =~ "beta task"
@@ -118,8 +154,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "Build a REST API"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "search_tasks", %{"search_query" => "rest api"})
+      _html = render_hook(view, "search_tasks", %{"search_query" => "rest api"})
+      html = flush_tasks_load(view)
 
       assert html =~ "Build a REST API"
     end
@@ -131,8 +169,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(status: :failed, opts: [prompt: "failed one"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
+      html = flush_tasks_load(view)
 
       assert html =~ "failed one"
       refute html =~ "completed one"
@@ -143,8 +183,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(status: :failed, opts: [prompt: "failed one"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "filter_tasks", %{"status_filter" => "all"})
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "all"})
+      html = flush_tasks_load(view)
 
       assert html =~ "completed one"
       assert html =~ "failed one"
@@ -155,11 +197,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "beta task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
       # Apply a search filter first
       _html = render_hook(view, "search_tasks", %{"search_query" => "alpha"})
+      flush_tasks_load(view)
       # Then reset
-      html = render_click(view, "reset_filters")
+      _html = render_click(view, "reset_filters")
+      html = flush_tasks_load(view)
 
       assert html =~ "alpha task"
       assert html =~ "beta task"
@@ -231,7 +276,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       # Insert page_size + 1 = 26 tasks to trigger pagination (2 pages).
       for i <- 0..25, do: insert_timed_fixture!(i)
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       # Pagination controls should render.
       assert html =~ "Page 1 of 2"
@@ -249,7 +295,8 @@ defmodule EvoDashWeb.TasksLiveTest do
     test "navigating to ?page=2 shows the next set", %{conn: conn} do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
-      {:ok, _view, html} = live(conn, ~p"/tasks?page=2")
+      {:ok, view, _html} = live(conn, ~p"/tasks?page=2")
+      html = flush_tasks_load(view)
 
       assert html =~ "Page 2 of 2"
 
@@ -263,15 +310,18 @@ defmodule EvoDashWeb.TasksLiveTest do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
       # Non-integer page → defaults to 1.
-      {:ok, _view, html_abc} = live(conn, ~p"/tasks?page=abc")
+      {:ok, view_abc, _html} = live(conn, ~p"/tasks?page=abc")
+      html_abc = flush_tasks_load(view_abc)
       assert html_abc =~ "Page 1 of 2"
 
       # Negative page → clamps to 1.
-      {:ok, _view, html_neg} = live(conn, ~p"/tasks?page=-1")
+      {:ok, view_neg, _html} = live(conn, ~p"/tasks?page=-1")
+      html_neg = flush_tasks_load(view_neg)
       assert html_neg =~ "Page 1 of 2"
 
       # Out-of-range page → clamps to last page (2).
-      {:ok, _view, html_big} = live(conn, ~p"/tasks?page=9999")
+      {:ok, view_big, _html} = live(conn, ~p"/tasks?page=9999")
+      html_big = flush_tasks_load(view_big)
       assert html_big =~ "Page 2 of 2"
       assert html_big =~ "task number 0"
     end
@@ -280,14 +330,17 @@ defmodule EvoDashWeb.TasksLiveTest do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
       # Navigate to page 2 via next_page.
-      html_next = render_click(view, "next_page")
+      _html = render_click(view, "next_page")
+      html_next = flush_tasks_load(view)
       assert html_next =~ "Page 2 of 2"
       assert html_next =~ "task number 0"
 
       # Navigate back to page 1 via prev_page.
-      html_prev = render_click(view, "prev_page")
+      _html = render_click(view, "prev_page")
+      html_prev = flush_tasks_load(view)
       assert html_prev =~ "Page 1 of 2"
       assert html_prev =~ "task number 25"
     end
@@ -296,8 +349,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_click(view, "goto_page", %{"page" => "2"})
+      _html = render_click(view, "goto_page", %{"page" => "2"})
+      html = flush_tasks_load(view)
       assert html =~ "Page 2 of 2"
       assert html =~ "task number 0"
     end
@@ -315,8 +370,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       end
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
-      html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
+      _html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
+      html = flush_tasks_load(view)
 
       # 10 failed tasks, page_size 25 → 1 page.
       assert html =~ "Page 1 of 1"
@@ -365,11 +422,168 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  describe "async page load" do
+    test "async page load populates the task list", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "async visible task"])
+
+      {:ok, view, html} = live(conn, ~p"/tasks")
+
+      # Deterministic: the async load task cannot apply its result before the
+      # initial render, so the loading placeholder is what live/2 returns.
+      assert html =~ "Loading tasks..."
+      refute html =~ "async visible task"
+
+      html = flush_tasks_load(view)
+
+      assert html =~ "async visible task"
+      assert html =~ "1 task found"
+      assert html =~ "Page 1 of 1"
+    end
+
+    test "stale page-load result is dropped", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "real visible task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      stale_task = %TaskInfo{
+        id: "stale_id",
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/stale", prompt: "STALE MARKER TASK"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      # Old seq (0 < tasks_load_seq): dropped by the seq stale-guard.
+      send(
+        view.pid,
+        {:tasks_page_loaded, 0, node(),
+         {:ok,
+          %{
+            tasks: [stale_task],
+            current_page: 1,
+            total_count: 1,
+            total_pages: 1,
+            project_paths: [],
+            ids_snapshot: nil
+          }}}
+      )
+
+      html = render(view)
+      refute html =~ "STALE MARKER TASK"
+      assert html =~ "real visible task"
+
+      # Wrong node with a high seq: dropped by the node stale-guard.
+      send(
+        view.pid,
+        {:tasks_page_loaded, 999, :other@host,
+         {:ok,
+          %{
+            tasks: [stale_task],
+            current_page: 1,
+            total_count: 1,
+            total_pages: 1,
+            project_paths: [],
+            ids_snapshot: nil
+          }}}
+      )
+
+      html = render(view)
+      refute html =~ "STALE MARKER TASK"
+      assert html =~ "real visible task"
+    end
+
+    test "poll result seeds the tracker and triggers a reload", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "poll visible task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # On the local node no poll is scheduled; inject one dirty-check result
+      # directly. Its max updated_at is NEWER than the seeded baseline, so the
+      # tracker must evaluate to :reload and spawn a background page load (no
+      # loading placeholder — show_loading is false for poll reloads).
+      send(
+        view.pid,
+        {:tasks_poll_result, 1, node(),
+         [%{id: "t1", status: :completed, updated_at: "2099-01-01T00:00:00.000000Z"}]}
+      )
+
+      _html = render(view)
+      html = flush_tasks_load(view)
+
+      assert html =~ "poll visible task"
+
+      # The reload was actually spawned (tasks_load_seq advanced at spawn
+      # time) and the tracker baseline advanced to the snapshot's max.
+      state = :sys.get_state(view.pid)
+      assert state.socket.assigns[:tasks_load_seq] >= 2
+
+      assert state.socket.assigns[:dirty_tracker].last_seen_updated_at ==
+               "2099-01-01T00:00:00.000000Z"
+
+      # Follow-up empty snapshot: noop (resync-counter path) — no crash,
+      # content unchanged.
+      send(view.pid, {:tasks_poll_result, 2, node(), []})
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "poll visible task"
+    end
+
+    test "stale poll result is dropped", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "real poll task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Apply a real poll result first (seq 1): advances the baseline.
+      send(
+        view.pid,
+        {:tasks_poll_result, 1, node(),
+         [%{id: "t1", status: :completed, updated_at: "2099-01-01T00:00:00.000000Z"}]}
+      )
+
+      _html = render(view)
+      flush_tasks_load(view)
+
+      # In production poll_seq advances at tick SPAWN time (in the
+      # :remote_poll handler) — which never runs on the local node. Simulate
+      # the next tick having spawned so the seq stale-guard is meaningful:
+      # any result with seq < poll_seq must be dropped.
+      :sys.replace_state(view.pid, fn state ->
+        %{state | socket: %{state.socket | assigns: Map.put(state.socket.assigns, :poll_seq, 1)}}
+      end)
+
+      # A stale tick (seq 0 < poll_seq 1) whose snapshot max is NEWER than the
+      # baseline must be dropped BEFORE the tracker sees it: the baseline must
+      # not advance and no reload may be spawned.
+      send(
+        view.pid,
+        {:tasks_poll_result, 0, node(),
+         [%{id: "stale-marker", status: :completed, updated_at: "2100-01-01T00:00:00.000000Z"}]}
+      )
+
+      html = render(view)
+      refute html =~ "stale-marker"
+      assert html =~ "real poll task"
+
+      state = :sys.get_state(view.pid)
+
+      assert state.socket.assigns[:dirty_tracker].last_seen_updated_at ==
+               "2099-01-01T00:00:00.000000Z"
+    end
+  end
+
   describe "cancelling status display" do
     test "renders the Cancelling label with a violet pulsing dot", %{conn: conn} do
       insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling task"])
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       assert html =~ "cancelling task"
       # Badge label — gettext("Cancelling…") uses a U+2026 ellipsis; assert the
@@ -390,7 +604,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       # (The option body renders with newline indentation around the label.)
       assert html =~ ~r/<option value="cancelling"[^>]*>\s*Cancelling\s*<\/option>/
 
-      filtered = render_hook(view, "filter_tasks", %{"status_filter" => "cancelling"})
+      _filtered = render_hook(view, "filter_tasks", %{"status_filter" => "cancelling"})
+      filtered = flush_tasks_load(view)
 
       assert filtered =~ "cancelling one"
       refute filtered =~ "completed one"
@@ -411,7 +626,8 @@ defmodule EvoDashWeb.TasksLiveTest do
              }}
         )
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       assert html =~ ~s(href="/review/#{id}")
       assert html =~ "Review"
@@ -420,7 +636,8 @@ defmodule EvoDashWeb.TasksLiveTest do
     test "renders a Review button for a cancelled task with a no_changes result", %{conn: conn} do
       id = insert_fixture!(status: :cancelled, result: {:ok, %{no_changes: true}})
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       assert html =~ ~s(href="/review/#{id}")
       assert html =~ "Review"
@@ -435,7 +652,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running one"])
       insert_fixture!(status: :pending, finished_at: nil, opts: [prompt: "pending one"])
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       # No task card may link to the review page.
       refute html =~ ~r{href="/review/"}
@@ -459,7 +677,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       finalizing_id =
         insert_fixture!(status: :finalizing, finished_at: nil, opts: [prompt: "finalizing one"])
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       cancel_buttons =
         html
@@ -543,6 +762,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
       html = render_click(view, "confirm_cancel_task", %{})
 
@@ -564,7 +784,8 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       completed_id = insert_fixture!(status: :completed, opts: [prompt: "completed one"])
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
 
       # The three-dot dropdown <ul> menu is always in the DOM (CSS-hidden).
       assert html =~ "menu menu-sm dropdown-content"
@@ -661,6 +882,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       id = insert_fixture!(status: :running, finished_at: nil, opts: [prompt: "running task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
 
       html = render_click(view, "confirm_force_kill_task", %{})
 
