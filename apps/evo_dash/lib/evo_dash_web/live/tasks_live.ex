@@ -30,372 +30,383 @@ defmodule EvoDashWeb.TasksLive do
       update_status={@update_status}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
-        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+        {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-      <!-- Filter Bar -->
-      <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
-        <form id="task-filters" phx-submit="noop">
-          <div class="flex flex-col sm:flex-row gap-3">
-            <!-- Status Filter -->
-            <div class="form-control">
-              <select
-                name="status_filter"
-                class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-                phx-change="filter_tasks"
-              >
-                <option value="all" selected={@status_filter == "all"}>
-                  {gettext("All Statuses")}
-                </option>
-                <option value="running" selected={@status_filter == "running"}>
-                  {gettext("Running")}
-                </option>
-                <option value="pending" selected={@status_filter == "pending"}>
-                  {gettext("Pending")}
-                </option>
-                <option value="cancelling" selected={@status_filter == "cancelling"}>
-                  {gettext("Cancelling")}
-                </option>
-                <option value="completed" selected={@status_filter == "completed"}>
-                  {gettext("Completed")}
-                </option>
-                <option value="failed" selected={@status_filter == "failed"}>
-                  {gettext("Failed")}
-                </option>
-                <option value="cancelled" selected={@status_filter == "cancelled"}>
-                  {gettext("Cancelled")}
-                </option>
-              </select>
-            </div>
-
-            <!-- Project Filter -->
-            <div class="form-control">
-              <select
-                name="project_filter"
-                class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-                phx-change="filter_tasks"
-              >
-                <option value="all" selected={@project_filter == "all"}>
-                  {gettext("All Projects")}
-                </option>
-                <%= for path <- @project_paths do %>
-                  <option value={path} selected={@project_filter == path}>
-                    {Path.basename(path)} ({String.slice(path, 0, 30)}...)
+        <!-- Filter Bar -->
+        <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
+          <form id="task-filters" phx-submit="noop">
+            <div class="flex flex-col sm:flex-row gap-3">
+              <!-- Status Filter -->
+              <div class="form-control">
+                <select
+                  name="status_filter"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  phx-change="filter_tasks"
+                >
+                  <option value="all" selected={@status_filter == "all"}>
+                    {gettext("All Statuses")}
                   </option>
-                <% end %>
-              </select>
-            </div>
+                  <option value="running" selected={@status_filter == "running"}>
+                    {gettext("Running")}
+                  </option>
+                  <option value="pending" selected={@status_filter == "pending"}>
+                    {gettext("Pending")}
+                  </option>
+                  <option value="cancelling" selected={@status_filter == "cancelling"}>
+                    {gettext("Cancelling")}
+                  </option>
+                  <option value="completed" selected={@status_filter == "completed"}>
+                    {gettext("Completed")}
+                  </option>
+                  <option value="failed" selected={@status_filter == "failed"}>
+                    {gettext("Failed")}
+                  </option>
+                  <option value="cancelled" selected={@status_filter == "cancelled"}>
+                    {gettext("Cancelled")}
+                  </option>
+                </select>
+              </div>
 
-            <!-- Review Status Filter -->
-            <div class="form-control">
-              <select
-                name="review_filter"
-                class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
-                phx-change="filter_review"
-              >
-                <option value="all" selected={@review_status_filter == "all"}>
-                  {gettext("All Reviews")}
-                </option>
-                <option value="pending" selected={@review_status_filter == "pending"}>
-                  {gettext("Pending Review")}
-                </option>
-                <option value="merged" selected={@review_status_filter == "merged"}>
-                  {gettext("Merged")}
-                </option>
-                <option value="rejected" selected={@review_status_filter == "rejected"}>
-                  {gettext("Rejected")}
-                </option>
-                <option value="continued" selected={@review_status_filter == "continued"}>
-                  {gettext("Continued")}
-                </option>
-              </select>
-            </div>
+              <!-- Project Filter -->
+              <div class="form-control">
+                <select
+                  name="project_filter"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  phx-change="filter_tasks"
+                >
+                  <option value="all" selected={@project_filter == "all"}>
+                    {gettext("All Projects")}
+                  </option>
+                  <%= for path <- @project_paths do %>
+                    <option value={path} selected={@project_filter == path}>
+                      {Path.basename(path)} ({String.slice(path, 0, 30)}...)
+                    </option>
+                  <% end %>
+                </select>
+              </div>
 
-            <!-- Search -->
-            <div class="form-control flex-1">
-              <div class="relative">
-                <.icon
-                  name="hero-magnifying-glass"
-                  class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
-                />
-                <input
-                  type="text"
-                  name="search_query"
-                  value={@search_query}
-                  class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
-                  placeholder={gettext("Search by task ID, prompt, or objective...")}
-                  phx-change="search_tasks"
-                  phx-debounce="200"
-                />
+              <!-- Review Status Filter -->
+              <div class="form-control">
+                <select
+                  name="review_filter"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  phx-change="filter_review"
+                >
+                  <option value="all" selected={@review_status_filter == "all"}>
+                    {gettext("All Reviews")}
+                  </option>
+                  <option value="pending" selected={@review_status_filter == "pending"}>
+                    {gettext("Pending Review")}
+                  </option>
+                  <option value="merged" selected={@review_status_filter == "merged"}>
+                    {gettext("Merged")}
+                  </option>
+                  <option value="rejected" selected={@review_status_filter == "rejected"}>
+                    {gettext("Rejected")}
+                  </option>
+                  <option value="continued" selected={@review_status_filter == "continued"}>
+                    {gettext("Continued")}
+                  </option>
+                </select>
+              </div>
+
+              <!-- Search -->
+              <div class="form-control flex-1">
+                <div class="relative">
+                  <.icon
+                    name="hero-magnifying-glass"
+                    class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
+                  />
+                  <input
+                    type="text"
+                    name="search_query"
+                    value={@search_query}
+                    class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
+                    placeholder={gettext("Search by task ID, prompt, or objective...")}
+                    phx-change="search_tasks"
+                    phx-debounce="200"
+                  />
+                </div>
+              </div>
+
+              <!-- Actions -->
+              <div class="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-md"
+                  phx-click="reset_filters"
+                  title={gettext("Reset all filters")}
+                >
+                  <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
+                </button>
               </div>
             </div>
+          </form>
 
-            <!-- Actions -->
-            <div class="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                class="btn btn-ghost btn-md"
-                phx-click="reset_filters"
-                title={gettext("Reset all filters")}
-              >
-                <.icon name="hero-x-mark" class="size-4" /> {gettext("Reset")}
-              </button>
-            </div>
-          </div>
-        </form>
-
-        <!-- Active filters indicator -->
-        <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
-          <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
-            <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
-            <%= if @status_filter != "all" do %>
-              <span class="badge badge-primary gap-1 rounded-md">
-                {@status_filter}
-                <button phx-click="clear_filter" phx-value-filter="status" class="hover:opacity-70">×</button>
-              </span>
-            <% end %>
-            <%= if @project_filter != "all" do %>
-              <span class="badge badge-secondary gap-1 rounded-md">
-                {Path.basename(@project_filter)}
-                <button phx-click="clear_filter" phx-value-filter="project" class="hover:opacity-70">×</button>
-              </span>
-            <% end %>
-            <%= if @search_query != "" do %>
-              <span class="badge badge-accent gap-1 rounded-md">
-                "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20, do: "..."}"
-                <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
-              </span>
-            <% end %>
-            <%= if @review_status_filter != "all" do %>
-              <span class="badge badge-accent gap-1 rounded-md">
-                <%= case @review_status_filter do %>
-                  <% "pending" -> %>
-                    {gettext("Pending Review")}
-                  <% "merged" -> %>
-                    {gettext("Merged")}
-                  <% "rejected" -> %>
-                    {gettext("Rejected")}
-                  <% "continued" -> %>
-                    {gettext("Continued")}
-                  <% _ -> %>
-                    {@review_status_filter}
-                <% end %>
-                <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
-              </span>
-            <% end %>
-          </div>
-        <% end %>
-      </div>
-
-      <!-- Task Count (hidden while a load is in flight — otherwise the stale
-           count flashes "0 tasks found" during every filter/navigation) -->
-      <%= if not @tasks_loading do %>
-        <div class="flex items-center justify-between mb-4">
-          <p class="text-sm text-base-content/60">
-            {dngettext(
-              "default",
-              "%{count} task found",
-              "%{count} tasks found",
-              length(@filtered_tasks)
-            )}
-          </p>
-        </div>
-      <% end %>
-
-      <!-- Task List -->
-      <div class="space-y-4 lg:space-y-5">
-        <%= if @tasks_loading do %>
-          <div class="text-center py-12 sm:py-16 text-base-content/50">
-            <.icon name="hero-arrow-path" class="size-10 mx-auto mb-4 opacity-50 animate-spin" />
-            <p class="text-lg font-medium">{gettext("Loading tasks...")}</p>
-          </div>
-        <% else %>
-          <%= if @filtered_tasks == [] do %>
-          <div class="text-center py-12 sm:py-16 text-base-content/50">
-            <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
-            <p class="text-lg font-medium">{gettext("No tasks found")}</p>
-            <p class="text-sm mt-1">
-              <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
-                {gettext("Try adjusting your filters or search query.")}
-              <% else %>
-                {gettext("Tasks will appear here once you start them from the dashboard.")}
+          <!-- Active filters indicator -->
+          <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
+            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
+              <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
+              <%= if @status_filter != "all" do %>
+                <span class="badge badge-primary gap-1 rounded-md">
+                  {@status_filter}
+                  <button phx-click="clear_filter" phx-value-filter="status" class="hover:opacity-70">×</button>
+                </span>
               <% end %>
-            </p>
-          </div>
-        <% else %>
-          <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
-            <div class={[
-              "relative z-10 has-[[open]]:z-30 animate-fade-in-up",
-              animation_delay_class(idx)
-            ]}>
-              <EvoDashWeb.TaskCardComponents.task_card
-                task={task}
-                show_details={MapSet.member?(@expanded_task_ids, task.id)}
-                current_node_id={@current_node_id}
-              />
+              <%= if @project_filter != "all" do %>
+                <span class="badge badge-secondary gap-1 rounded-md">
+                  {Path.basename(@project_filter)}
+                  <button phx-click="clear_filter" phx-value-filter="project" class="hover:opacity-70">×</button>
+                </span>
+              <% end %>
+              <%= if @search_query != "" do %>
+                <span class="badge badge-accent gap-1 rounded-md">
+                  "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20,
+                    do: "..."}"
+                  <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
+                </span>
+              <% end %>
+              <%= if @review_status_filter != "all" do %>
+                <span class="badge badge-accent gap-1 rounded-md">
+                  <%= case @review_status_filter do %>
+                    <% "pending" -> %>
+                      {gettext("Pending Review")}
+                    <% "merged" -> %>
+                      {gettext("Merged")}
+                    <% "rejected" -> %>
+                      {gettext("Rejected")}
+                    <% "continued" -> %>
+                      {gettext("Continued")}
+                    <% _ -> %>
+                      {@review_status_filter}
+                  <% end %>
+                  <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
+                </span>
+              <% end %>
             </div>
           <% end %>
-        <% end %>
-        <% end %>
-      </div>
+        </div>
 
-      <!-- Pagination Controls -->
-      <%= if @total_count > 0 do %>
-        <% offset = (@current_page - 1) * @page_size %>
-        <% range_start = offset + 1 %>
-        <% range_end = min(offset + @page_size, @total_count) %>
-        <% pages = page_window(@current_page, @total_pages) %>
-        <div class="mt-4 flex flex-col items-center gap-3">
-          <p class="text-sm text-base-content/60">
-            {gettext("Showing %{start}–%{end} of %{total} tasks",
-              start: range_start,
-              end: range_end,
-              total: @total_count
-            )}
-          </p>
-          <div class="flex items-center gap-2">
-            <div class="join">
-              <button
-                class="join-item btn btn-sm"
-                phx-click="prev_page"
-                disabled={@current_page <= 1}
-              >
-                <.icon name="hero-chevron-left" class="size-4" />
-              </button>
-              <%= for p <- pages do %>
-                <%= if p == @current_page do %>
-                  <button class="join-item btn btn-sm btn-primary" disabled>
-                    {p}
-                  </button>
-                <% else %>
-                  <button
-                    class="join-item btn btn-sm"
-                    phx-click="goto_page"
-                    phx-value-page={p}
-                  >
-                    {p}
-                  </button>
-                <% end %>
+        <!-- Task Count (hidden while a load is in flight — otherwise the stale
+           count flashes "0 tasks found" during every filter/navigation) -->
+        <%= if not @tasks_loading do %>
+          <div class="flex items-center justify-between mb-4">
+            <p class="text-sm text-base-content/60">
+              {dngettext(
+                "default",
+                "%{count} task found",
+                "%{count} tasks found",
+                length(@filtered_tasks)
+              )}
+            </p>
+          </div>
+        <% end %>
+
+        <!-- Task List -->
+        <div class="space-y-4 lg:space-y-5">
+          <%= if @tasks_loading do %>
+            <div class="text-center py-12 sm:py-16 text-base-content/50">
+              <.icon name="hero-arrow-path" class="size-10 mx-auto mb-4 opacity-50 animate-spin" />
+              <p class="text-lg font-medium">{gettext("Loading tasks...")}</p>
+            </div>
+          <% else %>
+            <%= if @filtered_tasks == [] do %>
+              <div class="text-center py-12 sm:py-16 text-base-content/50">
+                <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
+                <p class="text-lg font-medium">{gettext("No tasks found")}</p>
+                <p class="text-sm mt-1">
+                  <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
+                    {gettext("Try adjusting your filters or search query.")}
+                  <% else %>
+                    {gettext("Tasks will appear here once you start them from the dashboard.")}
+                  <% end %>
+                </p>
+              </div>
+            <% else %>
+              <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
+                <div class={[
+                  "relative z-10 has-[[open]]:z-30 animate-fade-in-up",
+                  animation_delay_class(idx)
+                ]}>
+                  <EvoDashWeb.TaskCardComponents.task_card
+                    task={task}
+                    show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                    current_node_id={@current_node_id}
+                  />
+                </div>
               <% end %>
-              <button
-                class="join-item btn btn-sm"
-                phx-click="next_page"
-                disabled={@current_page >= @total_pages}
-              >
-                <.icon name="hero-chevron-right" class="size-4" />
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-base-content/50">
-            {gettext("Page %{current} of %{total}", current: @current_page, total: @total_pages)}
-          </p>
+            <% end %>
+          <% end %>
         </div>
-      <% end %>
 
-      <!-- Clear History (moved to bottom for safety) -->
-      <div class="mt-6 flex justify-center sm:justify-end">
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1"
-          phx-click="clear_task_history"
-          phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
-        >
-          <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
-        </button>
-      </div>
-
-      <!-- Full Result Modal -->
-      <%= if @selected_result do %>
-        <EvoDashWeb.Helpers.modal on_close="close_result_modal">
-          <:title>
-            <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
-            {gettext("Task Result")}
-          </:title>
-          {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
-        </EvoDashWeb.Helpers.modal>
-      <% end %>
-
-      <!-- Full Options Modal -->
-      <%= if @selected_options do %>
-        <EvoDashWeb.Helpers.modal on_close="close_options_modal">
-          <:title>
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
-            {gettext("Full Objective")}
-          </:title>
-          <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
-        </EvoDashWeb.Helpers.modal>
-      <% end %>
-
-      <!-- Cancel Task confirmation modal (graceful: agents save + exit) -->
-      <%= if @confirm_cancel_task_id do %>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_cancel_modal"></div>
-          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
-            <div class="flex items-center gap-3 mb-4">
-              <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
-              <h3 class="text-lg font-bold">{gettext("Cancel Task?")}</h3>
-            </div>
-
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext(
-                "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
+        <!-- Pagination Controls -->
+        <%= if @total_count > 0 do %>
+          <% offset = (@current_page - 1) * @page_size %>
+          <% range_start = offset + 1 %>
+          <% range_end = min(offset + @page_size, @total_count) %>
+          <% pages = page_window(@current_page, @total_pages) %>
+          <div class="mt-4 flex flex-col items-center gap-3">
+            <p class="text-sm text-base-content/60">
+              {gettext("Showing %{start}–%{end} of %{total} tasks",
+                start: range_start,
+                end: range_end,
+                total: @total_count
               )}
             </p>
-            <p class="text-xs text-base-content/40 mb-5">
-              {gettext("Task: %{task_id}", task_id: @confirm_cancel_task_id)}
+            <div class="flex items-center gap-2">
+              <div class="join">
+                <button
+                  class="join-item btn btn-sm"
+                  phx-click="prev_page"
+                  disabled={@current_page <= 1}
+                >
+                  <.icon name="hero-chevron-left" class="size-4" />
+                </button>
+                <%= for p <- pages do %>
+                  <%= if p == @current_page do %>
+                    <button class="join-item btn btn-sm btn-primary" disabled>
+                      {p}
+                    </button>
+                  <% else %>
+                    <button
+                      class="join-item btn btn-sm"
+                      phx-click="goto_page"
+                      phx-value-page={p}
+                    >
+                      {p}
+                    </button>
+                  <% end %>
+                <% end %>
+                <button
+                  class="join-item btn btn-sm"
+                  phx-click="next_page"
+                  disabled={@current_page >= @total_pages}
+                >
+                  <.icon name="hero-chevron-right" class="size-4" />
+                </button>
+              </div>
+            </div>
+            <p class="text-xs text-base-content/50">
+              {gettext("Page %{current} of %{total}", current: @current_page, total: @total_pages)}
             </p>
+          </div>
+        <% end %>
 
-            <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="close_cancel_modal">
-                {gettext("Keep Running")}
-              </button>
-              <button
-                type="button"
-                class="btn btn-warning rounded-md px-6 gap-2"
-                phx-click="confirm_cancel_task"
-              >
-                <.icon name="hero-x-mark" class="size-4.5" />
-                {gettext("Cancel Task")}
-              </button>
+        <!-- Clear History (moved to bottom for safety) -->
+        <div class="mt-6 flex justify-center sm:justify-end">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1"
+            phx-click="clear_task_history"
+            phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
+          >
+            <.icon name="hero-trash" class="size-3.5" /> {gettext("Clear History")}
+          </button>
+        </div>
+
+        <!-- Full Result Modal -->
+        <%= if @selected_result do %>
+          <EvoDashWeb.Helpers.modal on_close="close_result_modal">
+            <:title>
+              <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
+              {gettext("Task Result")}
+            </:title>
+            {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
+          </EvoDashWeb.Helpers.modal>
+        <% end %>
+
+        <!-- Full Options Modal -->
+        <%= if @selected_options do %>
+          <EvoDashWeb.Helpers.modal on_close="close_options_modal">
+            <:title>
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+              {gettext("Full Objective")}
+            </:title>
+            <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+          </EvoDashWeb.Helpers.modal>
+        <% end %>
+
+        <!-- Cancel Task confirmation modal (graceful: agents save + exit) -->
+        <%= if @confirm_cancel_task_id do %>
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_cancel_modal">
+            </div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
+                <h3 class="text-lg font-bold">{gettext("Cancel Task?")}</h3>
+              </div>
+
+              <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                {gettext(
+                  "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
+                )}
+              </p>
+              <p class="text-xs text-base-content/40 mb-5">
+                {gettext("Task: %{task_id}", task_id: @confirm_cancel_task_id)}
+              </p>
+
+              <div class="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  class="btn btn-ghost rounded-md px-6"
+                  phx-click="close_cancel_modal"
+                >
+                  {gettext("Keep Running")}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-warning rounded-md px-6 gap-2"
+                  phx-click="confirm_cancel_task"
+                >
+                  <.icon name="hero-x-mark" class="size-4.5" />
+                  {gettext("Cancel Task")}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      <% end %>
+        <% end %>
 
-      <!-- Force Kill Task confirmation modal (brutal: immediate, all progress lost) -->
-      <%= if @confirm_force_kill_task_id do %>
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_force_kill_modal"></div>
-          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
-            <div class="flex items-center gap-3 mb-4">
-              <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
-              <h3 class="text-lg font-bold">{gettext("Force Kill Task?")}</h3>
+        <!-- Force Kill Task confirmation modal (brutal: immediate, all progress lost) -->
+        <%= if @confirm_force_kill_task_id do %>
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_force_kill_modal">
             </div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
+                <h3 class="text-lg font-bold">{gettext("Force Kill Task?")}</h3>
+              </div>
 
-            <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
-              {gettext(
-                "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
-              )}
-            </p>
-            <p class="text-xs text-base-content/40 mb-5">
-              {gettext("Task: %{task_id}", task_id: @confirm_force_kill_task_id)}
-            </p>
+              <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                {gettext(
+                  "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
+                )}
+              </p>
+              <p class="text-xs text-base-content/40 mb-5">
+                {gettext("Task: %{task_id}", task_id: @confirm_force_kill_task_id)}
+              </p>
 
-            <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="close_force_kill_modal">
-                {gettext("Keep Running")}
-              </button>
-              <button
-                type="button"
-                class="btn btn-error rounded-md px-6 gap-2"
-                phx-click="confirm_force_kill_task"
-              >
-                <.icon name="hero-x-circle" class="size-4.5" />
-                {gettext("Force Kill")}
-              </button>
+              <div class="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  class="btn btn-ghost rounded-md px-6"
+                  phx-click="close_force_kill_modal"
+                >
+                  {gettext("Keep Running")}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-error rounded-md px-6 gap-2"
+                  phx-click="confirm_force_kill_task"
+                >
+                  <.icon name="hero-x-circle" class="size-4.5" />
+                  {gettext("Force Kill")}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      <% end %>
+        <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
