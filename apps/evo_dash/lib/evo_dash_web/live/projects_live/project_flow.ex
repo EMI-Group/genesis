@@ -11,6 +11,14 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   on the remote daemon's filesystem/store. In pending contexts `@current_node`
   is still the local BEAM node, where NodeContext delegates to the local
   TaskRegistry/filesystem — the safe degradation path.
+
+  Remote project ACTIVATION is async: the gate guard + path normalization run
+  synchronously in the event handler, then `spawn_remote_project_activation/2`
+  runs the RPC-heavy sequence in a supervised `EvoDash.TaskSupervisor` task so
+  the LiveView never blocks on cross-node round-trips. Results arrive as
+  `{:async_remote_project, node, path, result}` messages that
+  `ProjectsLive.handle_info/2` stale-guards (node + in-flight
+  `@remote_project_loading` path) and applies.
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
@@ -382,11 +390,16 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
     end
   end
 
-  # Remote project activation — shared by open_project/select_project. Validates
-  # the directory on the remote node, registers it in the remote node's recent
-  # projects, and sets a DISPLAY-ONLY active project (no local project config /
-  # mode detection — those are local concerns). The push_patch URL carries the
-  # `&node=` param so handle_params re-runs in the same remote context.
+  # Remote project activation — ASYNC — shared by open_project/select_project.
+  # The synchronous part here is ONLY the gate guard + remote-aware path
+  # normalization; the RPC-heavy sequence (dir? validation, recent-project
+  # registration + reload, config/mode/foreign-repo loading) runs OUTSIDE the
+  # LiveView process in a supervised EvoDash.TaskSupervisor task so the UI
+  # never blocks on the 6-7 cross-node round-trips per activation click. The
+  # result arrives as a `{:async_remote_project, node, path, result}` message
+  # that ProjectsLive.handle_info/2 stale-guards and applies, ending with a
+  # push_patch whose URL carries the `&node=` param so handle_params re-runs
+  # in the same remote context.
   defp activate_remote_project(socket, path) do
     # Gate guard (defense in depth): while the selected remote target is
     # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
@@ -420,51 +433,88 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
            )}
 
         {:ok, expanded} ->
-          node = socket.assigns[:current_node]
-
-          if NodeContext.dir?(node, expanded) do
-            NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
-
-            recent_projects =
-              filter_absolute_recent_projects_for_node(
-                node,
-                NodeContext.list_recent_projects(node)
-              )
-
-            config = NodeContext.read_project_config(node, expanded)
-            mode = Project.detect_mode(node, expanded)
-            mode_info = mode_info_message(mode)
-
-            {project_config, worktree_script, commands} =
-              Project.load_project_config(node, expanded, config)
-
-            foreign_repos = Project.load_foreign_repos(node, expanded, config)
-
-            socket =
-              socket
-              |> assign(:recent_projects, recent_projects)
-              |> assign(:project_palette_open, false)
-              |> assign(:palette_mode, :menu)
-              |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
-              |> assign(:active_project_path, expanded)
-              |> assign(:task_mode, mode)
-              |> assign(:task_mode_info, mode_info)
-              |> assign(:project_config, project_config)
-              |> assign(:worktree_script, worktree_script)
-              |> assign(:commands, commands)
-              |> assign(:foreign_repos, foreign_repos)
-              |> assign(:show_add_foreign_repo_form, false)
-
-            {:noreply, push_patch(socket, to: project_url(socket, expanded))}
-          else
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               gettext("Directory does not exist on the remote node: %{path}", path: path)
-             )}
-          end
+          {:noreply, spawn_remote_project_activation(socket, expanded)}
       end
+    end
+  end
+
+  @doc """
+  Spawns the ASYNC remote project activation for `expanded` and returns the
+  socket with the loading flag set and the palette closed.
+
+  Shared by the open-project/select-project events and the command-palette
+  Enter path (`activate_remote_palette_project/2`). Re-trigger guard: an
+  activation already in flight for the SAME path is a no-op; a DIFFERENT path
+  supersedes it (the in-flight flag is replaced, so the older task's result is
+  dropped by the stale-guard in `ProjectsLive.handle_info/2`). The RPC-heavy
+  sequence runs OUTSIDE the LiveView process in a supervised
+  `EvoDash.TaskSupervisor` task and reports back as
+  `{:async_remote_project, node, expanded, result}` where `result` is
+  `{:ok, results_map}` — the assigns the sync flow applied today — or
+  `{:error, :not_a_directory}` when the path does not exist on the remote
+  node. The palette closes immediately here so the UI responds instantly; the
+  result applies a frame later via the continuation.
+  """
+  def spawn_remote_project_activation(socket, expanded) do
+    if socket.assigns[:remote_project_loading] == expanded do
+      # Same path already loading (e.g. double Enter) — no re-spawn.
+      socket
+    else
+      socket = assign(socket, :remote_project_loading, expanded)
+
+      node = socket.assigns[:current_node]
+      view_pid = self()
+
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result = remote_project_load(node, expanded)
+        send(view_pid, {:async_remote_project, node, expanded, result})
+      end)
+
+      socket
+      |> assign(:project_palette_open, false)
+      |> assign(:palette_mode, :menu)
+    end
+  end
+
+  # The RPC-heavy remote activation sequence, run in the supervised task.
+  # Returns `{:ok, results_map}` (the assigns the sync flow applied: recents
+  # reloaded + node-filtered, the display-only active project, the auto-
+  # detected task mode + info, and the project config / worktree script /
+  # commands / foreign repos) or `{:error, :not_a_directory}`. NodeContext's
+  # graceful degradation handles transport failures — no try/rescue.
+  defp remote_project_load(node, expanded) do
+    if NodeContext.dir?(node, expanded) do
+      NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
+
+      recent_projects =
+        filter_absolute_recent_projects_for_node(
+          node,
+          NodeContext.list_recent_projects(node)
+        )
+
+      config = NodeContext.read_project_config(node, expanded)
+      mode = Project.detect_mode(node, expanded)
+      mode_info = mode_info_message(mode)
+
+      {project_config, worktree_script, commands} =
+        Project.load_project_config(node, expanded, config)
+
+      foreign_repos = Project.load_foreign_repos(node, expanded, config)
+
+      {:ok,
+       %{
+         recent_projects: recent_projects,
+         active_project: %{path: expanded, name: Path.basename(expanded)},
+         active_project_path: expanded,
+         task_mode: mode,
+         task_mode_info: mode_info,
+         project_config: project_config,
+         worktree_script: worktree_script,
+         commands: commands,
+         foreign_repos: foreign_repos
+       }}
+    else
+      {:error, :not_a_directory}
     end
   end
 
