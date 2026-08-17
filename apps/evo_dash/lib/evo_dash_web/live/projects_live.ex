@@ -294,6 +294,22 @@ defmodule EvoDashWeb.ProjectsLive do
                     </p>
                   </div>
 
+                  <%!-- Remote project activation in flight: the RPC-heavy
+                       sequence runs in a supervised task (spawned by
+                       ProjectFlow.spawn_remote_project_activation/2), so this
+                       banner is the only feedback until the result applies.
+                       The path shown is the one being loaded. --%>
+                  <%= if @remote_project_loading != nil do %>
+                    <div class="mb-2 rounded-lg border border-base-300 bg-base-200/50 px-3 py-2 flex items-center gap-2">
+                      <span class="loading loading-spinner loading-sm text-primary"></span>
+                      <%!-- 正在通过远程节点加载所选项目，加载完成前任务表单保持禁用 --%>
+                      <span class="text-sm text-base-content/70">{gettext("Loading project…")}</span>
+                      <code class="text-xs text-base-content/40 font-mono truncate min-w-0">
+                        {@remote_project_loading}
+                      </code>
+                    </div>
+                  <% end %>
+
                   <EvoDashWeb.TaskFormComponents.task_form
                     prompt={@task_prompt}
                     mode={@task_mode}
@@ -535,6 +551,12 @@ defmodule EvoDashWeb.ProjectsLive do
         assign(socket,
           active_project: nil,
           active_project_path: nil,
+          # In-flight remote project activation (the path being loaded). nil
+          # = no activation in flight; set by
+          # ProjectFlow.spawn_remote_project_activation/2 and cleared by the
+          # {:async_remote_project, ...} continuation (or the node-switch
+          # state clear, which drops in-flight results from an old node).
+          remote_project_loading: nil,
           no_project_hint_dismissed: false,
           project_palette_open: false,
           palette_search: "",
@@ -640,6 +662,7 @@ defmodule EvoDashWeb.ProjectsLive do
       if prev_node_id != socket.assigns[:current_node_id] do
         socket
         |> assign(:file_pick_bases, %{})
+        |> assign(:remote_project_loading, nil)
         |> assign(:github_status, nil)
         |> assign(:github_modal_open, false)
         |> assign(:github_issues, GitHub.idle_issues())
@@ -1708,6 +1731,67 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, GitHub.maybe_check(socket)}
   end
 
+  # Async remote project activation — the continuation for the task spawned by
+  # ProjectFlow.spawn_remote_project_activation/2 (open_project/select_project
+  # events + the palette Enter path). STALE-GUARD: the captured node must
+  # still be the current node AND the captured path must still be the
+  # in-flight `@remote_project_loading` path — a node switch clears the flag
+  # in handle_params/3, and a superseding activation replaces it with a
+  # different path, so results from obsolete spawns are dropped here. On
+  # success the assigns the sync flow applied today are restored (the palette
+  # already closed at spawn), the GitHub state is reset when the project
+  # changed (same semantics as the old sync activate_remote_palette_project —
+  # `project_changed?` is computed from the PRE-apply socket), and the URL is
+  # patched so handle_params re-runs in the same remote context. On
+  # `{:error, :not_a_directory}` the loading flag clears and the error flash
+  # fires (the one RPC-derived error of the sequence — it must run in this
+  # continuation, not in the event handler).
+  @impl true
+  def handle_info({:async_remote_project, node, path, result}, socket) do
+    cond do
+      node != socket.assigns[:current_node] ->
+        {:noreply, socket}
+
+      path != socket.assigns[:remote_project_loading] ->
+        {:noreply, socket}
+
+      true ->
+        case result do
+          {:ok, results} ->
+            project_changed? = socket.assigns[:active_project_path] != path
+
+            socket =
+              socket
+              |> assign(:remote_project_loading, nil)
+              |> assign(:recent_projects, results.recent_projects)
+              |> assign(:active_project, results.active_project)
+              |> assign(:active_project_path, results.active_project_path)
+              |> assign(:task_mode, results.task_mode)
+              |> assign(:task_mode_info, results.task_mode_info)
+              |> assign(:project_config, results.project_config)
+              |> assign(:worktree_script, results.worktree_script)
+              |> assign(:commands, results.commands)
+              |> assign(:foreign_repos, results.foreign_repos)
+              |> assign(:show_add_foreign_repo_form, false)
+              |> maybe_reset_github_state(project_changed?)
+              |> GitHub.maybe_check()
+
+            {:noreply, push_patch(socket, to: project_url(socket, path))}
+
+          {:error, :not_a_directory} ->
+            socket =
+              socket
+              |> assign(:remote_project_loading, nil)
+              |> put_flash(
+                :error,
+                gettext("Directory does not exist on the remote node: %{path}", path: path)
+              )
+
+            {:noreply, socket}
+        end
+    end
+  end
+
   # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
   #
   # Looks up the task by id, extracts `task.opts[:foreign_repos]`, and converts the
@@ -1812,7 +1896,7 @@ defmodule EvoDashWeb.ProjectsLive do
         case ProjectFlow.normalize_project_path(project.path) do
           {:ok, expanded} ->
             if socket.assigns[:current_node_id] != nil do
-              activate_remote_palette_project(socket, project, expanded)
+              activate_remote_palette_project(socket, expanded)
             else
               if File.dir?(expanded) do
                 TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
@@ -1864,12 +1948,17 @@ defmodule EvoDashWeb.ProjectsLive do
 
   defp handle_palette_key(socket, _key, _mode), do: socket
 
-  # Remote palette selection: validates the directory on the remote node,
-  # registers it in the remote node's recent projects, and sets a DISPLAY-ONLY
-  # active project (no local project config / mode detection — those are local
-  # concerns). The push_patch URL carries the `&node=` param so handle_params
-  # re-runs in the same remote context.
-  defp activate_remote_palette_project(socket, project, expanded) do
+  # Remote palette selection — ASYNC. The synchronous part is only the gate
+  # guard; the RPC-heavy sequence (remote dir? validation, recent-project
+  # registration + reload, config/mode/foreign-repo loading) runs OUTSIDE the
+  # LiveView process via ProjectFlow.spawn_remote_project_activation/2 so the
+  # UI never blocks on the 6-7 cross-node round-trips per palette Enter. The
+  # palette closes immediately at spawn; the result arrives as a
+  # `{:async_remote_project, node, path, result}` message handled by
+  # handle_info/2, which stale-guards it, applies the assigns, resets the
+  # GitHub state when the project changed, and push_patches the `&node=` URL
+  # so handle_params re-runs in the same remote context.
+  defp activate_remote_palette_project(socket, expanded) do
     # Gate guard (defense in depth): while the selected remote target is
     # pending/failed, `@current_node` is still the LOCAL BEAM node — validating
     # or registering the path here would leak into the local filesystem and
@@ -1886,36 +1975,7 @@ defmodule EvoDashWeb.ProjectsLive do
         )
       )
     else
-      node = socket.assigns[:current_node]
-      project_changed? = socket.assigns[:active_project_path] != expanded
-
-      if EvoDash.NodeContext.dir?(node, expanded) do
-        EvoDash.NodeContext.add_recent_project(node, expanded, Path.basename(expanded))
-
-        recent_projects =
-          filter_absolute_recent_projects_for_node(
-            node,
-            EvoDash.NodeContext.list_recent_projects(node)
-          )
-
-        socket
-        |> assign(:recent_projects, recent_projects)
-        |> assign(:project_palette_open, false)
-        |> assign(:palette_mode, :menu)
-        |> assign(:active_project, %{path: expanded, name: Path.basename(expanded)})
-        |> assign(:active_project_path, expanded)
-        # `project_changed?` is computed from the PRE-assign socket above.
-        |> maybe_reset_github_state(project_changed?)
-        |> GitHub.maybe_check()
-        |> push_patch(to: project_url(socket, expanded))
-      else
-        socket
-        |> assign(:project_palette_open, false)
-        |> put_flash(
-          :error,
-          gettext("Directory does not exist on the remote node: %{path}", path: project.path)
-        )
-      end
+      ProjectFlow.spawn_remote_project_activation(socket, expanded)
     end
   end
 
