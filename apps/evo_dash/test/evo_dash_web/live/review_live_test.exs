@@ -25,14 +25,20 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
   describe "review for non-existent task" do
     test "shows error for non-existent task id", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id")
+      {:ok, view, _html} = live(conn, ~p"/review/nonexistent-task-id")
+
+      # The task lookup now runs in the async load task — flush it before
+      # asserting on the error state.
+      html = flush_review_load(view)
 
       assert html =~ "Review Not Available"
       assert html =~ "Task not found"
     end
 
     test "renders back to dashboard link", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id")
+      {:ok, view, _html} = live(conn, ~p"/review/nonexistent-task-id")
+
+      html = flush_review_load(view)
 
       assert html =~ "Back to Dashboard"
       assert html =~ "href=\"/\""
@@ -83,7 +89,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       conn: conn,
       task_id: task_id
     } do
-      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      # The review actions only render after the async load completes.
+      html = flush_review_load(view)
 
       # The Ignore button is rendered (phx-click="ignore") regardless of
       # whether the branch exists.
@@ -96,6 +105,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       task_id: task_id
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       # Click the ignore button — this triggers a navigation, so we assert the
       # LiveView process terminates and the browser is redirected to "/".
@@ -154,7 +165,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       conn: conn,
       task_id: task_id
     } do
-      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      html = flush_review_load(view)
 
       # The page mounts without crashing and shows the review actions
       # (Ignore) just like a completed task.
@@ -168,6 +181,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       task_id: task_id
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       view |> element("button[phx-click='ignore']") |> render_click()
 
@@ -290,6 +305,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
+      # The archive_metadata assign only arrives with the async load — flush
+      # before switching to the Archive tab so the agent ids are present.
+      flush_review_load(view)
+
       # Switch to the Archive tab — before the fix this would infinite-loop.
       html =
         view
@@ -317,7 +336,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       conn: conn,
       task_id: task_id
     } do
-      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      # The merge form only renders after the async load populates
+      # merge_targets / default_merge_target.
+      html = flush_review_load(view)
 
       # The "Merge into" selector appears next to the Merge button when the
       # repo has local branches.
@@ -340,6 +363,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       change_sha: change_sha
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       render_click(view, "merge", %{"target_branch" => "dev"})
 
@@ -378,7 +403,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       conn: conn,
       task_id: task_id
     } do
-      {:ok, _view, html} = live(conn, ~p"/review/#{task_id}")
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      html = flush_review_load(view)
 
       select_html = target_branch_select(html)
       assert select_html != "", "expected a target-branch <select> to be rendered"
@@ -415,11 +442,18 @@ defmodule EvoDashWeb.ReviewLiveTest do
     test "starts a merge check on mount", %{conn: conn, task_id: task_id} do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
+      # The merge check is only started AFTER the async review-data load
+      # completes (MergeCheck.maybe_start runs from the load's handle_info,
+      # never from handle_params) — flush the load first.
+      flush_review_load(view)
+
       assert %{state: :checking, target: "main", files: []} = assigns(view)[:merge_status]
     end
 
     test "renders the clean state and keeps the merge form", %{conn: conn, task_id: task_id} do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       send(view.pid, {:merge_check_result, task_id, node(), "main", {:ok, :clean}})
       html = render(view)
@@ -437,6 +471,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       task_id: task_id
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       send(
         view.pid,
@@ -458,6 +494,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
+      flush_review_load(view)
+
       # Wrong target — the running check targets "main".
       send(view.pid, {:merge_check_result, task_id, node(), "other-target", {:ok, :clean}})
       html = render(view)
@@ -478,6 +516,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       task_id: task_id
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       render_change(view, "merge_target_change", %{"target_branch" => "dev"})
 
@@ -551,6 +591,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
+      # Flush the async load first so the injected merge result cannot be
+      # clobbered by the load's assigns map (which resets merge_status to nil).
+      flush_review_load(view)
+
       send(
         view.pid,
         {:merge_check_result, task_id, node(), "main",
@@ -596,6 +640,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
+      flush_review_load(view)
+
       send(view.pid, {:merge_check_result, task_id, node(), "main", {:ok, :clean}})
       html = render(view)
       assert html =~ "Merge check passed"
@@ -614,6 +660,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       task_id: task_id
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
 
       html = render_click(view, "auto_resolve")
       assert html =~ "Auto-resolve unavailable"
@@ -671,6 +719,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # renders the graceful error state, but merge_check_result injection and
       # the auto_resolve event still operate on the assigns.
       {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+
+      # Flush the async load (it fails fast with :nodedown → error state) so
+      # the injected merge result cannot be clobbered by the load's assigns
+      # map (which resets merge_status to nil).
+      flush_review_load(view)
 
       remote_node = assigns(view)[:current_node]
       assert remote_node != node()
@@ -747,8 +800,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       # The task does not exist on the (unreachable) remote node — the RPC
       # fails fast with :nodedown, so the page must render the existing
-      # "Review Not Available" error state without crashing.
-      {:ok, _view, html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+      # "Review Not Available" error state without crashing. The task fetch
+      # now runs in the async load task; flush it.
+      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+
+      html = flush_review_load(view)
 
       assert html =~ "Review Not Available"
       assert html =~ "Task not found"
@@ -759,10 +815,155 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # An unknown `?node=` id resolves to the local context (NodeAware
       # semantics) — the task is not in the local store, so the existing
       # not-found error state renders.
-      {:ok, _view, html} = live(conn, ~p"/review/nonexistent-task-id?node=unknown-target-id")
+      {:ok, view, _html} = live(conn, ~p"/review/nonexistent-task-id?node=unknown-target-id")
+
+      html = flush_review_load(view)
 
       assert html =~ "Review Not Available"
       assert html =~ "Task not found"
+    end
+  end
+
+  describe "async review-data load" do
+    # The review page now loads its data asynchronously: handle_params spawns
+    # a supervised task (EvoDashWeb.ReviewLive.LoadData) that sends
+    # {:review_data_loaded, task_id, node, generation, result} back to the
+    # LiveView. The page renders a spinner ("Loading review data...") until
+    # the result arrives, and the handle_info applies it under a stale-guard
+    # (task id / node / monotonic load_generation).
+
+    test "async load shows the loading state then populates the page", %{conn: conn} do
+      {_repo_path, task_id, change_sha} = create_review_task_with_repo!("main", "dev")
+
+      {:ok, view, html} = live(conn, ~p"/review/#{task_id}")
+
+      # The initial render happens before the spawned load task can be
+      # processed, so the page always mounts in the loading state.
+      assert html =~ "Loading review data..."
+      assert html =~ "loading-spinner"
+
+      # Flush the async load: the review content replaces the spinner.
+      html = flush_review_load(view)
+
+      # Title (objective fallback), branch badge, and commit-sha badge.
+      assert html =~ "Test objective"
+      assert html =~ "task-branch"
+      assert html =~ String.slice(change_sha, 0..7)
+
+      # The commits list is populated by the load too.
+      html =
+        view
+        |> element("button[phx-click='switch_tab'][phx-value-tab='commits']")
+        |> render_click()
+
+      assert html =~ "Agent change commit"
+    end
+
+    test "drops stale async load results", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
+
+      gen = assigns(view)[:load_generation]
+
+      # Wrong task id.
+      send(
+        view.pid,
+        {:review_data_loaded, "wrong-task-id", node(), gen, {:ok, %{title: "INJECTED"}}}
+      )
+
+      # Right task id, but a different node.
+      send(
+        view.pid,
+        {:review_data_loaded, task_id, :review_other_node, gen, {:ok, %{title: "INJECTED"}}}
+      )
+
+      # Right task + node, but a stale generation.
+      send(
+        view.pid,
+        {:review_data_loaded, task_id, node(), gen - 1, {:ok, %{title: "INJECTED"}}}
+      )
+
+      # Synchronization: a VALID result for the current generation is applied
+      # AFTER the stale ones (FIFO mailbox). It touches a different assign
+      # (summary_raw), so a wrongly-applied stale title would remain visible
+      # once the marker lands — poll for it.
+      send(view.pid, {:review_data_loaded, task_id, node(), gen, {:ok, %{summary_raw: true}}})
+
+      wait_until(fn -> assigns(view)[:summary_raw] == true end)
+
+      # None of the stale results were applied.
+      assert assigns(view)[:title] == "Test objective"
+      html = render(view)
+      refute html =~ "INJECTED"
+      assert html =~ "Test objective"
+    end
+
+    test "broadcast for a different task does not trigger a review-data reload", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
+
+      gen_before = assigns(view)[:load_generation]
+
+      # A PubSub "tasks" broadcast for ANOTHER task (message shape:
+      # {:task_status, task_id, status} — task id second). Direct send is
+      # equivalent to the broadcast for handle_info.
+      send(view.pid, {:task_status, "some_other_task_id", :finalizing})
+
+      # Past the 300ms trailing-edge debounce. The sidebar reload must have
+      # run by now (tasks_reload_pending cleared) — otherwise the unchanged
+      # generation assertion below would be vacuous.
+      Process.sleep(400)
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+      # No new load was started: the broadcast-guard skipped the reload for
+      # a non-reviewed task.
+      assert assigns(view)[:load_generation] == gen_before
+
+      # A stale result from the old generation is still dropped.
+      send(
+        view.pid,
+        {:review_data_loaded, task_id, node(), gen_before - 1, {:ok, %{title: "INJECTED"}}}
+      )
+
+      Process.sleep(100)
+
+      assert assigns(view)[:title] == "Test objective"
+
+      # The page still renders normally.
+      html = render(view)
+      refute html =~ "INJECTED"
+      assert html =~ "Test objective"
+      assert html =~ ~s(phx-click="ignore")
+    end
+
+    test "broadcast for the reviewed task triggers a review-data reload", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
+
+      gen_before = assigns(view)[:load_generation]
+
+      # The reviewed task's own broadcast warrants a page reload.
+      send(view.pid, {:task_status, task_id, :finalizing})
+
+      # Past the 300ms debounce — wait for the new load to have started
+      # (generation incremented by start_async_load).
+      Process.sleep(400)
+      wait_until(fn -> assigns(view)[:load_generation] == gen_before + 1 end)
+
+      # Flush the reload and assert the page still renders the review content.
+      html = flush_review_load(view)
+
+      assert html =~ "Test objective"
+      assert html =~ ~s(phx-click="ignore")
     end
   end
 
@@ -895,6 +1096,94 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end)
 
     task_id
+  end
+
+  # Seeds a completed task whose result references a branch that does NOT
+  # exist in any real repository (repo_path points nowhere) — the same
+  # orphaned-branch scenario as the ignore-test fixture, but self-contained
+  # for the async-load describe. Returns the task id.
+  defp seed_orphaned_review_task! do
+    task_id = "review_test_async_#{System.unique_integer([:positive])}"
+
+    task = %TaskInfo{
+      id: task_id,
+      type: :evolve,
+      status: :completed,
+      opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+      ref: nil,
+      started_at: DateTime.utc_now(),
+      finished_at: DateTime.utc_now(),
+      logs: [],
+      review_status: nil,
+      result:
+        {:ok,
+         %{
+           commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+           branch_name: "evogit/test-branch",
+           result: "Agent summary",
+           pr_url: nil,
+           pr_title: nil
+         }}
+    }
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      TaskRegistry.delete_task(task_id)
+      # Synchronize the deletion cast.
+      TaskRegistry.list_tasks()
+    end)
+
+    task_id
+  end
+
+  # Waits for the async review-data load (EvoDashWeb.ReviewLive.LoadData) to
+  # finish and returns the rendered HTML. The load runs in a plain
+  # Task.Supervisor child — NOT a LiveView `start_async` task — so
+  # render_async/2 would return immediately without waiting; polling the
+  # test proxy's cached tree (updated by channel diffs as they arrive) until
+  # the spinner disappears is the deterministic flush.
+  defp flush_review_load(view, timeout \\ 5000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    flush_loop = fn flush_loop ->
+      html = render(view)
+
+      if html =~ "Loading review data..." do
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("timed out waiting for the async review-data load to finish")
+        else
+          Process.sleep(10)
+          flush_loop.(flush_loop)
+        end
+      else
+        html
+      end
+    end
+
+    flush_loop.(flush_loop)
+  end
+
+  # Polls `fun` until it returns a truthy value (or the timeout elapses).
+  # Used to synchronize on LiveView state changes that follow directly-sent
+  # messages (mailbox FIFO guarantees the preceding messages were processed).
+  defp wait_until(fun, timeout \\ 5000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    wait_loop = fn wait_loop ->
+      if fun.() do
+        :ok
+      else
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("timed out waiting for condition after #{timeout}ms")
+        else
+          Process.sleep(10)
+          wait_loop.(wait_loop)
+        end
+      end
+    end
+
+    wait_loop.(wait_loop)
   end
 
   # Extracts the "Merge into" target-branch <select> block, or "" if absent.
