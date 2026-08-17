@@ -82,21 +82,29 @@ pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
 /// before launching the desktop app (e.g. `EVOGIT_BIND=0.0.0.0` for remote
 /// access). The value is passed to Phoenix as `PHX_IP`.
 ///
-/// The port defaults to 9999 and can be overridden with the `PORT`
-/// environment variable (mirroring the headless mode's `headless_sidecar_env`
-/// in the crate root), so the backend, the WebView URL and the watchdog's
-/// readiness probe all agree on the port.
-pub(crate) fn sidecar_env() -> Vec<(String, String)> {
+/// `port` is the backend port resolved once at startup (`PORT` honored when
+/// set and free, otherwise a random free ephemeral port — never a fixed
+/// default; see `crate::resolve_backend_port`). The same port drives the
+/// WebView URL and the watchdog's readiness probe, so all three agree.
+///
+/// `EVOGIT_PARENT_PID` carries this shell's own pid so the Elixir backend
+/// (`EvoGit.DesktopParentMonitor`) can detect parent death and self-exit —
+/// an orphaned backend (e.g. after an abnormal shell death) can no longer
+/// keep its port bound and block a relaunch.
+pub(crate) fn sidecar_env(port: u16) -> Vec<(String, String)> {
     let phx_ip = std::env::var("EVOGIT_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("PORT").unwrap_or_else(|_| "9999".to_string());
 
     vec![
-        ("PORT".to_string(), port),
+        ("PORT".to_string(), port.to_string()),
         ("PHX_IP".to_string(), phx_ip),
         ("PHX_SERVER".to_string(), "true".to_string()),
         ("SECRET_KEY_BASE".to_string(), SECRET_KEY_BASE.to_string()),
         ("RELEASE_DISTRIBUTION".to_string(), "none".to_string()),
         ("EVOGIT_DESKTOP".to_string(), "1".to_string()),
+        (
+            "EVOGIT_PARENT_PID".to_string(),
+            std::process::id().to_string(),
+        ),
     ]
 }
 
