@@ -15,34 +15,42 @@
             <.icon name="hero-squares-2x2" class="size-5" /> <%= gettext("Agent Tree") %>
           </h3>
 
-          <%= if @agents == [] do %>
+          <%= if @agents_loading do %>
             <div class="text-center py-16 text-base-content/50">
-              <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
-              <p class="text-lg"><%= gettext("No agents currently registered") %></p>
-              <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
+              <.icon name="hero-arrow-path" class="size-20 mx-auto mb-4 opacity-40 animate-spin" />
+              <%# 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 %>
+              <p class="text-lg"><%= gettext("Loading agents…") %></p>
             </div>
           <% else %>
-            <div class="space-y-4">
-              <%= for {repo_name, tree_nodes} <- @repo_trees do %>
-                <div>
-                  <!-- Repo Header -->
-                  <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-200">
-                    <.icon name="hero-server-stack" class="size-5 text-primary" />
-                    <span class="font-bold text-base text-base-content"><%= repo_name %></span>
-                    <span class="text-xs text-base-content/50">(<%= length(tree_nodes) %> <%= gettext("directories") %>)</span>
+            <%= if @agents == [] do %>
+              <div class="text-center py-16 text-base-content/50">
+                <.icon name="hero-server" class="size-20 mx-auto mb-4 opacity-40 animate-float" />
+                <p class="text-lg"><%= gettext("No agents currently registered") %></p>
+                <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
+              </div>
+            <% else %>
+              <div class="space-y-4">
+                <%= for {repo_name, tree_nodes} <- @repo_trees do %>
+                  <div>
+                    <!-- Repo Header -->
+                    <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-200">
+                      <.icon name="hero-server-stack" class="size-5 text-primary" />
+                      <span class="font-bold text-base text-base-content"><%= repo_name %></span>
+                      <span class="text-xs text-base-content/50">(<%= length(tree_nodes) %> <%= gettext("directories") %>)</span>
+                    </div>
+                    <div class="space-y-4 font-mono text-sm">
+                      <EvoDashWeb.AgentsComponents.path_tree
+                        nodes={tree_nodes}
+                        depth={0}
+                        selected_id={@selected_agent_id}
+                        new_agent_ids={@new_agent_ids}
+                        changed_status_ids={@changed_status_ids}
+                      />
+                    </div>
                   </div>
-                  <div class="space-y-4 font-mono text-sm">
-                    <EvoDashWeb.AgentsComponents.path_tree
-                      nodes={tree_nodes}
-                      depth={0}
-                      selected_id={@selected_agent_id}
-                      new_agent_ids={@new_agent_ids}
-                      changed_status_ids={@changed_status_ids}
-                    />
-                  </div>
-                </div>
-              <% end %>
-            </div>
+                <% end %>
+              </div>
+            <% end %>
           <% end %>
         </div>
 
@@ -505,9 +513,17 @@
                       </div>
                     </div>
                   <% else %>
-                    <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center">
-                      <%= gettext("No history recorded yet") %>
-                    </div>
+                    <%= if @history_loading_agent_id == agent.id do %>
+                      <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center flex items-center justify-center gap-2">
+                        <.icon name="hero-arrow-path" class="size-4 animate-spin" />
+                        <%# 对话历史加载中提示：选中智能体后异步拉取历史时的过渡态 %>
+                        <span><%= gettext("Loading history…") %></span>
+                      </div>
+                    <% else %>
+                      <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center">
+                        <%= gettext("No history recorded yet") %>
+                      </div>
+                    <% end %>
                   <% end %>
                 </div>
               </div>

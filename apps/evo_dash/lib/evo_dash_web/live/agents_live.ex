@@ -7,11 +7,26 @@ defmodule EvoDashWeb.AgentsLive do
   via `EvoDash.NodeContext` so it works for both the local BEAM node and a
   remote `genesis_remote` daemon (SSH Remote Development, Phase 3). For remote
   nodes it polls periodically since cross-node PubSub may be unreliable.
+
+  ALL node-aware data loading is ASYNC: the page load (`handle_params`), the
+  3s remote poll, broadcast-triggered refreshes, and history fetches run in
+  `EvoDash.TaskSupervisor` children — the LiveView process never blocks on a
+  cross-node RPC. Results arrive as tagged messages guarded by monotonic
+  generation/sequence counters (stale results are dropped) and the node
+  currently being viewed. History transfers are gated on the
+  `RemoteAPI.list_agents/0` `:message_count` field: an agent's full history is
+  re-fetched only when its message count changed (see `HistoryGate`).
   """
   use EvoDashWeb, :live_view
 
-  alias EvoDashWeb.AgentsLive.OptimisticMessages
-  alias EvoDashWeb.AgentsLive.ToolCallDisplay
+  alias EvoDashWeb.AgentsLive.{
+    HistoryGate,
+    LoadData,
+    OptimisticMessages,
+    ThresholdCache,
+    ToolCallDisplay
+  }
+
   alias EvoGit.Platform
 
   @agent_state_table :evogit_agent_state
@@ -25,15 +40,13 @@ defmodule EvoDashWeb.AgentsLive do
 
     # current_node is set to node() by the NodeAware on_mount hook (runs before
     # mount). handle_params/3 runs assign_node/2 next, which may switch to a
-    # remote node and trigger a reload there.
+    # remote node and trigger the async load there.
     current_node = socket.assigns[:current_node] || node()
-    agents = load_agents(current_node)
 
-    id_to_display =
-      Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
-
-    config_status = node_config_status(current_node)
-
+    # No synchronous loads here: handle_params/3 always runs after mount and
+    # kicks off the async page load (start_async_load/1), which populates
+    # agents/config_status/threshold_cache. The initial render (dead render
+    # included) shows the loading state via @agents_loading.
     socket =
       assign(socket,
         selected_agent_id: nil,
@@ -42,12 +55,12 @@ defmodule EvoDashWeb.AgentsLive do
         show_usage: false,
         send_message_agent_id: nil,
         send_message_text: "",
-        agents: agents,
-        id_to_display: id_to_display,
-        repo_trees: build_repo_trees(agents),
-        config_status: config_status,
-        previous_agent_ids: MapSet.new(agents, & &1.id),
-        previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
+        agents: [],
+        id_to_display: %{},
+        repo_trees: [],
+        config_status: nil,
+        previous_agent_ids: MapSet.new(),
+        previous_statuses: %{},
         new_agent_ids: MapSet.new(),
         changed_status_ids: MapSet.new(),
         previous_node: current_node,
@@ -55,7 +68,28 @@ defmodule EvoDashWeb.AgentsLive do
         # sent_at}]). Independent of @agents — survives agent/history reloads;
         # merged into the displayed history at render time and dropped once the
         # agent's next turn drains the message into context.
-        optimistic_messages: %{}
+        optimistic_messages: %{},
+        # Async page-load state: agents_loading gates the tree's loading UI;
+        # load_generation is a monotonic counter that stale-guards async load
+        # results (only the newest generation may apply).
+        agents_loading: true,
+        load_generation: 0,
+        # Monotonic sequence for async refresh tasks (remote poll, broadcast
+        # fallbacks) — never reset; the newest seq wins (mirrors system_live's
+        # chart_tick_seq pattern).
+        poll_seq: 0,
+        # Last-seen message_count per agent id (see HistoryGate) — reset on
+        # node switch (agent ids are per-node).
+        history_gate: %{},
+        # {node, threshold, fetched_at_monotonic} compression-threshold cache
+        # (see ThresholdCache) — fetched only inside async tasks.
+        threshold_cache: nil,
+        # Agent id whose history is currently being fetched (small spinner in
+        # the chat-history section).
+        history_loading_agent_id: nil,
+        # Agent id whose history is being fetched for a full-message modal
+        # (view_full_message safety net).
+        full_message_pending_agent_id: nil
       )
 
     {:ok, socket}
@@ -74,21 +108,14 @@ defmodule EvoDashWeb.AgentsLive do
     socket =
       if current_node != previous_node do
         # Node changed (e.g. user switched from Local to a remote target, or
-        # vice versa). Reload agents from the new node and clear per-agent
-        # selection state that no longer applies. Also refresh config_status so
-        # the layout config banner reflects the new node's config (not stale
-        # local status).
-        agents = load_agents(current_node)
-        id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
-
+        # vice versa). Clear per-agent selection state, the history gate, and
+        # the threshold cache — agent ids and config are per-node. The agent
+        # reload itself happens asynchronously below (start_async_load/1), so
+        # the page never blocks on cross-node RPCs.
         socket
         |> assign(
-          agents: agents,
-          id_to_display: id_to_display,
-          repo_trees: build_repo_trees(agents),
-          config_status: node_config_status(current_node),
-          previous_agent_ids: MapSet.new(agents, & &1.id),
-          previous_statuses: Map.new(agents, fn a -> {a.id, a.status} end),
+          previous_agent_ids: MapSet.new(),
+          previous_statuses: %{},
           new_agent_ids: MapSet.new(),
           changed_status_ids: MapSet.new(),
           selected_agent_id: nil,
@@ -97,11 +124,20 @@ defmodule EvoDashWeb.AgentsLive do
           previous_node: current_node,
           # Agent ids are per-node; optimistic messages from the previous node
           # must not leak into a different node's agent list.
-          optimistic_messages: %{}
+          optimistic_messages: %{},
+          history_gate: %{},
+          threshold_cache: nil,
+          history_loading_agent_id: nil,
+          full_message_pending_agent_id: nil
         )
       else
         assign(socket, :previous_node, current_node)
       end
+
+    # Kick off the async page load (agents + config status + threshold cache).
+    # The generation guard in handle_info({:agents_data_loaded, ...}) drops
+    # stale results, so starting unconditionally here is safe.
+    socket = start_async_load(socket)
 
     # For remote nodes, cross-node PubSub may not deliver scheduler events
     # reliably. Start a periodic poll (reschedules itself in the handler only
@@ -121,44 +157,43 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  # Fallback — full reload when enriched deltas (agent_registered/updated/removed) are not sufficient
+  # Async page-load result (spawned by start_async_load/1). Applies the fresh
+  # agents + config status + threshold cache when still current.
+  def handle_info({:agents_data_loaded, node, generation, result}, socket) do
+    # Stale-guard: drop results from an older load generation or a different
+    # node (the user switched away while the task was in flight).
+    if node != socket.assigns.current_node or
+         generation < Map.get(socket.assigns, :load_generation, 0) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, %{agents: agents, config_status: config_status, threshold_cache: threshold_cache}} ->
+          socket =
+            socket
+            |> apply_agents_result(agents)
+            |> assign(
+              config_status: config_status,
+              threshold_cache: threshold_cache,
+              agents_loading: false,
+              previous_node: node
+            )
+
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          # Keep whatever is currently rendered; just clear the loading flag so
+          # the page is usable (the poll/broadcast paths will retry).
+          {:noreply, assign(socket, :agents_loading, false)}
+      end
+    end
+  end
+
+  @impl true
+  # Broadcast fallback — refresh the agent list asynchronously (same shared
+  # task as the remote poll). Nothing to reschedule; the seq guard handles
+  # staleness between overlapping refreshes.
   def handle_info({:agents_updated}, socket) do
-    agents = load_agents(socket.assigns.current_node)
-    current_ids = MapSet.new(agents, & &1.id)
-    current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
-
-    # Detect new agents
-    new_agent_ids = MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
-
-    # Detect status changes (agents that exist in both but have different status)
-    changed_status_ids =
-      current_ids
-      |> MapSet.intersection(socket.assigns.previous_agent_ids)
-      |> MapSet.filter(fn id ->
-        current_statuses[id] != socket.assigns.previous_statuses[id]
-      end)
-
-    id_to_display =
-      Map.new(agents, fn agent -> {agent.id, agent.task_local_id || agent.id} end)
-
-    # Reload history for the selected agent (wiped by load_agents)
-    agents =
-      reload_selected_agent_history(
-        agents,
-        socket.assigns.selected_agent_id,
-        socket.assigns.current_node
-      )
-
-    {:noreply,
-     assign(socket,
-       agents: agents,
-       id_to_display: id_to_display,
-       repo_trees: build_repo_trees(agents),
-       previous_agent_ids: current_ids,
-       previous_statuses: current_statuses,
-       new_agent_ids: new_agent_ids,
-       changed_status_ids: changed_status_ids
-     )}
+    {:noreply, spawn_agents_refresh(socket)}
   end
 
   @impl true
@@ -192,40 +227,40 @@ defmodule EvoDashWeb.AgentsLive do
     current_node = socket.assigns.current_node
 
     if current_node != node() do
-      # Still viewing a remote node — reload agents and reschedule the poll.
-      agents = load_agents(current_node)
-      current_ids = MapSet.new(agents, & &1.id)
-      current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
-
-      new_agent_ids = MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
-
-      changed_status_ids =
-        current_ids
-        |> MapSet.intersection(socket.assigns.previous_agent_ids)
-        |> MapSet.filter(fn id ->
-          current_statuses[id] != socket.assigns.previous_statuses[id]
-        end)
-
-      id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
-
-      agents =
-        reload_selected_agent_history(agents, socket.assigns.selected_agent_id, current_node)
-
+      # Still viewing a remote node — reschedule the poll FIRST (steady 3s
+      # cadence even when a previous fetch is still in flight — mirrors
+      # system_live's chart tick), then spawn the async refresh. The seq
+      # stale-guard drops results that lost the race.
       Process.send_after(self(), :remote_poll, 3_000)
-
-      {:noreply,
-       assign(socket,
-         agents: agents,
-         id_to_display: id_to_display,
-         repo_trees: build_repo_trees(agents),
-         previous_agent_ids: current_ids,
-         previous_statuses: current_statuses,
-         new_agent_ids: new_agent_ids,
-         changed_status_ids: changed_status_ids
-       )}
+      {:noreply, spawn_agents_refresh(socket)}
     else
       # Switched back to local — stop polling (PubSub handles local updates).
       {:noreply, assign(socket, :remote_poll_timer, false)}
+    end
+  end
+
+  @impl true
+  # Async refresh result (remote poll / broadcast fallbacks). Applies the
+  # fresh agent tree when this is the newest refresh for the viewed node.
+  def handle_info({:remote_poll_result, seq, node, result}, socket) do
+    # Stale-guard: only the newest spawned refresh may apply (older in-flight
+    # tasks' results are dropped), and only for the node currently viewed.
+    if seq < Map.get(socket.assigns, :poll_seq, 0) or node != socket.assigns.current_node do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, agents, threshold_cache} ->
+          socket =
+            socket
+            |> apply_agents_result(agents)
+            |> assign(threshold_cache: threshold_cache)
+
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          # Keep the last good tree; the next poll/broadcast will retry.
+          {:noreply, socket}
+      end
     end
   end
 
@@ -239,8 +274,8 @@ defmodule EvoDashWeb.AgentsLive do
     else
       if socket.assigns.current_node != node() do
         # Remote node — ETS tables are local; the incremental PubSub update
-        # can't read remote ETS. Fall back to a full reload via RPC.
-        {:noreply, full_reload(socket)}
+        # can't read remote ETS. Fall back to an async full refresh via RPC.
+        {:noreply, spawn_agents_refresh(socket)}
       else
         # Local node — read ETS directly for the incremental update.
         # See handle_local_agent_registered/3 in the helpers section.
@@ -255,29 +290,8 @@ defmodule EvoDashWeb.AgentsLive do
     agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
 
     if agent_idx == nil do
-      # Race — agent not yet in our list, do a full reload
-      agents = load_agents(socket.assigns.current_node)
-      current_ids = MapSet.new(agents, & &1.id)
-      current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
-
-      # Reload history for the selected agent (wiped by load_agents)
-      agents =
-        reload_selected_agent_history(
-          agents,
-          socket.assigns.selected_agent_id,
-          socket.assigns.current_node
-        )
-
-      {:noreply,
-       assign(socket,
-         agents: agents,
-         id_to_display: Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end),
-         repo_trees: build_repo_trees(agents),
-         previous_agent_ids: current_ids,
-         previous_statuses: current_statuses,
-         new_agent_ids: MapSet.new(),
-         changed_status_ids: MapSet.new()
-       )}
+      # Race — agent not yet in our list, do an async full refresh
+      {:noreply, spawn_agents_refresh(socket)}
     else
       agent = Enum.at(agents, agent_idx)
 
@@ -317,13 +331,20 @@ defmodule EvoDashWeb.AgentsLive do
           agents
         end
 
-      # Reload history if the updated agent is currently selected
-      agents =
+      socket = assign(socket, :agents, agents)
+
+      # Reload history if the updated agent is currently selected. The
+      # `{:agent_updated}` broadcast payload does NOT carry :message_count
+      # (it is the exact `fields` kwlist passed to batch_update_agent — e.g.
+      # [context:, turn:, usage:]), so the gate cannot suppress this refetch
+      # against a fresh count: refetch UNCONDITIONALLY but asynchronously
+      # (the gate records the count when the fetch completes, so the poll
+      # stops re-fetching while the count is unchanged).
+      socket =
         if agent_id == socket.assigns.selected_agent_id do
-          history = load_agent_history(socket.assigns.current_node, agent_id)
-          update_agent_in_list(agents, agent_id, fn a -> %{a | history: history} end)
+          refetch_selected_history(socket)
         else
-          agents
+          socket
         end
 
       # Detect status change
@@ -362,7 +383,6 @@ defmodule EvoDashWeb.AgentsLive do
 
       {:noreply,
        assign(socket,
-         agents: agents,
          id_to_display: id_to_display,
          repo_trees: repo_trees,
          previous_statuses: previous_statuses,
@@ -423,17 +443,59 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  def handle_info({:update_agent_history, agent_id, history}, socket) do
-    agents = socket.assigns.agents
-    agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
-
-    if agent_idx do
-      agent = Enum.at(agents, agent_idx)
-      updated_agent = %{agent | history: history}
-      updated_agents = List.replace_at(agents, agent_idx, updated_agent)
-      {:noreply, assign(socket, :agents, updated_agents)}
-    else
+  # Async history-fetch result (select_agent / view_full_message / broadcast
+  # refresh paths). `index` is nil for the select/refresh flows and an integer
+  # for the view_full_message safety-net flow (the modal entry is set from the
+  # fetched history at that index).
+  def handle_info({:agent_history_loaded, agent_id, node, result, index}, socket) do
+    # Stale-guard: only apply history for the currently selected agent on the
+    # node being viewed (the user may have selected another agent or switched
+    # nodes while the fetch was in flight).
+    if agent_id != socket.assigns.selected_agent_id or node != socket.assigns.current_node do
       {:noreply, socket}
+    else
+      case result do
+        {:ok, entries} ->
+          agents =
+            update_agent_in_list(socket.assigns.agents, agent_id, fn agent ->
+              %{agent | history: entries}
+            end)
+
+          # Record the message count this history corresponds to so the poll
+          # does not re-fetch while the agent's conversation is unchanged. The
+          # count comes from the most recent list_agents summary for this
+          # agent (fall back to the fetched length when absent).
+          agent = Enum.find(agents, &(&1.id == agent_id))
+          count = (agent && agent.message_count) || length(entries)
+          history_gate = HistoryGate.record(socket.assigns.history_gate, agent_id, count)
+
+          socket =
+            assign(socket,
+              agents: agents,
+              history_gate: history_gate,
+              history_loading_agent_id: nil,
+              full_message_pending_agent_id: nil
+            )
+
+          socket =
+            if is_integer(index) do
+              entry = Enum.at(entries, index)
+              assign(socket, :selected_history_entry, entry)
+            else
+              socket
+            end
+
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          # Clear the pending flags so the UI recovers; the poll/broadcast
+          # paths will retry the fetch.
+          {:noreply,
+           assign(socket,
+             history_loading_agent_id: nil,
+             full_message_pending_agent_id: nil
+           )}
+      end
     end
   end
 
@@ -441,19 +503,27 @@ defmodule EvoDashWeb.AgentsLive do
   def handle_event("select_agent", %{"id" => id}, socket) do
     agent_id = String.to_integer(id)
 
-    socket = assign(socket, :selected_agent_id, agent_id) |> assign(:show_usage, false)
+    socket =
+      assign(socket,
+        selected_agent_id: agent_id,
+        show_usage: false,
+        selected_history_entry: nil,
+        full_message_pending_agent_id: nil
+      )
 
-    # Lazy-load chat history for the selected agent
-    agents = socket.assigns.agents
-    agent_idx = Enum.find_index(agents, fn a -> a.id == agent_id end)
+    # Lazy-load chat history for the selected agent — asynchronously so the
+    # page never blocks on the (possibly cross-node) history RPC. First
+    # selection always fetches (no last-seen entry in the gate); later
+    # selections fetch only when the message count moved on.
+    agent = Enum.find(socket.assigns.agents, &(&1.id == agent_id))
 
     socket =
-      if agent_idx do
-        agent = Enum.at(agents, agent_idx)
-        history = load_agent_history(socket.assigns.current_node, agent_id)
-        updated_agent = %{agent | history: history}
-        updated_agents = List.replace_at(agents, agent_idx, updated_agent)
-        assign(socket, :agents, updated_agents)
+      if agent &&
+           HistoryGate.need_fetch?(socket.assigns.history_gate, agent_id, agent.message_count) &&
+           socket.assigns.history_loading_agent_id != agent_id do
+        socket
+        |> assign(history_loading_agent_id: agent_id)
+        |> spawn_history_fetch(agent_id, nil)
       else
         socket
       end
@@ -483,20 +553,25 @@ defmodule EvoDashWeb.AgentsLive do
 
     agent = Enum.find(socket.assigns.agents, &(&1.id == socket.assigns.selected_agent_id))
 
-    # Safety net: if history is empty, lazy-load it first
-    agent =
-      if agent && agent.history == [] do
-        history = load_agent_history(socket.assigns.current_node, agent.id)
-        send(self(), {:update_agent_history, agent.id, history})
-        %{agent | history: history}
-      else
-        agent
-      end
+    if agent && agent.history == [] do
+      # Safety net: history is empty — fetch it asynchronously and set the
+      # selected entry when the result arrives (the index is carried in the
+      # result message). A brief loading state shows in the chat section.
+      socket =
+        socket
+        |> assign(
+          full_message_pending_agent_id: agent.id,
+          history_loading_agent_id: agent.id
+        )
+        |> spawn_history_fetch(agent.id, index)
 
-    entry =
-      agent && Enum.at(merged_history(agent, socket.assigns.optimistic_messages), index)
+      {:noreply, socket}
+    else
+      entry =
+        agent && Enum.at(merged_history(agent, socket.assigns.optimistic_messages), index)
 
-    {:noreply, assign(socket, :selected_history_entry, entry)}
+      {:noreply, assign(socket, :selected_history_entry, entry)}
+    end
   end
 
   @impl true
@@ -558,6 +633,8 @@ defmodule EvoDashWeb.AgentsLive do
     # local path (RemoteNode wraps the RemoteAPI result in {:ok, _}); erpc
     # failures surface as {:error, reason}. Only {:ok, :ok} is a real success —
     # matching the old {:ok, _} falsely reported success for missing agents.
+    # Deliberately synchronous: the user expects immediate feedback (optimistic
+    # display), and this call is a cheap local/remote store append.
     case EvoDash.NodeContext.send_user_message(node, agent_id, message) do
       {:ok, :ok} ->
         optimistic_messages =
@@ -577,6 +654,223 @@ defmodule EvoDashWeb.AgentsLive do
 
       {:error, reason} ->
         {:noreply, send_message_error_flash(socket, reason)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Async load machinery
+  # ---------------------------------------------------------------------------
+
+  # Kicks off the async page load (agents + config status + threshold cache).
+  # Sets the loading flag and a fresh generation; the task sends
+  # {:agents_data_loaded, node, gen, result} back, which is stale-guarded by
+  # generation + node in handle_info/2.
+  defp start_async_load(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+    gen = Map.get(socket.assigns, :load_generation, 0) + 1
+    threshold_cache = socket.assigns.threshold_cache
+
+    socket = assign(socket, agents_loading: true, load_generation: gen)
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      # Node-boundary rescue: the load RPCs to a possibly-dead remote daemon
+      # (or a node that disconnected mid-flight). (1) Do we expect this error?
+      # Yes — the remote daemon can die or the SSH tunnel drop between polls.
+      # (2) Is try/rescue the cleanest approach? Yes — the alternative is the
+      # page wedging at the loading state forever; the stale-guard below drops
+      # late results and an error just clears the loading flag.
+      result =
+        try do
+          EvoDashWeb.AgentsLive.LoadData.load(node, threshold_cache)
+        rescue
+          _ -> {:error, :load_failed}
+        end
+
+      send(parent, {:agents_data_loaded, node, gen, result})
+    end)
+
+    socket
+  end
+
+  # Spawns the shared async agent refresh (used by the :remote_poll tick,
+  # {:agents_updated} broadcasts, the remote {:agent_registered} fallback, and
+  # the {:agent_updated} missing-agent race). Bumps the monotonic :poll_seq
+  # (never reset); the result is stale-guarded by seq + node in handle_info/2.
+  defp spawn_agents_refresh(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+    seq = Map.get(socket.assigns, :poll_seq, 0) + 1
+    threshold_cache = socket.assigns.threshold_cache
+
+    socket = assign(socket, :poll_seq, seq)
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      # Node-boundary rescue: the refresh RPCs to a possibly-dead remote
+      # daemon. (1) Do we expect this error? Yes — the remote node can die or
+      # disconnect mid-flight. (2) Is try/rescue the cleanest approach? Yes —
+      # the seq stale-guard drops late/duplicate results and an error keeps the
+      # last good tree.
+      result =
+        try do
+          {agents, cache} = EvoDashWeb.AgentsLive.LoadData.refresh(node, threshold_cache)
+          {:ok, agents, cache}
+        rescue
+          _ -> {:error, :refresh_failed}
+        end
+
+      send(parent, {:remote_poll_result, seq, node, result})
+    end)
+
+    socket
+  end
+
+  # Spawns an async history fetch for `agent_id` on the viewed node. `index`
+  # is nil for select/refresh flows, or the clicked entry index for the
+  # view_full_message safety net. The history runner is injectable via the
+  # :agents_history_runner env seam, resolved AT SPAWN TIME (inside the task)
+  # so tests can stub it.
+  defp spawn_history_fetch(socket, agent_id, index) do
+    parent = self()
+    node = socket.assigns.current_node
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      # Node-boundary rescue: the history RPC targets a possibly-dead remote
+      # daemon. (1) Do we expect this error? Yes — the remote node can die
+      # mid-flight. (2) Is try/rescue the cleanest approach? Yes — the
+      # stale-guard drops late results and an error just clears the loading
+      # flags.
+      result =
+        try do
+          runner =
+            Application.get_env(
+              :evo_dash,
+              :agents_history_runner,
+              &EvoDash.NodeContext.get_agent_history/2
+            )
+
+          entries = runner.(node, agent_id) |> messages_to_history_entries()
+          {:ok, entries}
+        rescue
+          _ -> {:error, :history_fetch_failed}
+        end
+
+      send(parent, {:agent_history_loaded, agent_id, node, result, index})
+    end)
+
+    socket
+  end
+
+  # Shared application of a fresh agent list (from the async load or a refresh
+  # task): recomputes all the tracking assigns, carries over already-fetched
+  # histories when the history gate says they are still current, records the
+  # fresh message counts into the gate, and (re)triggers a history fetch for
+  # the selected agent when its count moved on.
+  defp apply_agents_result(socket, agents) do
+    current_ids = MapSet.new(agents, & &1.id)
+    current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
+
+    # Detect new agents
+    new_agent_ids = MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
+
+    # Detect status changes (agents that exist in both but have different status)
+    changed_status_ids =
+      current_ids
+      |> MapSet.intersection(socket.assigns.previous_agent_ids)
+      |> MapSet.filter(fn id ->
+        current_statuses[id] != socket.assigns.previous_statuses[id]
+      end)
+
+    id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
+
+    # Carry over already-fetched histories and record the gate: a fresh agent
+    # built from summaries has history: [] — keep the old (fetched) history
+    # while the message count is unchanged (the gate's last-seen entry), so the
+    # full history is never re-transferred for an unchanged agent. When the
+    # count changed (or there is no last-seen entry), the history is dropped
+    # and the gate entry is left untouched — selecting the agent then fetches
+    # fresh history.
+    old_agents = socket.assigns.agents
+
+    {agents, history_gate} =
+      Enum.reduce(agents, {[], socket.assigns.history_gate}, fn agent, {acc, gate} ->
+        old_agent = Enum.find(old_agents, &(&1.id == agent.id))
+
+        carry =
+          old_agent && old_agent.history != [] &&
+            !HistoryGate.need_fetch?(gate, agent.id, agent.message_count)
+
+        agent = if carry, do: %{agent | history: old_agent.history}, else: agent
+        gate = if carry, do: HistoryGate.record(gate, agent.id, agent.message_count), else: gate
+
+        {[agent | acc], gate}
+      end)
+
+    agents = Enum.reverse(agents)
+
+    socket
+    |> assign(
+      agents: agents,
+      id_to_display: id_to_display,
+      repo_trees: build_repo_trees(agents),
+      previous_agent_ids: current_ids,
+      previous_statuses: current_statuses,
+      new_agent_ids: new_agent_ids,
+      changed_status_ids: changed_status_ids,
+      history_gate: history_gate
+    )
+    |> maybe_fetch_selected_history()
+  end
+
+  # Triggers an async history fetch for the selected agent when the history
+  # gate says the stored history (if any) no longer matches the agent's current
+  # message count. No-op when nothing is selected, the agent is gone, the gate
+  # says the history is current, or a fetch is already in flight.
+  defp maybe_fetch_selected_history(socket) do
+    selected_agent_id = socket.assigns.selected_agent_id
+
+    if selected_agent_id do
+      agent = Enum.find(socket.assigns.agents, &(&1.id == selected_agent_id))
+
+      if agent &&
+           HistoryGate.need_fetch?(
+             socket.assigns.history_gate,
+             selected_agent_id,
+             agent.message_count
+           ) &&
+           socket.assigns.history_loading_agent_id != selected_agent_id do
+        socket
+        |> assign(history_loading_agent_id: selected_agent_id)
+        |> spawn_history_fetch(selected_agent_id, nil)
+      else
+        socket
+      end
+    else
+      socket
+    end
+  end
+
+  # Triggers an async history fetch for the selected agent WITHOUT consulting
+  # the gate. Used by the {:agent_updated} broadcast path, whose payload does
+  # not carry :message_count — the merged agent's count is stale (from the last
+  # list_agents summary), so gating on it would wrongly suppress the refetch
+  # and leave the chat panel stale (the local node has no poll to correct it).
+  # Still guards against overlapping fetches via history_loading_agent_id.
+  defp refetch_selected_history(socket) do
+    selected_agent_id = socket.assigns.selected_agent_id
+
+    if selected_agent_id do
+      agent = Enum.find(socket.assigns.agents, &(&1.id == selected_agent_id))
+
+      if agent && socket.assigns.history_loading_agent_id != selected_agent_id do
+        socket
+        |> assign(history_loading_agent_id: selected_agent_id)
+        |> spawn_history_fetch(selected_agent_id, nil)
+      else
+        socket
+      end
+    else
+      socket
     end
   end
 
@@ -626,29 +920,6 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
-  # Full reload of the agent list from the current node, recomputing all the
-  # tracking assigns. Used by the remote agent_registered path (where ETS is
-  # not accessible) and any other path that needs a clean refresh.
-  defp full_reload(socket) do
-    current_node = socket.assigns.current_node
-    agents = load_agents(current_node)
-    current_ids = MapSet.new(agents, & &1.id)
-    current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
-    id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
-
-    agents = reload_selected_agent_history(agents, socket.assigns.selected_agent_id, current_node)
-
-    assign(socket,
-      agents: agents,
-      id_to_display: id_to_display,
-      repo_trees: build_repo_trees(agents),
-      previous_agent_ids: current_ids,
-      previous_statuses: current_statuses,
-      new_agent_ids: MapSet.new(),
-      changed_status_ids: MapSet.new()
-    )
-  end
-
   # Incremental agent registration handler for the LOCAL node. Reads ETS
   # directly (the tables are local). Returns the updated socket.
   defp handle_local_agent_registered(socket, agent_id, meta_summary) do
@@ -668,7 +939,7 @@ defmodule EvoDashWeb.AgentsLive do
 
     total_tokens = (agent_state && agent_state.total_tokens) || 0
     compression_count = (agent_state && agent_state.compression_count) || 0
-    compression_threshold = safe_compression_threshold(socket.assigns.current_node)
+    compression_threshold = safe_compression_threshold(socket)
 
     compression_pct =
       trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
@@ -702,7 +973,12 @@ defmodule EvoDashWeb.AgentsLive do
       total_tokens: total_tokens,
       compression_count: compression_count,
       compression_threshold: compression_threshold,
-      compression_pct: compression_pct
+      compression_pct: compression_pct,
+      # History-gate input: number of messages in the agent's context. NOT
+      # recorded into the gate here — the history is empty until first fetch,
+      # and recording a count would wrongly suppress the fetch on selection.
+      message_count:
+        (agent_state && agent_state.context && length(agent_state.context.messages)) || 0
     }
 
     agents = socket.assigns.agents
@@ -722,7 +998,7 @@ defmodule EvoDashWeb.AgentsLive do
     agents =
       if new_agent.parent_id do
         update_agent_in_list(agents, new_agent.parent_id, fn parent ->
-          children = find_children_from_agents(parent.id, agents)
+          children = LoadData.find_children_from_agents(parent.id, agents)
           %{parent | children: children, has_children: length(children) > 0}
         end)
       else
@@ -749,16 +1025,9 @@ defmodule EvoDashWeb.AgentsLive do
 
   defp maybe_update_parent_children(agents, parent_id) do
     update_agent_in_list(agents, parent_id, fn parent ->
-      children = find_children_from_agents(parent.id, agents)
+      children = LoadData.find_children_from_agents(parent.id, agents)
       %{parent | children: children, has_children: length(children) > 0}
     end)
-  end
-
-  defp find_children_from_agents(parent_id, agents) do
-    agents
-    |> Enum.filter(fn a -> a.parent_id == parent_id end)
-    |> Enum.map(fn a -> {a.id, a.status} end)
-    |> Enum.sort_by(fn {id, _} -> id end)
   end
 
   defp build_repo_trees(agents) do
@@ -864,131 +1133,31 @@ defmodule EvoDashWeb.AgentsLive do
     end)
   end
 
-  # Loads all agents for the given node. Reads scheduler state via
-  # `EvoDash.NodeContext.list_agents/1`, which returns summary maps. On the
-  # local node this reads the local ETS-backed RemoteAPI directly (no :erpc);
-  # on a remote node it routes through :erpc.call/5, which transfers native
-  # Elixir terms (atoms, structs) directly — no serialization boundary.
-  #
-  # The RPC summaries provide the fields the rendering code expects, including
-  # the agent metadata fields (repo_root, context_path, current_commit,
-  # base_commit, worktree, task_id, task_number, retries) which are now exposed
-  # by the RemoteAPI summary layer. Fields not in the summary are read via
-  # bracket access (summary[:field]) so they default to nil gracefully.
-  defp load_agents(node) do
-    summaries = EvoDash.NodeContext.list_agents(node)
-    compression_threshold = safe_compression_threshold(node)
-    # Minimal {id, parent_id, status} list used for children computation.
-    parent_lookup = summaries_to_agents(summaries)
+  # Reads the compression threshold for the currently viewed node from the
+  # threshold cache. The cache is filled ONLY by the async load/refresh tasks
+  # (see ThresholdCache) — this never RPCs from the LiveView process. On a
+  # cache miss the LOCAL node resolves its config directly (cheap, local); a
+  # remote miss falls back to the default until the next async refresh fills
+  # the cache.
+  defp safe_compression_threshold(socket) do
+    node = socket.assigns.current_node
 
-    summaries
-    |> Enum.map(fn summary ->
-      total_tokens = summary[:total_tokens] || 0
-      compression_count = summary[:compression_count] || 0
+    case ThresholdCache.read(
+           socket.assigns.threshold_cache,
+           node,
+           System.monotonic_time(:millisecond)
+         ) do
+      {:ok, threshold} ->
+        threshold
 
-      compression_pct =
-        trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
-
-      %{
-        id: summary[:id],
-        task_local_id: summary[:task_local_id],
-        repo_id: summary[:repo_id] || "primary",
-        repo_root: summary[:repo_root],
-        task_id: summary[:task_id],
-        task_number: summary[:task_number],
-        status: summary[:status] || :pending,
-        depth: summary[:depth] || 0,
-        parent_id: summary[:parent_id],
-        worktree: summary[:worktree],
-        retries: summary[:retries] || 0,
-        agent_module: parse_agent_module(summary[:agent_module]),
-        model_id: summary[:model_id],
-        objective: summary[:objective] || "",
-        context_path: summary[:context_path],
-        current_commit: summary[:current_commit],
-        base_commit: summary[:base_commit],
-        # children/has_children are computed after the full list is built
-        children: [],
-        has_children: false,
-        pending_sub_agents: [],
-        sub_agent_results: %{},
-        task_ref: nil,
-        result_sent: false,
-        history: [],
-        usage: normalize_usage(summary[:usage]),
-        total_tokens: total_tokens,
-        compression_count: compression_count,
-        compression_threshold: compression_threshold,
-        compression_pct: compression_pct
-      }
-    end)
-    # Compute children from the full list using parent_id relationships.
-    |> Enum.map(fn agent ->
-      children = find_children_from_agents(agent.id, parent_lookup)
-      %{agent | children: children, has_children: length(children) > 0}
-    end)
-    |> Enum.sort_by(&{&1.depth, &1.id})
-  end
-
-  # Builds a minimal agent list (only id/parent_id/status) from the RPC
-  # summaries, used by find_children_from_agents/2 which keys off parent_id.
-  defp summaries_to_agents(summaries) do
-    Enum.map(summaries, fn s ->
-      %{id: s[:id], parent_id: s[:parent_id], status: s[:status] || :pending}
-    end)
-  end
-
-  # RemoteAPI returns agent_module as a native module atom
-  # (e.g. EvoGit.Agents.Manager), transferred directly by :erpc.call/5.
-  # The rendering code calls inspect/1 on it; return the atom so it displays
-  # correctly. Returns nil when absent.
-  defp parse_agent_module(nil), do: nil
-  defp parse_agent_module(module) when is_atom(module), do: module
-
-  # Normalizes the usage value from an agent summary into a struct so the
-  # rendering code (which reads usage.input_tokens etc.) works uniformly.
-  # :erpc.call/5 transfers the native %EvoGit.Agent.Usage{} struct directly —
-  # no serialization boundary — so we just return it (with a nil → zero
-  # fallback for agents that have no usage yet).
-  defp normalize_usage(nil), do: EvoGit.Agent.Usage.zero()
-
-  defp normalize_usage(%EvoGit.Agent.Usage{} = usage), do: usage
-
-  defp normalize_usage(_), do: EvoGit.Agent.Usage.zero()
-
-  # Reads the compression threshold for the given node. On the local node this
-  # resolves the local config directly; on a remote node it reads the remote
-  # scheduler config. Falls back to 100_000 when unavailable.
-  defp safe_compression_threshold(node) do
-    if node == node() do
-      EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) || 100_000
-    else
-      config = EvoDash.NodeContext.get_remote_config(node)
-      get_in(config, [:llm, :compression_threshold_tokens]) || 100_000
+      :miss ->
+        if node == node() do
+          EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) ||
+            ThresholdCache.default_threshold()
+        else
+          ThresholdCache.default_threshold()
+        end
     end
-  end
-
-  # Reads the config health status for the given node. On the local node this
-  # resolves the local config directly; on a remote node it fetches the remote
-  # config status via RPC. The layout config banner uses this to show the
-  # correct status for the node being viewed (not stale local status).
-  defp node_config_status(node) do
-    if node == node() do
-      EvoGit.Config.config_status()
-    else
-      EvoDash.NodeContext.get_remote_config_status(node)
-    end
-  end
-
-  # Loads the conversation history for an agent on the given node. RemoteAPI
-  # returns native %ReqLLM.Message{} structs (transferred directly by
-  # :erpc.call/5); we convert them to the %{turn, type, data} entry shape the
-  # template expects via messages_to_history_entries/1. On the local node this
-  # reads the local RemoteAPI (same format), so both local and remote paths are
-  # unified.
-  defp load_agent_history(node, agent_id) do
-    EvoDash.NodeContext.get_agent_history(node, agent_id)
-    |> messages_to_history_entries()
   end
 
   # Converts native %ReqLLM.Message{} structs into the %{turn, type, data}
@@ -1018,15 +1187,6 @@ defmodule EvoDashWeb.AgentsLive do
         metadata: msg.metadata
       }
     }
-  end
-
-  # Reloads history for the selected agent in the agents list.
-  # Returns the updated agents list (no-op if selected_agent_id is nil or not found).
-  defp reload_selected_agent_history(agents, nil, _node), do: agents
-
-  defp reload_selected_agent_history(agents, selected_agent_id, node) do
-    history = load_agent_history(node, selected_agent_id)
-    update_agent_in_list(agents, selected_agent_id, fn agent -> %{agent | history: history} end)
   end
 
   # Merges an agent's real history with its pending optimistic user messages
