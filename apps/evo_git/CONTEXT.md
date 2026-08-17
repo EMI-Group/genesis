@@ -238,6 +238,48 @@ Facts for designing a "safe to restart/update" flow for the desktop backend (lon
 - **No auto-resume**: `TaskRegistry.init/1` reconciles but never resumes; resume is always a NEW `:evolve` task via dashboard Review page (`resume_from` → `ResumeContext`; `review_status: :continued` is a persisted marker only, `set_review_status/2` task_registry.ex:130-132). Core never gates on `review_status` — the human review step is pure dashboard UX. Auto-resume after an update would need new machinery.
 - **Adding a distinct status (e.g. `:interrupted`) requires**: codec `@known_atoms` (store/codec.ex:217-221 — unknown status decodes to nil, and `decode_task` falls back to `:pending`, codec.ex:153), TaskInfo typespec (task_info.ex:30-31), and the hardcoded status lists: store.ex:634 (`NOT IN ('running','pending','cancelling')` — new status would be deleted by `clear_finished_tasks`), store.ex:682 (`IN ('running','finalizing','cancelling')`), task_registry.ex:317-319, 846-849, 851-861, 870-878, 1114, 1130-1138, 1324, 1364. Schema itself has NO CHECK/FK/ON CONFLICT constraints (schema.ex:36-56) — any string is accepted by the write path.
 
+## Cross-Node RPC Payload Profile (SSH remote UX optimization — investigation findings)
+
+Payload/severity analysis of the remote dashboard's RPC surface (`EvoGit.RemoteNode` → `EvoGit.AgentScheduler.RemoteAPI` via `:erpc.call/5`; local node = direct call). Transfer is **uncompressed native BEAM terms** (no distribution compression configured in `EvoGit.Distribution`); no JSON boundary. `:remote_rpc_timeout` default 30s read at call time (remote_node.ex:18,69-72). Every wrapper: local → direct call (errors surface truthfully), remote → `:erpc.call/5` normalized to `{:ok, _} | {:error, {kind, reason}}`; failure fallbacks (`[]`/`%{}`/`nil`/`false`) per function. Severity: 🔴 heavy payload / 🟠 moderate / 🟢 cheap.
+
+**Agent-state reads (ETS-backed, `:evogit_agent_state` + `:evogit_sched_meta` — cheap server-side, `:ets.tab2list`/`:ets.lookup`):**
+- `get_agent_history/1` 🔴 — returns the FULL `context.messages` list (`%ReqLLM.Message{}` structs: content parts, tool_calls with args, reasoning_details incl. signatures, metadata). No trimming. Worst case pre-compression ≈ `llm.compression_threshold_tokens` (default **100_000** tokens, config.ex:32) ≈ 400 KB–1 MB text per agent; tool outputs per-call capped (truncation config: 128 KB global ceiling / 16 KB default for high-output tools, output_sanitizer.ex:110-121). Compressed contexts are small (`[system, initial_user, summary]`).
+- `get_agent_state/1` 🟢 — native `%AgentState{}` **with `:context` dropped** (remote_api.ex:108-113); carries foreign_repos, pending_user_messages, usage, phylo_node, context_node → ~1-2 KB. **Dead in the dashboard** (zero web-layer callers — NodeContext passthrough only).
+- `list_agents/0` 🟠 — per-agent summary map (~20 keys: id, task_local_id, repo_id, status, depth, parent_id, **usage `%Usage{}`**, total_tokens, compression_count, **objective** (can be large — attached-file content is appended into objectives), agent_module, model_id, repo_root, context_path, worktree, current_commit, base_commit, task_id, task_number, retries). ~0.5-5 KB/agent typical; **objective dominates** when file content was attached. Dashboard (AgentsLive) consumes ~20 keys but re-fetches **every `{:agents_updated}` broadcast + every 3s remote poll tick** — the highest-frequency transfer in the system.
+
+**Task reads (SQLite via TaskRegistry — server-side offloads heavy decodes to short-lived Tasks, task_registry.ex:285-310; status/updated_at filters are index-backed):**
+- `list_tasks/0` 🔴 — FULL `%TaskInfo{}` decode: logs (capped @max_log_entries 500), result (embeds usage + archive_records), opts (objective + foreign_repos), archive_metadata. **No dashboard caller** (NodeContext passthrough only) — not a tunnel cost today.
+- `get_task/1` 🔴/🟠 — full row incl. result blob. ReviewLive consumes all but `logs`; once per page load + per debounced broadcast burst.
+- `list_tasks_paginated/1` 🔴 — 25 full TaskInfo rows/page; heavy fields (result/logs/usage/archive_metadata) transferred even when every card is collapsed; no lazy detail RPC exists. Per dirty change only.
+- `list_tasks_summary/1` 🟢 — 15-key projection, **no `result`** (store.ex:78 `@summary_columns`); sidebar-only, broadcast-debounced (no polling).
+- `list_tasks_changed_since/1` 🟢 but **worst transferred-vs-consumed gap** — full 15-key projection per row every 3s remote poll tick; DirtyTracker consumes ONLY `:updated_at` (14/15 keys unused). A `(id, updated_at)` projection is the natural optimization.
+- `list_task_ids/1` 🟢 — 3-key projection; dashboard reads only `updated_at`.
+
+**Config reads:**
+- `get_config/0` 🟢 — scheduler state map (~17 keys); model_profiles carry NO api keys (credentials live in credentials.toml/ReqLLM key store) → ~1-3 KB. Consumed by SystemLive chart (~30s cadence) and AgentsLive threshold lookup (reads `[:llm, :compression_threshold_tokens]` which is **absent from the scheduler config** → remote nodes always fall back to 100_000 — known correctness gap).
+- `get_config_status/0` 🟢 — small status map (missing/warnings/ok?/validation_errors).
+- `reload_config/0`, `save_user_config/1`, `save_credentials/1` 🟢 — tiny returns; heavy work (disk write) runs remotely.
+
+**Review/git functions (via RemoteAPI → `EvoGit.Review` — run git CLI processes ON the remote node, server-side cost is per-git-spawn; return values pass through verbatim):**
+- `load_review_data/2` 🔴 — `git diff` full-branch diff string can be MBs; **never called by the dashboard (dead path)**; `load_review_metadata` is the live variant.
+- `load_review_metadata/2` 🟠 — 4 git commands (rev_parse, merge-base, diff_numstat, diff_shortstat); payload = file list with counts (~small). Dashboard doesn't consume top-level `commit_sha`/`diff_stat`.
+- `list_commits/2` 🟢 — 3 git commands; CommitInfo list (author_email unused by dashboard).
+- `load_file_diff/4,5` 🟠 — 1 git command per file; payload = file diff (KB–MB with `-U999999` full-file context); dashboard loads **lazily per file click**.
+- `load_commit_files/2` 🟢 / `load_commit_file_diff/3` 🟠 — per-commit variants; metadata-only / single-file diff.
+- `get_file_content/3` 🟠 — `git show <sha>:<path>` — full file content (can be MBs); used for whole-file highlighting on demand.
+- `check_merge/3` 🟢 — in-memory `git merge-tree` (non-mutating); returns `:clean | {:conflict, files}`.
+- `merge_branch/2,3`, `reject_branch/2`, `branch_exists?/2`, `default_merge_target/1`, `list_branches/1` 🟢 — small returns; git work happens remotely.
+- `create_github_pr/4`, `github_upstream/1`, `list_github_issues/2`, `github_issue_markdown/2` 🟠 — gh CLI + network on the remote; payloads small-medium.
+
+**Custom-agents & system functions:** `list_custom_agents/0` 🟢 (~KB, file read of agents.toml); `save/delete/save_model_selection_script/reload_custom_agents` 🟢; `start_task/2` 🟢 (`{:ok, %TaskInfo{}}` — dashboard reads only the id); `file_exists?/1`, `ls/1`, `dir?/2`, `read_project_config/1`, `list_path_suggestions/1` 🟢 (path-list); `llm_test/2` 🟠 (runs a real LLM call remotely; returns model + response text).
+
+**Top payload-reduction opportunities (cross-checked against apps/evo_dash consumption):**
+1. `list_tasks_changed_since` — add a `(id, updated_at)`-only projection (biggest gap: 14/15 keys unused every 3s).
+2. `get_agent_history` — re-transferred in full every 3s tick + every broadcast for the selected agent; dashboard renders only text content parts, tool_calls name/args, metadata.turn/timestamp, reasoning_details (full `metadata` map is dead wire weight). Trim server-side or fetch-on-change.
+3. `list_agents` — re-fetched per broadcast + 3s tick; `objective` can carry attached-file content. Consider excluding heavy fields or splitting light/detail variants.
+4. `list_tasks_paginated` — heavy blobs (result/logs/usage/archive_metadata) for all 25 rows though only consumed when a card is expanded; a lazy detail RPC would bound transfer.
+5. Dead surface: `get_agent_state/1` (no dashboard caller), `load_review_data/2` (no caller), `list_tasks/0` (no caller), `RemoteNode.list_tasks/1` (unused) — candidates for removal or deprecation if the UX workstream wants a leaner surface.
+
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
