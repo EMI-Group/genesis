@@ -62,6 +62,30 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
   end
 
+  # Waits until the async chart tick's result has been applied (i.e.
+  # `chart_samples` is non-empty). The `:system_chart_tick` handler increments
+  # `chart_tick_count`/`chart_tick_seq` synchronously at spawn time, but the
+  # sample itself only arrives later as `{:chart_tick_result, ...}` from the
+  # spawned sampling task — poll until the handler has applied it.
+  defp await_chart_sample(view, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_chart_sample(view, deadline)
+  end
+
+  defp do_await_chart_sample(view, deadline) do
+    cond do
+      assigns(view)[:chart_samples] != [] ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("the async chart tick did not produce a sample within the test timeout")
+
+      true ->
+        Process.sleep(10)
+        do_await_chart_sample(view, deadline)
+    end
+  end
+
   # Injects a system-checks result directly into the LiveView mailbox and
   # renders. The self-check rows only render once `system_checks_status` leaves
   # `:checking`; the injected result is processed after the real async one, so
@@ -333,6 +357,100 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute result_socket.assigns.show_stop_confirm
       # Info flash about remote stop (not an error flash)
       assert %{"info" => _} = result_socket.assigns.flash
+    end
+
+    test "scheduler_config broadcast reloads the REMOTE paused state, not the local one", %{
+      conn: conn
+    } do
+      # Regression for the async node-aware paused reload: the
+      # {:scheduler_config_updated} handler must re-read the node being VIEWED
+      # (degrading to false for the fake remote node, which has no scheduler
+      # behind it), never the LOCAL scheduler's paused state — the old
+      # local-only read showed "Scheduler Paused" on a remote view whenever the
+      # local scheduler happened to be paused.
+      #
+      # Same remote scaffolding as the "LLM Test in Settings link" test:
+      # isolate the config dir via XDG_CONFIG_HOME so the saved target never
+      # touches the developer's real ~/.config/genesis/, and register a fake
+      # connection manager so the `?node=` param resolves to a connected remote
+      # context.
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_system_live_xdg_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      id = "test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{ssh_target: "user@host", id: id, name: "Test Target"})
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.RemoteConnections.delete(id)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      start_supervised!(
+        {EvoDashWeb.SystemLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/system?node=" <> id)
+
+      # The initial async handle_params paused load settles on `false`: the
+      # fake remote node has no scheduler behind it, so NodeContext.paused?/1
+      # degrades to false. Await it so the broadcast path is what the final
+      # assertion exercises.
+      assert await_view_assign(view, :scheduler_paused, false) == :ok
+
+      # Prove the paused-state channel works for the current (remote) node —
+      # the node stale-guard accepts it, flipping the banner to paused. This
+      # makes the post-broadcast flip back to `false` meaningful: it comes from
+      # the broadcast-triggered node-aware reload, not a broken channel.
+      remote_node = assigns(view)[:current_node]
+      send(view.pid, {:paused_state, remote_node, true})
+      render(view)
+      assert assigns(view)[:scheduler_paused] == true
+
+      # Now pause the LOCAL scheduler and fire the broadcast the handler
+      # listens to (topic "scheduler_config", message
+      # {:scheduler_config_updated} — see EvoGit.AgentScheduler.PubSub).
+      EvoGit.AgentScheduler.pause()
+
+      on_exit(fn ->
+        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.AgentScheduler.resume()
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "scheduler_config", {:scheduler_config_updated})
+
+      # The reload is node-aware: it re-reads the REMOTE node's paused state
+      # (degrading to false), NOT the local scheduler's now-paused state, so
+      # the remote view flips back to `false`.
+      assert await_view_assign(view, :scheduler_paused, false) == :ok
     end
   end
 
@@ -696,20 +814,70 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "<svg"
     end
 
-    test "system_chart_tick samples safely and the section keeps rendering", %{conn: conn} do
+    test "system_chart_tick samples asynchronously and the section keeps rendering", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      # Safe in the test env: local-node sampling is gated by a liveness check
-      # (scheduler process/ETS) and config fetch goes through NodeContext, which
-      # the existing tests already exercise (mount's `scheduler_paused`).
+      # The tick now reschedules itself and spawns an async sampling task: the
+      # handler increments `chart_tick_count` synchronously at spawn time, but
+      # the sample only arrives later as `{:chart_tick_result, ...}`. Safe in
+      # the test env: the spawned task is total (local-node liveness gate +
+      # NodeContext degradation), so it always records a sample.
       send(view.pid, :system_chart_tick)
+
+      assert await_view_assign(view, :chart_tick_count, 1) == :ok
+      assert await_chart_sample(view) == :ok
+
       html = render(view)
 
-      assert assigns(view)[:chart_tick_count] == 1
-      # One sample exists → the SVG charts render in place of the placeholder.
-      assert html =~ "Scheduler Status"
       assert html =~ "<svg"
       refute html =~ "Collecting data…"
+    end
+
+    test "a fresh chart-tick result updates the chart", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Inject the result directly with the current sequence — no real tick has
+      # spawned yet, so it is the freshest possible result and is applied. (The
+      # mount's real 3s timer could race in a slow environment, so assert on
+      # the last sample only, never exact-list equality.)
+      seq = assigns(view)[:chart_tick_seq]
+
+      send(
+        view.pid,
+        {:chart_tick_result, seq, node(), [%{status: :running}],
+         %{llm_capacity: 2, tool_capacity: 3}}
+      )
+
+      html = render(view)
+
+      assert List.last(assigns(view)[:chart_samples])[:agents_total] == 1
+      assert html =~ "<svg"
+    end
+
+    test "a stale chart-tick result is dropped", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Spawn a real tick (seq 1) and await its result — the freshest possible
+      # result is applied, giving a deterministic "before" state.
+      send(view.pid, :system_chart_tick)
+      assert await_view_assign(view, :chart_tick_count, 1) == :ok
+      assert await_chart_sample(view) == :ok
+
+      before = assigns(view)[:chart_samples]
+
+      # A result from a PREVIOUS tick (seq 0 < the current seq 1) must be
+      # dropped: the samples stay exactly as the real tick left them.
+      send(
+        view.pid,
+        {:chart_tick_result, 0, node(), [%{status: :running}],
+         %{llm_capacity: 2, tool_capacity: 3}}
+      )
+
+      render(view)
+
+      assert assigns(view)[:chart_samples] == before
     end
   end
 

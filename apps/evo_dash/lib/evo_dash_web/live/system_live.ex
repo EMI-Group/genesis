@@ -784,7 +784,9 @@ defmodule EvoDashWeb.SystemLive do
     socket =
       assign(socket,
         remote?: false,
-        scheduler_paused: load_paused_state(),
+        # Safe default — the node-aware paused state is loaded asynchronously
+        # in handle_params/3 (never block the initial render on a node RPC).
+        scheduler_paused: false,
         show_restart_confirm: false,
         show_stop_confirm: false,
         system_checks_status: :checking,
@@ -793,11 +795,23 @@ defmodule EvoDashWeb.SystemLive do
         sandbox_check: nil,
         supervisor_check: nil,
         nix_check: nil,
-        platform_os: EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node]),
+        # Local fast-path only: the mount's `current_node` is always local/nil
+        # (NodeAware seeds it before mount; remote resolution happens in
+        # handle_params), so this is a cheap host call. Remote nodes get
+        # `:unknown` here and are filled in by the async handle_params load.
+        platform_os:
+          if socket.assigns[:current_node] in [nil, node()] do
+            EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node])
+          else
+            :unknown
+          end,
         chart_samples: [],
         chart_node: nil,
         chart_config_cache: nil,
         chart_tick_count: 0,
+        # Monotonic sequence for async chart-tick results (never reset — see
+        # spawn_chart_tick/1; `chart_tick_count` above is the per-node counter).
+        chart_tick_seq: 0,
         # Software Update card assigns (visibility is recomputed in
         # handle_params/3 after assign_node; modal ids are nil-guarded no-ops).
         update_card_visible: false,
@@ -827,17 +841,13 @@ defmodule EvoDashWeb.SystemLive do
     socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
     socket = assign(socket, :current_path, ~p"/system")
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
-    # Recompute the platform OS for the (possibly remote) node AFTER assign_node
-    # so sandbox/nix row gating reflects the node being viewed.
-    socket =
-      assign(
-        socket,
-        :platform_os,
-        EvoDashWeb.PlatformInfo.os_for_node(socket.assigns.current_node)
-      )
 
-    socket =
-      assign(socket, :scheduler_paused, EvoDash.NodeContext.paused?(socket.assigns.current_node))
+    # Load the node-dependent values (scheduler paused state + platform OS for
+    # sandbox/nix row gating) ASYNCHRONOUSLY — each is a cross-node RPC on a
+    # remote node, which could otherwise block navigation for up to the RPC
+    # timeout. Results arrive via handle_info, stale-guarded on the node the
+    # request was made for. Initial render keeps the mount defaults.
+    socket = spawn_node_loads(socket)
 
     # Reset the chart ring buffer + config cache when the node context changes
     # so charts never mix samples from different nodes.
@@ -1166,7 +1176,11 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_info({:scheduler_config_updated}, socket) do
-    {:noreply, assign(socket, :scheduler_paused, load_paused_state())}
+    # The broadcast fires from the node's scheduler — on a remote node a
+    # local-only read would show the WRONG paused state. Reload it
+    # node-aware (and async, so the broadcast never blocks the LiveView on a
+    # cross-node RPC).
+    {:noreply, spawn_paused_load(socket)}
   end
 
   # --- Software Update card messages ---
@@ -1245,17 +1259,90 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_info(:system_chart_tick, socket) do
-    # Sampling tick for the scheduler-status charts. Reschedule only while
-    # connected; the timer dies with the LiveView process when the tab closes.
+    # Sampling tick for the scheduler-status charts. Reschedule IMMEDIATELY
+    # (steady 3s cadence even when a sampling task is still in flight) — the
+    # actual RPC work runs in an async task, so the page never blocks on a
+    # node round-trip. The timer dies with the LiveView process when the tab
+    # closes.
     socket =
       if connected?(socket) do
         Process.send_after(self(), :system_chart_tick, 3000)
-        do_chart_tick(socket)
+        spawn_chart_tick(socket)
       else
         socket
       end
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:paused_state, node, paused}, socket) do
+    # Async node-aware paused-state result (handle_params load + the
+    # {:scheduler_config_updated} broadcast reload). Stale-guard: drop results
+    # that arrived after a node switch so a slow remote RPC never overwrites
+    # the current node's state.
+    socket =
+      if socket.assigns.current_node == node do
+        assign(socket, :scheduler_paused, paused)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:platform_os_result, node, os}, socket) do
+    # Async platform-OS result for sandbox/nix row gating. Same node
+    # stale-guard as {:paused_state, ...}.
+    socket =
+      if socket.assigns.current_node == node do
+        assign(socket, :platform_os, os)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:chart_tick_result, seq, node, agents, totals}, socket) do
+    # Async chart-sample result. Stale-guard: drop results from an older tick
+    # (a newer tick already spawned — its result will arrive later) or from a
+    # previously-viewed node (the ring buffer was reset on the node change).
+    # Only the latest tick's result may update the samples, so slow in-flight
+    # RPCs can never overwrite fresher data. `seq` is monotonic across node
+    # switches (never reset), so a re-visit to an earlier node cannot
+    # re-apply a pre-switch sample either.
+    cond do
+      seq < socket.assigns.chart_tick_seq ->
+        {:noreply, socket}
+
+      node != socket.assigns.current_node ->
+        {:noreply, socket}
+
+      true ->
+        # The dead-scheduler branch sends `totals == nil`; build the sample
+        # with zero capacities (same as the old synchronous code) but do NOT
+        # cache those zeros — caching them would suppress the every-10th-tick
+        # config refresh for 10 ticks even after the scheduler starts (the old
+        # code never cached in the dead branch either).
+        effective_totals = totals || %{llm_capacity: 0, tool_capacity: 0}
+
+        samples =
+          Charts.push(socket.assigns.chart_samples, Charts.build_sample(agents, effective_totals))
+
+        socket = assign(socket, :chart_samples, samples)
+
+        socket =
+          if totals != nil do
+            assign(socket, :chart_config_cache, {node, totals})
+          else
+            socket
+          end
+
+        {:noreply, socket}
+    end
   end
 
   # --- Private Helpers ---
@@ -1283,50 +1370,106 @@ defmodule EvoDashWeb.SystemLive do
     EvoGit.SystemCheck.run_all_checks()
   end
 
-  defp load_paused_state do
-    Map.get(EvoGit.AgentScheduler.get_config(), :paused, false)
+  # Asynchronously loads the node-dependent values rendered on this page
+  # (scheduler paused state + platform OS for sandbox/nix row gating). Both
+  # callees are total (`NodeContext.paused?/1` → false on failure,
+  # `PlatformInfo.os_for_node/1` never raises), so the tasks can never crash
+  # the LiveView; results are stale-guarded in handle_info.
+  defp spawn_node_loads(socket) do
+    socket = spawn_paused_load(socket)
+
+    parent = self()
+    node = socket.assigns.current_node
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      send(parent, {:platform_os_result, node, EvoDashWeb.PlatformInfo.os_for_node(node)})
+    end)
+
+    socket
+  end
+
+  # Asynchronously reloads the node-aware scheduler paused state. Shared by
+  # handle_params/3 and the {:scheduler_config_updated} broadcast handler —
+  # the broadcast fires from the node's scheduler, so the reload must be
+  # node-aware too (a local-only read would show the wrong state when viewing
+  # a remote node). The local liveness gate keeps the task total on a fresh
+  # boot where the scheduler process isn't running yet (`AgentScheduler.paused?`
+  # would raise :noproc).
+  defp spawn_paused_load(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      paused = if scheduler_alive?(node), do: EvoDash.NodeContext.paused?(node), else: false
+      send(parent, {:paused_state, node, paused})
+    end)
+
+    socket
+  end
+
+  # Spawns one chart-sampling tick as an async task. Increments BOTH counters
+  # at spawn time: `chart_tick_count` (per-node tick number, reset on node
+  # change — drives the every-10th-tick config refresh) and `chart_tick_seq`
+  # (monotonic across the LiveView's lifetime, never reset — the sequence
+  # guard for result application). The task sends
+  # `{:chart_tick_result, seq, node, agents, totals}`; handle_info applies it
+  # only when it is the latest sequence.
+  defp spawn_chart_tick(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+    tick = socket.assigns.chart_tick_count + 1
+    seq = socket.assigns.chart_tick_seq + 1
+    config_cache = socket.assigns.chart_config_cache
+
+    socket =
+      socket
+      |> assign(:chart_tick_count, tick)
+      |> assign(:chart_tick_seq, seq)
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      {agents, totals} = sample_chart(node, tick, config_cache)
+      send(parent, {:chart_tick_result, seq, node, agents, totals})
+    end)
+
+    socket
+  end
+
+  # Runs inside the spawned chart task (total — every callee degrades safely):
+  # the scheduler liveness gate, the agent-summary fetch, and the (every-10th
+  # tick) config-totals refresh. Sample semantics are unchanged: `:running`
+  # agent count is the slot-use proxy, `:blocked` is the waiting signal.
+  defp sample_chart(node, tick, config_cache) do
+    if scheduler_alive?(node) do
+      agents = EvoDash.NodeContext.list_agents(node)
+      totals = chart_totals(node, tick, config_cache)
+      {agents, totals}
+    else
+      # Dead scheduler: zero-agent sample, and `nil` totals so the result
+      # handler does not cache zero capacities (see handle_info).
+      {[], nil}
+    end
+  end
+
+  # Resolved config totals, cached per node and refreshed every 10th tick
+  # (ticks 1, 11, 21… ≈ 30s — config changes rarely and a remote re-fetch is
+  # an :erpc round-trip). The cache snapshot is taken at task spawn time; the
+  # result handler stores the totals the task used, so the cache never
+  # regresses (a dropped stale result is followed by the next tick's fresh
+  # fetch or a cache read of the already-applied value).
+  defp chart_totals(node, tick, config_cache) do
+    case config_cache do
+      {^node, totals} when rem(tick, 10) != 1 ->
+        totals
+
+      _ ->
+        Charts.config_totals(EvoDash.NodeContext.get_remote_config(node))
+    end
   end
 
   # Gate for the Software Update card's event handlers — all update events are
   # no-ops unless the card is visible (desktop shell + local node).
   defp update_card_visible?(socket) do
     socket.assigns[:update_card_visible] || false
-  end
-
-  # Samples scheduler status into the chart ring buffer. Per tick: agent
-  # summaries via NodeContext (RPC-safe: `[]` on failure), config totals
-  # (cached per node, refreshed every 10th tick ≈ 30s — config changes rarely
-  # and a remote re-fetch is an :erpc round-trip).
-  defp do_chart_tick(socket) do
-    node = socket.assigns.current_node
-    tick = socket.assigns.chart_tick_count + 1
-
-    {agents, totals, socket} =
-      if scheduler_alive?(node) do
-        agents = EvoDash.NodeContext.list_agents(node)
-        {totals, socket} = chart_totals(socket, node, tick)
-        {agents, totals, socket}
-      else
-        {[], %{llm_capacity: 0, tool_capacity: 0}, socket}
-      end
-
-    samples = Charts.push(socket.assigns.chart_samples, Charts.build_sample(agents, totals))
-
-    socket
-    |> assign(:chart_samples, samples)
-    |> assign(:chart_tick_count, tick)
-  end
-
-  # Resolved config totals, cached per node and refreshed every 10th tick.
-  defp chart_totals(socket, node, tick) do
-    case socket.assigns.chart_config_cache do
-      {^node, totals} when rem(tick, 10) != 1 ->
-        {totals, socket}
-
-      _ ->
-        totals = Charts.config_totals(EvoDash.NodeContext.get_remote_config(node))
-        {totals, assign(socket, :chart_config_cache, {node, totals})}
-    end
   end
 
   # Remote nodes: NodeContext RPC degrades to []/%{}/false on failure, so no
