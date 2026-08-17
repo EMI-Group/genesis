@@ -264,7 +264,9 @@ defmodule EvoDashWeb.ReviewLive do
         finished_at: nil,
         merge_targets: [],
         default_merge_target: nil,
-        merge_status: nil
+        merge_status: nil,
+        load_generation: 0,
+        last_broadcast_task_id: nil
       )
 
     {:ok, socket}
@@ -280,26 +282,25 @@ defmodule EvoDashWeb.ReviewLive do
     # Node-aware task load. `@current_node` is only resolved by assign_node
     # above (at mount time it is still the on_mount local default), so the
     # task fetch MUST live here — handle_params runs after mount on initial
-    # load too. Dedup guard: the task id is fixed for the page lifetime, so
-    # only a node change warrants a refetch (e.g. a pending→connected
-    # transition that push_patch-es this path, or a manual ?node= switch).
+    # load too. Dedup guard: the load runs once per (node, route) context —
+    # a node change (pending→connected transition, manual ?node= switch) or a
+    # push_patch between the review and commit routes warrants a refetch. The
+    # load itself runs asynchronously (see start_async_load/2); the result
+    # arrives later as a {:review_data_loaded, ...} message.
     socket =
-      if Map.get(socket.assigns, :tasks_loaded_for) == socket.assigns.current_node do
+      if Map.get(socket.assigns, :tasks_loaded_for) ==
+           {socket.assigns.current_node, socket.assigns.live_action, params["commit_sha"]} do
         socket
       else
         socket
-        |> load_task_data(socket.assigns.task_id)
-        |> assign(:tasks_loaded_for, socket.assigns.current_node)
-        |> EvoDashWeb.ReviewLive.MergeCheck.maybe_start()
+        |> start_async_load(params["commit_sha"])
+        |> assign(
+          :tasks_loaded_for,
+          {socket.assigns.current_node, socket.assigns.live_action, params["commit_sha"]}
+        )
       end
 
-    case {socket.assigns.live_action, params["commit_sha"]} do
-      {:commit, commit_sha} when is_binary(commit_sha) ->
-        {:noreply, load_commit_inspection(socket, commit_sha)}
-
-      _ ->
-        {:noreply, socket}
-    end
+    {:noreply, socket}
   end
 
   @impl true
@@ -705,25 +706,83 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_info({:tasks_updated} = msg, socket) do
-    # Debounced via NodeAware — the task-data reload + sidebar reload happen once
-    # in handle_info(:node_aware_reload_tasks, socket) when the timer fires.
+    # Id-less broadcast — can never be attributed to the reviewed task, so it
+    # must never trigger the review-data reload (see the broadcast guard in
+    # :node_aware_reload_tasks). Sidebar refresh still runs via the debounce.
+    socket = assign(socket, :last_broadcast_task_id, nil)
+    # Debounced via NodeAware — the sidebar reload happens once in
+    # handle_info(:node_aware_reload_tasks, socket) when the timer fires.
     # handle_task_info/2 already returns {:noreply, socket}.
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status} = msg, socket) do
+  def handle_info({:task_status, task_id, _status} = msg, socket) do
+    # Stash the broadcast's task id: the debounced reload only re-fetches the
+    # review data when THIS task's broadcasts caused it.
+    socket = assign(socket, :last_broadcast_task_id, task_id)
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
   def handle_info(:node_aware_reload_tasks, socket) do
-    # Debounce timer fired: reload the reviewed task's data and the sidebar's
-    # running/pending tasks, then clear the debounce-pending flag.
-    socket = load_task_data(socket, socket.assigns.task_id)
-    socket = EvoDashWeb.ReviewLive.MergeCheck.maybe_start(socket)
+    # Debounce timer fired: always refresh the sidebar's running/pending
+    # tasks (reload_tasks/1 also clears the debounce-pending flag). The
+    # review-data reload is broadcast-guarded — only a broadcast for the
+    # reviewed task itself (a `{:task_status, task_id, _}` message) warrants
+    # re-fetching the page; other tasks' activity and id-less `{:tasks_updated}`
+    # broadcasts only refresh the sidebar.
     socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
+
+    socket =
+      if Map.get(socket.assigns, :last_broadcast_task_id, nil) == socket.assigns.task_id do
+        start_async_load(socket, Map.get(socket.assigns, :inspect_commit_sha))
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:review_data_loaded, task_id, node, generation, result}, socket) do
+    # Async review-data load finished. Stale-guard: drop results for a
+    # different task/node or from an older load generation (a newer load was
+    # started since — `load_generation` only grows, so `generation < current`
+    # means stale).
+    stale? =
+      task_id != socket.assigns.task_id or node != socket.assigns.current_node or
+        generation < Map.get(socket.assigns, :load_generation, 0)
+
+    if stale? do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, assigns_map} ->
+          socket = assign(socket, assigns_map)
+          # The merge check MUST be sequenced here, after the loaded assigns
+          # (merge_targets/branch_name/branch_exists/...) are in place.
+          {:noreply, EvoDashWeb.ReviewLive.MergeCheck.maybe_start(socket)}
+
+        {:error, reason} ->
+          socket =
+            assign(socket,
+              loading: false,
+              error: reason,
+              repo_path: nil,
+              objective: nil,
+              task_usage: nil,
+              agent_count: nil,
+              task_status: nil,
+              model_id: nil,
+              started_at: nil,
+              finished_at: nil,
+              merge_status: nil
+            )
+
+          {:noreply, socket}
+      end
+    end
   end
 
   @impl true
@@ -751,207 +810,42 @@ defmodule EvoDashWeb.ReviewLive do
 
   # --- Private Helpers ---
 
-  defp load_task_data(socket, task_id) do
-    # All review operations run on the node being viewed: local → direct
-    # call, remote → RPC to the remote daemon (its own TaskRegistry + its own
-    # filesystem). RemoteNode returns the verbatim underlying value in both
-    # paths, so the pattern matches below are identical for local and remote.
+  # Spawns the async review-data load in a supervised Task (same pattern as
+  # `MergeCheck.start/5` and SettingsLive's LLM connection test) and marks the
+  # page as loading. The result arrives later as a
+  # `{:review_data_loaded, task_id, node, generation, result}` message;
+  # `load_generation` is monotonic (incremented per start), so stale results
+  # from superseded loads are dropped by the handle_info stale-guard.
+  defp start_async_load(socket, inspect_commit_sha) do
+    parent = self()
     node = socket.assigns.current_node
+    task_id = socket.assigns.task_id
+    live_action = socket.assigns.live_action
+    gen = Map.get(socket.assigns, :load_generation, 0) + 1
 
-    case EvoDash.NodeContext.get_task(node, task_id) do
-      nil ->
-        assign(socket,
-          loading: false,
-          error: gettext("Task not found. It may have been deleted."),
-          repo_path: nil,
-          objective: nil,
-          task_usage: nil,
-          agent_count: nil,
-          task_status: nil,
-          model_id: nil,
-          started_at: nil,
-          finished_at: nil,
-          merge_status: nil
-        )
+    socket = assign(socket, loading: true, error: nil, load_generation: gen)
 
-      task ->
-        result = task.result
-        repo_path = task.opts[:path]
-
-        # Merge-target branch selector: list local branches and resolve the
-        # default merge target. Degrades gracefully to [] / nil when branches
-        # cannot be listed (e.g. missing repo or unreachable remote node) —
-        # plain case on the tuple returns, no try/rescue.
-        {merge_targets, default_merge_target} =
-          if repo_available?(socket, repo_path) do
-            targets =
-              case EvoDash.NodeContext.list_branches(node, repo_path) do
-                {:ok, names} -> Enum.filter(names, &(is_binary(&1) and String.trim(&1) != ""))
-                _ -> []
-              end
-
-            default =
-              case EvoDash.NodeContext.default_merge_target(node, repo_path) do
-                {:ok, name} -> name
-                _ -> nil
-              end
-
-            {targets, default}
-          else
-            {[], nil}
-          end
-
-        {commit_sha, branch_name, agent_summary, pr_url, pr_title} =
-          case result do
-            {:ok,
-             %{
-               commit_sha: sha,
-               branch_name: branch,
-               result: summary,
-               pr_url: url,
-               pr_title: title
-             }} ->
-              {sha, branch, summary, url, title}
-
-            _ ->
-              {nil, nil, nil, nil, nil}
-          end
-
-        objective = (task.opts[:prompt] || task.opts[:objective]) |> to_string() |> String.trim()
-
-        title = pr_title || objective || branch_name || gettext("Review Changes")
-
-        branch_exists =
-          !!(branch_name && repo_available?(socket, repo_path) &&
-               branch_exists_on_node?(socket, repo_path, branch_name))
-
-        can_resume =
-          repo_available?(socket, repo_path) && (commit_sha != nil || branch_name == nil)
-
-        rs = task.review_status
-
-        review_status =
-          cond do
-            branch_name == nil -> :no_changes
-            rs != nil -> rs
-            not branch_exists -> :open
-            true -> :open
-          end
-
-        is_no_changes = branch_name == nil && task.status in [:completed, :cancelled]
-
-        commit_sha = commit_sha || task.commit_sha
-
-        review_data =
-          cond do
-            # Normal case: branch still exists
-            branch_exists && repo_path ->
-              case EvoDash.NodeContext.load_review_metadata(node, repo_path, branch_name) do
-                {:ok, data} -> data
-                _ -> nil
-              end
-
-            # Post-merge/reject case: branch gone but SHAs persisted
-            not branch_exists && repo_path && task.base_sha && commit_sha ->
-              case EvoDash.NodeContext.load_review_metadata_from_shas(
-                     node,
-                     repo_path,
-                     task.base_sha,
-                     commit_sha
-                   ) do
-                {:ok, data} -> data
-                _ -> nil
-              end
-
-            true ->
-              nil
-          end
-
-        base_sha = if review_data, do: review_data.base_sha, else: task.base_sha
-
-        # Persist SHAs when loading from branch (for future post-merge access)
-        if (branch_exists && review_data && is_nil(task.base_sha)) and base_sha do
-          EvoDash.NodeContext.set_review_metadata(node, task_id, base_sha, commit_sha)
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result =
+        try do
+          EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
+            live_action: live_action,
+            inspect_commit_sha: inspect_commit_sha
+          )
+        rescue
+          # (1) Do we expect this error? YES — the load crosses the node
+          #     boundary: the RPC target may be a dead/disappearing remote
+          #     daemon, or the task may be deleted mid-load.
+          # (2) Is try/rescue the cleanest approach? YES — the alternative is
+          #     the page wedging at the loading state forever with no message;
+          #     mirrors the justified rescue in merge_check.ex:211-218.
+          _ -> {:error, gettext("Failed to load review data.")}
         end
 
-        commits =
-          cond do
-            branch_exists && repo_path ->
-              case EvoDash.NodeContext.list_commits(node, repo_path, branch_name) do
-                {:ok, commits} -> commits
-                # Graceful degradation (missing repo, unreachable remote
-                # node): render an empty commit list instead of crashing.
-                _ -> []
-              end
+      send(parent, {:review_data_loaded, task_id, node, gen, result})
+    end)
 
-            not branch_exists && repo_path && task.base_sha && commit_sha ->
-              case EvoDash.NodeContext.list_commits_from_shas(
-                     node,
-                     repo_path,
-                     task.base_sha,
-                     commit_sha
-                   ) do
-                {:ok, commits} -> commits
-                _ -> []
-              end
-
-            true ->
-              []
-          end
-
-        assign(socket,
-          loading: false,
-          error: nil,
-          title: title,
-          task_type: task.type,
-          branch_name: branch_name,
-          commit_sha: commit_sha,
-          base_sha: base_sha,
-          agent_summary: agent_summary,
-          review_status: review_status,
-          branch_exists: branch_exists || false,
-          can_resume: can_resume || false,
-          is_no_changes: is_no_changes,
-          has_pr: pr_url != nil,
-          pr_url: pr_url,
-          review_data: review_data,
-          expanded_files: %{},
-          file_context_levels: %{},
-          selected_file: nil,
-          repo_path: repo_path,
-          objective: objective,
-          commits: commits,
-          archive_metadata: task.archive_metadata,
-          task_usage: task.usage,
-          agent_count: task.agent_count,
-          task_status: task.status,
-          model_id: task.model_id,
-          started_at: task.started_at,
-          finished_at: task.finished_at,
-          merge_targets: merge_targets,
-          default_merge_target: default_merge_target,
-          merge_status: nil
-        )
-    end
-  end
-
-  # Local repos are gated on a cheap File.dir?/1 check (avoids git errors on
-  # missing paths). Remote repos live on the remote host's filesystem — no
-  # local check is possible, so availability is derived from the RPC results
-  # themselves (an {:error, _} return — missing repo or transport failure —
-  # degrades to the empty/disabled state below). Lives in the MergeCheck
-  # support module, which owns the same gate for the merge form.
-  defdelegate repo_available?(socket, repo_path),
-    to: EvoDashWeb.ReviewLive.MergeCheck
-
-  # Branch existence on the current node. For the local node this is
-  # `EvoGit.Review.branch_exists?/2` (a raw boolean). For remote nodes it is
-  # the RPC result, which may be `{:error, {kind, reason}}` on transport
-  # failure — treated as branch-not-determinable (false) so the page degrades
-  # to the existing post-merge/reject state instead of crashing.
-  defp branch_exists_on_node?(socket, repo_path, branch_name) do
-    EvoDash.NodeContext.branch_exists?(socket.assigns.current_node, repo_path, branch_name) ==
-      true
+    socket
   end
 
   defp format_commit_history([]), do: nil
@@ -1076,40 +970,6 @@ defmodule EvoDashWeb.ReviewLive do
       {:expanded_files, expanded_files},
       {:file_context_levels, file_context_levels}
     ])
-  end
-
-  # Loads commit inspection data (file list) for a specific commit.
-  defp load_commit_inspection(socket, commit_sha) do
-    %{repo_path: repo_path, commits: commits} = socket.assigns
-
-    commit_header =
-      Enum.find(commits, &(&1.sha == commit_sha)) ||
-        %EvoGit.Review.CommitInfo{
-          sha: commit_sha,
-          short_sha: String.slice(commit_sha, 0..7),
-          message: gettext("Commit details"),
-          author_name: "",
-          date: DateTime.utc_now()
-        }
-
-    commit_data =
-      case EvoDash.NodeContext.load_commit_files(
-             socket.assigns.current_node,
-             repo_path,
-             commit_sha
-           ) do
-        {:ok, data} -> data
-        _ -> nil
-      end
-
-    assign(socket,
-      inspect_commit_sha: commit_sha,
-      commit_header: commit_header,
-      commit_data: commit_data,
-      expanded_files: %{},
-      file_context_levels: %{},
-      selected_file: nil
-    )
   end
 
   defp file_path_to_id(path) do
