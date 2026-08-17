@@ -428,6 +428,63 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # them from the underlying LiveView process socket.
     defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
+    # Builds a deterministic NodeData results map for the currently viewed node
+    # by applying the pure PlatformInfo filters to the UNFILTERED schemas
+    # snapshot (`:all_schemas_by_category`). The platform computation
+    # short-circuits on the `:platform_os_override` / `:nix_available_override`
+    # app-env seams (checked FIRST by PlatformInfo), so the result is
+    # deterministic on ANY host. `overrides` win per-key for tests that want a
+    # different value than the current env computes.
+    defp default_node_results(view, overrides \\ %{}) do
+      overrides = Map.new(overrides)
+      assigns = assigns(view)
+      node = assigns[:current_node]
+      all_schemas = assigns[:all_schemas_by_category]
+      platform_os = Map.get(overrides, :platform_os, EvoDashWeb.PlatformInfo.os_for_node(node))
+
+      filtered =
+        Map.get(
+          overrides,
+          :filtered_schemas_by_category,
+          EvoDashWeb.PlatformInfo.filter_nix_category(
+            EvoDashWeb.PlatformInfo.filter_schemas_by_category(all_schemas, platform_os),
+            node
+          )
+        )
+
+      Map.merge(
+        %{
+          platform_os: platform_os,
+          filtered_schemas_by_category: filtered,
+          file_config: assigns[:file_config] || %{},
+          config_status: assigns[:config_status] || %{},
+          remote_config_error: nil,
+          custom_agents: %{
+            agents: assigns[:custom_agents] || [],
+            model_selection_script: assigns[:model_selection_script] || "",
+            script_status: assigns[:script_status] || :ok
+          }
+        },
+        overrides
+      )
+    end
+
+    # Deterministically delivers a NodeData result (the async task's message)
+    # to the view and drains the mailbox via render — the established direct-
+    # send pattern for tests asserting async-loaded content. Tagged with the
+    # CURRENT node so it passes the stale-guard. The real task (same node, same
+    # deterministic values under the override seams) sends its message before
+    # ours, so ours is processed last — assertions are race-free.
+    defp deliver_node_data(view, category_param \\ nil, overrides \\ %{}) do
+      send(
+        view.pid,
+        {:settings_node_data_loaded, assigns(view)[:current_node], category_param,
+         default_node_results(view, overrides)}
+      )
+
+      render(view)
+    end
+
     test "unknown category does not crash select_category", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/settings")
 
@@ -1481,7 +1538,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Windows override hides the Sandbox sidebar entry", %{conn: conn} do
       with_os_override(:windows)
 
-      {:ok, _view, html} = live(conn, ~p"/settings")
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      # The platform-filtered schemas arrive with the async NodeData result —
+      # deliver it deterministically (the real task computes the same values
+      # under the :platform_os_override seam, so a duplicate is idempotent).
+      html = deliver_node_data(view)
 
       # The sidebar renders one button per category, each carrying
       # phx-value-category="<name>" (EvoDashWeb.SettingsComponents.Sidebar).
@@ -1496,10 +1558,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Windows override: ?category=sandbox falls back to :llm without crashing", %{conn: conn} do
       with_os_override(:windows)
 
-      # handle_params re-filters schemas BEFORE resolving the category param,
-      # so "sandbox" is not a known category → falls back to the active
-      # category (:llm). No crash.
+      # The result handler re-resolves the category param against the
+      # platform-FILTERED schemas — deliver the async result first. On Windows
+      # "sandbox" is not a known category → falls back to the active category
+      # (:llm). No crash.
       {:ok, view, html} = live(conn, ~p"/settings?category=sandbox")
+      html = deliver_node_data(view, "sandbox")
 
       assert assigns(view).active_category == :llm
       assert html =~ ~s(id="category-llm")
@@ -1515,6 +1579,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       seed_write_paths(["/tmp/a"])
 
       {:ok, view, _html} = live(conn, ~p"/settings")
+      # Deliver the async platform-filtered schemas before selecting the
+      # category (the seed shell shows the UNFILTERED map).
+      deliver_node_data(view)
       html = render_hook(view, "select_category", %{"category" => "sandbox"})
 
       assert assigns(view).active_category == :sandbox
@@ -1532,6 +1599,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       with_os_override(:linux)
 
       {:ok, view, _html} = live(conn, ~p"/settings")
+      # Deliver the async platform-filtered schemas before selecting the
+      # category (the seed shell shows the UNFILTERED map).
+      deliver_node_data(view)
       html = render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # On Linux the sandbox schemas are unchanged — all sub-sections render.
@@ -1575,6 +1645,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       {:ok, view, html} = live(conn, ~p"/settings")
 
+      # Deliver the async NodeData result (nix visible under the override) so
+      # the platform-filtered schemas are in place before the gated asserts.
+      html = deliver_node_data(view)
+
       # Sidebar entry is present on initial load...
       assert html =~ ~s(phx-value-category="nix")
       # ...and selecting the category renders its content section (only the
@@ -1589,6 +1663,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       seed_nix_enabled(true)
 
       {:ok, view, html} = live(conn, ~p"/settings")
+      html = deliver_node_data(view)
 
       assert html =~ ~s(phx-value-category="nix")
       section_html = render_hook(view, "select_category", %{"category" => "nix"})
@@ -1601,6 +1676,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       seed_nix_enabled(false)
 
       {:ok, view, html} = live(conn, ~p"/settings")
+      html = deliver_node_data(view)
 
       # An explicit false counts as "configured" — the section must stay
       # editable so the user can turn the feature on.
@@ -1616,6 +1692,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       with_nix_available_override(false)
 
       {:ok, view, html} = live(conn, ~p"/settings")
+      html = deliver_node_data(view)
 
       # Sidebar entry and content section are both gone.
       refute html =~ ~s(phx-value-category="nix")
@@ -1643,13 +1720,102 @@ defmodule EvoDashWeb.SettingsLiveTest do
     } do
       with_nix_available_override(false)
 
-      # handle_params re-filters schemas BEFORE resolving the category param,
-      # so "nix" is not a known category → falls back to the active category
-      # (:llm). No crash.
+      # The result handler re-resolves the category param against the
+      # platform-FILTERED schemas — deliver the async result first. With nix
+      # hidden, "nix" is not a known category → falls back to the active
+      # category (:llm). No crash.
+      {:ok, view, html} = live(conn, ~p"/settings?category=nix")
+      html = deliver_node_data(view, "nix")
+
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-nix")
+    end
+  end
+
+  describe "shell seeding (async platform gating)" do
+    # handle_params/3 no longer runs the platform gating + category resolution
+    # synchronously: the FILTERED schemas map and the re-resolved active
+    # category arrive with the async NodeData result. Until then the page shell
+    # seeds — UNFILTERED schemas (every category visible in the sidebar) and
+    # the active category via seed_category/2: non-gated `?category=` params
+    # (:agents, :remote_connections, :llm, ...) resolve immediately with zero
+    # flash, gated ones (:nix / :sandbox — the platform filter may hide them)
+    # seed the current stable category (or :llm) and defer to the result
+    # handler's re-resolution.
+    #
+    # The html returned by live/3 is ALWAYS the seed-shell render (the async
+    # task's message cannot interleave with the mount/handle_params call), so
+    # seed-state html assertions are deterministic. `assigns` may already
+    # reflect the real task's (fast, local) result — seed asserts below
+    # therefore use scenarios where the seed state and the post-result state
+    # coincide, and the post-delivery asserts use deliver_node_data (ours is
+    # the last message processed).
+
+    test "non-gated ?category=agents renders the agents section immediately", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/settings?category=agents")
+
+      # Seeded directly by seed_category/2 — no async result needed. The real
+      # task's re-resolution lands on :agents too, so this holds in both states.
+      assert assigns(view).active_category == :agents
+      assert html =~ "Add Agent"
+      assert html =~ ~s(phx-value-category="agents")
+    end
+
+    test "gated ?category=sandbox seeds :llm, then resolves :sandbox after delivery", %{
+      conn: conn
+    } do
+      with_os_override(:linux)
+
+      # Seed shell: :sandbox is potentially-gated, so it seeds the default
+      # :llm — the sandbox section is NOT rendered on the first paint, even
+      # though the UNFILTERED sidebar still lists the sandbox entry. (html-only
+      # asserts: the real task may have already re-resolved to :sandbox.)
+      {:ok, view, html} = live(conn, ~p"/settings?category=sandbox")
+
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-sandbox")
+      assert html =~ ~s(phx-value-category="sandbox")
+
+      # After the async result (sandbox kept on Linux) the result handler
+      # re-resolves the captured param and opens the sandbox section.
+      html = deliver_node_data(view, "sandbox")
+
+      assert assigns(view).active_category == :sandbox
+      assert html =~ ~s(id="category-sandbox")
+    end
+
+    test "gated ?category=nix seeds :llm, then resolves :nix after delivery", %{conn: conn} do
+      # nix binary available (file-level setup default) → nix visible post-result.
+      {:ok, view, html} = live(conn, ~p"/settings?category=nix")
+
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-nix")
+
+      html = deliver_node_data(view, "nix")
+
+      assert assigns(view).active_category == :nix
+      assert html =~ ~s(id="category-nix")
+    end
+
+    test "gated ?category=nix stays :llm when the nix category is hidden", %{conn: conn} do
+      with_nix_available_override(false)
+
+      # Seed shell: the UNFILTERED sidebar still shows the nix entry, but the
+      # active category seeds :llm (nix is potentially-gated). The post-result
+      # state coincides (:llm — nix hidden), so the assigns assert is race-free.
       {:ok, view, html} = live(conn, ~p"/settings?category=nix")
 
       assert assigns(view).active_category == :llm
       assert html =~ ~s(id="category-llm")
+      assert html =~ ~s(phx-value-category="nix")
+
+      # After the async result (nix hidden: no binary + no explicit config) the
+      # category stays :llm and the sidebar entry disappears.
+      html = deliver_node_data(view, "nix")
+
+      assert assigns(view).active_category == :llm
+      refute html =~ ~s(phx-value-category="nix")
       refute html =~ ~s(id="category-nix")
     end
   end
@@ -1693,10 +1859,26 @@ defmodule EvoDashWeb.SettingsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, html} = live(conn, "/settings?node=" <> id)
+      {:ok, view, _html} = live(conn, "/settings?node=" <> id)
 
       # The node context resolved to the (unreachable) remote node.
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+
+      # The config load now runs in an async supervised task (NodeData) outside
+      # the LiveView process, so its result arrives as a message. Deliver it
+      # deterministically (direct-send + render, the same pattern as the LLM
+      # connection test) instead of racing the task's message. The real task
+      # delivers the same values (erpc fails fast with :nodedown), so a
+      # duplicate delivery is an idempotent no-op.
+      node = :"genesis_remote@127.0.0.1"
+
+      html =
+        deliver_node_data(view, nil,
+          file_config: %{},
+          config_status: EvoDash.NodeContext.get_remote_config_status(node),
+          remote_config_error: :nodedown
+        )
+
       assert is_binary(assigns(view)[:remote_config_error])
       # No config was loaded — an empty map, not a misleading subset.
       assert assigns(view)[:file_config] == %{}
@@ -1707,6 +1889,49 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # ...and the bogus "No LLM Model Configured" box must NOT fire on top of it.
       refute html =~ "No LLM Model Configured"
+    end
+
+    test "stale async result for a different node is dropped", %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.SettingsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/settings?node=" <> id)
+      assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
+
+      # Deliver a result tagged with a DIFFERENT node than the one currently
+      # viewed — simulates a load that was requested for a node the user has
+      # since left. The stale-guard in handle_info must drop it: none of the
+      # sentinel values may appear in the assigns, regardless of whether the
+      # real in-flight load for the current node has landed yet.
+      send(
+        view.pid,
+        {:settings_node_data_loaded, :some_other_node@host, nil,
+         %{
+           platform_os: :windows,
+           filtered_schemas_by_category: %{sentinel: []},
+           file_config: %{"llm" => %{"model" => "stale-sentinel"}},
+           config_status: %{ok?: true, warnings: [], validation_errors: []},
+           remote_config_error: "stale-error",
+           custom_agents: %{
+             agents: [%{"id" => "stale-agent"}],
+             model_selection_script: "stale-script",
+             script_status: :ok
+           }
+         }}
+      )
+
+      render(view)
+
+      refute assigns(view)[:platform_os] == :windows
+      refute assigns(view)[:schemas_by_category] == %{sentinel: []}
+      refute assigns(view)[:file_config] == %{"llm" => %{"model" => "stale-sentinel"}}
+      refute assigns(view)[:remote_config_error] == "stale-error"
+      refute assigns(view)[:model_selection_script] == "stale-script"
+      refute assigns(view)[:custom_agents] == [%{"id" => "stale-agent"}]
     end
 
     test "local node keeps remote_config_error nil and shows no error banner", %{conn: conn} do

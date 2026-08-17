@@ -12,6 +12,11 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
   alias EvoDashWeb.SettingsLive.SearchEvents
 
+  # Tag for the async node-data load result message (see
+  # EvoDashWeb.SettingsLive.NodeData). Tests that deliver results
+  # deterministically must use this same atom.
+  @node_data_tag :settings_node_data_loaded
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -605,11 +610,20 @@ defmodule EvoDashWeb.SettingsLive do
     schemas_by_category = Map.put(schemas_by_category, :remote_connections, [])
     schemas_by_category = Map.put(schemas_by_category, :agents, [])
 
+    # Snapshot of the UNFILTERED schemas map (all schema categories plus the
+    # two pseudo-categories, BEFORE the platform-OS/nix filtering below). The
+    # async node-data task (NodeData) re-filters it for the currently-viewed
+    # (possibly remote) node and the result handler replaces
+    # `schemas_by_category` with the filtered map — see handle_params/3.
+    all_schemas_by_category = schemas_by_category
+
     # Platform-aware schema filtering: hide the sandbox category (or its
     # Linux-only sub-sections) on platforms where they don't apply. This is
     # BOTH the display mechanism and the save round-trip protection —
     # save_category only processes schemas present in this filtered list, so
-    # hidden fields can never clobber saved sandbox config.
+    # hidden fields can never clobber saved sandbox config. Mount's own
+    # filtering is local-only/cheap (current_node is nil/local at mount time);
+    # the per-node filtering for navigations runs in the async task.
     platform_os = EvoDashWeb.PlatformInfo.os_for_node(socket.assigns[:current_node])
 
     schemas_by_category =
@@ -628,6 +642,7 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       assign(socket,
         schemas_by_category: schemas_by_category,
+        all_schemas_by_category: all_schemas_by_category,
         platform_os: platform_os,
         active_category: :llm,
         search_text: "",
@@ -665,60 +680,23 @@ defmodule EvoDashWeb.SettingsLive do
       socket
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/settings")
-      |> load_node_config()
 
-    # Platform-aware schema filtering for the (possibly remote) node. Must be
-    # re-filtered BEFORE category_str_to_atom is built below so
-    # `?category=sandbox` resolves to nil on Windows/unknown (falls back).
-    os = EvoDashWeb.PlatformInfo.os_for_node(socket.assigns.current_node)
+    # Seeded shell (async platform gating): the platform-filtered schemas map
+    # and the platform OS for the (possibly remote) node are computed in the
+    # async node-data task below (NodeData) — never block the LiveView render
+    # loop on cross-node RPCs. Until the result arrives, seed the UNFILTERED
+    # schemas (all categories visible) so the page shell renders immediately;
+    # the result handler re-filters and re-resolves the active category.
+    socket = assign(socket, :schemas_by_category, socket.assigns.all_schemas_by_category)
+    socket = assign(socket, :platform_os, socket.assigns.platform_os || :unknown)
 
-    socket =
-      socket
-      |> assign(:platform_os, os)
-      |> assign(
-        :schemas_by_category,
-        EvoDashWeb.PlatformInfo.filter_schemas_by_category(socket.assigns.schemas_by_category, os)
-      )
-      # Hide the Nix category on nodes without the nix binary (unless the user
-      # explicitly configured `[nix] enabled`). MUST run before
-      # category_str_to_atom below so `?category=nix` resolves to nil here.
-      |> assign(
-        :schemas_by_category,
-        EvoDashWeb.PlatformInfo.filter_nix_category(
-          socket.assigns.schemas_by_category,
-          socket.assigns.current_node
-        )
-      )
-
-    # Map the raw query param to a known category atom via a whitelist lookup
-    # built from the existing schemas_by_category map (atom keys). Stringify
-    # the keys so we compare string-to-string — no String.to_existing_atom on
-    # untrusted input, fully crash-safe for unknown values.
-    category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category)
-
-    category =
-      case params["category"] do
-        "remote_connections" -> :remote_connections
-        "agents" -> :agents
-        cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
-        _ -> nil
-      end
-
-    # Fall back to active_category for unknown/missing input
-    category = category || socket.assigns.active_category
-
-    # Edge case: the resolved category (or the persisted active_category) is
-    # missing from the platform-filtered schemas map — e.g. :sandbox on
-    # Windows/unknown, or :nix when the category is hidden — fall back to the
-    # safe :llm default instead of rendering an empty section. (category is
-    # always a non-nil atom here; :remote_connections is always in the map, so
-    # it is unaffected.)
-    category =
-      if not Map.has_key?(socket.assigns.schemas_by_category, category) do
-        :llm
-      else
-        category
-      end
+    # Seed the active category with a flash-minimizing rule: non-gated
+    # categories (`?category=agents`, `:remote_connections`, `:llm`, ...)
+    # resolve against the UNFILTERED map and render their section immediately
+    # with zero flash; potentially-gated ones (:nix / :sandbox — the platform
+    # filter may hide them) and unresolvable params defer to the result
+    # handler and seed the current stable category (or :llm) instead.
+    category = seed_category(params, socket)
 
     socket =
       if category != socket.assigns.active_category do
@@ -727,12 +705,60 @@ defmodule EvoDashWeb.SettingsLive do
         socket
       end
 
-    # Reload the custom-agents data for the (possibly remote) node — cheap
-    # file read locally, single RPC remotely. Keeps the agents category fresh
-    # on every navigation and node switch.
-    socket = load_custom_agents_data(socket)
+    # Kick off the ASYNC node-data load (platform gating + config + custom
+    # agents) in a supervised task — never block the LiveView render loop on
+    # cross-node RPCs. The page shell above (with mount's locally-loaded config
+    # and the seeded category) renders immediately; the result arrives via
+    # handle_info({@node_data_tag, ...}) with a stale-guard against node
+    # switches. Per-save flows (save_category, persist_file_config,
+    # CustomAgentEvents) remain synchronous and reload fresh data themselves.
+    EvoDashWeb.SettingsLive.NodeData.start(socket, @node_data_tag, params["category"])
 
     {:noreply, socket}
+  end
+
+  # Seeds the active category for the shell render BEFORE the async node-data
+  # result arrives. Resolves `params["category"]` against the UNFILTERED
+  # schemas map (whitelist via ConfigIO.category_str_to_atom, with the
+  # "remote_connections"/"agents" pseudo-categories special-cased exactly like
+  # the pre-async code). `:nix`/`:sandbox` (potentially hidden by the platform
+  # filter) and unresolvable params (nil/unknown) seed the current
+  # active_category when it is a stable non-gated value, else the safe `:llm`
+  # default — so non-gated navigations render their section immediately, while
+  # gated ones defer to the result handler's re-resolution.
+  defp seed_category(params, socket) do
+    category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.all_schemas_by_category)
+
+    requested =
+      case params["category"] do
+        "remote_connections" -> :remote_connections
+        "agents" -> :agents
+        cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
+        _ -> nil
+      end
+
+    if requested in [nil, :nix, :sandbox] do
+      if socket.assigns.active_category in [nil, :nix, :sandbox] do
+        :llm
+      else
+        socket.assigns.active_category
+      end
+    else
+      requested
+    end
+  end
+
+  @impl true
+  def handle_info({@node_data_tag, requested_node, category_param, results}, socket) do
+    # Stale-guard: the load was requested for `requested_node` at spawn time;
+    # if the user has since switched nodes (current_node differs), a newer
+    # load is already in flight for the new node — drop this result rather
+    # than flashing the wrong node's config/agents on screen.
+    if requested_node != socket.assigns.current_node do
+      {:noreply, socket}
+    else
+      {:noreply, apply_node_data_results(socket, category_param, results)}
+    end
   end
 
   @impl true
@@ -1615,48 +1641,32 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
-  # Loads the config to display based on the current node context.
-  #
-  # On the local node (`socket.assigns.current_node == node()`), config is loaded
-  # from the local file system. On a remote node, the FULL resolved user config
-  # (defaults + user config merged — the same atom-keyed nested shape
-  # `ConfigIO.load_file_config/0` produces locally) is fetched via
-  # `EvoDash.NodeContext.get_resolved_config/1` and displayed directly — the form
-  # is editable and saves go to the REMOTE node's config file (routed via
-  # `EvoDash.NodeContext.save_user_config/2`). A fetch failure is surfaced via
-  # `:remote_config_error` instead of silently rendering an empty config (the
-  # old `get_remote_config/1` path returned a flat scheduler subset that never
-  # included `llm.models`, causing a spurious "No LLM Model Configured" box).
-  defp load_node_config(socket) do
-    if socket.assigns.current_node == node() do
-      # Local node — load from disk exactly as mount/1 does.
+  # Applies the results of the async node-data load (see
+  # EvoDashWeb.SettingsLive.NodeData) to the socket: the platform assigns
+  # (platform_os + the platform-filtered schemas map), the re-resolved active
+  # category, and the config/agents assigns. Mirrors the assigns that the
+  # pre-async `handle_params/3` + `load_custom_agents_data/1` produced
+  # synchronously. A `:remote_config_error` reason is gettext'd into the same
+  # user-facing message the old synchronous path showed, so a remote fetch
+  # failure still renders the error banner instead of a misleading "No LLM
+  # Model Configured" box.
+  defp apply_node_data_results(socket, category_param, results) do
+    socket =
       socket
+      |> assign(:platform_os, results.platform_os)
+      |> assign(:schemas_by_category, results.filtered_schemas_by_category)
+      |> assign(:file_config, results.file_config)
+      |> assign(:config_status, results.config_status)
       |> assign(:remote_config, false)
-      |> assign(:file_config, ConfigIO.load_file_config())
-      |> assign(:config_status, config_status())
-    else
-      # Remote node — fetch the full resolved config via RPC.
-      node = socket.assigns.current_node
 
-      case EvoDash.NodeContext.get_resolved_config(node) do
-        {:ok, resolved} ->
-          socket
-          |> assign(:remote_config, false)
-          |> assign(:file_config, resolved)
-          |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
-          |> assign(:remote_config_error, nil)
+    socket =
+      case results.remote_config_error do
+        nil ->
+          assign(socket, :remote_config_error, nil)
 
-        {:error, reason} ->
-          # Do NOT silently render an empty config — surface the failure so the
-          # user sees the real problem instead of a bogus "No LLM Model
-          # Configured" warning. The config-status assign comes from
-          # get_remote_config_status/1, which degrades to a safe map on RPC
-          # failure (never crashes).
-          socket
-          |> assign(:remote_config, false)
-          |> assign(:file_config, %{})
-          |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
-          |> assign(
+        reason ->
+          assign(
+            socket,
             :remote_config_error,
             gettext(
               "Could not load configuration from the remote node: %{reason} — the node may be unreachable.",
@@ -1664,6 +1674,55 @@ defmodule EvoDashWeb.SettingsLive do
             )
           )
       end
+
+    # Re-resolve the active category against the FILTERED schemas map — the
+    # category the shell seeded against the UNFILTERED map may now be hidden
+    # (e.g. `?category=sandbox` on Windows/unknown, or `:nix` when the nix
+    # category is hidden).
+    category = resolve_category(category_param, socket)
+
+    socket =
+      if category != socket.assigns.active_category do
+        assign(socket, :active_category, category)
+      else
+        socket
+      end
+
+    assign(socket,
+      custom_agents: results.custom_agents.agents,
+      model_selection_script: results.custom_agents.model_selection_script,
+      script_status: results.custom_agents.script_status,
+      editing_agent_id: nil,
+      script_save_error: nil,
+      script_test_results: []
+    )
+  end
+
+  # Re-resolves the active category from the captured `?category=` param
+  # against the platform-FILTERED schemas map (mirrors the pre-async
+  # handle_params logic exactly): whitelist lookup via
+  # ConfigIO.category_str_to_atom (with the "remote_connections"/"agents"
+  # pseudo-categories special-cased) → fallback to the current active_category
+  # → `:llm` when the resolved category is missing from the filtered map
+  # (preserves the `:sandbox`-on-Windows fallback and the hidden-nix fallback
+  # exactly as before).
+  defp resolve_category(category_param, socket) do
+    category_str_to_atom = ConfigIO.category_str_to_atom(socket.assigns.schemas_by_category)
+
+    category =
+      case category_param do
+        "remote_connections" -> :remote_connections
+        "agents" -> :agents
+        cat when is_binary(cat) -> Map.get(category_str_to_atom, cat)
+        _ -> nil
+      end
+
+    category = category || socket.assigns.active_category
+
+    if not Map.has_key?(socket.assigns.schemas_by_category, category) do
+      :llm
+    else
+      category
     end
   end
 
@@ -1673,13 +1732,12 @@ defmodule EvoDashWeb.SettingsLive do
   # back to schema defaults when rendered. This is best-effort display data for
   # the remote config view.
   #
-  # LEGACY — the load path (load_node_config/1) and the persist path
-  # (persist_file_config/1) now fetch the FULL resolved config via
+  # LEGACY — the navigation load path now fetches the FULL resolved config via
   # `EvoDash.NodeContext.get_resolved_config/1` (which includes `llm.models`,
-  # tools, evolution, truncation, nix, ...). This converter remains ONLY for the
-  # remaining remote re-fetch callers that still use the flat scheduler-map
-  # shape: `save_category`/`save_search` (settings_live.ex) and
-  # `SearchEvents.handle_reset_key/2`.
+  # tools, evolution, truncation, nix, ...) and so do the persist paths. This
+  # converter remains ONLY for the remaining remote re-fetch callers that still
+  # use the flat scheduler-map shape: `save_category`/`save_search`
+  # (settings_live.ex) and `SearchEvents.handle_reset_key/2`.
   def remote_config_to_file_config(remote_cfg) when is_map(remote_cfg) do
     scheduler =
       %{}
