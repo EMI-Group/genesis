@@ -877,9 +877,12 @@ defmodule EvoDashWeb.SystemLiveTest do
       # this VM (real user config, capacities 25/8) — stubbing it to fail makes
       # the assertion depend only on the foreign-sample filter. (The file-level
       # setup block restores this env in on_exit.)
-      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:error, :not_implemented} end)
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node ->
+        {:error, :not_implemented}
+      end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "system",
