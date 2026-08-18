@@ -90,7 +90,7 @@ pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
 ///
 /// `lifetime_port` is the port of the TCP "lifetime pipe" listener (see
 /// [`start_lifetime_listener`]): the Elixir backend
-/// (`EvoGit.DesktopLifetime`) connects to `127.0.0.1:<lifetime_port>`
+/// (`EvoDash.DesktopLifetime`) connects to `127.0.0.1:<lifetime_port>`
 /// and blocks on recv; the shell never writes, so any close/error means the
 /// shell is dead and the backend stops itself — an orphaned backend (e.g.
 /// after an abnormal shell death) can no longer keep its port bound and
