@@ -157,7 +157,7 @@ Reproducible locally by running the real linuxdeploy on a minimal AppDir with a 
 - **NixOS-specific bundling quirks (local only — never root-cause candidates)**: no `/bin/bash` (patch plugin shebangs); pkg-config emits multi-`-L` strings that break tauri-cli's library-path parsing (sanitizing wrapper needed); gtk plugin needs writable glib schemas/immodules paths.
 ); pkg-config emits multi-`-L` strings that break tauri-cli's library-path parsing (sanitizing wrapper needed); gtk plugin needs writable glib schemas/immodules paths.
 
-### Orphaned backend on abnormal shell death — mitigated (dynamic port + parent-death monitor)
+### Orphaned backend on abnormal shell death — mitigated (dynamic port + TCP lifetime pipe)
 
 The backend child has NO parent-death detection on the Rust side: `sidecar::spawn` → `launcher_command` (sidecar.rs:56-73) is a plain `Command::new(...).arg("start")` — no `process_group`, no `prctl(PDEATHSIG)`/`pdeathsig`, no Windows job object, no `Drop` impl on `BackendManager`, and no `RunEvent::Exit`/event-loop hook (the builder calls `.run(tauri::generate_context!())` directly, main.rs:579-580). The backend is killed ONLY via `BackendManager::kill_current_child` (backend_watchdog.rs:379-385, kills the direct child PID — the launcher, which per sidecar.rs:143-145 execs the BEAM so the PID IS the BEAM) reached from the quit paths. If the shell dies abnormally — SIGKILL (macOS "Force Quit", `kill -9`), crash/panic, or `--headless` SIGKILL — the backend child is reparented (init/launchd) and keeps running. **Two independent mechanisms now make that harmless**:
 
