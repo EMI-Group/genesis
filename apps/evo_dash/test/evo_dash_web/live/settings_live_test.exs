@@ -99,7 +99,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # Push-refactor contract: the emitter broadcasts
     # `{:scheduler_config_updated, node}` on the "scheduler_config" topic,
     # where node is the BEAM node atom of the publisher. The handler
-    # (settings_live.ex:814) node-filters via
+    # (settings_live.ex:822) node-filters via
     # NodeAware.event_from_current_node?/2 — matching-node events re-read the
     # scheduler config (LOCAL — pre-existing gap, see settings_live/CONTEXT.md);
     # foreign-node events are ignored (socket unchanged).
@@ -133,8 +133,15 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "broadcast from a foreign node is ignored (assign unchanged)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
-
+      # Pause BEFORE mounting: pause() itself broadcasts a matching-node
+      # {:scheduler_config_updated, node()} via
+      # AgentScheduler.PubSub.broadcast_config_updated/0 (config change, pause,
+      # or resume). With no subscribers yet the broadcast is dropped, so the
+      # mount-time snapshot is the paused state and the foreign broadcast below
+      # is the ONLY event the view can react to. This also makes the test
+      # immune to cross-test scheduler-state leakage (if a prior test left the
+      # scheduler paused, pause() is a no-op and the test still behaves
+      # identically).
       EvoGit.AgentScheduler.pause()
 
       on_exit(fn ->
@@ -146,6 +153,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
         end
       end)
 
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      # Mount snapshot was paused — the final assertion below means "unchanged
+      # from the snapshot" (the foreign event was dropped).
+      assert assigns(view)[:scheduler_config][:paused] == true
+
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "scheduler_config",
@@ -154,8 +167,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       render(view)
 
-      # Foreign-node event dropped — the mount-time snapshot (unpaused) stays.
-      assert assigns(view)[:scheduler_config][:paused] == false
+      # Foreign-node event dropped — the mount-time snapshot (paused) stays.
+      assert assigns(view)[:scheduler_config][:paused] == true
     end
   end
 

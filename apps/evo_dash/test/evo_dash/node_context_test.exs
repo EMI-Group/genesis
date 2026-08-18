@@ -141,12 +141,13 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "get_recent_system_samples/1 (local node, real path)" do
-    # The evo_git system sampler is a stub on this worktree — the passthrough
-    # delegate must surface the stub's result verbatim (shape check only; real
-    # samples are emitted by the evo_git sampler workstream).
-    test "passes the RemoteAPI stub result through verbatim" do
-      assert EvoDash.NodeContext.get_recent_system_samples(node()) ==
-               {:error, :not_implemented}
+    # The supervised EvoGit.SystemSampler runs in the test app, but its tick is
+    # disabled in test env (config/test.exs: :system_sample_interval_ms,
+    # 86_400_000), so the ring buffer is empty — the passthrough delegate must
+    # surface the real sampler's {:ok, samples} shape verbatim.
+    test "returns the real sampler's {:ok, samples} list" do
+      assert {:ok, samples} = EvoDash.NodeContext.get_recent_system_samples(node())
+      assert is_list(samples)
     end
   end
 
