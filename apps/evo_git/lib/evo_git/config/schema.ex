@@ -482,7 +482,37 @@ defmodule EvoGit.Config.Schema do
           []
       end
 
-    id_errors ++ model_errors ++ provider_options_errors
+    # Optional peak-hour concurrency fields. Atom- and string-keyed maps are
+    # both possible (TOML decoding may leave string keys). A `case Map.get`
+    # (not `||`) distinguishes "absent" from "present but 0".
+    peak_concurrency =
+      case Map.get(profile, :peak_concurrency) do
+        nil -> Map.get(profile, "peak_concurrency")
+        value -> value
+      end
+
+    peak_concurrency_errors =
+      if is_nil(peak_concurrency) do
+        []
+      else
+        validate_peak_concurrency(path, peak_concurrency)
+      end
+
+    peak_hours =
+      case Map.get(profile, :peak_hours) do
+        nil -> Map.get(profile, "peak_hours")
+        value -> value
+      end
+
+    peak_hours_errors =
+      if is_nil(peak_hours) do
+        []
+      else
+        validate_peak_hours(path, peak_hours)
+      end
+
+    id_errors ++
+      model_errors ++ provider_options_errors ++ peak_concurrency_errors ++ peak_hours_errors
   end
 
   defp validate_model_profile(path, profile) do
@@ -495,6 +525,107 @@ defmodule EvoGit.Config.Schema do
       )
     ]
   end
+
+  # Validates the optional peak_concurrency profile field: must be a
+  # positive integer when present.
+  defp validate_peak_concurrency(path, value) do
+    if is_integer(value) and value > 0 do
+      []
+    else
+      [
+        error(
+          path ++ [:peak_concurrency],
+          "peak_concurrency must be a positive integer, got #{inspect(value)}",
+          value,
+          :integer
+        )
+      ]
+    end
+  end
+
+  # Validates the optional peak_hours profile field by delegating window
+  # parsing/format/overlap checks to EvoGit.PeakHours.validate_windows/1
+  # (single source of truth — do NOT re-implement format/overlap logic).
+  # {:ok, _windows} (including {:ok, []} = disabled) is valid; each
+  # {:error, reason} maps to a ValidationError via the error/4 helper.
+  defp validate_peak_hours(path, value) do
+    case EvoGit.PeakHours.validate_windows(value) do
+      {:ok, _windows} ->
+        []
+
+      {:error, reason} ->
+        peak_hours_errors(path, value, reason)
+    end
+  end
+
+  defp peak_hours_errors(path, value, reason) do
+    base_path = path ++ [:peak_hours]
+
+    case reason do
+      {:invalid_windows, v} ->
+        [
+          error(
+            base_path,
+            "peak_hours must be a list of { start = \"HH:MM\", end = \"HH:MM\" } windows, got #{inspect(v)}",
+            v,
+            :peak_hours
+          )
+        ]
+
+      {:invalid_window, v} ->
+        [
+          error(
+            indexed_path(base_path, value, v),
+            "peak_hours entries must be maps with start/end \"HH:MM\" strings, got #{inspect(v)}",
+            v,
+            :peak_hours
+          )
+        ]
+
+      {:invalid_format, w} ->
+        [
+          error(
+            indexed_path(base_path, value, w),
+            "peak_hours window has invalid \"HH:MM\" time, got #{inspect(w)}",
+            w,
+            :peak_hours
+          )
+        ]
+
+      {:zero_length, w} ->
+        [
+          error(
+            indexed_path(base_path, value, w),
+            "peak_hours window start must differ from end (zero-length window), got #{inspect(w)}",
+            w,
+            :peak_hours
+          )
+        ]
+
+      {:overlap, w1, w2} ->
+        [
+          error(
+            indexed_path(base_path, value, w1),
+            "peak_hours windows overlap: #{inspect(w1)} and #{inspect(w2)}",
+            {w1, w2},
+            :peak_hours
+          )
+        ]
+    end
+  end
+
+  # Locates a raw window map inside the peak_hours list so the TOML path
+  # can include the window index (e.g. [:llm, :models, 0, :peak_hours, 1]).
+  # Falls back to the bare :peak_hours path when the value isn't a list or
+  # the window can't be found.
+  defp indexed_path(base_path, value, window) when is_list(value) do
+    case Enum.find_index(value, &(&1 == window)) do
+      nil -> base_path
+      idx -> base_path ++ [idx]
+    end
+  end
+
+  defp indexed_path(base_path, _value, _window), do: base_path
 
   defp rule_errors(key_path, validation, value) do
     Enum.flat_map(validation, fn
