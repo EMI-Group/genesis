@@ -62,9 +62,31 @@ The "spatial glue" for SSH Remote Development node-aware navigation. Provides on
 | `handle_tasks_result/2` | Stale-guard seam (pure socket in/out): drops mismatched node/seq results, assigns `:running_tasks`/`:pending_tasks` on match. Called by the attached `handle_info/2` hook. |
 | `handle_info/2` | Attached `:handle_info` hook — `{:halt, socket}` for `{:node_aware_active_tasks, ...}` (via `handle_tasks_result/2`), `{:cont, socket}` for all other messages. |
 
+### `EvoDashWeb.LiveHooks.UpdateStatus` (`update_status.ex`)
+
+Global on-mount hook bridging the Tauri updater (see root `EvoDash.UpdateStatus` hub GenServer, which broadcasts `{:update_status, state}` on `EvoGit.PubSub` topic `"updates"` from every `handle_cast` transition, `apps/evo_dash/lib/evo_dash/update_status.ex:236`). **This hook is the reference pattern for a global push-based hook**:
+
+- `on_mount/4` (update_status.ex:46-55): computes `desktop? = UpdateStatus.desktop?()`; seeds `@update_status` via `initial_assign(desktop?, params["node"] != nil)` (update_status.ex:61-64 — full hub state map `UpdateStatus.get()` ONLY on desktop+local views, `nil` otherwise: non-desktop or remote-node viewing); calls `maybe_attach(desktop?)`.
+- `maybe_attach/2` (update_status.ex:160-172): when desktop AND `connected?(socket)` → `Phoenix.PubSub.subscribe(EvoGit.PubSub, "updates")` (line 162) + `attach_hook(:update_status, :handle_info, &handle_info/2)` + `attach_hook(:update_status, :handle_event, &handle_event/3)` (lines 165-166). Dead-render skip mirrors NodeAware. Non-desktop → no-op (dormant hook).
+- `handle_info` interceptor (update_status.ex:117-124): `{:update_status, state}` → `{:halt, assign(socket, :update_status, state)}` — attached hooks run BEFORE the LiveView's own `handle_info`; other messages pass `{:cont, socket}`. NOTE: the broadcast assign is UNCONDITIONAL — a transition on a remote-view page would populate the assign (only the INITIAL seed is hidden on remote views).
+- `handle_event` interceptor (update_status.ex:127-155): consumes the four JS-hook result events (`update_check_result`, `update_download_result`, `update_apply_confirmed`, `update_apply_failed`) with `{:halt, socket}` so no page sees unhandled-pushEvent warnings; everything else passes `{:cont, socket}`. Check results may auto-request a download via `push_event` (line 129).
+- Every page receives broadcasts because the hook is registered globally (evo_dash_web.ex:55); the shared layout renders the System-nav notification dot from `@update_status` (layouts.ex:49, 148, 450-451 — only phases `:available`/`:ready`).
+
+### `EvoDashWeb.LiveHooks.DesktopQuit` (`desktop_quit.ex`)
+
+No subscriptions, no timers, no polling — NOT relevant to push-refactor work. Seeds `@desktop_quit_confirm` (false) and attaches a `:handle_event` interceptor (desktop_quit.ex:41) consuming the three tray-quit events (`desktop_quit_requested` / `desktop_quit_cancelled` / `desktop_quit_confirmed`, lines 49-61). The stop runs through the `:evo_dash, :desktop_quit_stop_fun` config seam (lines 85-87, default `default_stop/0` = spawn + 150ms delay + `System.stop/0`, lines 75-80).
+
+### Hook registration, process lifetime & reconnection (push-refactor context)
+
+- **Registration**: all four hooks are registered via `on_mount` in the shared `live_view/0` macro (`apps/evo_dash/lib/evo_dash_web.ex:52-55`) — SetLocale → NodeAware → DesktopQuit → UpdateStatus. Every LiveView (including Welcome/WelcomeComplete) gets them automatically.
+- **Process lifetime**: one LiveView process per connected page session. `on_mount` runs TWICE per page load: (1) dead render inside the initial HTTP request process — `connected?/1` false → NO PubSub subscriptions (interceptors and assign seeds still attach); (2) connected mount in the NEW LiveView process — `connected?/1` true → subscribe + initial loads. Subscriptions are per-process and die with the process (Phoenix PubSub auto-cleans); nothing re-subscribes within a process.
+- **Navigation**: `push_patch` (palette/pagination/node switches) re-runs `handle_params/3` on the SAME process — no re-subscription, `assign_node/2`'s `:tasks_node_loaded` dedup prevents redundant sidebar reloads. `push_navigate` to a DIFFERENT LiveView module (all dashboard routes are distinct modules) spawns a NEW process → full re-mount → re-subscribe. `push_navigate` to the same module keeps the process.
+- **Disconnect/reconnect**: on socket close the channel stops the LiveView process (`{:shutdown, :closed}`); on reconnect the client mounts a NEW process → `on_mount` re-runs → re-subscribes. Missed-event catch-up is per-hook reload-on-mount only (no cursors/replay): NodeAware re-runs `load_running_and_pending_tasks/1` on the connected mount (node_aware.ex:98 — full DB/RPC re-query); UpdateStatus re-reads the hub's CURRENT state via `UpdateStatus.get()` (update_status.ex:63 — GenServer snapshot); page-level remote polls (TasksLive/AgentsLive/SystemLive) restart on the new process's `handle_params`/mount.
+
 ## Constraints
 
-- Both hooks use `assign_new/3` (safe assigns — first-write-wins).- Domain logic is delegated to `EvoDash.NodeContext` — hooks are thin wrappers.
+- Both hooks use `assign_new/3` (safe assigns — first-write-wins).
+- Domain logic is delegated to `EvoDash.NodeContext` — hooks are thin wrappers.
 - Safe fallbacks everywhere: locale defaults to `"en"`, node resolution falls back to `:local` on all failure paths.
 - Node name fallback: "Local" when no remote node is active.
 - **Task reload debounce**: `handle_task_info/2` NEVER reloads synchronously — always go through `debounce_task_reload/1` → `:node_aware_reload_tasks` (300ms trailing-edge) → `reload_tasks/1`. LiveViews that do custom reloads must call `clear_task_reload_pending/1` afterwards so the next broadcast can schedule a fresh reload.
