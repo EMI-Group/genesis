@@ -910,10 +910,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       gen_before = assigns(view)[:load_generation]
 
-      # A PubSub "tasks" broadcast for ANOTHER task (message shape:
-      # {:task_status, task_id, status} — task id second). Direct send is
+      # A PubSub "tasks" broadcast for ANOTHER task on the viewed node
+      # (message shape: {:task_updated, task_id, status, node}). Direct send is
       # equivalent to the broadcast for handle_info.
-      send(view.pid, {:task_status, "some_other_task_id", :finalizing})
+      send(view.pid, {:task_updated, "some_other_task_id", :finalizing, node()})
 
       # Past the 300ms trailing-edge debounce. The sidebar reload must have
       # run by now (tasks_reload_pending cleared) — otherwise the unchanged
@@ -951,8 +951,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       gen_before = assigns(view)[:load_generation]
 
-      # The reviewed task's own broadcast warrants a page reload.
-      send(view.pid, {:task_status, task_id, :finalizing})
+      # The reviewed task's own broadcast (from the viewed node) warrants a
+      # page reload.
+      send(view.pid, {:task_updated, task_id, :finalizing, node()})
 
       # Past the 300ms debounce — wait for the new load to have started
       # (generation incremented by start_async_load).
@@ -962,6 +963,63 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # Flush the reload and assert the page still renders the review content.
       html = flush_review_load(view)
 
+      assert html =~ "Test objective"
+      assert html =~ ~s(phx-click="ignore")
+    end
+
+    test "broadcast from a foreign node triggers no reload at all", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
+
+      gen_before = assigns(view)[:load_generation]
+
+      # A broadcast published by a DIFFERENT BEAM node is dropped by the node
+      # filter BEFORE the debounce is scheduled: neither the sidebar reload
+      # (tasks_reload_pending stays false) nor the stash/guarded review-data
+      # reload may fire.
+      send(view.pid, {:task_updated, task_id, :finalizing, :remote@elsewhere})
+
+      # Past the 300ms debounce window.
+      Process.sleep(400)
+
+      # No debounce was ever scheduled and no review-data load was started.
+      refute assigns(view)[:tasks_reload_pending]
+      assert assigns(view)[:load_generation] == gen_before
+
+      # The page still renders normally.
+      html = render(view)
+      assert html =~ "Test objective"
+      assert html =~ ~s(phx-click="ignore")
+    end
+
+    test "task_deleted broadcast does not trigger a review-data reload", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      flush_review_load(view)
+
+      gen_before = assigns(view)[:load_generation]
+
+      # A deleted task — even the reviewed task itself — can never warrant a
+      # review-data reload (nothing is left to review): the stash is never
+      # set, only the sidebar refresh runs (matching node).
+      send(view.pid, {:task_deleted, task_id, node()})
+
+      # Past the 300ms trailing-edge debounce. The sidebar reload must have
+      # run by now (tasks_reload_pending cleared) — otherwise the unchanged
+      # generation assertion below would be vacuous.
+      Process.sleep(400)
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+      # No new load was started: deleted tasks are never stashed.
+      assert assigns(view)[:load_generation] == gen_before
+
+      # The page still renders normally.
+      html = render(view)
       assert html =~ "Test objective"
       assert html =~ ~s(phx-click="ignore")
     end
