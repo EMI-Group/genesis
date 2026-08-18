@@ -64,8 +64,7 @@ The "spatial glue" for SSH Remote Development node-aware navigation. Provides on
 
 ## Constraints
 
-- Both hooks use `assign_new/3` (safe assigns — first-write-wins).
-- Domain logic is delegated to `EvoDash.NodeContext` — hooks are thin wrappers.
+- Both hooks use `assign_new/3` (safe assigns — first-write-wins).- Domain logic is delegated to `EvoDash.NodeContext` — hooks are thin wrappers.
 - Safe fallbacks everywhere: locale defaults to `"en"`, node resolution falls back to `:local` on all failure paths.
 - Node name fallback: "Local" when no remote node is active.
 - **Task reload debounce**: `handle_task_info/2` NEVER reloads synchronously — always go through `debounce_task_reload/1` → `:node_aware_reload_tasks` (300ms trailing-edge) → `reload_tasks/1`. LiveViews that do custom reloads must call `clear_task_reload_pending/1` afterwards so the next broadcast can schedule a fresh reload.
