@@ -7,5 +7,11 @@
     "core:default",
     "shell:allow-execute",
     "shell:allow-spawn"
-  ]
+  ],
+  "remote": {
+    "urls": [
+      "http://localhost:*",
+      "http://127.0.0.1:*"
+    ]
+  }
 }
