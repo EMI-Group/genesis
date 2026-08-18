@@ -37,129 +37,32 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
     end
   end
 
-  describe "status_counts/1" do
-    test "empty list yields all zeros" do
-      assert Charts.status_counts([]) == %{
-               total: 0,
-               running: 0,
-               blocked: 0,
-               waiting: 0,
-               pending: 0,
-               ready: 0
-             }
-    end
-
-    test "counts agents per status" do
-      agents = [
-        %{status: :running},
-        %{status: :running},
-        %{status: :blocked},
-        %{status: :waiting},
-        %{status: :pending},
-        %{status: :ready}
-      ]
-
-      assert Charts.status_counts(agents) == %{
-               total: 6,
-               running: 2,
-               blocked: 1,
-               waiting: 1,
-               pending: 1,
-               ready: 1
-             }
-    end
-
-    test "agents with a missing status key are counted safely (no crash)" do
-      assert Charts.status_counts([%{}, %{status: :running}]) == %{
-               total: 2,
-               running: 1,
-               blocked: 0,
-               waiting: 0,
-               pending: 0,
-               ready: 0
-             }
-    end
-
-    test "unknown status atoms are counted safely (not crashed)" do
-      counts = Charts.status_counts([%{status: :weird}, %{status: :running}])
-
-      assert counts.total == 2
-      assert counts.running == 1
-      assert counts.blocked == 0
-    end
-  end
-
-  describe "config_totals/1" do
-    test "sums model-profile concurrency and max_tool_concurrency" do
-      config = %{
-        model_profiles: [%{concurrency: 2}, %{concurrency: 3}],
-        max_tool_concurrency: 4
-      }
-
-      assert Charts.config_totals(config) == %{llm_capacity: 5, tool_capacity: 4}
-    end
-
-    test "nil or missing concurrency values count as zero" do
-      config = %{
-        model_profiles: [%{concurrency: nil}, %{}, %{concurrency: 2}],
-        max_tool_concurrency: nil
-      }
-
-      assert Charts.config_totals(config) == %{llm_capacity: 2, tool_capacity: 0}
-    end
-
-    test "empty config map yields zero capacities (RPC-failure fallback)" do
-      assert Charts.config_totals(%{}) == %{llm_capacity: 0, tool_capacity: 0}
-    end
-
-    test "non-map arg yields zero capacities" do
-      assert Charts.config_totals(nil) == %{llm_capacity: 0, tool_capacity: 0}
-    end
-  end
-
-  describe "build_sample/2" do
-    test "running feeds llm/tool used, blocked feeds waiting, totals threaded through" do
-      agents = [
-        %{status: :running},
-        %{status: :running},
-        %{status: :blocked},
-        %{status: :waiting},
-        %{status: :pending}
-      ]
-
-      totals = %{llm_capacity: 4, tool_capacity: 2}
-
-      assert Charts.build_sample(agents, totals) == %{
-               llm_used: 2,
-               llm_waiting: 1,
-               llm_capacity: 4,
-               tool_used: 2,
-               tool_waiting: 1,
-               tool_capacity: 2,
-               agents_total: 5,
-               agents_running: 2,
-               agents_blocked: 1,
-               agents_waiting: 1,
-               agents_pending: 1
-             }
-    end
-
-    test "empty agents with zero totals yield a zero sample" do
-      sample = Charts.build_sample([], %{llm_capacity: 0, tool_capacity: 0})
-
-      assert sample.llm_used == 0
-      assert sample.tool_used == 0
-      assert sample.llm_capacity == 0
-      assert sample.tool_capacity == 0
-      assert sample.agents_total == 0
-    end
+  # A full 12-key sample map as emitted by the evo_git system sampler (the
+  # "system" topic contract — aggregation now lives sampler-side). Overrides
+  # let tests vary individual keys.
+  defp sample_map(overrides) do
+    Map.merge(
+      %{
+        llm_used: 0,
+        llm_waiting: 0,
+        llm_capacity: 4,
+        tool_used: 0,
+        tool_waiting: 0,
+        tool_capacity: 2,
+        agents_total: 0,
+        agents_running: 0,
+        agents_blocked: 0,
+        agents_waiting: 0,
+        agents_pending: 0,
+        scheduler_alive: true
+      },
+      Map.new(overrides)
+    )
   end
 
   describe "llm_series/1 and tool_series/1" do
     test "capacity series is marked static and keeps per-sample values" do
-      samples = [
-        Charts.build_sample([%{status: :running}], %{llm_capacity: 4, tool_capacity: 2})
-      ]
+      samples = [sample_map(llm_used: 1, tool_used: 1)]
 
       # gettext returns the source string "Capacity" in the default locale
       llm_capacity = Enum.find(Charts.llm_series(samples), &(&1.name == "Capacity"))
@@ -281,14 +184,8 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
 
     test "renders the svg chart with legend entries and scale footer when samples exist" do
       samples = [
-        Charts.build_sample([%{status: :running}, %{status: :blocked}], %{
-          llm_capacity: 4,
-          tool_capacity: 2
-        }),
-        Charts.build_sample([%{status: :running}, %{status: :running}], %{
-          llm_capacity: 4,
-          tool_capacity: 2
-        })
+        sample_map(llm_used: 1, llm_waiting: 1),
+        sample_map(llm_used: 2, llm_waiting: 0)
       ]
 
       series = Charts.llm_series(samples)
@@ -317,14 +214,8 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
 
     test "renders the static capacity series as a dashed horizontal line, not a path" do
       samples = [
-        Charts.build_sample([%{status: :running}, %{status: :blocked}], %{
-          llm_capacity: 4,
-          tool_capacity: 2
-        }),
-        Charts.build_sample([%{status: :running}, %{status: :running}], %{
-          llm_capacity: 4,
-          tool_capacity: 2
-        })
+        sample_map(llm_used: 1, llm_waiting: 1),
+        sample_map(llm_used: 2, llm_waiting: 0)
       ]
 
       series = Charts.llm_series(samples)

@@ -140,6 +140,16 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "get_recent_system_samples/1 (local node, real path)" do
+    # The evo_git system sampler is a stub on this worktree — the passthrough
+    # delegate must surface the stub's result verbatim (shape check only; real
+    # samples are emitted by the evo_git sampler workstream).
+    test "passes the RemoteAPI stub result through verbatim" do
+      assert EvoDash.NodeContext.get_recent_system_samples(node()) ==
+               {:error, :not_implemented}
+    end
+  end
+
   describe "custom-agents RPC delegates (local node, real paths)" do
     # The local path reads/writes the REAL agents.toml at
     # EvoGit.Config.config_dir(). Never touch the user's real file: isolate

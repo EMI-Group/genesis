@@ -14,14 +14,16 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
   ## Data semantics (must stay truthful)
 
-  Live "used slot" holder counts are NOT observable from the dashboard: slot
-  holders live only in the `EvoGit.AgentScheduler` GenServer loop state, are
-  not mirrored to the `:evogit_sched_meta` ETS table, and are not exposed via
-  `RemoteAPI`. "In use" is therefore a clearly-labeled proxy — the count of
-  agents in `:running` status (the agents that acquire/hold slots) — and
-  `:blocked` (agents waiting for a slot) is the saturation signal. Capacities
-  come from the resolved config: Σ model-profile `concurrency` for LLM slots,
-  `max_tool_concurrency` for tool slots.
+  Samples arrive PRE-AGGREGATED from the `:evo_git` system sampler on the
+  `"system"` PubSub topic (`{:system_sample, node, seq, sample}`, one every
+  3 seconds). Each sample map carries the keys the series builders read:
+  `llm_used, llm_waiting, llm_capacity, tool_used, tool_waiting, tool_capacity,
+  agents_total, agents_running, agents_blocked, agents_waiting, agents_pending,
+  scheduler_alive`. The sampler computes the values with the same semantics
+  the old dashboard-side aggregation used ("in use" = live slot-holder counts,
+  "waiting" = agents blocked on a slot), and `scheduler_alive: false` samples
+  (zero capacities) drive the dead-scheduler rendering — no LiveView-side
+  special-casing is needed.
   """
 
   use Phoenix.Component
@@ -57,63 +59,6 @@ defmodule EvoDashWeb.SystemLive.Charts do
   def push(buffer, sample, capacity \\ @sample_capacity) when is_list(buffer) do
     (buffer ++ [sample]) |> Enum.take(-capacity)
   end
-
-  # ── Sample building (pure) ───────────────────────────────────────
-
-  @doc """
-  Builds one chart sample from the agent summary list and config totals
-  (`%{llm_capacity: int, tool_capacity: int}` — see `config_totals/1`).
-
-  "Used" is the `:running` agent count (slot-use proxy — see moduledoc) and
-  `:blocked` (agents waiting for a slot) is the "waiting" count, for both the
-  LLM and tool charts.
-  """
-  def build_sample(agents, totals) when is_list(agents) and is_map(totals) do
-    counts = status_counts(agents)
-
-    %{
-      llm_used: counts.running,
-      llm_waiting: counts.blocked,
-      llm_capacity: totals.llm_capacity,
-      tool_used: counts.running,
-      tool_waiting: counts.blocked,
-      tool_capacity: totals.tool_capacity,
-      agents_total: counts.total,
-      agents_running: counts.running,
-      agents_blocked: counts.blocked,
-      agents_waiting: counts.waiting,
-      agents_pending: counts.pending
-    }
-  end
-
-  @doc "Per-status agent counts. Missing/unknown statuses count as `:unknown`."
-  def status_counts(agents) when is_list(agents) do
-    counts = Enum.frequencies_by(agents, fn agent -> Map.get(agent, :status, :unknown) end)
-
-    %{
-      total: length(agents),
-      running: Map.get(counts, :running, 0),
-      blocked: Map.get(counts, :blocked, 0),
-      waiting: Map.get(counts, :waiting, 0),
-      pending: Map.get(counts, :pending, 0),
-      ready: Map.get(counts, :ready, 0)
-    }
-  end
-
-  @doc """
-  Extracts slot capacities from a resolved config map. Missing/unknown keys
-  or a non-map (e.g. the `%{}` RPC-failure fallback) yield zero capacities.
-  """
-  def config_totals(config) when is_map(config) do
-    llm =
-      Enum.reduce(Map.get(config, :model_profiles, []), 0, fn profile, acc ->
-        acc + (Map.get(profile, :concurrency) || 0)
-      end)
-
-    %{llm_capacity: llm, tool_capacity: Map.get(config, :max_tool_concurrency) || 0}
-  end
-
-  def config_totals(_), do: %{llm_capacity: 0, tool_capacity: 0}
 
   # ── Series derivation (pure) ─────────────────────────────────────
 

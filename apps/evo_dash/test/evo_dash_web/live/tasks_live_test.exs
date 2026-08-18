@@ -64,6 +64,28 @@ defmodule EvoDashWeb.TasksLiveTest do
         timeout
       )
 
+  # Polls `fun` every 10ms until it returns truthy (or the timeout elapses).
+  # Used to observe the PubSub-driven debounce phases (:tasks_reload_pending
+  # true → false) without fixed sleeps.
+  defp wait_until(fun, timeout \\ 2000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    wait_loop = fn wait_loop ->
+      if fun.() do
+        :ok
+      else
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("timed out waiting for async condition")
+        else
+          Process.sleep(10)
+          wait_loop.(wait_loop)
+        end
+      end
+    end
+
+    wait_loop.(wait_loop)
+  end
+
   describe "task search" do
     test "renders the search input", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/tasks")
@@ -194,20 +216,25 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
-  describe ":task_status broadcast handling" do
-    # The EvoGit runtime broadcasts {:task_status, task_id, status} on the "tasks"
-    # PubSub topic. Before the fix, TasksLive had no clause matching this tuple,
-    # so a :finalizing status transition crashed the LiveView. These tests verify
-    # the handle_info clauses added by the fix handle these messages gracefully.
+  describe ":task_updated broadcast handling" do
+    # The EvoGit runtime broadcasts {:task_updated, task_id, status, node} on
+    # the "tasks" PubSub topic (node-identity contract). TasksLive forwards the
+    # message to NodeAware.handle_task_info/2, which applies the node filter
+    # (only the viewed node's events trigger UI updates) and schedules a 300ms
+    # debounced reload. These tests verify the handle_info clauses handle these
+    # messages gracefully.
 
-    test "handle_info {:task_status, _, :finalizing} does not crash the LiveView", %{conn: conn} do
+    test "handle_info {:task_updated, _, :finalizing, node} does not crash the LiveView", %{
+      conn: conn
+    } do
       {:ok, view, _html} = live(conn, ~p"/tasks")
 
-      # Broadcast a :finalizing status transition (the message that previously crashed).
+      # Broadcast a :finalizing status transition in the new node-identity shape
+      # (the message that previously crashed).
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "tasks",
-        {:task_status, "test-finalizing", :finalizing}
+        {:task_updated, "test-finalizing", :finalizing, node()}
       )
 
       # render/1 flushes pending messages synchronously; a crash would propagate here.
@@ -383,26 +410,6 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "Task history is only available when viewing the local node"
       assert html =~ "Search by task ID, prompt, or objective"
     end
-
-    test ":remote_poll on the local node does not crash and stops polling", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-
-      # On the local node (current_node == node()) the poll handler takes the
-      # stop branch and sets :remote_poll_timer to false. No timer is
-      # scheduled for the local node, so nothing leaks. A crash in the
-      # handler would propagate through render/1.
-      send(view.pid, :remote_poll)
-      html = render(view)
-
-      assert is_binary(html)
-      assert html =~ "All Statuses"
-
-      # The stop branch disables the poll timer. This LiveViewTest version
-      # exposes no assigns accessor on the View struct, so read the LiveView
-      # GenServer's socket state directly.
-      state = :sys.get_state(view.pid)
-      assert state.socket.assigns[:remote_poll_timer] == false
-    end
   end
 
   describe "async page load" do
@@ -451,8 +458,7 @@ defmodule EvoDashWeb.TasksLiveTest do
             current_page: 1,
             total_count: 1,
             total_pages: 1,
-            project_paths: [],
-            ids_snapshot: nil
+            project_paths: []
           }}}
       )
 
@@ -470,8 +476,7 @@ defmodule EvoDashWeb.TasksLiveTest do
             current_page: 1,
             total_count: 1,
             total_pages: 1,
-            project_paths: [],
-            ids_snapshot: nil
+            project_paths: []
           }}}
       )
 
@@ -480,84 +485,103 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "real visible task"
     end
 
-    test "poll result seeds the tracker and triggers a reload", %{conn: conn} do
-      insert_fixture!(opts: [prompt: "poll visible task"])
+    test "a task_updated broadcast triggers a debounced reload", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "event visible task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      # On the local node no poll is scheduled; inject one dirty-check result
-      # directly. Its max updated_at is NEWER than the seeded baseline, so the
-      # tracker must evaluate to :reload and spawn a background page load (no
-      # loading placeholder — show_loading is false for poll reloads).
-      send(
-        view.pid,
-        {:tasks_poll_result, 1, node(),
-         [%{id: "t1", status: :completed, updated_at: "2099-01-01T00:00:00.000000Z"}]}
-      )
+      # A task seeded AFTER the initial page load is only visible after a reload.
+      insert_fixture!(opts: [prompt: "event-added task"])
 
-      _html = render(view)
-      html = flush_tasks_load(view)
+      # New-shape event from the local node: NodeAware's node filter matches,
+      # so the 300ms debounced reload is scheduled.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
 
-      assert html =~ "poll visible task"
-
-      # The reload was actually spawned (tasks_load_seq advanced at spawn
-      # time) and the tracker baseline advanced to the snapshot's max.
-      state = :sys.get_state(view.pid)
-      assert state.socket.assigns[:tasks_load_seq] >= 2
-
-      assert state.socket.assigns[:dirty_tracker].last_seen_updated_at ==
-               "2099-01-01T00:00:00.000000Z"
-
-      # Follow-up empty snapshot: noop (resync-counter path) — no crash,
-      # content unchanged.
-      send(view.pid, {:tasks_poll_result, 2, node(), []})
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "poll visible task"
-    end
-
-    test "stale poll result is dropped", %{conn: conn} do
-      insert_fixture!(opts: [prompt: "real poll task"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
-      # Apply a real poll result first (seq 1): advances the baseline.
-      send(
-        view.pid,
-        {:tasks_poll_result, 1, node(),
-         [%{id: "t1", status: :completed, updated_at: "2099-01-01T00:00:00.000000Z"}]}
-      )
-
-      _html = render(view)
-      flush_tasks_load(view)
-
-      # In production poll_seq advances at tick SPAWN time (in the
-      # :remote_poll handler) — which never runs on the local node. Simulate
-      # the next tick having spawned so the seq stale-guard is meaningful:
-      # any result with seq < poll_seq must be dropped.
-      :sys.replace_state(view.pid, fn state ->
-        %{state | socket: %{state.socket | assigns: Map.put(state.socket.assigns, :poll_seq, 1)}}
+      # Phase 1: the event is processed and the debounce is scheduled.
+      wait_until(fn ->
+        state = :sys.get_state(view.pid)
+        state.socket.assigns[:tasks_reload_pending] == true
       end)
 
-      # A stale tick (seq 0 < poll_seq 1) whose snapshot max is NEWER than the
-      # baseline must be dropped BEFORE the tracker sees it: the baseline must
-      # not advance and no reload may be spawned.
-      send(
-        view.pid,
-        {:tasks_poll_result, 0, node(),
-         [%{id: "stale-marker", status: :completed, updated_at: "2100-01-01T00:00:00.000000Z"}]}
-      )
+      # Phase 2: the debounce fires and the full reload re-renders the page.
+      wait_until(fn ->
+        state = :sys.get_state(view.pid)
+        state.socket.assigns[:tasks_reload_pending] == false
+      end)
 
       html = render(view)
-      refute html =~ "stale-marker"
-      assert html =~ "real poll task"
+      assert html =~ "event visible task"
+      assert html =~ "event-added task"
+    end
 
-      state = :sys.get_state(view.pid)
+    test "a foreign-node task_updated broadcast does not trigger a reload", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "event visible task"])
 
-      assert state.socket.assigns[:dirty_tracker].last_seen_updated_at ==
-               "2099-01-01T00:00:00.000000Z"
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # A task seeded after the initial load would only render if a reload
+      # wrongly fired.
+      insert_fixture!(opts: [prompt: "foreign marker task"])
+
+      # Event from a DIFFERENT BEAM node: the node filter must drop it BEFORE
+      # the debounce is scheduled.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, "t1", :running, :remote@elsewhere}
+      )
+
+      # Sample across the 300ms debounce window (10ms cadence): the
+      # reload-pending flag must never become true.
+      deadline = System.monotonic_time(:millisecond) + 400
+
+      check_no_reload = fn check_no_reload ->
+        state = :sys.get_state(view.pid)
+        assert state.socket.assigns[:tasks_reload_pending] == false
+
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(10)
+          check_no_reload.(check_no_reload)
+        end
+      end
+
+      check_no_reload.(check_no_reload)
+
+      html = render(view)
+      assert html =~ "event visible task"
+      refute html =~ "foreign marker task"
+    end
+
+    test "a task_deleted broadcast triggers a debounced reload", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "delete visible task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Seed + remove a task directly in the store, then broadcast its deletion
+      # — the debounced reload must re-read the store and drop the row.
+      id = insert_fixture!(opts: [prompt: "delete me task"])
+      EvoGit.Store.delete_task(EvoGit.Store, id)
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, id, node()})
+
+      # Phase 1: the event is processed and the debounce is scheduled.
+      wait_until(fn ->
+        state = :sys.get_state(view.pid)
+        state.socket.assigns[:tasks_reload_pending] == true
+      end)
+
+      # Phase 2: the debounce fires and the full reload re-renders the page.
+      wait_until(fn ->
+        state = :sys.get_state(view.pid)
+        state.socket.assigns[:tasks_reload_pending] == false
+      end)
+
+      html = render(view)
+      assert html =~ "delete visible task"
+      refute html =~ "delete me task"
     end
   end
 
