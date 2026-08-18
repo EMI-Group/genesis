@@ -72,11 +72,21 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     end)
   end
 
-  # STUB — implemented by the system-sampler workstream (returns recent
-  # samples from EvoGit.SystemSampler's ring buffer; {:ok, samples} |
-  # {:error, _}).
+  @doc """
+  Returns recent system samples from `EvoGit.SystemSampler`'s ring buffer.
+
+  `{:ok, samples}` when the sampler is running; `{:error, :sampler_down}`
+  when the sampler process is not running (checked locally before calling —
+  `Process.whereis/1`, no try/rescue); `{:error, :not_found}` in the rare
+  race where the sampler dies between the liveness check and the call
+  (surfaced verbatim from `EvoGit.SystemSampler.get_recent_samples/0`).
+  """
+  @spec get_recent_system_samples() :: {:ok, [map()]} | {:error, :not_found | :sampler_down}
   def get_recent_system_samples do
-    {:error, :not_implemented}
+    case Process.whereis(EvoGit.SystemSampler) do
+      nil -> {:error, :sampler_down}
+      _pid -> EvoGit.SystemSampler.get_recent_samples()
+    end
   end
 
   @doc """
