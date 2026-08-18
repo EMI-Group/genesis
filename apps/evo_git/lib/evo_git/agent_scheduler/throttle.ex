@@ -1,6 +1,6 @@
 defmodule EvoGit.AgentScheduler.PubSub.Throttle do
   @moduledoc """
-  GenServer backing the throttled `{:agents_updated}` broadcast.
+  GenServer backing the throttled `{:agents_updated, node}` broadcast.
 
   Coalesces rapid `:schedule` casts into a single flush broadcast at most
   `@throttle_ms` milliseconds after the last schedule — the same semantics as
@@ -37,7 +37,7 @@ defmodule EvoGit.AgentScheduler.PubSub.Throttle do
     Phoenix.PubSub.broadcast(
       EvoGit.PubSub,
       EvoGit.AgentScheduler.PubSub.agent_topic(),
-      {:agents_updated}
+      {:agents_updated, node()}
     )
 
     {:noreply, nil}
