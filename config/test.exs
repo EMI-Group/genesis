@@ -28,6 +28,9 @@ config :phoenix_live_view,
 # key must be :evo_git (the Store reads Application.get_env(:evo_git, :data_dir)).
 config :evo_git, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genesis")
 
+# SystemSampler tick disabled in tests (the sampler's own test suite manages its interval)
+config :evo_git, :system_sample_interval_ms, 86_400_000
+
 # Never open a real wx directory dialog during tests (a modal native dialog
 # would block the suite). test_helper.exs sets the same flag as a
 # belt-and-suspenders fallback; the picker module short-circuits on it.
