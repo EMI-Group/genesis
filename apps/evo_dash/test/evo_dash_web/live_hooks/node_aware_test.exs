@@ -15,6 +15,12 @@ defmodule EvoDashWeb.NodeAwareTest do
   # stale-guard seam `handle_tasks_result/2` is tested directly (pure socket
   # in/out).
   #
+  # The debounced task-reload path (`handle_task_info/2`) uses the same
+  # send-pattern: a matching-node event schedules `:node_aware_reload_tasks`
+  # after 300ms (`assert_receive :node_aware_reload_tasks` — always drained so
+  # late messages never leak into a later test), while foreign-node events are
+  # dropped before the debounce (`refute_receive`).
+  #
   # async: false — the assign_node remote-target tests mutate the global
   # XDG_CONFIG_HOME env var (to isolate EvoGit.RemoteConnections, same pattern
   # as evo_git's remote_connections_test.exs) and register a fake connection
@@ -39,7 +45,8 @@ defmodule EvoDashWeb.NodeAwareTest do
         connection_statuses: %{},
         running_tasks: [],
         pending_tasks: [],
-        tasks_load_seq: 0
+        tasks_load_seq: 0,
+        tasks_reload_pending: false
       }
       |> Map.merge(overrides)
 
@@ -722,6 +729,127 @@ defmodule EvoDashWeb.NodeAwareTest do
       # :tasks_node_loaded dedup guard skips it — no new message arrives).
       NodeAware.assign_node(result, %{})
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+    end
+  end
+
+  describe "handle_task_info/2 — node-filtered debounce" do
+    # The node-identity PubSub contract: `{:task_updated, task_id, status,
+    # node}` / `{:task_deleted, task_id, node}` where node is the BEAM node
+    # atom of the publishing node. A matching-node event schedules the 300ms
+    # trailing-edge debounce (`:node_aware_reload_tasks`); a foreign-node event
+    # is dropped BEFORE the debounce — socket returned unchanged, no message.
+    # Every scheduling test drains the message with `assert_receive` so a late
+    # delivery can never leak into a later test's `refute_receive`.
+
+    test "{:task_updated, _, _, node()} with matching node schedules the debounce" do
+      sock = socket(%{current_node: node(), tasks_reload_pending: false})
+
+      assert {:noreply, result} =
+               NodeAware.handle_task_info(sock, {:task_updated, "t1", :running, node()})
+
+      assert result.assigns[:tasks_reload_pending] == true
+      assert_receive :node_aware_reload_tasks, 500
+    end
+
+    test "{:task_updated, _, _, foreign_node} is dropped (socket unchanged, no reload scheduled)" do
+      sock = socket(%{current_node: node(), tasks_reload_pending: false})
+
+      assert {:noreply, result} =
+               NodeAware.handle_task_info(sock, {:task_updated, "t1", :running, :remote@other})
+
+      assert result == sock
+      assert result.assigns[:tasks_reload_pending] == false
+      refute_receive :node_aware_reload_tasks, 150
+    end
+
+    test "{:task_deleted, _, node()} with matching node schedules the debounce" do
+      sock = socket(%{current_node: node(), tasks_reload_pending: false})
+
+      assert {:noreply, result} =
+               NodeAware.handle_task_info(sock, {:task_deleted, "t1", node()})
+
+      assert result.assigns[:tasks_reload_pending] == true
+      assert_receive :node_aware_reload_tasks, 500
+    end
+
+    test "{:task_deleted, _, foreign_node} is dropped (socket unchanged, no reload scheduled)" do
+      sock = socket(%{current_node: node(), tasks_reload_pending: false})
+
+      assert {:noreply, result} =
+               NodeAware.handle_task_info(sock, {:task_deleted, "t1", :remote@other})
+
+      assert result == sock
+      assert result.assigns[:tasks_reload_pending] == false
+      refute_receive :node_aware_reload_tasks, 150
+    end
+
+    test "remote viewing: event from the viewed remote node schedules; a local event is dropped" do
+      remote_node = :"genesis_remote@127.0.0.1"
+      sock = socket(%{current_node: remote_node, tasks_reload_pending: false})
+
+      # The remote daemon's own event matches the viewed node → reload.
+      assert {:noreply, result} =
+               NodeAware.handle_task_info(sock, {:task_updated, "t1", :completed, remote_node})
+
+      assert result.assigns[:tasks_reload_pending] == true
+      assert_receive :node_aware_reload_tasks, 500
+
+      # A local-node event while viewing the remote node → dropped.
+      sock2 = socket(%{current_node: remote_node, tasks_reload_pending: false})
+
+      assert {:noreply, result2} =
+               NodeAware.handle_task_info(sock2, {:task_updated, "t2", :completed, node()})
+
+      assert result2 == sock2
+      assert result2.assigns[:tasks_reload_pending] == false
+      refute_receive :node_aware_reload_tasks, 150
+    end
+
+    test "review-only mutation (status nil) with matching node schedules the debounce" do
+      sock = socket(%{current_node: node(), tasks_reload_pending: false})
+
+      assert {:noreply, result} =
+               NodeAware.handle_task_info(sock, {:task_updated, "t1", nil, node()})
+
+      assert result.assigns[:tasks_reload_pending] == true
+      assert_receive :node_aware_reload_tasks, 500
+    end
+
+    test "a second matching broadcast while a reload is pending is dropped (coalescing)" do
+      sock = socket(%{current_node: node(), tasks_reload_pending: false})
+
+      {:noreply, result} =
+        NodeAware.handle_task_info(sock, {:task_updated, "t1", :running, node()})
+
+      assert result.assigns[:tasks_reload_pending] == true
+
+      # The second broadcast arrives while the reload is pending — dropped.
+      {:noreply, result2} =
+        NodeAware.handle_task_info(result, {:task_updated, "t2", :completed, node()})
+
+      assert result2 == result
+
+      # Exactly ONE :node_aware_reload_tasks message was scheduled.
+      assert_receive :node_aware_reload_tasks, 500
+      refute_receive :node_aware_reload_tasks, 150
+    end
+  end
+
+  describe "event_from_current_node?/2 — node-identity filter" do
+    test "local viewing: true for node(), false for a foreign atom" do
+      assert NodeAware.event_from_current_node?(%{current_node: node()}, node())
+      refute NodeAware.event_from_current_node?(%{current_node: node()}, :remote@other)
+    end
+
+    test "remote viewing: true for the viewed remote atom, false for node()" do
+      remote_node = :genesis_remote@host
+      assert NodeAware.event_from_current_node?(%{current_node: remote_node}, remote_node)
+      refute NodeAware.event_from_current_node?(%{current_node: remote_node}, node())
+    end
+
+    test "missing :current_node assign falls back to node()" do
+      assert NodeAware.event_from_current_node?(%{}, node())
+      refute NodeAware.event_from_current_node?(%{}, :remote@other)
     end
   end
 

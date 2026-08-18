@@ -537,12 +537,68 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   Handles task-related PubSub messages by scheduling a debounced reload of
   running/pending tasks. Returns `{:noreply, socket}`.
 
+  The `:evo_git` app emits the node-identity contract on the `"tasks"` topic:
+  `{:task_updated, task_id, status, node}` (status = the task status atom
+  `:pending|:running|:finalizing|:cancelling|:completed|:failed|:cancelled`,
+  or `nil` for review-only mutations) and `{:task_deleted, task_id, node}`.
+  Every event carries the BEAM node atom of the publishing node.
+
+  Node filtering: an event only schedules a reload when its `node` matches the
+  currently-viewed node identity (`event_from_current_node?/2` — local viewing
+  → `node()`, remote viewing → the remote daemon's BEAM node atom). Foreign-
+  node events are dropped BEFORE the debounce is scheduled, so they can never
+  leak into another node's UI updates (page reloads, ProjectsLive's browser-
+  notification diff). Unmatched message shapes are ignored (transitional
+  safety net for not-yet-migrated emitters).
+
   Uses a trailing-edge debounce (300ms via `:node_aware_reload_tasks`) to
   coalesce broadcast bursts into a single reload: intermediate broadcasts
   while a reload is already pending are dropped.
   """
+  def handle_task_info(socket, {:task_updated, _task_id, _status, node}) do
+    if event_from_current_node?(socket.assigns, node) do
+      {:noreply, debounce_task_reload(socket)}
+    else
+      # Foreign-node event — dropped before the debounce is scheduled so it
+      # never triggers a UI update on the currently-viewed node.
+      {:noreply, socket}
+    end
+  end
+
+  def handle_task_info(socket, {:task_deleted, _task_id, node}) do
+    if event_from_current_node?(socket.assigns, node) do
+      {:noreply, debounce_task_reload(socket)}
+    else
+      # Foreign-node event — dropped before the debounce is scheduled so it
+      # never triggers a UI update on the currently-viewed node.
+      {:noreply, socket}
+    end
+  end
+
   def handle_task_info(socket, _message) do
-    {:noreply, debounce_task_reload(socket)}
+    # Transitional safety net for not-yet-migrated emitters (old shapes carry
+    # no node identity) — the socket is returned unchanged, no reload is
+    # scheduled.
+    {:noreply, socket}
+  end
+
+  @doc """
+  Returns `true` when a PubSub event's `node` matches the currently-viewed node
+  identity.
+
+  `@current_node` is resolved by `assign_node/2` (see `resolve_node_context/1`):
+  local viewing → `node()` (the dashboard's own BEAM node atom); remote viewing
+  → the remote daemon's BEAM node atom (the third element of the
+  `{:remote, target, remote_node}` tuple, flattened into the assign); a
+  pending/disconnected target → `node()`. The helper therefore compares the
+  event's publishing node with the node identity the user is currently viewing.
+
+  Used by EVERY consumer of the `"tasks"` PubSub topic (NodeAware, AgentsLive,
+  SystemLive, ReviewLive, SettingsLive) to drop foreign-node events before any
+  UI update. Falls back to `node()` when the `:current_node` assign is absent.
+  """
+  def event_from_current_node?(assigns, event_node) when is_atom(event_node) do
+    event_node == Map.get(assigns, :current_node, node())
   end
 
   @doc """
