@@ -72,6 +72,13 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     end)
   end
 
+  # STUB — implemented by the system-sampler workstream (returns recent
+  # samples from EvoGit.SystemSampler's ring buffer; {:ok, samples} |
+  # {:error, _}).
+  def get_recent_system_samples do
+    {:error, :not_implemented}
+  end
+
   @doc """
   Returns the conversation history for an agent as a list of native
   `ReqLLM.Message` structs.
