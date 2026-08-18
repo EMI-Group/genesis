@@ -1276,6 +1276,26 @@ defmodule EvoDashWeb.SettingsLive do
     ModelProfileEvents.move_model_profile(socket, params)
   end
 
+  @impl true
+  def handle_event("add_peak_hours_row", params, socket) do
+    # Peak-hours row editor is only meaningful while a profile is being edited
+    # (the rows live in the editing profile's in-memory peak_hours).
+    if socket.assigns[:editing_profile_id] do
+      ModelProfileEvents.add_peak_hours_row(socket, params)
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("remove_peak_hours_row", %{"index" => _idx} = params, socket) do
+    if socket.assigns[:editing_profile_id] do
+      ModelProfileEvents.remove_peak_hours_row(socket, params)
+    else
+      {:noreply, socket}
+    end
+  end
+
   # ── Custom Agents category events (delegated to CustomAgentEvents) ──
 
   @impl true
