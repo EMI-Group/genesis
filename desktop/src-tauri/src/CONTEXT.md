@@ -17,7 +17,7 @@ Rust source for the Genesis Tauri v2 desktop shell: `main.rs` (entry point, tray
 
 Contract with the Elixir backend (fixed on the Elixir side — do not change):
 - Env var **`EVOGIT_LIFETIME_PORT`** = the lifetime listener's port (bound on 127.0.0.1). The backend connects to `127.0.0.1:<port>` and blocks on recv; any close/error = shell dead → backend `System.stop(0)`.
-- **`EVOGIT_PARENT_PID` no longer exists** — do not reintroduce it in either env builder.
+- **`EVOGIT_PARENT_PID` is not used** — do not reintroduce it in either env builder.
 - The shell **never writes** on the lifetime connection — it is a pure hold.
 
 Rust side:
