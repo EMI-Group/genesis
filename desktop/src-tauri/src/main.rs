@@ -616,7 +616,35 @@ fn run_gui() {
                         let manager = app.try_state::<BackendHandle>();
                         if let Some(manager) = manager.as_ref() {
                             if sidecar::probe_http(manager.backend_url()).is_some() {
-                                let _ = app.emit("quit-requested", ());
+                                // Single-shot emit races the dashboard
+                                // LiveSocket: while the window was hidden to
+                                // tray, phoenix suspends reconnects
+                                // (pageHidden) and the dashboard's pushEvent
+                                // drops the event when the channel can't push.
+                                // Re-emit on a short bounded schedule — the
+                                // dashboard handler is idempotent (assign set
+                                // true; unchanged → no re-render) and the
+                                // re-emits stop by themselves once the user
+                                // confirms (backend stops, app exits).
+                                // `manager.inner()` unwraps the tauri `State`
+                                // (which borrows `app`) to the owned
+                                // `Arc<BackendManager>` so the detached
+                                // thread can own it ('static).
+                                let app = app.clone();
+                                let manager = manager.inner().clone();
+                                std::thread::spawn(move || {
+                                    for delay_ms in [500u64, 1000, 2000] {
+                                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                                        if manager.shutdown_requested()
+                                            || manager.update_requested()
+                                        {
+                                            break; // user confirmed — the app is going away
+                                        }
+                                        if app.emit("quit-requested", ()).is_err() {
+                                            break; // app is shutting down
+                                        }
+                                    }
+                                });
                                 return;
                             }
                         }
