@@ -20,6 +20,14 @@ use backend_watchdog::BackendManager;
 /// How long (in seconds) to wait for the backend to become ready.
 const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
 
+/// How many times the GUI setup retries navigating the webview to the
+/// dashboard after the initial readiness poll (step 8). The webview's first
+/// load races the backend boot, so the re-navigation must tolerate a webview
+/// that is still initializing; the budget is bounded (~20 × 250ms = ~5s).
+const INITIAL_NAVIGATE_ATTEMPTS: u32 = 20;
+/// Delay between the post-readiness navigation retries.
+const INITIAL_NAVIGATE_RETRY_MS: u64 = 250;
+
 /// The OS-specific launcher script name inside the bundled release directory.
 ///
 /// On Unix this is the POSIX shell script `genesis_desktop`; on Windows it is
@@ -698,7 +706,12 @@ fn run_gui() {
             //    1280x800, resizable, centered. The window is created BEFORE
             //    the blocking readiness poll so the watchdog's `show_backend`
             //    retry loop (which waits for the window) behaves as before.
-            tauri::WebviewWindowBuilder::new(
+            //    The window's initial load races the backend boot — the
+            //    backend is not listening yet, so that first navigation
+            //    typically fails; step 8 re-navigates to the dashboard once
+            //    the readiness poll succeeds. The builder's result is bound so
+            //    the post-readiness re-navigation targets this exact window.
+            let window = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::External(url.parse()?),
@@ -721,12 +734,44 @@ fn run_gui() {
             // 7. If the initial boot never became ready, kill the child: the
             //    watchdog sees the unexpected exit and takes over with the
             //    error page + restart cycle (the final probe avoids killing a
-            //    backend that became ready just as the poll timed out).
+            //    backend that became ready just as the poll timed out). The
+            //    final probe is the single source of truth for ready-ness.
             if sidecar::probe_http(&url).is_none() {
                 eprintln!(
                     "[desktop] initial backend boot did not become ready — handing over to the watchdog"
                 );
                 manager.kill_current_child();
+            } else {
+                // 8. Backend is ready — make sure the webview actually shows
+                //    the dashboard. Its initial load (step 5) raced the boot
+                //    and failed with connection refused; NOTHING re-navigates
+                //    on the healthy path (the watchdog only navigates after an
+                //    unexpected exit), so without this a healthy boot sat on
+                //    the failed-load page forever — and with it the
+                //    dashboard's `quit-requested` listener never loaded, which
+                //    wedged the tray Quit confirmation flow. Retry the
+                //    navigation on a bounded schedule: the webview may still
+                //    be initializing right after creation, so navigation can
+                //    fail transiently. Stop early on success or when a
+                //    quit/update intent is requested (the backend is going
+                //    away — don't navigate during shutdown). Never-ready
+                //    boots are handled above by the watchdog's recovery path
+                //    (`show_backend`).
+                match navigate_after_ready(
+                    || backend_watchdog::navigate_webview(&window, &url),
+                    || manager.shutdown_requested() || manager.update_requested(),
+                    INITIAL_NAVIGATE_ATTEMPTS,
+                    std::time::Duration::from_millis(INITIAL_NAVIGATE_RETRY_MS),
+                ) {
+                    InitialNavigateOutcome::Navigated => eprintln!(
+                        "[desktop] navigated webview to the dashboard after the readiness poll"
+                    ),
+                    // Quit/update began — the shutdown machinery takes over.
+                    InitialNavigateOutcome::Aborted => {}
+                    InitialNavigateOutcome::Failed => eprintln!(
+                        "[desktop] webview did not accept the navigation after {INITIAL_NAVIGATE_ATTEMPTS} attempts — the watchdog will retry on the next backend recovery"
+                    ),
+                }
             }
 
             Ok(())
@@ -742,6 +787,45 @@ fn run_gui() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ---------------------------------------------------------------------------
+// Post-readiness navigation (healthy-boot webview fix)
+// ---------------------------------------------------------------------------
+
+/// Outcome of the bounded post-readiness navigation retry
+/// ([`navigate_after_ready`]).
+#[derive(Debug, PartialEq, Eq)]
+enum InitialNavigateOutcome {
+    /// The webview accepted the navigation to the dashboard.
+    Navigated,
+    /// A quit/update intent was requested before the webview accepted it.
+    Aborted,
+    /// The webview never accepted the navigation within the attempt budget.
+    Failed,
+}
+
+/// Bounded navigation retry used after the initial readiness poll (step 8 of
+/// the GUI setup): calls `navigate` up to `max_attempts` times with
+/// `retry_delay` between tries, stopping early once `navigate` succeeds or
+/// `abort` (a quit/update intent) becomes true. Pure with injected closures
+/// so the retry semantics are unit-testable without a tauri window.
+fn navigate_after_ready(
+    mut navigate: impl FnMut() -> bool,
+    mut abort: impl FnMut() -> bool,
+    max_attempts: u32,
+    retry_delay: std::time::Duration,
+) -> InitialNavigateOutcome {
+    for _ in 0..max_attempts {
+        if abort() {
+            return InitialNavigateOutcome::Aborted;
+        }
+        if navigate() {
+            return InitialNavigateOutcome::Navigated;
+        }
+        std::thread::sleep(retry_delay);
+    }
+    InitialNavigateOutcome::Failed
 }
 
 fn main() {
@@ -907,5 +991,62 @@ mod tests {
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
             other => panic!("expected a blocked read on second client, got {other:?}"),
         }
+    }
+
+    /// `navigate_after_ready` stops at the first successful navigation.
+    #[test]
+    fn navigate_after_ready_stops_on_first_success() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = navigate_after_ready(
+            || {
+                calls.set(calls.get() + 1);
+                calls.get() == 2 // the webview accepts on the second attempt
+            },
+            || false,
+            10,
+            Duration::from_millis(1),
+        );
+        assert_eq!(outcome, InitialNavigateOutcome::Navigated);
+        assert_eq!(
+            calls.get(),
+            2,
+            "navigation must stop after the first success"
+        );
+    }
+
+    /// `navigate_after_ready` gives up after the attempt budget when the
+    /// webview never accepts the navigation.
+    #[test]
+    fn navigate_after_ready_gives_up_after_max_attempts() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = navigate_after_ready(
+            || {
+                calls.set(calls.get() + 1);
+                false
+            },
+            || false,
+            5,
+            Duration::from_millis(1),
+        );
+        assert_eq!(outcome, InitialNavigateOutcome::Failed);
+        assert_eq!(calls.get(), 5, "must not exceed the attempt budget");
+    }
+
+    /// `navigate_after_ready` aborts (without further navigation) as soon as
+    /// a quit/update intent is requested.
+    #[test]
+    fn navigate_after_ready_aborts_on_quit_or_update_intent() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = navigate_after_ready(
+            || {
+                calls.set(calls.get() + 1);
+                false
+            },
+            || calls.get() >= 1, // intent requested before the second attempt
+            10,
+            Duration::from_millis(1),
+        );
+        assert_eq!(outcome, InitialNavigateOutcome::Aborted);
+        assert_eq!(calls.get(), 1, "must not navigate once the intent is set");
     }
 }

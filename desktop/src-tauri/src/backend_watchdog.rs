@@ -698,19 +698,7 @@ impl BackendManager {
         let Some(window) = app.get_webview_window("main") else {
             return false;
         };
-        match tauri::Url::parse(url) {
-            Ok(parsed) => match window.navigate(parsed) {
-                Ok(()) => true,
-                Err(err) => {
-                    eprintln!("[desktop] failed to navigate webview to {url}: {err}");
-                    true
-                }
-            },
-            Err(err) => {
-                eprintln!("[desktop] invalid navigation URL {url}: {err}");
-                true
-            }
-        }
+        navigate_webview(&window, url)
     }
 
     /// Shows the backend-unavailable error page (single attempt; the next
@@ -745,6 +733,35 @@ impl BackendManager {
         self.policy
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared navigation helper
+// ---------------------------------------------------------------------------
+
+/// Navigates a webview window to `url`. Returns true when the window existed
+/// and accepted the navigation (an invalid URL also returns true to avoid
+/// hot-looping); false while the window does not exist yet (early startup),
+/// so callers can retry.
+///
+/// `pub(crate)`: the single navigation implementation, shared by the
+/// watchdog ([`BackendManager::navigate`], error-page and recovery paths)
+/// and `run_gui`'s setup closure in `main.rs`, which re-navigates the
+/// webview to the dashboard after the initial readiness poll (step 8).
+pub(crate) fn navigate_webview(window: &tauri::WebviewWindow, url: &str) -> bool {
+    match tauri::Url::parse(url) {
+        Ok(parsed) => match window.navigate(parsed) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("[desktop] failed to navigate webview to {url}: {err}");
+                true
+            }
+        },
+        Err(err) => {
+            eprintln!("[desktop] invalid navigation URL {url}: {err}");
+            true
+        }
     }
 }
 
