@@ -675,6 +675,17 @@ const TauriDetect = {
 // being viewed (the hook is mounted on a wrapper around the app layout's
 // <main>, so it is re-established on every page navigation). A complete no-op
 // outside the Tauri shell (normal browsers) since window.__TAURI__ is absent.
+//
+// Delivery is latched + retried because pushEvent is NOT buffered: while the
+// window sits hidden in the tray the LiveSocket disconnects (heartbeat stalls
+// while the page is hidden and reconnects are suspended until the window is
+// shown), and pushHookEvent rejects with "unable to push hook event. LiveView
+// not connected" when the socket is down — a single unlatched push would be
+// silently lost. The latch is armed on the first quit-requested, dedups any
+// re-emit while a quit awaits delivery or the dialog is open, retries the
+// push on rejection (1s) and again from reconnected(), and is released only
+// when the server pushes desktop_quit_closed (dialog dismissed) so FUTURE
+// tray quits stay honored.
 const DesktopQuit = {
   mounted() {
     // Same detection as TauriDetect (see above).
@@ -682,9 +693,13 @@ const DesktopQuit = {
     if (!isTauri) {
       return;
     }
+    this._quitPending = false;   // a quit awaits delivery / the dialog is open
+    this._retryTimer = null;
     this._unlisten = null;
     this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
-      this.pushEvent("desktop_quit_requested", {});
+      if (this._quitPending) return;   // dedup: dialog open or delivery in flight
+      this._quitPending = true;
+      this._pushQuitRequested();
     });
     this._unlistenPromise.then((unlisten) => {
       // If the hook was destroyed before the promise resolved, unlisten right
@@ -695,14 +710,51 @@ const DesktopQuit = {
         unlisten();
       }
     });
+    // Server→client signal that the dialog was dismissed — re-arms the latch
+    // so a FUTURE tray Quit is honored. Same phx: window-event pattern as the
+    // DirectoryPicker hook's "picker_result:..." (see above).
+    this._unlistenClosed = this.handleEvent("desktop_quit_closed", () => {
+      this._quitPending = false;
+      if (this._retryTimer) {
+        clearTimeout(this._retryTimer);
+        this._retryTimer = null;
+      }
+    });
+  },
+  // Socket re-established: deliver an undelivered quit request now.
+  reconnected() {
+    if (this._quitPending) this._pushQuitRequested();
+  },
+  _pushQuitRequested() {
+    if (!this._quitPending) return;
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
+    this.pushEvent("desktop_quit_requested", {}).then(
+      () => {},   // delivered — latch stays until the user dismisses (desktop_quit_closed)
+      () => {     // dropped (disconnected) — retry shortly; latch still set
+        if (!this._quitPending) return;
+        this._retryTimer = setTimeout(() => this._pushQuitRequested(), 1000);
+      }
+    );
   },
   destroyed() {
+    this._quitPending = false;
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
     // Safe if the listen promise hasn't resolved yet: nulling _unlistenPromise
     // makes the then-callback unlisten immediately instead of storing.
     this._unlistenPromise = null;
     if (this._unlisten) {
       this._unlisten();
       this._unlisten = null;
+    }
+    if (this._unlistenClosed) {
+      this.removeHandleEvent(this._unlistenClosed);
+      this._unlistenClosed = null;
     }
   }
 };

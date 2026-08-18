@@ -25,10 +25,16 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuit do
   No remote-node branch: the tray event only comes from the desktop shell,
   whose webview serves the LOCAL dashboard VM. Outside the Tauri shell (normal
   browsers) the JS listener never fires and this hook stays dormant.
+
+  Delivery contract with the `DesktopQuit` JS hook: the JS side latches every
+  `quit-requested` (dedup + retry while the LiveSocket is disconnected, see
+  `assets/js/app.js`) and holds the latch until the server pushes
+  `"desktop_quit_closed"` — emitted by BOTH the cancel and confirm handlers
+  below — which re-arms the JS hook so future tray quits stay honored.
   """
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [attach_hook: 4]
+  import Phoenix.LiveView, only: [attach_hook: 4, push_event: 3]
 
   @doc """
   Seeds the `@desktop_quit_confirm` assign (false) and attaches the event
@@ -51,13 +57,15 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuit do
   end
 
   def handle_event("desktop_quit_cancelled", _params, socket) do
-    {:halt, assign(socket, :desktop_quit_confirm, false)}
+    socket = assign(socket, :desktop_quit_confirm, false)
+    {:halt, push_event(socket, "desktop_quit_closed", %{})}
   end
 
   def handle_event("desktop_quit_confirmed", _params, socket) do
     stop_fun().()
 
-    {:halt, assign(socket, :desktop_quit_confirm, false)}
+    socket = assign(socket, :desktop_quit_confirm, false)
+    {:halt, push_event(socket, "desktop_quit_closed", %{})}
   end
 
   # Any other event flows through to the LiveView untouched.
