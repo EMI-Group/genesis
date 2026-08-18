@@ -141,11 +141,121 @@ fn is_missing_platform_error(err: &tauri_plugin_updater::Error) -> bool {
     )
 }
 
+/// Latest-version info parsed from the raw update feed (`latest.json`).
+///
+/// Read directly by the shell when the updater plugin cannot resolve a payload
+/// for the current platform (or failed outright), so the dashboard can still
+/// show the latest release version from the feed.
+struct FeedInfo {
+    version: String,
+    body: Option<String>,
+    date: Option<String>,
+}
+
+/// Reads `plugins > updater > endpoints` (the ordered list of feed URLs) from
+/// the tauri config — the same source the updater plugin itself uses. Empty
+/// when the config carries no endpoints.
+fn configured_updater_endpoints(app: &tauri::AppHandle) -> Vec<String> {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|v| v.get("endpoints"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// True when `s` is a semver-shaped version (`major.minor.patch`, with
+/// optional `-prerelease` / `+build` suffixes). A deliberate loose check: its
+/// only job is gating garbage from a malformed feed, not full semver parsing.
+fn is_version_shaped(s: &str) -> bool {
+    let core = s.split(['+', '-']).next().unwrap_or(s);
+    let mut parts = core.split('.');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(a), Some(b), Some(c), None) => [a, b, c]
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
+        _ => false,
+    }
+}
+
+/// Parses the update-feed JSON (`{"version", "notes", "pub_date",
+/// "platforms", ...}`) and returns the latest-version info. Returns `None`
+/// when the text is not a parseable feed: malformed JSON, a missing or
+/// non-string `version`, or a version that fails the shape check. A leading
+/// `v` is trimmed first (mirroring the plugin); `notes`/`pub_date` are
+/// optional and map to `None` when absent.
+fn parse_feed_info(json_text: &str) -> Option<FeedInfo> {
+    let parsed: serde_json::Value = serde_json::from_str(json_text).ok()?;
+    let version = parsed
+        .get("version")?
+        .as_str()?
+        .trim()
+        .trim_start_matches('v');
+    if !is_version_shaped(version) {
+        return None;
+    }
+    Some(FeedInfo {
+        version: version.to_string(),
+        body: parsed
+            .get("notes")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        date: parsed
+            .get("pub_date")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// Fetches the update feed directly (bypassing the updater plugin) and parses
+/// out the latest-version info. Tries each configured endpoint in order
+/// (mirroring the plugin's own fallback); every request is bounded by a 30s
+/// timeout and follows redirects (reqwest's default). `None` when no endpoint
+/// yields a parseable feed.
+async fn fetch_feed_info(app: &tauri::AppHandle) -> Option<FeedInfo> {
+    let endpoints = configured_updater_endpoints(app);
+    if endpoints.is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .ok()?;
+    for endpoint in endpoints {
+        let text = match client.get(endpoint).send().await {
+            Ok(resp) => match resp.error_for_status() {
+                Ok(resp) => match resp.text().await {
+                    Ok(text) => text,
+                    Err(_) => continue,
+                },
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+        if let Some(info) = parse_feed_info(&text) {
+            return Some(info);
+        }
+    }
+    None
+}
+
 /// `check_update` — asks the updater plugin whether a new version is available.
 ///
 /// JSON contract (all keys always present):
 /// `{"status", "current_version", "version", "body", "date", "error"}` where
 /// status ∈ `"up_to_date" | "available" | "not_configured" | "not_available" | "error"`.
+///
+/// When the plugin check fails because the feed has no payload for the current
+/// platform (`not_available`), and also on any other plugin failure (`error`),
+/// the feed is fetched directly ([`fetch_feed_info`]) so `version`/`body`/
+/// `date` still report the latest release from the feed instead of nulls.
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
     if updater_pubkey_is_placeholder(configured_updater_pubkey(&app).as_deref()) {
@@ -168,12 +278,15 @@ async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
     {
         Ok(updater) => updater,
         Err(err) => {
+            // Config-level plugin failure — still try the direct feed fetch so
+            // the response carries the latest version from the feed.
+            let feed = fetch_feed_info(&app).await;
             return json!({
                 "status": "error",
                 "current_version": app.package_info().version.to_string(),
-                "version": null,
-                "body": null,
-                "date": null,
+                "version": feed.as_ref().map(|f| f.version.clone()),
+                "body": feed.as_ref().and_then(|f| f.body.clone()),
+                "date": feed.as_ref().and_then(|f| f.date.clone()),
                 "error": format!("Update check failed: {err}"),
             });
         }
@@ -181,22 +294,28 @@ async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
 
     match updater.check().await {
         Err(err) => {
+            // The plugin check failed. Fetch the feed directly so the response
+            // can still carry the latest version (and notes/date) from the
+            // feed — both when the platform simply has no payload
+            // (`not_available`) and when the plugin client itself failed
+            // (`error`, e.g. proxy/TLS quirks).
+            let feed = fetch_feed_info(&app).await;
             if is_missing_platform_error(&err) {
                 json!({
                     "status": "not_available",
                     "current_version": app.package_info().version.to_string(),
-                    "version": null,
-                    "body": null,
-                    "date": null,
+                    "version": feed.as_ref().map(|f| f.version.clone()),
+                    "body": feed.as_ref().and_then(|f| f.body.clone()),
+                    "date": feed.as_ref().and_then(|f| f.date.clone()),
                     "error": "No auto-update is available for this platform.",
                 })
             } else {
                 json!({
                     "status": "error",
                     "current_version": app.package_info().version.to_string(),
-                    "version": null,
-                    "body": null,
-                    "date": null,
+                    "version": feed.as_ref().map(|f| f.version.clone()),
+                    "body": feed.as_ref().and_then(|f| f.body.clone()),
+                    "date": feed.as_ref().and_then(|f| f.date.clone()),
                     "error": format!("Update check failed: {err}"),
                 })
             }
@@ -1193,5 +1312,86 @@ mod tests {
 
         // All-negative inputs → no navigation.
         assert!(!keeper_should_navigate(false, false, true, false, true));
+    }
+
+    /// `parse_feed_info` extracts version/notes/pub_date from a valid feed.
+    #[test]
+    fn parse_feed_info_extracts_version_notes_and_date() {
+        let info = parse_feed_info(
+            r#"{"version":"0.10.10","notes":"Release notes","pub_date":"2026-08-17T12:00:00Z","platforms":{"darwin-aarch64":{"url":"https://example.com/app.tar.gz","signature":"sig"}}}"#,
+        )
+        .expect("valid feed must parse");
+        assert_eq!(info.version, "0.10.10");
+        assert_eq!(info.body.as_deref(), Some("Release notes"));
+        assert_eq!(info.date.as_deref(), Some("2026-08-17T12:00:00Z"));
+    }
+
+    /// A leading `v` in the feed version is trimmed, mirroring the plugin.
+    #[test]
+    fn parse_feed_info_trims_leading_v() {
+        let info = parse_feed_info(r#"{"version":"v0.10.10","platforms":{}}"#)
+            .expect("feed with leading-v version must parse");
+        assert_eq!(info.version, "0.10.10");
+    }
+
+    /// `notes` is optional — it maps to `None` when absent.
+    #[test]
+    fn parse_feed_info_missing_notes_is_none() {
+        let info = parse_feed_info(r#"{"version":"0.10.10","pub_date":"2026-08-17T12:00:00Z"}"#)
+            .expect("feed without notes must parse");
+        assert_eq!(info.body, None);
+        assert_eq!(info.date.as_deref(), Some("2026-08-17T12:00:00Z"));
+    }
+
+    /// `pub_date` is optional — it maps to `None` when absent.
+    #[test]
+    fn parse_feed_info_missing_pub_date_is_none() {
+        let info = parse_feed_info(r#"{"version":"0.10.10","notes":"notes"}"#)
+            .expect("feed without pub_date must parse");
+        assert_eq!(info.date, None);
+        assert_eq!(info.body.as_deref(), Some("notes"));
+    }
+
+    /// Malformed JSON is not a parseable feed.
+    #[test]
+    fn parse_feed_info_malformed_json_is_none() {
+        assert!(parse_feed_info("not json {").is_none());
+    }
+
+    /// A missing `version` key is not a parseable feed.
+    #[test]
+    fn parse_feed_info_missing_version_is_none() {
+        assert!(parse_feed_info(r#"{"notes":"n","platforms":{}}"#).is_none());
+    }
+
+    /// A non-string `version` is not a parseable feed.
+    #[test]
+    fn parse_feed_info_non_string_version_is_none() {
+        assert!(parse_feed_info(r#"{"version":123}"#).is_none());
+    }
+
+    /// A version that is not semver-shaped (e.g. a free-text tag) is not a
+    /// parseable feed.
+    #[test]
+    fn parse_feed_info_garbage_version_is_none() {
+        assert!(parse_feed_info(r#"{"version":"latest"}"#).is_none());
+        assert!(parse_feed_info(r#"{"version":"0.10.10.1"}"#).is_none());
+        assert!(parse_feed_info(r#"{"version":""}"#).is_none());
+    }
+
+    /// `is_version_shaped` truth table: `major.minor.patch` (with optional
+    /// `-prerelease` / `+build` suffixes) is accepted; anything else is not.
+    #[test]
+    fn is_version_shaped_truth_table() {
+        assert!(is_version_shaped("0.10.10"));
+        assert!(is_version_shaped("1.2.3"));
+        assert!(is_version_shaped("0.10.10-rc.1"));
+        assert!(is_version_shaped("0.10.10+build5"));
+        assert!(!is_version_shaped(""));
+        assert!(!is_version_shaped("latest"));
+        assert!(!is_version_shaped("1.2"));
+        assert!(!is_version_shaped("1.2.3.4"));
+        assert!(!is_version_shaped("1..3"));
+        assert!(!is_version_shaped("1.2.x"));
     }
 }
