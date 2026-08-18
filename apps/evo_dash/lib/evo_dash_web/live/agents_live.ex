@@ -78,7 +78,7 @@ defmodule EvoDashWeb.AgentsLive do
         load_generation: 0,
         # Monotonic sequence for async refresh tasks (broadcast-triggered
         # fallbacks) — never reset; the newest seq wins (mirrors
-        # system_live's chart_tick_seq pattern).
+        # system_live's chart_seed_seq pattern).
         refresh_seq: 0,
         # Last-seen message_count per agent id (see HistoryGate) — reset on
         # node switch (agent ids are per-node).
