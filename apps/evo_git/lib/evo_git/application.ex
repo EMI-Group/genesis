@@ -71,22 +71,6 @@ defmodule EvoGit.Application do
         children
       end
 
-    # Desktop mode: keep a TCP lifetime pipe to the Tauri shell. The shell
-    # binds a listener on 127.0.0.1:0 at startup and passes the port via
-    # EVOGIT_LIFETIME_PORT; when the shell dies the OS closes the pipe, so
-    # the watcher exits the VM and an orphaned backend never holds the port.
-    # Gated on the env vars ONLY — the sidecar sets both, while
-    # manually-launched releases and the genesis_remote daemon set neither
-    # (the module's own init-disabled logic is belt-and-suspenders for direct
-    # starts).
-    children =
-      if System.get_env("EVOGIT_DESKTOP") == "1" and
-           System.get_env("EVOGIT_LIFETIME_PORT") not in [nil, ""] do
-        children ++ [{EvoGit.DesktopLifetime, []}]
-      else
-        children
-      end
-
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: EvoGit.Supervisor]
