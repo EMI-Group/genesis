@@ -1,4 +1,4 @@
-defmodule EvoGit.DesktopLifetimeTest do
+defmodule EvoDash.DesktopLifetimeTest do
   # async: false — the EVOGIT_LIFETIME_PORT env var and the application-env
   # test seam are global; tests must not race each other.
   use ExUnit.Case, async: false
@@ -10,10 +10,10 @@ defmodule EvoGit.DesktopLifetimeTest do
   setup do
     # Snapshot and clear the env var + seam so each test starts clean.
     original_port = System.get_env("EVOGIT_LIFETIME_PORT")
-    original_stop = Application.get_env(:evo_git, :parent_stop_fun)
+    original_stop = Application.get_env(:evo_dash, :parent_stop_fun)
 
     System.delete_env("EVOGIT_LIFETIME_PORT")
-    Application.delete_env(:evo_git, :parent_stop_fun)
+    Application.delete_env(:evo_dash, :parent_stop_fun)
 
     on_exit(fn ->
       restore_sys_env("EVOGIT_LIFETIME_PORT", original_port)
@@ -25,7 +25,7 @@ defmodule EvoGit.DesktopLifetimeTest do
 
   describe "disabled" do
     test "missing env var: no socket, no stop, process stays alive" do
-      pid = start_supervised!({EvoGit.DesktopLifetime, @small_opts})
+      pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
       refute_receive @stop_message, 200
       assert Process.alive?(pid)
@@ -33,7 +33,7 @@ defmodule EvoGit.DesktopLifetimeTest do
 
     test "empty env var is treated as disabled" do
       System.put_env("EVOGIT_LIFETIME_PORT", "")
-      pid = start_supervised!({EvoGit.DesktopLifetime, @small_opts})
+      pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
       refute_receive @stop_message, 200
       assert Process.alive?(pid)
@@ -41,7 +41,7 @@ defmodule EvoGit.DesktopLifetimeTest do
 
     test "invalid port value is treated as disabled (no crash, no stop)" do
       System.put_env("EVOGIT_LIFETIME_PORT", "not-a-port")
-      pid = start_supervised!({EvoGit.DesktopLifetime, @small_opts})
+      pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
       refute_receive @stop_message, 200
       assert Process.alive?(pid)
@@ -52,9 +52,9 @@ defmodule EvoGit.DesktopLifetimeTest do
     test "exhausted retry budget invokes the stop fun" do
       test_pid = self()
       System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(unused_port()))
-      Application.put_env(:evo_git, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
+      Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
 
-      pid = start_supervised!({EvoGit.DesktopLifetime, @small_opts})
+      pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
       assert_receive @stop_message, 1000
       # The process idles in the stopped state — no restart loop, no repeat stop.
@@ -69,13 +69,13 @@ defmodule EvoGit.DesktopLifetimeTest do
       {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
       {:ok, port} = :inet.port(listener)
       System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(port))
-      Application.put_env(:evo_git, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
+      Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
 
       on_exit(fn ->
         :gen_tcp.close(listener)
       end)
 
-      pid = start_supervised!(EvoGit.DesktopLifetime)
+      pid = start_supervised!(EvoDash.DesktopLifetime)
 
       # The watcher must actually connect to the shell's listener.
       {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
@@ -98,9 +98,9 @@ defmodule EvoGit.DesktopLifetimeTest do
       {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
       {:ok, port} = :inet.port(listener)
       System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(port))
-      Application.put_env(:evo_git, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
+      Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
 
-      pid = start_supervised!(EvoGit.DesktopLifetime)
+      pid = start_supervised!(EvoDash.DesktopLifetime)
 
       {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
       assert is_port(shell_sock)
@@ -127,6 +127,6 @@ defmodule EvoGit.DesktopLifetimeTest do
   defp restore_sys_env(key, nil), do: System.delete_env(key)
   defp restore_sys_env(key, value), do: System.put_env(key, value)
 
-  defp restore_app_env(key, nil), do: Application.delete_env(:evo_git, key)
-  defp restore_app_env(key, value), do: Application.put_env(:evo_git, key, value)
+  defp restore_app_env(key, nil), do: Application.delete_env(:evo_dash, key)
+  defp restore_app_env(key, value), do: Application.put_env(:evo_dash, key, value)
 end

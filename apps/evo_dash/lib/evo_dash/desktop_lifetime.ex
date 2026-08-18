@@ -1,4 +1,4 @@
-defmodule EvoGit.DesktopLifetime do
+defmodule EvoDash.DesktopLifetime do
   @moduledoc """
   Desktop-mode Tauri-shell lifetime watcher (TCP pipe).
 
@@ -22,15 +22,17 @@ defmodule EvoGit.DesktopLifetime do
 
   The watcher is appended to the supervision tree only when BOTH
   `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (see
-  `EvoGit.Application.start/2`) — only the Tauri sidecar sets both, so
+  `EvoDash.Application.start/2`) — only the Tauri sidecar sets both, so
   manually-launched releases and the `genesis_remote` daemon are unaffected.
-  As belt-and-suspenders, `init/1` also disables itself when
+  It lives in the frontend app by design: desktop-only lifecycle code must
+  never ship in `genesis_remote`, the evo_git-only headless daemon. As
+  belt-and-suspenders, `init/1` also disables itself when
   `EVOGIT_LIFETIME_PORT` is missing, empty, or not a valid port number,
   making a direct start a safe no-op.
 
   ## Test seams
 
-  - `:parent_stop_fun` — `Application.get_env(:evo_git, ...)`, read at
+  - `:parent_stop_fun` — `Application.get_env(:evo_dash, ...)`, read at
     `init/1`; a zero-arity fun replacing `default_stop/0` (tests inject a
     fake so the REAL `System.stop/0` never runs in the test VM).
   - `:connect_retries` / `:connect_retry_delay` — `start_link` opts bounding
@@ -92,7 +94,7 @@ defmodule EvoGit.DesktopLifetime do
       port_str ->
         case Integer.parse(port_str) do
           {port, ""} when port in 1..65_535 ->
-            stop_fun = Application.get_env(:evo_git, :parent_stop_fun, &__MODULE__.default_stop/0)
+            stop_fun = Application.get_env(:evo_dash, :parent_stop_fun, &__MODULE__.default_stop/0)
 
             state = %{
               enabled: true,
