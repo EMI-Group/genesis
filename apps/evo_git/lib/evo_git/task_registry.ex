@@ -359,7 +359,12 @@ defmodule EvoGit.TaskRegistry do
         # Keep the runtime ref in-memory only
         state = %{state | task_refs: Map.put(state.task_refs, task_id, task_ref)}
 
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          "tasks",
+          {:task_updated, task_id, :running, node()}
+        )
+
         {:reply, {:ok, task}, state}
     end
   end
@@ -478,7 +483,7 @@ defmodule EvoGit.TaskRegistry do
           {{:error, :not_running}, state}
       end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, :failed, node()})
     {:reply, result, state}
   end
 
@@ -492,12 +497,21 @@ defmodule EvoGit.TaskRegistry do
           # guard (see {:start_task, ...} handler) then refuses to start it.
           # On disk-full the persisted status stays :pending and
           # {:error, :disk_full} is returned (a later cancel retry would work).
+          # Broadcast only on the successful write — the :running arm below
+          # funnels through handle_update_status/6, which broadcasts the
+          # :cancelling transition itself (no double broadcast).
           case EvoGit.Store.update_task_columns(state.task_store, task_id,
                  status: :cancelled,
                  finished_at: DateTime.utc_now(),
                  lease_expires_at: nil
                ) do
             :ok ->
+              Phoenix.PubSub.broadcast(
+                EvoGit.PubSub,
+                "tasks",
+                {:task_updated, task_id, :cancelled, node()}
+              )
+
               :ok
 
             {:error, :disk_full} ->
@@ -511,8 +525,9 @@ defmodule EvoGit.TaskRegistry do
 
         :running ->
           # 1. Transition to :cancelling via the normal status-update path so
-          #    it broadcasts {:tasks_updated} (dashboard sees the change
-          #    immediately). :cancelling is NON-terminal, so finished_at stays
+          #    handle_update_status broadcasts {:task_updated, task_id,
+          #    :cancelling, node()} (dashboard sees the change immediately).
+          #    :cancelling is NON-terminal, so finished_at stays
           #    nil, the lease stays valid, and the task_refs entry stays. The
           #    returned state is discarded (unchanged for non-terminal).
           handle_update_status(state, task_id, :cancelling, nil, [], {:cancel_request, nil})
@@ -550,7 +565,6 @@ defmodule EvoGit.TaskRegistry do
           {:error, :not_running}
       end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, result, state}
   end
 
@@ -645,6 +659,14 @@ defmodule EvoGit.TaskRegistry do
       case EvoGit.Store.delete_tasks(state.task_store, task_ids) do
         :ok ->
           Cleanup.cleanup_expired_tasks(state.task_store)
+
+          # One event per deleted row — the dashboard needs the id to drop
+          # the task from its UI. Broadcast only on the successful write (on
+          # disk-full the rows remain and nothing was deleted).
+          Enum.each(task_ids, fn task_id ->
+            Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, task_id, node()})
+          end)
+
           :ok
 
         {:error, :disk_full} ->
@@ -655,7 +677,6 @@ defmodule EvoGit.TaskRegistry do
           {:error, :disk_full}
       end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:reply, reply, state}
   end
 
@@ -751,6 +772,9 @@ defmodule EvoGit.TaskRegistry do
   def handle_cast({:delete_task, task_id}, state) do
     case EvoGit.Store.delete_task(state.task_store, task_id) do
       :ok ->
+        # Broadcast only on the successful write — on disk-full the row
+        # remains and nothing was deleted.
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, task_id, node()})
         :ok
 
       {:error, :disk_full} ->
@@ -759,7 +783,6 @@ defmodule EvoGit.TaskRegistry do
         Logger.warning("TaskRegistry: disk full — task #{task_id} could not be deleted")
     end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     {:noreply, state}
   end
 
@@ -784,7 +807,8 @@ defmodule EvoGit.TaskRegistry do
         end
     end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    # Review-status mutations don't change the task status — broadcast nil.
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, nil, node()})
     {:noreply, state}
   end
 
@@ -812,7 +836,8 @@ defmodule EvoGit.TaskRegistry do
         end
     end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
+    # Review-metadata mutations don't change the task status — broadcast nil.
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, task_id, nil, node()})
     {:noreply, state}
   end
 
@@ -903,6 +928,18 @@ defmodule EvoGit.TaskRegistry do
 
             case EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols) do
               :ok ->
+                # Broadcast the persisted status only when it actually changed.
+                # A missing row or a stale/no-op update never reaches here, and
+                # a disk-full write leaves the row untouched — so this is the
+                # single place where the write is known to have happened.
+                if status != task_status do
+                  Phoenix.PubSub.broadcast(
+                    EvoGit.PubSub,
+                    "tasks",
+                    {:task_updated, task_id, status, node()}
+                  )
+                end
+
                 :ok
 
               {:error, :disk_full} ->
@@ -928,10 +965,10 @@ defmodule EvoGit.TaskRegistry do
           end
 
         nil ->
+          # Missing row — no write, no broadcast.
           state
       end
 
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     state
   end
 
@@ -1036,8 +1073,15 @@ defmodule EvoGit.TaskRegistry do
     # Targeted write — only the changed columns; `ref` is runtime-only and
     # never persisted. On disk-full the task stays in its previous persisted
     # state — log and continue (the in-memory resolution is complete).
+    # Broadcast only when the write actually happened (status after resolve).
     case EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols) do
       :ok ->
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          "tasks",
+          {:task_updated, task_id, final_status, node()}
+        )
+
         :ok
 
       {:error, :disk_full} ->
@@ -1046,8 +1090,6 @@ defmodule EvoGit.TaskRegistry do
             "(#{final_status}) not persisted"
         )
     end
-
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
 
     Logger.info("TaskRegistry: recheck resolved task #{task_id} to #{final_status}")
 
@@ -1102,69 +1144,60 @@ defmodule EvoGit.TaskRegistry do
   ## GenServer Info Handlers
 
   @impl true
-  def handle_info({:task_status, task_id, status}, state) do
+  def handle_info({:task_updated, task_id, :finalizing, node}, state) when node == node() do
+    # :finalizing is the ONLY status acted on here — other statuses in
+    # {:task_updated, ...} are persisted locally by TaskRegistry itself and
+    # must not be reprocessed. A broadcast from a remote node (node !=
+    # node()) is ignored by the no-op clause below: task ids are per-node,
+    # so a cross-node collision would corrupt local rows.
     state =
       case task_get(state, task_id) do
         %TaskInfo{} = task ->
-          # Ignore stale :task_status updates for tasks already terminal AND
+          # Ignore stale :finalizing updates for tasks already terminal AND
           # for tasks in graceful cancel (:cancelling) — a cancelling task
           # that reaches phase finalization keeps :cancelling (the more
           # informative state; the final mapping to :cancelled happens at
           # result time in handle_update_status/6).
           if task.status in [:completed, :cancelled, :cancelling] do
             Logger.debug(
-              "TaskRegistry: Ignoring stale :task_status update for task #{task_id}: " <>
-                "already #{task.status}, ignoring #{status}"
+              "TaskRegistry: Ignoring stale :task_updated finalizing update for task #{task_id}: " <>
+                "already #{task.status}, ignoring :finalizing"
             )
 
             state
           else
-            # Log any transition INTO :failed. The core runtime normally only
-            # broadcasts :finalizing on this topic, so :failed here is unexpected.
-            if status == :failed do
-              Diagnostics.log_failed_transition(task_id, :task_status_pubsub, task.status,
-                result: nil
-              )
-            end
-
-            finished_at =
-              if status in [:completed, :failed, :cancelled],
-                do: DateTime.utc_now(),
-                else: task.finished_at
-
-            updated =
-              if status in [:completed, :failed, :cancelled],
-                do: %{task | status: status, finished_at: finished_at, lease_expires_at: nil},
-                else: %{task | status: status, finished_at: finished_at}
+            # :finalizing is NON-terminal — finished_at and the lease stay as
+            # they are; the final terminal mapping happens at result time in
+            # handle_update_status/6.
+            updated = %{task | status: :finalizing}
 
             # On disk-full the persisted row keeps its old status — log and
-            # continue; the in-memory terminal cleanup below still runs.
+            # continue.
             case EvoGit.Store.put_task(state.task_store, updated) do
               :ok ->
                 :ok
 
               {:error, :disk_full} ->
                 Logger.warning(
-                  "TaskRegistry: disk full — :task_status update for task #{task_id} " <>
-                    "not persisted (status #{inspect(status)})"
+                  "TaskRegistry: disk full — :task_updated finalizing update for task #{task_id} " <>
+                    "not persisted (status :finalizing)"
                 )
             end
 
-            if status in [:completed, :failed, :cancelled] do
-              # Terminal state via this direct write — clean up the
-              # graceful-cancel marker (guarded: scheduler may be down).
-              clear_cancelling_marker(task_id)
-
-              %{state | task_refs: Map.delete(state.task_refs, task_id)}
-            else
-              state
-            end
+            state
           end
 
         nil ->
           state
       end
 
+    {:noreply, state}
+  end
+
+  # A remote node's :finalizing broadcast must NEVER be persisted into the
+  # local store — task ids are per-node, so a cross-node collision would
+  # corrupt local rows.
+  def handle_info({:task_updated, _task_id, :finalizing, _other_node}, state) do
     {:noreply, state}
   end
 
@@ -1358,17 +1391,17 @@ defmodule EvoGit.TaskRegistry do
     # decoded, avoiding the full struct decode for every task in the table.
     # We only need to task_get (full decode) for the very few tasks (usually
     # 0-1) that actually need to be marked :failed.
-    changed =
+    {changed, failed_ids} =
       EvoGit.Store.select_running_lease_info(state.task_store)
       |> Enum.filter(fn %{id: id, status: status, lease_expires_at: lease} ->
         status == :running and
           id not in owned_ids and
           not Lease.lease_valid?(lease)
       end)
-      |> Enum.reduce(false, fn %{id: id, lease_expires_at: lease}, acc ->
+      |> Enum.reduce({false, []}, fn %{id: id, lease_expires_at: lease}, {changed, failed_ids} ->
         if Lease.sched_meta_has_active_agents?(id) do
           # Same VM, agents still active — skip (handled by :recheck_task)
-          acc
+          {changed, failed_ids}
         else
           Diagnostics.log_failed_transition(id, :lease_sweep, :running,
             result: "Lease expired; owning instance no longer renewing",
@@ -1389,29 +1422,35 @@ defmodule EvoGit.TaskRegistry do
 
               case EvoGit.Store.put_task(state.task_store, updated) do
                 :ok ->
-                  true
+                  {true, [id | failed_ids]}
 
                 {:error, :disk_full} ->
                   # The sweep result is still "changed" (in-memory state and
-                  # diagnostics updated) — log and continue.
+                  # diagnostics updated) — log and continue, but the row was
+                  # not persisted so no broadcast fires for it.
                   Logger.warning(
                     "TaskRegistry: disk full — lease-expired task #{id} could not be " <>
                       "persisted as :failed"
                   )
 
-                  true
+                  {true, failed_ids}
               end
 
             nil ->
-              acc
+              {changed, failed_ids}
           end
         end
       end)
 
     if changed do
       Cleanup.cleanup_expired_tasks(state.task_store)
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:tasks_updated})
     end
+
+    # One event per successfully-persisted sweep — the dashboard needs the id
+    # to attribute the :failed status to the specific task.
+    Enum.each(failed_ids, fn id ->
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :failed, node()})
+    end)
 
     {:noreply, state}
   end
