@@ -1198,15 +1198,6 @@ defmodule EvoDashWeb.SystemLive do
     end
   end
 
-  @impl true
-  def handle_info({:scheduler_config_updated}, socket) do
-    # Transitional safety net for the not-yet-migrated local scheduler emitter
-    # (this worktree still broadcasts the OLD node-less 1-tuple). It carries no
-    # node identity, so it cannot be node-filtered — ignore it entirely; the
-    # reworked emitter in evo_git sends the 2-tuple handled above.
-    {:noreply, socket}
-  end
-
   # --- Software Update card messages ---
 
   @impl true
@@ -1270,21 +1261,6 @@ defmodule EvoDashWeb.SystemLive do
     # New node-identity contract on the "tasks" topic. Forward the FULL message
     # to NodeAware's task handler — it node-filters and debounces the sidebar
     # reload.
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-  end
-
-  @impl true
-  def handle_info({:tasks_updated} = msg, socket) do
-    # Transitional safety net for not-yet-migrated emitters: the old shape
-    # carries no node identity, so NodeAware's task handler drops it unchanged
-    # (no reload is scheduled).
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-  end
-
-  @impl true
-  def handle_info({:task_status, _, _} = msg, socket) do
-    # Transitional safety net for not-yet-migrated emitters (see
-    # {:tasks_updated} above).
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 

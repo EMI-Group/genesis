@@ -548,8 +548,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   → `node()`, remote viewing → the remote daemon's BEAM node atom). Foreign-
   node events are dropped BEFORE the debounce is scheduled, so they can never
   leak into another node's UI updates (page reloads, ProjectsLive's browser-
-  notification diff). Unmatched message shapes are ignored (transitional
-  safety net for not-yet-migrated emitters).
+  notification diff).
 
   Uses a trailing-edge debounce (300ms via `:node_aware_reload_tasks`) to
   coalesce broadcast bursts into a single reload: intermediate broadcasts
@@ -573,13 +572,6 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       # never triggers a UI update on the currently-viewed node.
       {:noreply, socket}
     end
-  end
-
-  def handle_task_info(socket, _message) do
-    # Transitional safety net for not-yet-migrated emitters (old shapes carry
-    # no node identity) — the socket is returned unchanged, no reload is
-    # scheduled.
-    {:noreply, socket}
   end
 
   @doc """

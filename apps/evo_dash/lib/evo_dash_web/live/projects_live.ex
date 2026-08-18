@@ -1598,19 +1598,6 @@ defmodule EvoDashWeb.ProjectsLive do
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
-  @impl true
-  def handle_info({:tasks_updated} = msg, socket) do
-    # Transitional: pre-node-identity emitter shapes carry no node to filter
-    # on — forwarded to NodeAware.handle_task_info/2, whose catch-all ignores
-    # them (socket unchanged). Remove once the emitters are migrated.
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-  end
-
-  @impl true
-  def handle_info({:task_status, _task_id, _status} = msg, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
-  end
-
   # Debounced reload fired by NodeAware after task broadcasts: refreshes the
   # sidebar, reloads project settings when the settings panel is open, and
   # pushes browser notifications for newly finished tasks. Notification

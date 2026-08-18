@@ -750,9 +750,8 @@ defmodule EvoDashWeb.ReviewLive do
 
     # Stash lifecycle: reset after the guarded decision (whether or not it
     # matched) so each 300ms debounce window evaluates only the latest event's
-    # stash. The old id-less `{:tasks_updated}` broadcasts that used to reset
-    # the stash mid-window are gone — every event in the new contract carries
-    # a task id, so the stash is unambiguous until this handler consumes it.
+    # stash — every event in the new contract carries a task id, so the stash
+    # is unambiguous until this handler consumes it.
     socket = assign(socket, :last_broadcast_task_id, nil)
 
     {:noreply, socket}
