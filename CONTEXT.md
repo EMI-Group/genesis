@@ -111,7 +111,7 @@ This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, and `READ
 
 ### Runtime Data Directory (`tasks.sqlite`)
 
-The SQLite task database (`tasks.sqlite`) lives in the platform data directory, resolved at runtime by `EvoGit.Platform.data_dir/0` (`apps/evo_git/lib/evo_git/platform.ex:106-132`) — NOT via Tauri's `path_resolver`/`app_data_dir`. The Tauri sidecar passes no data-dir env vars (only `PORT`, `PHX_IP`, `PHX_SERVER`, `SECRET_KEY_BASE`, `RELEASE_DISTRIBUTION`, `EVOGIT_DESKTOP`, `EVOGIT_PARENT_PID`; see `desktop/src-tauri/src/sidecar.rs` `sidecar_env/1`) — the Elixir backend decides the path itself:
+The SQLite task database (`tasks.sqlite`) lives in the platform data directory, resolved at runtime by `EvoGit.Platform.data_dir/0` (`apps/evo_git/lib/evo_git/platform.ex:106-132`) — NOT via Tauri's `path_resolver`/`app_data_dir`. The Tauri sidecar passes no data-dir env vars (only `PORT`, `PHX_IP`, `PHX_SERVER`, `SECRET_KEY_BASE`, `RELEASE_DISTRIBUTION`, `EVOGIT_DESKTOP`, `EVOGIT_LIFETIME_PORT`; see `desktop/src-tauri/src/sidecar.rs` `sidecar_env/1`) — the Elixir backend decides the path itself:
 
 - **macOS**: `~/Library/Application Support/genesis/tasks.sqlite`
 - **Linux**: `$XDG_DATA_HOME/genesis/tasks.sqlite` (default `~/.local/share/genesis/tasks.sqlite`)
