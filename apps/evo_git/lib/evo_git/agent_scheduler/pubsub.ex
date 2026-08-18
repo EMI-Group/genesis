@@ -14,6 +14,9 @@ defmodule EvoGit.AgentScheduler.PubSub do
   Until the process is up (supervisor restart window, contexts where the app
   isn't started), `broadcast_agents_updated/0` degrades gracefully to an
   immediate broadcast.
+
+  Every broadcast carries a trailing `node` element — the emitting BEAM node
+  (`node()`) — computed inside the helpers themselves.
   """
 
   @throttle_ms 200
@@ -38,7 +41,7 @@ defmodule EvoGit.AgentScheduler.PubSub do
     case Process.whereis(__MODULE__.Throttle) do
       nil ->
         # No throttle process (tests, early startup) — broadcast immediately
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agents_updated})
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agents_updated, node()})
 
       pid ->
         GenServer.cast(pid, :schedule)
@@ -57,13 +60,15 @@ defmodule EvoGit.AgentScheduler.PubSub do
   - `:task_id` — task identifier string
   - `:task_number` — short integer task number
   - `:objective` — the agent's objective string (from spec)
+
+  The broadcast tuple is `{:agent_registered, agent_id, meta_summary, node}`.
   """
   @spec broadcast_agent_registered(pos_integer(), map()) :: :ok
   def broadcast_agent_registered(agent_id, meta_summary) do
     Phoenix.PubSub.broadcast(
       EvoGit.PubSub,
       @agent_topic,
-      {:agent_registered, agent_id, meta_summary}
+      {:agent_registered, agent_id, meta_summary, node()}
     )
   end
 
@@ -74,14 +79,15 @@ defmodule EvoGit.AgentScheduler.PubSub do
   `[status: :running, turn: 5, usage: %Usage{...}]`.
 
   Subscribers can apply these as incremental patches without re-reading
-  the full ETS tables.
+  the full ETS tables. The broadcast tuple is
+  `{:agent_updated, agent_id, changed_fields, node}`.
   """
   @spec broadcast_agent_updated(pos_integer(), keyword()) :: :ok
   def broadcast_agent_updated(agent_id, changed_fields) do
     Phoenix.PubSub.broadcast(
       EvoGit.PubSub,
       @agent_topic,
-      {:agent_updated, agent_id, changed_fields}
+      {:agent_updated, agent_id, changed_fields, node()}
     )
   end
 
@@ -89,17 +95,20 @@ defmodule EvoGit.AgentScheduler.PubSub do
   Broadcast that an agent has been removed from the scheduler.
 
   Called when both the sched-meta and agent-state ETS rows are deleted.
+  The broadcast tuple is `{:agent_removed, agent_id, node}`.
   """
   @spec broadcast_agent_removed(pos_integer()) :: :ok
   def broadcast_agent_removed(agent_id) do
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agent_removed, agent_id})
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, @agent_topic, {:agent_removed, agent_id, node()})
   end
 
   @doc """
   Broadcast that scheduler config has changed (config update, pause, or resume).
+
+  The broadcast tuple is `{:scheduler_config_updated, node}`.
   """
   def broadcast_config_updated do
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, @config_topic, {:scheduler_config_updated})
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, @config_topic, {:scheduler_config_updated, node()})
   end
 
   @doc "The agents topic name"

@@ -20,7 +20,7 @@ defmodule EvoGit.TaskRegistry.Diagnostics do
   ## Parameters
     - `task_id`     — the task being marked failed
     - `source`      — an atom identifying the code path (e.g. `:result_handler`,
-                      `:down_handler`, `:reconcile`, `:task_status_pubsub`,
+                      `:down_handler`, `:reconcile`, `:task_updated_pubsub`,
                       `:update_status_cast`)
     - `prev_status` — the status BEFORE transitioning to `:failed` (may be `nil`
                       if the task couldn't be found)

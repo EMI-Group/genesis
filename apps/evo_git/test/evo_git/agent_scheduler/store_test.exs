@@ -12,6 +12,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.PubSub
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
@@ -61,6 +62,14 @@ defmodule EvoGit.AgentScheduler.StoreTest do
 
     if :ets.whereis(:evogit_sched_meta) != :undefined,
       do: :ets.delete_all_objects(:evogit_sched_meta)
+  end
+
+  defp drain_mailbox do
+    receive do
+      _msg -> drain_mailbox()
+    after
+      0 -> :ok
+    end
   end
 
   # --- Setup ---
@@ -264,6 +273,60 @@ defmodule EvoGit.AgentScheduler.StoreTest do
       {:ok, state} = Store.get_agent_state(agent_id)
       assert state.turn == 7
       assert state.cancel_requested == true
+    end
+  end
+
+  describe "broadcast payload hygiene" do
+    setup do
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, PubSub.agent_topic())
+      # Flush any broadcasts that arrived before this test subscribed
+      drain_mailbox()
+
+      on_exit(fn ->
+        Phoenix.PubSub.unsubscribe(EvoGit.PubSub, PubSub.agent_topic())
+      end)
+
+      :ok
+    end
+
+    test "batch_update_agent with a :context broadcasts a stripped delta with message_count" do
+      agent_id = 1
+      Store.put_agent_state(agent_id, agent_state())
+
+      # The insert path broadcasts the initial tracked fields (no context).
+      assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
+
+      ctx = %ReqLLM.Context{
+        messages: [
+          message(:user, metadata: %{timestamp: @old_ts, turn: 1}),
+          message(:assistant, metadata: %{timestamp: @old_ts + 1, turn: 1})
+        ]
+      }
+
+      assert :ok = Store.batch_update_agent(agent_id, context: ctx, turn: 5)
+
+      assert_receive {:agent_updated, ^agent_id, fields, bcast_node}
+      refute Keyword.has_key?(fields, :context)
+      assert Keyword.get(fields, :message_count) == 2
+      assert Keyword.fetch!(fields, :turn) == 5
+      assert bcast_node == node()
+    end
+
+    test "update_agent_context/2 broadcasts message_count matching the new context" do
+      agent_id = 2
+      Store.put_agent_state(agent_id, agent_state())
+
+      assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
+
+      ctx = %ReqLLM.Context{
+        messages: [message(:user, metadata: %{timestamp: @old_ts, turn: 1})]
+      }
+
+      assert :ok = Store.update_agent_context(agent_id, ctx)
+
+      assert_receive {:agent_updated, ^agent_id, fields, _node}
+      refute Keyword.has_key?(fields, :context)
+      assert Keyword.get(fields, :message_count) == 1
     end
   end
 end
