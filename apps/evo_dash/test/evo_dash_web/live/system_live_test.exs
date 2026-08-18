@@ -18,7 +18,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       :update_check_timeout,
       :update_active_task_ids,
       :update_winddown_timeout,
-      :update_winddown_poll_ms
+      :update_winddown_poll_ms,
+      :system_samples_runner
     ]
 
     originals = Map.new(keys, fn key -> {key, Application.get_env(:evo_dash, key)} end)
@@ -62,11 +63,10 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
   end
 
-  # Waits until the async chart tick's result has been applied (i.e.
-  # `chart_samples` is non-empty). The `:system_chart_tick` handler increments
-  # `chart_tick_count`/`chart_tick_seq` synchronously at spawn time, but the
-  # sample itself only arrives later as `{:chart_tick_result, ...}` from the
-  # spawned sampling task — poll until the handler has applied it.
+  # Waits until the chart ring buffer is non-empty (`chart_samples`). Samples
+  # arrive either from a `{:system_sample, ...}` broadcast (applied
+  # synchronously by the handler) or from the async seed RPC — poll until the
+  # handler has applied one.
   defp await_chart_sample(view, timeout \\ 2_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_chart_sample(view, deadline)
@@ -78,12 +78,34 @@ defmodule EvoDashWeb.SystemLiveTest do
         :ok
 
       System.monotonic_time(:millisecond) >= deadline ->
-        flunk("the async chart tick did not produce a sample within the test timeout")
+        flunk("no chart sample appeared within the test timeout")
 
       true ->
         Process.sleep(10)
         do_await_chart_sample(view, deadline)
     end
+  end
+
+  # A full 12-key sample map as emitted by the evo_git system sampler (the
+  # "system" topic contract). Overrides let tests vary individual keys.
+  defp sample_map(overrides) do
+    Map.merge(
+      %{
+        llm_used: 0,
+        llm_waiting: 0,
+        llm_capacity: 4,
+        tool_used: 0,
+        tool_waiting: 0,
+        tool_capacity: 2,
+        agents_total: 0,
+        agents_running: 0,
+        agents_blocked: 0,
+        agents_waiting: 0,
+        agents_pending: 0,
+        scheduler_alive: true
+      },
+      Map.new(overrides)
+    )
   end
 
   # Injects a system-checks result directly into the LiveView mailbox and
@@ -431,9 +453,21 @@ defmodule EvoDashWeb.SystemLiveTest do
       render(view)
       assert assigns(view)[:scheduler_paused] == true
 
-      # Now pause the LOCAL scheduler and fire the broadcast the handler
-      # listens to (topic "scheduler_config", message
-      # {:scheduler_config_updated} — see EvoGit.AgentScheduler.PubSub).
+      # A FOREIGN node's scheduler broadcast must be ignored: no reload is
+      # triggered, so the paused banner stays exactly as injected.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "scheduler_config",
+        {:scheduler_config_updated, :remote@elsewhere}
+      )
+
+      render(view)
+      assert assigns(view)[:scheduler_paused] == true
+
+      # Now pause the LOCAL scheduler and fire the broadcast for the VIEWED
+      # node (topic "scheduler_config", message
+      # {:scheduler_config_updated, node} — see EvoGit.AgentScheduler.PubSub;
+      # `remote_node` is the viewed node's BEAM atom, resolved by NodeAware).
       EvoGit.AgentScheduler.pause()
 
       on_exit(fn ->
@@ -445,7 +479,11 @@ defmodule EvoDashWeb.SystemLiveTest do
         end
       end)
 
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "scheduler_config", {:scheduler_config_updated})
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "scheduler_config",
+        {:scheduler_config_updated, remote_node}
+      )
 
       # The reload is node-aware: it re-reads the REMOTE node's paused state
       # (degrading to false), NOT the local scheduler's now-paused state, so
@@ -814,20 +852,17 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "<svg"
     end
 
-    test "system_chart_tick samples asynchronously and the section keeps rendering", %{
+    test "a system sample broadcast appends to the chart buffer and renders", %{
       conn: conn
     } do
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      # The tick now reschedules itself and spawns an async sampling task: the
-      # handler increments `chart_tick_count` synchronously at spawn time, but
-      # the sample only arrives later as `{:chart_tick_result, ...}`. Safe in
-      # the test env: the spawned task is total (local-node liveness gate +
-      # NodeContext degradation), so it always records a sample.
-      send(view.pid, :system_chart_tick)
+      sample = sample_map(llm_used: 1, tool_used: 1, agents_total: 2, agents_running: 1)
 
-      assert await_view_assign(view, :chart_tick_count, 1) == :ok
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "system", {:system_sample, node(), 1, sample})
+
       assert await_chart_sample(view) == :ok
+      assert List.last(assigns(view)[:chart_samples]) == sample
 
       html = render(view)
 
@@ -835,49 +870,157 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "Collecting data…"
     end
 
-    test "a fresh chart-tick result updates the chart", %{conn: conn} do
+    test "a foreign-node system sample broadcast is ignored", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      # Inject the result directly with the current sequence — no real tick has
-      # spawned yet, so it is the freshest possible result and is applied. (The
-      # mount's real 3s timer could race in a slow environment, so assert on
-      # the last sample only, never exact-list equality.)
-      seq = assigns(view)[:chart_tick_seq]
-
-      send(
-        view.pid,
-        {:chart_tick_result, seq, node(), [%{status: :running}],
-         %{llm_capacity: 2, tool_capacity: 3}}
-      )
-
-      html = render(view)
-
-      assert List.last(assigns(view)[:chart_samples])[:agents_total] == 1
-      assert html =~ "<svg"
-    end
-
-    test "a stale chart-tick result is dropped", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      # Spawn a real tick (seq 1) and await its result — the freshest possible
-      # result is applied, giving a deterministic "before" state.
-      send(view.pid, :system_chart_tick)
-      assert await_view_assign(view, :chart_tick_count, 1) == :ok
-      assert await_chart_sample(view) == :ok
-
-      before = assigns(view)[:chart_samples]
-
-      # A result from a PREVIOUS tick (seq 0 < the current seq 1) must be
-      # dropped: the samples stay exactly as the real tick left them.
-      send(
-        view.pid,
-        {:chart_tick_result, 0, node(), [%{status: :running}],
-         %{llm_capacity: 2, tool_capacity: 3}}
+      # The mount's seed RPC can never fill the buffer (the evo_git sampler
+      # stub returns {:error, :not_implemented}), so the buffer stays empty
+      # unless the foreign sample is (wrongly) applied.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "system",
+        {:system_sample, :remote@elsewhere, 1, sample_map(llm_used: 9)}
       )
 
       render(view)
 
-      assert assigns(view)[:chart_samples] == before
+      assert assigns(view)[:chart_samples] == []
+    end
+
+    test "the seed RPC fills the chart buffer preserving order", %{conn: conn} do
+      samples = [sample_map(llm_used: 1), sample_map(llm_used: 2)]
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, samples} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      assert await_view_assign(view, :chart_samples, samples, 6_000) == :ok
+    end
+
+    test "the seed RPC caps the chart buffer at 60 samples", %{conn: conn} do
+      samples = for i <- 1..65, do: sample_map(llm_used: i)
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, samples} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      assert await_view_assign(view, :chart_samples, Enum.take(samples, -60), 6_000) == :ok
+    end
+
+    test "a failed seed retries once and then gives up", %{conn: conn} do
+      table = :ets.new(:seed_calls, [:public, :set])
+      :ets.insert(table, {:calls, 0})
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node ->
+        :ets.update_counter(table, :calls, 1)
+        {:error, :not_implemented}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # The initial seed failed — the one-shot retry is scheduled.
+      assert await_view_assign(view, :chart_seed_retried, true) == :ok
+
+      # The retry fires once (3s later), fails again, and gives up: no third
+      # call is ever made and the buffer stays empty.
+      assert await_ets_count(table, :calls, 2, 6_000) == :ok
+      Process.sleep(200)
+      assert :ets.lookup_element(table, :calls, 2) == 2
+      assert assigns(view)[:chart_samples] == []
+    end
+
+    test "a failed seed retries and succeeds on the second attempt", %{conn: conn} do
+      table = :ets.new(:seed_calls, [:public, :set])
+      :ets.insert(table, {:calls, 0})
+      sample = sample_map(llm_used: 3)
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node ->
+        if :ets.update_counter(table, :calls, 1) == 1 do
+          {:error, :not_implemented}
+        else
+          {:ok, [sample]}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # The initial seed failed — the one-shot retry is scheduled. 6s budget:
+      # the seed task queues behind the mount's async system-check loads in
+      # the test env, so the failure result (and thus the retry scheduling)
+      # can arrive late.
+      dbg_deadline = System.monotonic_time(:millisecond) + 6_000
+      dbg_retried = dbg_poll_retried(view, table, dbg_deadline)
+
+      if dbg_retried != :ok do
+        flunk("chart_seed_retried did not become true: #{inspect(dbg_retried)}")
+      end
+
+      # The retry succeeds and fills the buffer (3s later).
+      assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
+    end
+
+    test "node switch clears the chart buffer and re-seeds for the new node", %{conn: conn} do
+      # Same remote scaffolding as the scheduler_config broadcast test: isolate
+      # the config dir via XDG_CONFIG_HOME and register a fake connection
+      # manager so the `?node=` param resolves to a connected remote context.
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_system_live_xdg_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      id = "test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{ssh_target: "user@host", id: id, name: "Test Target"})
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.RemoteConnections.delete(id)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      start_supervised!(
+        {EvoDashWeb.SystemLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      local_sample = sample_map(llm_used: 1)
+      remote_sample = sample_map(llm_used: 2)
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn node ->
+        if node == node(), do: {:ok, [local_sample]}, else: {:ok, [remote_sample]}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # The local node's seed fills the buffer.
+      assert await_view_assign(view, :chart_samples, [local_sample], 6_000) == :ok
+
+      # Switch to the remote node: buffer cleared + a fresh seed for the new
+      # node (a stale local seed result, if any, is dropped by the node
+      # stale-guard).
+      render_patch(view, "/system?node=" <> id)
+
+      assert await_view_assign(view, :chart_samples, [remote_sample], 6_000) == :ok
     end
   end
 
@@ -1382,6 +1525,24 @@ defmodule EvoDashWeb.SystemLiveTest do
   defp await_view_assign(view, key, value, timeout \\ 2_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_view_assign(view, key, value, deadline)
+  end
+
+  defp dbg_poll_retried(view, table, deadline) do
+    cond do
+      assigns(view)[:chart_seed_retried] == true ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        {:timeout,
+         calls: :ets.lookup_element(table, :calls, 2),
+         chart_samples: assigns(view)[:chart_samples],
+         chart_seed_seq: assigns(view)[:chart_seed_seq],
+         chart_node: assigns(view)[:chart_node]}
+
+      true ->
+        Process.sleep(10)
+        dbg_poll_retried(view, table, deadline)
+    end
   end
 
   # Polls an ETS integer counter until it reaches the expected value (used for

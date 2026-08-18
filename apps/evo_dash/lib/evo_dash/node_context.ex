@@ -246,6 +246,19 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Returns the most recent system samples from the given node.
+
+  Delegates to `EvoGit.RemoteNode.get_recent_system_samples/1`, which calls
+  the system sampler's ring buffer on the local node or routes through
+  `:erpc` on a remote node. Returns `{:ok, samples}` on success or
+  `{:error, reason}` on failure (including RPC failure).
+  """
+  @spec get_recent_system_samples(node()) :: {:ok, list()} | {:error, term()}
+  def get_recent_system_samples(node) do
+    EvoGit.RemoteNode.get_recent_system_samples(node)
+  end
+
+  @doc """
   Returns the config health status on the given node.
 
   Delegates to `EvoGit.RemoteNode.get_config_status/1`. Returns a safe
