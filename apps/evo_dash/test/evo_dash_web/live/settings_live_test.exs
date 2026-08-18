@@ -95,6 +95,83 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
+  describe "scheduler_config broadcast (node-filtered)" do
+    # Push-refactor contract: the emitter broadcasts
+    # `{:scheduler_config_updated, node}` on the "scheduler_config" topic,
+    # where node is the BEAM node atom of the publisher. The handler
+    # (settings_live.ex:822) node-filters via
+    # NodeAware.event_from_current_node?/2 — matching-node events re-read the
+    # scheduler config (LOCAL — pre-existing gap, see settings_live/CONTEXT.md);
+    # foreign-node events are ignored (socket unchanged).
+
+    test "broadcast from the current node refreshes the :scheduler_config assign", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      # Mount seeds the assign from the scheduler — flip the paused flag so the
+      # refreshed config observably differs from the mount-time snapshot.
+      EvoGit.AgentScheduler.pause()
+
+      on_exit(fn ->
+        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.AgentScheduler.resume()
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "scheduler_config",
+        {:scheduler_config_updated, node()}
+      )
+
+      # render/1 flushes pending messages synchronously; a crash would propagate here.
+      render(view)
+
+      assert assigns(view)[:scheduler_config][:paused] == true
+    end
+
+    test "broadcast from a foreign node is ignored (assign unchanged)", %{conn: conn} do
+      # Pause BEFORE mounting: pause() itself broadcasts a matching-node
+      # {:scheduler_config_updated, node()} via
+      # AgentScheduler.PubSub.broadcast_config_updated/0 (config change, pause,
+      # or resume). With no subscribers yet the broadcast is dropped, so the
+      # mount-time snapshot is the paused state and the foreign broadcast below
+      # is the ONLY event the view can react to. This also makes the test
+      # immune to cross-test scheduler-state leakage (if a prior test left the
+      # scheduler paused, pause() is a no-op and the test still behaves
+      # identically).
+      EvoGit.AgentScheduler.pause()
+
+      on_exit(fn ->
+        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.AgentScheduler.resume()
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      # Mount snapshot was paused — the final assertion below means "unchanged
+      # from the snapshot" (the foreign event was dropped).
+      assert assigns(view)[:scheduler_config][:paused] == true
+
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "scheduler_config",
+        {:scheduler_config_updated, :genesis_remote@somewhere}
+      )
+
+      render(view)
+
+      # Foreign-node event dropped — the mount-time snapshot (paused) stays.
+      assert assigns(view)[:scheduler_config][:paused] == true
+    end
+  end
+
   describe "LLM quick setup API key detection (credentials.toml)" do
     # The credentials.toml file is written under the test's isolated XDG dir
     # (see the file-level `setup` block), so EvoGit.Config.credentials_path/0

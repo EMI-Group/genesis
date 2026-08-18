@@ -60,7 +60,11 @@ defmodule EvoGit.Application do
        id: :task_registry_process_registry},
       {EvoGit.TaskRegistry, []},
       {EvoGit.AgentScheduler.WorktreeManager, []},
-      {EvoGit.AgentGroupSupervisor, []}
+      {EvoGit.AgentGroupSupervisor, []},
+      # System sampling — broadcasts {:system_sample, node, seq, sample} on
+      # PubSub topic "system" every 3s. Runs on every node (incl. the headless
+      # genesis_remote daemon) so remote dashboards get chart pushes.
+      {EvoGit.SystemSampler, []}
     ]
 
     # SandboxSlice is only needed on Linux (systemd-run backend)

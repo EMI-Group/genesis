@@ -129,7 +129,7 @@ Applied at `create_project/2`, `open_project/2`, `select_project/2` (all local f
 
 ## RPC Consumption Audit (NodeContext cross-node calls in this directory)
 
-Audited for the remote-SSH UX optimization. Line refs verified against current code; re-verify before editing. All remote calls go through `EvoDash.NodeContext` delegates → `EvoGit.RemoteNode` (local direct / `:erpc`). **No polling in ProjectsLive** — PubSub-driven reloads only (`rg remote_poll|Process.send_after` → zero matches in projects_live.ex).
+Audited for the remote-SSH UX optimization. Line refs verified against current code; re-verify before editing. All remote calls go through `EvoDash.NodeContext` delegates → `EvoGit.RemoteNode` (local direct / `:erpc`). **No polling in ProjectsLive** — PubSub-driven reloads only (`rg remote_poll|Process.send_after` → zero matches in projects_live.ex). Task broadcasts now carry node identity (`{:task_updated, task_id, status, node}` / `{:task_deleted, task_id, node}`) and are node-filtered upstream in `NodeAware.handle_task_info/2` (foreign-node events dropped BEFORE the 300ms debounce is scheduled, so ProjectsLive's local-only browser-notification diff can never see cross-node leaks).
 
 ### Per-call inventory (support modules)
 

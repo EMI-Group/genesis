@@ -140,6 +140,17 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "get_recent_system_samples/1 (local node, real path)" do
+    # The supervised EvoGit.SystemSampler runs in the test app, but its tick is
+    # disabled in test env (config/test.exs: :system_sample_interval_ms,
+    # 86_400_000), so the ring buffer is empty — the passthrough delegate must
+    # surface the real sampler's {:ok, samples} shape verbatim.
+    test "returns the real sampler's {:ok, samples} list" do
+      assert {:ok, samples} = EvoDash.NodeContext.get_recent_system_samples(node())
+      assert is_list(samples)
+    end
+  end
+
   describe "custom-agents RPC delegates (local node, real paths)" do
     # The local path reads/writes the REAL agents.toml at
     # EvoGit.Config.config_dir(). Never touch the user's real file: isolate

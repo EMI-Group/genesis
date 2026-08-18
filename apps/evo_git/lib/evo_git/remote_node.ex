@@ -92,6 +92,28 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Returns recent system samples from the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.get_recent_system_samples/0` directly. On a
+  remote node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns `{:ok, samples}` on success or `{:error, reason}` on failure
+  (including RPC failure).
+  """
+  @spec get_recent_system_samples(node()) :: {:ok, term()} | {:error, term()}
+  def get_recent_system_samples(node) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.get_recent_system_samples()
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_recent_system_samples, []) do
+        {:ok, result} -> result
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  @doc """
   Returns the conversation history for an agent on the given node.
 
   On the local node, calls

@@ -772,13 +772,15 @@ defmodule EvoDashWeb.SystemLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "scheduler_config")
+      # Scheduler-status chart samples: the evo_git system sampler broadcasts
+      # `{:system_sample, node, seq, sample}` on this topic every 3s.
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "system")
       # Software Update card: subscribe to `EvoDash.UpdateStatus` hub
       # transitions. Idempotent to subscribe from the same pid, so this stays
       # correct even after workstream B's on_mount hook adds a second
       # subscription to the same topic.
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "updates")
       spawn_system_checks(socket)
-      Process.send_after(self(), :system_chart_tick, 3000)
     end
 
     socket =
@@ -807,11 +809,11 @@ defmodule EvoDashWeb.SystemLive do
           end,
         chart_samples: [],
         chart_node: nil,
-        chart_config_cache: nil,
-        chart_tick_count: 0,
-        # Monotonic sequence for async chart-tick results (never reset — see
-        # spawn_chart_tick/1; `chart_tick_count` above is the per-node counter).
-        chart_tick_seq: 0,
+        # Monotonic sequence for async sample-seed results (never reset — see
+        # spawn_sample_seed/1). `chart_seed_retried` gates the one-shot retry
+        # after a failed seed (reset to false on node change).
+        chart_seed_seq: 0,
+        chart_seed_retried: false,
         # Software Update card assigns (visibility is recomputed in
         # handle_params/3 after assign_node; modal ids are nil-guarded no-ops).
         update_card_visible: false,
@@ -846,18 +848,26 @@ defmodule EvoDashWeb.SystemLive do
     # sandbox/nix row gating) ASYNCHRONOUSLY — each is a cross-node RPC on a
     # remote node, which could otherwise block navigation for up to the RPC
     # timeout. Results arrive via handle_info, stale-guarded on the node the
-    # request was made for. Initial render keeps the mount defaults.
-    socket = spawn_node_loads(socket)
+    # request was made for. Initial render keeps the mount defaults. Both this
+    # and the chart seed below are gated on `connected?(socket)`: handle_params
+    # runs twice per page load (dead render + live websocket mount), and a task
+    # spawned from the dead render sends its result to a process that is gone —
+    # the live mount's handle_params re-runs and does the real work.
+    socket = if connected?(socket), do: spawn_node_loads(socket), else: socket
 
-    # Reset the chart ring buffer + config cache when the node context changes
-    # so charts never mix samples from different nodes.
+    # Reset the chart ring buffer + seed state when the node context changes so
+    # charts never mix samples from different nodes. Each node gets ONE async
+    # seed RPC (the "system" topic only carries live samples — there is no
+    # replay), filling the buffer with the sampler's recent history.
     socket =
       if socket.assigns[:chart_node] != socket.assigns.current_node do
-        socket
-        |> assign(:chart_node, socket.assigns.current_node)
-        |> assign(:chart_samples, [])
-        |> assign(:chart_config_cache, nil)
-        |> assign(:chart_tick_count, 0)
+        socket =
+          socket
+          |> assign(:chart_node, socket.assigns.current_node)
+          |> assign(:chart_samples, [])
+          |> assign(:chart_seed_retried, false)
+
+        if connected?(socket), do: spawn_sample_seed(socket), else: socket
       else
         socket
       end
@@ -1175,12 +1185,17 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   @impl true
-  def handle_info({:scheduler_config_updated}, socket) do
+  def handle_info({:scheduler_config_updated, node}, socket) do
     # The broadcast fires from the node's scheduler — on a remote node a
-    # local-only read would show the WRONG paused state. Reload it
+    # local-only read would show the WRONG paused state. Node-filter first (a
+    # foreign node's scheduler broadcast must not touch this view), then reload
     # node-aware (and async, so the broadcast never blocks the LiveView on a
     # cross-node RPC).
-    {:noreply, spawn_paused_load(socket)}
+    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+      {:noreply, spawn_paused_load(socket)}
+    else
+      {:noreply, socket}
+    end
   end
 
   # --- Software Update card messages ---
@@ -1242,13 +1257,16 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
+  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
+    # New node-identity contract on the "tasks" topic. Forward the FULL message
+    # to NodeAware's task handler — it node-filters and debounces the sidebar
+    # reload.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
+  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
@@ -1258,21 +1276,18 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   @impl true
-  def handle_info(:system_chart_tick, socket) do
-    # Sampling tick for the scheduler-status charts. Reschedule IMMEDIATELY
-    # (steady 3s cadence even when a sampling task is still in flight) — the
-    # actual RPC work runs in an async task, so the page never blocks on a
-    # node round-trip. The timer dies with the LiveView process when the tab
-    # closes.
-    socket =
-      if connected?(socket) do
-        Process.send_after(self(), :system_chart_tick, 3000)
-        spawn_chart_tick(socket)
-      else
-        socket
-      end
-
-    {:noreply, socket}
+  def handle_info({:system_sample, node, _seq, sample}, socket) do
+    # Push-based sample from the evo_git system sampler ("system" topic, one
+    # every 3s). Node-filter first — a foreign node's samples are dropped
+    # unchanged. `seq` is the publisher's monotonic sample sequence
+    # (informational — samples arrive in order on the PubSub channel), and the
+    # ring buffer trims itself to its capacity (Charts.push, 60 samples).
+    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+      samples = Charts.push(socket.assigns.chart_samples, sample)
+      {:noreply, assign(socket, :chart_samples, samples)}
+    else
+      {:noreply, socket}
+    end
   end
 
   @impl true
@@ -1306,42 +1321,56 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   @impl true
-  def handle_info({:chart_tick_result, seq, node, agents, totals}, socket) do
-    # Async chart-sample result. Stale-guard: drop results from an older tick
-    # (a newer tick already spawned — its result will arrive later) or from a
-    # previously-viewed node (the ring buffer was reset on the node change).
-    # Only the latest tick's result may update the samples, so slow in-flight
-    # RPCs can never overwrite fresher data. `seq` is monotonic across node
-    # switches (never reset), so a re-visit to an earlier node cannot
-    # re-apply a pre-switch sample either.
+  def handle_info({:system_samples_seeded, seq, node, result}, socket) do
+    # Async seed-RPC result (see spawn_sample_seed/1). Stale-guard: drop
+    # results from an older seed request (a newer one already spawned — its
+    # result will arrive later) or from a previously-viewed node (the ring
+    # buffer was reset on the node change). `seq` is monotonic across node
+    # switches (never reset), so a re-visit to an earlier node cannot re-apply
+    # a pre-switch seed either.
     cond do
-      seq < socket.assigns.chart_tick_seq ->
+      seq < socket.assigns.chart_seed_seq ->
         {:noreply, socket}
 
       node != socket.assigns.current_node ->
         {:noreply, socket}
 
       true ->
-        # The dead-scheduler branch sends `totals == nil`; build the sample
-        # with zero capacities (same as the old synchronous code) but do NOT
-        # cache those zeros — caching them would suppress the every-10th-tick
-        # config refresh for 10 ticks even after the scheduler starts (the old
-        # code never cached in the dead branch either).
-        effective_totals = totals || %{llm_capacity: 0, tool_capacity: 0}
+        case result do
+          {:ok, samples} when is_list(samples) ->
+            # Fill the buffer preserving order, trimmed to the ring capacity
+            # (Charts.push keeps the newest 60).
+            filled =
+              Enum.reduce(samples, socket.assigns.chart_samples, &Charts.push(&2, &1))
 
-        samples =
-          Charts.push(socket.assigns.chart_samples, Charts.build_sample(agents, effective_totals))
+            {:noreply, assign(socket, :chart_samples, filled)}
 
-        socket = assign(socket, :chart_samples, samples)
+          {:error, _reason} ->
+            # One-shot retry on failure ONLY — not periodic. The retry timer is
+            # scheduled exactly once (gated by `chart_seed_retried`); a second
+            # failure gives up silently, leaving the chart empty until live
+            # samples arrive.
+            if socket.assigns.chart_seed_retried do
+              {:noreply, socket}
+            else
+              socket = assign(socket, :chart_seed_retried, true)
+              Process.send_after(self(), :system_samples_seed_retry, 3000)
+              {:noreply, socket}
+            end
+        end
+    end
+  end
 
-        socket =
-          if totals != nil do
-            assign(socket, :chart_config_cache, {node, totals})
-          else
-            socket
-          end
-
-        {:noreply, socket}
+  @impl true
+  def handle_info(:system_samples_seed_retry, socket) do
+    # Retry timer from a failed seed — fires once (the failure handler above
+    # set `chart_seed_retried` before scheduling it). The re-spawned seed does
+    # NOT schedule a further retry on its own failure: the retry's result
+    # handler sees `chart_seed_retried == true` and gives up silently.
+    if socket.assigns.chart_seed_retried do
+      {:noreply, spawn_sample_seed(socket)}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -1407,63 +1436,36 @@ defmodule EvoDashWeb.SystemLive do
     socket
   end
 
-  # Spawns one chart-sampling tick as an async task. Increments BOTH counters
-  # at spawn time: `chart_tick_count` (per-node tick number, reset on node
-  # change — drives the every-10th-tick config refresh) and `chart_tick_seq`
-  # (monotonic across the LiveView's lifetime, never reset — the sequence
-  # guard for result application). The task sends
-  # `{:chart_tick_result, seq, node, agents, totals}`; handle_info applies it
-  # only when it is the latest sequence.
-  defp spawn_chart_tick(socket) do
+  # Spawns ONE async seed RPC for the viewed node's recent system samples (the
+  # "system" PubSub topic only carries live samples — the seed fills the ring
+  # buffer with the sampler's history so charts aren't empty on load). Bumps
+  # `chart_seed_seq` at spawn time: monotonic across node switches, never
+  # reset — the sequence guard for `{:system_samples_seeded, ...}` result
+  # application (mirrors the old chart-tick sequence). The runner is
+  # injectable via the :system_samples_runner env seam, resolved AT SPAWN TIME
+  # (inside the task) so tests can stub it. No try/rescue at this boundary:
+  # the default runner (`NodeContext.get_recent_system_samples/1` →
+  # `RemoteNode`) is total — it degrades to `{:error, reason}` (the evo_git
+  # sampler stub returns `{:error, :not_implemented}`), it never raises.
+  defp spawn_sample_seed(socket) do
     parent = self()
     node = socket.assigns.current_node
-    tick = socket.assigns.chart_tick_count + 1
-    seq = socket.assigns.chart_tick_seq + 1
-    config_cache = socket.assigns.chart_config_cache
-
-    socket =
-      socket
-      |> assign(:chart_tick_count, tick)
-      |> assign(:chart_tick_seq, seq)
+    seq = socket.assigns.chart_seed_seq + 1
+    socket = assign(socket, :chart_seed_seq, seq)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      {agents, totals} = sample_chart(node, tick, config_cache)
-      send(parent, {:chart_tick_result, seq, node, agents, totals})
+      runner =
+        Application.get_env(
+          :evo_dash,
+          :system_samples_runner,
+          &EvoDash.NodeContext.get_recent_system_samples/1
+        )
+
+      result = runner.(node)
+      send(parent, {:system_samples_seeded, seq, node, result})
     end)
 
     socket
-  end
-
-  # Runs inside the spawned chart task (total — every callee degrades safely):
-  # the scheduler liveness gate, the agent-summary fetch, and the (every-10th
-  # tick) config-totals refresh. Sample semantics are unchanged: `:running`
-  # agent count is the slot-use proxy, `:blocked` is the waiting signal.
-  defp sample_chart(node, tick, config_cache) do
-    if scheduler_alive?(node) do
-      agents = EvoDash.NodeContext.list_agents(node)
-      totals = chart_totals(node, tick, config_cache)
-      {agents, totals}
-    else
-      # Dead scheduler: zero-agent sample, and `nil` totals so the result
-      # handler does not cache zero capacities (see handle_info).
-      {[], nil}
-    end
-  end
-
-  # Resolved config totals, cached per node and refreshed every 10th tick
-  # (ticks 1, 11, 21… ≈ 30s — config changes rarely and a remote re-fetch is
-  # an :erpc round-trip). The cache snapshot is taken at task spawn time; the
-  # result handler stores the totals the task used, so the cache never
-  # regresses (a dropped stale result is followed by the next tick's fresh
-  # fetch or a cache read of the already-applied value).
-  defp chart_totals(node, tick, config_cache) do
-    case config_cache do
-      {^node, totals} when rem(tick, 10) != 1 ->
-        totals
-
-      _ ->
-        Charts.config_totals(EvoDash.NodeContext.get_remote_config(node))
-    end
   end
 
   # Gate for the Software Update card's event handlers — all update events are

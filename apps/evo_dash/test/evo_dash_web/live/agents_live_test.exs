@@ -100,11 +100,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:load_generation] == 1
 
       # A result from an older generation (0 < 1) must be dropped. The
-      # trailing :remote_poll tick is only a FIFO synchronization fence: once
-      # its assign change is visible, the stale message was already processed.
+      # trailing {:agents_updated, node()} event is only a FIFO
+      # synchronization fence: once the refresh it spawned is observable
+      # (refresh_seq bumped), the stale message was already processed.
       send(view.pid, {:agents_data_loaded, node(), 0, {:ok, %{agents: [marker_agent()]}}})
-      send(view.pid, :remote_poll)
-      wait_until(fn -> assigns(view)[:remote_poll_timer] == false end)
+      send(view.pid, {:agents_updated, node()})
+      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
       refute render(view) =~ "#99"
@@ -118,30 +119,19 @@ defmodule EvoDashWeb.AgentsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
-      # Trigger an async refresh (broadcast fallback) — poll_seq becomes 1.
-      send(view.pid, {:agents_updated})
-      wait_until(fn -> assigns(view)[:poll_seq] == 1 end)
+      # Trigger an async refresh ({:agents_updated, node()} broadcast) —
+      # refresh_seq becomes 1.
+      send(view.pid, {:agents_updated, node()})
+      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
 
       # A stale refresh result (seq 0 < 1) must be dropped. FIFO fence: the
-      # :remote_poll tick is processed after the stale message.
-      send(view.pid, {:remote_poll_result, 0, node(), {:ok, [marker_agent()], nil}})
-      send(view.pid, :remote_poll)
-      wait_until(fn -> assigns(view)[:remote_poll_timer] == false end)
+      # {:agents_updated, node()} event is processed after the stale message.
+      send(view.pid, {:agents_refresh_result, 0, node(), {:ok, [marker_agent()], nil}})
+      send(view.pid, {:agents_updated, node()})
+      wait_until(fn -> assigns(view)[:refresh_seq] == 2 end)
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
       refute render(view) =~ "#99"
-    end
-
-    test "does not schedule a poll on the local node", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # A :remote_poll tick on the LOCAL node must not reschedule the poll
-      # (PubSub drives local updates; only remote nodes poll).
-      send(view.pid, :remote_poll)
-      wait_until(fn -> assigns(view)[:remote_poll_timer] == false end)
-
-      assert assigns(view)[:remote_poll_timer] == false
     end
   end
 
@@ -169,7 +159,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Make the next refresh observable: change the agent's status in ETS
       # while leaving its context (message_count) untouched.
       update_agent_status(1, :waiting)
-      send(view.pid, {:agents_updated})
+      send(view.pid, {:agents_updated, node()})
       wait_until(fn -> render(view) =~ "WAITING" end)
 
       # The refresh applied but the count is unchanged — the carried history is
@@ -200,10 +190,261 @@ defmodule EvoDashWeb.AgentsLiveTest do
         %ReqLLM.Message{role: :assistant, content: [%{text: "world"}], metadata: %{turn: 2}}
       ])
 
-      send(view.pid, {:agents_updated})
+      send(view.pid, {:agents_updated, node()})
       wait_until(fn -> render(view) =~ "Turn 2" end)
 
       assert Agent.get(counter, & &1) == 2
+    end
+  end
+
+  describe "agent event broadcasts (node-identity contract)" do
+    # The :evo_git emitters broadcast four node-identity event shapes on
+    # EvoGit.PubSub topic "agents": {:agent_registered, id, summary, node},
+    # {:agent_updated, id, changed_fields, node}, {:agent_removed, id, node},
+    # and {:agents_updated, node}. AgentsLive applies them incrementally
+    # in-memory through ONE shared path for local and remote viewing; events
+    # whose node does not match the viewed node are dropped. These tests
+    # inject the events directly (send/2) — the emitters are converted in
+    # parallel and not available in this worktree yet.
+
+    test "registered event merges the new row in-memory (local)", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      summary =
+        summary_agent(id: 2, parent_id: 1, status: :pending, objective: "child objective")
+
+      send(view.pid, {:agent_registered, 2, summary, node()})
+
+      wait_until(fn -> assigns(view)[:new_agent_ids] |> MapSet.member?(2) end)
+
+      agents = assigns(view)[:agents]
+      assert Enum.map(agents, & &1.id) == [1, 2]
+
+      registered = Enum.find(agents, &(&1.id == 2))
+      assert registered.parent_id == 1
+      assert registered.status == :pending
+      assert registered.objective == "child objective"
+      assert registered.compression_pct == 0
+
+      # The parent's children list was recomputed from parent_id.
+      parent = Enum.find(agents, &(&1.id == 1))
+      assert parent.children == [{2, :pending}]
+      assert parent.has_children
+    end
+
+    test "registered event with an incomplete summary falls back to a full refresh", %{
+      conn: conn
+    } do
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        [summary_agent(id: 1), summary_agent(id: 2, objective: "from refresh")]
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # A summary missing fields the tree needs (status/depth/parent_id) —
+      # the handler must fall back to a full async refresh instead of
+      # merging a broken row.
+      send(view.pid, {:agent_registered, 3, %{id: 3}, node()})
+
+      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
+      wait_until(fn -> assigns(view)[:agents] |> Enum.any?(&(&1.id == 2)) end)
+
+      refute Enum.any?(assigns(view)[:agents], &(&1.id == 3))
+    end
+
+    test "updated event merges changed fields in-memory (local)", %{conn: conn} do
+      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
+        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      send(view.pid, {:agent_updated, 1, [status: :waiting, total_tokens: 21_000], node()})
+
+      wait_until(fn -> assigns(view)[:previous_statuses][1] == :waiting end)
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == 1))
+      assert agent.status == :waiting
+      assert agent.total_tokens == 21_000
+      # 21_000 / 42_000 = 50% — recomputed from the node's configured threshold.
+      assert agent.compression_pct == 50
+      assert assigns(view)[:changed_status_ids] |> MapSet.member?(1)
+    end
+
+    test "updated event applies for remote viewing too", %{conn: conn} do
+      seed_agent(1, [])
+      remote_node = :remote@elsewhere
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Simulate viewing the remote node (the NodeAware hook resolves
+      # ?node= in handle_params; mutating the assign directly mirrors that
+      # for message-handling tests — asserts read via :sys.get_state, not
+      # the proxy's render cache).
+      :sys.replace_state(view.pid, fn state ->
+        %{
+          state
+          | socket: %{
+              state.socket
+              | assigns: Map.put(state.socket.assigns, :current_node, remote_node)
+            }
+        }
+      end)
+
+      send(view.pid, {:agent_updated, 1, [status: :waiting], remote_node})
+
+      wait_until(fn ->
+        assigns(view)[:agents] |> Enum.find(&(&1.id == 1)) |> Map.get(:status) == :waiting
+      end)
+    end
+
+    test "removed event drops the row (local)", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+
+      send(view.pid, {:agent_removed, 1, node()})
+
+      wait_until(fn -> assigns(view)[:agents] == [] end)
+      refute render(view) =~ "#1"
+    end
+
+    test "removed event drops the row for remote viewing (previously invisible)", %{conn: conn} do
+      seed_agent(1, [])
+      remote_node = :remote@elsewhere
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+
+      :sys.replace_state(view.pid, fn state ->
+        %{
+          state
+          | socket: %{
+              state.socket
+              | assigns: Map.put(state.socket.assigns, :current_node, remote_node)
+            }
+        }
+      end)
+
+      send(view.pid, {:agent_removed, 1, remote_node})
+
+      wait_until(fn -> assigns(view)[:agents] == [] end)
+    end
+
+    test "foreign-node events are ignored (tree unchanged, no refresh spawned)", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      assert assigns(view)[:refresh_seq] == 0
+
+      foreign = :remote@elsewhere
+
+      send(view.pid, {:agents_updated, foreign})
+      send(view.pid, {:agent_registered, 2, summary_agent(id: 2), foreign})
+      send(view.pid, {:agent_updated, 1, [status: :waiting], foreign})
+      send(view.pid, {:agent_removed, 1, foreign})
+
+      # All four events must be dropped — no refresh spawned (refresh_seq
+      # stays 0) and the tree is unchanged.
+      Process.sleep(100)
+      assert assigns(view)[:refresh_seq] == 0
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+      assert Enum.find(assigns(view)[:agents], &(&1.id == 1)).status == :running
+    end
+  end
+
+  describe "agent_updated message_count gating" do
+    # The {:agent_updated, id, changed_fields, node} broadcast carries
+    # :message_count whenever the agent's context changed (the contract).
+    # The selected-agent history refetch is gated on it via HistoryGate:
+    # fetch only when the count moved vs the gate's last-seen entry.
+
+    test "refetches selected history when message_count moved on", %{conn: conn} do
+      seed_agent(1, [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-1") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      # The agent's context grew (message_count 1 -> 2) — the event carries
+      # the fresh count, so the refetch fires and the second message renders.
+      send(view.pid, {:agent_updated, 1, [message_count: 2], node()})
+
+      wait_until(fn -> Agent.get(counter, & &1) == 2 end)
+      assert render(view) =~ "fake message 2"
+    end
+
+    test "does not refetch when message_count is unchanged", %{conn: conn} do
+      seed_agent(1, [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-1") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      # Same message_count — the gate suppresses the refetch (the status
+      # change still proves the merge applied).
+      send(view.pid, {:agent_updated, 1, [message_count: 1, status: :waiting], node()})
+
+      wait_until(fn -> render(view) =~ "WAITING" end)
+      assert Agent.get(counter, & &1) == 1
+    end
+
+    test "does not refetch when changed_fields lacks :message_count", %{conn: conn} do
+      seed_agent(1, [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-1") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      # No :message_count in changed_fields — nothing context-related moved,
+      # so no refetch even though the selected agent was updated.
+      send(view.pid, {:agent_updated, 1, [status: :waiting], node()})
+
+      wait_until(fn -> render(view) =~ "WAITING" end)
+      assert Agent.get(counter, & &1) == 1
     end
   end
 

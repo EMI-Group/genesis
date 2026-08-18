@@ -8,6 +8,10 @@ defmodule EvoGit.AgentScheduler.Store do
   sched-meta tables broadcasts enriched PubSub delta events so the dashboard
   can apply incremental updates, plus a throttled `:agents_updated` fallback
   for backward compat. Archive-table operations are PubSub-free.
+
+  All broadcasts carry a trailing `node` element (the emitting BEAM node), and
+  agent-state broadcast kwlists exclude the heavy `:context` field with a
+  `message_count` substituted — ETS writes stay verbatim.
   """
 
   alias EvoGit.AgentScheduler.AgentState
@@ -107,6 +111,9 @@ defmodule EvoGit.AgentScheduler.Store do
 
   Broadcasts an `:agent_updated` delta event with the changed fields plus
   the throttled `:agents_updated` fallback for backward compatibility.
+  Broadcast kwlists exclude heavy fields (`:context` is stripped — a no-op
+  today since it is not tracked by the diff) and carry `message_count` on the
+  insert path when the new state has a context; ETS writes stay verbatim.
   """
   @spec put_agent_state(pos_integer(), AgentState.t()) :: :ok
   def put_agent_state(agent_id, agent_state) do
@@ -125,8 +132,25 @@ defmodule EvoGit.AgentScheduler.Store do
         initial_agent_state_fields(agent_state)
       end
 
-    if changes != [] do
-      PubSub.broadcast_agent_updated(agent_id, changes)
+    # Broadcast kwlists exclude heavy fields — `:context` is stripped here
+    # defensively (a no-op today since it is untracked) so the invariant lives
+    # in one place. On the INSERT path a `message_count` is prepended when the
+    # state carries a context (the diff path never carries `:context`).
+    broadcast_fields =
+      if old_state do
+        strip_heavy_fields(changes)
+      else
+        case agent_state.context do
+          %ReqLLM.Context{messages: messages} ->
+            [message_count: length(messages)] ++ strip_heavy_fields(changes)
+
+          _ ->
+            strip_heavy_fields(changes)
+        end
+      end
+
+    if broadcast_fields != [] do
+      PubSub.broadcast_agent_updated(agent_id, broadcast_fields)
     end
 
     PubSub.broadcast_agents_updated()
@@ -376,19 +400,36 @@ defmodule EvoGit.AgentScheduler.Store do
   This avoids redundant `:ets.lookup` + `:ets.insert` round-trips when syncing
   multiple fields per agent turn.
 
-  Broadcasts an enriched `:agent_updated` delta with the exact changed fields,
-  plus the throttled `:agents_updated` fallback for backward compat.
+  Broadcasts an enriched `:agent_updated` delta plus the throttled
+  `:agents_updated` fallback for backward compat. The broadcast kwlist is the
+  delta minus heavy fields — `:context` is stripped (it is the entire
+  conversation and changes every turn) and a `message_count` is added when a
+  context is among the updated fields — while the ETS write stays verbatim.
   """
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields) when is_list(fields) do
     {:ok, agent_state} = get_agent_state(agent_id)
     updated_state = Kernel.struct!(agent_state, fields)
 
-    # Write through put_agent_state which does its own enriched broadcast.
-    # We also emit the exact fields kwlist as a focused delta — subscribers
-    # can use whichever granularity they prefer.
+    # Direct ETS write (no put_agent_state round-trip) plus a focused delta
+    # broadcast — heavy fields stripped (`:context`), `message_count` added
+    # when a context is updated. Subscribers can use whichever granularity
+    # they prefer.
     :ets.insert(@agent_table, {agent_id, updated_state})
-    PubSub.broadcast_agent_updated(agent_id, fields)
+
+    broadcast_fields =
+      case fields[:context] do
+        nil ->
+          strip_heavy_fields(fields)
+
+        %ReqLLM.Context{messages: messages} ->
+          [message_count: length(messages)] ++ strip_heavy_fields(fields)
+
+        _ ->
+          [message_count: 0] ++ strip_heavy_fields(fields)
+      end
+
+    PubSub.broadcast_agent_updated(agent_id, broadcast_fields)
     PubSub.broadcast_agents_updated()
 
     :ok
@@ -504,6 +545,16 @@ defmodule EvoGit.AgentScheduler.Store do
     :task_local_id,
     :pending_user_messages
   ]
+
+  # Heavy fields stripped from agent-state BROADCAST kwlists. `:context` holds
+  # the entire conversation (`%ReqLLM.Context{}`) and changes every LLM turn —
+  # broadcasting it would copy the conversation to every subscriber. ETS writes
+  # keep the full struct verbatim; only the broadcast kwlist is stripped.
+  @broadcast_stripped_fields [:context]
+
+  defp strip_heavy_fields(fields) do
+    Keyword.drop(fields, @broadcast_stripped_fields)
+  end
 
   defp sched_meta_changes(old, new) do
     diff_fields(old, new, @sched_meta_tracked_fields)

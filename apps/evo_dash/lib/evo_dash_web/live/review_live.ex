@@ -705,22 +705,29 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated} = msg, socket) do
-    # Id-less broadcast — can never be attributed to the reviewed task, so it
-    # must never trigger the review-data reload (see the broadcast guard in
-    # :node_aware_reload_tasks). Sidebar refresh still runs via the debounce.
-    socket = assign(socket, :last_broadcast_task_id, nil)
-    # Debounced via NodeAware — the sidebar reload happens once in
-    # handle_info(:node_aware_reload_tasks, socket) when the timer fires.
-    # handle_task_info/2 already returns {:noreply, socket}.
+  def handle_info({:task_updated, task_id, _status, node} = msg, socket) do
+    # Node filter FIRST: only a broadcast from the viewed node can be
+    # attributed to the reviewed task. Foreign-node events must NOT stash the
+    # task id — the debounced reload only re-fetches the review data when THIS
+    # task's broadcasts caused it (see the broadcast guard in
+    # :node_aware_reload_tasks). handle_task_info/2 re-applies the same node
+    # filter for the sidebar reload and returns {:noreply, socket}.
+    socket =
+      if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+        assign(socket, :last_broadcast_task_id, task_id)
+      else
+        socket
+      end
+
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_status, task_id, _status} = msg, socket) do
-    # Stash the broadcast's task id: the debounced reload only re-fetches the
-    # review data when THIS task's broadcasts caused it.
-    socket = assign(socket, :last_broadcast_task_id, task_id)
+  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
+    # A deleted task can never be the reviewed task (there is nothing left to
+    # review), so the stash is never set here — only the sidebar reload runs,
+    # and only when the event's node matches the viewed node (NodeAware
+    # filters foreign-node events before scheduling the debounce).
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
@@ -728,10 +735,10 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_info(:node_aware_reload_tasks, socket) do
     # Debounce timer fired: always refresh the sidebar's running/pending
     # tasks (reload_tasks/1 also clears the debounce-pending flag). The
-    # review-data reload is broadcast-guarded — only a broadcast for the
-    # reviewed task itself (a `{:task_status, task_id, _}` message) warrants
-    # re-fetching the page; other tasks' activity and id-less `{:tasks_updated}`
-    # broadcasts only refresh the sidebar.
+    # review-data reload is broadcast-guarded — only a `{:task_updated, ...}`
+    # broadcast for the reviewed task itself (stashed by the node-filtered
+    # clause above) warrants re-fetching the page; other tasks' activity only
+    # refreshes the sidebar.
     socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
 
     socket =
@@ -740,6 +747,12 @@ defmodule EvoDashWeb.ReviewLive do
       else
         socket
       end
+
+    # Stash lifecycle: reset after the guarded decision (whether or not it
+    # matched) so each 300ms debounce window evaluates only the latest event's
+    # stash — every event in the new contract carries a task id, so the stash
+    # is unambiguous until this handler consumes it.
+    socket = assign(socket, :last_broadcast_task_id, nil)
 
     {:noreply, socket}
   end

@@ -712,8 +712,14 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       EvoGit.Store.put_task(EvoGit.Store, task)
 
-      # The registry subscribes to the "tasks" PubSub topic on init.
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+      # The registry subscribes to the "tasks" PubSub topic on init. The
+      # emitter broadcasts the task_updated shape with the emitting node; a
+      # local-node broadcast passes the node filter and is applied.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, task_id, :finalizing, node()}
+      )
 
       # Sync with a call so the info message is processed before we assert.
       TaskRegistry.list_tasks()
@@ -769,13 +775,68 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       EvoGit.Store.put_task(EvoGit.Store, task)
 
       # A late :finalizing PubSub update must NOT overwrite a terminal :cancelled.
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, task_id, :finalizing, node()}
+      )
 
       TaskRegistry.list_tasks()
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched != nil
       assert fetched.status == :cancelled
+    end
+  end
+
+  describe "cross-node PubSub filtering" do
+    test "a :finalizing broadcast from another node is not applied locally" do
+      unique = System.unique_integer([:positive])
+      task_id = "cross_node_finalizing_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      drain_tasks_mailbox()
+
+      # A broadcast emitted on a remote node (node != node()) must be filtered
+      # out by the handler's node guard — the local store is untouched.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, task_id, :finalizing, :other_node@host}
+      )
+
+      # Sync with a call so any (wrongly) accepted info message is processed.
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched != nil
+      assert fetched.status == :running
+
+      # The same filter applies to an unknown id: no row is ever created.
+      unknown_id = "cross_node_unknown_#{unique}"
+
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, unknown_id, :finalizing, :other_node@host}
+      )
+
+      TaskRegistry.list_tasks()
+      assert TaskRegistry.get_task(unknown_id) == nil
     end
   end
 
@@ -1226,7 +1287,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
       send(EvoGit.TaskRegistry, {:recheck_task, task_id})
-      assert_receive {:tasks_updated}, 1_000
+      assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
 
       fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
       assert fetched.status == :completed
@@ -1255,7 +1316,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
       send(EvoGit.TaskRegistry, {:recheck_task, task_id})
-      assert_receive {:tasks_updated}, 1_000
+      assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
 
       fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
       assert fetched.status == :completed
@@ -1297,7 +1358,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
       send(EvoGit.TaskRegistry, {:recheck_task, task_id})
-      refute_receive {:tasks_updated}, 200
+      refute_receive {:task_updated, _, _, _}, 200
 
       fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
       assert fetched.status == :running
@@ -1308,7 +1369,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # nil result and no branch_name.
       :ets.delete(:evogit_sched_meta, 1)
       send(EvoGit.TaskRegistry, {:recheck_task, task_id})
-      assert_receive {:tasks_updated}, 1_000
+      assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
 
       resolved = EvoGit.Store.get_task(EvoGit.Store, task_id)
       assert resolved.status == :completed
@@ -1440,6 +1501,41 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       # Task registered in the graceful-cancel marker.
       assert :ets.member(:evogit_cancelling_tasks, task_id)
+    end
+
+    test "graceful cancel emits exactly one tasks-topic broadcast" do
+      unique = System.unique_integer([:positive])
+      task_id = "cancel_single_broadcast_#{unique}"
+
+      :ok =
+        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          id: task_id,
+          type: :genesis,
+          status: :running,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          logs: [],
+          result: nil,
+          lease_expires_at: System.system_time(:second) + 300
+        })
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+      drain_tasks_mailbox()
+
+      assert :ok = TaskRegistry.cancel_task(task_id)
+
+      # The emitter must broadcast exactly one :task_updated per cancel — the
+      # :cancelling transition — never a second one from the internal
+      # status-update path (double-broadcast elimination).
+      assert_receive {:task_updated, ^task_id, :cancelling, _}, 1_000
+
+      refute_receive {:task_updated, _, _, _}, 200
+      refute_receive {:task_deleted, _, _}, 200
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :cancelling
     end
 
     test "cancel_task is idempotent on :cancelling — no duplicate messages" do
@@ -1638,7 +1734,11 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           result: nil
         })
 
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, task_id, :finalizing, node()}
+      )
 
       TaskRegistry.list_tasks()
 
@@ -1745,6 +1845,16 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
   end
 
   # --- Helpers ---
+
+  # Drains the test-process mailbox of any messages broadcast before the
+  # measurement window (PubSub delivery is async).
+  defp drain_tasks_mailbox do
+    receive do
+      _msg -> drain_tasks_mailbox()
+    after
+      0 -> :ok
+    end
+  end
 
   # AgentSpec for the graceful-cancel agent-notification tests.
   defp cancel_test_agent_spec do
