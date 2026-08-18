@@ -7,9 +7,9 @@ ExUnit test files for the EvoDash LiveView pages and their support modules. Mirr
 ## Routing Table
 
 - `./projects_live_test.exs` → Comprehensive `ProjectsLive` dashboard suite (~2200 lines; project form/palette/settings, task notifications, remote-node contexts via the fake `EvoDashWeb.ProjectsLiveTest.ConnectionManager` in `EvoGit.RemoteConnection.Registry`, directory picker, file attach, cross-OS remote path handling)
-- `./projects_live/` → Pure unit tests for `ProjectsLive` support modules (`project_flow_test.exs` — path normalization incl. `normalize_remote_project_path/2`, `absolute_path_for_node?/2`, the `path_suggestions/2,3` node-aware recents filter, `build_foreign_repo/4` + `Project.load_foreign_repos/3` raw-storage tests; `state_persistence_test.exs` — `maybe_restore_foreign_repos/2` node-aware restore with minimal LiveView sockets; `dirty_tracker`-style modules live here)
+- `./projects_live/` → Pure unit tests for `ProjectsLive` support modules (`project_flow_test.exs` — path normalization incl. `normalize_remote_project_path/2`, `absolute_path_for_node?/2`, the `path_suggestions/2,3` node-aware recents filter, `build_foreign_repo/4` + `Project.load_foreign_repos/3` raw-storage tests; `state_persistence_test.exs` — `maybe_restore_foreign_repos/2` node-aware restore with minimal LiveView sockets)
 - `./settings_live_test.exs` → Settings page (search, custom model providers, whitelist safety)
-- `./tasks_live_test.exs` → Cross-project task list (search/filter, cancellation modals, `:cancelling` display, remote poll smoke)
+- `./tasks_live_test.exs` → Cross-project task list (search/filter, cancellation modals, `:cancelling` display, event-driven debounced reloads)
 - `./review_live_test.exs` → Review page (missing-task error, ignore action)
 - `./welcome_live_test.exs`, `./welcome_complete_live_test.exs` → Onboarding pages
 - `./system_live_test.exs`, `./agents_live_test.exs`, `./error_html_test.exs`, `./error_json_test.exs` → System page, agent tree, error templates
