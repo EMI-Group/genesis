@@ -811,8 +811,28 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_info({:scheduler_config_updated, node}, socket) do
+    # Node filter first: foreign-node events are ignored (socket unchanged).
+    #
+    # NOTE — pre-existing gap, deliberately NOT fixed in the push-refactor:
+    # the reload still reads the LOCAL scheduler config
+    # (ConfigIO.load_scheduler_config() → AgentScheduler.get_config()) even
+    # while viewing a remote node — remote viewers never get a remote-refresh
+    # path for this assign today. Behavior kept exactly as before.
+    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+      {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
+    else
+      # Foreign-node event — dropped, socket unchanged.
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_info({:scheduler_config_updated}, socket) do
-    {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
+    # Transitional: old 1-tuple shape from pre-node-identity emitters carries
+    # no node to filter on — ignored (socket unchanged). Remove once the
+    # emitters are migrated.
+    {:noreply, socket}
   end
 
   @impl true
@@ -827,13 +847,17 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
+  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
+    # Node-identity task broadcast — node-filtered (foreign-node events are
+    # dropped BEFORE the debounce is scheduled) and debounced (300ms trailing
+    # edge) inside NodeAware.handle_task_info/2, which already returns
+    # {:noreply, socket}.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
+  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true

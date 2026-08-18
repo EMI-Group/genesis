@@ -1585,13 +1585,30 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   @impl true
-  def handle_info({:tasks_updated}, socket) do
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.debounce_task_reload(socket)}
+  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
+    # Node-identity task broadcast — node-filtered (foreign-node events are
+    # dropped BEFORE the debounce is scheduled) and debounced (300ms trailing
+    # edge) inside NodeAware.handle_task_info/2, which already returns
+    # {:noreply, socket}.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
-    {:noreply, EvoDashWeb.LiveHooks.NodeAware.debounce_task_reload(socket)}
+  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+  end
+
+  @impl true
+  def handle_info({:tasks_updated} = msg, socket) do
+    # Transitional: pre-node-identity emitter shapes carry no node to filter
+    # on — forwarded to NodeAware.handle_task_info/2, whose catch-all ignores
+    # them (socket unchanged). Remove once the emitters are migrated.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+  end
+
+  @impl true
+  def handle_info({:task_status, _task_id, _status} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   # Debounced reload fired by NodeAware after task broadcasts: refreshes the
