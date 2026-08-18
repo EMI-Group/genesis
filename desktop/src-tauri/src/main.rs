@@ -34,12 +34,6 @@ const INITIAL_NAVIGATE_RETRY_MS: u64 = 250;
 /// its LiveSocket reconnects.
 const QUIT_REEMIT_DELAYS_MS: [u64; 5] = [500, 1000, 2000, 4000, 8000];
 
-/// How long the tray-Quit guaranteed-exit fallback thread waits before
-/// force-quitting when the dashboard never reacts (no heartbeat advance, no
-/// user confirmation). Deliberately longer than the last re-emit (+8000ms)
-/// so a live-but-slow dashboard has time to respond.
-const QUIT_FALLBACK_DELAY_MS: u64 = 9000;
-
 /// Keeper thread poll interval (ms).
 const KEEPER_POLL_INTERVAL_MS: u64 = 2000;
 
@@ -81,12 +75,11 @@ fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
 /// (`DesktopQuit` hook) at hook mount, on every socket reconnect, and on
 /// every `quit-requested` reception.
 ///
-/// Records the dashboard's liveness in the [`BackendManager`] heartbeat: the
-/// tray-Quit fallback thread disarms when the heartbeat epoch advances (the
-/// page is live and the confirm dialog is coming), and the keeper thread
-/// stops re-navigating a live dashboard. Must not panic when the state is
-/// missing — it is only managed in `run_gui`, and headless never registers
-/// the command (same pattern as `begin_quit`).
+/// Records the dashboard's liveness in the [`BackendManager`] heartbeat (a
+/// wall-clock timestamp) so the keeper thread stops re-navigating a live
+/// dashboard. Must not panic when the state is missing — it is only managed
+/// in `run_gui`, and headless never registers the command (same pattern as
+/// `begin_quit`).
 #[tauri::command]
 fn dashboard_ready(manager: tauri::State<'_, BackendHandle>) {
     manager.mark_dashboard_ready();
@@ -665,13 +658,6 @@ fn run_gui() {
                         let manager = app.try_state::<BackendHandle>();
                         if let Some(manager) = manager.as_ref() {
                             if sidecar::probe_http(manager.backend_url()).is_some() {
-                                // Capture the heartbeat epoch BEFORE the emit:
-                                // the dashboard's quit-requested handler
-                                // refreshes the heartbeat on reception, so an
-                                // epoch change after the emit proves the page
-                                // is live (the fallback thread below relies on
-                                // that).
-                                let epoch_before = manager.dashboard_heartbeat_epoch();
                                 // Synchronous first emit — the dashboard may be
                                 // fully connected right now, and waiting +500ms
                                 // (the first re-emit) before the event reaches
@@ -691,13 +677,10 @@ fn run_gui() {
                                 // `manager.inner()` unwraps the tauri `State`
                                 // (which borrows `app`) to the owned
                                 // `Arc<BackendManager>` so the detached
-                                // threads can own it ('static). Clone both
+                                // thread can own it ('static). Clone both
                                 // BEFORE the re-emit closure moves them.
                                 let app = app.clone();
                                 let manager = manager.inner().clone();
-                                let fallback_app = app.clone();
-                                let fallback_manager = manager.clone();
-                                let fallback_epoch = epoch_before;
                                 std::thread::spawn(move || {
                                     for delay_ms in QUIT_REEMIT_DELAYS_MS {
                                         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
@@ -710,38 +693,6 @@ fn run_gui() {
                                             break; // app is shutting down
                                         }
                                     }
-                                });
-
-                                // Guaranteed-exit fallback: if the dashboard
-                                // never reacts (the webview sits on the
-                                // connection-refused page, the LiveSocket never
-                                // joined, the emits went into the void), the
-                                // emit path can never succeed and NOTHING else
-                                // would exit — the app would wedge forever.
-                                // After QUIT_FALLBACK_DELAY_MS, quit anyway
-                                // UNLESS the user confirmed (begin_quit /
-                                // begin_update flag) or the dashboard signaled
-                                // liveness (heartbeat epoch advanced since the
-                                // sync emit — the page is live and the dialog
-                                // is coming). `kill_for_quit` sets the
-                                // intentional-shutdown flag BEFORE killing, so
-                                // the watchdog never restarts the backend.
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_millis(
-                                        QUIT_FALLBACK_DELAY_MS,
-                                    ));
-                                    if fallback_manager.shutdown_requested()
-                                        || fallback_manager.update_requested()
-                                    {
-                                        return; // user confirmed — the app is going away
-                                    }
-                                    if fallback_manager.dashboard_heartbeat_epoch()
-                                        != fallback_epoch
-                                    {
-                                        return; // page responded → dialog is live or coming
-                                    }
-                                    fallback_manager.kill_for_quit();
-                                    fallback_app.exit(0);
                                 });
                                 return;
                             }

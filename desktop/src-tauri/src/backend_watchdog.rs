@@ -43,7 +43,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -319,11 +319,6 @@ pub struct BackendManager {
     env: Vec<(String, String)>,
     port: u16,
     backend_url: String,
-    /// Monotonic epoch counter of dashboard-liveness signals
-    /// (`mark_dashboard_ready` / the `dashboard_ready` command). Never
-    /// derived from the wall clock — the tray-Quit fallback thread disarms
-    /// when the epoch changes, so it must be immune to clock changes.
-    dashboard_heartbeat: AtomicU64,
     /// Unix-epoch millis of the last dashboard-liveness signal. Only used
     /// for the keeper thread's freshness window (best-effort).
     dashboard_heartbeat_ms: AtomicI64,
@@ -345,7 +340,6 @@ impl BackendManager {
             env,
             port,
             backend_url,
-            dashboard_heartbeat: AtomicU64::new(0),
             dashboard_heartbeat_ms: AtomicI64::new(0),
         }
     }
@@ -432,20 +426,12 @@ impl BackendManager {
     /// command — invoked fire-and-forget by the dashboard's hook at mount,
     /// on every socket reconnect, and on every `quit-requested` reception).
     ///
-    /// Advances the monotonic heartbeat epoch — the tray-Quit fallback
-    /// thread disarms when the epoch changes (an advance proves the page is
-    /// live and the confirm dialog is live or coming) — and stamps the
-    /// wall-clock time for the keeper thread's freshness window.
+    /// Stamps the wall-clock time used by the keeper thread's freshness
+    /// window: a fresh heartbeat means the dashboard is live and must not be
+    /// re-navigated.
     pub fn mark_dashboard_ready(&self) {
-        self.dashboard_heartbeat.fetch_add(1, Ordering::SeqCst);
         self.dashboard_heartbeat_ms
             .store(now_ms(), Ordering::SeqCst);
-    }
-
-    /// The current dashboard-heartbeat epoch (number of liveness signals so
-    /// far). Monotonic and immune to clock changes.
-    pub fn dashboard_heartbeat_epoch(&self) -> u64 {
-        self.dashboard_heartbeat.load(Ordering::SeqCst)
     }
 
     /// True when the last dashboard heartbeat is within `within_ms` of
@@ -776,10 +762,7 @@ impl BackendManager {
 }
 
 /// Current unix-epoch time in milliseconds. Only used for freshness windows
-/// (the keeper thread's heartbeat check); the monotonic
-/// [`BackendManager::dashboard_heartbeat`] epoch is what the tray-Quit
-/// fallback disarming relies on, so a wall-clock change can never wedge the
-/// quit flow.
+/// (the keeper thread's heartbeat check).
 fn now_ms() -> i64 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(d) => d.as_millis() as i64,
@@ -1289,26 +1272,6 @@ mod tests {
         assert!(!should_install_update(false, true));
         assert!(!should_install_update(true, false));
         assert!(should_install_update(true, true));
-    }
-
-    #[test]
-    fn dashboard_heartbeat_epoch_increments_monotonically() {
-        let manager = BackendManager::new(
-            PathBuf::from("/nonexistent"),
-            vec![],
-            9999,
-            "http://localhost:9999".to_string(),
-        );
-        let e0 = manager.dashboard_heartbeat_epoch();
-        manager.mark_dashboard_ready();
-        let e1 = manager.dashboard_heartbeat_epoch();
-        manager.mark_dashboard_ready();
-        manager.mark_dashboard_ready();
-        let e2 = manager.dashboard_heartbeat_epoch();
-        assert_eq!(e0, 0, "no signal yet → epoch 0");
-        assert_eq!(e1, 1, "first signal advances the epoch by one");
-        assert_eq!(e2, 3, "every signal advances the epoch");
-        assert!(e2 > e1 && e1 > e0, "epoch must be strictly monotonic");
     }
 
     #[test]
