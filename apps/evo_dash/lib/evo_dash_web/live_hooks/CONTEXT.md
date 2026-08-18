@@ -6,7 +6,7 @@ Phoenix LiveView on-mount hooks registered globally via the `live_view/0` macro 
 
 ## Routing Table
 
-None — leaf directory (two module files: `set_locale.ex`, `node_aware.ex`).
+None — leaf directory (four module files: `set_locale.ex`, `node_aware.ex`, `update_status.ex`, `desktop_quit.ex`).
 
 ## API Surface
 
