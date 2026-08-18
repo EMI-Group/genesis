@@ -183,6 +183,35 @@ The `:evolve` task type supports a `"custom"` mode opt (task type stays `:evolve
 
 **Finch pool vs slot gating (the "excess queuing" question):** `config/runtime.exs:38-54` sizes ReqLLM's Finch stream pool ONCE at boot as `max(sum(profile concurrencies) + 2, 8)`. It is a boot-time value; runtime `update_config` changes (CLI `-c`, dashboard sliders, `reload_config`) do NOT resize it. The scheduler's slot pools (per-model, from the same profile concurrencies) are the actual concurrency gate for agent LLM calls — when slot concurrency is raised at runtime above the boot-time pool count (or when non-gated auxiliary calls run concurrently with a full pool), `ReqLLM.stream_text` calls can queue on the fixed-size Finch pool (`Finch was unable to provide a connection...`). Slot waiting (blocked agents) is a separate queue inside the scheduler and does not consume Finch connections.
 
+## Peak/Off-Peak Hour Concurrency Scheduling
+
+LLM providers charge more during peak hours, so each `[[llm.models]]` profile can declare a **peak-hour concurrency** plus daily **peak windows**; the scheduler dynamically swaps each model's effective concurrency when the local wall clock enters/leaves a window. `EvoGit.PeakHourEngine` (supervised in `application.ex`, after `AgentGroupSupervisor`) owns the dynamic override; `EvoGit.PeakHours` is the pure window-math module.
+
+**Config contract** (new optional `[[llm.models]]` fields — schema-validated in `config/schema.ex`, see `config/CONTEXT.md`):
+
+```toml
+[[llm.models]]
+id = "glm"
+concurrency = 4        # normal (off-peak) concurrency
+peak_concurrency = 2   # optional — concurrency during peak windows
+peak_hours = [         # optional — daily windows, half-open [start, end)
+  { start = "09:00", end = "12:00" },
+  { start = "14:00", end = "18:00" }
+]
+```
+
+- `peak_hours` = list of `%{start, end}` `"HH:MM"` 24h **local wall-clock** strings; `start > end` = overnight window wrapping midnight; absent / `[]` / all-invalid → disabled (normal `concurrency` applies 24/7 exactly as before).
+- `peak_concurrency` present → effective inside windows; `peak_hours` present but `peak_concurrency` absent → legal no-op (defaults to `concurrency`).
+- Effective concurrency = `peak_concurrency` in-window else `concurrency`; **local wall-clock** (`NaiveDateTime.local_now()`), never UTC.
+
+**`EvoGit.PeakHours`** (`lib/evo_git/peak_hours.ex`, pure module, no state): `parse_time/1`, `parse_window/1`, `validate_windows/1` (single source of truth for format/zero-length/overlap validation — `config/schema.ex` delegates to it, do NOT re-implement), `in_peak?/2` (half-open `[start, end)`, overnight-wrap aware), `next_transition/2` (next `NaiveDateTime` flip; `nil` when no windows), `effective_concurrency/2`. Accepts atom- AND string-keyed window maps (TOML decode may yield either).
+
+**`EvoGit.PeakHourEngine`** (`lib/evo_git/peak_hour_engine.ex`, GenServer): on start and every wakeup it reads `AgentScheduler.get_config(:model_profiles)` + `:default_llm_max_concurrency`, computes the floored effective map (`max(effective_concurrency, default)` per model — the EXACT floor `State` re-applies on store, making the apply a fixed point so the engine's own `{:scheduler_config_updated, node()}` broadcast re-check no-ops; an unfloored computation would re-apply forever), and applies it via `AgentScheduler.update_config(model_concurrency: map)` ONLY when it differs from `get_config(:model_concurrency)` — the existing handler's `reconcile_pool_after_update/1` drives `EvoGit.ReqLLMPool` grow-only sizing and the trailing `Slots.grant_pending_on_resume` sweep grants queued LLM waiters automatically (do NOT add a second sweep). Wake triggers: (a) a timer at the earliest `next_transition` across all profiles (+100ms epsilon so `now >=` the flip instant, capped at 6h as a clock-drift/config-miss safety net; the pending timer is cancelled before rescheduling); (b) `"scheduler_config"` PubSub broadcasts `{:scheduler_config_updated, node}` filtered to `node()` — config edits/reloads re-apply immediately mid-peak. Robustness: `Process.whereis(AgentScheduler)` guard + `try/catch :exit` around scheduler RPCs — scheduler down / profiles empty / races degrade to a logged no-op + safety-net wakeup; the engine never crashes. **Clock seam for tests**: `Application.get_env(:evo_git, :peak_hours_now_fun)` (default `&NaiveDateTime.local_now/0`), read per wakeup; public `check/0` runs the pipeline deterministically.
+
+**State `:model_concurrency` update path** (`agent_scheduler/state.ex` `do_update_config/2`): a `maybe_update_model_concurrency/2` step replaces `state.model_concurrency` with the given map then re-applies the active `default_llm_max_concurrency` floor (an engine update below an active CLI `-c` / runtime floor never drops it; explicit values above win). `from_model_profiles/2` still reads base `concurrency` only — config loading stays wall-clock agnostic; the engine owns dynamic overrides. Details: `agent_scheduler/CONTEXT.md`.
+
+Tests: `peak_hours_test.exs` (window math), `peak_hour_engine_test.exs` (fake-clock integration incl. config-reload re-apply, fixed-point, scheduler-down robustness), `schema_test.exs` (field validation), `state_test.exs` (`:model_concurrency` path).
+
 ## GitEnv — Commit Identity Resolution (design decision)
 
 `EvoGit.GitEnv.git_env/1` is the single source of truth for the env map injected into EVERY git invocation — both `EvoGit.Adapters.Git` and the sandbox backends (`git_env_list/1`). It always sets `LC_ALL=C` and `GIT_EDITOR` (resolved `true` path). Identity is resolved per key with priority:
