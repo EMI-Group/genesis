@@ -871,11 +871,15 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
 
     test "a foreign-node system sample broadcast is ignored", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
+      # Make the test hermetic: the mount's async seed RPC must not fill the
+      # chart buffer. The default runner reads the real EvoGit.SystemSampler
+      # ring buffer, which is non-empty whenever a sampler tick has occurred in
+      # this VM (real user config, capacities 25/8) — stubbing it to fail makes
+      # the assertion depend only on the foreign-sample filter. (The file-level
+      # setup block restores this env in on_exit.)
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:error, :not_implemented} end)
 
-      # The mount's seed RPC can never fill the buffer (the evo_git sampler
-      # stub returns {:error, :not_implemented}), so the buffer stays empty
-      # unless the foreign sample is (wrongly) applied.
+      {:ok, view, _html} = live(conn, ~p"/system")
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "system",
