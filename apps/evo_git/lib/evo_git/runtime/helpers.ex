@@ -72,7 +72,11 @@ defmodule EvoGit.Runtime.Helpers do
   def notify_finalizing(nil), do: :ok
 
   def notify_finalizing(task_id) when is_binary(task_id) do
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_status, task_id, :finalizing})
+    Phoenix.PubSub.broadcast(
+      EvoGit.PubSub,
+      "tasks",
+      {:task_updated, task_id, :finalizing, node()}
+    )
   end
 
   def generate_branch_name(_prefix) do
