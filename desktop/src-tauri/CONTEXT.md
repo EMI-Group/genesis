@@ -16,7 +16,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 | File | Purpose |
 |------|---------|
 | `src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window · separator · Quit Genesis menu), spawns the Elixir release, opens window, intercepts close-to-tray, starts the backend watchdog, registers the `begin_quit` command; tray Quit shows+focuses the window and emits `quit-requested` to the webview for the web-page confirm flow |
-| `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), shared `spawn(launcher, env)` (the ONLY GUI launcher spawn path, always via `launcher_command`), one-shot `probe_http`, readiness polling, shutdown |
+| `src/sidecar.rs` | Sidecar lifecycle: env config (PHX_IP bind address, PORT), shared `spawn(launcher, env)` (the ONLY GUI launcher spawn path, always via `launcher_command`), one-shot `probe_http`, readiness polling, shutdown, TCP lifetime-pipe listener (`start_lifetime_listener`) + env builders emitting `EVOGIT_LIFETIME_PORT` |
 | `src/backend_watchdog.rs` | Backend crash watchdog: monitors the child process, restarts it with backoff on unexpected exit, shows an error page in the WebView while down, reloads the dashboard on recovery (`RestartPolicy`, `classify_exit`, `tcp_accepting`, `percent_encode`/`error_page_data_url`, `BackendManager`) |
 | `src/sidecar_path.rs` | Shared launcher-path resolution (`resolve_launcher/2`) — first existing candidate wins, descriptive error listing all candidates when none exist; used by both GUI (`sidecar.rs`) and headless (`main.rs`) modes; contains the unit tests |
 | `Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
