@@ -71,16 +71,18 @@ defmodule EvoGit.Application do
         children
       end
 
-    # Desktop mode: monitor the Tauri shell's OS pid (EVOGIT_PARENT_PID) and
-    # exit the VM when the shell dies, so an orphaned backend never holds the
-    # port. Gated on the env vars ONLY — the sidecar sets both, while
+    # Desktop mode: keep a TCP lifetime pipe to the Tauri shell. The shell
+    # binds a listener on 127.0.0.1:0 at startup and passes the port via
+    # EVOGIT_LIFETIME_PORT; when the shell dies the OS closes the pipe, so
+    # the watcher exits the VM and an orphaned backend never holds the port.
+    # Gated on the env vars ONLY — the sidecar sets both, while
     # manually-launched releases and the genesis_remote daemon set neither
     # (the module's own init-disabled logic is belt-and-suspenders for direct
     # starts).
     children =
       if System.get_env("EVOGIT_DESKTOP") == "1" and
-           System.get_env("EVOGIT_PARENT_PID") not in [nil, ""] do
-        children ++ [{EvoGit.DesktopParentMonitor, []}]
+           System.get_env("EVOGIT_LIFETIME_PORT") not in [nil, ""] do
+        children ++ [{EvoGit.DesktopLifetime, []}]
       else
         children
       end
