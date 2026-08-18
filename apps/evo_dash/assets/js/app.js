@@ -692,7 +692,7 @@ const TauriDetect = {
 // and on every quit-requested reception. The Rust shell uses it to verify the
 // quit listener is actually live — when the webview isn't showing the
 // dashboard, emits go nowhere, so the shell re-navigates the webview
-// (self-heal) or falls back to an immediate quit.
+// (self-heal).
 const DesktopQuit = {
   mounted() {
     // Same detection as TauriDetect (see above).
@@ -717,8 +717,9 @@ const DesktopQuit = {
       this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
         if (this._quitPending) return;   // dedup: dialog open or delivery in flight
         this._quitPending = true;
-        // The event reached a live page — disarm the shell's guaranteed-exit
-        // fallback so the user gets to decide.
+        // The event reached a live page — refresh the liveness heartbeat so
+        // the keeper keeps the dashboard loaded (and the confirm dialog up)
+        // while the user decides.
         this._notifyDashboardReady();
         this._pushQuitRequested();
       });
