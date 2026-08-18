@@ -686,6 +686,13 @@ const TauriDetect = {
 // push on rejection (1s) and again from reconnected(), and is released only
 // when the server pushes desktop_quit_closed (dialog dismissed) so FUTURE
 // tray quits stay honored.
+//
+// Liveness heartbeat: the hook also invokes the Tauri `dashboard_ready`
+// command (fire-and-forget, errors swallowed) on mount, on socket reconnect,
+// and on every quit-requested reception. The Rust shell uses it to verify the
+// quit listener is actually live — when the webview isn't showing the
+// dashboard, emits go nowhere, so the shell re-navigates the webview
+// (self-heal) or falls back to an immediate quit.
 const DesktopQuit = {
   mounted() {
     // Same detection as TauriDetect (see above).
@@ -693,12 +700,18 @@ const DesktopQuit = {
     if (!isTauri) {
       return;
     }
+    // The hook is mounted = the LiveSocket joined = the quit listener below is
+    // registered — the shell can trust this page is live.
+    this._notifyDashboardReady();
     this._quitPending = false;   // a quit awaits delivery / the dialog is open
     this._retryTimer = null;
     this._unlisten = null;
     this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
       if (this._quitPending) return;   // dedup: dialog open or delivery in flight
       this._quitPending = true;
+      // The event reached a live page — disarm the shell's guaranteed-exit
+      // fallback so the user gets to decide.
+      this._notifyDashboardReady();
       this._pushQuitRequested();
     });
     this._unlistenPromise.then((unlisten) => {
@@ -721,8 +734,18 @@ const DesktopQuit = {
       }
     });
   },
-  // Socket re-established: deliver an undelivered quit request now.
+  // Liveness heartbeat for the Rust shell: fire-and-forget invoke of the
+  // dashboard_ready command (no args, no return). Must never throw — the
+  // shell uses it only to verify the quit-requested listener is live.
+  _notifyDashboardReady() {
+    const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (!invoke) return;
+    invoke("dashboard_ready").catch(() => {});
+  },
+  // Socket re-established: page is live again; deliver an undelivered quit
+  // request now.
   reconnected() {
+    this._notifyDashboardReady();
     if (this._quitPending) this._pushQuitRequested();
   },
   _pushQuitRequested() {
