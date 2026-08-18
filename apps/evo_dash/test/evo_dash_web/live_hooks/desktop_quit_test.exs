@@ -42,7 +42,7 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       assert html =~ ~s(phx-hook="DesktopQuitConfirm")
     end
 
-    test "desktop_quit_cancelled closes the modal", %{conn: conn} do
+    test "desktop_quit_cancelled closes the modal and pushes desktop_quit_closed", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/system")
 
       # Open the modal first
@@ -51,6 +51,9 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       html = render_click(view, "desktop_quit_cancelled")
 
       refute html =~ "Quit Genesis?"
+      # Re-arms the JS latch so a FUTURE tray Quit is honored (see the
+      # DesktopQuit hook's dedup in assets/js/app.js).
+      assert_push_event(view, "desktop_quit_closed", %{})
     end
 
     test "desktop_quit_confirmed calls the injected stop seam and closes the modal", %{conn: conn} do
@@ -64,6 +67,34 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       # had it been, the test VM would be gone and this assertion unreachable).
       assert_received :desktop_stopped
       refute html =~ "Quit Genesis?"
+      # Same re-arm contract as the cancel handler.
+      assert_push_event(view, "desktop_quit_closed", %{})
+    end
+
+    test "duplicate desktop_quit_requested events are idempotent", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Regression pin for Rust re-emitting quit-requested (e.g. while the
+      # dialog is already open): the second event must not error the view.
+      _html = render_click(view, "desktop_quit_requested")
+      html = render_click(view, "desktop_quit_requested")
+
+      assert html =~ "Quit Genesis?"
+    end
+
+    test "requested → cancelled → requested re-opens the dialog", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html = render_click(view, "desktop_quit_requested")
+      assert html =~ "Quit Genesis?"
+
+      html = render_click(view, "desktop_quit_cancelled")
+      refute html =~ "Quit Genesis?"
+
+      # The desktop_quit_closed push re-arms the JS latch — a second tray quit
+      # must open the dialog again (documents why the JS dedup/latch exists).
+      html = render_click(view, "desktop_quit_requested")
+      assert html =~ "Quit Genesis?"
     end
 
     test "unrelated events still reach the LiveView", %{conn: conn} do
