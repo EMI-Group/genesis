@@ -55,7 +55,7 @@ Tauri launches the Phoenix app as a child process via the mix release launcher s
 
 ## Sidecar Lifecycle
 
-1. Tauri spawns the Elixir release launcher (`bin/genesis_desktop start`) with env vars: `PORT=<shell-chosen dynamic port>`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`, `EVOGIT_PARENT_PID=<shell pid>` — always via `sidecar::spawn` → `launcher_command` (Windows `CREATE_NO_WINDOW`), the only GUI spawn path (initial boot AND every watchdog restart)
+1. Tauri spawns the Elixir release launcher (`bin/genesis_desktop start`) with env vars: `PORT=<shell-chosen dynamic port>`, `PHX_IP=127.0.0.1`, `PHX_SERVER=true`, `SECRET_KEY_BASE=<local>`, `RELEASE_DISTRIBUTION=none`, `EVOGIT_DESKTOP=1`, `EVOGIT_LIFETIME_PORT=<lifetime-pipe listener port>` — always via `sidecar::spawn` → `launcher_command` (Windows `CREATE_NO_WINDOW`), the only GUI spawn path (initial boot AND every watchdog restart)
 2. Tauri polls `http://localhost:<PORT>` until the backend responds (up to 30s)
 3. The WebView window opens, pointing to `http://localhost:<PORT>` (the window is created in Rust with `WebviewUrl::External`; the config `window` and `devUrl` were removed from tauri.conf.json)
 4. Closing the window hides it to the system tray (backend keeps running); the "Quit Genesis" tray menu item (below a separator) shows+focuses the window and emits `quit-requested` so the dashboard renders a web-page confirm dialog (backend-down fallback: immediate `kill_for_quit()` + exit — see "Quit Flow (Web Confirmation)")
