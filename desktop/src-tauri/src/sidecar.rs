@@ -4,7 +4,7 @@
 //! (`bin/genesis_desktop start`) as a child process, surfaces its output to the
 //! console, and polls its HTTP endpoint until it is ready to serve requests.
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -88,25 +88,78 @@ pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
 /// default; see `crate::resolve_backend_port`). The same port drives the
 /// WebView URL and the watchdog's readiness probe, so all three agree.
 ///
-/// `EVOGIT_PARENT_PID` carries this shell's own pid so the Elixir backend
-/// (`EvoGit.DesktopParentMonitor`) can detect parent death and self-exit —
-/// an orphaned backend (e.g. after an abnormal shell death) can no longer
-/// keep its port bound and block a relaunch.
-pub(crate) fn sidecar_env(port: u16) -> Vec<(String, String)> {
+/// `lifetime_port` is the port of the TCP "lifetime pipe" listener (see
+/// [`start_lifetime_listener`]): the Elixir backend
+/// (`EvoGit.DesktopParentMonitor`) connects to `127.0.0.1:<lifetime_port>`
+/// and blocks on recv; the shell never writes, so any close/error means the
+/// shell is dead and the backend stops itself — an orphaned backend (e.g.
+/// after an abnormal shell death) can no longer keep its port bound and
+/// block a relaunch. `None` means the lifetime pipe is unavailable (listener
+/// bind failed) and the variable is omitted so the backend's monitor stays
+/// off — emitting a bad port would make the backend treat a failed connect
+/// as shell-death and stop, which is wrong.
+pub(crate) fn sidecar_env(port: u16, lifetime_port: Option<u16>) -> Vec<(String, String)> {
     let phx_ip = std::env::var("EVOGIT_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
 
-    vec![
+    let mut env = vec![
         ("PORT".to_string(), port.to_string()),
         ("PHX_IP".to_string(), phx_ip),
         ("PHX_SERVER".to_string(), "true".to_string()),
         ("SECRET_KEY_BASE".to_string(), SECRET_KEY_BASE.to_string()),
         ("RELEASE_DISTRIBUTION".to_string(), "none".to_string()),
         ("EVOGIT_DESKTOP".to_string(), "1".to_string()),
-        (
-            "EVOGIT_PARENT_PID".to_string(),
-            std::process::id().to_string(),
-        ),
-    ]
+    ];
+
+    if let Some(lifetime_port) = lifetime_port {
+        env.push((
+            "EVOGIT_LIFETIME_PORT".to_string(),
+            lifetime_port.to_string(),
+        ));
+    }
+
+    env
+}
+
+/// Starts the TCP "lifetime pipe" listener used by the Elixir backend to
+/// detect shell death without polling.
+///
+/// Binds an ephemeral listener on `127.0.0.1` and returns its bound port. A
+/// **detached** accept thread runs for the rest of the process: it loops over
+/// `listener.incoming()` forever, spawning a per-stream hold thread per
+/// accepted connection (the backend connects once per spawn, so every
+/// watchdog respawn gets its own held connection). Each hold thread blocks on
+/// a read loop until the peer closes (EOF) or errors, then exits — dropping
+/// the stream ends the hold. The shell NEVER writes on the connection; it is
+/// a pure hold. The backend connects to `127.0.0.1:<port>` and blocks on
+/// recv; any close/error means the shell is dead and the backend stops
+/// itself.
+///
+/// Accept errors are logged and the loop continues. On bind failure the
+/// caller logs a warning and continues WITHOUT the lifetime pipe (non-fatal —
+/// the dynamic backend port already prevents the orphan crash; this is
+/// defense-in-depth).
+pub(crate) fn start_lifetime_listener() -> std::io::Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    // Per-stream hold thread: block reading until EOF or
+                    // error, then exit (dropping the stream ends the hold).
+                    thread::spawn(move || {
+                        let mut stream = stream;
+                        let mut buf = [0u8; 1024];
+                        while stream.read(&mut buf).is_ok_and(|n| n > 0) {}
+                    });
+                }
+                Err(err) => eprintln!("[desktop] lifetime listener accept error: {err}"),
+            }
+        }
+    });
+
+    Ok(port)
 }
 
 /// Resolves the path to the mix release launcher script bundled as a Tauri
