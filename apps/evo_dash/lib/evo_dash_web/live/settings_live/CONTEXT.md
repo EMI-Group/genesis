@@ -39,6 +39,12 @@ Pure data-transformation functions for model profile CRUD operations on the `[[l
 
 All functions are pure — no I/O, no socket, no process calls.
 
+### `EvoDashWeb.SettingsLive.ModelProfileEvents` (`model_profile_events.ex`)
+
+Event handlers for the model-profiles editor (delegated from `settings_live.ex`). `save_model_profile/2` maps `parse_model_profile_params/2`'s four peak error strings to gettext flashes ("Peak concurrency must be a positive integer.", "Peak hours must use HH:MM 24-hour format.", "Peak hour window start and end must differ.", "Peak hour windows must not overlap." — zh_CN comments anchor the release-time translator).
+
+**Peak-hours row editor (in-memory only — nothing persisted until the enclosing save form submits)**: `add_peak_hours_row/2` appends `%{start: "", end: ""}` to the editing profile's `peak_hours` (creating the key if absent); `remove_peak_hours_row/2` parses the `phx-value-index` via `Integer.parse` (malformed → -1, out-of-bounds → no-op) and `List.delete_at/2`; removing the LAST row deletes the `peak_hours` key entirely (absent = disabled). Both target the profile whose id == `socket.assigns.editing_profile_id` (via `ModelProfileHelpers.profile_id/1`, atom-or-string key safe), read existing rows atom-or-string defensively, write atom keys, keep `editing_profile_id` set, and no-op (`{:noreply, socket}`) when no editing profile matches. **Wiring note**: `settings_live.ex` must route `"add_peak_hours_row"` / `"remove_peak_hours_row"` phx events to these functions (guarded on `editing_profile_id` non-nil).
+
 ### `EvoDashWeb.SettingsLive.ConfigIO` (`config_io.ex`)
 
 Configuration I/O bridge between the Settings LiveView and the core runtime.
