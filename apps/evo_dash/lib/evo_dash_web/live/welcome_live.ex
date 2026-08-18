@@ -675,6 +675,26 @@ defmodule EvoDashWeb.WelcomeLive do
     {:noreply, assign(socket, :llm_test_status, status)}
   end
 
+  @impl true
+  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
+    # Node-identity task broadcast — node-filtered (foreign-node events are
+    # dropped BEFORE the debounce is scheduled) and debounced (300ms trailing
+    # edge) inside NodeAware.handle_task_info/2, which already returns
+    # {:noreply, socket}.
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+  end
+
+  @impl true
+  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
+    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
+  end
+
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired — reload the sidebar's running/pending tasks.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
+  end
+
   # Saves a newly-typed API key before running the connection test, so the
   # test exercises the key the user just entered (`EvoGit.SystemCheck.llm_test`
   # reads credentials from the saved credentials file). Returns `{:ok, socket}`
