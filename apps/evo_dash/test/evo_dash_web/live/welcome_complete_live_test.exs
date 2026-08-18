@@ -106,4 +106,33 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
                EvoGit.Config.VersionState.current_version()
     end
   end
+
+  describe "task broadcast handling" do
+    # WelcomeCompleteLive subscribes to the "tasks" PubSub topic via
+    # EvoDashWeb.LiveHooks.NodeAware.on_mount/4 (registered by `use EvoDashWeb,
+    # :live_view`). It previously had NO task-broadcast handle_info clauses and
+    # crashed with FunctionClauseError on any {:task_updated, _, status, node}
+    # / {:task_deleted, _, node} message; it now forwards to
+    # NodeAware.handle_task_info/2 and handles the :node_aware_reload_tasks
+    # self-message. This test guards the regression.
+
+    test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/welcome/complete")
+
+      # The broadcast shape observed crashing in production (the :finalizing
+      # status transition).
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, "test-finalizing", :finalizing, node()}
+      )
+
+      # render/1 flushes pending messages synchronously; a crash would propagate here.
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Write high-level prompts, not code"
+    end
+  end
 end

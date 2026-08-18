@@ -808,6 +808,126 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "task broadcast handling" do
+    # Every LiveView subscribes to the "tasks" PubSub topic via
+    # EvoDashWeb.LiveHooks.NodeAware.on_mount/4 (registered by `use EvoDashWeb,
+    # :live_view`). AgentsLive forwards the node-identity task broadcasts to
+    # NodeAware.handle_task_info/2 — node-filtered (only the viewed node's
+    # events schedule a reload) and debounced (300ms trailing edge via
+    # :node_aware_reload_tasks) — plus the :node_aware_reload_tasks
+    # self-message. These tests guard the handle_info clauses against the
+    # FunctionClauseError crash class that previously slipped through
+    # (AgentsLive had NO task-broadcast clauses and crashed on any
+    # {:task_updated, _, status, node} / {:task_deleted, _, node} message).
+
+    test "matching-node {:task_updated, _, :finalizing, node()} does not crash and schedules a debounced reload",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # The broadcast shape observed crashing in production (the :finalizing
+      # status transition).
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, "test-finalizing", :finalizing, node()}
+      )
+
+      # Phase 1: the event is processed and the 300ms debounce is scheduled.
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
+
+      # Phase 2: the debounce fires and reload_tasks clears the flag.
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+      # render/1 flushes pending messages synchronously; a crash would propagate here.
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Agent Tree"
+    end
+
+    test "matching-node {:task_deleted, _, node()} does not crash and schedules a debounced reload",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, "test-deleted", node()})
+
+      # Phase 1: the event is processed and the 300ms debounce is scheduled.
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
+
+      # Phase 2: the debounce fires and reload_tasks clears the flag.
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Agent Tree"
+    end
+
+    test "foreign-node {:task_updated, _, :finalizing, remote} is ignored (no crash, no reload)",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Event from a DIFFERENT BEAM node: the node filter must drop it BEFORE
+      # the debounce is scheduled.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, "test-finalizing", :finalizing, :remote@elsewhere}
+      )
+
+      # Sample across the 300ms debounce window (10ms cadence): the
+      # reload-pending flag must never become true.
+      deadline = System.monotonic_time(:millisecond) + 400
+
+      check_no_reload = fn check_no_reload ->
+        assert assigns(view)[:tasks_reload_pending] == false
+
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(10)
+          check_no_reload.(check_no_reload)
+        end
+      end
+
+      check_no_reload.(check_no_reload)
+
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Agent Tree"
+    end
+
+    test "review-only {:task_updated, _, nil, node()} does not crash and schedules a debounced reload",
+         %{
+           conn: conn
+         } do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Review-only mutations broadcast status nil — the clause must accept it.
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "tasks",
+        {:task_updated, "test-review", nil, node()}
+      )
+
+      # Phase 1: the event is processed and the 300ms debounce is scheduled.
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
+
+      # Phase 2: the debounce fires and reload_tasks clears the flag.
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+      html = render(view)
+      assert is_binary(html)
+      assert html =~ "Agent Tree"
+    end
+  end
+
   # ── Private helpers ─────────────────────────────────────────────
 
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
