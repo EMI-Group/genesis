@@ -32,10 +32,18 @@ Pure data-transformation functions for model profile CRUD operations on the `[[l
 | `update_model_profile/3` | Updates an existing profile's fields. |
 | `replace_model_profiles/2` | Replaces all profiles in a category. |
 | `mirror_model_profiles_by_provider/2` | Copies profiles from one provider to another. |
-| `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). Also parses the optional peak fields (`peak_concurrency`, `peak_hours`) with UI-side UX validation — invalid input surfaces as one of `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`, `"peak_hours_overlap"` (see "Peak/Off-Peak Hour Concurrency (model profiles)" below). |
+| `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). Also parses the OPTIONAL peak/off-peak fields: `peak_concurrency` (string number) and `peak_hours` (Phoenix-nested map keyed by string index, list, or absent). Both keys stay ABSENT from the profile when disabled/empty so TOML omits them (never `nil`/`[]`). UI-side UX validation surfaces one of `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`, `"peak_hours_overlap"` (strict overlap `startA < endB && startB < endA` in minutes-since-midnight; touching boundaries allowed). Error precedence: spec → provider_options → peak. See "Peak/Off-Peak Hour Concurrency (model profiles)" below. |
+| `parse_peak_fields/1` | Public — parses `params["peak_concurrency"]` + `params["peak_hours"]` into `{:ok, %{}}` (disabled), `{:ok, %{peak_concurrency: pos_int, peak_hours: [%{start: "HH:MM", end: "HH:MM"}]}}`, or `{:error, reason}`. |
+| `valid_clock_time?/1`, `clock_to_minutes/1` | Public pure helpers: `valid_clock_time?` matches strict 24h `HH:MM` (regex `\A(?:[01]\d|2[0-3]):[0-5]\d\z` — `"9:00"`, `"24:00"`, `"12:60"`, `"12:0"` all false); `clock_to_minutes` → minutes-since-midnight (`nil` for non-conforming strings). |
 | `model_profile_collision?/3` | Checks for duplicate provider+model combos. |
 
 All functions are pure — no I/O, no socket, no process calls.
+
+### `EvoDashWeb.SettingsLive.ModelProfileEvents` (`model_profile_events.ex`)
+
+Event handlers for the model-profiles editor (delegated from `settings_live.ex`). `save_model_profile/2` maps `parse_model_profile_params/2`'s four peak error strings to gettext flashes ("Peak concurrency must be a positive integer.", "Peak hours must use HH:MM 24-hour format.", "Peak hour window start and end must differ.", "Peak hour windows must not overlap." — zh_CN comments anchor the release-time translator).
+
+**Peak-hours row editor (in-memory only — nothing persisted until the enclosing save form submits)**: `add_peak_hours_row/2` appends `%{start: "", end: ""}` to the editing profile's `peak_hours` (creating the key if absent); `remove_peak_hours_row/2` parses the `phx-value-index` via `Integer.parse` (malformed → -1, out-of-bounds → no-op) and `List.delete_at/2`; removing the LAST row deletes the `peak_hours` key entirely (absent = disabled). Both target the profile whose id == `socket.assigns.editing_profile_id` (via `ModelProfileHelpers.profile_id/1`, atom-or-string key safe), read existing rows atom-or-string defensively, write atom keys, keep `editing_profile_id` set, and no-op (`{:noreply, socket}`) when no editing profile matches. **Wiring note**: `settings_live.ex` must route `"add_peak_hours_row"` / `"remove_peak_hours_row"` phx events to these functions (guarded on `editing_profile_id` non-nil).
 
 ### `EvoDashWeb.SettingsLive.ConfigIO` (`config_io.ex`)
 

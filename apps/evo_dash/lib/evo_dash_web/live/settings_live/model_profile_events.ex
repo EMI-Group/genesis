@@ -252,6 +252,25 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
           {:error, "provider_options_must_be_object"} ->
             {:noreply,
              put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
+
+          {:error, "peak_concurrency_invalid"} ->
+            # 峰值并发必须为正整数
+            {:noreply,
+             put_flash(socket, :error, gettext("Peak concurrency must be a positive integer."))}
+
+          {:error, "peak_hours_invalid_time"} ->
+            # 峰值时段必须使用 HH:MM 24 小时制格式（如 09:00、18:30），且开始与结束时间必须都填写
+            {:noreply,
+             put_flash(socket, :error, gettext("Peak hours must use HH:MM 24-hour format."))}
+
+          {:error, "peak_hours_start_equals_end"} ->
+            # 峰值时段窗口的开始与结束时间不能相同
+            {:noreply,
+             put_flash(socket, :error, gettext("Peak hour window start and end must differ."))}
+
+          {:error, "peak_hours_overlap"} ->
+            # 峰值时段窗口之间不能重叠（首尾相接的相邻时段是允许的）
+            {:noreply, put_flash(socket, :error, gettext("Peak hour windows must not overlap."))}
         end
     end
   end
@@ -284,6 +303,98 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       socket,
       gettext("Model profile moved.")
     )
+  end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Peak-hours row editor (in-memory only, mirroring the add_list_entry /
+  # remove_list_entry pattern in settings_live.ex — nothing is persisted until
+  # the enclosing save_model_profile form is submitted)
+  # ───────────────────────────────────────────────────────────────────────────
+
+  def add_peak_hours_row(socket, _params) do
+    file_config = socket.assigns.file_config
+    editing_id = socket.assigns.editing_profile_id
+
+    case find_editing_profile(file_config, editing_id) do
+      nil ->
+        {:noreply, socket}
+
+      profile ->
+        peak_hours = Map.get(profile, :peak_hours) || Map.get(profile, "peak_hours") || []
+        peak_hours = if is_list(peak_hours), do: peak_hours, else: []
+        peak_hours = peak_hours ++ [%{start: "", end: ""}]
+
+        file_config =
+          update_editing_profile(file_config, editing_id, fn p ->
+            p
+            |> Map.delete("peak_hours")
+            |> Map.put(:peak_hours, peak_hours)
+          end)
+
+        {:noreply, assign(socket, :file_config, file_config)}
+    end
+  end
+
+  def remove_peak_hours_row(socket, %{"index" => index_str}) do
+    file_config = socket.assigns.file_config
+    editing_id = socket.assigns.editing_profile_id
+
+    # phx-value-* arrives as a string; Integer.parse (not a bare
+    # String.to_integer) so a malformed index can never crash the LiveView.
+    index =
+      case Integer.parse(index_str) do
+        {int, ""} -> int
+        _ -> -1
+      end
+
+    case find_editing_profile(file_config, editing_id) do
+      nil ->
+        {:noreply, socket}
+
+      profile ->
+        peak_hours = Map.get(profile, :peak_hours) || Map.get(profile, "peak_hours") || []
+        peak_hours = if is_list(peak_hours), do: peak_hours, else: []
+
+        if index >= 0 and index < length(peak_hours) do
+          new_hours = List.delete_at(peak_hours, index)
+
+          file_config =
+            update_editing_profile(file_config, editing_id, fn p ->
+              p =
+                p
+                |> Map.delete(:peak_hours)
+                |> Map.delete("peak_hours")
+
+              # Empty list → remove the key entirely (absent = disabled, per
+              # the serialization contract).
+              if new_hours == [], do: p, else: Map.put(p, :peak_hours, new_hours)
+            end)
+
+          {:noreply, assign(socket, :file_config, file_config)}
+        else
+          {:noreply, socket}
+        end
+    end
+  end
+
+  # Finds the profile currently being edited by id (atom-or-string key safe),
+  # or nil when none.
+  defp find_editing_profile(file_config, editing_id) do
+    models = get_in(file_config, [:llm, :models]) || []
+    Enum.find(models, fn p -> ModelProfileHelpers.profile_id(p) == editing_id end)
+  end
+
+  # Applies `fun` to the profile whose id matches `editing_id`, returning the
+  # updated file_config (unchanged when no profile matches).
+  defp update_editing_profile(file_config, editing_id, fun) do
+    models = get_in(file_config, [:llm, :models]) || []
+
+    new_models =
+      Enum.map(models, fn p ->
+        if ModelProfileHelpers.profile_id(p) == editing_id, do: fun.(p), else: p
+      end)
+
+    ModelProfileHelpers.put_in_model_profiles(file_config, new_models)
   end
 
   # ───────────────────────────────────────────────────────────────────────────
