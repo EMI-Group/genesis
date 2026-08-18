@@ -411,10 +411,10 @@ defmodule EvoGit.AgentScheduler.Store do
     {:ok, agent_state} = get_agent_state(agent_id)
     updated_state = Kernel.struct!(agent_state, fields)
 
-    # Write through put_agent_state which does its own enriched broadcast.
-    # We also emit the fields kwlist as a focused delta (heavy fields
-    # stripped, `message_count` added when a context is updated) — subscribers
-    # can use whichever granularity they prefer.
+    # Direct ETS write (no put_agent_state round-trip) plus a focused delta
+    # broadcast — heavy fields stripped (`:context`), `message_count` added
+    # when a context is updated. Subscribers can use whichever granularity
+    # they prefer.
     :ets.insert(@agent_table, {agent_id, updated_state})
 
     broadcast_fields =
