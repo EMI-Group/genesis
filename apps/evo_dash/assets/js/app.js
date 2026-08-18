@@ -706,23 +706,43 @@ const DesktopQuit = {
     this._quitPending = false;   // a quit awaits delivery / the dialog is open
     this._retryTimer = null;
     this._unlisten = null;
-    this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
-      if (this._quitPending) return;   // dedup: dialog open or delivery in flight
-      this._quitPending = true;
-      // The event reached a live page — disarm the shell's guaranteed-exit
-      // fallback so the user gets to decide.
-      this._notifyDashboardReady();
-      this._pushQuitRequested();
-    });
-    this._unlistenPromise.then((unlisten) => {
-      // If the hook was destroyed before the promise resolved, unlisten right
-      // away; otherwise keep the unlisten for destroyed().
-      if (this._unlistenPromise) {
-        this._unlisten = unlisten;
-      } else {
-        unlisten();
-      }
-    });
+    // Defensive guard: some shells/builds expose __TAURI__ without the event
+    // module (capability/ACL restrictions). Without this check the call below
+    // would throw a TypeError — log loudly instead of failing silently, since
+    // a missing listener means the tray Quit confirm dialog can never appear.
+    if (!(window.__TAURI__ && window.__TAURI__.event && typeof window.__TAURI__.event.listen === "function")) {
+      console.error("[desktop] quit-requested listener unavailable: window.__TAURI__.event.listen missing");
+      this._unlistenPromise = null;
+    } else {
+      this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
+        if (this._quitPending) return;   // dedup: dialog open or delivery in flight
+        this._quitPending = true;
+        // The event reached a live page — disarm the shell's guaranteed-exit
+        // fallback so the user gets to decide.
+        this._notifyDashboardReady();
+        this._pushQuitRequested();
+      });
+      this._unlistenPromise.then(
+        (unlisten) => {
+          // If the hook was destroyed before the promise resolved, unlisten right
+          // away; otherwise keep the unlisten for destroyed().
+          if (this._unlistenPromise) {
+            this._unlisten = unlisten;
+          } else {
+            unlisten();
+          }
+        },
+        // Registration rejection (ACL/permission, IPC error): historically this
+        // was swallowed silently — the tray Quit dialog never appeared and the
+        // logs gave no clue why. Log it loudly, including whether __TAURI__ is
+        // present at all, so the failure is self-explanatory. No retry/loop:
+        // a rejected listen call would just reject again.
+        (err) => {
+          console.error("[desktop] failed to register quit-requested listener:", err);
+          console.error("[desktop] window.__TAURI__ presence at registration failure:", window.__TAURI__);
+        }
+      );
+    }
     // Server→client signal that the dialog was dismissed — re-arms the latch
     // so a FUTURE tray Quit is honored. Same phx: window-event pattern as the
     // DirectoryPicker hook's "picker_result:..." (see above).
