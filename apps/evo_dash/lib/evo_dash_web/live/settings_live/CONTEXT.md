@@ -32,7 +32,9 @@ Pure data-transformation functions for model profile CRUD operations on the `[[l
 | `update_model_profile/3` | Updates an existing profile's fields. |
 | `replace_model_profiles/2` | Replaces all profiles in a category. |
 | `mirror_model_profiles_by_provider/2` | Copies profiles from one provider to another. |
-| `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). |
+| `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). Also parses the OPTIONAL peak/off-peak fields: `peak_concurrency` (string number) and `peak_hours` (Phoenix-nested map keyed by string index, list, or absent). Both keys stay ABSENT from the profile when disabled/empty so TOML omits them (never `nil`/`[]`). Validation error strings (UI-side UX validation only — evo_git schema owns authoritative validation): `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`, `"peak_hours_overlap"` (strict overlap `startA < endB && startB < endA` in minutes-since-midnight; touching boundaries allowed). Error precedence: spec → provider_options → peak. |
+| `parse_peak_fields/1` | Public — parses `params["peak_concurrency"]` + `params["peak_hours"]` into `{:ok, %{}}` (disabled), `{:ok, %{peak_concurrency: pos_int, peak_hours: [%{start: "HH:MM", end: "HH:MM"}]}}`, or `{:error, reason}`. |
+| `valid_clock_time?/1`, `clock_to_minutes/1` | Public pure helpers: `valid_clock_time?` matches strict 24h `HH:MM` (regex `\A(?:[01]\d|2[0-3]):[0-5]\d\z` — `"9:00"`, `"24:00"`, `"12:60"`, `"12:0"` all false); `clock_to_minutes` → minutes-since-midnight (`nil` for non-conforming strings). |
 | `model_profile_collision?/3` | Checks for duplicate provider+model combos. |
 
 All functions are pure — no I/O, no socket, no process calls.
