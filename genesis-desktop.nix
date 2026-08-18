@@ -112,6 +112,18 @@ let
       mkdir -p resources
       ln -s ${genesisRelease} resources/genesis-backend
     '';
+
+    # tauri-build's copy_resources copies resources/genesis-backend (a symlink
+    # to the immutable Nix store release, files 0444) into the cargo target dir
+    # via fs::copy, which preserves mode bits. checkPhase's `cargo test` re-runs
+    # the build script, which re-copies and fails with EACCES on the 0444 dests
+    # (build.rs panics: "Permission denied (os error 13)"). Make the copies
+    # writable after buildPhase so the build-script re-run succeeds.
+    postBuild = ''
+      chmod -R u+w target/x86_64-unknown-linux-gnu/release/resources
+      # Belt and suspenders: also cover any non-tuple-target layout.
+      chmod -R u+w target/release/resources 2>/dev/null || true
+    '';
   };
 in
 # ── Final package: binary + release in the expected layout ───────────
