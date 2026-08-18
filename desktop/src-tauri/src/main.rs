@@ -348,11 +348,14 @@ fn resolve_sidecar_path() -> Result<std::path::PathBuf, String> {
 }
 
 /// Build the environment-variable list for the sidecar, mirroring
-/// [`sidecar::sidecar_env`].
-fn headless_sidecar_env(port: u16) -> Vec<(String, String)> {
+/// [`sidecar::sidecar_env`]. `lifetime_port` (see
+/// [`sidecar::start_lifetime_listener`]) is emitted as `EVOGIT_LIFETIME_PORT`
+/// only when present; `None` (listener bind failure) omits the variable so
+/// the backend's monitor stays off.
+fn headless_sidecar_env(port: u16, lifetime_port: Option<u16>) -> Vec<(String, String)> {
     let phx_ip = std::env::var("EVOGIT_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
 
-    vec![
+    let mut env = vec![
         ("PORT".to_string(), port.to_string()),
         ("PHX_IP".to_string(), phx_ip),
         ("PHX_SERVER".to_string(), "true".to_string()),
@@ -362,11 +365,16 @@ fn headless_sidecar_env(port: u16) -> Vec<(String, String)> {
         ),
         ("RELEASE_DISTRIBUTION".to_string(), "none".to_string()),
         ("EVOGIT_DESKTOP".to_string(), "1".to_string()),
-        (
-            "EVOGIT_PARENT_PID".to_string(),
-            std::process::id().to_string(),
-        ),
-    ]
+    ];
+
+    if let Some(lifetime_port) = lifetime_port {
+        env.push((
+            "EVOGIT_LIFETIME_PORT".to_string(),
+            lifetime_port.to_string(),
+        ));
+    }
+
+    env
 }
 
 /// Run the desktop app as a headless HTTP server (no window, no tray).
@@ -389,9 +397,20 @@ fn run_headless() {
         std::process::exit(1);
     });
 
+    // Start the TCP lifetime pipe: the backend connects to this port and
+    // blocks; any close = shell dead → backend self-stops. Non-fatal on
+    // failure (the dynamic backend port already prevents the orphan crash).
+    let lifetime_port = match sidecar::start_lifetime_listener() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!("[desktop] failed to start lifetime listener: {e}");
+            None
+        }
+    };
+
     let mut child = sidecar::launcher_command(&sidecar_path)
         .arg("start")
-        .envs(headless_sidecar_env(port))
+        .envs(headless_sidecar_env(port, lifetime_port))
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -475,7 +494,22 @@ fn run_gui() {
             // 1. Resolve the launcher path once and build the backend
             //    environment. A broken install (missing launcher) stays fatal.
             let launcher = sidecar::launcher_path(app)?;
-            let env = sidecar::sidecar_env(port);
+
+            // Start the TCP lifetime pipe: the backend connects to this port
+            // and blocks; any close = shell dead → backend self-stops.
+            // Non-fatal on failure (defense-in-depth — the dynamic backend
+            // port already prevents the orphan crash). The env is built ONCE
+            // and reused by the watchdog for all respawns, so the lifetime
+            // port stays constant for the shell's lifetime; the accept thread
+            // handles each respawn's new connection.
+            let lifetime_port = match sidecar::start_lifetime_listener() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    eprintln!("[desktop] failed to start lifetime listener: {e}");
+                    None
+                }
+            };
+            let env = sidecar::sidecar_env(port, lifetime_port);
 
             // 2. Create the backend manager and spawn the initial child. A
             //    spawn failure is NOT fatal: the watchdog treats the missing
@@ -662,6 +696,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+    use std::time::Duration;
 
     /// `pick_free_port` returns a port > 0 that can be bound again.
     #[test]
@@ -710,26 +746,106 @@ mod tests {
         assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_ok());
     }
 
-    /// The GUI sidecar env carries the resolved PORT and the shell's own pid.
+    /// The GUI sidecar env carries the resolved PORT and the lifetime pipe
+    /// port, and never carries the parent pid.
     #[test]
-    fn sidecar_env_contains_port_and_parent_pid() {
-        let env: std::collections::HashMap<_, _> = sidecar::sidecar_env(4242).into_iter().collect();
+    fn sidecar_env_contains_port_and_lifetime_port() {
+        let env: std::collections::HashMap<_, _> =
+            sidecar::sidecar_env(4242, Some(9999)).into_iter().collect();
         assert_eq!(env.get("PORT").map(String::as_str), Some("4242"));
-        let parent_pid = env
-            .get("EVOGIT_PARENT_PID")
-            .expect("EVOGIT_PARENT_PID must be set");
-        assert!(!parent_pid.is_empty());
-        assert_eq!(parent_pid.parse::<u32>(), Ok(std::process::id()));
+        assert_eq!(
+            env.get("EVOGIT_LIFETIME_PORT").map(String::as_str),
+            Some("9999")
+        );
+        assert!(
+            !env.contains_key("EVOGIT_PARENT_PID"),
+            "EVOGIT_PARENT_PID must be absent"
+        );
     }
 
-    /// The headless sidecar env carries the resolved PORT and the shell's pid.
+    /// With no lifetime pipe available (listener bind failure), the variable
+    /// is omitted entirely — the backend's monitor stays off.
     #[test]
-    fn headless_sidecar_env_contains_port_and_parent_pid() {
-        let env: std::collections::HashMap<_, _> = headless_sidecar_env(8080).into_iter().collect();
+    fn sidecar_env_omits_lifetime_port_when_unavailable() {
+        let env: std::collections::HashMap<_, _> =
+            sidecar::sidecar_env(4242, None).into_iter().collect();
+        assert_eq!(env.get("PORT").map(String::as_str), Some("4242"));
+        assert!(
+            !env.contains_key("EVOGIT_LIFETIME_PORT"),
+            "EVOGIT_LIFETIME_PORT must be absent when None"
+        );
+        assert!(!env.contains_key("EVOGIT_PARENT_PID"));
+    }
+
+    /// The headless sidecar env carries the resolved PORT and the lifetime
+    /// pipe port, and never carries the parent pid.
+    #[test]
+    fn headless_sidecar_env_contains_port_and_lifetime_port() {
+        let env: std::collections::HashMap<_, _> =
+            headless_sidecar_env(8080, Some(7777)).into_iter().collect();
         assert_eq!(env.get("PORT").map(String::as_str), Some("8080"));
-        let parent_pid = env
-            .get("EVOGIT_PARENT_PID")
-            .expect("EVOGIT_PARENT_PID must be set");
-        assert!(!parent_pid.is_empty());
+        assert_eq!(
+            env.get("EVOGIT_LIFETIME_PORT").map(String::as_str),
+            Some("7777")
+        );
+        assert!(
+            !env.contains_key("EVOGIT_PARENT_PID"),
+            "EVOGIT_PARENT_PID must be absent"
+        );
+    }
+
+    /// `start_lifetime_listener` returns a connectable port, and a connected
+    /// client stays held open (the shell never writes): a read on the client
+    /// must block (WouldBlock / TimedOut), NOT hit EOF (Ok(0)) and NOT get a
+    /// reset/abort.
+    #[test]
+    fn start_lifetime_listener_holds_client_connection_open() {
+        let port = sidecar::start_lifetime_listener().expect("lifetime listener must bind");
+        assert!(port > 0);
+
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port))
+            .expect("client must connect to the lifetime listener");
+        client
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("read timeout must be settable");
+
+        let mut buf = [0u8; 16];
+        match client.read(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            other => panic!("expected a blocked read, got {other:?}"),
+        }
+    }
+
+    /// After the first client disconnects, a SECOND client still gets held —
+    /// the accept loop keeps accepting new connections (the watchdog-respawn
+    /// property: every backend respawn reconnects and is held).
+    #[test]
+    fn lifetime_listener_accepts_second_client_after_first_disconnects() {
+        let port = sidecar::start_lifetime_listener().expect("lifetime listener must bind");
+
+        let mut first =
+            std::net::TcpStream::connect(("127.0.0.1", port)).expect("first client must connect");
+        first
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("read timeout must be settable");
+        let mut buf = [0u8; 16];
+        match first.read(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            other => panic!("expected a blocked read on first client, got {other:?}"),
+        }
+        drop(first);
+
+        let mut second = std::net::TcpStream::connect(("127.0.0.1", port))
+            .expect("second client must connect after the first dropped");
+        second
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("read timeout must be settable");
+        match second.read(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            other => panic!("expected a blocked read on second client, got {other:?}"),
+        }
     }
 }
