@@ -156,8 +156,11 @@ if config_env() == :prod and
     case System.get_env("PORT") do
       nil ->
         if Application.get_env(:evo_dash, :desktop_release, false) do
-          # Desktop release: PORT env var not forwarded by the launcher — use
-          # the fixed desktop port (must match Tauri WebView's localhost:9999).
+          # Safety-net fallback only: the Tauri shell always picks a free
+          # ephemeral port at startup and forwards it as PORT (the WebView
+          # follows the same port), so this branch only runs for manually
+          # launched desktop releases without a sidecar. The fixed value is
+          # arbitrary and never needs to match the WebView.
           9999
         else
           EvoGit.Config.resolve([:server, :listen_port])

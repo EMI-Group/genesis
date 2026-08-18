@@ -6,22 +6,10 @@
   "identifier": "com.genesis.desktop",
   "build": {
     "beforeDevCommand": "",
-    "devUrl": "http://localhost:9999",
     "beforeBuildCommand": ""
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "main",
-        "title": "Genesis Dashboard",
-        "url": "http://localhost:9999",
-        "width": 1280,
-        "height": 800,
-        "resizable": true,
-        "center": true
-      }
-    ],
     "security": {
       "csp": null
     }

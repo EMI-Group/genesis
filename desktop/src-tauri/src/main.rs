@@ -17,8 +17,6 @@ mod sidecar_path;
 
 use backend_watchdog::BackendManager;
 
-/// Default port the Phoenix dashboard backend listens on.
-const DEFAULT_PORT: u16 = 9999;
 /// How long (in seconds) to wait for the backend to become ready.
 const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
 
@@ -243,24 +241,59 @@ fn begin_update(manager: tauri::State<'_, BackendHandle>) -> serde_json::Value {
     json!({"ok": true})
 }
 
-/// Returns the port the Phoenix backend listens on.
+/// Asks the OS for a currently-free ephemeral port on 127.0.0.1.
 ///
-/// Reads the `PORT` environment variable if set, otherwise defaults to
-/// [`DEFAULT_PORT`] (9999). The WebView always connects via `localhost` since
-/// it runs on the same machine.
-fn backend_port() -> u16 {
-    std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(DEFAULT_PORT)
+/// Binds `127.0.0.1:0` (the OS assigns a free ephemeral port), reads the
+/// assigned port, and drops the listener again. There is a tiny race between
+/// the drop and the backend's own bind — the watchdog's restart cycle absorbs
+/// a failed bind — but on a desktop the window is negligible. A failure to
+/// bind ANY loopback ephemeral port is a system-level failure from which the
+/// backend could not recover either, so it surfaces loudly.
+fn pick_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr().map(|addr| addr.port()))
+        .expect("failed to pick a free port: cannot bind an ephemeral port on 127.0.0.1")
 }
 
-/// Builds the backend URL the WebView will connect to.
+/// True when nothing currently listens on `port` on 127.0.0.1.
 ///
-/// Always uses `localhost` regardless of the bind address, because the
-/// WebView is local.
-fn backend_url() -> String {
-    format!("http://localhost:{}", backend_port())
+/// A bind probe — if the bind succeeds the port is free, and the listener is
+/// dropped immediately.
+fn port_is_bindable(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+}
+
+/// Resolves the backend port from a candidate `PORT` environment value.
+///
+/// Pure logic (no environment access) so it is directly testable:
+/// - `None` or an unparseable value → a fresh free ephemeral port;
+/// - a parseable value whose port is currently free → that exact port;
+/// - a parseable value whose port is OCCUPIED → a warning and a fresh free
+///   port. This is the anti-crash guarantee: even a stale `PORT=9999` left
+///   over from a zombie backend can no longer wedge the app.
+fn resolve_backend_port_from(env_port: Option<&str>) -> u16 {
+    match env_port.and_then(|p| p.parse::<u16>().ok()) {
+        // PORT=0 is not a real port ("OS-assigned ephemeral") — it would
+        // break the WebView URL, so treat it like an unset value.
+        Some(port) if port > 0 && port_is_bindable(port) => port,
+        Some(port) if port > 0 => {
+            eprintln!(
+                "[desktop] PORT={port} is already in use — picking a free ephemeral port instead"
+            );
+            pick_free_port()
+        }
+        _ => pick_free_port(),
+    }
+}
+
+/// Resolves the port the Phoenix backend will listen on.
+///
+/// The `PORT` environment variable is honored when it is set, parses as a
+/// port, and is currently free; otherwise a random free ephemeral port is
+/// picked at startup (never a fixed default). The WebView always connects via
+/// `localhost` since it runs on the same machine, using the same port.
+fn resolve_backend_port() -> u16 {
+    resolve_backend_port_from(std::env::var("PORT").ok().as_deref())
 }
 
 // ---------------------------------------------------------------------------
@@ -315,13 +348,15 @@ fn resolve_sidecar_path() -> Result<std::path::PathBuf, String> {
 }
 
 /// Build the environment-variable list for the sidecar, mirroring
-/// [`sidecar::sidecar_env`].
-fn headless_sidecar_env() -> Vec<(String, String)> {
+/// [`sidecar::sidecar_env`]. `lifetime_port` (see
+/// [`sidecar::start_lifetime_listener`]) is emitted as `EVOGIT_LIFETIME_PORT`
+/// only when present; `None` (listener bind failure) omits the variable so
+/// the backend's monitor stays off.
+fn headless_sidecar_env(port: u16, lifetime_port: Option<u16>) -> Vec<(String, String)> {
     let phx_ip = std::env::var("EVOGIT_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("PORT").unwrap_or_else(|_| DEFAULT_PORT.to_string());
 
-    vec![
-        ("PORT".to_string(), port),
+    let mut env = vec![
+        ("PORT".to_string(), port.to_string()),
         ("PHX_IP".to_string(), phx_ip),
         ("PHX_SERVER".to_string(), "true".to_string()),
         (
@@ -330,7 +365,16 @@ fn headless_sidecar_env() -> Vec<(String, String)> {
         ),
         ("RELEASE_DISTRIBUTION".to_string(), "none".to_string()),
         ("EVOGIT_DESKTOP".to_string(), "1".to_string()),
-    ]
+    ];
+
+    if let Some(lifetime_port) = lifetime_port {
+        env.push((
+            "EVOGIT_LIFETIME_PORT".to_string(),
+            lifetime_port.to_string(),
+        ));
+    }
+
+    env
 }
 
 /// Run the desktop app as a headless HTTP server (no window, no tray).
@@ -343,14 +387,30 @@ fn run_headless() {
     #[cfg(unix)]
     signal_handler::setup();
 
+    // Resolve the backend port once; the same port drives the sidecar env and
+    // the readiness probe. With the dynamic default, two headless instances
+    // can no longer collide on a fixed port.
+    let port = resolve_backend_port();
+
     let sidecar_path = resolve_sidecar_path().unwrap_or_else(|msg| {
         eprintln!("[desktop] {msg}");
         std::process::exit(1);
     });
 
+    // Start the TCP lifetime pipe: the backend connects to this port and
+    // blocks; any close = shell dead → backend self-stops. Non-fatal on
+    // failure (the dynamic backend port already prevents the orphan crash).
+    let lifetime_port = match sidecar::start_lifetime_listener() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!("[desktop] failed to start lifetime listener: {e}");
+            None
+        }
+    };
+
     let mut child = sidecar::launcher_command(&sidecar_path)
         .arg("start")
-        .envs(headless_sidecar_env())
+        .envs(headless_sidecar_env(port, lifetime_port))
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -365,7 +425,7 @@ fn run_headless() {
     );
 
     // Wait for the backend to become ready (reuses the existing poll logic).
-    let url = format!("http://localhost:{}", backend_port());
+    let url = format!("http://localhost:{port}");
     sidecar::wait_for_ready(&url, BACKEND_READY_TIMEOUT_SECS);
 
     println!("[desktop] running headless — press Ctrl+C to stop");
@@ -400,6 +460,13 @@ fn run_headless() {
 // ---------------------------------------------------------------------------
 
 fn run_gui() {
+    // Resolve the backend port ONCE at the top of the GUI flow: the same port
+    // drives the sidecar env, the watchdog, the initial readiness poll, and
+    // the WebView URL (the config window entry was removed — the window is
+    // now created in the setup closure with this dynamic URL).
+    let port = resolve_backend_port();
+    let url = format!("http://localhost:{port}");
+
     tauri::Builder::default()
         // MUST be the first plugin: plugins run in registration order, and this
         // plugin's setup is what makes a second instance exit. Registering it
@@ -423,13 +490,26 @@ fn run_gui() {
             download_update,
             begin_update
         ])
-        .setup(|app| {
+        .setup(move |app| {
             // 1. Resolve the launcher path once and build the backend
             //    environment. A broken install (missing launcher) stays fatal.
             let launcher = sidecar::launcher_path(app)?;
-            let env = sidecar::sidecar_env();
-            let port = backend_port();
-            let url = backend_url();
+
+            // Start the TCP lifetime pipe: the backend connects to this port
+            // and blocks; any close = shell dead → backend self-stops.
+            // Non-fatal on failure (defense-in-depth — the dynamic backend
+            // port already prevents the orphan crash). The env is built ONCE
+            // and reused by the watchdog for all respawns, so the lifetime
+            // port stays constant for the shell's lifetime; the accept thread
+            // handles each respawn's new connection.
+            let lifetime_port = match sidecar::start_lifetime_listener() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    eprintln!("[desktop] failed to start lifetime listener: {e}");
+                    None
+                }
+            };
+            let env = sidecar::sidecar_env(port, lifetime_port);
 
             // 2. Create the backend manager and spawn the initial child. A
             //    spawn failure is NOT fatal: the watchdog treats the missing
@@ -438,7 +518,7 @@ fn run_gui() {
                 launcher,
                 env,
                 port,
-                url,
+                url.clone(),
             ));
             if let Err(err) = manager.spawn_child() {
                 eprintln!("[desktop] failed to spawn genesis-backend sidecar: {err}");
@@ -497,19 +577,23 @@ fn run_gui() {
                         // dashboard shows its confirm modal; on confirmation
                         // its JS invokes the `begin_quit` command (sets the
                         // intentional-shutdown flag, no kill) and the backend
-                        // stops itself gracefully. `backend_url()` is called
-                        // inside the handler because `on_menu_event` requires
-                        // a `'static` closure, so nothing may be captured.
-                        if sidecar::probe_http(&backend_url()).is_some() {
-                            let _ = app.emit("quit-requested", ());
-                            return;
+                        // stops itself gracefully. The URL is read from the
+                        // managed BackendHandle: with a dynamic port the
+                        // environment no longer reflects the actual port, so
+                        // recomputing it here would probe a stale URL.
+                        let manager = app.try_state::<BackendHandle>();
+                        if let Some(manager) = manager.as_ref() {
+                            if sidecar::probe_http(manager.backend_url()).is_some() {
+                                let _ = app.emit("quit-requested", ());
+                                return;
+                            }
                         }
                         // Backend down — the WebView shows the watchdog error
                         // page, so no dashboard dialog could appear. Keep the
                         // old immediate path: flag an intentional shutdown
                         // BEFORE killing the child, so the watchdog never
                         // restarts the backend after a quit has begun.
-                        if let Some(manager) = app.try_state::<BackendHandle>() {
+                        if let Some(manager) = manager {
                             manager.kill_for_quit();
                         }
                         app.exit(0);
@@ -544,17 +628,37 @@ fn run_gui() {
                 })
                 .build(app)?;
 
-            // 5. Block until the Phoenix backend responds. The poll runs on a
+            // 5. Create the main window. The window used to be declarative in
+            //    tauri.conf.json with a hardcoded http://localhost:9999 URL;
+            //    with a dynamic port the URL must follow the resolved port, so
+            //    the window is created here with `WebviewUrl::External` (the
+            //    config window entry and `build.devUrl` were removed — a
+            //    duplicate "main" label would conflict with a config-built
+            //    window). Properties mirror the removed config entry: title,
+            //    1280x800, resizable, centered. The window is created BEFORE
+            //    the blocking readiness poll so the watchdog's `show_backend`
+            //    retry loop (which waits for the window) behaves as before.
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::External(url.parse()?),
+            )
+            .title("Genesis Dashboard")
+            .inner_size(1280.0, 800.0)
+            .resizable(true)
+            .center()
+            .build()?;
+
+            // 6. Block until the Phoenix backend responds. The poll runs on a
             //    dedicated OS thread because reqwest's blocking client must not be
             //    driven from inside an async runtime context (which is live here).
-            let url = backend_url();
             let poll_url = url.clone();
             let poll = std::thread::spawn(move || {
                 sidecar::wait_for_ready(&poll_url, BACKEND_READY_TIMEOUT_SECS);
             });
             let _ = poll.join();
 
-            // 6. If the initial boot never became ready, kill the child: the
+            // 7. If the initial boot never became ready, kill the child: the
             //    watchdog sees the unexpected exit and takes over with the
             //    error page + restart cycle (the final probe avoids killing a
             //    backend that became ready just as the poll timed out).
@@ -586,5 +690,162 @@ fn main() {
         run_headless();
     } else {
         run_gui();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use std::time::Duration;
+
+    /// `pick_free_port` returns a port > 0 that can be bound again.
+    #[test]
+    fn pick_free_port_returns_a_bindable_port() {
+        let port = pick_free_port();
+        assert!(port > 0);
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", port)).is_ok(),
+            "returned port {port} must be bindable again"
+        );
+    }
+
+    /// No PORT value → a fresh free port is picked.
+    #[test]
+    fn resolve_backend_port_from_none_picks_a_free_port() {
+        let port = resolve_backend_port_from(None);
+        assert!(port > 0);
+        assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_ok());
+    }
+
+    /// An OCCUPIED PORT must never be reused — the anti-crash guarantee.
+    #[test]
+    fn resolve_backend_port_from_occupied_port_picks_a_different_port() {
+        // Hold a listener on a real port; the resolver must not reuse it.
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+        let port = resolve_backend_port_from(Some(&occupied_port.to_string()));
+        assert!(port > 0);
+        assert_ne!(port, occupied_port, "occupied port must not be reused");
+        assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_ok());
+    }
+
+    /// A valid, free PORT value is honored exactly.
+    #[test]
+    fn resolve_backend_port_from_free_port_uses_it() {
+        let port = pick_free_port();
+        let resolved = resolve_backend_port_from(Some(&port.to_string()));
+        assert_eq!(resolved, port);
+    }
+
+    /// An unparseable PORT value → a fresh free port.
+    #[test]
+    fn resolve_backend_port_from_garbage_picks_a_free_port() {
+        let port = resolve_backend_port_from(Some("not_a_number"));
+        assert!(port > 0);
+        assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_ok());
+    }
+
+    /// The GUI sidecar env carries the resolved PORT and the lifetime pipe
+    /// port, and never carries the parent pid.
+    #[test]
+    fn sidecar_env_contains_port_and_lifetime_port() {
+        let env: std::collections::HashMap<_, _> =
+            sidecar::sidecar_env(4242, Some(9999)).into_iter().collect();
+        assert_eq!(env.get("PORT").map(String::as_str), Some("4242"));
+        assert_eq!(
+            env.get("EVOGIT_LIFETIME_PORT").map(String::as_str),
+            Some("9999")
+        );
+        assert!(
+            !env.contains_key("EVOGIT_PARENT_PID"),
+            "EVOGIT_PARENT_PID must be absent"
+        );
+    }
+
+    /// With no lifetime pipe available (listener bind failure), the variable
+    /// is omitted entirely — the backend's monitor stays off.
+    #[test]
+    fn sidecar_env_omits_lifetime_port_when_unavailable() {
+        let env: std::collections::HashMap<_, _> =
+            sidecar::sidecar_env(4242, None).into_iter().collect();
+        assert_eq!(env.get("PORT").map(String::as_str), Some("4242"));
+        assert!(
+            !env.contains_key("EVOGIT_LIFETIME_PORT"),
+            "EVOGIT_LIFETIME_PORT must be absent when None"
+        );
+        assert!(!env.contains_key("EVOGIT_PARENT_PID"));
+    }
+
+    /// The headless sidecar env carries the resolved PORT and the lifetime
+    /// pipe port, and never carries the parent pid.
+    #[test]
+    fn headless_sidecar_env_contains_port_and_lifetime_port() {
+        let env: std::collections::HashMap<_, _> =
+            headless_sidecar_env(8080, Some(7777)).into_iter().collect();
+        assert_eq!(env.get("PORT").map(String::as_str), Some("8080"));
+        assert_eq!(
+            env.get("EVOGIT_LIFETIME_PORT").map(String::as_str),
+            Some("7777")
+        );
+        assert!(
+            !env.contains_key("EVOGIT_PARENT_PID"),
+            "EVOGIT_PARENT_PID must be absent"
+        );
+    }
+
+    /// `start_lifetime_listener` returns a connectable port, and a connected
+    /// client stays held open (the shell never writes): a read on the client
+    /// must block (WouldBlock / TimedOut), NOT hit EOF (Ok(0)) and NOT get a
+    /// reset/abort.
+    #[test]
+    fn start_lifetime_listener_holds_client_connection_open() {
+        let port = sidecar::start_lifetime_listener().expect("lifetime listener must bind");
+        assert!(port > 0);
+
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port))
+            .expect("client must connect to the lifetime listener");
+        client
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("read timeout must be settable");
+
+        let mut buf = [0u8; 16];
+        match client.read(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            other => panic!("expected a blocked read, got {other:?}"),
+        }
+    }
+
+    /// After the first client disconnects, a SECOND client still gets held —
+    /// the accept loop keeps accepting new connections (the watchdog-respawn
+    /// property: every backend respawn reconnects and is held).
+    #[test]
+    fn lifetime_listener_accepts_second_client_after_first_disconnects() {
+        let port = sidecar::start_lifetime_listener().expect("lifetime listener must bind");
+
+        let mut first =
+            std::net::TcpStream::connect(("127.0.0.1", port)).expect("first client must connect");
+        first
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("read timeout must be settable");
+        let mut buf = [0u8; 16];
+        match first.read(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            other => panic!("expected a blocked read on first client, got {other:?}"),
+        }
+        drop(first);
+
+        let mut second = std::net::TcpStream::connect(("127.0.0.1", port))
+            .expect("second client must connect after the first dropped");
+        second
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .expect("read timeout must be settable");
+        match second.read(&mut buf) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            other => panic!("expected a blocked read on second client, got {other:?}"),
+        }
     }
 }
