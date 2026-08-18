@@ -1058,9 +1058,11 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # :idle — the initial render: the mount-triggered check's broadcast is
       # processed only after the initial render is sent, so the returned html
-      # still shows the :idle branch.
+      # still shows the :idle branch. The current-version line is seeded from
+      # the :evo_git app spec and visible in every phase.
       assert html =~ "Software Update"
       assert html =~ "Check now"
+      assert html =~ "Current version:"
       assert html =~ "Update information will appear here after the first check."
 
       # :checking — the mount-triggered check left the hub at :checking
@@ -1099,18 +1101,26 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ "Update ready"
       assert html =~ ~s(id="update-restart")
 
-      # :error (generic failure)
+      # :error (generic failure) — no Retry button (the always-visible
+      # Check-now header button is the retry path from every phase)
       EvoDash.UpdateStatus.handle_check_result(%{"status" => "error", "error" => "boom"})
       await_update_phase(view, :error)
       html = render(view)
       assert html =~ "Check failed"
-      assert html =~ ~s(id="update-retry")
+      refute html =~ ~s(id="update-retry")
 
       # :error with error == "not_configured" → friendly pre-key message
       EvoDash.UpdateStatus.handle_check_result(%{"status" => "not_configured"})
       await_update_phase(view, :error)
       html = render(view)
       assert html =~ "Automatic updates are not configured yet"
+      refute html =~ "Check failed"
+
+      # :error with error == "not_available" → friendly info-style message
+      EvoDash.UpdateStatus.handle_check_result(%{"status" => "not_available"})
+      await_update_phase(view, :error)
+      html = render(view)
+      assert html =~ "No auto update on this platform"
       refute html =~ "Check failed"
 
       # :applying — the header Check-now button is disabled
@@ -1194,8 +1204,8 @@ defmodule EvoDashWeb.SystemLiveTest do
     test "a check that never resolves times out and shows the error state", %{conn: conn} do
       reset_hub_to_idle()
       set_desktop()
-      # Count runner invocations in a public ETS table so the Retry re-run is
-      # provable without racing the short :checking observation window (the
+      # Count runner invocations in a public ETS table so the Check-now re-run
+      # is provable without racing the short :checking observation window (the
       # 50ms timeout is too fast to await on the view assign reliably).
       :ets.new(:update_check_runs, [:named_table, :public, :set])
       :ets.insert(:update_check_runs, {:count, 0})
@@ -1233,12 +1243,13 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       html = render(view)
       assert html =~ "Check failed"
-      assert html =~ ~s(id="update-retry")
+      refute html =~ ~s(id="update-retry")
 
-      # Retry re-runs the check: poll until the runner is invoked a second time
-      # (deterministic — the short :checking window is not awaited), then the
+      # The always-visible Check-now header button is the retry path: re-run
+      # the check from :error (poll until the runner is invoked a second time —
+      # deterministic, the short :checking window is not awaited), then the
       # 50ms watchdog bounds the retry too: the UI can never wedge on a spinner.
-      view |> element("#update-retry") |> render_click()
+      view |> element("#update-check-now") |> render_click()
 
       await_ets_count(:update_check_runs, :count, 2)
       await_update_phase(view, :error)

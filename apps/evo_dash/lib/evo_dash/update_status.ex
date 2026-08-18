@@ -19,6 +19,7 @@ defmodule EvoDash.UpdateStatus do
           ▲                         │  │  │                       :available
           │                         │  │  └──check_failed──▶      :error
           │                         │  └─not_configured──▶        :error
+          │                         └─not_available──▶            :error
           │                         └─"error"/malformed──▶        :error
           │
           :available ──handle_download_result("ready")──▶ :ready
@@ -31,8 +32,8 @@ defmodule EvoDash.UpdateStatus do
   ## Never-wedge invariants
 
   1. Every check-result path (`"available"`, `"up_to_date"`, `"not_configured"`,
-     `"error"`, malformed) and `check_failed/1` terminates `:checking` — the UI
-     can never stick on a spinner.
+     `"not_available"`, `"error"`, malformed) and `check_failed/1` terminates
+     `:checking` — the UI can never stick on a spinner.
   2. `:error` is always retryable: `check_started/0` and `handle_check_result/1`
      work from `:error`.
   3. `:applying` is reversible via `apply_failed/1` — if the Rust
@@ -240,7 +241,7 @@ defmodule EvoDash.UpdateStatus do
   defp initial_state do
     %{
       phase: :idle,
-      current_version: nil,
+      current_version: app_version(),
       latest_version: nil,
       notes: nil,
       date: nil,
@@ -249,6 +250,16 @@ defmodule EvoDash.UpdateStatus do
       notify_only: notify_only?(),
       download_requested_version: nil
     }
+  end
+
+  # Seeds the current version from the :evo_git app spec so the card shows it
+  # even before the first check; nil when the app is not loaded. The Rust
+  # command's `current_version` overwrites it after a check.
+  defp app_version do
+    case Application.spec(:evo_git, :vsn) do
+      nil -> nil
+      vsn -> to_string(vsn)
+    end
   end
 
   # Non-map payloads (nil, atoms, lists, ...) are treated as a failed check.
@@ -289,12 +300,33 @@ defmodule EvoDash.UpdateStatus do
             last_checked_at: DateTime.utc_now()
         }
 
+      "not_available" ->
+        # Sentinel error: latest.json was fetched, but this platform has no
+        # auto-update payload (mirrors the not_configured handling). Keep the
+        # reported current_version so the card stays populated.
+        %{
+          state
+          | phase: :error,
+            error: "not_available",
+            current_version: payload["current_version"] || state.current_version
+        }
+
       "not_configured" ->
         # Sentinel error: the UI renders a friendly pre-key message for it.
-        %{state | phase: :error, error: "not_configured"}
+        %{
+          state
+          | phase: :error,
+            error: "not_configured",
+            current_version: payload["current_version"] || state.current_version
+        }
 
       _ ->
-        %{state | phase: :error, error: payload["error"] || "check_failed"}
+        %{
+          state
+          | phase: :error,
+            error: payload["error"] || "check_failed",
+            current_version: payload["current_version"] || state.current_version
+        }
     end
   end
 

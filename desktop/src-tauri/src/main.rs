@@ -88,17 +88,29 @@ fn configured_updater_pubkey(app: &tauri::AppHandle) -> Option<String> {
         .map(str::to_string)
 }
 
+/// True when the updater error means the remote manifest (`latest.json`) has no
+/// payload for the current platform — e.g. its `platforms` object lacks the
+/// `linux-x86_64` key. In that case the commands report `not_available` instead
+/// of a generic error.
+fn is_missing_platform_error(err: &tauri_plugin_updater::Error) -> bool {
+    matches!(
+        err,
+        tauri_plugin_updater::Error::TargetNotFound(_)
+            | tauri_plugin_updater::Error::TargetsNotFound(_)
+    )
+}
+
 /// `check_update` — asks the updater plugin whether a new version is available.
 ///
 /// JSON contract (all keys always present):
 /// `{"status", "current_version", "version", "body", "date", "error"}` where
-/// status ∈ `"up_to_date" | "available" | "not_configured" | "error"`.
+/// status ∈ `"up_to_date" | "available" | "not_configured" | "not_available" | "error"`.
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
     if updater_pubkey_is_placeholder(configured_updater_pubkey(&app).as_deref()) {
         return json!({
             "status": "not_configured",
-            "current_version": null,
+            "current_version": app.package_info().version.to_string(),
             "version": null,
             "body": null,
             "date": null,
@@ -117,7 +129,7 @@ async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
         Err(err) => {
             return json!({
                 "status": "error",
-                "current_version": null,
+                "current_version": app.package_info().version.to_string(),
                 "version": null,
                 "body": null,
                 "date": null,
@@ -127,14 +139,27 @@ async fn check_update(app: tauri::AppHandle) -> serde_json::Value {
     };
 
     match updater.check().await {
-        Err(err) => json!({
-            "status": "error",
-            "current_version": null,
-            "version": null,
-            "body": null,
-            "date": null,
-            "error": format!("Update check failed: {err}"),
-        }),
+        Err(err) => {
+            if is_missing_platform_error(&err) {
+                json!({
+                    "status": "not_available",
+                    "current_version": app.package_info().version.to_string(),
+                    "version": null,
+                    "body": null,
+                    "date": null,
+                    "error": "No auto-update is available for this platform.",
+                })
+            } else {
+                json!({
+                    "status": "error",
+                    "current_version": app.package_info().version.to_string(),
+                    "version": null,
+                    "body": null,
+                    "date": null,
+                    "error": format!("Update check failed: {err}"),
+                })
+            }
+        }
         Ok(None) => json!({
             "status": "up_to_date",
             "current_version": app.package_info().version.to_string(),
@@ -200,6 +225,13 @@ async fn download_update(app: tauri::AppHandle) -> serde_json::Value {
             });
         }
         Err(err) => {
+            if is_missing_platform_error(&err) {
+                return json!({
+                    "status": "error",
+                    "version": null,
+                    "error": "No auto-update is available for this platform.",
+                });
+            }
             return json!({
                 "status": "error",
                 "version": null,
