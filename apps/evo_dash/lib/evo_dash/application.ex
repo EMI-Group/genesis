@@ -21,6 +21,18 @@ defmodule EvoDash.Application do
       EvoDashWeb.Endpoint
     ]
 
+    # Desktop-only Tauri-shell lifetime watcher: the sidecar sets BOTH
+    # EVOGIT_DESKTOP=1 and EVOGIT_LIFETIME_PORT, while manually-launched
+    # releases and the remote daemon set neither. The module's own init/1
+    # self-disable logic is belt-and-suspenders.
+    children =
+      if System.get_env("EVOGIT_DESKTOP") == "1" and
+           System.get_env("EVOGIT_LIFETIME_PORT") not in [nil, ""] do
+        children ++ [{EvoDash.DesktopLifetime, []}]
+      else
+        children
+      end
+
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     # Use :one_for_one with a generous max_restarts to tolerate transient
