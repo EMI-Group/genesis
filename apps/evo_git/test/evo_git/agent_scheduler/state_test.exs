@@ -307,4 +307,66 @@ defmodule EvoGit.AgentScheduler.StateTest do
       assert_received {^ref, :ok}
     end
   end
+
+  # --- do_update_config/2: dynamic :model_concurrency override (PeakHourEngine path) ---
+
+  describe "do_update_config/2 — :model_concurrency override (dynamic engine path)" do
+    test "replaces the per-model concurrency map" do
+      state = %State{model_concurrency: %{"default" => 2, "fast" => 7}}
+
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"glm" => 3}], state)
+
+      assert final.model_concurrency == %{"glm" => 3}
+      assert State.concurrency_for(final, "glm") == 3
+
+      # Removed ids fall back to the default, never a stale entry.
+      assert State.concurrency_for(final, "default") == final.default_llm_max_concurrency
+    end
+
+    test "replaced entries are floored to an active default_llm_max_concurrency" do
+      state = State.apply_default_llm_concurrency_override(%State{}, 4)
+      assert state.default_llm_max_concurrency == 4
+
+      # Engine pushes a value BELOW the active floor (4): the floor must hold.
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"glm" => 1}], state)
+
+      assert final.default_llm_max_concurrency == 4
+      assert final.model_concurrency == %{"glm" => 4}
+      assert State.concurrency_for(final, "glm") == 4
+    end
+
+    test "explicit entries above the floor win" do
+      state = State.apply_default_llm_concurrency_override(%State{}, 4)
+
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"glm" => 10}], state)
+
+      assert final.default_llm_max_concurrency == 4
+      assert final.model_concurrency == %{"glm" => 10}
+      assert State.concurrency_for(final, "glm") == 10
+    end
+
+    test "queued waiter is granted when :model_concurrency raises capacity (grant sweep)" do
+      ref = make_ref()
+      from = {self(), ref}
+      put_meta(3, 0)
+      put_agent_state(3, @default_model)
+
+      state = full_default_state()
+      assert {:noreply, state2, [{3, :blocked}]} = Slots.handle_request_llm_slot(3, from, state)
+
+      # Engine raises the "default" pool capacity 2 -> 3 via :model_concurrency.
+      # The trailing grant_pending_on_resume sweep (runs on EVERY update)
+      # grants the queued waiter — no separate sweep call exists.
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"default" => 3}], state2)
+
+      assert final.model_concurrency[@default_model] == 3
+      assert MapSet.member?(State.holders_for(final, @default_model), 3)
+      assert :queue.to_list(State.waiting_for(final, @default_model)) == []
+      assert_received {^ref, :ok}
+    end
+  end
 end

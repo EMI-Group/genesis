@@ -61,6 +61,13 @@ defmodule EvoGit.Application do
       {EvoGit.TaskRegistry, []},
       {EvoGit.AgentScheduler.WorktreeManager, []},
       {EvoGit.AgentGroupSupervisor, []},
+      # Peak-hour LLM concurrency engine — watches the local wall clock and
+      # dynamically pushes per-model peak/off-peak concurrency via
+      # update_config(model_concurrency:). Starts AFTER AgentGroupSupervisor
+      # (it calls the scheduler on its initial check); its own
+      # {:scheduler_config_updated, node} subscription re-applies on config
+      # edits/reloads.
+      {EvoGit.PeakHourEngine, []},
       # System sampling — broadcasts {:system_sample, node, seq, sample} on
       # PubSub topic "system" every 3s. Runs on every node (incl. the headless
       # genesis_remote daemon) so remote dashboards get chart pushes.

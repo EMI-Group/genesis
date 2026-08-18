@@ -127,6 +127,24 @@ enabled = false              # Run tool calls inside a cached Nix dev environmen
 flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
 
+**`[[llm.models]]` profile fields**: each profile supports `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus the two OPTIONAL peak-hour fields `peak_concurrency` and `peak_hours`:
+
+```toml
+[[llm.models]]
+id = "glm"
+concurrency = 4        # normal (off-peak) concurrency
+peak_concurrency = 2   # optional — effective concurrency during peak windows
+peak_hours = [         # optional — list of daily windows (local wall-clock)
+  { start = "09:00", end = "12:00" },
+  { start = "14:00", end = "18:00" }
+]
+```
+
+- `peak_concurrency` — when present must be a POSITIVE integer (`0`, negatives, floats, strings → validation error at `[:llm, :models, <idx>, :peak_concurrency]`); absent → off-peak `concurrency` always applies.
+- `peak_hours` — list of maps with `start`/`end` `"HH:MM"` 24h strings (atom- or string-keyed; TOML decoding may produce string keys). Windows are half-open `[start, end)`; `start > end` = overnight wrap; absent / `[]` / invalid → disabled (normal `concurrency` 24/7). `peak_hours` present without `peak_concurrency` → legal no-op (defaults to `concurrency`).
+- **Validation ownership**: window parsing/format/overlap checks are delegated to `EvoGit.PeakHours.validate_windows/1` (single source of truth — the schema does NOT re-implement format/overlap logic). `Schema.validate/1` reports `%ValidationError{}`s at `[:llm, :models, <idx>, :peak_hours]` (non-list) or `[:llm, :models, <idx>, :peak_hours, <window_idx>]` (invalid entry/window; the overlap error is reported at the index of the later overlapping window).
+- Both fields survive config resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys are never stripped — and reach `state.model_profiles` unchanged, where the runtime reads them from `get_config(:model_profiles)`.
+
 **`[sandbox] backend` semantics**: `[:sandbox, :backend]` is an `:atom` schema key (default `:auto`, validation `[in: [:auto, :systemd, :bwrap]]`) selecting the Linux sandbox backend. `:auto` tries systemd-run first, then bubblewrap (`bwrap`), then no sandbox when neither is available (macOS always uses sandbox-exec regardless — bwrap is Linux-only). `:systemd` forces systemd-run (no sandbox if systemd is unavailable); `:bwrap` forces bubblewrap — filesystem isolation only, no resource limits — useful in Docker/containers where systemd is unavailable, and falls back to no sandbox if `bwrap` is unavailable. **The `[sandbox.resources]` and `[sandbox.process]` keys are systemd-only and ignored when bwrap is the active backend.** String values from config.toml are atomized by the `atomize_enum_values/1` pipeline step (`"auto" | "systemd" | "bwrap"` → atoms) before `Schema.validate`.
 
 **`[sandbox] write_paths` semantics**: `[:sandbox, :write_paths]` is a `:list_of_strings` schema key (default `nil`). Unset/nil means the sandbox backends use their platform-default writable paths; set (including an explicitly empty list) REPLACES the built-in list — `[]` disables those writable paths entirely. The value survives the resolve pipeline (`deep_merge` → `atomize_enum_values` → `Schema.validate`) and any non-list/non-string-list value surfaces as a validation error (never a crash). **Consumed by the sandbox backends** (`EvoGit.Sandbox.Linux.args/4` and `EvoGit.Sandbox.MacOS.generate_profile/2` resolve it via `EvoGit.Config.resolve([:sandbox, :write_paths])`): nil → platform default cache-dir list; set (incl. `[]`) → replaces the built-in cache-dir list only; `~`-prefixed entries expand to `System.user_home!()`, absolute entries as-is, relative entries joined to `$HOME`. Structural paths (cwd, tmp, nix store, repo `.git`) are always appended regardless; deny lists are never affected. Details in `sandbox/CONTEXT.md`.

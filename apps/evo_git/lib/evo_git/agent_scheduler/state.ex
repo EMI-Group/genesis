@@ -361,10 +361,13 @@ defmodule EvoGit.AgentScheduler.State do
         state
       end
 
-    # Apply all field updates
+    # Apply all field updates. `:model_concurrency` replaces the per-model map
+    # and re-applies the active default floor (dynamic engine updates — e.g.
+    # PeakHourEngine — must never drop a CLI -c / runtime floor).
     state =
       state
       |> maybe_apply_default_llm_concurrency(opts)
+      |> maybe_update_model_concurrency(opts)
       |> maybe_update(:agent_max_retries, opts)
       |> maybe_update(:max_depth, opts)
       |> maybe_update(:llm_model, opts)
@@ -395,7 +398,10 @@ defmodule EvoGit.AgentScheduler.State do
         state
       end
 
-    # Grant any newly-available slots to waiting agents
+    # Grant any newly-available slots to waiting agents. This sweep runs for
+    # EVERY update (including :model_concurrency replacements), so a capacity
+    # increase from a new per-model map — or from the :default_llm_max_concurrency
+    # floor — is granted automatically. Do NOT add a second sweep call here.
     {state, status_updates} = Slots.grant_pending_on_resume(state)
     Lifecycle.apply_status_updates(status_updates)
 
@@ -451,6 +457,25 @@ defmodule EvoGit.AgentScheduler.State do
     case Keyword.fetch(opts, :default_llm_max_concurrency) do
       {:ok, value} -> apply_default_llm_concurrency_override(state, value)
       :error -> state
+    end
+  end
+
+  # Replaces `model_concurrency` with the given `%{model_id => pos_integer()}`
+  # map (wall-clock dynamic overrides, e.g. PeakHourEngine), then re-applies
+  # the active floor: an engine update with values below an active
+  # `default_llm_max_concurrency` (CLI `-c` / runtime override) must NEVER
+  # silently drop the floor. `apply_default_llm_concurrency_override/2` also
+  # re-sets `default_llm_max_concurrency` to the passed value — passing the
+  # current state value keeps it unchanged, which is correct.
+  defp maybe_update_model_concurrency(%__MODULE__{} = state, opts) do
+    case Keyword.fetch(opts, :model_concurrency) do
+      {:ok, map} ->
+        state
+        |> struct(model_concurrency: map)
+        |> apply_default_llm_concurrency_override(state.default_llm_max_concurrency)
+
+      :error ->
+        state
     end
   end
 
