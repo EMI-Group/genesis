@@ -15,25 +15,27 @@
 
 ---
 
-<h2 align="center">One objective in. A software world unfolds.</h2>
+<h2 align="center">Let the software world keep evolving.</h2>
 
 <p align="center">
-  Describe what the software should become. Genesis recursively develops it.
+  One objective in. A persistent software world unfolds.
 </p>
 
-**EvoX Genesis** turns a high-level software objective into a continuously developing software world.
+From an implementation-empty repository, Genesis built a **248,989-line C compiler** in a **123.4-hour** run. Different foundation models then independently continued development from the same accepted software world.
 
-You do not hand-design an agent team, pre-build a task tree, or keep one coding session alive. Genesis recursively creates local responsibilities, instantiates agents where needed, validates returned contributions, and carries accepted results forward. The approach is described in our paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450).
+**EvoX Genesis is an AI system for long-horizon autonomous software evolution.**
+
+Its key idea is not to keep one agent—or one coding session—alive. Genesis maintains a persistent recursive software world. Finite-lived agents enter where needed, develop local parts, validate proposed changes, and carry only accepted results forward for later agents to inherit and extend. The approach is described in our paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450).
 
 > **You specify what the software should become. Genesis unfolds how to build it.**
 
-> **Agents come and go. The software world persists.**
+> **Agents come and go. The software world keeps evolving.**
 
 ---
 
 ## ✨ Key Features
 
-* 🧭 **Long-horizon autonomous evolution** — recursive agent hierarchies drive one continuous run: hundreds of hours, hundreds of thousands of lines, fully validated.
+* 🧭 **Long-horizon autonomous software evolution** — recursive agent hierarchies advance one persistent software world across many finite-lived agent episodes, carrying validated results forward.
 * 🪶 **Transient agents, persistent world** — each agent spawns fresh for one task and disappears when done: less context, fewer tokens, more reliable results.
 * 🌳 **Git-native workflow** — the repository itself is the only state. Agents and humans share the same repo, the same `git log`, the same `git diff` — no hidden databases, no custom formats.
 
@@ -116,12 +118,14 @@ Managers decompose, delegate and judge returned work. Executors implement concre
 world = (accepted version, repository path)
 ```
 
+What evolves is the software world—not the foundation model. Accepted development state and validated results remain available for later agents to inherit and extend.
+
 The accepted version determines **what exists and can be inherited**. The path determines **where agency is situated**.
 
 **Only accepted consequences become history.**  
 Agent outputs are proposals. Only accepted results advance the persistent version lineage.
 
-> **Agent does not persist. Its validated consequences do.**
+> **Agents do not persist. Their validated contributions do.**
 
 ---
 
