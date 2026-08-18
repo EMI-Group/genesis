@@ -28,6 +28,31 @@ const INITIAL_NAVIGATE_ATTEMPTS: u32 = 20;
 /// Delay between the post-readiness navigation retries.
 const INITIAL_NAVIGATE_RETRY_MS: u64 = 250;
 
+/// Delays (ms) between the `quit-requested` re-emits after the synchronous
+/// first emit (see the tray "quit" arm). 5 re-emits + the sync emit = 6
+/// emits over ~8s, covering a slow page load while the dashboard mounts and
+/// its LiveSocket reconnects.
+const QUIT_REEMIT_DELAYS_MS: [u64; 5] = [500, 1000, 2000, 4000, 8000];
+
+/// How long the tray-Quit guaranteed-exit fallback thread waits before
+/// force-quitting when the dashboard never reacts (no heartbeat advance, no
+/// user confirmation). Deliberately longer than the last re-emit (+8000ms)
+/// so a live-but-slow dashboard has time to respond.
+const QUIT_FALLBACK_DELAY_MS: u64 = 9000;
+
+/// Keeper thread poll interval (ms).
+const KEEPER_POLL_INTERVAL_MS: u64 = 2000;
+
+/// A dashboard heartbeat younger than this (ms) means the dashboard is live —
+/// the keeper must NOT re-navigate a live dashboard (that would reload it
+/// before its socket joins and prevent it from ever mounting).
+const DASHBOARD_HEARTBEAT_FRESH_MS: i64 = 10_000;
+
+/// Minimum gap (ms) between keeper navigations — prevents hammering a page
+/// that is still loading (a reload would restart the load before the socket
+/// joins and never let it mount).
+const KEEPER_NAVIGATE_COOLDOWN_MS: i64 = 15_000;
+
 /// The OS-specific launcher script name inside the bundled release directory.
 ///
 /// On Unix this is the POSIX shell script `genesis_desktop`; on Windows it is
@@ -50,6 +75,21 @@ type BackendHandle = Arc<BackendManager>;
 #[tauri::command]
 fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
     manager.begin_quit();
+}
+
+/// Tauri command invoked fire-and-forget by the dashboard's JavaScript
+/// (`DesktopQuit` hook) at hook mount, on every socket reconnect, and on
+/// every `quit-requested` reception.
+///
+/// Records the dashboard's liveness in the [`BackendManager`] heartbeat: the
+/// tray-Quit fallback thread disarms when the heartbeat epoch advances (the
+/// page is live and the confirm dialog is coming), and the keeper thread
+/// stops re-navigating a live dashboard. Must not panic when the state is
+/// missing — it is only managed in `run_gui`, and headless never registers
+/// the command (same pattern as `begin_quit`).
+#[tauri::command]
+fn dashboard_ready(manager: tauri::State<'_, BackendHandle>) {
+    manager.mark_dashboard_ready();
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +566,7 @@ fn run_gui() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             begin_quit,
+            dashboard_ready,
             check_update,
             download_update,
             begin_update
@@ -613,9 +654,9 @@ fn run_gui() {
                             let _ = window.set_focus();
                         }
                         // Backend healthy → hand the quit decision to the web
-                        // page: emit `quit-requested` and do NOTHING else. The
-                        // dashboard shows its confirm modal; on confirmation
-                        // its JS invokes the `begin_quit` command (sets the
+                        // page: emit `quit-requested`; the dashboard shows its
+                        // confirm modal and on confirmation its JS invokes the
+                        // `begin_quit` command (sets the
                         // intentional-shutdown flag, no kill) and the backend
                         // stops itself gracefully. The URL is read from the
                         // managed BackendHandle: with a dynamic port the
@@ -624,12 +665,25 @@ fn run_gui() {
                         let manager = app.try_state::<BackendHandle>();
                         if let Some(manager) = manager.as_ref() {
                             if sidecar::probe_http(manager.backend_url()).is_some() {
-                                // Single-shot emit races the dashboard
-                                // LiveSocket: while the window was hidden to
-                                // tray, phoenix suspends reconnects
-                                // (pageHidden) and the dashboard's pushEvent
-                                // drops the event when the channel can't push.
-                                // Re-emit on a short bounded schedule — the
+                                // Capture the heartbeat epoch BEFORE the emit:
+                                // the dashboard's quit-requested handler
+                                // refreshes the heartbeat on reception, so an
+                                // epoch change after the emit proves the page
+                                // is live (the fallback thread below relies on
+                                // that).
+                                let epoch_before = manager.dashboard_heartbeat_epoch();
+                                // Synchronous first emit — the dashboard may be
+                                // fully connected right now, and waiting +500ms
+                                // (the first re-emit) before the event reaches
+                                // it is an unnecessary delay.
+                                let _ = app.emit("quit-requested", ());
+
+                                // Re-emit on a bounded schedule — while the
+                                // window was hidden to tray, phoenix suspends
+                                // reconnects (pageHidden) and the dashboard's
+                                // pushEvent drops the event when the channel
+                                // can't push; a slow page load also needs time
+                                // to mount. 6 emits total (~8s window); the
                                 // dashboard handler is idempotent (assign set
                                 // true; unchanged → no re-render) and the
                                 // re-emits stop by themselves once the user
@@ -637,11 +691,15 @@ fn run_gui() {
                                 // `manager.inner()` unwraps the tauri `State`
                                 // (which borrows `app`) to the owned
                                 // `Arc<BackendManager>` so the detached
-                                // thread can own it ('static).
+                                // threads can own it ('static). Clone both
+                                // BEFORE the re-emit closure moves them.
                                 let app = app.clone();
                                 let manager = manager.inner().clone();
+                                let fallback_app = app.clone();
+                                let fallback_manager = manager.clone();
+                                let fallback_epoch = epoch_before;
                                 std::thread::spawn(move || {
-                                    for delay_ms in [500u64, 1000, 2000] {
+                                    for delay_ms in QUIT_REEMIT_DELAYS_MS {
                                         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                                         if manager.shutdown_requested()
                                             || manager.update_requested()
@@ -652,6 +710,38 @@ fn run_gui() {
                                             break; // app is shutting down
                                         }
                                     }
+                                });
+
+                                // Guaranteed-exit fallback: if the dashboard
+                                // never reacts (the webview sits on the
+                                // connection-refused page, the LiveSocket never
+                                // joined, the emits went into the void), the
+                                // emit path can never succeed and NOTHING else
+                                // would exit — the app would wedge forever.
+                                // After QUIT_FALLBACK_DELAY_MS, quit anyway
+                                // UNLESS the user confirmed (begin_quit /
+                                // begin_update flag) or the dashboard signaled
+                                // liveness (heartbeat epoch advanced since the
+                                // sync emit — the page is live and the dialog
+                                // is coming). `kill_for_quit` sets the
+                                // intentional-shutdown flag BEFORE killing, so
+                                // the watchdog never restarts the backend.
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        QUIT_FALLBACK_DELAY_MS,
+                                    ));
+                                    if fallback_manager.shutdown_requested()
+                                        || fallback_manager.update_requested()
+                                    {
+                                        return; // user confirmed — the app is going away
+                                    }
+                                    if fallback_manager.dashboard_heartbeat_epoch()
+                                        != fallback_epoch
+                                    {
+                                        return; // page responded → dialog is live or coming
+                                    }
+                                    fallback_manager.kill_for_quit();
+                                    fallback_app.exit(0);
                                 });
                                 return;
                             }
@@ -774,6 +864,67 @@ fn run_gui() {
                 }
             }
 
+            // 9. Self-healing dashboard keeper. The step-8 navigation is a
+            //    one-shot whose success is reported unconditionally (the
+            //    webkitgtk/wkwebview load APIs accept the load without
+            //    proving it rendered), so a silently-failed load leaves the
+            //    webview on the connection-refused page forever — no
+            //    LiveSocket, no `quit-requested` listener, unquittable app.
+            //    This thread re-navigates whenever the backend is healthy,
+            //    the main window is visible, and the dashboard has NOT
+            //    signaled liveness (the `dashboard_ready` command heartbeat)
+            //    within DASHBOARD_HEARTBEAT_FRESH_MS, throttled by a 15s
+            //    cooldown so a page that is still loading is not reloaded
+            //    before its socket joins. It never fights the watchdog:
+            //    while the backend is down the probe fails and nothing is
+            //    navigated; it stops entirely on quit/update intent.
+            let keeper_app = app.handle().clone();
+            let keeper_manager = manager.clone();
+            std::thread::spawn(move || {
+                let mut last_navigate_ms: i64 = 0;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        KEEPER_POLL_INTERVAL_MS,
+                    ));
+                    let quitting = keeper_manager.shutdown_requested()
+                        || keeper_manager.update_requested();
+                    if quitting {
+                        return; // quit/update owns the exit — never navigate during shutdown
+                    }
+                    let now = now_ms();
+                    let backend_up =
+                        sidecar::probe_http(keeper_manager.backend_url()).is_some();
+                    // Best-effort visibility: an error or a missing window
+                    // defaults to visible (navigate) rather than hidden.
+                    let visible = keeper_app
+                        .get_webview_window("main")
+                        .map(|window| window.is_visible().unwrap_or(true))
+                        .unwrap_or(true);
+                    let heartbeat_fresh = keeper_manager
+                        .dashboard_heartbeat_fresh(now, DASHBOARD_HEARTBEAT_FRESH_MS);
+                    let cooldown_elapsed =
+                        now - last_navigate_ms >= KEEPER_NAVIGATE_COOLDOWN_MS;
+                    if keeper_should_navigate(
+                        backend_up,
+                        visible,
+                        heartbeat_fresh,
+                        cooldown_elapsed,
+                        quitting,
+                    ) {
+                        // Resolve the window per iteration (the watchdog's
+                        // pattern) — do not capture a WebviewWindow across
+                        // threads.
+                        if let Some(window) = keeper_app.get_webview_window("main") {
+                            backend_watchdog::navigate_webview(
+                                &window,
+                                keeper_manager.backend_url(),
+                            );
+                            last_navigate_ms = now_ms();
+                        }
+                    }
+                }
+            });
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -826,6 +977,30 @@ fn navigate_after_ready(
         std::thread::sleep(retry_delay);
     }
     InitialNavigateOutcome::Failed
+}
+
+/// Current unix-epoch time in milliseconds (wall clock). Used by the keeper
+/// thread for the heartbeat-freshness window and the navigation cooldown.
+fn now_ms() -> i64 {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_millis() as i64,
+        Err(_) => 0,
+    }
+}
+
+/// Pure keeper decision: re-navigate the webview only when the backend is
+/// healthy, the main window is visible, the dashboard has NOT signaled
+/// liveness within the freshness window, the navigation cooldown has
+/// elapsed, and no quit/update intent is pending. All inputs are injected
+/// so the truth table is unit-testable without a tauri window.
+fn keeper_should_navigate(
+    backend_up: bool,
+    visible: bool,
+    heartbeat_fresh: bool,
+    cooldown_elapsed: bool,
+    quitting: bool,
+) -> bool {
+    !quitting && backend_up && visible && !heartbeat_fresh && cooldown_elapsed
 }
 
 fn main() {
@@ -1048,5 +1223,24 @@ mod tests {
         );
         assert_eq!(outcome, InitialNavigateOutcome::Aborted);
         assert_eq!(calls.get(), 1, "must not navigate once the intent is set");
+    }
+
+    /// `keeper_should_navigate` navigates only when ALL five conditions hold:
+    /// backend up, window visible, heartbeat stale, cooldown elapsed, not
+    /// quitting. Each input alone flips the decision.
+    #[test]
+    fn keeper_should_navigate_truth_table() {
+        // The one navigating combination.
+        assert!(keeper_should_navigate(true, true, false, true, false));
+
+        // Every input alone flips the decision.
+        assert!(!keeper_should_navigate(false, true, false, true, false)); // backend down
+        assert!(!keeper_should_navigate(true, false, false, true, false)); // window hidden
+        assert!(!keeper_should_navigate(true, true, true, true, false)); // heartbeat fresh
+        assert!(!keeper_should_navigate(true, true, false, false, false)); // cooldown active
+        assert!(!keeper_should_navigate(true, true, false, true, true)); // quitting
+
+        // All-negative inputs → no navigation.
+        assert!(!keeper_should_navigate(false, false, true, false, true));
     }
 }
