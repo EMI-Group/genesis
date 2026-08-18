@@ -2,8 +2,9 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
   @moduledoc """
   Tests for the supervised broadcast throttle `EvoGit.AgentScheduler.PubSub.Throttle`.
 
-  The throttle coalesces rapid `:schedule` casts into ONE `{:agents_updated}`
-  broadcast on the `"agents"` topic at most 200ms after the last cast. It runs
+  The throttle coalesces rapid `:schedule` casts into ONE `{:agents_updated, node}`
+  broadcast on the `"agents"` topic at most 200ms after the last cast — the
+  trailing element is the emitting BEAM node (`node()`). It runs
   as a standard child of the application's `EvoGit.Supervisor` (declared in
   `EvoGit.Application`'s children after `Phoenix.PubSub`, `:permanent`
   restart).
@@ -44,16 +45,35 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     end
   end
 
-  test "rapid broadcasts collapse into a single {:agents_updated} message" do
+  test "rapid broadcasts collapse into a single {:agents_updated, node} message" do
     PubSub.broadcast_agents_updated()
     PubSub.broadcast_agents_updated()
     PubSub.broadcast_agents_updated()
 
     # The throttle flushes at most 200ms after the last cast — wait past it.
-    assert_receive {:agents_updated}, 700
+    assert_receive {:agents_updated, bcast_node}, 700
+    assert bcast_node == node()
 
     # The three back-to-back casts must not produce a second flush.
-    refute_receive {:agents_updated}, 300
+    refute_receive {:agents_updated, _node}, 300
+  end
+
+  test "broadcast without a throttle process falls back to immediate dispatch with the node element" do
+    throttle_pid = Process.whereis(Throttle)
+    assert is_pid(throttle_pid)
+
+    # Temporarily unregister the name so broadcast_agents_updated/0 sees a nil
+    # throttle and dispatches immediately (the fallback path). The supervisor
+    # tracks the child by pid, so unregistering the NAME is supervision-safe.
+    Process.unregister(Throttle)
+    on_exit(fn -> Process.register(throttle_pid, Throttle) end)
+
+    PubSub.broadcast_agents_updated()
+
+    # Short timeout pins the immediate path — the throttle flush would take up
+    # to 200ms (@throttle_ms).
+    assert_receive {:agents_updated, bcast_node}, 100
+    assert bcast_node == node()
   end
 
   test "throttle process is restarted by its supervisor and broadcasts resume" do
@@ -70,7 +90,8 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     # The restarted throttle must serve broadcasts again
     drain_mailbox()
     PubSub.broadcast_agents_updated()
-    assert_receive {:agents_updated}, 600
+    assert_receive {:agents_updated, bcast_node}, 600
+    assert bcast_node == node()
   end
 
   test "throttle is a supervised child of EvoGit.Supervisor" do
