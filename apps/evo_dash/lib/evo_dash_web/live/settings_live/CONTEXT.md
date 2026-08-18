@@ -32,7 +32,7 @@ Pure data-transformation functions for model profile CRUD operations on the `[[l
 | `update_model_profile/3` | Updates an existing profile's fields. |
 | `replace_model_profiles/2` | Replaces all profiles in a category. |
 | `mirror_model_profiles_by_provider/2` | Copies profiles from one provider to another. |
-| `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). |
+| `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). Also parses the optional peak fields (`peak_concurrency`, `peak_hours`) with UI-side UX validation — invalid input surfaces as one of `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`, `"peak_hours_overlap"` (see "Peak/Off-Peak Hour Concurrency (model profiles)" below). |
 | `model_profile_collision?/3` | Checks for duplicate provider+model combos. |
 
 All functions are pure — no I/O, no socket, no process calls.
@@ -100,9 +100,39 @@ Where each support module hits the network (NodeContext → RemoteNode → direc
 - **Agent def map keys read** (all in `CustomAgentsEditor`, custom_agents_editor.ex, atom-or-string fallback): `id` (:359), `name` (:368), `description` (:374), `prompt` (:380), `agent_type` (:386), `delegation_level` (:392), `model_id` (:398), `max_turns` (:404), `tools` (:411), `subagents` (:420). All 10 keys ARE consumed, but full prompts are only used as a truncated one-line preview (:112-114) and as the edit-form textarea value — a slim-list + lazy-full-fetch optimization would cut RPC payload on navigation. `script_status` consumed by `model_selection_editor.ex` `script_compile_error/1` (:162-163): `{:error, {:compile_error, msg}}` → msg in red box; `:ok`/anything else → nil. `script_test_results` consumed as `%{label:, result:}` (:136) with `result` matched `{:ok, nil}` → "default model" badge, `{:ok, model_id}` → badge (string verbatim), `{:error, reason}` → `format_error/1` (:166-169 unwraps `:compile_error`/`:script_raised`/`:invalid_result` msgs).
 - **config_io.ex calls NO NodeContext** — purely local: `EvoGit.Config.resolve/0` (load_file_config, :18), `EvoGit.AgentScheduler.get_config/0` (load_scheduler_config, :25), `EvoGit.AgentScheduler.update_config/1` (update_runtime_from_file_config, :68), `EvoGit.Config.LLMCatalog.providers/0` (:238) and `provider_variants/1` (:246). `update_runtime_from_file_config` pushes only `[:scheduler, :default_llm_max_concurrency | :max_tool_concurrency | :agent_max_retries | :max_agent_depth | :max_retries | :max_turns | :max_turns_root]` + `:model_profiles` (via `Schema.model_profiles/1` = `[:llm, :models]` list, schema/llm.ex:56-60) and re-assigns `scheduler_config` from `load_scheduler_config()` on `:ok` (:71). Callers guard `node == node()` (settings_live.ex:930, :1021, :1523) — remote saves never push; they use `reload_remote_config` instead.
 - **Known issue — node-filtered `{:scheduler_config_updated, node}` handler still reads LOCAL config** (settings_live.ex:814-828): the handler node-filters via `NodeAware.event_from_current_node?/2` (foreign-node events ignored), but the reload itself still calls `ConfigIO.load_scheduler_config()` — the LOCAL `AgentScheduler.get_config()` — even while viewing a remote node. Remote viewers never get a remote-refresh path for this assign today (the mount also seeds it locally, settings_live.ex:650). Pre-existing gap, deliberately NOT fixed in the push-refactor; behavior kept exactly as before.
-- **model_profile_helpers.ex is 100% pure** (no I/O/RPC); profile keys constructed in `parse_model_profile_params/2` (:243-256): `id`, `model` (string `"provider:model_id"` or map spec `%{provider:, id:}` + optional `:base_url`/`:extra`), `concurrency`, `temperature`, `reasoning_effort`, `max_tokens`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, `provider_options`. **model_profile_events.ex has NO direct NodeContext calls** — its RPC footprint is indirect via `SettingsLive.persist_file_config/3` (settings_live.ex:1502-1569: local → `ConfigIO.load_file_config` + `update_runtime_from_file_config`; remote → `reload_remote_config` (:1528) + `get_resolved_config` (:1532), full config into `@file_config`). `maybe_put_gen_opt/3` (model_profile_events.ex:295-298) reads profile keys atom-or-string; used by test_llm (settings_live.ex:1334-1339) for `temperature/max_tokens/top_p/top_k/frequency_penalty/presence_penalty`.
+- **model_profile_helpers.ex is 100% pure** (no I/O/RPC); profile keys constructed in `parse_model_profile_params/2` (:243-256): `id`, `model` (string `"provider:model_id"` or map spec `%{provider:, id:}` + optional `:base_url`/`:extra`), `concurrency`, `temperature`, `reasoning_effort`, `max_tokens`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`, the optional peak fields `peak_concurrency`/`peak_hours` (see "Peak/Off-Peak Hour Concurrency (model profiles)" above), `provider_options`. **model_profile_events.ex has NO direct NodeContext calls** — its RPC footprint is indirect via `SettingsLive.persist_file_config/3` (settings_live.ex:1502-1569: local → `ConfigIO.load_file_config` + `update_runtime_from_file_config`; remote → `reload_remote_config` (:1528) + `get_resolved_config` (:1532), full config into `@file_config`). `maybe_put_gen_opt/3` (model_profile_events.ex:295-298) reads profile keys atom-or-string; used by test_llm (settings_live.ex:1334-1339) for `temperature/max_tokens/top_p/top_k/frequency_penalty/presence_penalty`.
 - **search_events.ex**: `handle_reset_key` (:57-101) is the only NodeContext user — `save_user_config` (:70), then local: `ConfigIO.load_file_config` (:74) + `config_status()` (Helpers → `EvoGit.Config.config_status()`); remote: `reload_remote_config` (:77) + `get_remote_config` (:78, flat scheduler map) → `SettingsLive.remote_config_to_file_config/1` (settings_live.ex:1686-1712, reads `:default_llm_max_concurrency`, `:max_tool_concurrency`, `:agent_max_retries`, `:max_agent_depth`, `:max_retries`, `:max_turns`, `:max_turns_root`, `:llm_model`, `:model_profiles` — all 9 consumed) + `get_remote_config_status` (:80). `File.exists?` on the LOCAL `config_path` even when remote (:83).
 - **Payload-vs-consumed summary**: list_custom_agents transfers full defs incl. prompts (all consumed by UI, but only as truncated preview + edit form); save_user_config transfers the WHOLE resolved config per category save (whole-file write model); select_model transfers tiny attrs, returns model-id string; reload_custom_agents is tag-only.
+
+## Peak/Off-Peak Hour Concurrency (model profiles)
+
+Each `[[llm.models]]` profile supports two OPTIONAL fields for time-based concurrency scaling:
+
+- `peak_concurrency` — positive integer; the concurrency slot count during peak hours.
+- `peak_hours` — list of daily time-window maps `[%{start: "09:00", end: "12:00"}, %{start: "14:00", end: "18:00"}]`, 24h `"HH:MM"` local time (two same-day periods is the motivating example).
+
+**Serialization rule**: missing/empty → DISABLED. The keys are ABSENT from the profile map so the TOML omits them — never emit `peak_concurrency: nil` or `peak_hours: []`. (The evo_git Config schema — authoritative, owned by the core — serializes absent keys as absent.)
+
+**Form-param ↔ profile-map shapes** (the editor emits; `parse_model_profile_params/2` consumes):
+
+- `params["peak_concurrency"]` — plain string from `<input type="number" name="peak_concurrency" min="1">`; empty/absent → key ABSENT.
+- `params["peak_hours"]` — Phoenix-nested map from inputs named `peak_hours[<index>][start]` / `peak_hours[<index>][end]`, i.e. `%{"0" => %{"start" => "09:00", "end" => "12:00"}, "1" => %{"start" => "14:00", "end" => "18:00"}}`. Parse accepts a map keyed by string index (sorted numerically to preserve order), a list, or absent. All-rows-blank → key ABSENT.
+- Profile map (atom keys): `peak_concurrency: pos_integer`, `peak_hours: [%{start: "HH:MM", end: "HH:MM"}]`.
+
+**Row add/remove events** (editor emits → `ModelProfileEvents` handles, delegated from `settings_live.ex`; in-memory `file_config` mutation only, NO persist; active only in edit mode — `editing_profile_id` non-nil):
+
+- `add_peak_hours_row` — no params; appends an empty row `%{start: "", end: ""}` to the editing profile's `peak_hours` (creates the key if absent).
+- `remove_peak_hours_row` — carries `phx-value-index`; removes that row (safe `Integer.parse` index handling); when the list becomes empty the `peak_hours` key is removed from the profile map (absent = disabled).
+
+**Validation semantics** (UI-side UX validation in `parse_model_profile_params/2`; evo_git owns authoritative schema validation):
+
+- `peak_concurrency` blank/absent → absent; else must be a POSITIVE integer → error `"peak_concurrency_invalid"` (0, -1, non-numeric all invalid).
+- Each window: `start`/`end` must be valid 24h clock times (format `HH:MM`, hour 0-23, minute 0-59) → error `"peak_hours_invalid_time"`; a row with exactly one of start/end filled → same error.
+- `start != end` → error `"peak_hours_start_equals_end"`.
+- Windows pairwise non-overlapping (strict overlap `startA < endB && startB < endA`; touching boundaries e.g. `[09:00,12:00]`+`[12:00,15:00]` allowed) → error `"peak_hours_overlap"`.
+- All rows fully blank → `peak_hours` omitted.
+
+`save_model_profile/2` maps the four error strings to user-facing gettext error flashes.
 
 ## Notes for Agents — model-profile id naming (model_value → base name)
 
