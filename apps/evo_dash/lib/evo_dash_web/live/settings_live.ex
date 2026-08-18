@@ -836,14 +836,6 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_info({:scheduler_config_updated}, socket) do
-    # Transitional: old 1-tuple shape from pre-node-identity emitters carries
-    # no node to filter on — ignored (socket unchanged). Remove once the
-    # emitters are migrated.
-    {:noreply, socket}
-  end
-
-  @impl true
   def handle_info({:llm_test_result, result}, socket) do
     status =
       case result do

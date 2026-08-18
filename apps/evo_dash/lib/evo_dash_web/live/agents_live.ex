@@ -189,18 +189,6 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
-  # Transitional safety net for not-yet-migrated emitters: this worktree's
-  # :evo_git still broadcasts the OLD shapes WITHOUT node identity
-  # ({:agents_updated}, {:agent_registered, id, meta_summary},
-  # {:agent_updated, id, fields}, {:agent_removed, id}). They carry no node
-  # to filter on and are dropped (the socket is unchanged) — the new
-  # node-identity clauses above take over once the emitters migrate. Keep
-  # these until the emitter conversion lands, then remove them.
-  def handle_info({:agents_updated}, socket), do: {:noreply, socket}
-  def handle_info({:agent_registered, _agent_id, _meta_summary}, socket), do: {:noreply, socket}
-  def handle_info({:agent_updated, _agent_id, _changed_fields}, socket), do: {:noreply, socket}
-  def handle_info({:agent_removed, _agent_id}, socket), do: {:noreply, socket}
-
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
@@ -209,16 +197,6 @@ defmodule EvoDashWeb.AgentsLive do
   @impl true
   def handle_info({:remote_connection_status, _, _} = msg, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
-  end
-
-  @impl true
-  def handle_info({:tasks_updated}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :tasks_updated)
-  end
-
-  @impl true
-  def handle_info({:task_status, _task_id, _status}, socket) do
-    EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, :task_status)
   end
 
   @impl true

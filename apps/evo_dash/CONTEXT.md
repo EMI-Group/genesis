@@ -99,8 +99,6 @@ The dashboard is fully PUSH-based — all periodic polling was deleted. `:evo_gi
 
 **SystemLive chart seed**: on mount/node-switch ONE async `EvoDash.NodeContext.get_recent_system_samples(current_node)` runs via `EvoDash.TaskSupervisor` + self-message + stale-guard (monotonic `chart_seed_seq` + node); on error ONE retry after 3s (one-shot, gated by `chart_seed_retried` — NOT periodic); on node switch the buffer is cleared + re-seeded. The `:system_samples_runner` app-env test seam is resolved AT SPAWN TIME.
 
-**Transitional safety nets (DEAD CODE)**: several views keep catch-all clauses matching the OLD emitter shapes (`{:tasks_updated}`, `{:task_status, _, _}`, 1-tuple `{:scheduler_config_updated}`, old 2/3-tuple agent shapes — e.g. agents_live.ex:199-202, settings_live.ex:831, system_live.ex:1202), each commented "remove once the emitters are migrated". The `:evo_git` side is being converted to the new emitters IN PARALLEL (real-broadcast integration verified post-merge); remove these clauses after that merge. Details per page: `lib/evo_dash_web/live_hooks/CONTEXT.md` + each page-level CONTEXT.md.
-
 ### Task Archive Feature
 
 When a task is started with the **archive** option enabled (checkbox in the task form), the core runtime collects per-agent metadata (`archive_records`) and EvoDash stores it in `EvoGit.TaskInfo.archive_metadata`. Archived tasks display the agent parent-child tree, per-agent details (objective, return message, start/end commits, token usage, archive refs), and provide JSON export.
