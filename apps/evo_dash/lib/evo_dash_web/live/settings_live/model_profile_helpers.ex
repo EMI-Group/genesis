@@ -502,7 +502,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   defp parse_peak_hours(input) do
     # normalize_peak_hours_input/1 is total — every input shape normalizes to a
     # row list (absent/unknown → []).
-    rows = normalize_peak_hours_input(input)
+    {:ok, rows} = normalize_peak_hours_input(input)
 
     case normalize_peak_hours_rows(rows) do
       # Every row was fully blank → omit the key.
