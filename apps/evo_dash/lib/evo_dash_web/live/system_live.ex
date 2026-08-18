@@ -848,8 +848,12 @@ defmodule EvoDashWeb.SystemLive do
     # sandbox/nix row gating) ASYNCHRONOUSLY — each is a cross-node RPC on a
     # remote node, which could otherwise block navigation for up to the RPC
     # timeout. Results arrive via handle_info, stale-guarded on the node the
-    # request was made for. Initial render keeps the mount defaults.
-    socket = spawn_node_loads(socket)
+    # request was made for. Initial render keeps the mount defaults. Both this
+    # and the chart seed below are gated on `connected?(socket)`: handle_params
+    # runs twice per page load (dead render + live websocket mount), and a task
+    # spawned from the dead render sends its result to a process that is gone —
+    # the live mount's handle_params re-runs and does the real work.
+    socket = if connected?(socket), do: spawn_node_loads(socket), else: socket
 
     # Reset the chart ring buffer + seed state when the node context changes so
     # charts never mix samples from different nodes. Each node gets ONE async
@@ -857,11 +861,13 @@ defmodule EvoDashWeb.SystemLive do
     # replay), filling the buffer with the sampler's recent history.
     socket =
       if socket.assigns[:chart_node] != socket.assigns.current_node do
-        socket
-        |> assign(:chart_node, socket.assigns.current_node)
-        |> assign(:chart_samples, [])
-        |> assign(:chart_seed_retried, false)
-        |> spawn_sample_seed()
+        socket =
+          socket
+          |> assign(:chart_node, socket.assigns.current_node)
+          |> assign(:chart_samples, [])
+          |> assign(:chart_seed_retried, false)
+
+        if connected?(socket), do: spawn_sample_seed(socket), else: socket
       else
         socket
       end
@@ -1470,7 +1476,6 @@ defmodule EvoDashWeb.SystemLive do
     node = socket.assigns.current_node
     seq = socket.assigns.chart_seed_seq + 1
     socket = assign(socket, :chart_seed_seq, seq)
-    IO.inspect({:SPAWN, seq, node}, label: "seed-debug")
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       runner =

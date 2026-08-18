@@ -948,12 +948,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # the seed task queues behind the mount's async system-check loads in
       # the test env, so the failure result (and thus the retry scheduling)
       # can arrive late.
-      dbg_deadline = System.monotonic_time(:millisecond) + 6_000
-      dbg_retried = dbg_poll_retried(view, table, dbg_deadline)
-
-      if dbg_retried != :ok do
-        flunk("chart_seed_retried did not become true: #{inspect(dbg_retried)}")
-      end
+      assert await_view_assign(view, :chart_seed_retried, true, 6_000) == :ok
 
       # The retry succeeds and fills the buffer (3s later).
       assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
@@ -1525,24 +1520,6 @@ defmodule EvoDashWeb.SystemLiveTest do
   defp await_view_assign(view, key, value, timeout \\ 2_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_await_view_assign(view, key, value, deadline)
-  end
-
-  defp dbg_poll_retried(view, table, deadline) do
-    cond do
-      assigns(view)[:chart_seed_retried] == true ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        {:timeout,
-         calls: :ets.lookup_element(table, :calls, 2),
-         chart_samples: assigns(view)[:chart_samples],
-         chart_seed_seq: assigns(view)[:chart_seed_seq],
-         chart_node: assigns(view)[:chart_node]}
-
-      true ->
-        Process.sleep(10)
-        dbg_poll_retried(view, table, deadline)
-    end
   end
 
   # Polls an ETS integer counter until it reaches the expected value (used for
