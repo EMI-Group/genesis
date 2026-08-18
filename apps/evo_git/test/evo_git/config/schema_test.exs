@@ -787,6 +787,227 @@ defmodule EvoGit.Config.SchemaTest do
     end
   end
 
+  describe "peak_concurrency / peak_hours on model profiles" do
+    test "accepts a full profile with peak_concurrency + peak_hours (two same-day windows)" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: [
+              %{start: "09:00", end: "12:00"},
+              %{start: "14:00", end: "18:00"}
+            ]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts peak_hours only (no peak_concurrency — legal no-op)" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [%{start: "09:00", end: "12:00"}]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts peak_concurrency only (no peak_hours)" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", peak_concurrency: 2}
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts peak_hours = [] (disabled)" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", peak_concurrency: 2, peak_hours: []}
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts an overnight window" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_concurrency: 2,
+            peak_hours: [%{start: "22:00", end: "06:00"}]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts a string-keyed TOML-style map profile with peak fields" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            "id" => "glm",
+            "model" => "zai:glm-5",
+            "concurrency" => 4,
+            "peak_concurrency" => 2,
+            "peak_hours" => [
+              %{"start" => "09:00", "end" => "12:00"},
+              %{"start" => "14:00", "end" => "18:00"}
+            ]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "rejects non-positive-integer peak_concurrency values" do
+      for bad <- [0, -1, "2", 2.5] do
+        config =
+          put_in(Schema.defaults(), [:llm, :models], [
+            %{id: "glm", model: "zai:glm-5", peak_concurrency: bad}
+          ])
+
+        assert {:error, errors} = Schema.validate(config)
+
+        assert Enum.any?(errors, fn e ->
+                 e.key_path == [:llm, :models, 0, :peak_concurrency] and
+                   String.contains?(e.message, "peak_concurrency must be a positive integer")
+               end)
+      end
+    end
+
+    test "rejects peak_hours that is not a list" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", peak_hours: "09:00-12:00"}
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               e.key_path == [:llm, :models, 0, :peak_hours] and
+                 String.contains?(e.message, "peak_hours must be a list of")
+             end)
+    end
+
+    test "rejects a peak_hours entry that is not a map" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", peak_hours: ["09:00"]}
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               e.key_path == [:llm, :models, 0, :peak_hours, 0] and
+                 String.contains?(e.message, "peak_hours entries must be maps")
+             end)
+    end
+
+    test "rejects peak_hours windows with a bad time format" do
+      for bad <- ["9:00", "24:00", "12:60", "abc"] do
+        config =
+          put_in(Schema.defaults(), [:llm, :models], [
+            %{
+              id: "glm",
+              model: "zai:glm-5",
+              peak_hours: [%{start: bad, end: "12:00"}]
+            }
+          ])
+
+        assert {:error, errors} = Schema.validate(config)
+
+        assert Enum.any?(errors, fn e ->
+                 e.key_path == [:llm, :models, 0, :peak_hours, 0] and
+                   String.contains?(e.message, "peak_hours window has invalid")
+               end)
+      end
+    end
+
+    test "rejects a zero-length peak_hours window (start == end)" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [%{start: "09:00", end: "09:00"}]
+          }
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               e.key_path == [:llm, :models, 0, :peak_hours, 0] and
+                 String.contains?(e.message, "zero-length window")
+             end)
+    end
+
+    test "rejects overlapping peak_hours windows" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [
+              %{start: "09:00", end: "12:00"},
+              %{start: "11:00", end: "13:00"}
+            ]
+          }
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               List.starts_with?(e.key_path, [:llm, :models, 0, :peak_hours]) and
+                 String.contains?(e.message, "peak_hours windows overlap")
+             end)
+    end
+
+    test "rejects overlapping overnight peak_hours windows" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [
+              %{start: "22:00", end: "06:00"},
+              %{start: "23:00", end: "01:00"}
+            ]
+          }
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               List.starts_with?(e.key_path, [:llm, :models, 0, :peak_hours]) and
+                 String.contains?(e.message, "peak_hours windows overlap")
+             end)
+    end
+
+    test "rejects string-keyed profile with invalid peak_concurrency" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{"id" => "glm", "model" => "zai:glm-5", "peak_concurrency" => 0}
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               e.key_path == [:llm, :models, 0, :peak_concurrency] and
+                 String.contains?(e.message, "peak_concurrency must be a positive integer")
+             end)
+    end
+  end
+
   describe "model_profiles/1" do
     test "returns the list of profiles from config" do
       config = %{llm: %{models: [%{id: "default", model: "x:y"}, %{id: "fast", model: "a:b"}]}}
