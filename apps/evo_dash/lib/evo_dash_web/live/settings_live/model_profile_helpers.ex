@@ -225,8 +225,13 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
             end
           end
 
-        case {spec_result, provider_options_result} do
-          {{:ok, final_spec}, {:ok, provider_options}} ->
+        # Parse the optional peak/off-peak concurrency fields (peak_concurrency
+        # + peak_hours). Both keys stay ABSENT from the profile when disabled,
+        # so TOML serialization omits them (never nil/empty values).
+        peak_result = parse_peak_fields(params)
+
+        case {spec_result, provider_options_result, peak_result} do
+          {{:ok, final_spec}, {:ok, provider_options}, {:ok, peak_fields}} ->
             # Determine the final :model value. When there are no genuine
             # overrides (no base_url, no extra JSON) store the compact STRING
             # form `"provider:model_id"` (or just `model_id` for an empty
@@ -252,17 +257,80 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
               |> maybe_put_float(:frequency_penalty, params["frequency_penalty"])
               |> maybe_put_float(:presence_penalty, params["presence_penalty"])
               |> maybe_put_map(:provider_options, provider_options)
+              # peak_fields is %{} when disabled, else carries :peak_concurrency
+              # and/or :peak_hours (absent keys → TOML omits them).
+              |> Map.merge(peak_fields)
 
             {:ok, profile}
 
-          {{:error, reason}, _} ->
+          {{:error, reason}, _, _} ->
             {:error, reason}
 
-          {_, {:error, reason}} ->
+          {_, {:error, reason}, _} ->
+            {:error, reason}
+
+          {_, _, {:error, reason}} ->
             {:error, reason}
         end
     end
   end
+
+  @doc """
+  Parses the optional peak/off-peak concurrency form fields into atom-keyed
+  profile fields.
+
+  Reads `params["peak_concurrency"]` (plain number string) and
+  `params["peak_hours"]` (Phoenix-nested map keyed by string index, a list, or
+  absent). Returns `{:ok, %{}}` when both fields are disabled/absent (keys must
+  stay ABSENT from the profile so TOML omits them), `{:ok, %{peak_concurrency:
+  int, peak_hours: [%{start: "HH:MM", end: "HH:MM"}]}}` on success, or
+  `{:error, reason}` with one of the four peak error strings:
+  `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`,
+  `"peak_hours_start_equals_end"`, `"peak_hours_overlap"`.
+  """
+  def parse_peak_fields(params) do
+    with {:ok, concurrency} <- parse_peak_concurrency(params["peak_concurrency"]),
+         {:ok, hours} <- parse_peak_hours(params["peak_hours"]) do
+      fields =
+        if is_nil(concurrency), do: %{}, else: %{peak_concurrency: concurrency}
+
+      fields =
+        if is_nil(hours), do: fields, else: Map.put(fields, :peak_hours, hours)
+
+      {:ok, fields}
+    end
+  end
+
+  @doc """
+  Checks whether a string is a valid 24-hour clock time in `HH:MM` format
+  (hour 0-23, minute 0-59, two digits each). `"09:00"` → true; `"9:00"`,
+  `"24:00"`, `"12:60"`, `"12:0"`, `"12:00am"` → false.
+  """
+  def valid_clock_time?(value) when is_binary(value) do
+    Regex.match?(~r/\A(?:[01]\d|2[0-3]):[0-5]\d\z/, value)
+  end
+
+  def valid_clock_time?(_), do: false
+
+  @doc """
+  Converts a valid `"HH:MM"` clock time to minutes since midnight
+  (e.g. `"09:00"` → 540). Returns `nil` for anything not matching the format;
+  callers should validate with `valid_clock_time?/1` first.
+  """
+  def clock_to_minutes(value) when is_binary(value) do
+    case String.split(value, ":") do
+      [h, m] ->
+        case {Integer.parse(h), Integer.parse(m)} do
+          {{hour, ""}, {minute, ""}} -> hour * 60 + minute
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  def clock_to_minutes(_), do: nil
 
   @doc """
   Conditionally puts an integer value into the map. When parsing fails, uses
@@ -407,6 +475,142 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   defp incomplete_profile?(_), do: true
+
+  # ── peak/off-peak concurrency parsing helpers ─────────────────────────────
+  #
+  # Serialization contract: `peak_concurrency` (pos_integer) and `peak_hours`
+  # ([%{start: "HH:MM", end: "HH:MM"}]) are OPTIONAL profile fields; when
+  # disabled/empty the keys are ABSENT from the profile map so TOML omits them.
+  # Validation here is UI-side UX validation only — the evo_git schema owns the
+  # authoritative validation.
+
+  # Blank/absent → {:ok, nil} (key omitted). A non-blank value must parse as a
+  # POSITIVE integer ("0", "-1", "abc" are all invalid; blank is NOT an error).
+  defp parse_peak_concurrency(nil), do: {:ok, nil}
+  defp parse_peak_concurrency(""), do: {:ok, nil}
+
+  defp parse_peak_concurrency(raw) do
+    case SettingsUtils.parse_int(raw) do
+      int when is_integer(int) and int > 0 -> {:ok, int}
+      _ -> {:error, "peak_concurrency_invalid"}
+    end
+  end
+
+  # Normalizes the peak_hours form value (Phoenix-nested map keyed by string
+  # index, a list, or absent) into atom-keyed windows. Returns {:ok, nil} when
+  # absent/all-blank (key omitted) or {:ok, [%{start:, end:}]} / {:error, _}.
+  defp parse_peak_hours(input) do
+    # normalize_peak_hours_input/1 is total — every input shape normalizes to a
+    # row list (absent/unknown → []).
+    rows = normalize_peak_hours_input(input)
+
+    case normalize_peak_hours_rows(rows) do
+      # Every row was fully blank → omit the key.
+      {:ok, []} -> {:ok, nil}
+      {:ok, windows} -> validate_peak_hours_windows(windows)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp normalize_peak_hours_input(nil), do: {:ok, []}
+  defp normalize_peak_hours_input(hours) when is_list(hours), do: {:ok, hours}
+
+  defp normalize_peak_hours_input(hours) when is_map(hours) do
+    # String-index keys sort NUMERICALLY ("10" after "9") so row order is
+    # preserved regardless of map iteration order.
+    sorted =
+      hours
+      |> Enum.sort_by(fn {idx, _row} ->
+        case Integer.parse(to_string(idx)) do
+          {int, ""} -> int
+          _ -> -1
+        end
+      end)
+      |> Enum.map(fn {_idx, row} -> row end)
+
+    {:ok, sorted}
+  end
+
+  defp normalize_peak_hours_input(_), do: {:ok, []}
+
+  defp normalize_peak_hours_rows(rows) do
+    result =
+      Enum.reduce_while(rows, {:ok, []}, fn row, {:ok, acc} ->
+        case normalize_peak_hours_row(row) do
+          # Fully-blank rows are dropped (only OK when ALL rows are blank —
+          # handled by the caller omitting the key).
+          {:ok, nil} -> {:cont, {:ok, acc}}
+          {:ok, window} -> {:cont, {:ok, [window | acc]}}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+
+    case result do
+      {:ok, windows} -> {:ok, Enum.reverse(windows)}
+      error -> error
+    end
+  end
+
+  # Reads start/end from a row with atom-or-string key safety. A row with
+  # exactly one of start/end filled is invalid (must be both or neither).
+  defp normalize_peak_hours_row(row) when is_map(row) do
+    start_time = Map.get(row, "start") || Map.get(row, :start) || ""
+    end_time = Map.get(row, "end") || Map.get(row, :end) || ""
+
+    cond do
+      start_time == "" and end_time == "" -> {:ok, nil}
+      start_time == "" or end_time == "" -> {:error, "peak_hours_invalid_time"}
+      true -> {:ok, %{start: start_time, end: end_time}}
+    end
+  end
+
+  defp normalize_peak_hours_row(_), do: {:error, "peak_hours_invalid_time"}
+
+  defp validate_peak_hours_windows(windows) do
+    with :ok <- validate_window_times(windows),
+         :ok <- validate_start_not_end(windows),
+         :ok <- validate_no_overlap(windows) do
+      {:ok, windows}
+    end
+  end
+
+  defp validate_window_times(windows) do
+    if Enum.all?(windows, fn w -> valid_clock_time?(w.start) and valid_clock_time?(w.end) end) do
+      :ok
+    else
+      {:error, "peak_hours_invalid_time"}
+    end
+  end
+
+  defp validate_start_not_end(windows) do
+    if Enum.any?(windows, fn w -> w.start == w.end end) do
+      {:error, "peak_hours_start_equals_end"}
+    else
+      :ok
+    end
+  end
+
+  # Strict-overlap predicate on minute-windows: windows overlap when
+  # startA < endB AND startB < endA. Touching boundaries (e.g. [09:00,12:00] +
+  # [12:00,15:00]) are allowed.
+  defp validate_no_overlap(windows) do
+    minutes = Enum.map(windows, fn w -> {clock_to_minutes(w.start), clock_to_minutes(w.end)} end)
+
+    overlaps? =
+      for {a, i} <- Enum.with_index(minutes),
+          {b, j} <- Enum.with_index(minutes),
+          j > i,
+          overlap?(a, b) do
+        true
+      end
+      |> Enum.any?()
+
+    if overlaps?, do: {:error, "peak_hours_overlap"}, else: :ok
+  end
+
+  defp overlap?({start_a, end_a}, {start_b, end_b}) do
+    start_a < end_b and start_b < end_a
+  end
 
   defp ensure_llm_key(file_config) do
     if is_map(get_in(file_config, [:llm])) do
