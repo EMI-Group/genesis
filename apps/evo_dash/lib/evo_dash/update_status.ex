@@ -303,12 +303,17 @@ defmodule EvoDash.UpdateStatus do
       "not_available" ->
         # Sentinel error: latest.json was fetched, but this platform has no
         # auto-update payload (mirrors the not_configured handling). Keep the
-        # reported current_version so the card stays populated.
+        # reported current_version so the card stays populated, and mirror the
+        # "available" arm by keeping the feed's version/body/date when present
+        # so the card can still show what the latest release is.
         %{
           state
           | phase: :error,
             error: "not_available",
-            current_version: payload["current_version"] || state.current_version
+            current_version: payload["current_version"] || state.current_version,
+            latest_version: payload["version"] || state.latest_version,
+            notes: payload["body"],
+            date: payload["date"]
         }
 
       "not_configured" ->
@@ -318,6 +323,18 @@ defmodule EvoDash.UpdateStatus do
           | phase: :error,
             error: "not_configured",
             current_version: payload["current_version"] || state.current_version
+        }
+
+      "error" ->
+        # Real check failure with a descriptive backend error string. The
+        # payload may also carry the feed's version (when the feed was
+        # fetchable) — surface it as latest_version so the card can show it.
+        %{
+          state
+          | phase: :error,
+            error: payload["error"] || "check_failed",
+            current_version: payload["current_version"] || state.current_version,
+            latest_version: payload["version"] || state.latest_version
         }
 
       _ ->

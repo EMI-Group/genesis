@@ -1111,16 +1111,18 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # :error with error == "not_configured" → friendly pre-key message
       EvoDash.UpdateStatus.handle_check_result(%{"status" => "not_configured"})
-      await_update_phase(view, :error)
+      await_update_error(view, "not_configured")
       html = render(view)
       assert html =~ "Automatic updates are not configured yet"
       refute html =~ "Check failed"
 
-      # :error with error == "not_available" → friendly info-style message
+      # :error with error == "not_available" → friendly info-style message;
+      # the latest_version from the earlier "available" check is preserved and
+      # shown (the version-less rendering is covered in the dedicated test)
       EvoDash.UpdateStatus.handle_check_result(%{"status" => "not_available"})
-      await_update_phase(view, :error)
+      await_update_error(view, "not_available")
       html = render(view)
-      assert html =~ "No auto update on this platform"
+      assert html =~ "Latest version 1.2.3 — no auto-update for this platform"
       refute html =~ "Check failed"
 
       # :applying — the header Check-now button is disabled
@@ -1133,6 +1135,65 @@ defmodule EvoDashWeb.SystemLiveTest do
         Floki.find(Floki.parse_document!(html), ~s(button[id="update-check-now"]))
 
       assert Floki.attribute(check_now_button, "disabled") != []
+    end
+
+    test "not_available with a known latest version shows it in the card", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "not_available",
+        "version" => "1.2.3",
+        "body" => "notes",
+        "date" => "2026-08-01T00:00:00Z"
+      })
+
+      await_hub_phase(:error)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view).update_status.error == "not_available"
+      assert assigns(view).update_status.latest_version == "1.2.3"
+      assert html =~ "Latest version 1.2.3 — no auto-update for this platform"
+      refute html =~ "No auto update on this platform"
+      refute html =~ "Check failed"
+    end
+
+    test "not_available without a known version falls back to the generic message", %{
+      conn: conn
+    } do
+      reset_hub_to_idle()
+      set_desktop()
+
+      EvoDash.UpdateStatus.handle_check_result(%{"status" => "not_available"})
+      await_hub_phase(:error)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view).update_status.error == "not_available"
+      assert assigns(view).update_status.latest_version == nil
+      assert html =~ "No auto update on this platform"
+      refute html =~ "Latest version"
+      refute html =~ "Check failed"
+    end
+
+    test "generic check error shows Check failed and the raw error detail", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "error",
+        "error" => "Update check failed: network unreachable"
+      })
+
+      await_hub_phase(:error)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view).update_status.error == "Update check failed: network unreachable"
+      assert html =~ "Check failed"
+      assert html =~ "Update check failed: network unreachable"
+      refute html =~ "No auto update on this platform"
     end
 
     test "notify-only mode shows the package-manager message instead of a Download button", %{
@@ -1523,6 +1584,33 @@ defmodule EvoDashWeb.SystemLiveTest do
       else
         Process.sleep(10)
         do_await_update_phase(view, phase, deadline)
+      end
+    end
+  end
+
+  # Polls the LiveView's `@update_status` assign until its error matches. Needed
+  # for consecutive same-phase transitions (e.g. :error → :error): the
+  # phase-only await above can return on the PREVIOUS state's broadcast, and
+  # the following render would show stale HTML. Awaiting the error value
+  # discriminates the two states.
+  defp await_update_error(view, error, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_update_error(view, error, deadline)
+  end
+
+  defp do_await_update_error(view, error, deadline) do
+    if assigns(view).update_status.error == error do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        got = assigns(view).update_status.error
+
+        flunk(
+          "update status did not reach error #{inspect(error)} within the test timeout (got #{inspect(got)})"
+        )
+      else
+        Process.sleep(10)
+        do_await_update_error(view, error, deadline)
       end
     end
   end

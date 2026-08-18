@@ -149,6 +149,39 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.current_version == "0.1.0"
     end
 
+    test "\"not_available\" keeps the feed's version/body/date so the card can show them" do
+      UpdateStatus.handle_check_result(%{
+        "status" => "not_available",
+        "current_version" => "0.1.0",
+        "version" => "1.2.3",
+        "body" => "Release notes",
+        "date" => "2026-08-01T00:00:00Z"
+      })
+
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "not_available"
+      assert state.current_version == "0.1.0"
+      assert state.latest_version == "1.2.3"
+      assert state.notes == "Release notes"
+      assert state.date == "2026-08-01T00:00:00Z"
+    end
+
+    test "\"not_available\" without a version falls back to the previous latest_version" do
+      # Fresh hub: no previous value → nil
+      UpdateStatus.handle_check_result(%{"status" => "not_available"})
+      assert UpdateStatus.get().latest_version == nil
+
+      # After an "available" check the previous latest_version is preserved
+      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.2.3"})
+      UpdateStatus.handle_check_result(%{"status" => "not_available"})
+
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "not_available"
+      assert state.latest_version == "1.2.3"
+    end
+
     test "error paths store current_version so the version stays populated" do
       # not_configured
       UpdateStatus.handle_check_result(%{
@@ -201,6 +234,29 @@ defmodule EvoDash.UpdateStatusTest do
       UpdateStatus.handle_check_result(%{"status" => "error"})
       assert UpdateStatus.get().phase == :error
       assert UpdateStatus.get().error == "check_failed"
+    end
+
+    test "\"error\" with a version stores it as latest_version" do
+      UpdateStatus.handle_check_result(%{
+        "status" => "error",
+        "error" => "Update check failed: network unreachable",
+        "version" => "1.2.3"
+      })
+
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "Update check failed: network unreachable"
+      assert state.latest_version == "1.2.3"
+    end
+
+    test "\"error\" without a version keeps the previous latest_version" do
+      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.2.3"})
+      UpdateStatus.handle_check_result(%{"status" => "error", "error" => "boom"})
+
+      state = UpdateStatus.get()
+      assert state.phase == :error
+      assert state.error == "boom"
+      assert state.latest_version == "1.2.3"
     end
 
     test "missing or unknown status normalizes to :error check_failed" do

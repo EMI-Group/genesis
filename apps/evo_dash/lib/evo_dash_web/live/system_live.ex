@@ -253,9 +253,17 @@ defmodule EvoDashWeb.SystemLive do
                       <% "not_available" -> %>
                         <!-- latest.json fetched but no auto-update payload for this platform -->
                         <.icon name="hero-information-circle" class="size-4 text-info shrink-0" />
-                        <span class="text-sm text-info">
-                          {gettext("No auto update on this platform")} <% # zh_CN: "当前平台没有可用的自动更新（未发布对应平台的安装包）" %>
-                        </span>
+                        <%= if @update_status.latest_version do %>
+                          <span class="text-sm text-info">
+                            {gettext("Latest version %{version} — no auto-update for this platform",
+                              version: @update_status.latest_version
+                            )} <% # zh_CN: "当前平台不支持自动更新，提示最新可用版本" %>
+                          </span>
+                        <% else %>
+                          <span class="text-sm text-info">
+                            {gettext("No auto update on this platform")} <% # zh_CN: "当前平台没有可用的自动更新（未发布对应平台的安装包）" %>
+                          </span>
+                        <% end %>
                       <% "not_configured" -> %>
                         <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
                         <span class="text-sm text-base-content/70">
@@ -263,7 +271,15 @@ defmodule EvoDashWeb.SystemLive do
                         </span>
                       <% _ -> %>
                         <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
-                        <span class="text-sm text-error">{gettext("Check failed")}</span>
+                        <div>
+                          <span class="text-sm text-error">{gettext("Check failed")}</span>
+                          <%= if @update_status.error do %>
+                            <!-- Raw backend diagnostic detail (English) — not a UI string -->
+                            <span class="block text-xs text-base-content/40 break-all">
+                              {@update_status.error}
+                            </span>
+                          <% end %>
+                        </div>
                     <% end %>
                   </div>
                 <% :applying -> %>
