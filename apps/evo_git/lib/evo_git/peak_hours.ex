@@ -55,6 +55,69 @@ defmodule EvoGit.PeakHours do
 
   @minutes_per_day 1440
 
+  # Fixed mid-year UTC instant used to probe a time zone database for an IANA
+  # name (mid-year avoids DST edge cases; any valid instant works for the
+  # existence probe).
+  @probe_iso_days Calendar.ISO.naive_datetime_to_iso_days(2025, 7, 1, 12, 0, 0, {0, 0})
+
+  @doc """
+  Validates an IANA time zone name against a time zone database.
+
+  `nil` / `""` (absent/disabled) are always valid. A non-empty binary must
+  resolve in the database returned by `Calendar.get_time_zone_database/0` (or
+  the explicitly passed `db`). When no database is configured (Elixir's
+  default `Calendar.UTCOnlyTimeZoneDatabase`), returns
+  `{:error, :no_time_zone_database}` — the caller should treat that as "time
+  zones unsupported".
+
+  The probe uses the database's `time_zone_period_from_utc_iso_days/2`
+  callback at the fixed mid-year UTC instant above: a valid IANA name returns
+  `{:ok, period}`; unknown names return `{:error, :time_zone_not_found}`.
+
+  The optional `db` argument exists so the no-database case is testable
+  without mutating the global time zone database (pass
+  `Calendar.UTCOnlyTimeZoneDatabase` directly).
+  """
+  @spec validate_timezone(term(), module()) :: :ok | {:error, term()}
+  def validate_timezone(tz, db \\ Calendar.get_time_zone_database())
+
+  def validate_timezone(nil, _db), do: :ok
+  def validate_timezone("", _db), do: :ok
+
+  def validate_timezone(tz, db) when is_binary(tz) do
+    cond do
+      db == Calendar.UTCOnlyTimeZoneDatabase ->
+        {:error, :no_time_zone_database}
+
+      true ->
+        case db.time_zone_period_from_utc_iso_days(@probe_iso_days, tz) do
+          {:ok, _period} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  def validate_timezone(_other, _db), do: {:error, :invalid_timezone}
+
+  @doc """
+  Resolves a UTC instant into the wall clock of `tz`.
+
+  Returns `{:ok, %NaiveDateTime{}}` (DST-aware — real UTC instants never hit
+  gaps/ambiguities) or `{:error, reason}` for an unknown time zone, a
+  non-binary `tz`, or a non-DateTime `utc` input.
+  """
+  @spec wall_clock_in(term(), term()) :: {:ok, NaiveDateTime.t()} | {:error, term()}
+  def wall_clock_in(tz, %DateTime{} = utc) when is_binary(tz) do
+    case DateTime.shift_zone(utc, tz, Calendar.get_time_zone_database()) do
+      {:ok, shifted} -> {:ok, DateTime.to_naive(shifted)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def wall_clock_in(tz, _utc) when not is_binary(tz), do: {:error, :invalid_timezone}
+
+  def wall_clock_in(_tz, _utc), do: {:error, :invalid_datetime}
+
   @doc """
   Parses a strict `"HH:MM"` 24-hour time string into minute-of-day.
 
@@ -216,6 +279,24 @@ defmodule EvoGit.PeakHours do
           {:error, _reason} ->
             concurrency
         end
+    end
+  end
+
+  @doc """
+  Timezone-aware variant of `effective_concurrency/2`.
+
+  Resolves `utc_instant` (a `%DateTime{}` UTC instant) into `tz`'s wall clock
+  via `wall_clock_in/2` and delegates to `effective_concurrency/2` — no window
+  logic is re-implemented here. On any resolution error (unknown time zone,
+  unconfigured tz database, bad input) falls back to `concurrency` — the same
+  fallback the two-arity version uses for invalid windows (`nil` when
+  `:concurrency` is missing).
+  """
+  @spec effective_concurrency(map(), DateTime.t(), term()) :: non_neg_integer() | nil
+  def effective_concurrency(profile, utc_instant, tz) when is_map(profile) do
+    case wall_clock_in(tz, utc_instant) do
+      {:ok, wall} -> effective_concurrency(profile, wall)
+      {:error, _reason} -> Map.get(profile, :concurrency)
     end
   end
 

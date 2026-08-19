@@ -416,4 +416,134 @@ defmodule EvoGit.PeakHoursTest do
       assert PeakHours.effective_concurrency(profile, ~N[2025-01-15 13:00:00]) == 4
     end
   end
+
+  describe "validate_timezone/1,2" do
+    test "accepts nil and empty string (absent/disabled)" do
+      assert PeakHours.validate_timezone(nil) == :ok
+      assert PeakHours.validate_timezone("") == :ok
+    end
+
+    test "accepts valid IANA names against the configured db" do
+      # The app configures Tzdata.TimeZoneDatabase at boot, so the no-arg
+      # form resolves real IANA names.
+      assert PeakHours.validate_timezone("Asia/Shanghai") == :ok
+      assert PeakHours.validate_timezone("America/New_York") == :ok
+      assert PeakHours.validate_timezone("UTC") == :ok
+    end
+
+    test "rejects garbage and unknown-but-wellformed names" do
+      assert {:error, :time_zone_not_found} = PeakHours.validate_timezone("Not/AZone")
+      assert {:error, :time_zone_not_found} = PeakHours.validate_timezone("abc")
+      assert {:error, :time_zone_not_found} = PeakHours.validate_timezone("GMT+8")
+      assert {:error, :time_zone_not_found} = PeakHours.validate_timezone("Mars/Olympus")
+    end
+
+    test "rejects non-binary input" do
+      assert {:error, :invalid_timezone} = PeakHours.validate_timezone(123)
+      assert {:error, :invalid_timezone} = PeakHours.validate_timezone(%{})
+      assert {:error, :invalid_timezone} = PeakHours.validate_timezone(:utc)
+    end
+
+    test "no time zone database configured → :no_time_zone_database" do
+      # Explicit db arg — the module is async: true, so we must NOT mutate the
+      # global time zone database.
+      assert {:error, :no_time_zone_database} =
+               PeakHours.validate_timezone("Asia/Shanghai", Calendar.UTCOnlyTimeZoneDatabase)
+
+      assert {:error, :no_time_zone_database} =
+               PeakHours.validate_timezone("UTC", Calendar.UTCOnlyTimeZoneDatabase)
+    end
+  end
+
+  describe "wall_clock_in/2" do
+    test "resolves a fixed-offset zone" do
+      assert PeakHours.wall_clock_in("Asia/Shanghai", ~U[2025-01-15 08:00:00Z]) ==
+               {:ok, ~N[2025-01-15 16:00:00]}
+    end
+
+    test "DST-aware resolution (US Eastern, DST starts 2025-03-09 at 07:00Z)" do
+      # 06:30Z is still EST (-5): 06:30 - 5 = 01:30 (before the 07:00Z flip)
+      assert PeakHours.wall_clock_in("America/New_York", ~U[2025-03-09 06:30:00Z]) ==
+               {:ok, ~N[2025-03-09 01:30:00]}
+
+      # 07:00Z is the transition instant itself → already EDT (-4): 07:00 - 4 = 03:00
+      assert PeakHours.wall_clock_in("America/New_York", ~U[2025-03-09 07:00:00Z]) ==
+               {:ok, ~N[2025-03-09 03:00:00]}
+
+      # 08:00Z is EDT (-4): 08:00 - 4 = 04:00
+      assert PeakHours.wall_clock_in("America/New_York", ~U[2025-03-09 08:00:00Z]) ==
+               {:ok, ~N[2025-03-09 04:00:00]}
+    end
+
+    test "rejects an unknown time zone name" do
+      assert {:error, :time_zone_not_found} =
+               PeakHours.wall_clock_in("Not/AZone", ~U[2025-01-15 08:00:00Z])
+    end
+
+    test "rejects non-binary timezone and non-DateTime input" do
+      assert {:error, :invalid_timezone} = PeakHours.wall_clock_in(nil, ~U[2025-01-15 08:00:00Z])
+      assert {:error, :invalid_timezone} = PeakHours.wall_clock_in(123, ~U[2025-01-15 08:00:00Z])
+
+      assert {:error, :invalid_datetime} =
+               PeakHours.wall_clock_in("Asia/Shanghai", ~N[2025-01-15 08:00:00])
+    end
+  end
+
+  describe "effective_concurrency/3 (tz-aware)" do
+    @tz_profile %{
+      concurrency: 4,
+      peak_concurrency: 2,
+      peak_hours: [%{start: "09:00", end: "12:00"}],
+      timezone: "Asia/Shanghai"
+    }
+
+    test "resolves the profile's wall clock from the utc instant" do
+      # 2025-01-15 01:00:00Z = 09:00 Shanghai → in peak → peak_concurrency
+      assert PeakHours.effective_concurrency(
+               @tz_profile,
+               ~U[2025-01-15 01:00:00Z],
+               "Asia/Shanghai"
+             ) ==
+               2
+
+      # 2025-01-15 00:00:00Z = 08:00 Shanghai → off peak → concurrency
+      assert PeakHours.effective_concurrency(
+               @tz_profile,
+               ~U[2025-01-15 00:00:00Z],
+               "Asia/Shanghai"
+             ) ==
+               4
+    end
+
+    test "peak_concurrency 0 is honored in a tz profile" do
+      profile = %{
+        concurrency: 4,
+        peak_concurrency: 0,
+        peak_hours: [%{start: "09:00", end: "12:00"}],
+        timezone: "Asia/Shanghai"
+      }
+
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-15 01:00:00Z], "Asia/Shanghai") ==
+               0
+
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-15 00:00:00Z], "Asia/Shanghai") ==
+               4
+    end
+
+    test "falls back to concurrency on timezone resolution error" do
+      profile = %{@tz_profile | timezone: "Not/AZone"}
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-15 01:00:00Z], "Not/AZone") == 4
+    end
+
+    test "missing concurrency → nil" do
+      profile = %{
+        peak_concurrency: 2,
+        peak_hours: [%{start: "09:00", end: "12:00"}],
+        timezone: "Asia/Shanghai"
+      }
+
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-15 01:00:00Z], "Asia/Shanghai") ==
+               nil
+    end
+  end
 end

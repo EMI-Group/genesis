@@ -42,6 +42,15 @@ defmodule EvoGit.Application do
     # connect to remote nodes via SSH tunnels.
     EvoGit.Distribution.maybe_enable()
 
+    # Use the IANA tz database (bundled with the tzdata dep) as Elixir's
+    # global time zone database so per-profile peak-hour `timezone` fields
+    # (IANA names) resolve correctly. tzdata ships its tz data read-only in
+    # priv/ and its network-polling ReleaseUpdater is OFF by default (it only
+    # starts when `config :tzdata, :autoupdate, :enabled` is set — nothing in
+    # this project enables it), so configuring the database causes no network
+    # I/O at boot.
+    Calendar.put_time_zone_database(Tzdata.TimeZoneDatabase)
+
     children = [
       {Phoenix.PubSub, name: EvoGit.PubSub},
       # PubSub broadcast throttle (coalesces rapid agent-update signals)

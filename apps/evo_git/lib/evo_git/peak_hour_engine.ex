@@ -10,13 +10,15 @@ defmodule EvoGit.PeakHourEngine do
 
   ## Runtime update path
 
-  For every model profile the engine computes
-  `max(effective_concurrency(profile, now), default_llm_max_concurrency)` —
-  the **same floor** `EvoGit.AgentScheduler.State` re-applies when storing a
+  For every model profile the engine computes the per-model concurrency map —
+  `effective_map/3,4` — applying the **same floor**
+  `EvoGit.AgentScheduler.State` re-applies when storing a
   `:model_concurrency` replacement (`maybe_update_model_concurrency/2` +
-  `apply_default_llm_concurrency_override/2`). It then calls
-  `AgentScheduler.update_config(model_concurrency: map)` only when the
-  computed map differs from the scheduler's current one. The floored
+  `apply_default_llm_concurrency_override/2`): an explicit effective `0`
+  stays `0`, and every other value floors to
+  `max(effective_concurrency(profile, now), default_llm_max_concurrency)`.
+  It then calls `AgentScheduler.update_config(model_concurrency: map)` only
+  when the computed map differs from the scheduler's current one. The floored
   computation guarantees a **fixed point**: the stored map equals the computed
   map, so the `{:scheduler_config_updated, node}` broadcast that every update
   emits re-checks into a no-op instead of looping. The scheduler's
@@ -24,15 +26,25 @@ defmodule EvoGit.PeakHourEngine do
   capacity increase, and `reconcile_pool_after_update/1` re-sizes the
   ReqLLM Finch pool — both automatic.
 
+  ## Timezones
+
+  Profiles may declare an optional `timezone` (IANA name, e.g.
+  `"Asia/Shanghai"`). For such profiles the engine resolves the wall clock
+  from the UTC clock seam via `EvoGit.PeakHours.wall_clock_in/2` instead of
+  the local wall clock, and computes the next wakeup in the profile's own
+  wall clock (converting the wall transition to UTC). Profiles without a
+  `timezone` keep using the local wall clock exactly as before.
+
   ## Wakeups
 
   After every check the engine schedules the next wakeup at the earliest
-  in-peak state flip across all profiles' windows
-  (`EvoGit.PeakHours.next_transition/2`), plus a small epsilon so `now` is
-  guaranteed to be past the boundary when the timer fires (windows are
-  half-open). When no transition is computable (no windows) it falls back to a
-  6-hour safety-net cap so config reloads are still picked up. A pending timer
-  is always cancelled before a new one is scheduled, so wakeups never stack.
+  in-peak state flip across all profiles' windows, computed in each profile's
+  own wall clock (`EvoGit.PeakHours.next_transition/2`), plus a small epsilon
+  so `now` is guaranteed to be past the boundary when the timer fires (windows
+  are half-open). When no transition is computable (no windows) it falls back
+  to a 6-hour safety-net cap so config reloads are still picked up. A pending
+  timer is always cancelled before a new one is scheduled, so wakeups never
+  stack.
 
   ## Config reloads
 
@@ -41,12 +53,14 @@ defmodule EvoGit.PeakHourEngine do
   profile edit / config reload re-applies immediately even mid-peak. Foreign
   node broadcasts are ignored.
 
-  ## Clock seam
+  ## Clock seams
 
-  `now` is read from `Application.get_env(:evo_git, :peak_hours_now_fun,
-  &NaiveDateTime.local_now/0)` on EVERY wakeup, so tests can swap the clock at
-  runtime with `Application.put_env` and the engine picks it up without a
-  restart.
+  `now` (local wall clock) is read from
+  `Application.get_env(:evo_git, :peak_hours_now_fun, &NaiveDateTime.local_now/0)`
+  on EVERY wakeup, and `utc_now` (for timezone profiles) from
+  `Application.get_env(:evo_git, :peak_hours_utc_now_fun, &DateTime.utc_now/0)`
+  — so tests can swap either clock at runtime with `Application.put_env` and
+  the engine picks them up without a restart.
 
   ## Robustness
 
@@ -100,25 +114,33 @@ defmodule EvoGit.PeakHourEngine do
   end
 
   @doc """
-  Computes the floored per-model concurrency map for `profiles` at `now`.
+  Computes the floored per-model concurrency map for `profiles`.
 
   `default` is the scheduler's `default_llm_max_concurrency` floor (`nil` is
-  treated as no floor / 0). Each entry is
-  `max(effective_concurrency(profile, now), default)` — the exact floor
-  `EvoGit.AgentScheduler.State` applies when storing a `:model_concurrency`
-  replacement, so the applied map is a fixed point (the engine must NEVER
-  compute an unfloored map, or the State would floor it and the engine would
-  re-apply forever).
+  treated as no floor / 0). Arity 3 uses the local wall clock `now` for every
+  profile (profiles without a `timezone` behave exactly as before; a
+  timezone profile with no `utc_now` falls back to `now`). Arity 4 resolves
+  each timezone profile's wall clock from `utc_now` via
+  `EvoGit.PeakHours.wall_clock_in/2` (falling back to `now` on resolution
+  errors) and uses `now` for non-timezone profiles.
+
+  **Floor rule** (must mirror
+  `EvoGit.AgentScheduler.State.apply_default_llm_concurrency_override/2`):
+  an explicit effective `0` stays `0`; `nil` (no concurrency) becomes the
+  floor; every other value floors to `max(effective, default)`. The engine
+  must NEVER compute an unfloored map, or the State would floor it and the
+  engine would re-apply forever.
   """
-  @spec effective_map([map()], non_neg_integer() | nil, NaiveDateTime.t()) ::
+  @spec effective_map([map()], non_neg_integer() | nil, NaiveDateTime.t(), DateTime.t() | nil) ::
           %{String.t() => non_neg_integer()}
-  def effective_map(profiles, default, %NaiveDateTime{} = now) when is_list(profiles) do
+  def effective_map(profiles, default, %NaiveDateTime{} = now, utc_now \\ nil)
+      when is_list(profiles) do
     d = default || 0
 
     Map.new(profiles, fn p ->
       id = Map.get(p, :id, "default")
-      eff = PeakHours.effective_concurrency(p, now)
-      {id, max(eff || d, d)}
+      eff = effective_for_profile(p, now, utc_now)
+      {id, floor_effective(eff, d)}
     end)
   end
 
@@ -151,6 +173,61 @@ defmodule EvoGit.PeakHourEngine do
       transition ->
         ms = max(NaiveDateTime.diff(transition, now, :millisecond), 0)
         min(ms + @wakeup_epsilon_ms, @max_sleep_ms)
+    end
+  end
+
+  @doc false
+  # Timezone-aware variant of `next_wakeup_ms/2`: takes `[{windows, tz}]`
+  # pairs (`tz` = nil for local-clock profiles) plus both clocks, computes
+  # each profile's next transition in its OWN wall clock, and returns the
+  # earliest wakeup delay — epsilon and the 6h cap applied, mirroring
+  # `next_wakeup_ms/2`.
+  #
+  # Non-tz pairs use the local `now` directly. Tz pairs resolve their wall
+  # clock from `utc_now` via `EvoGit.PeakHours.wall_clock_in/2` (falling back
+  # to `now` on resolution errors) and convert the wall transition to a UTC
+  # instant via `DateTime.from_naive/3` + `DateTime.shift_zone/3`; on ANY
+  # conversion error (DST gap/ambiguity, unknown zone, unconfigured db) that
+  # profile's transition is skipped. No transitions at all → `@max_sleep_ms`.
+  @spec next_wakeup_ms_for(
+          [{PeakHours.windows(), String.t() | nil}],
+          NaiveDateTime.t(),
+          DateTime.t()
+        ) ::
+          pos_integer()
+  def next_wakeup_ms_for(windows_tz_pairs, %NaiveDateTime{} = now, %DateTime{} = utc_now)
+      when is_list(windows_tz_pairs) do
+    transitions =
+      Enum.flat_map(windows_tz_pairs, fn
+        {[], _tz} ->
+          []
+
+        {ws, nil} ->
+          case PeakHours.next_transition(ws, now) do
+            nil -> []
+            transition -> [max(NaiveDateTime.diff(transition, now, :millisecond), 0)]
+          end
+
+        {ws, tz} ->
+          # wall_clock_for/3 always resolves (falling back to `now`), so the
+          # match below cannot fail.
+          {:ok, wall} = wall_clock_for(tz, now, utc_now)
+
+          case PeakHours.next_transition(ws, wall) do
+            nil ->
+              []
+
+            wall_transition ->
+              case tz_transition_delay_ms(wall_transition, tz, utc_now) do
+                nil -> []
+                ms -> [ms]
+              end
+          end
+      end)
+
+    case Enum.min(transitions, fn -> nil end) do
+      nil -> @max_sleep_ms
+      ms -> min(ms + @wakeup_epsilon_ms, @max_sleep_ms)
     end
   end
 
@@ -203,13 +280,14 @@ defmodule EvoGit.PeakHourEngine do
     state = %{state | timer_ref: nil}
 
     now = now_fun()
+    utc_now = utc_now_fun()
 
     if scheduler_up?() do
       profiles = safe_get_config(:model_profiles, [])
 
       if is_list(profiles) and profiles != [] do
         default = safe_get_config(:default_llm_max_concurrency, nil)
-        effective = effective_map(profiles, default, now)
+        effective = effective_map(profiles, default, now, utc_now)
         current = safe_get_config(:model_concurrency, %{})
 
         if effective != current do
@@ -227,15 +305,15 @@ defmodule EvoGit.PeakHourEngine do
           end
         end
 
-        windows_list =
+        windows_tz_pairs =
           Enum.flat_map(profiles, fn p ->
             case PeakHours.validate_windows(Map.get(p, :peak_hours)) do
-              {:ok, ws} when ws != [] -> [ws]
+              {:ok, ws} when ws != [] -> [{ws, profile_timezone(p)}]
               _ -> []
             end
           end)
 
-        ms = next_wakeup_ms(windows_list, now)
+        ms = next_wakeup_ms_for(windows_tz_pairs, now, utc_now)
         %{state | timer_ref: Process.send_after(self(), :check, ms)}
       else
         schedule_safety_net(state)
@@ -252,6 +330,79 @@ defmodule EvoGit.PeakHourEngine do
   defp now_fun do
     fun = Application.get_env(:evo_git, :peak_hours_now_fun, &NaiveDateTime.local_now/0)
     fun.()
+  end
+
+  defp utc_now_fun do
+    fun = Application.get_env(:evo_git, :peak_hours_utc_now_fun, &DateTime.utc_now/0)
+    fun.()
+  end
+
+  # Resolves a profile's effective concurrency at its own wall clock: tz
+  # profiles resolve the utc seam into the zone's wall clock (falling back to
+  # the local `now` on any resolution error); non-tz profiles use `now`
+  # directly.
+  defp effective_for_profile(p, now, utc_now) do
+    case profile_timezone(p) do
+      nil ->
+        PeakHours.effective_concurrency(p, now)
+
+      tz ->
+        case PeakHours.wall_clock_in(tz, utc_now) do
+          {:ok, wall} -> PeakHours.effective_concurrency(p, wall)
+          {:error, _reason} -> PeakHours.effective_concurrency(p, now)
+        end
+    end
+  end
+
+  # Task B floor rule (must mirror
+  # State.apply_default_llm_concurrency_override/2): an explicit effective 0
+  # stays 0; nil (no concurrency) becomes the floor; all other values floor
+  # to max(eff, floor).
+  defp floor_effective(eff, floor) do
+    cond do
+      eff == 0 -> 0
+      is_nil(eff) -> floor
+      true -> max(eff, floor)
+    end
+  end
+
+  # Returns the profile's timezone as a non-empty binary, or nil when
+  # absent / empty (atom- and string-keyed tolerance — TOML decoding may
+  # produce string keys).
+  defp profile_timezone(p) do
+    case Map.get(p, :timezone) do
+      tz when tz in [nil, ""] ->
+        case Map.get(p, "timezone") do
+          tz2 when tz2 in [nil, ""] -> nil
+          tz2 -> tz2
+        end
+
+      tz ->
+        tz
+    end
+  end
+
+  # Resolves the wall clock for a tz profile from the utc seam, falling back
+  # to the local `now` on any resolution error.
+  defp wall_clock_for(tz, now, utc_now) do
+    case PeakHours.wall_clock_in(tz, utc_now) do
+      {:ok, wall} -> {:ok, wall}
+      {:error, _reason} -> {:ok, now}
+    end
+  end
+
+  # Converts a wall-clock transition (expressed in `tz`) into milliseconds
+  # until the corresponding UTC instant. nil when the conversion fails (DST
+  # gap/ambiguity, unknown zone, unconfigured tz db).
+  defp tz_transition_delay_ms(wall_transition, tz, utc_now) do
+    db = Calendar.get_time_zone_database()
+
+    with {:ok, dt_tz} <- DateTime.from_naive(wall_transition, tz, db),
+         {:ok, dt_utc} <- DateTime.shift_zone(dt_tz, "Etc/UTC", db) do
+      max(DateTime.diff(dt_utc, utc_now, :millisecond), 0)
+    else
+      _ -> nil
+    end
   end
 
   defp scheduler_up? do
