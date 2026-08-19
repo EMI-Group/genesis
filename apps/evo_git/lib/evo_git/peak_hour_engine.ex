@@ -11,17 +11,19 @@ defmodule EvoGit.PeakHourEngine do
   ## Runtime update path
 
   For every model profile the engine computes the per-model concurrency map —
-  `effective_map/3,4` — applying the **same floor**
-  `EvoGit.AgentScheduler.State` re-applies when storing a
-  `:model_concurrency` replacement (`maybe_update_model_concurrency/2` +
-  `apply_default_llm_concurrency_override/2`): an explicit effective `0`
-  stays `0`, and every other value floors to
-  `max(effective_concurrency(profile, now), default_llm_max_concurrency)`.
-  It then calls `AgentScheduler.update_config(model_concurrency: map)` only
-  when the computed map differs from the scheduler's current one. The floored
-  computation guarantees a **fixed point**: the stored map equals the computed
-  map, so the `{:scheduler_config_updated, node}` broadcast that every update
-  emits re-checks into a no-op instead of looping. The scheduler's
+  `effective_map/3,4` — and OWNS the floor logic itself. An explicit in-peak
+  `peak_concurrency` — including the hard-pause `0` — is an intentional
+  per-model user configuration and is sent as-is, exempt from the
+  `default_llm_max_concurrency` floor; every other value floors to
+  `max(effective_concurrency(profile, now), default_llm_max_concurrency)`
+  (`nil` becomes the floor). It then calls
+  `AgentScheduler.update_config(model_concurrency: map,
+  model_concurrency_skip_floor: true)` only when the computed map differs from
+  the scheduler's current one — the skip-floor flag makes the scheduler store
+  the map verbatim, so the floored computation guarantees a **fixed point**:
+  the stored map equals the computed map, and the
+  `{:scheduler_config_updated, node}` broadcast that every update emits
+  re-checks into a no-op instead of looping. The scheduler's
   `Slots.grant_pending_on_resume/1` sweep grants queued LLM waiters on any
   capacity increase, and `reconcile_pool_after_update/1` re-sizes the
   ReqLLM Finch pool — both automatic.
@@ -124,12 +126,14 @@ defmodule EvoGit.PeakHourEngine do
   `EvoGit.PeakHours.wall_clock_in/2` (falling back to `now` on resolution
   errors) and uses `now` for non-timezone profiles.
 
-  **Floor rule** (must mirror
-  `EvoGit.AgentScheduler.State.apply_default_llm_concurrency_override/2`):
-  an explicit effective `0` stays `0`; `nil` (no concurrency) becomes the
+  **Floor rule**: an explicit in-peak `peak_concurrency` — including the
+  hard-pause `0` — is an intentional per-model user configuration and is sent
+  as-is, exempt from the `default_llm_max_concurrency` floor (the engine owns
+  the floor logic; the scheduler stores the map verbatim for the
+  `model_concurrency_skip_floor` flag). `nil` (no concurrency) becomes the
   floor; every other value floors to `max(effective, default)`. The engine
-  must NEVER compute an unfloored map, or the State would floor it and the
-  engine would re-apply forever.
+  must NEVER send an unfloored map for NON-exempt values, or the scheduler
+  would floor it and the engine would re-apply forever (fixed point).
   """
   @spec effective_map([map()], non_neg_integer() | nil, NaiveDateTime.t(), DateTime.t() | nil) ::
           %{String.t() => non_neg_integer()}
@@ -140,7 +144,11 @@ defmodule EvoGit.PeakHourEngine do
     Map.new(profiles, fn p ->
       id = Map.get(p, :id, "default")
       eff = effective_for_profile(p, now, utc_now)
-      {id, floor_effective(eff, d)}
+
+      # An explicit in-peak `peak_concurrency` (incl. the hard-pause 0) is an
+      # intentional user configuration and is sent as-is, exempt from the
+      # default floor; everything else floors.
+      {id, if(peak_exempt?(p, now, utc_now), do: eff, else: floor_effective(eff, d))}
     end)
   end
 
@@ -291,7 +299,10 @@ defmodule EvoGit.PeakHourEngine do
         current = safe_get_config(:model_concurrency, %{})
 
         if effective != current do
-          case safe_update_config(model_concurrency: effective) do
+          case safe_update_config(
+                 model_concurrency: effective,
+                 model_concurrency_skip_floor: true
+               ) do
             :ok ->
               Logger.info("PeakHourEngine: applied model concurrency #{inspect(effective)}")
 
@@ -354,15 +365,60 @@ defmodule EvoGit.PeakHourEngine do
     end
   end
 
-  # Task B floor rule (must mirror
-  # State.apply_default_llm_concurrency_override/2): an explicit effective 0
-  # stays 0; nil (no concurrency) becomes the floor; all other values floor
-  # to max(eff, floor).
+  # Floor rule for NON-exempt values (the engine owns the floor logic now —
+  # the scheduler stores the map verbatim for the `model_concurrency_skip_floor`
+  # flag): an explicit in-peak `peak_concurrency` (incl. the hard-pause 0) is
+  # sent as-is via `peak_exempt?/3` and never reaches this helper; nil (no
+  # concurrency) becomes the floor; all other values floor to max(eff, floor).
+  # An unfloored NON-exempt value would be raised by the scheduler-side floor
+  # and break the fixed point.
   defp floor_effective(eff, floor) do
     cond do
       eff == 0 -> 0
       is_nil(eff) -> floor
       true -> max(eff, floor)
+    end
+  end
+
+  # True iff the profile declares an explicit `peak_concurrency` (a
+  # non-negative integer; atom- or string-keyed like `profile_timezone/1`)
+  # AND is CURRENTLY inside one of its validated `peak_hours` windows. An
+  # explicit in-peak peak value — including the hard-pause 0 — is an
+  # intentional per-model user configuration and wins over the global default
+  # floor; everything else (off-peak profiles, absent/invalid/empty windows,
+  # no explicit peak_concurrency) is floored. Invalid/empty/absent
+  # `peak_hours` → false (never exempt).
+  defp peak_exempt?(p, now, utc_now) do
+    with {:ok, _peak} <- explicit_peak_concurrency(p),
+         {:ok, ws} <- PeakHours.validate_windows(Map.get(p, :peak_hours)),
+         ws when ws != [] <- ws do
+      PeakHours.in_peak?(ws, peak_wall_clock(p, now, utc_now))
+    else
+      _ -> false
+    end
+  end
+
+  # Returns {:ok, peak} when the profile declares an explicit non-negative
+  # integer `peak_concurrency` (atom- or string-keyed), else :error.
+  defp explicit_peak_concurrency(p) do
+    case {Map.get(p, :peak_concurrency), Map.get(p, "peak_concurrency")} do
+      {v, _} when is_integer(v) and v >= 0 -> {:ok, v}
+      {_, v} when is_integer(v) and v >= 0 -> {:ok, v}
+      _ -> :error
+    end
+  end
+
+  # Resolves the wall clock for the in-peak check, mirroring
+  # `effective_for_profile/3`: tz profiles resolve the utc seam (falling back
+  # to `now` on resolution errors); non-tz profiles use `now` directly.
+  defp peak_wall_clock(p, now, utc_now) do
+    case profile_timezone(p) do
+      nil ->
+        now
+
+      tz ->
+        {:ok, wall} = wall_clock_for(tz, now, utc_now)
+        wall
     end
   end
 

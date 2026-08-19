@@ -452,6 +452,12 @@ defmodule EvoGit.AgentScheduler.State do
 
   Note: this floor applies to runtime `update_config` only. At init, the file
   semantics remain "profile wins" (`from_model_profiles/2` does not floor).
+
+  This floor is bypassed ONLY when the caller passes `model_concurrency_skip_floor:
+  true` on a `model_concurrency` update (the PeakHourEngine sets it — the engine
+  owns the floor logic in that case, including its explicit in-peak
+  `peak_concurrency` exemptions, and storing verbatim preserves its fixed-point
+  invariant). The hard-pause `0` exemption and all other paths are unchanged.
   """
   @spec apply_default_llm_concurrency_override(t(), pos_integer()) :: t()
   def apply_default_llm_concurrency_override(%__MODULE__{} = state, new_default) do
@@ -479,12 +485,26 @@ defmodule EvoGit.AgentScheduler.State do
   # silently drop the floor. `apply_default_llm_concurrency_override/2` also
   # re-sets `default_llm_max_concurrency` to the passed value — passing the
   # current state value keeps it unchanged, which is correct.
+  #
+  # The `:model_concurrency_skip_floor` opt (boolean, default false) bypasses
+  # the re-floor: when truthy the map is stored VERBATIM. PeakHourEngine sets
+  # it — the engine's map is already floored with explicit in-peak
+  # `peak_concurrency` exemptions, so the scheduler must not re-floor. Storing
+  # verbatim is what preserves the engine's fixed-point invariant (the engine
+  # re-check compares its own map against the stored map → no loop). ALL other
+  # update paths (CLI `-c` / runtime `default_llm_max_concurrency` override via
+  # `maybe_apply_default_llm_concurrency/2`, and any `model_concurrency` send
+  # WITHOUT the opt) keep the documented floor semantics unchanged.
   defp maybe_update_model_concurrency(%__MODULE__{} = state, opts) do
     case Keyword.fetch(opts, :model_concurrency) do
       {:ok, map} ->
-        state
-        |> struct(model_concurrency: map)
-        |> apply_default_llm_concurrency_override(state.default_llm_max_concurrency)
+        if Keyword.get(opts, :model_concurrency_skip_floor, false) do
+          struct(state, model_concurrency: map)
+        else
+          state
+          |> struct(model_concurrency: map)
+          |> apply_default_llm_concurrency_override(state.default_llm_max_concurrency)
+        end
 
       :error ->
         state
