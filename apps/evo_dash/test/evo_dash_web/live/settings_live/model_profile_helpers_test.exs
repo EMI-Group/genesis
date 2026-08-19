@@ -224,6 +224,260 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
     end
   end
 
+  describe "parse_model_profile_params/2 — peak/off-peak concurrency fields" do
+    @peak_params %{
+      "provider" => "deepseek",
+      "model_id" => "deepseek-v4-pro",
+      "base_url" => "",
+      "extra" => ""
+    }
+
+    test "absent peak fields leave the profile without peak_concurrency/peak_hours keys" do
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(@peak_params, "profile-1")
+
+      refute Map.has_key?(profile, :peak_concurrency),
+             "peak_concurrency key must stay absent when disabled"
+
+      refute Map.has_key?(profile, :peak_hours),
+             "peak_hours key must stay absent when disabled"
+    end
+
+    test "blank peak_concurrency and fully-blank rows omit both keys" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_concurrency" => "",
+          "peak_hours" => %{
+            "0" => %{"start" => "", "end" => ""},
+            "1" => %{"start" => "", "end" => ""}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      refute Map.has_key?(profile, :peak_concurrency)
+      refute Map.has_key?(profile, :peak_hours)
+    end
+
+    test "peak_concurrency round-trips as a positive integer" do
+      params = Map.merge(@peak_params, %{"peak_concurrency" => "8"})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_concurrency == 8
+      refute Map.has_key?(profile, :peak_hours)
+    end
+
+    test "two windows round-trip preserving form order" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00"},
+            "1" => %{"start" => "14:00", "end" => "18:00"}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [
+               %{start: "09:00", end: "12:00"},
+               %{start: "14:00", end: "18:00"}
+             ]
+
+      refute Map.has_key?(profile, :peak_concurrency)
+    end
+
+    test "a list-form peak_hours input is accepted" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => [%{"start" => "09:00", "end" => "12:00"}]
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00"}]
+    end
+
+    test "string-index map keys sort numerically (index 10 after 9)" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "10" => %{"start" => "20:00", "end" => "21:00"},
+            "9" => %{"start" => "09:00", "end" => "10:00"}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [
+               %{start: "09:00", end: "10:00"},
+               %{start: "20:00", end: "21:00"}
+             ]
+    end
+
+    test "peak_concurrency and peak_hours merge into one profile" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_concurrency" => "12",
+          "peak_hours" => %{"0" => %{"start" => "08:00", "end" => "10:00"}}
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_concurrency == 12
+      assert profile.peak_hours == [%{start: "08:00", end: "10:00"}]
+    end
+
+    test "mixed blank/valid rows drop the blank row and keep the valid one" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00"},
+            "1" => %{"start" => "", "end" => ""}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00"}]
+    end
+
+    test "invalid peak_concurrency values are rejected" do
+      for bad <- ["0", "-1", "abc"] do
+        params = Map.merge(@peak_params, %{"peak_concurrency" => bad})
+
+        assert {:error, "peak_concurrency_invalid"} =
+                 ModelProfileHelpers.parse_model_profile_params(params, "profile-1"),
+               "expected #{inspect(bad)} to be rejected"
+      end
+
+      # parse_peak_fields/1 exposes the same validation directly.
+      for bad <- ["0", "-1", "abc"] do
+        assert {:error, "peak_concurrency_invalid"} =
+                 ModelProfileHelpers.parse_peak_fields(%{"peak_concurrency" => bad}),
+               "expected #{inspect(bad)} to be rejected"
+      end
+    end
+
+    test "valid_clock_time?/1 accepts strict HH:MM and rejects malformed times" do
+      for good <- ["00:00", "09:00", "12:30", "23:59"] do
+        assert ModelProfileHelpers.valid_clock_time?(good),
+               "expected #{inspect(good)} to be valid"
+      end
+
+      for bad <- ["9:00", "24:00", "12:60", "12:0", "abc", "12:00am", ""] do
+        refute ModelProfileHelpers.valid_clock_time?(bad),
+               "expected #{inspect(bad)} to be invalid"
+      end
+
+      refute ModelProfileHelpers.valid_clock_time?(nil)
+      refute ModelProfileHelpers.valid_clock_time?(930)
+    end
+
+    test "malformed clock times in windows are rejected" do
+      for bad <- ["9:00", "24:00", "12:60", "12:0", "abc"] do
+        params =
+          Map.merge(@peak_params, %{
+            "peak_hours" => %{"0" => %{"start" => bad, "end" => "12:00"}}
+          })
+
+        assert {:error, "peak_hours_invalid_time"} =
+                 ModelProfileHelpers.parse_model_profile_params(params, "profile-1"),
+               "expected start #{inspect(bad)} to be rejected"
+      end
+    end
+
+    test "a window with only one of start/end filled is invalid" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{"0" => %{"start" => "09:00", "end" => ""}}
+        })
+
+      assert {:error, "peak_hours_invalid_time"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{"0" => %{"start" => "", "end" => "12:00"}}
+        })
+
+      assert {:error, "peak_hours_invalid_time"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+    end
+
+    test "a window with start == end is rejected" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "09:00"}}
+        })
+
+      assert {:error, "peak_hours_start_equals_end"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+    end
+
+    test "overlapping windows are rejected" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00"},
+            "1" => %{"start" => "11:00", "end" => "13:00"}
+          }
+        })
+
+      assert {:error, "peak_hours_overlap"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+    end
+
+    test "touching windows (adjacent boundaries) are accepted" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00"},
+            "1" => %{"start" => "12:00", "end" => "15:00"}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [
+               %{start: "09:00", end: "12:00"},
+               %{start: "12:00", end: "15:00"}
+             ]
+    end
+
+    test "an invalid spec/provider_options error wins over a peak error" do
+      # model_id_empty is checked before any peak validation.
+      params = Map.merge(@peak_params, %{"model_id" => "", "peak_concurrency" => "abc"})
+
+      assert {:error, "model_id_empty"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      # invalid extra JSON beats the peak error.
+      params = Map.merge(@peak_params, %{"extra" => "not json", "peak_concurrency" => "abc"})
+
+      assert {:error, "invalid_extra_json"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      # invalid provider_options JSON beats the peak error.
+      params =
+        Map.merge(@peak_params, %{
+          "provider_options" => "not json",
+          "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "09:00"}}
+        })
+
+      assert {:error, "invalid_provider_options_json"} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+    end
+  end
+
   describe "profile id naming from model value" do
     test "derives id from provider:model string" do
       result =

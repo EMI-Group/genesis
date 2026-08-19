@@ -259,6 +259,77 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </p>
       </div>
 
+      <%!-- Peak hours (optional) ── --%>
+      <div class="form-control">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">
+            <%!-- zh_CN: Peak Concurrency → "高峰并发" --%>{gettext("Peak Concurrency (optional)")}
+          </span>
+        </label>
+        <input
+          type="number"
+          name="peak_concurrency"
+          value={profile_peak_concurrency(@profile)}
+          min="1"
+          class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
+        />
+        <p class="text-[11px] text-base-content/60 mt-1">
+          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用 --%>{gettext(
+            "Optional; used only during peak hours. Leave empty to disable."
+          )}
+        </p>
+      </div>
+
+      <div class="form-control">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">
+            <%!-- zh_CN: Peak Hours → "高峰时段" --%>{gettext("Peak Hours (optional)")}
+          </span>
+        </label>
+        <div class="space-y-2">
+          <%= for {window, index} <- Enum.with_index(profile_peak_hours(@profile)) do %>
+            <div class="flex items-center gap-2">
+              <input
+                type="time"
+                name={"peak_hours[#{index}][start]"}
+                value={peak_window_value(window, :start)}
+                class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
+              />
+              <span class="text-xs text-base-content/50">–</span>
+              <input
+                type="time"
+                name={"peak_hours[#{index}][end]"}
+                value={peak_window_value(window, :end)}
+                class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
+              />
+              <button
+                type="button"
+                phx-click="remove_peak_hours_row"
+                phx-value-index={index}
+                class="btn btn-ghost btn-sm gap-1 text-error"
+                title={gettext("Remove time window")}
+                aria-label={gettext("Remove time window")}
+              >
+                <.icon name="hero-x-mark" class="size-4" />
+              </button>
+            </div>
+          <% end %>
+        </div>
+        <button
+          type="button"
+          phx-click="add_peak_hours_row"
+          class="btn btn-ghost btn-sm gap-1 mt-2 self-start"
+        >
+          <.icon name="hero-plus" class="size-4" />
+          <%!-- zh_CN: Add time window → "添加时段" --%>{gettext("Add time window")}
+        </button>
+        <p class="text-[11px] text-base-content/60 mt-1">
+          <%!-- zh_CN: 每日时间窗口，24 小时制 HH:MM 本地时间；同一天允许两个窗口，例如 09:00–12:00 与 14:00–18:00 --%>{gettext(
+            "Daily time windows in 24h HH:MM local time. Two windows for one day are allowed, e.g. 09:00–12:00 and 14:00–18:00."
+          )}
+        </p>
+      </div>
+
       <%!-- Generation params ── collapsible-ish section ── --%>
       <div class="pt-2">
         <div class="flex items-center gap-3 mb-3">
@@ -457,6 +528,51 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   end
 
   defp profile_concurrency(_), do: nil
+
+  # Peak-hour pre-fill helpers. Both `peak_concurrency` and `peak_hours` are
+  # OPTIONAL profile fields — absent/nil means "peak scheduling disabled" (the
+  # parse side omits the keys from the profile map entirely). Pre-fill values
+  # are read via profile_param/2 (atom-or-string key tolerant).
+
+  # Peak concurrency pre-fill: nil/absent → "" (empty string = disabled).
+  defp profile_peak_concurrency(profile) when is_map(profile) do
+    case profile_param(profile, :peak_concurrency) do
+      nil -> ""
+      value -> to_string(value)
+    end
+  end
+
+  defp profile_peak_concurrency(_), do: ""
+
+  # Peak-hours pre-fill: nil/absent/[] → a single blank row so users can start
+  # adding windows. Each window is normalized to atom-keyed string values so
+  # the template can always dot/Map-read `:start` / `:end`.
+  defp profile_peak_hours(profile) when is_map(profile) do
+    case profile_param(profile, :peak_hours) do
+      hours when is_list(hours) and hours != [] ->
+        Enum.map(hours, &normalize_peak_window/1)
+
+      _ ->
+        [%{start: "", end: ""}]
+    end
+  end
+
+  defp profile_peak_hours(_), do: [%{start: "", end: ""}]
+
+  defp normalize_peak_window(window) when is_map(window) do
+    %{start: peak_window_value(window, :start), end: peak_window_value(window, :end)}
+  end
+
+  defp normalize_peak_window(_), do: %{start: "", end: ""}
+
+  defp peak_window_value(window, key) when is_map(window) do
+    case Map.get(window, key) || Map.get(window, Atom.to_string(key)) do
+      nil -> ""
+      value -> to_string(value)
+    end
+  end
+
+  defp peak_window_value(_, _), do: ""
 
   defp profile_param(profile, key) when is_map(profile) and is_atom(key) do
     Map.get(profile, key) || Map.get(profile, Atom.to_string(key))
