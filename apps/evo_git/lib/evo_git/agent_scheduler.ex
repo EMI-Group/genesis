@@ -258,8 +258,10 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Requests an LLM execution slot from the scheduler. Blocks the caller until a slot
   is available (respects default_llm_max_concurrency). Returns :ok when granted.
+  Returns `{:error, :no_capacity}` immediately when the agent's model is
+  hard-paused at 0 LLM slots (peak hours) — never enqueued, never blocked.
   """
-  @spec request_llm_slot(pos_integer(), timeout()) :: :ok
+  @spec request_llm_slot(pos_integer(), timeout()) :: :ok | {:error, :no_capacity}
   def request_llm_slot(agent_id, timeout \\ :infinity) do
     GenServer.call(__MODULE__, {:request_llm_slot, agent_id}, timeout)
   end
@@ -317,10 +319,17 @@ defmodule EvoGit.AgentScheduler do
   before raising — the `after` block runs after any exception.
 
   A non-`:ok` result from the slot request (e.g. `{:error, :cancelled}` when the
-  agent is purged from the waiting queue during a force-kill) raises instead of
-  proceeding without a slot.
+  agent is purged from the waiting queue during a force-kill, or
+  `{:error, :no_capacity}` when the agent's model is hard-paused at 0 LLM slots)
+  raises instead of proceeding without a slot. The `:no_capacity` raise message
+  resolves the agent's model id so the failure is immediately debuggable.
 
-  Returns the result of `fun.()`.
+  The raise is deliberate: callers (`ToolDispatch.call_llm_with_retry/5`, context
+  compression) already depend on a non-`:ok` slot result being an exception, and
+  the retry loop is configured with `rescue_only: []` so the raise propagates on
+  the first attempt with zero retries (a returned `{:error, :no_capacity}` tuple
+  WOULD be retried by the retry library's `atoms: [:error]` default — the retry
+  macro retries any `{:error, _}` result from the block).
   """
   @spec with_llm_slot(pos_integer(), (-> result)) :: result when result: var
   def with_llm_slot(agent_id, fun) when is_function(fun, 0) do
@@ -333,6 +342,20 @@ defmodule EvoGit.AgentScheduler do
         after
           release_llm_slot(agent_id)
         end
+
+      {:error, :no_capacity} ->
+        model_id =
+          case Store.get_model_id(agent_id) do
+            nil -> "unknown"
+            "" -> "unknown"
+            id -> id
+          end
+
+        Logger.warning(
+          "Agent #{agent_id}: model '#{model_id}' has 0 LLM slots (hard-paused, e.g. peak hours) — LLM call rejected"
+        )
+
+        raise "Agent #{agent_id}: model '#{model_id}' has 0 LLM slots (paused during peak hours) — LLM call rejected"
 
       other ->
         raise "LLM slot request failed for agent #{agent_id}: #{inspect(other)}"
@@ -890,6 +913,12 @@ defmodule EvoGit.AgentScheduler do
       {:reply, :ok, new_state, status_updates} ->
         Lifecycle.apply_status_updates(status_updates)
         {:reply, :ok, new_state}
+
+      {:reply, {:error, _reason} = reply, new_state, status_updates} ->
+        # Hard-pause (0-capacity model): the caller gets {:error, :no_capacity}
+        # immediately — forwarded verbatim, never wedged in a pending request.
+        Lifecycle.apply_status_updates(status_updates)
+        {:reply, reply, new_state}
 
       {:noreply, new_state, status_updates} ->
         Lifecycle.apply_status_updates(status_updates)

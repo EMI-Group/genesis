@@ -26,7 +26,7 @@ None — leaf directory (seven module files).
 
 The profile edit form (`ModelProfilesEditor.model_profile_edit_form/1`, private) renders an optional **"Peak hours"** section directly under the concurrency field. Each `[[llm.models]]` profile may carry two OPTIONAL fields (absent/nil/empty = disabled; the parse side omits the keys from the profile map so TOML omits them):
 
-- `peak_concurrency` — positive int, concurrency used during peak hours. `<input type="number" name="peak_concurrency" min="1">`; pre-filled via `profile_param/2` (atom-or-string key tolerant), blank (`""`) when absent.
+- `peak_concurrency` — non-negative int, concurrency used during peak hours (`0` = hard pause — zero LLM slots during peak). `<input type="number" name="peak_concurrency" min="0">`; pre-filled via `profile_param/2` (atom-or-string key tolerant), blank (`""`) when absent.
 - `peak_hours` — list of daily time-window maps `[%{start: "HH:MM", end: "HH:MM"}]`, 24h local time. Rendered as indexed rows of `<input type="time">` pairs named `peak_hours[<index>][start]` / `peak_hours[<index>][end]` (Phoenix parses these into the nested map the parse side consumes). Absent/`[]` → a single blank row so users can start adding.
 
 Row events (both buttons `type="button"` so they never submit the form; handlers live in `live/settings_live/`, not in this module): `add_peak_hours_row` (`phx-click="add_peak_hours_row"`, no payload, appends an empty row server-side) and `remove_peak_hours_row` (`phx-click="remove_peak_hours_row"` + `phx-value-index={index}` on a per-row button). After add/remove the server re-renders the edit form pre-filled from file_config.

@@ -587,6 +587,7 @@ defmodule EvoDashWeb.SettingsLive do
                     llm_test_status={@llm_test_status}
                     model_profiles={@file_config[:llm][:models] || []}
                     editing_profile_id={@editing_profile_id}
+                    profile_form_draft={@profile_form_draft}
                     test_profile_id={@test_profile_id}
                     credentials={@credentials}
                   />
@@ -668,6 +669,7 @@ defmodule EvoDashWeb.SettingsLive do
         selected_model_string: nil,
         llm_test_status: :idle,
         editing_profile_id: nil,
+        profile_form_draft: nil,
         test_profile_id: test_profile_id,
         remote_config: false,
         remote_config_error: nil,
@@ -1264,6 +1266,14 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("save_model_profile", params, socket) do
     ModelProfileEvents.save_model_profile(socket, params)
+  end
+
+  @impl true
+  def handle_event("model_profile_form_change", params, socket) do
+    # phx-change draft-tracking: stores the whole edit-form params so
+    # add/remove_peak_hours_row (phx-click, which does NOT send the form data)
+    # can re-render the form with every typed value preserved.
+    ModelProfileEvents.model_profile_form_change(socket, params)
   end
 
   @impl true

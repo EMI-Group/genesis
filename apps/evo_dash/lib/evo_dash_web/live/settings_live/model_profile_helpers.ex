@@ -279,12 +279,13 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   Parses the optional peak/off-peak concurrency form fields into atom-keyed
   profile fields.
 
-  Reads `params["peak_concurrency"]` (plain number string) and
+  Reads `params["peak_concurrency"]` (plain number string),
   `params["peak_hours"]` (Phoenix-nested map keyed by string index, a list, or
-  absent). Returns `{:ok, %{}}` when both fields are disabled/absent (keys must
-  stay ABSENT from the profile so TOML omits them), `{:ok, %{peak_concurrency:
-  int, peak_hours: [%{start: "HH:MM", end: "HH:MM"}]}}` on success, or
-  `{:error, reason}` with one of the four peak error strings:
+  absent), and `params["timezone"]` (IANA string, optional). Returns
+  `{:ok, %{}}` when all fields are disabled/absent (keys must stay ABSENT from
+  the profile so TOML omits them), `{:ok, %{peak_concurrency: int, peak_hours:
+  [%{start: "HH:MM", end: "HH:MM"}], timezone: "IANA"}}` on success (absent
+  keys omitted), or `{:error, reason}` with one of the four peak error strings:
   `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`,
   `"peak_hours_start_equals_end"`, `"peak_hours_overlap"`.
   """
@@ -297,8 +298,25 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
       fields =
         if is_nil(hours), do: fields, else: Map.put(fields, :peak_hours, hours)
 
+      fields = parse_timezone(fields, params["timezone"])
+
       {:ok, fields}
     end
+  end
+
+  @doc """
+  Normalizes the raw `peak_hours` form value (a Phoenix-nested map keyed by
+  string index, a list, or absent) into a numerically-sorted list of windows
+  `[%{start: "HH:MM", end: "HH:MM"}]` for draft-tracking re-renders. Values are
+  stringified with `""` for nil/absent, so blank/partially-filled rows
+  round-trip losslessly. Total — never raises; unknown/absent input → `[]`.
+  """
+  def normalize_peak_hours_draft(input) do
+    {:ok, rows} = normalize_peak_hours_input(input)
+
+    Enum.map(rows, fn row ->
+      %{start: peak_draft_value(row, :start), end: peak_draft_value(row, :end)}
+    end)
   end
 
   @doc """
@@ -478,23 +496,48 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   # ── peak/off-peak concurrency parsing helpers ─────────────────────────────
   #
-  # Serialization contract: `peak_concurrency` (pos_integer) and `peak_hours`
-  # ([%{start: "HH:MM", end: "HH:MM"}]) are OPTIONAL profile fields; when
-  # disabled/empty the keys are ABSENT from the profile map so TOML omits them.
-  # Validation here is UI-side UX validation only — the evo_git schema owns the
-  # authoritative validation.
+  # Serialization contract: `peak_concurrency` (non_neg_integer) and
+  # `peak_hours` ([%{start: "HH:MM", end: "HH:MM"}]) are OPTIONAL profile
+  # fields; when disabled/empty the keys are ABSENT from the profile map so
+  # TOML omits them. Validation here is UI-side UX validation only — the
+  # evo_git schema owns the authoritative validation.
 
   # Blank/absent → {:ok, nil} (key omitted). A non-blank value must parse as a
-  # POSITIVE integer ("0", "-1", "abc" are all invalid; blank is NOT an error).
+  # NON-NEGATIVE integer ("0" is valid — a zero peak concurrency HARD-PAUSES the
+  # model during peak windows (zero LLM slots); "-1", "abc" are invalid; blank
+  # is NOT an error).
   defp parse_peak_concurrency(nil), do: {:ok, nil}
   defp parse_peak_concurrency(""), do: {:ok, nil}
 
   defp parse_peak_concurrency(raw) do
     case SettingsUtils.parse_int(raw) do
-      int when is_integer(int) and int > 0 -> {:ok, int}
+      int when is_integer(int) and int >= 0 -> {:ok, int}
       _ -> {:error, "peak_concurrency_invalid"}
     end
   end
+
+  # Timezone (optional IANA string). Blank/nil → key omitted (server local
+  # time); non-blank → trimmed string. No strict format validation client-side
+  # — the evo_git schema validates IANA names authoritatively.
+  defp parse_timezone(fields, tz) when is_binary(tz) do
+    case String.trim(tz) do
+      "" -> fields
+      trimmed -> Map.put(fields, :timezone, trimmed)
+    end
+  end
+
+  defp parse_timezone(fields, _), do: fields
+
+  # Reads a single start/end value from a peak-hours draft row (atom-or-string
+  # key safe), stringified with "" for nil/absent.
+  defp peak_draft_value(row, key) when is_map(row) do
+    case Map.get(row, Atom.to_string(key)) || Map.get(row, key) do
+      nil -> ""
+      value -> to_string(value)
+    end
+  end
+
+  defp peak_draft_value(_, _), do: ""
 
   # Normalizes the peak_hours form value (Phoenix-nested map keyed by string
   # index, a list, or absent) into atom-keyed windows. Returns {:ok, nil} when

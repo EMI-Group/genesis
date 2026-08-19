@@ -511,8 +511,29 @@ defmodule EvoGit.Config.Schema do
         validate_peak_hours(path, peak_hours)
       end
 
+    # Optional IANA timezone name for the profile's peak-hour windows. Atom-
+    # and string-keyed maps are both possible (TOML decoding may leave string
+    # keys). A `case Map.get` (not `||`) distinguishes "absent" from
+    # "present but nil".
+    timezone =
+      case Map.get(profile, :timezone) do
+        nil -> Map.get(profile, "timezone")
+        value -> value
+      end
+
+    timezone_errors =
+      if is_nil(timezone) do
+        []
+      else
+        validate_timezone_field(path, timezone)
+      end
+
     id_errors ++
-      model_errors ++ provider_options_errors ++ peak_concurrency_errors ++ peak_hours_errors
+      model_errors ++
+      provider_options_errors ++
+      peak_concurrency_errors ++
+      peak_hours_errors ++
+      timezone_errors
   end
 
   defp validate_model_profile(path, profile) do
@@ -527,19 +548,42 @@ defmodule EvoGit.Config.Schema do
   end
 
   # Validates the optional peak_concurrency profile field: must be a
-  # positive integer when present.
+  # non-negative integer when present (0 is valid — it disables the model
+  # during peak windows).
   defp validate_peak_concurrency(path, value) do
-    if is_integer(value) and value > 0 do
+    if is_integer(value) and value >= 0 do
       []
     else
       [
         error(
           path ++ [:peak_concurrency],
-          "peak_concurrency must be a positive integer, got #{inspect(value)}",
+          "peak_concurrency must be a non-negative integer, got #{inspect(value)}",
           value,
           :integer
         )
       ]
+    end
+  end
+
+  # Validates the optional timezone profile field (an IANA time zone name) by
+  # delegating tz-database resolution to EvoGit.PeakHours.validate_timezone/1
+  # (single source of truth — do NOT re-implement tz-database probing here).
+  # nil/"" is valid (no timezone → local wall clock); {:error, reason} maps
+  # to a ValidationError via the error/4 helper.
+  defp validate_timezone_field(path, value) do
+    case EvoGit.PeakHours.validate_timezone(value) do
+      :ok ->
+        []
+
+      {:error, reason} ->
+        [
+          error(
+            path ++ [:timezone],
+            "invalid timezone: #{inspect(reason)} (got #{inspect(value)})",
+            value,
+            :timezone
+          )
+        ]
     end
   end
 

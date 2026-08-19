@@ -185,20 +185,28 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       socket
       |> assign(:file_config, file_config)
       |> assign(:editing_profile_id, new_id)
+      |> assign(:profile_form_draft, nil)
       |> put_flash(:info, gettext("New profile added — fill in the details and save."))
 
     {:noreply, socket}
   end
 
   def edit_model_profile(socket, %{"profile_id" => id}) do
+    # Opening a (different) profile's edit form starts a fresh edit session:
+    # clear any draft from a previous session.
     {:noreply,
      assign(socket,
-       editing_profile_id: if(socket.assigns.editing_profile_id == id, do: nil, else: id)
+       editing_profile_id: if(socket.assigns.editing_profile_id == id, do: nil, else: id),
+       profile_form_draft: nil
      )}
   end
 
   def cancel_edit_model_profile(socket, _params) do
-    {:noreply, assign(socket, :editing_profile_id, nil)}
+    {:noreply,
+     assign(socket,
+       editing_profile_id: nil,
+       profile_form_draft: nil
+     )}
   end
 
   def save_model_profile(socket, params) do
@@ -207,71 +215,85 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
     models = get_in(socket.assigns.file_config, [:llm, :models]) || []
 
-    cond do
-      new_id == "" ->
-        {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
+    result =
+      cond do
+        new_id == "" ->
+          {:noreply, put_flash(socket, :error, gettext("Profile id cannot be empty."))}
 
-      # Duplicate id check: another profile (with a different old id) already
-      # uses the requested id.
-      ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("A profile with id \"%{id}\" already exists.", id: new_id)
-         )}
+        # Duplicate id check: another profile (with a different old id) already
+        # uses the requested id.
+        ModelProfileHelpers.id_collision?(models, old_id, new_id) ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("A profile with id \"%{id}\" already exists.", id: new_id)
+           )}
 
-      true ->
-        case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
-          {:ok, updated_profile} ->
-            file_config =
-              socket.assigns.file_config
-              |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
+        true ->
+          case ModelProfileHelpers.parse_model_profile_params(params, new_id) do
+            {:ok, updated_profile} ->
+              file_config =
+                socket.assigns.file_config
+                |> ModelProfileHelpers.update_model_profile(old_id, updated_profile)
 
-            socket = socket |> assign(:editing_profile_id, nil)
+              socket = socket |> assign(:editing_profile_id, nil)
 
-            EvoDashWeb.SettingsLive.persist_file_config(
-              file_config,
-              socket,
-              gettext("Model profile saved.")
-            )
+              EvoDashWeb.SettingsLive.persist_file_config(
+                file_config,
+                socket,
+                gettext("Model profile saved.")
+              )
 
-          {:error, "model_id_empty"} ->
-            {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
+            {:error, "model_id_empty"} ->
+              {:noreply, put_flash(socket, :error, gettext("Model ID cannot be empty."))}
 
-          {:error, "invalid_extra_json"} ->
-            {:noreply, put_flash(socket, :error, gettext("Extra Config must be valid JSON."))}
+            {:error, "invalid_extra_json"} ->
+              {:noreply, put_flash(socket, :error, gettext("Extra Config must be valid JSON."))}
 
-          {:error, "extra_must_be_object"} ->
-            {:noreply,
-             put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
+            {:error, "extra_must_be_object"} ->
+              {:noreply,
+               put_flash(socket, :error, gettext("Extra Config must be a JSON object (map)."))}
 
-          {:error, "invalid_provider_options_json"} ->
-            {:noreply, put_flash(socket, :error, gettext("Provider Options must be valid JSON."))}
+            {:error, "invalid_provider_options_json"} ->
+              {:noreply,
+               put_flash(socket, :error, gettext("Provider Options must be valid JSON."))}
 
-          {:error, "provider_options_must_be_object"} ->
-            {:noreply,
-             put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
+            {:error, "provider_options_must_be_object"} ->
+              {:noreply,
+               put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
 
-          {:error, "peak_concurrency_invalid"} ->
-            # 峰值并发必须为正整数
-            {:noreply,
-             put_flash(socket, :error, gettext("Peak concurrency must be a positive integer."))}
+            {:error, "peak_concurrency_invalid"} ->
+              # 峰值并发必须为非负整数（0 表示高峰时段完全暂停该模型 — 0 个并发槽位）
+              {:noreply,
+               put_flash(
+                 socket,
+                 :error,
+                 gettext("Peak concurrency must be a non-negative integer.")
+               )}
 
-          {:error, "peak_hours_invalid_time"} ->
-            # 峰值时段必须使用 HH:MM 24 小时制格式（如 09:00、18:30），且开始与结束时间必须都填写
-            {:noreply,
-             put_flash(socket, :error, gettext("Peak hours must use HH:MM 24-hour format."))}
+            {:error, "peak_hours_invalid_time"} ->
+              # 峰值时段必须使用 HH:MM 24 小时制格式（如 09:00、18:30），且开始与结束时间必须都填写
+              {:noreply,
+               put_flash(socket, :error, gettext("Peak hours must use HH:MM 24-hour format."))}
 
-          {:error, "peak_hours_start_equals_end"} ->
-            # 峰值时段窗口的开始与结束时间不能相同
-            {:noreply,
-             put_flash(socket, :error, gettext("Peak hour window start and end must differ."))}
+            {:error, "peak_hours_start_equals_end"} ->
+              # 峰值时段窗口的开始与结束时间不能相同
+              {:noreply,
+               put_flash(socket, :error, gettext("Peak hour window start and end must differ."))}
 
-          {:error, "peak_hours_overlap"} ->
-            # 峰值时段窗口之间不能重叠（首尾相接的相邻时段是允许的）
-            {:noreply, put_flash(socket, :error, gettext("Peak hour windows must not overlap."))}
-        end
+            {:error, "peak_hours_overlap"} ->
+              # 峰值时段窗口之间不能重叠（首尾相接的相邻时段是允许的）
+              {:noreply,
+               put_flash(socket, :error, gettext("Peak hour windows must not overlap."))}
+          end
+      end
+
+    # The edit session is over either way (saved or rejected): drop the
+    # unsaved-typing draft so the next edit session starts from the profile's
+    # saved values (a rejected save re-renders the row list from file_config).
+    case result do
+      {:noreply, socket} -> {:noreply, assign(socket, :profile_form_draft, nil)}
     end
   end
 
@@ -283,7 +305,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       socket.assigns.file_config
       |> ModelProfileHelpers.put_in_model_profiles(new_models)
 
-    socket = socket |> assign(:editing_profile_id, nil)
+    socket = socket |> assign(:editing_profile_id, nil) |> assign(:profile_form_draft, nil)
 
     EvoDashWeb.SettingsLive.persist_file_config(
       file_config,
@@ -311,6 +333,25 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   # the enclosing save_model_profile form is submitted)
   # ───────────────────────────────────────────────────────────────────────────
 
+  # phx-change snapshot of the whole edit form. Stored as :profile_form_draft
+  # so the edit form re-renders with every typed value preserved — phx-click
+  # (add/remove row) does NOT send the enclosing form's data, so without the
+  # draft the row buttons would re-render the form from file_config and wipe
+  # all unsaved typing. The nested peak_hours is normalized to the canonical
+  # list form defensively (total — never crashes on partial/odd params).
+  def model_profile_form_change(socket, params) when is_map(params) do
+    draft =
+      Map.put(
+        params,
+        "peak_hours",
+        ModelProfileHelpers.normalize_peak_hours_draft(params["peak_hours"])
+      )
+
+    {:noreply, assign(socket, :profile_form_draft, draft)}
+  end
+
+  def model_profile_form_change(socket, _params), do: {:noreply, socket}
+
   def add_peak_hours_row(socket, _params) do
     file_config = socket.assigns.file_config
     editing_id = socket.assigns.editing_profile_id
@@ -320,8 +361,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
         {:noreply, socket}
 
       profile ->
-        peak_hours = Map.get(profile, :peak_hours) || Map.get(profile, "peak_hours") || []
-        peak_hours = if is_list(peak_hours), do: peak_hours, else: []
+        peak_hours = current_peak_hours(socket, profile)
         peak_hours = peak_hours ++ [%{start: "", end: ""}]
 
         file_config =
@@ -331,7 +371,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
             |> Map.put(:peak_hours, peak_hours)
           end)
 
-        {:noreply, assign(socket, :file_config, file_config)}
+        draft = maybe_update_draft_peak_hours(socket, peak_hours)
+
+        {:noreply,
+         socket |> assign(:file_config, file_config) |> assign(:profile_form_draft, draft)}
     end
   end
 
@@ -352,8 +395,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
         {:noreply, socket}
 
       profile ->
-        peak_hours = Map.get(profile, :peak_hours) || Map.get(profile, "peak_hours") || []
-        peak_hours = if is_list(peak_hours), do: peak_hours, else: []
+        peak_hours = current_peak_hours(socket, profile)
 
         if index >= 0 and index < length(peak_hours) do
           new_hours = List.delete_at(peak_hours, index)
@@ -370,10 +412,48 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
               if new_hours == [], do: p, else: Map.put(p, :peak_hours, new_hours)
             end)
 
-          {:noreply, assign(socket, :file_config, file_config)}
+          draft = maybe_update_draft_peak_hours(socket, new_hours)
+
+          {:noreply,
+           socket |> assign(:file_config, file_config) |> assign(:profile_form_draft, draft)}
         else
           {:noreply, socket}
         end
+    end
+  end
+
+  # The current peak-hours window list for the edited profile. When a form
+  # draft exists (any input has been typed), the draft's peak_hours are
+  # authoritative — they carry the user's typed window values that phx-click
+  # did NOT send. Without a draft, fall back to the profile's saved peak_hours
+  # (the legacy behavior).
+  defp current_peak_hours(socket, profile) do
+    case socket.assigns[:profile_form_draft] do
+      %{} = draft when map_size(draft) > 0 ->
+        case Map.get(draft, "peak_hours") do
+          nil -> profile_peak_hours(profile)
+          hours -> ModelProfileHelpers.normalize_peak_hours_draft(hours)
+        end
+
+      _ ->
+        profile_peak_hours(profile)
+    end
+  end
+
+  defp profile_peak_hours(profile) do
+    case Map.get(profile, :peak_hours) || Map.get(profile, "peak_hours") do
+      hours when is_list(hours) -> hours
+      _ -> []
+    end
+  end
+
+  # Mirrors the updated peak_hours list into the draft when one exists, so the
+  # re-render (which prefers the draft) shows the new row set. Returns nil when
+  # there is no draft — the render falls back to the updated profile instead.
+  defp maybe_update_draft_peak_hours(socket, peak_hours) do
+    case socket.assigns[:profile_form_draft] do
+      %{} = draft when map_size(draft) > 0 -> Map.put(draft, "peak_hours", peak_hours)
+      _ -> nil
     end
   end
 

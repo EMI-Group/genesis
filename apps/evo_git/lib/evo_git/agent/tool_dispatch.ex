@@ -180,23 +180,34 @@ defmodule EvoGit.Agent.ToolDispatch do
   @doc false
   # Calls the LLM with retry-on-transient-error semantics. The retry loop (with
   # exponential backoff) handles ONLY genuine transport/stream errors (network
-  # failures, rate limits, stream-processing errors). It does NOT retry the "no
-  # tool calls" case — that semantic problem is handled by the caller via context
-  # nudging. Returns {:ok, response, duration_ms} or {:error, reason}.
+  # failures, rate limits, stream-processing errors) — returned as `{:error, _}`
+  # tuples. It does NOT retry the "no tool calls" case — that semantic problem
+  # is handled by the caller via context nudging. Returns {:ok, response,
+  # duration_ms} or {:error, reason}.
+  #
+  # `rescue_only: []` disables exception retrying. This is REQUIRED for the
+  # scheduler-side hard-pause to fail fast: the retry library's DEFAULT is
+  # `rescue_only: [RuntimeError]`, which WOULD retry a raised RuntimeError
+  # (bounded by max_retries, but through exponential-backoff sleeps of up to
+  # 60s each — effectively a long hang). With `rescue_only: []`, when a model
+  # has 0 LLM slots `AgentScheduler.with_llm_slot/2` raises a descriptive
+  # no-capacity error that propagates IMMEDIATELY on the first attempt (zero
+  # retries). The same applies to the `{:error, :cancelled}` raise from a
+  # force-kill queue purge.
   #
   # The LLM slot is acquired and released PER ATTEMPT (with_llm_slot sits INSIDE
   # the retry block), so the exponential-backoff sleep happens BETWEEN attempts
   # while the agent's slot is FREE. This makes `AgentScheduler.pause/0` effective
   # for a retrying agent: its next attempt blocks on slot re-acquisition when the
-  # scheduler is paused (and is granted on resume). A raise inside the LLM call
-  # still propagates immediately — with_llm_slot's `after` releases the slot, and
-  # the retry macro only retries `{:error, _}` tuple returns, never raises.
+  # scheduler is paused (and is granted on resume). `{:error, _}` tuple returns
+  # from the block are retried per the `atoms: [:error]` default.
   def call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
     retry with:
             exponential_backoff(1_000)
             |> randomize()
             |> cap(60_000)
-            |> Stream.take(max_retries) do
+            |> Stream.take(max_retries),
+          rescue_only: [] do
       AgentScheduler.with_llm_slot(agent_id, fn ->
         with llm_start <- System.monotonic_time(:millisecond),
              {:ok, stream_resp} <-

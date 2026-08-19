@@ -33,7 +33,7 @@ Pure data-transformation functions for model profile CRUD operations on the `[[l
 | `replace_model_profiles/2` | Replaces all profiles in a category. |
 | `mirror_model_profiles_by_provider/2` | Copies profiles from one provider to another. |
 | `parse_model_profile_params/2` | Parses form params, composing ReqLLM-native map model specs (provider, id, base_url, extra). Also parses the OPTIONAL peak/off-peak fields: `peak_concurrency` (string number) and `peak_hours` (Phoenix-nested map keyed by string index, list, or absent). Both keys stay ABSENT from the profile when disabled/empty so TOML omits them (never `nil`/`[]`). UI-side UX validation surfaces one of `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`, `"peak_hours_overlap"` (strict overlap `startA < endB && startB < endA` in minutes-since-midnight; touching boundaries allowed). Error precedence: spec → provider_options → peak. See "Peak/Off-Peak Hour Concurrency (model profiles)" below. |
-| `parse_peak_fields/1` | Public — parses `params["peak_concurrency"]` + `params["peak_hours"]` into `{:ok, %{}}` (disabled), `{:ok, %{peak_concurrency: pos_int, peak_hours: [%{start: "HH:MM", end: "HH:MM"}]}}`, or `{:error, reason}`. |
+| `parse_peak_fields/1` | Public — parses `params["peak_concurrency"]` + `params["peak_hours"]` into `{:ok, %{}}` (disabled), `{:ok, %{peak_concurrency: non_neg_int, peak_hours: [%{start: "HH:MM", end: "HH:MM"}]}}`, or `{:error, reason}`. |
 | `valid_clock_time?/1`, `clock_to_minutes/1` | Public pure helpers: `valid_clock_time?` matches strict 24h `HH:MM` (regex `\A(?:[01]\d|2[0-3]):[0-5]\d\z` — `"9:00"`, `"24:00"`, `"12:60"`, `"12:0"` all false); `clock_to_minutes` → minutes-since-midnight (`nil` for non-conforming strings). |
 | `model_profile_collision?/3` | Checks for duplicate provider+model combos. |
 
@@ -41,7 +41,7 @@ All functions are pure — no I/O, no socket, no process calls.
 
 ### `EvoDashWeb.SettingsLive.ModelProfileEvents` (`model_profile_events.ex`)
 
-Event handlers for the model-profiles editor (delegated from `settings_live.ex`). `save_model_profile/2` maps `parse_model_profile_params/2`'s four peak error strings to gettext flashes ("Peak concurrency must be a positive integer.", "Peak hours must use HH:MM 24-hour format.", "Peak hour window start and end must differ.", "Peak hour windows must not overlap." — zh_CN comments anchor the release-time translator).
+Event handlers for the model-profiles editor (delegated from `settings_live.ex`). `save_model_profile/2` maps `parse_model_profile_params/2`'s four peak error strings to gettext flashes ("Peak concurrency must be a non-negative integer.", "Peak hours must use HH:MM 24-hour format.", "Peak hour window start and end must differ.", "Peak hour windows must not overlap." — zh_CN comments anchor the release-time translator).
 
 **Peak-hours row editor (in-memory only — nothing persisted until the enclosing save form submits)**: `add_peak_hours_row/2` appends `%{start: "", end: ""}` to the editing profile's `peak_hours` (creating the key if absent); `remove_peak_hours_row/2` parses the `phx-value-index` via `Integer.parse` (malformed → -1, out-of-bounds → no-op) and `List.delete_at/2`; removing the LAST row deletes the `peak_hours` key entirely (absent = disabled). Both target the profile whose id == `socket.assigns.editing_profile_id` (via `ModelProfileHelpers.profile_id/1`, atom-or-string key safe), read existing rows atom-or-string defensively, write atom keys, keep `editing_profile_id` set, and no-op (`{:noreply, socket}`) when no editing profile matches. **Wiring note**: `settings_live.ex` must route `"add_peak_hours_row"` / `"remove_peak_hours_row"` phx events to these functions (guarded on `editing_profile_id` non-nil).
 
@@ -116,16 +116,16 @@ Where each support module hits the network (NodeContext → RemoteNode → direc
 
 Each `[[llm.models]]` profile supports two OPTIONAL fields for time-based concurrency scaling:
 
-- `peak_concurrency` — positive integer; the concurrency slot count during peak hours.
+- `peak_concurrency` — non-negative integer; the concurrency slot count during peak hours (`0` = hard pause — zero slots during peak).
 - `peak_hours` — list of daily time-window maps `[%{start: "09:00", end: "12:00"}, %{start: "14:00", end: "18:00"}]`, 24h `"HH:MM"` local time (two same-day periods is the motivating example).
 
 **Serialization rule**: missing/empty → DISABLED. The keys are ABSENT from the profile map so the TOML omits them — never emit `peak_concurrency: nil` or `peak_hours: []`. (The evo_git Config schema — authoritative, owned by the core — serializes absent keys as absent.)
 
 **Form-param ↔ profile-map shapes** (the editor emits; `parse_model_profile_params/2` consumes):
 
-- `params["peak_concurrency"]` — plain string from `<input type="number" name="peak_concurrency" min="1">`; empty/absent → key ABSENT.
+- `params["peak_concurrency"]` — plain string from `<input type="number" name="peak_concurrency" min="0">`; empty/absent → key ABSENT.
 - `params["peak_hours"]` — Phoenix-nested map from inputs named `peak_hours[<index>][start]` / `peak_hours[<index>][end]`, i.e. `%{"0" => %{"start" => "09:00", "end" => "12:00"}, "1" => %{"start" => "14:00", "end" => "18:00"}}`. Parse accepts a map keyed by string index (sorted numerically to preserve order), a list, or absent. All-rows-blank → key ABSENT.
-- Profile map (atom keys): `peak_concurrency: pos_integer`, `peak_hours: [%{start: "HH:MM", end: "HH:MM"}]`.
+- Profile map (atom keys): `peak_concurrency: non_neg_integer`, `peak_hours: [%{start: "HH:MM", end: "HH:MM"}]`.
 
 **Row add/remove events** (editor emits → `ModelProfileEvents` handles, delegated from `settings_live.ex`; in-memory `file_config` mutation only, NO persist; active only in edit mode — `editing_profile_id` non-nil):
 
@@ -134,7 +134,7 @@ Each `[[llm.models]]` profile supports two OPTIONAL fields for time-based concur
 
 **Validation semantics** (UI-side UX validation in `parse_model_profile_params/2`; evo_git owns authoritative schema validation):
 
-- `peak_concurrency` blank/absent → absent; else must be a POSITIVE integer → error `"peak_concurrency_invalid"` (0, -1, non-numeric all invalid).
+- `peak_concurrency` blank/absent → absent; else must be a NON-NEGATIVE integer → error `"peak_concurrency_invalid"` (-1 and non-numeric are invalid; `0` is valid = hard pause).
 - Each window: `start`/`end` must be valid 24h clock times (format `HH:MM`, hour 0-23, minute 0-59) → error `"peak_hours_invalid_time"`; a row with exactly one of start/end filled → same error.
 - `start != end` → error `"peak_hours_start_equals_end"`.
 - Windows pairwise non-overlapping (strict overlap `startA < endB && startB < endA`; touching boundaries e.g. `[09:00,12:00]`+`[12:00,15:00]` allowed) → error `"peak_hours_overlap"`.

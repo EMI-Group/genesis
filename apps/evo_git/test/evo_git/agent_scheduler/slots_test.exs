@@ -151,6 +151,121 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
     end
   end
 
+  # --- Hard-pause (0-capacity, PeakHourEngine) ---
+
+  describe "LLM hard-pause (0-capacity model)" do
+    test "request for a 0-capacity model fails fast without enqueueing" do
+      from = {self(), make_ref()}
+      put_agent_state(1, @default_model)
+
+      state = base_state(model_concurrency: %{@default_model => 0})
+
+      assert {:reply, {:error, :no_capacity}, new_state, []} =
+               Slots.handle_request_llm_slot(1, from, state)
+
+      # Nothing enqueued, nothing held — the caller got its reply (no deadlock).
+      assert :queue.is_empty(State.waiting_for(new_state, @default_model))
+      refute MapSet.member?(State.holders_for(new_state, @default_model), 1)
+    end
+
+    test "rejects immediately even when the scheduler is paused (never enqueues at 0)" do
+      from = {self(), make_ref()}
+      put_agent_state(1, @default_model)
+
+      state = base_state(model_concurrency: %{@default_model => 0}, paused: true)
+
+      assert {:reply, {:error, :no_capacity}, new_state, []} =
+               Slots.handle_request_llm_slot(1, from, state)
+
+      assert :queue.is_empty(State.waiting_for(new_state, @default_model))
+    end
+
+    test "capacity drop to 0 rejects all queued waiters via the grant sweep" do
+      ref1 = make_ref()
+      ref2 = make_ref()
+      from1 = {self(), ref1}
+      from2 = {self(), ref2}
+
+      put_meta(1, 0)
+      put_meta(2, 0)
+      put_agent_state(1, @default_model)
+      put_agent_state(2, @default_model)
+
+      # Default pool (concurrency 2) FULL with holders 10, 11; agents 1 and 2 queued.
+      state =
+        base_state(
+          llm_holders: %{@default_model => MapSet.new([10, 11])},
+          llm_waiting: %{
+            @default_model => :queue.from_list([{1, from1, nil}, {2, from2, nil}])
+          }
+        )
+
+      # Engine drops capacity to 0 — the do_update_config grant sweep runs.
+      zero_state = struct!(state, model_concurrency: %{@default_model => 0})
+      {final, status_updates} = Slots.grant_pending_on_resume(zero_state)
+
+      # No status updates (mirrors the purge precedent), but every waiter got a
+      # reply — the sweep REJECTS instead of silently skipping.
+      assert status_updates == []
+      assert :queue.is_empty(State.waiting_for(final, @default_model))
+      assert_received {^ref1, {:error, :no_capacity}}
+      assert_received {^ref2, {:error, :no_capacity}}
+    end
+
+    test "in-flight holders are not evicted when capacity drops to 0" do
+      ref = make_ref()
+      from = {self(), ref}
+      put_meta(1, 0)
+      put_agent_state(1, @default_model)
+
+      # Holder 10 is mid-LLM-call; agent 1 queued behind it.
+      state =
+        base_state(
+          llm_holders: %{@default_model => MapSet.new([10])},
+          llm_waiting: %{@default_model => :queue.from_list([{1, from, nil}])}
+        )
+
+      zero_state = struct!(state, model_concurrency: %{@default_model => 0})
+      {final, _status_updates} = Slots.grant_pending_on_resume(zero_state)
+
+      # The holder keeps its slot; only the queued waiter was rejected.
+      assert MapSet.member?(State.holders_for(final, @default_model), 10)
+      assert :queue.is_empty(State.waiting_for(final, @default_model))
+      assert_received {^ref, {:error, :no_capacity}}
+    end
+
+    test "a 0-capacity model does not affect granting on other models" do
+      from_fast = {self(), make_ref()}
+      put_agent_state(2, @fast_model)
+
+      state = base_state(model_concurrency: %{@default_model => 0, @fast_model => 1})
+
+      assert {:reply, :ok, new_state, []} = Slots.handle_request_llm_slot(2, from_fast, state)
+      assert MapSet.member?(State.holders_for(new_state, @fast_model), 2)
+    end
+
+    test "force-kill purge path (replies {:error, :cancelled}) is unaffected by 0-capacity" do
+      ref = make_ref()
+      from = {self(), ref}
+      put_meta(1, 0)
+      put_agent_state(1, @default_model)
+
+      # A leftover waiter on a 0-capacity model's queue (queued before the drop,
+      # not yet swept) is purged by force-kill with the CANCELLED reply — the
+      # purge path is capacity-independent.
+      state =
+        base_state(
+          model_concurrency: %{@default_model => 0},
+          llm_waiting: %{@default_model => :queue.from_list([{1, from, nil}])}
+        )
+
+      {final, _updates} = Slots.purge_agents_from_queues(state, MapSet.new([1]))
+
+      assert :queue.is_empty(State.waiting_for(final, @default_model))
+      assert_received {^ref, {:error, :cancelled}}
+    end
+  end
+
   # --- Per-model pool isolation ---
 
   describe "per-model pool isolation" do

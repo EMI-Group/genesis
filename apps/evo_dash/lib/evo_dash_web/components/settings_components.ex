@@ -55,6 +55,7 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:llm_test_status, :any, default: :idle)
   attr(:model_profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
+  attr(:profile_form_draft, :any, default: nil)
   attr(:test_profile_id, :any, default: nil)
   attr(:credentials, :map, default: %{})
 
@@ -398,6 +399,7 @@ defmodule EvoDashWeb.SettingsComponents do
             <.model_profiles_editor
               profiles={@model_profiles}
               editing_profile_id={@editing_profile_id}
+              profile_form_draft={@profile_form_draft}
             />
 
             <%!-- LLM Connection Test --%>

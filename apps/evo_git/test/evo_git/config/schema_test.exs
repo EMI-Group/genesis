@@ -869,8 +869,18 @@ defmodule EvoGit.Config.SchemaTest do
       assert {:ok, _} = Schema.validate(config)
     end
 
-    test "rejects non-positive-integer peak_concurrency values" do
-      for bad <- [0, -1, "2", 2.5] do
+    test "accepts peak_concurrency 0 (atom-keyed and string-keyed)" do
+      for profile <- [
+            %{id: "glm", model: "zai:glm-5", peak_concurrency: 0},
+            %{"id" => "glm", "model" => "zai:glm-5", "peak_concurrency" => 0}
+          ] do
+        config = put_in(Schema.defaults(), [:llm, :models], [profile])
+        assert {:ok, _} = Schema.validate(config)
+      end
+    end
+
+    test "rejects negative and non-integer peak_concurrency values" do
+      for bad <- [-1, "2", 2.5] do
         config =
           put_in(Schema.defaults(), [:llm, :models], [
             %{id: "glm", model: "zai:glm-5", peak_concurrency: bad}
@@ -880,7 +890,7 @@ defmodule EvoGit.Config.SchemaTest do
 
         assert Enum.any?(errors, fn e ->
                  e.key_path == [:llm, :models, 0, :peak_concurrency] and
-                   String.contains?(e.message, "peak_concurrency must be a positive integer")
+                   String.contains?(e.message, "peak_concurrency must be a non-negative integer")
                end)
       end
     end
@@ -996,14 +1006,50 @@ defmodule EvoGit.Config.SchemaTest do
     test "rejects string-keyed profile with invalid peak_concurrency" do
       config =
         put_in(Schema.defaults(), [:llm, :models], [
-          %{"id" => "glm", "model" => "zai:glm-5", "peak_concurrency" => 0}
+          %{"id" => "glm", "model" => "zai:glm-5", "peak_concurrency" => -1}
         ])
 
       assert {:error, errors} = Schema.validate(config)
 
       assert Enum.any?(errors, fn e ->
                e.key_path == [:llm, :models, 0, :peak_concurrency] and
-                 String.contains?(e.message, "peak_concurrency must be a positive integer")
+                 String.contains?(e.message, "peak_concurrency must be a non-negative integer")
+             end)
+    end
+
+    test "accepts a valid timezone (atom-keyed and string-keyed)" do
+      for profile <- [
+            %{id: "glm", model: "zai:glm-5", timezone: "Asia/Shanghai"},
+            %{"id" => "glm", "model" => "zai:glm-5", "timezone" => "America/New_York"}
+          ] do
+        config = put_in(Schema.defaults(), [:llm, :models], [profile])
+        assert {:ok, _} = Schema.validate(config)
+      end
+    end
+
+    test "accepts empty string and absent timezone" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", timezone: ""}
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+
+      config2 = put_in(Schema.defaults(), [:llm, :models], [%{id: "glm", model: "zai:glm-5"}])
+      assert {:ok, _} = Schema.validate(config2)
+    end
+
+    test "rejects an unknown timezone with the :timezone key path" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", timezone: "Not/AZone"}
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               e.key_path == [:llm, :models, 0, :timezone] and
+                 String.contains?(e.message, "invalid timezone:")
              end)
     end
   end
