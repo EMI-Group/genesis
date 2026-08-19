@@ -36,6 +36,11 @@ defmodule EvoGit.PeakHourEngineTest do
     on_exit(fn -> Application.delete_env(:evo_git, :peak_hours_now_fun) end)
   end
 
+  defp with_utc_clock(fun) do
+    Application.put_env(:evo_git, :peak_hours_utc_now_fun, fun)
+    on_exit(fn -> Application.delete_env(:evo_git, :peak_hours_utc_now_fun) end)
+  end
+
   defp wait_until(fun, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline, timeout)
@@ -67,6 +72,7 @@ defmodule EvoGit.PeakHourEngineTest do
 
     on_exit(fn ->
       Application.delete_env(:evo_git, :peak_hours_now_fun)
+      Application.delete_env(:evo_git, :peak_hours_utc_now_fun)
 
       AgentScheduler.update_config(model_profiles: model_profiles)
       AgentScheduler.update_config(default_llm_max_concurrency: default_llm)
@@ -230,6 +236,59 @@ defmodule EvoGit.PeakHourEngineTest do
       assert :ok = PeakHourEngine.check()
       assert Process.whereis(EvoGit.PeakHourEngine) != nil
     end
+
+    test "tz profile resolves its wall clock from the utc seam, not the local clock" do
+      # Local clock says 08:00 (off-peak for 09:00–12:00), but at 01:00 UTC
+      # Shanghai is 09:00 → in peak → peak_concurrency 2 applies. peak is
+      # NON-zero so the (old) scheduler-side floor can't interfere.
+      with_clock(fn -> fake_now(8) end)
+      with_utc_clock(fn -> ~U[2025-01-15 01:00:00Z] end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: @window,
+            timezone: "Asia/Shanghai"
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 1)
+
+      assert :ok = PeakHourEngine.check()
+
+      # If the engine had (wrongly) used the local 08:00 clock, off-peak → 4.
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
+    end
+
+    test "tz profile off-peak in its own wall clock applies normal concurrency" do
+      # 00:00 UTC = 08:00 Shanghai → off-peak → 4 (local clock 14:00 would be
+      # off-peak anyway; the utc seam is what drives the decision).
+      with_clock(fn -> fake_now(14) end)
+      with_utc_clock(fn -> ~U[2025-01-15 00:00:00Z] end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: @window,
+            timezone: "Asia/Shanghai"
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 1)
+
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
+    end
   end
 
   describe "effective_map/3 (pure)" do
@@ -292,6 +351,130 @@ defmodule EvoGit.PeakHourEngineTest do
       # 13:00 → next start of the afternoon window (14:00, 1h).
       assert PeakHourEngine.next_wakeup_ms([[@canonical_window, w2]], fake_now(13)) ==
                3_600_000 + 100
+    end
+  end
+
+  describe "effective_map/4 (pure, tz-aware)" do
+    @tz_profiles [
+      %{
+        id: "glm",
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: @window,
+        timezone: "Asia/Shanghai"
+      }
+    ]
+
+    test "tz profile resolves its wall clock from the utc arg" do
+      # 00:30 UTC = 08:30 Shanghai → off peak → 4 (local fake_now(8) is the
+      # fallback clock, same value here by construction).
+      assert PeakHourEngine.effective_map(
+               @tz_profiles,
+               nil,
+               fake_now(8),
+               ~U[2025-01-15 00:30:00Z]
+             ) ==
+               %{"glm" => 4}
+
+      # 01:30 UTC = 09:30 Shanghai → in peak → 2.
+      assert PeakHourEngine.effective_map(
+               @tz_profiles,
+               nil,
+               fake_now(8),
+               ~U[2025-01-15 01:30:00Z]
+             ) ==
+               %{"glm" => 2}
+    end
+
+    test "tz profile with no utc arg falls back to the local clock" do
+      # Arity 3: fake_now(10) is 10:00 local → in peak → 2.
+      assert PeakHourEngine.effective_map(@tz_profiles, nil, fake_now(10)) == %{"glm" => 2}
+    end
+
+    test "non-tz profile ignores the utc arg (behaves exactly like arity 3)" do
+      profiles = [%{id: "glm", concurrency: 4, peak_concurrency: 2, peak_hours: @window}]
+
+      assert PeakHourEngine.effective_map(profiles, nil, fake_now(10), ~U[2025-01-15 01:00:00Z]) ==
+               %{"glm" => 2}
+
+      assert PeakHourEngine.effective_map(profiles, nil, fake_now(14), ~U[2025-01-15 01:00:00Z]) ==
+               %{"glm" => 4}
+    end
+  end
+
+  describe "effective_map/3 floor rule (peak_concurrency 0)" do
+    test "explicit 0 in peak stays 0 even with a default floor" do
+      profiles = [%{id: "glm", concurrency: 4, peak_concurrency: 0, peak_hours: @window}]
+      assert PeakHourEngine.effective_map(profiles, nil, fake_now(10)) == %{"glm" => 0}
+      assert PeakHourEngine.effective_map(profiles, 3, fake_now(10)) == %{"glm" => 0}
+    end
+
+    test "explicit 0 off peak → normal concurrency" do
+      profiles = [%{id: "glm", concurrency: 4, peak_concurrency: 0, peak_hours: @window}]
+      assert PeakHourEngine.effective_map(profiles, nil, fake_now(14)) == %{"glm" => 4}
+      assert PeakHourEngine.effective_map(profiles, 3, fake_now(14)) == %{"glm" => 4}
+    end
+
+    test "computation is deterministic (fixed-point re-check is a no-op)" do
+      profiles = [%{id: "glm", concurrency: 4, peak_concurrency: 0, peak_hours: @window}]
+
+      assert PeakHourEngine.effective_map(profiles, 3, fake_now(10)) ==
+               PeakHourEngine.effective_map(profiles, 3, fake_now(10))
+
+      tz_profiles = [
+        %{
+          id: "glm",
+          concurrency: 4,
+          peak_concurrency: 2,
+          peak_hours: @window,
+          timezone: "Asia/Shanghai"
+        }
+      ]
+
+      assert PeakHourEngine.effective_map(tz_profiles, nil, fake_now(8), ~U[2025-01-15 01:30:00Z]) ==
+               PeakHourEngine.effective_map(
+                 tz_profiles,
+                 nil,
+                 fake_now(8),
+                 ~U[2025-01-15 01:30:00Z]
+               )
+    end
+  end
+
+  describe "next_wakeup_ms_for/3 (pure, tz-aware)" do
+    test "non-tz pair uses the local clock (same result as next_wakeup_ms/2)" do
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{[@canonical_window], nil}],
+               fake_now(10),
+               ~U[2026-01-15 02:00:00Z]
+             ) == 7_200_000 + 100
+
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{[@canonical_window], nil}],
+               fake_now(14),
+               ~U[2026-01-15 02:00:00Z]
+             ) == @six_hours_ms
+    end
+
+    test "tz pair converts the wall transition to UTC" do
+      # Shanghai window 09:00–12:00; utc_now = 00:30 UTC (08:30 Shanghai) →
+      # next transition 09:00 Shanghai = 01:00 UTC → 30min = 1_800_000ms.
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{[@canonical_window], "Asia/Shanghai"}],
+               fake_now(8),
+               ~U[2025-01-15 00:30:00Z]
+             ) == 1_800_000 + 100
+    end
+
+    test "no transitions → 6h safety-net cap" do
+      assert PeakHourEngine.next_wakeup_ms_for([], fake_now(10), ~U[2025-01-15 02:00:00Z]) ==
+               @six_hours_ms
+
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{[], "Asia/Shanghai"}],
+               fake_now(10),
+               ~U[2025-01-15 02:00:00Z]
+             ) == @six_hours_ms
     end
   end
 end

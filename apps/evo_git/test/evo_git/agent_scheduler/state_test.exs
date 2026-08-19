@@ -243,6 +243,47 @@ defmodule EvoGit.AgentScheduler.StateTest do
       assert lowered.default_llm_max_concurrency == 1
       assert lowered.model_concurrency == %{"default" => 2, "fast" => 7}
     end
+
+    test "preserves explicit 0-capacity hard-pause entries while flooring others" do
+      # PeakHourEngine emits {id, 0} during the peak window — the floor must
+      # NEVER resurrect the model (flooring 0 to new_default would re-enable it
+      # and break the engine's fixed-point invariant).
+      state = %State{model_concurrency: %{"a" => 0, "b" => 2}}
+
+      raised = State.apply_default_llm_concurrency_override(state, 3)
+      assert raised.default_llm_max_concurrency == 3
+      assert raised.model_concurrency == %{"a" => 0, "b" => 3}
+
+      # Even a floor of 0 keeps 0 entries at 0.
+      lowered = State.apply_default_llm_concurrency_override(state, 0)
+      assert lowered.model_concurrency == %{"a" => 0, "b" => 2}
+    end
+  end
+
+  # --- concurrency_for/2: 0 is a valid capacity (hard-pause) ---
+
+  describe "concurrency_for/2 — hard-pause 0-capacity" do
+    test "returns 0 from an explicit map entry, never the default fallback" do
+      state = %State{model_concurrency: %{"a" => 0}, default_llm_max_concurrency: 3}
+
+      assert State.concurrency_for(state, "a") == 0
+
+      # Unknown models still fall back to the default.
+      assert State.concurrency_for(state, "missing") == 3
+    end
+
+    test "a 0 entry survives the dynamic engine override path (fixed point)" do
+      # Engine pushes {"glm" => 0} under an active floor of 4: the floor raises
+      # other entries but MUST keep the hard-pause 0 (otherwise the engine's
+      # re-broadcast would see a different value and loop).
+      state = State.apply_default_llm_concurrency_override(%State{}, 4)
+
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"glm" => 0, "other" => 2}], state)
+
+      assert final.model_concurrency == %{"glm" => 0, "other" => 4}
+      assert State.concurrency_for(final, "glm") == 0
+    end
   end
 
   # --- do_update_config/2: live default_llm_max_concurrency override (Fix E) ---

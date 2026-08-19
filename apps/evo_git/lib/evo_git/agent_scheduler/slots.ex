@@ -49,6 +49,7 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   @type slot_result ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
+          | {:reply, {:error, :no_capacity}, State.t(), [{pos_integer(), atom()}]}
           | {:noreply, State.t(), [{pos_integer(), atom()}]}
 
   # --- Model ID Resolution ---
@@ -80,49 +81,67 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   Resolves the agent's model_id from ETS, then checks the per-model pool.
   Returns `{:reply, :ok, state, status_updates}` if a slot is immediately available,
-  or `{:noreply, state, status_updates}` if the agent must wait (no slots or in backoff).
+  `{:reply, {:error, :no_capacity}, state, []}` if the model is hard-paused
+  (0 capacity — never enqueued), or `{:noreply, state, status_updates}` if the
+  agent must wait (no slots or in backoff).
   """
   @spec handle_request_llm_slot(pos_integer(), GenServer.from(), State.t()) :: slot_result()
   def handle_request_llm_slot(agent_id, from, %State{} = state) do
     model_id = resolve_model_id(agent_id, state)
 
-    if state.paused do
-      waiting = State.waiting_for(state, model_id)
-      waiting = :queue.in({agent_id, from, nil}, waiting)
-      state = State.update_waiting(state, model_id, waiting)
-      {:noreply, state, [{agent_id, :blocked}]}
+    # Hard-pause (PeakHourEngine sets the model's concurrency to 0): reject the
+    # request immediately with a distinct error instead of enqueueing a waiter
+    # that could never be granted. Checked BEFORE the paused branch so no path
+    # (paused or not) ever enqueues a request for a 0-capacity pool.
+    if State.concurrency_for(state, model_id) == 0 do
+      {:reply, {:error, :no_capacity}, state, []}
     else
-      do_handle_request_llm_slot(agent_id, from, state, model_id)
-    end
-  end
-
-  defp do_handle_request_llm_slot(agent_id, from, %State{} = state, model_id) do
-    now = System.monotonic_time(:millisecond)
-    backoff = State.backoff_for(state, model_id)
-    holders = State.holders_for(state, model_id)
-    concurrency = State.concurrency_for(state, model_id)
-
-    if backoff && now < backoff do
-      waiting = State.waiting_for(state, model_id)
-      waiting = :queue.in({agent_id, from, backoff}, waiting)
-      state = State.update_waiting(state, model_id, waiting)
-      {:noreply, state, [{agent_id, :blocked}]}
-    else
-      if MapSet.size(holders) < concurrency do
-        state =
-          state
-          |> State.update_holders(model_id, MapSet.put(holders, agent_id))
-          |> State.update_last_granted(
-            model_id,
-            Map.put(State.last_granted_for(state, model_id), agent_id, now)
-          )
-
-        {:reply, :ok, state, []}
-      else
+      if state.paused do
         waiting = State.waiting_for(state, model_id)
         waiting = :queue.in({agent_id, from, nil}, waiting)
         state = State.update_waiting(state, model_id, waiting)
         {:noreply, state, [{agent_id, :blocked}]}
+      else
+        do_handle_request_llm_slot(agent_id, from, state, model_id)
+      end
+    end
+  end
+
+  defp do_handle_request_llm_slot(agent_id, from, %State{} = state, model_id) do
+    concurrency = State.concurrency_for(state, model_id)
+
+    # Hard-pause (peak hours): capacity 0 can never grant — fail fast instead
+    # of enqueueing a waiter that would block forever. Checked BEFORE the
+    # backoff branch (a 0-capacity model must never queue, even under backoff).
+    if concurrency == 0 do
+      {:reply, {:error, :no_capacity}, state, []}
+    else
+      now = System.monotonic_time(:millisecond)
+      backoff = State.backoff_for(state, model_id)
+      holders = State.holders_for(state, model_id)
+
+      if backoff && now < backoff do
+        waiting = State.waiting_for(state, model_id)
+        waiting = :queue.in({agent_id, from, backoff}, waiting)
+        state = State.update_waiting(state, model_id, waiting)
+        {:noreply, state, [{agent_id, :blocked}]}
+      else
+        if MapSet.size(holders) < concurrency do
+          state =
+            state
+            |> State.update_holders(model_id, MapSet.put(holders, agent_id))
+            |> State.update_last_granted(
+              model_id,
+              Map.put(State.last_granted_for(state, model_id), agent_id, now)
+            )
+
+          {:reply, :ok, state, []}
+        else
+          waiting = State.waiting_for(state, model_id)
+          waiting = :queue.in({agent_id, from, nil}, waiting)
+          state = State.update_waiting(state, model_id, waiting)
+          {:noreply, state, [{agent_id, :blocked}]}
+        end
       end
     end
   end
@@ -418,69 +437,94 @@ defmodule EvoGit.AgentScheduler.Slots do
   # The recency/depth prioritization stays the same, just scoped to this model's queue.
   # Returns {state, unblocked} where unblocked is a list of {agent_id, :running}.
   defp grant_llm_from_queue(%State{} = state, model_id) do
-    now = System.monotonic_time(:millisecond)
-    holders = State.holders_for(state, model_id)
     concurrency = State.concurrency_for(state, model_id)
-    waiting = State.waiting_for(state, model_id)
 
-    if MapSet.size(holders) >= concurrency or :queue.is_empty(waiting) do
-      {state, []}
+    # Hard-pause (peak hours): capacity 0 can never grant. Drain the ENTIRE
+    # waiting queue, replying {:error, :no_capacity} to every blocked caller —
+    # NOT silently skipping (which would leave waiters wedged forever: 0 >= 0
+    # makes the early return below a permanent no-op). In-flight holders are
+    # NOT evicted: their call completes, the release path re-runs this sweep
+    # (a no-op at 0), and the NEXT request hits the request-path fail-fast.
+    # Mirrors the purge precedent (purge_agents_from_queues/2): no status
+    # updates, {state, []}. Hooks in automatically via every sweep caller —
+    # grant_pending_on_resume (update_config), handle_release_llm_slot, and
+    # handle_retry_llm_waiting — so a capacity drop to 0 purges already-queued
+    # waiters in the same update that applies the new map.
+    if concurrency == 0 do
+      waiting = State.waiting_for(state, model_id)
+
+      waiting
+      |> :queue.to_list()
+      |> Enum.each(fn
+        {_agent_id, from} -> GenServer.reply(from, {:error, :no_capacity})
+        {_agent_id, from, _backoff} -> GenServer.reply(from, {:error, :no_capacity})
+      end)
+
+      {State.update_waiting(state, model_id, :queue.new()), []}
     else
-      entries = :queue.to_list(waiting)
+      now = System.monotonic_time(:millisecond)
+      holders = State.holders_for(state, model_id)
+      waiting = State.waiting_for(state, model_id)
 
-      # Single reduce: partition into in_backoff / eligible and track best candidate
-      {in_backoff_rev, eligible_rev, best} =
-        Enum.reduce(entries, {[], [], nil}, fn entry, {in_bo_rev, elig_rev, best_so_far} ->
-          agent_id = entry_agent_id(entry)
-
-          case entry do
-            {_aid, _from, backoff_until} when backoff_until != nil and now < backoff_until ->
-              {[entry | in_bo_rev], elig_rev, best_so_far}
-
-            _ ->
-              new_best = better_entry(best_so_far, entry, agent_id, state, model_id)
-              {in_bo_rev, [entry | elig_rev], new_best}
-          end
-        end)
-
-      if best == nil do
-        # All entries in backoff — preserve order and stop
-        {%State{
-           state
-           | llm_waiting:
-               Map.put(
-                 state.llm_waiting,
-                 model_id,
-                 :queue.from_list(:lists.reverse(in_backoff_rev))
-               )
-         }, []}
+      if MapSet.size(holders) >= concurrency or :queue.is_empty(waiting) do
+        {state, []}
       else
-        {agent_id, from, _backoff} = best
+        entries = :queue.to_list(waiting)
 
-        GenServer.reply(from, :ok)
+        # Single reduce: partition into in_backoff / eligible and track best candidate
+        {in_backoff_rev, eligible_rev, best} =
+          Enum.reduce(entries, {[], [], nil}, fn entry, {in_bo_rev, elig_rev, best_so_far} ->
+            agent_id = entry_agent_id(entry)
 
-        # Rebuild queue: reverse eligible to forward order, prepend (skipping best) to in_backoff_rev, reverse once
-        queue_rev =
-          eligible_rev
-          |> :lists.reverse()
-          |> Enum.reduce(in_backoff_rev, fn
-            ^best, acc -> acc
-            item, acc -> [item | acc]
+            case entry do
+              {_aid, _from, backoff_until} when backoff_until != nil and now < backoff_until ->
+                {[entry | in_bo_rev], elig_rev, best_so_far}
+
+              _ ->
+                new_best = better_entry(best_so_far, entry, agent_id, state, model_id)
+                {in_bo_rev, [entry | elig_rev], new_best}
+            end
           end)
 
-        queue_list = :lists.reverse(queue_rev)
+        if best == nil do
+          # All entries in backoff — preserve order and stop
+          {%State{
+             state
+             | llm_waiting:
+                 Map.put(
+                   state.llm_waiting,
+                   model_id,
+                   :queue.from_list(:lists.reverse(in_backoff_rev))
+                 )
+           }, []}
+        else
+          {agent_id, from, _backoff} = best
 
-        state =
-          state
-          |> State.update_waiting(model_id, :queue.from_list(queue_list))
-          |> State.update_holders(model_id, MapSet.put(holders, agent_id))
-          |> State.update_last_granted(
-            model_id,
-            Map.put(State.last_granted_for(state, model_id), agent_id, now)
-          )
+          GenServer.reply(from, :ok)
 
-        {state, more} = grant_llm_from_queue(state, model_id)
-        {state, [{agent_id, :running} | more]}
+          # Rebuild queue: reverse eligible to forward order, prepend (skipping best) to in_backoff_rev, reverse once
+          queue_rev =
+            eligible_rev
+            |> :lists.reverse()
+            |> Enum.reduce(in_backoff_rev, fn
+              ^best, acc -> acc
+              item, acc -> [item | acc]
+            end)
+
+          queue_list = :lists.reverse(queue_rev)
+
+          state =
+            state
+            |> State.update_waiting(model_id, :queue.from_list(queue_list))
+            |> State.update_holders(model_id, MapSet.put(holders, agent_id))
+            |> State.update_last_granted(
+              model_id,
+              Map.put(State.last_granted_for(state, model_id), agent_id, now)
+            )
+
+          {state, more} = grant_llm_from_queue(state, model_id)
+          {state, [{agent_id, :running} | more]}
+        end
       end
     end
   end

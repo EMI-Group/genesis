@@ -127,23 +127,25 @@ enabled = false              # Run tool calls inside a cached Nix dev environmen
 flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
 ```
 
-**`[[llm.models]]` profile fields**: each profile supports `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus the two OPTIONAL peak-hour fields `peak_concurrency` and `peak_hours`:
+**`[[llm.models]]` profile fields**: each profile supports `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus the OPTIONAL peak-hour fields `peak_concurrency`, `peak_hours`, and `timezone`:
 
 ```toml
 [[llm.models]]
 id = "glm"
 concurrency = 4        # normal (off-peak) concurrency
-peak_concurrency = 2   # optional — effective concurrency during peak windows
-peak_hours = [         # optional — list of daily windows (local wall-clock)
+peak_concurrency = 2   # optional — effective concurrency during peak windows (0 = hard pause)
+peak_hours = [         # optional — list of daily windows (local wall-clock unless timezone set)
   { start = "09:00", end = "12:00" },
   { start = "14:00", end = "18:00" }
 ]
+timezone = "Asia/Shanghai"  # optional — IANA tz for this profile's peak windows
 ```
 
-- `peak_concurrency` — when present must be a POSITIVE integer (`0`, negatives, floats, strings → validation error at `[:llm, :models, <idx>, :peak_concurrency]`); absent → off-peak `concurrency` always applies.
+- `peak_concurrency` — when present must be a NON-NEGATIVE integer (`0` = hard pause: the model gets zero LLM slots during peak windows, never raised by the `default_llm_max_concurrency` floor; negatives, floats, strings → validation error at `[:llm, :models, <idx>, :peak_concurrency]`); absent → off-peak `concurrency` always applies.
 - `peak_hours` — list of maps with `start`/`end` `"HH:MM"` 24h strings (atom- or string-keyed; TOML decoding may produce string keys). Windows are half-open `[start, end)`; `start > end` = overnight wrap; absent / `[]` / invalid → disabled (normal `concurrency` 24/7). `peak_hours` present without `peak_concurrency` → legal no-op (defaults to `concurrency`).
+- `timezone` — optional IANA timezone name (e.g. `"Asia/Shanghai"`, `"America/New_York"`): when present, the profile's peak computations (in-peak checks + next-transition wakeups) use that timezone's wall clock, DST-aware; absent / empty / nil → server local wall clock (legacy). Validated by `EvoGit.PeakHours.validate_timezone/1` (single source of truth): nil/"" valid; unknown IANA name / no tz database configured → error at `[:llm, :models, <idx>, :timezone]`. Requires the tz database at boot — `Calendar.put_time_zone_database(Tzdata.TimeZoneDatabase)` in `EvoGit.Application.start/2` (`tzdata` ~> 1.1 dep; network updater off by default).
 - **Validation ownership**: window parsing/format/overlap checks are delegated to `EvoGit.PeakHours.validate_windows/1` (single source of truth — the schema does NOT re-implement format/overlap logic). `Schema.validate/1` reports `%ValidationError{}`s at `[:llm, :models, <idx>, :peak_hours]` (non-list) or `[:llm, :models, <idx>, :peak_hours, <window_idx>]` (invalid entry/window; the overlap error is reported at the index of the later overlapping window).
-- Both fields survive config resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys are never stripped — and reach `state.model_profiles` unchanged, where the runtime reads them from `get_config(:model_profiles)`.
+- All peak-hour fields (incl. `timezone`) survive config resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys are never stripped — and reach `state.model_profiles` unchanged, where the runtime reads them from `get_config(:model_profiles)`.
 
 **`[sandbox] backend` semantics**: `[:sandbox, :backend]` is an `:atom` schema key (default `:auto`, validation `[in: [:auto, :systemd, :bwrap]]`) selecting the Linux sandbox backend. `:auto` tries systemd-run first, then bubblewrap (`bwrap`), then no sandbox when neither is available (macOS always uses sandbox-exec regardless — bwrap is Linux-only). `:systemd` forces systemd-run (no sandbox if systemd is unavailable); `:bwrap` forces bubblewrap — filesystem isolation only, no resource limits — useful in Docker/containers where systemd is unavailable, and falls back to no sandbox if `bwrap` is unavailable. **The `[sandbox.resources]` and `[sandbox.process]` keys are systemd-only and ignored when bwrap is the active backend.** String values from config.toml are atomized by the `atomize_enum_values/1` pipeline step (`"auto" | "systemd" | "bwrap"` → atoms) before `Schema.validate`.
 
