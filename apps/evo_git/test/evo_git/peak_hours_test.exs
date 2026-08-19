@@ -424,7 +424,7 @@ defmodule EvoGit.PeakHoursTest do
     end
 
     test "accepts valid IANA names against the configured db" do
-      # The app configures Tzdata.TimeZoneDatabase at boot, so the no-arg
+      # The app configures Tz.TimeZoneDatabase at boot, so the no-arg
       # form resolves real IANA names.
       assert PeakHours.validate_timezone("Asia/Shanghai") == :ok
       assert PeakHours.validate_timezone("America/New_York") == :ok
