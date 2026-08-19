@@ -2,9 +2,11 @@ defmodule Mix.Tasks.Changelog do
   @moduledoc """
   Generate an AI-powered Keep-a-Changelog section for a new version.
 
-  Collects the commit history since the last git tag (or a custom range),
-  summarizes it with an LLM into user-facing changelog categories, and
-  maintains `CHANGELOG.md` in Keep a Changelog format. A missing file is
+  Collects the pull requests / merges in the commit history since the last git
+  tag (or a custom range) by walking the first-parent line, summarizes each
+  change with an LLM into a single user-facing line (map stage), then
+  aggregates those lines into categorized changelog entries (reduce stage),
+  and maintains `CHANGELOG.md` in Keep a Changelog format. A missing file is
   created with a `# Changelog` title, an intro line, and an empty
   `## [Unreleased]` section. An existing file gets the new `## [<version>]`
   section inserted right after the header — or replaced in place when a
@@ -26,10 +28,23 @@ defmodule Mix.Tasks.Changelog do
     * `--file <path>` — changelog file path. Defaults to `CHANGELOG.md` in
       the current directory.
 
-  Merge commits and version-bump commits (subjects matching `^Bump version
-  to`) are excluded from the summary. After writing the file the task
-  interactively asks whether to commit it; if confirmed only the changelog
-  file is staged and committed (never `git add -A`).
+  Collection is **PR/merge-aware**: the first-parent line of the range is
+  walked (`git log --first-parent <from>..<to>`), and each merge commit (≥ 2
+  parents) becomes one change whose commits are the branch commits it brought
+  in (`git log --no-merges <merge>^1..<merge>` — `--no-merges` skips nested
+  agent merges; GitHub-style single-commit merges yield exactly one commit).
+  Non-merge commits on the first-parent line become single-commit changes.
+  The merge message itself is never used as the signal. Version-bump commits
+  (subjects matching `^Bump version to`) and obvious mechanical noise
+  (`^Update mix hash`, `^Update CONTEXT.md`) are filtered from every change's
+  commit list; a change left with no commits is dropped entirely.
+
+  Summarization is **two-stage (map-reduce)**: stage 1 produces one concise
+  user-facing summary line per change (one LLM call per change, taking that
+  change's commits); stage 2 aggregates the per-change summaries into the
+  final Keep-a-Changelog entries in a single LLM call. After writing the file
+  the task interactively asks whether to commit it; if confirmed only the
+  changelog file is staged and committed (never `git add -A`).
 
   ## Examples
 
@@ -41,9 +56,25 @@ defmodule Mix.Tasks.Changelog do
 
   ## Test seam
 
-  The LLM call is routed through the `:changelog_summarizer` application-env
-  seam (`Application.get_env(:evo_git, :changelog_summarizer, ...)`); tests
-  substitute a deterministic stub via `Application.put_env`.
+  The pipeline is routed through three `Application.get_env(:evo_git, ...)`
+  seams (repo-wide pattern, cf. `:peak_hours_now_fun`,
+  `:remote_rpc_timeout`); each defaults to the real `ReqLLM` implementation
+  and tests substitute deterministic stubs via `Application.put_env`:
+
+    * `:changelog_summarizer` — the whole pipeline
+      `(model, version, prs) -> {:ok, entries} | {:error, reason}` where
+      `prs` is the PR list. Defaults to `__MODULE__.summarize_pipeline/3`.
+    * `:changelog_pr_summarizer` — stage 1 (map), one call per PR
+      `(model, version, pr) -> {:ok, summary :: String.t()} | {:error, reason}`
+      where `pr = %{head_sha: String.t(), commits: [%{hash, subject, body}]}`.
+      Defaults to `__MODULE__.summarize_pr_with_llm/3`.
+    * `:changelog_aggregator` — stage 2 (reduce)
+      `(model, version, summaries :: [String.t()]) -> {:ok, entries} | {:error, reason}`.
+      Defaults to `__MODULE__.aggregate_with_llm/3`.
+
+  `entries` is a list of `%{category, text}` maps (string- or atom-keyed);
+  the aggregation schema/output stays exactly compatible with
+  `normalize_entries/1` and `build_section/2`.
   """
 
   use Mix.Task
@@ -57,6 +88,7 @@ defmodule Mix.Tasks.Changelog do
   @record_sep "\x1e"
   @field_sep "\x1f"
   @version_bump_re ~r/^Bump version to/
+  @mechanical_noise_re ~r/^(Update mix hash|Update CONTEXT\.md)/
   @categories ~w(Added Changed Fixed Removed Security Deprecated)
 
   @impl Mix.Task
@@ -84,16 +116,18 @@ defmodule Mix.Tasks.Changelog do
     file = opts[:file] || @default_file
     model = opts[:model] || @model
 
-    case collect_commits(opts[:from], opts[:to]) do
+    case collect_prs(opts[:from], opts[:to]) do
       {:ok, []} ->
         Mix.shell().info("No commits found in the given range — nothing to summarize.")
 
-      {:ok, commits} ->
+      {:ok, prs} ->
+        total_commits = Enum.sum(Enum.map(prs, &length(&1.commits)))
+
         Mix.shell().info(
-          "Found #{length(commits)} commit(s) — generating changelog for v#{version}..."
+          "Found #{total_commits} commit(s) in #{length(prs)} change(s) — generating changelog for v#{version}..."
         )
 
-        case summarize(model, version, commits) do
+        case summarize(model, version, prs) do
           {:ok, entries} ->
             section = build_section(version, entries)
             content = upsert_changelog(file, version, section)
@@ -112,9 +146,14 @@ defmodule Mix.Tasks.Changelog do
     end
   end
 
-  # --- Commit collection ---------------------------------------------------
+  # --- PR collection -------------------------------------------------------
 
-  defp collect_commits(from, to) do
+  # Walks the first-parent line of the range (git log --first-parent
+  # <from>..<to>; full history when there is no tag) and groups it into
+  # PR-shaped changes. Returns {:ok, prs} where prs is a list of
+  # %{head_sha: String.t(), commits: [%{hash, subject, body}]} in
+  # newest-first order, or {:error, {:git_log_failed, code, output}}.
+  defp collect_prs(from, to) do
     to_ref = to || "HEAD"
 
     from_ref =
@@ -129,7 +168,10 @@ defmodule Mix.Tasks.Changelog do
         ref -> "#{ref}..#{to_ref}"
       end
 
-    git_log(range)
+    case git_log_first_parent(range) do
+      {:ok, entries} -> build_prs(entries)
+      {:error, code, output} -> {:error, {:git_log_failed, code, output}}
+    end
   end
 
   defp last_tag do
@@ -145,7 +187,30 @@ defmodule Mix.Tasks.Changelog do
     end
   end
 
-  defp git_log(range) do
+  # git log --first-parent over the range, including merge commits so the
+  # mainline walk is PR-shaped. Each record carries hash, parents (space-
+  # separated full SHAs), subject, and body.
+  defp git_log_first_parent(range) do
+    format = "%H%x1f%P%x1f%s%x1f%b%x1e"
+
+    case git(["log", "--first-parent", "--pretty=format:#{format}", range]) do
+      {:ok, output} ->
+        entries =
+          output
+          |> String.split(@record_sep, trim: true)
+          |> Enum.flat_map(&parse_first_parent_record/1)
+
+        {:ok, entries}
+
+      {:error, code, output} ->
+        {:error, code, output}
+    end
+  end
+
+  # The branch commits a merge brought in: git log --no-merges <merge>^1..<merge>.
+  # --no-merges skips nested agent merges; a GitHub-style single-commit merge
+  # yields exactly one commit.
+  defp git_log_no_merges(range) do
     format = "%H%x1f%s%x1f%b%x1e"
 
     case git(["log", "--no-merges", "--pretty=format:#{format}", range]) do
@@ -154,14 +219,76 @@ defmodule Mix.Tasks.Changelog do
           output
           |> String.split(@record_sep, trim: true)
           |> Enum.flat_map(&parse_record/1)
-          |> Enum.reject(&Regex.match?(@version_bump_re, &1.subject))
 
         {:ok, commits}
 
       {:error, code, output} ->
-        {:error, {:git_log_failed, code, output}}
+        {:error, code, output}
     end
   end
+
+  defp build_prs(entries) do
+    Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, acc} ->
+      case pr_for_entry(entry) do
+        {:ok, nil} -> {:cont, {:ok, acc}}
+        {:ok, pr} -> {:cont, {:ok, [pr | acc]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, prs} -> {:ok, Enum.reverse(prs)}
+      other -> other
+    end
+  end
+
+  # A merge commit (≥ 2 parents) is one PR whose commits are exactly the
+  # branch commits it brought in — the merge's own subject/body are noise and
+  # never feed the signal.
+  defp pr_for_entry(%{parents: parents, hash: hash}) when length(parents) >= 2 do
+    case git_log_no_merges("#{hash}^1..#{hash}") do
+      {:ok, commits} -> pr_or_nil(hash, commits)
+      {:error, code, output} -> {:error, {:git_log_failed, code, output}}
+    end
+  end
+
+  # A non-merge (or root) commit on the first-parent line is a single-commit PR.
+  defp pr_for_entry(entry) do
+    pr_or_nil(entry.hash, [%{hash: entry.hash, subject: entry.subject, body: entry.body}])
+  end
+
+  defp pr_or_nil(head_sha, commits) do
+    commits = Enum.reject(commits, &noise_commit?/1)
+
+    if commits == [] do
+      {:ok, nil}
+    else
+      {:ok, %{head_sha: head_sha, commits: commits}}
+    end
+  end
+
+  defp noise_commit?(commit) do
+    Regex.match?(@version_bump_re, commit.subject) or
+      Regex.match?(@mechanical_noise_re, commit.subject)
+  end
+
+  # Splits one first-parent git-log record (%H%x1f%P%x1f%s%x1f%b%x1e) into
+  # {hash, parents, subject, body}. Bodies may contain newlines; fields
+  # beyond the first three \x1f separators belong to the body.
+  defp parse_first_parent_record(record) do
+    case String.split(record, @field_sep, parts: 4) do
+      [hash, parents, subject, body] ->
+        [%{hash: hash, parents: parse_parents(parents), subject: subject, body: body}]
+
+      [hash, parents, subject] ->
+        [%{hash: hash, parents: parse_parents(parents), subject: subject, body: ""}]
+
+      _ ->
+        []
+    end
+  end
+
+  defp parse_parents(""), do: []
+  defp parse_parents(parents), do: String.split(parents, " ")
 
   # Splits one git-log record (already split on the \x1e record separator)
   # into {hash, subject, body} fields. Bodies may contain newlines; fields
@@ -174,21 +301,103 @@ defmodule Mix.Tasks.Changelog do
     end
   end
 
-  # --- LLM summarization ---------------------------------------------------
+  # --- LLM summarization (two-stage map-reduce) ----------------------------
 
-  # Routes the LLM call through the :changelog_summarizer application-env
-  # seam so tests can substitute a deterministic stub (repo-wide pattern,
-  # cf. :peak_hours_now_fun, :remote_rpc_timeout).
-  defp summarize(model, version, commits) do
+  # Whole-pipeline seam. Routes through the :changelog_summarizer
+  # application-env seam so tests (and Mix.Tasks.Bump.Version's changelog
+  # integration) can substitute a deterministic stub (repo-wide pattern, cf.
+  # :peak_hours_now_fun, :remote_rpc_timeout). Contract:
+  # (model, version, prs) -> {:ok, entries} | {:error, reason}.
+  defp summarize(model, version, prs) do
     summarizer =
-      Application.get_env(:evo_git, :changelog_summarizer, &__MODULE__.summarize_with_llm/3)
+      Application.get_env(:evo_git, :changelog_summarizer, &__MODULE__.summarize_pipeline/3)
 
-    summarizer.(model, version, commits)
+    summarizer.(model, version, prs)
   end
 
   @doc false
-  def summarize_with_llm(model, version, commits) do
-    prompt = build_prompt(version, commits)
+  # The real pipeline: stage 1 maps each PR to one summary line, stage 2
+  # reduces the summaries into the final categorized entries.
+  def summarize_pipeline(model, version, prs) do
+    with {:ok, summaries} <- summarize_prs(model, version, prs) do
+      aggregate(model, version, summaries)
+    end
+  end
+
+  # Stage 1 (map) seam: one call per PR, returning a single concise
+  # user-facing summary line for that PR.
+  defp summarize_prs(model, version, prs) do
+    summarizer =
+      Application.get_env(
+        :evo_git,
+        :changelog_pr_summarizer,
+        &__MODULE__.summarize_pr_with_llm/3
+      )
+
+    Enum.reduce_while(prs, {:ok, []}, fn pr, {:ok, acc} ->
+      case summarizer.(model, version, pr) do
+        {:ok, summary} when is_binary(summary) ->
+          {:cont, {:ok, acc ++ [String.trim(summary)]}}
+
+        {:ok, _other} ->
+          {:halt, {:error, {:invalid_pr_summary, pr.head_sha}}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  @doc false
+  # Real stage-1 implementation: one LLM call per PR, taking that PR's
+  # commits and returning a single summary line.
+  def summarize_pr_with_llm(model, version, pr) do
+    prompt = build_pr_prompt(version, pr)
+
+    schema = [
+      summary: [type: :string, required: true]
+    ]
+
+    opts = [
+      max_tokens: 10_000,
+      provider_options: [thinking: %{type: "disabled"}]
+    ]
+
+    case ReqLLM.stream_object(model, prompt, schema, opts) do
+      {:ok, stream_resp} ->
+        case ReqLLM.StreamResponse.process_stream(stream_resp) do
+          {:ok, response} ->
+            parsed = ReqLLM.Response.object(response)
+
+            case parsed["summary"] do
+              summary when is_binary(summary) -> {:ok, String.trim(summary)}
+              _ -> {:error, {:missing_summary, parsed}}
+            end
+
+          {:error, reason} ->
+            {:error, {:stream_error, reason}}
+        end
+
+      {:error, error} ->
+        {:error, {:llm_error, error}}
+    end
+  end
+
+  # Stage 2 (reduce) seam: one LLM call over the per-PR summaries, producing
+  # the final entries in the existing {category, text} shape.
+  defp aggregate(model, version, summaries) do
+    aggregator =
+      Application.get_env(:evo_git, :changelog_aggregator, &__MODULE__.aggregate_with_llm/3)
+
+    aggregator.(model, version, summaries)
+  end
+
+  @doc false
+  # Real stage-2 implementation: reduces the per-PR summary lines into the
+  # final categorized entries (same schema + normalize_entries/1 path as the
+  # old flat prompt).
+  def aggregate_with_llm(model, version, summaries) do
+    prompt = build_aggregate_prompt(version, summaries)
 
     schema = [
       entries: [
@@ -225,24 +434,42 @@ defmodule Mix.Tasks.Changelog do
     end
   end
 
-  defp build_prompt(version, commits) do
-    commit_lines =
-      Enum.map_join(commits, "\n", fn c ->
-        base = "  #{c.hash} #{c.subject}"
-
-        if c.body == "" do
-          base
-        else
-          base <> "\n    " <> String.replace(c.body, "\n", "\n    ")
-        end
-      end)
+  # Stage-1 prompt: one PR's commits -> one concise user-facing summary line.
+  # Nested per-commit grouping happens inside this call (a PR that "fixes the
+  # same bug twice" collapses to one summary).
+  defp build_pr_prompt(version, pr) do
+    commit_lines = format_commit_lines(pr.commits)
 
     """
     You are writing release notes for version #{version} of this software project.
 
-    Below are the commits (hash, subject, and optional body) included in this
-    release. Write a concise, user-facing changelog in Keep a Changelog style,
-    grouped into the categories below. Include ONLY categories that have entries.
+    Below are the commits belonging to ONE pull request / merge included in
+    this release (hash, subject, and optional body). Write a SINGLE concise,
+    user-facing summary line describing what this change does, as it would
+    appear in a changelog entry.
+
+    Rules:
+    - The summary is ONE short user-facing sentence fragment (no commit
+      hashes, author names, or file paths).
+    - Merge related commits into a single summary — a change that fixes the
+      same bug twice collapses to one summary line.
+
+    Commits in this change:
+    #{commit_lines}
+    """
+  end
+
+  # Stage-2 prompt: per-PR summaries -> categorized Keep-a-Changelog entries.
+  defp build_aggregate_prompt(version, summaries) do
+    summary_lines = Enum.map_join(summaries, "\n", &"- #{&1}")
+
+    """
+    You are writing release notes for version #{version} of this software project.
+
+    Below are the per-change summaries of the pull requests / merges included
+    in this release (each line is one change). Write a concise, user-facing
+    changelog in Keep a Changelog style, grouped into the categories below.
+    Include ONLY categories that have entries.
 
     Categories (use exactly these names):
     Added, Changed, Fixed, Removed, Security, Deprecated
@@ -250,13 +477,25 @@ defmodule Mix.Tasks.Changelog do
     Rules:
     - Each entry is a short user-facing sentence fragment (no commit hashes,
       author names, or file paths).
-    - Merge related commits into single entries.
-    - Ignore mechanical/trivial commits (chore, formatting, dependency churn,
+    - Merge related changes into single entries.
+    - Ignore mechanical/trivial changes (chore, formatting, dependency churn,
       pure refactors with no user impact) unless they are meaningful.
 
-    Commits:
-    #{commit_lines}
+    Changes:
+    #{summary_lines}
     """
+  end
+
+  defp format_commit_lines(commits) do
+    Enum.map_join(commits, "\n", fn c ->
+      base = "  #{c.hash} #{c.subject}"
+
+      if c.body == "" do
+        base
+      else
+        base <> "\n    " <> String.replace(c.body, "\n", "\n    ")
+      end
+    end)
   end
 
   # Normalizes the LLM's raw entries (string-keyed maps, free-form category
