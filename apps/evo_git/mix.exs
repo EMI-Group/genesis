@@ -31,6 +31,9 @@ defmodule EvoGit.MixProject do
       {:phoenix_pubsub, "~> 2.2"},
       # TomlElixir
       {:toml_elixir, "~> 3.1"},
+      # IANA time zone database (Tzdata.TimeZoneDatabase) for per-profile
+      # peak-hour timezone support
+      {:tzdata, "~> 1.1"},
       {:yaml_elixir, "~> 2.11"},
       {:xqlite, "~> 0.10"},
       {:jason, "~> 1.2"}
