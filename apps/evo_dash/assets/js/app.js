@@ -686,19 +686,6 @@ const TauriDetect = {
 // push on rejection (1s) and again from reconnected(), and is released only
 // when the server pushes desktop_quit_closed (dialog dismissed) so FUTURE
 // tray quits stay honored.
-//
-// Liveness heartbeat: the hook invokes the Tauri `dashboard_ready` command
-// (fire-and-forget, errors swallowed) as a PERIODIC KEEPALIVE — every
-// DASHBOARD_HEARTBEAT_INTERVAL_MS (5s) while the hook is mounted — in addition
-// to on mount, on socket reconnect, and on every quit-requested reception.
-// The Rust shell's keeper thread (desktop/src-tauri/src/main.rs) polls every
-// 2s and re-navigates the webview to "/" whenever the `dashboard_ready`
-// heartbeat is stale for longer than DASHBOARD_HEARTBEAT_FRESH_MS (10s), with
-// a 15s navigation cooldown. The 5s interval is < the 10s freshness window, so
-// a healthy, idle page (whose JS is running) never goes stale and the keeper
-// never re-navigates it away; a genuinely dead/failed page (no JS running)
-// still goes stale after 10s, preserving the keeper's self-heal.
-const DASHBOARD_HEARTBEAT_INTERVAL_MS = 5000;
 const DesktopQuit = {
   mounted() {
     // Same detection as TauriDetect (see above).
@@ -707,12 +694,7 @@ const DesktopQuit = {
       return;
     }
     // The hook is mounted = the LiveSocket joined = the quit listener below is
-    // registered — the shell can trust this page is live.
-    this._notifyDashboardReady();
-    // Periodic liveness keepalive: refresh the heartbeat every 5s while the
-    // hook is mounted so a healthy page never goes stale and the Rust keeper
-    // thread never re-navigates it to "/". Cleared in destroyed().
-    this._heartbeatTimer = setInterval(() => this._notifyDashboardReady(), DASHBOARD_HEARTBEAT_INTERVAL_MS);
+    // registered.
     this._quitPending = false;   // a quit awaits delivery / the dialog is open
     this._retryTimer = null;
     this._unlisten = null;
@@ -727,10 +709,6 @@ const DesktopQuit = {
       this._unlistenPromise = window.__TAURI__.event.listen("quit-requested", () => {
         if (this._quitPending) return;   // dedup: dialog open or delivery in flight
         this._quitPending = true;
-        // The event reached a live page — refresh the liveness heartbeat so
-        // the keeper keeps the dashboard loaded (and the confirm dialog up)
-        // while the user decides.
-        this._notifyDashboardReady();
         this._pushQuitRequested();
       });
       this._unlistenPromise.then(
@@ -765,20 +743,9 @@ const DesktopQuit = {
       }
     });
   },
-  // Liveness heartbeat for the Rust shell: fire-and-forget invoke of the
-  // dashboard_ready command (no args, no return). Must never throw — the
-  // shell uses it only to verify the quit-requested listener is live. Called
-  // by the periodic keepalive (every 5s while mounted, see mounted()) plus on
-  // mount / socket reconnect / quit-requested reception.
-  _notifyDashboardReady() {
-    const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-    if (!invoke) return;
-    invoke("dashboard_ready").catch(() => {});
-  },
   // Socket re-established: page is live again; deliver an undelivered quit
   // request now.
   reconnected() {
-    this._notifyDashboardReady();
     if (this._quitPending) this._pushQuitRequested();
   },
   _pushQuitRequested() {
@@ -797,10 +764,6 @@ const DesktopQuit = {
   },
   destroyed() {
     this._quitPending = false;
-    if (this._heartbeatTimer) {
-      clearInterval(this._heartbeatTimer);
-      this._heartbeatTimer = null;
-    }
     if (this._retryTimer) {
       clearTimeout(this._retryTimer);
       this._retryTimer = null;
