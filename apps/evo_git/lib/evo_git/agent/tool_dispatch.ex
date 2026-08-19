@@ -185,15 +185,19 @@ defmodule EvoGit.Agent.ToolDispatch do
   # is handled by the caller via context nudging. Returns {:ok, response,
   # duration_ms} or {:error, reason}.
   #
-  # `rescue_only: []` disables exception retrying. This is REQUIRED for the
-  # scheduler-side hard-pause to fail fast: the retry library's DEFAULT is
+  # `rescue_only: []` disables exception retrying. It stays because the remaining
+  # raise paths must propagate IMMEDIATELY rather than being retried through
+  # exponential backoff: the retry library's DEFAULT is
   # `rescue_only: [RuntimeError]`, which WOULD retry a raised RuntimeError
   # (bounded by max_retries, but through exponential-backoff sleeps of up to
-  # 60s each — effectively a long hang). With `rescue_only: []`, when a model
-  # has 0 LLM slots `AgentScheduler.with_llm_slot/2` raises a descriptive
-  # no-capacity error that propagates IMMEDIATELY on the first attempt (zero
-  # retries). The same applies to the `{:error, :cancelled}` raise from a
-  # force-kill queue purge.
+  # 60s each — effectively a long hang). The remaining raise paths are:
+  # (a) `{:error, :cancelled}` from a force-kill queue purge raises in
+  # `AgentScheduler.with_llm_slot/2` → agent crash → scheduler crash-retry/cancel
+  # machinery; (b) unexpected exceptions. A model with 0 LLM slots (peak
+  # hard-pause) does NOT raise — its slot request BLOCKS (queued in the
+  # scheduler, exactly like the paused-scheduler path) until capacity returns
+  # (peak exit → `update_config` → `grant_pending_on_resume` grants queued
+  # waiters) or a purge replies `{:error, :cancelled}` (force-kill).
   #
   # The LLM slot is acquired and released PER ATTEMPT (with_llm_slot sits INSIDE
   # the retry block), so the exponential-backoff sleep happens BETWEEN attempts
