@@ -107,7 +107,9 @@ To bump the version, run:
 mix bump.version 0.2.0
 ```
 
-This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, and `README.md` (shields.io badge) in one command, then prints next-step guidance (compile, commit, tag). The CLI also supports `--version` / `-v` to print the version at runtime.
+This updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, and `README.md` (shields.io badge) in one command, then prints next-step guidance (compile, commit, tag). The task interactively asks whether to commit the bumped files (only the touched files are staged, never `git add -A`), and finally asks whether to auto-generate the changelog for the new version — accepting delegates to `mix changelog`. The CLI also supports `--version` / `-v` to print the version at runtime.
+
+**AI changelog generation** — `mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]` (`Mix.Tasks.Changelog`, `apps/evo_git/lib/mix/tasks/changelog.ex`): collects the commit history since the last git tag (`git describe --tags --abbrev=0`, falling back to full history when no tag exists; `--no-merges`, version-bump commits filtered out), summarizes it with an LLM (`deepseek:deepseek-v4-flash` via `ReqLLM.stream_object`, `--model` overrides) into a user-facing Keep-a-Changelog section (`## [<version>] - <date>` with Added/Changed/Fixed/Removed/Security/Deprecated categories), and maintains the root `CHANGELOG.md` — created with a `# Changelog` title plus an empty `## [Unreleased]` section when missing, otherwise the new section is inserted after the header, or an existing same-version section is replaced in place (re-runs never duplicate). After writing it asks whether to commit the changelog file (only that file is staged). The LLM call is routed through the `:changelog_summarizer` app-env test seam. Release-time tool, like `mix translate`.
 
 ### Runtime Data Directory (`tasks.sqlite`)
 
