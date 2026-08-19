@@ -9,7 +9,7 @@
 #
 # After updating mix.lock or NIF versions, update the hashes below. Use
 # `lib.fakeHash` as a placeholder, build, and copy the reported hashes.
-{ 
+{
   src,
   beamPackages,
   tailwindcss_4,
@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-jGEdVs9VwfRrKaO2gthz/B0ci3Fhv4s+aq0hw1yVx4w=";
+    hash = "sha256-osQLu6FF6rleDc+nNzpm9pNUXq1fKsuaovnoCsaEKxQ=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
