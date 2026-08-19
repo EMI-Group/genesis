@@ -154,33 +154,35 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   # --- Hard-pause (0-capacity, PeakHourEngine) ---
 
   describe "LLM hard-pause (0-capacity model)" do
-    test "request for a 0-capacity model fails fast without enqueueing" do
+    test "request for a 0-capacity model enqueues and blocks (like paused)" do
       from = {self(), make_ref()}
       put_agent_state(1, @default_model)
 
       state = base_state(model_concurrency: %{@default_model => 0})
 
-      assert {:reply, {:error, :no_capacity}, new_state, []} =
+      # No reply — the request enqueues and blocks until capacity returns.
+      assert {:noreply, new_state, [{1, :blocked}]} =
                Slots.handle_request_llm_slot(1, from, state)
 
-      # Nothing enqueued, nothing held — the caller got its reply (no deadlock).
-      assert :queue.is_empty(State.waiting_for(new_state, @default_model))
+      # The waiter IS enqueued (nothing held).
+      assert :queue.to_list(State.waiting_for(new_state, @default_model)) == [{1, from, nil}]
       refute MapSet.member?(State.holders_for(new_state, @default_model), 1)
     end
 
-    test "rejects immediately even when the scheduler is paused (never enqueues at 0)" do
+    test "a 0-capacity request with the scheduler paused also enqueues (never replies)" do
       from = {self(), make_ref()}
       put_agent_state(1, @default_model)
 
       state = base_state(model_concurrency: %{@default_model => 0}, paused: true)
 
-      assert {:reply, {:error, :no_capacity}, new_state, []} =
+      # The paused branch enqueues regardless of capacity — never a fail-fast reply.
+      assert {:noreply, new_state, [{1, :blocked}]} =
                Slots.handle_request_llm_slot(1, from, state)
 
-      assert :queue.is_empty(State.waiting_for(new_state, @default_model))
+      assert :queue.to_list(State.waiting_for(new_state, @default_model)) == [{1, from, nil}]
     end
 
-    test "capacity drop to 0 rejects all queued waiters via the grant sweep" do
+    test "capacity drop to 0 keeps waiters queued (no drain)" do
       ref1 = make_ref()
       ref2 = make_ref()
       from1 = {self(), ref1}
@@ -204,12 +206,15 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       zero_state = struct!(state, model_concurrency: %{@default_model => 0})
       {final, status_updates} = Slots.grant_pending_on_resume(zero_state)
 
-      # No status updates (mirrors the purge precedent), but every waiter got a
-      # reply — the sweep REJECTS instead of silently skipping.
+      # No status updates and NO replies — waiters stay queued untouched so they
+      # are granted when capacity returns to >0 (peak exit).
       assert status_updates == []
-      assert :queue.is_empty(State.waiting_for(final, @default_model))
-      assert_received {^ref1, {:error, :no_capacity}}
-      assert_received {^ref2, {:error, :no_capacity}}
+
+      assert :queue.to_list(State.waiting_for(final, @default_model)) ==
+               [{1, from1, nil}, {2, from2, nil}]
+
+      refute_received {^ref1, _}
+      refute_received {^ref2, _}
     end
 
     test "in-flight holders are not evicted when capacity drops to 0" do
@@ -228,10 +233,44 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       zero_state = struct!(state, model_concurrency: %{@default_model => 0})
       {final, _status_updates} = Slots.grant_pending_on_resume(zero_state)
 
-      # The holder keeps its slot; only the queued waiter was rejected.
+      # The holder keeps its slot; the queued waiter stays queued (no replies).
       assert MapSet.member?(State.holders_for(final, @default_model), 10)
+      assert :queue.to_list(State.waiting_for(final, @default_model)) == [{1, from, nil}]
+      refute_received {^ref, _}
+    end
+
+    test "0-to-N capacity transition grants queued waiters" do
+      ref1 = make_ref()
+      ref2 = make_ref()
+      from1 = {self(), ref1}
+      from2 = {self(), ref2}
+
+      put_meta(1, 0)
+      put_meta(2, 0)
+      put_agent_state(1, @default_model)
+      put_agent_state(2, @default_model)
+
+      # Agents 1 and 2 queued while the model was at 0 capacity (hard pause).
+      zero_state =
+        base_state(
+          model_concurrency: %{@default_model => 0},
+          llm_waiting: %{
+            @default_model => :queue.from_list([{1, from1, nil}, {2, from2, nil}])
+          }
+        )
+
+      # Capacity restored to the model's normal concurrency (peak exit →
+      # update_config → grant_pending_on_resume → the normal grant branch).
+      restored_state = struct!(zero_state, model_concurrency: %{@default_model => 2})
+      {final, status_updates} = Slots.grant_pending_on_resume(restored_state)
+
+      # Both waiters granted: holders, :ok replies, and :running status updates.
+      assert MapSet.member?(State.holders_for(final, @default_model), 1)
+      assert MapSet.member?(State.holders_for(final, @default_model), 2)
       assert :queue.is_empty(State.waiting_for(final, @default_model))
-      assert_received {^ref, {:error, :no_capacity}}
+      assert_received {^ref1, :ok}
+      assert_received {^ref2, :ok}
+      assert Enum.sort(status_updates) == [{1, :running}, {2, :running}]
     end
 
     test "a 0-capacity model does not affect granting on other models" do
