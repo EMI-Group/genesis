@@ -263,7 +263,9 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~
                ~S|nix-build "$NIXPKGS" -A stdenv.cc.cc.lib --out-link "$PATCH_DIR/cc" 2>&1|
 
-      assert script =~ ~S|nix-build "$NIXPKGS" -A openssl.out --out-link "$PATCH_DIR/openssl" 2>&1|
+      assert script =~
+               ~S|nix-build "$NIXPKGS" -A openssl.out --out-link "$PATCH_DIR/openssl" 2>&1|
+
       assert script =~ ~S|nix-build "$NIXPKGS" -A zlib --out-link "$PATCH_DIR/zlib" 2>&1|
       assert script =~ ~S|nix-build "$NIXPKGS" -A ncurses --out-link "$PATCH_DIR/ncurses" 2>&1|
       assert script =~ ~S|nix-build "$NIXPKGS" -A pcre2.out --out-link "$PATCH_DIR/pcre2" 2>&1|
@@ -318,7 +320,9 @@ defmodule EvoGit.RemoteBootstrapTest do
       script = RemoteBootstrap.nixos_patch_script(@launcher)
 
       # shared libs are distinguished from static-pie binaries by NEEDED deps
-      assert script =~ ~S|"$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null \| grep -q NEEDED|
+      assert script =~
+               ~S|"$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null \| grep -q NEEDED|
+
       assert script =~ ~S|echo "nixos-patch: setting rpath on $file"|
       assert script =~ ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-rpath "$RPATH" "$file"|
     end
@@ -339,8 +343,10 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ "nixos-patch: building zlib..."
       assert script =~ "nixos-patch: building ncurses..."
       assert script =~ "nixos-patch: building pcre2..."
+
       assert script =~
                ~S|echo "nixos-patch: patched $count executables, set rpath on $rpath_count ELF files"|
+
       assert script =~ "set -e"
     end
   end
@@ -366,6 +372,40 @@ defmodule EvoGit.RemoteBootstrapTest do
 
     test "wraps an empty command" do
       assert RemoteBootstrap.bash_wrap("") == "/usr/bin/env bash -c ''"
+    end
+  end
+
+  describe "parse_unit_environment/1" do
+    test "parses space-separated KEY=value tokens" do
+      assert RemoteBootstrap.parse_unit_environment(
+               "RELEASE_NODE=genesis_remote_x@127.0.0.1 RELEASE_COOKIE=abc123"
+             ) == %{"RELEASE_NODE" => "genesis_remote_x@127.0.0.1", "RELEASE_COOKIE" => "abc123"}
+    end
+
+    test "parses multi-line output" do
+      assert RemoteBootstrap.parse_unit_environment(
+               "RELEASE_NODE=genesis_remote_x@127.0.0.1\nRELEASE_COOKIE=abc123\n"
+             ) == %{"RELEASE_NODE" => "genesis_remote_x@127.0.0.1", "RELEASE_COOKIE" => "abc123"}
+    end
+
+    test "strips double quotes around values containing spaces" do
+      assert RemoteBootstrap.parse_unit_environment(~s|FOO=bar BAZ="hello world" QUX=1|) ==
+               %{"FOO" => "bar", "BAZ" => "hello world", "QUX" => "1"}
+    end
+
+    test "returns empty map for empty / whitespace-only input" do
+      assert RemoteBootstrap.parse_unit_environment("") == %{}
+      assert RemoteBootstrap.parse_unit_environment("   \n  ") == %{}
+    end
+
+    test "skips tokens without an equals sign" do
+      assert RemoteBootstrap.parse_unit_environment("RELEASE_NODE=abc stray RELEASE_COOKIE=xyz") ==
+               %{"RELEASE_NODE" => "abc", "RELEASE_COOKIE" => "xyz"}
+    end
+
+    test "handles empty values" do
+      assert RemoteBootstrap.parse_unit_environment("RELEASE_NODE= RELEASE_COOKIE=") ==
+               %{"RELEASE_NODE" => "", "RELEASE_COOKIE" => ""}
     end
   end
 end

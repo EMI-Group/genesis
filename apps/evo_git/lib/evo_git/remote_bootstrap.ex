@@ -45,6 +45,10 @@ defmodule EvoGit.RemoteBootstrap do
   @valid_os ["linux", "darwin", "windows"]
   @valid_arch ["x64", "arm64"]
 
+  # Matches a single `KEY=value` token: a run of non-whitespace, non-quote
+  # characters, OR a double-quoted section (which may contain spaces). This
+  # mirrors how systemd quotes Environment values that contain whitespace.
+  @unit_env_token_re ~r/(?:[^\s"]+|"[^"]*")+/
   @doc """
   Maps `uname -s` / `uname -m` output to a CI platform string `<os>_<arch>`.
 
@@ -331,7 +335,47 @@ defmodule EvoGit.RemoteBootstrap do
     "/usr/bin/env bash -c '" <> String.replace(remote_cmd, "'", "'\\''") <> "'"
   end
 
+  @doc """
+  Parses the output of `systemctl --user show <unit> -p Environment --value`
+  into a `%{"KEY" => "value"}` map.
+
+  systemd prints the unit's environment space-separated on one or more lines
+  (multiple `Environment=` lines), quoting values that contain whitespace:
+
+      RELEASE_NODE=genesis_remote_x@127.0.0.1 RELEASE_COOKIE=abc123
+
+  or, multi-line:
+
+      RELEASE_NODE=genesis_remote_x@127.0.0.1
+      RELEASE_COOKIE="some value with spaces"
+
+  Tokens without an `=` (stray output) are skipped; surrounding double quotes
+  are stripped from values. Empty / whitespace-only input → `%{}`.
+
+  Pure parser — performs no I/O.
+  """
+  @spec parse_unit_environment(String.t()) :: %{String.t() => String.t()}
+  def parse_unit_environment(output) when is_binary(output) do
+    Regex.scan(@unit_env_token_re, output)
+    |> List.flatten()
+    |> Enum.reduce(%{}, fn token, acc ->
+      case String.split(token, "=", parts: 2) do
+        [key, value] -> Map.put(acc, key, strip_quotes(value))
+        _ -> acc
+      end
+    end)
+  end
+
   # --- Private ---
+
+  defp strip_quotes(value) do
+    if String.starts_with?(value, "\"") and String.ends_with?(value, "\"") and
+         String.length(value) >= 2 do
+      String.slice(value, 1, String.length(value) - 2)
+    else
+      value
+    end
+  end
 
   defp os_from_uname(os) when os in ["Linux", "Darwin"], do: {:ok, String.downcase(os)}
 

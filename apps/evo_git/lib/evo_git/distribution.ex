@@ -96,10 +96,12 @@ defmodule EvoGit.Distribution do
     end
   end
 
-  defp enable_for_connection(target) do
+  defp enable_for_connection(_target) do
     # Configure EPMD-less distribution listen ports for the local side.
     # The remote daemon listens on 9000; we use 9100-9200 locally to avoid
     # conflict. The SSH tunnel forwards local_port → remote_port 9000.
+    # (`target` is unused — the cookie comes from the config [node] category,
+    # not the target map, which has no :cookie field.)
     unless Application.get_env(:kernel, :inet_dist_listen_min) do
       Application.put_env(:kernel, :inet_dist_listen_min, 9100)
     end
@@ -115,14 +117,28 @@ defmodule EvoGit.Distribution do
       {:ok, _pid} ->
         # Set the distribution cookie to match the remote daemon. Must be
         # done after :net_kernel.start succeeds — set_cookie/1 crashes on
-        # a non-distributed node (:nonode@nohost).
-        case Map.get(target, :cookie) do
+        # a non-distributed node (:nonode@nohost). The cookie is read from
+        # the persisted config [node] cookie — the SAME source bootstrap
+        # writes via ensure_cookie! (the target map has no :cookie field;
+        # the old Map.get(target, :cookie) branch was always nil).
+        config = EvoGit.Config.resolve()
+        cookie = get_in(config, [:node, :cookie])
+
+        case cookie do
           nil ->
-            Logger.debug("Skipping Node.set_cookie/1 in enable_for_connection: no cookie in target map")
+            Logger.debug(
+              "Skipping Node.set_cookie/1 in enable_for_connection: no [node] cookie configured"
+            )
+
+          "" ->
+            Logger.debug(
+              "Skipping Node.set_cookie/1 in enable_for_connection: [node] cookie is empty"
+            )
 
           cookie when is_binary(cookie) ->
             Node.set_cookie(String.to_atom(cookie))
         end
+
         Logger.info("Distribution enabled for remote connection: #{node()}")
         :ok
 

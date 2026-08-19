@@ -480,10 +480,12 @@ defmodule EvoGit.RemoteConnectionTest do
             *"uname -s && uname -m"*) printf 'Linux\nx86_64\n'; exit 0 ;;
             *"uname -s"*) printf '__OS__\n'; exit 0 ;;
             *"systemctl --user is-active"*) if [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
+            *"systemctl --user show"*) if [ -n "$FAKE_UNIT_RELEASE_NODE" ] || [ -n "$FAKE_UNIT_RELEASE_COOKIE" ]; then printf 'RELEASE_NODE=%s RELEASE_COOKIE=%s\n' "$FAKE_UNIT_RELEASE_NODE" "$FAKE_UNIT_RELEASE_COOKIE"; fi; exit 0 ;;
             *"systemctl --user reset-failed"*) exit 0 ;;
             *"systemd-run"*) touch "$marker"; exit 0 ;;
             *"launchctl unload"*) touch "$marker"; exit 0 ;;
             *"launchctl list"*) if [ -f "$marker" ]; then printf '1234\t0\tcom.genesis.remote.test\n'; fi; exit 0 ;;
+            *"cat ~/Library/LaunchAgents"*) if [ -n "$FAKE_UNIT_RELEASE_NODE" ] || [ -n "$FAKE_UNIT_RELEASE_COOKIE" ]; then printf '<plist><dict><key>RELEASE_NODE</key><string>%s</string><key>RELEASE_COOKIE</key><string>%s</string></dict></plist>\n' "$FAKE_UNIT_RELEASE_NODE" "$FAKE_UNIT_RELEASE_COOKIE"; fi; exit 0 ;;
             *"launchctl"*) exit 0 ;;
             *"test -d /etc/nixos"*) printf '__DETECT__\n'; exit 0 ;;
             *nix-build*) printf '%s\n' '__PATCH_OUTPUT__'; exit __PATCH_EXIT__ ;;
@@ -527,6 +529,11 @@ defmodule EvoGit.RemoteConnectionTest do
             System.delete_env("PATH")
           end
 
+          # Clear the fake-unit env vars the daemon-identity verification reads
+          # (set via set_fake_unit_env/2) so they don't leak into sibling tests.
+          System.delete_env("FAKE_UNIT_RELEASE_NODE")
+          System.delete_env("FAKE_UNIT_RELEASE_COOKIE")
+
           File.rm_rf!(tmp)
         end)
 
@@ -564,6 +571,25 @@ defmodule EvoGit.RemoteConnectionTest do
                "expected stages #{inspect(expected)} present in #{inspect(stages)}"
 
         assert indices == Enum.sort(indices), "stages out of order: #{inspect(stages)}"
+      end
+
+      # Writes a config.toml with a known [node] cookie into the isolated XDG
+      # config dir so `ensure_cookie!` returns the known value during bootstrap
+      # (instead of generating a random one) — making the fake unit env
+      # deterministic.
+      defp write_test_config_cookie(cookie) do
+        config_dir = EvoGit.Config.config_dir()
+        File.mkdir_p!(config_dir)
+        File.write!(Path.join(config_dir, "config.toml"), "[node]\ncookie = \"#{cookie}\"\n")
+      end
+
+      # Makes the fake ssh echo a MATCHING unit Environment (RELEASE_NODE +
+      # RELEASE_COOKIE) for the daemon-identity verification. Must be called
+      # before bootstrap; the values are inherited by Port.open children at
+      # spawn time. Cleaned up in with_fake_ssh_tools' on_exit.
+      defp set_fake_unit_env(target_id, cookie) do
+        System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
+        System.put_env("FAKE_UNIT_RELEASE_COOKIE", cookie)
       end
 
       test "NixOS detected → patch issued + :patching_binaries broadcast before :starting_daemon" do
@@ -638,14 +664,18 @@ defmodule EvoGit.RemoteConnectionTest do
         end)
       end
 
-      test "daemon already running → no detection, no patch" do
+      test "daemon already running + matching identity → no detection, no patch" do
         ensure_registry_and_supervisor()
+
+        cookie = "test-cookie-matching-daemon"
+        write_test_config_cookie(cookie)
 
         with_fake_ssh_tools([os: "Linux", daemon_active?: true], fn %{
                                                                       log: log,
                                                                       tarball: tarball
                                                                     } ->
           target_id = save_test_target(local_binary_path: tarball)
+          set_fake_unit_env(target_id, cookie)
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
           assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
@@ -654,9 +684,109 @@ defmodule EvoGit.RemoteConnectionTest do
           refute log_content =~ "test -d /etc/nixos"
           refute log_content =~ "nix-build"
 
+          # the identity verification ran against the running unit
+          assert log_content =~ "systemctl --user show"
+
           stages = collect_stages(target_id)
           refute :patching_binaries in stages
           refute :starting_daemon in stages
+
+          cleanup_connections()
+        end)
+      end
+
+      test "daemon already running but env is STALE (different cookie) → identity mismatch with remediation" do
+        ensure_registry_and_supervisor()
+
+        cookie = "current-contract-cookie"
+        write_test_config_cookie(cookie)
+
+        with_fake_ssh_tools([os: "Linux", daemon_active?: true], fn %{tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          # Fake ssh echoes the CORRECT node but a STALE cookie — like a daemon
+          # launched by an older bootstrap whose cookie differs from the local
+          # config.toml [node] cookie.
+          System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
+          System.put_env("FAKE_UNIT_RELEASE_COOKIE", "old-stale-cookie")
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:error, {:daemon_identity_mismatch, details}} =
+                   EvoGit.RemoteConnection.bootstrap(target_id)
+
+          assert details =~ "systemctl --user stop genesis-remote-#{target_id}"
+          assert details =~ "old-stale-cookie"
+          assert details =~ "current-contract-cookie"
+
+          # the running daemon was never touched — no :starting_daemon broadcast
+          stages = collect_stages(target_id)
+          refute :starting_daemon in stages
+
+          cleanup_connections()
+        end)
+      end
+
+      test "daemon already running with NO RELEASE_COOKIE (pre-cookie-era daemon) → identity mismatch" do
+        ensure_registry_and_supervisor()
+
+        cookie = "current-contract-cookie"
+        write_test_config_cookie(cookie)
+
+        with_fake_ssh_tools([os: "Linux", daemon_active?: true], fn %{tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          # Only RELEASE_NODE is echoed — RELEASE_COOKIE is absent, like a
+          # daemon launched before bootstrap passed --setenv=RELEASE_COOKIE.
+          System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
+          System.delete_env("FAKE_UNIT_RELEASE_COOKIE")
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:error, {:daemon_identity_mismatch, details}} =
+                   EvoGit.RemoteConnection.bootstrap(target_id)
+
+          assert details =~ "RELEASE_COOKIE"
+          assert details =~ "(empty)"
+          assert details =~ "systemctl --user stop genesis-remote-#{target_id}"
+
+          cleanup_connections()
+        end)
+      end
+
+      test "macOS daemon already running + matching plist → :ok, no :starting_daemon" do
+        ensure_registry_and_supervisor()
+
+        cookie = "macos-test-cookie"
+        write_test_config_cookie(cookie)
+
+        with_fake_ssh_tools([os: "Darwin", daemon_active?: true], fn %{tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          set_fake_unit_env(target_id, cookie)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          stages = collect_stages(target_id)
+          refute :starting_daemon in stages
+
+          cleanup_connections()
+        end)
+      end
+
+      test "macOS daemon already running but plist is stale → identity mismatch with launchctl remediation" do
+        ensure_registry_and_supervisor()
+
+        cookie = "macos-test-cookie"
+        write_test_config_cookie(cookie)
+
+        with_fake_ssh_tools([os: "Darwin", daemon_active?: true], fn %{tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          # No FAKE_UNIT_RELEASE_* set — the fake ssh `cat` echoes an empty
+          # plist, so the containment check fails.
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:error, {:daemon_identity_mismatch, details}} =
+                   EvoGit.RemoteConnection.bootstrap(target_id)
+
+          assert details =~ "launchctl unload"
+          assert details =~ "com.genesis.remote.#{target_id}"
 
           cleanup_connections()
         end)
