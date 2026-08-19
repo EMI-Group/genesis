@@ -424,7 +424,8 @@ impl BackendManager {
 
     /// Records a dashboard-liveness signal (the `dashboard_ready` Tauri
     /// command — invoked fire-and-forget by the dashboard's hook at mount,
-    /// on every socket reconnect, and on every `quit-requested` reception).
+    /// on every socket reconnect, on every `quit-requested` reception, and
+    /// periodically (~every 5s) while the hook is mounted as a keepalive).
     ///
     /// Stamps the wall-clock time used by the keeper thread's freshness
     /// window: a fresh heartbeat means the dashboard is live and must not be

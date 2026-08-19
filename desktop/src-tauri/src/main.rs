@@ -72,8 +72,10 @@ fn begin_quit(manager: tauri::State<'_, BackendHandle>) {
 }
 
 /// Tauri command invoked fire-and-forget by the dashboard's JavaScript
-/// (`DesktopQuit` hook) at hook mount, on every socket reconnect, and on
-/// every `quit-requested` reception.
+/// (`DesktopQuit` hook) at hook mount, on every socket reconnect, on every
+/// `quit-requested` reception, and periodically (every ~5s) while the hook
+/// is mounted, so a live dashboard always carries a fresh heartbeat and the
+/// keeper never re-navigates a healthy page.
 ///
 /// Records the dashboard's liveness in the [`BackendManager`] heartbeat (a
 /// wall-clock timestamp) so the keeper thread stops re-navigating a live
@@ -942,12 +944,15 @@ fn run_gui() {
             //    LiveSocket, no `quit-requested` listener, unquittable app.
             //    This thread re-navigates whenever the backend is healthy,
             //    the main window is visible, and the dashboard has NOT
-            //    signaled liveness (the `dashboard_ready` command heartbeat)
-            //    within DASHBOARD_HEARTBEAT_FRESH_MS, throttled by a 15s
-            //    cooldown so a page that is still loading is not reloaded
-            //    before its socket joins. It never fights the watchdog:
-            //    while the backend is down the probe fails and nothing is
-            //    navigated; it stops entirely on quit/update intent.
+            //    signaled liveness (the `dashboard_ready` command heartbeat —
+            //    refreshed at mount, on socket reconnect, on `quit-requested`,
+            //    and every ~5s while the hook is mounted, so an idle-but-live
+            //    page never goes stale) within DASHBOARD_HEARTBEAT_FRESH_MS,
+            //    throttled by a 15s cooldown so a page that is still loading
+            //    is not reloaded before its socket joins. It never fights the
+            //    watchdog: while the backend is down the probe fails and
+            //    nothing is navigated; it stops entirely on quit/update
+            //    intent.
             let keeper_app = app.handle().clone();
             let keeper_manager = manager.clone();
             std::thread::spawn(move || {
