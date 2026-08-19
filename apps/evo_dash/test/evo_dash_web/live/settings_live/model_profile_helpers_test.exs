@@ -270,6 +270,19 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
       refute Map.has_key?(profile, :peak_hours)
     end
 
+    test "peak_concurrency 0 is accepted and round-trips" do
+      params = Map.merge(@peak_params, %{"peak_concurrency" => "0"})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_concurrency == 0
+
+      # parse_peak_fields/1 exposes the same acceptance directly.
+      assert {:ok, %{peak_concurrency: 0}} =
+               ModelProfileHelpers.parse_peak_fields(%{"peak_concurrency" => "0"})
+    end
+
     test "two windows round-trip preserving form order" do
       params =
         Map.merge(@peak_params, %{
@@ -334,6 +347,66 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
       assert profile.peak_hours == [%{start: "08:00", end: "10:00"}]
     end
 
+    test "a non-blank timezone is stored trimmed; blank/nil omit the key" do
+      params = Map.merge(@peak_params, %{"timezone" => "  Asia/Shanghai  "})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.timezone == "Asia/Shanghai"
+
+      for blank <- ["", "   ", nil] do
+        params = Map.merge(@peak_params, %{"timezone" => blank})
+
+        assert {:ok, profile} =
+                 ModelProfileHelpers.parse_model_profile_params(params, "profile-1"),
+               "expected blank timezone #{inspect(blank)} to omit the key"
+
+        refute Map.has_key?(profile, :timezone),
+               "timezone key must stay absent when blank"
+      end
+    end
+
+    test "timezone merges with peak_concurrency into one profile" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_concurrency" => "4",
+          "timezone" => "Asia/Shanghai"
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_concurrency == 4
+      assert profile.timezone == "Asia/Shanghai"
+    end
+
+    test "normalize_peak_hours_draft/1 normalizes nested-map, list, and absent input" do
+      # Nested map (Phoenix phx-change shape) — sorted numerically.
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{
+               "10" => %{"start" => "20:00", "end" => "21:00"},
+               "9" => %{"start" => "09:00", "end" => "10:00"}
+             }) == [
+               %{start: "09:00", end: "10:00"},
+               %{start: "20:00", end: "21:00"}
+             ]
+
+      # Atom-keyed rows survive (round-trip from a prior draft).
+      assert ModelProfileHelpers.normalize_peak_hours_draft([
+               %{start: "09:00", end: "12:00"}
+             ]) == [%{start: "09:00", end: "12:00"}]
+
+      # Blank/partially-filled rows keep "" (no data loss).
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{
+               "0" => %{"start" => "", "end" => ""}
+             }) == [%{start: "", end: ""}]
+
+      # Total — odd/absent input never raises.
+      assert ModelProfileHelpers.normalize_peak_hours_draft(nil) == []
+      assert ModelProfileHelpers.normalize_peak_hours_draft("garbage") == []
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{}) == []
+    end
+
     test "mixed blank/valid rows drop the blank row and keep the valid one" do
       params =
         Map.merge(@peak_params, %{
@@ -350,7 +423,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
     end
 
     test "invalid peak_concurrency values are rejected" do
-      for bad <- ["0", "-1", "abc"] do
+      for bad <- ["-1", "abc"] do
         params = Map.merge(@peak_params, %{"peak_concurrency" => bad})
 
         assert {:error, "peak_concurrency_invalid"} =
@@ -359,7 +432,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
       end
 
       # parse_peak_fields/1 exposes the same validation directly.
-      for bad <- ["0", "-1", "abc"] do
+      for bad <- ["-1", "abc"] do
         assert {:error, "peak_concurrency_invalid"} =
                  ModelProfileHelpers.parse_peak_fields(%{"peak_concurrency" => bad}),
                "expected #{inspect(bad)} to be rejected"

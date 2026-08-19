@@ -9,12 +9,15 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   import EvoDashWeb.SettingsComponents.SettingCard, only: [model_display: 1]
 
+  alias EvoDashWeb.SettingsLive.ModelProfileHelpers
+
   # ───────────────────────────────────────────────────────────────────────────
   # model_profiles_editor/1 — List editor for [[llm.models]] profiles
   # ───────────────────────────────────────────────────────────────────────────
 
   attr(:profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
+  attr(:profile_form_draft, :any, default: nil)
 
   def model_profiles_editor(assigns) do
     ~H"""
@@ -56,7 +59,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <%= for {profile, index} <- Enum.with_index(@profiles) do %>
             <% id = profile_id_string(profile) %>
             <%= if @editing_profile_id == id do %>
-              <.model_profile_edit_form profile={profile} />
+              <.model_profile_edit_form profile={profile} draft={@profile_form_draft} />
             <% else %>
               <.model_profile_row profile={profile} index={index} total={total} id={id} />
             <% end %>
@@ -155,14 +158,20 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   # ── Editable form for a single profile ──
 
   attr(:profile, :map, required: true)
+  attr(:draft, :any, default: nil)
 
   defp model_profile_edit_form(assigns) do
     ~H"""
     <form
       phx-submit="save_model_profile"
+      phx-change="model_profile_form_change"
       class="p-4 rounded-lg border-2 border-primary/40 bg-base-100 space-y-4"
     >
-      <input type="hidden" name="profile_id" value={profile_id_string(@profile)} />
+      <input
+        type="hidden"
+        name="profile_id"
+        value={draft_or_profile(@draft, "profile_id", profile_id_string(@profile))}
+      />
 
       <div class="flex items-center gap-2 mb-1">
         <.icon name="hero-pencil-square" class="size-5 text-primary" />
@@ -171,7 +180,11 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
       <%!-- id + provider/model-id/base-url (required fields) ── ── --%>
       <% {provider_val, model_id_val, base_url_val, extra_val} = profile_model_fields(@profile) %>
-      <% provider_options_val = profile_provider_options(@profile) %>
+      <% provider_val = draft_or_profile(@draft, "provider", provider_val) %>
+      <% model_id_val = draft_or_profile(@draft, "model_id", model_id_val) %>
+      <% base_url_val = draft_or_profile(@draft, "base_url", base_url_val) %>
+      <% extra_val = draft_or_profile(@draft, "extra", extra_val) %>
+      <% provider_options_val = draft_or_profile(@draft, "provider_options", profile_provider_options(@profile)) %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="form-control">
           <label class="label pb-1">
@@ -181,7 +194,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <input
             type="text"
             name="profile_id_new"
-            value={profile_id_string(@profile)}
+            value={draft_or_profile(@draft, "profile_id_new", profile_id_string(@profile))}
             placeholder="default"
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
             required
@@ -250,7 +263,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         <input
           type="number"
           name="concurrency"
-          value={profile_concurrency(@profile) || 3}
+          value={draft_or_profile(@draft, "concurrency", profile_concurrency(@profile) || 3)}
           min="1"
           class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
         />
@@ -269,13 +282,34 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         <input
           type="number"
           name="peak_concurrency"
-          value={profile_peak_concurrency(@profile)}
-          min="1"
+          value={draft_or_profile(@draft, "peak_concurrency", profile_peak_concurrency(@profile))}
+          min="0"
           class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
         />
         <p class="text-[11px] text-base-content/60 mt-1">
-          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用 --%>{gettext(
+          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用，0 表示高峰时段不限流但仍使用该配置档 --%>{gettext(
             "Optional; used only during peak hours. Leave empty to disable."
+          )}
+        </p>
+      </div>
+
+      <%!-- Timezone (optional) ── --%>
+      <div class="form-control">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">
+            <%!-- zh_CN: Timezone → "时区" --%>{gettext("Timezone (optional)")}
+          </span>
+        </label>
+        <input
+          type="text"
+          name="timezone"
+          value={draft_or_profile(@draft, "timezone", profile_param(@profile, :timezone) || "")}
+          placeholder={gettext("Asia/Shanghai")}
+          class="input input-bordered input-sm rounded-md w-full sm:w-64 font-mono text-sm"
+        />
+        <p class="text-[11px] text-base-content/60 mt-1">
+          <%!-- zh_CN: IANA 时区名用于解释 peak_hours 时段（如 Asia/Shanghai）；留空表示使用服务器本地时间 --%>{gettext(
+            "IANA timezone for interpreting peak hours (e.g. Asia/Shanghai). Leave empty to use the server's local time."
           )}
         </p>
       </div>
@@ -287,7 +321,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           </span>
         </label>
         <div class="space-y-2">
-          <%= for {window, index} <- Enum.with_index(profile_peak_hours(@profile)) do %>
+          <%= for {window, index} <- Enum.with_index(edit_peak_hours(@draft, @profile)) do %>
             <div class="flex items-center gap-2">
               <input
                 type="time"
@@ -351,7 +385,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               type="number"
               step="0.01"
               name="temperature"
-              value={profile_param(@profile, :temperature)}
+              value={draft_or_profile(@draft, "temperature", profile_param(@profile, :temperature))}
               min="0"
               max="2"
               placeholder={gettext("empty")}
@@ -368,13 +402,16 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
                 name="reasoning_effort"
                 class="select select-bordered select-sm rounded-md w-full font-mono text-sm appearance-none pr-8"
               >
-                <option value="" selected={is_nil(profile_param(@profile, :reasoning_effort))}>
+                <option
+                  value=""
+                  selected={is_nil(draft_or_profile(@draft, "reasoning_effort", profile_param(@profile, :reasoning_effort)))}
+                >
                   {gettext("(provider default)")}
                 </option>
                 <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
                   <option
                     value={opt}
-                    selected={to_string(profile_param(@profile, :reasoning_effort)) == opt}
+                    selected={to_string(draft_or_profile(@draft, "reasoning_effort", profile_param(@profile, :reasoning_effort))) == opt}
                   >
                     {opt}
                   </option>
@@ -393,7 +430,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             <input
               type="number"
               name="max_tokens"
-              value={profile_param(@profile, :max_tokens)}
+              value={draft_or_profile(@draft, "max_tokens", profile_param(@profile, :max_tokens))}
               min="1"
               placeholder={gettext("empty")}
               class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
@@ -408,7 +445,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               type="number"
               step="0.01"
               name="top_p"
-              value={profile_param(@profile, :top_p)}
+              value={draft_or_profile(@draft, "top_p", profile_param(@profile, :top_p))}
               min="0"
               max="1"
               placeholder={gettext("empty")}
@@ -423,7 +460,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             <input
               type="number"
               name="top_k"
-              value={profile_param(@profile, :top_k)}
+              value={draft_or_profile(@draft, "top_k", profile_param(@profile, :top_k))}
               min="1"
               placeholder={gettext("empty")}
               class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
@@ -438,7 +475,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               type="number"
               step="0.01"
               name="frequency_penalty"
-              value={profile_param(@profile, :frequency_penalty)}
+              value={draft_or_profile(@draft, "frequency_penalty", profile_param(@profile, :frequency_penalty))}
               min="-2"
               max="2"
               placeholder={gettext("empty")}
@@ -454,7 +491,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               type="number"
               step="0.01"
               name="presence_penalty"
-              value={profile_param(@profile, :presence_penalty)}
+              value={draft_or_profile(@draft, "presence_penalty", profile_param(@profile, :presence_penalty))}
               min="-2"
               max="2"
               placeholder={gettext("empty")}
@@ -558,6 +595,52 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   end
 
   defp profile_peak_hours(_), do: [%{start: "", end: ""}]
+
+  # ── Draft-tracking pre-fill helpers ──
+  #
+  # The edit form carries `phx-change="model_profile_form_change"`, so every
+  # keystroke stores the WHOLE form as a `:profile_form_draft` assign. All
+  # inputs pre-fill from the draft when it exists (morphdom leaves inputs whose
+  # value matches the DOM untouched → cursor position preserved); without a
+  # draft they fall back to the profile's saved values.
+
+  # Reads an input's pre-fill value: the draft's value wins when the key is
+  # present (even "" — the user cleared the field), otherwise the profile
+  # fallback. `fallback` is the profile-derived value, already stringified
+  # where needed.
+  defp draft_or_profile(nil, _params_key, fallback), do: fallback
+
+  defp draft_or_profile(draft, params_key, fallback) when is_map(draft) do
+    case Map.get(draft, params_key) do
+      nil -> fallback
+      value -> value
+    end
+  end
+
+  defp draft_or_profile(_, _params_key, fallback), do: fallback
+
+  # The peak-hours window list for the edit form. When a draft exists, the
+  # draft's peak_hours are authoritative — the draft's window count/values
+  # reflect the DOM and must survive add/remove-row re-renders. Falls back to
+  # the profile's saved peak_hours when there is no draft (or the draft lacks
+  # the key). Always renders at least one blank row so users can start adding
+  # windows.
+  defp edit_peak_hours(nil, profile), do: profile_peak_hours(profile)
+
+  defp edit_peak_hours(draft, profile) when is_map(draft) do
+    case Map.get(draft, "peak_hours") do
+      nil ->
+        profile_peak_hours(profile)
+
+      hours ->
+        case ModelProfileHelpers.normalize_peak_hours_draft(hours) do
+          [] -> [%{start: "", end: ""}]
+          list -> list
+        end
+    end
+  end
+
+  defp edit_peak_hours(_, profile), do: profile_peak_hours(profile)
 
   defp normalize_peak_window(window) when is_map(window) do
     %{start: peak_window_value(window, :start), end: peak_window_value(window, :end)}

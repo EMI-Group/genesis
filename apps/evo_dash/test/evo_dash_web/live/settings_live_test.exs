@@ -1205,6 +1205,230 @@ defmodule EvoDashWeb.SettingsLiveTest do
       last_card_region = binary_part(html, second_start, byte_size(html) - second_start)
       refute last_card_region =~ ~s(phx-value-direction="down")
     end
+
+    # ── Peak-hours draft-tracking (phx-change → :profile_form_draft) ──────────
+    #
+    # phx-click (add/remove_peak_hours_row) does NOT send the enclosing form's
+    # data, so the edit form re-renders from the :profile_form_draft assign
+    # (stored by phx-change="model_profile_form_change" on every keystroke)
+    # instead of file_config — otherwise ALL unsaved typing would be wiped.
+
+    test "model_profile_form_change stores the whole form as a draft", %{conn: conn} do
+      # add_model_profile enters edit mode for profile-1 immediately.
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "5",
+        "temperature" => "0.7",
+        "peak_concurrency" => "0",
+        "timezone" => "Asia/Shanghai",
+        "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
+      })
+
+      draft = assigns(view).profile_form_draft
+      assert draft["temperature"] == "0.7"
+      assert draft["timezone"] == "Asia/Shanghai"
+      assert draft["peak_concurrency"] == "0"
+      # peak_hours is normalized to the canonical atom-keyed list form.
+      assert draft["peak_hours"] == [%{start: "09:00", end: "12:00"}]
+    end
+
+    test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html = render_hook(view, "model_profile_form_change", %{"peak_hours" => "garbage"})
+
+      assert html =~ "Edit Profile"
+      assert assigns(view).profile_form_draft["peak_hours"] == []
+    end
+
+    test "add_peak_hours_row preserves typed values from the draft", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "5",
+        "temperature" => "0.7",
+        "peak_concurrency" => "0",
+        "timezone" => "Asia/Shanghai",
+        "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
+      })
+
+      html = render_hook(view, "add_peak_hours_row", %{})
+      doc = Floki.parse_document!(html)
+
+      # Previously-typed window values survive the re-render...
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[0][start]"]), "value") == ["09:00"]
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[0][end]"]), "value") == ["12:00"]
+      # ...and a new blank row is appended.
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[1][start]"]), "value") == [""]
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[1][end]"]), "value") == [""]
+
+      # Other typed fields are preserved too (the whole form re-renders from the draft).
+      assert Floki.attribute(doc, ~s(input[name="temperature"]), "value") == ["0.7"]
+      assert Floki.attribute(doc, ~s(input[name="timezone"]), "value") == ["Asia/Shanghai"]
+      assert Floki.attribute(doc, ~s(input[name="peak_concurrency"]), "value") == ["0"]
+      assert Floki.attribute(doc, ~s(input[name="concurrency"]), "value") == ["5"]
+    end
+
+    test "remove_peak_hours_row preserves the remaining typed values", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "peak_hours" => %{
+          "0" => %{"start" => "09:00", "end" => "12:00"},
+          "1" => %{"start" => "14:00", "end" => "18:00"}
+        }
+      })
+
+      html = render_hook(view, "remove_peak_hours_row", %{"index" => "0"})
+      doc = Floki.parse_document!(html)
+
+      # The remaining window (14:00–18:00) is now at index 0 with values intact.
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[0][start]"]), "value") == ["14:00"]
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[0][end]"]), "value") == ["18:00"]
+      refute Floki.find(doc, ~s(input[name="peak_hours[1][start]"])) != []
+    end
+
+    test "profile_form_draft is cleared on cancel and on save", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "temperature" => "0.7"
+      })
+
+      assert assigns(view).profile_form_draft != nil
+
+      # Cancel clears the draft.
+      render_hook(view, "cancel_edit_model_profile", %{})
+      assert assigns(view).profile_form_draft == nil
+
+      # Re-enter edit mode, type again, then SAVE — the draft is cleared too.
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "temperature" => "0.7"
+      })
+
+      assert assigns(view).profile_form_draft != nil
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      assert assigns(view).profile_form_draft == nil
+    end
+
+    test "profile_form_draft is cleared when opening a different profile's edit form", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
+      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
+
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      assert assigns(view).profile_form_draft != nil
+
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-2"})
+      assert assigns(view).profile_form_draft == nil
+    end
+
+    test "save_model_profile rejects a negative peak_concurrency with the updated flash", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "peak_concurrency" => "-1"
+        })
+
+      assert html =~ "Peak concurrency must be a non-negative integer."
+      # A rejected save still ends the edit session (draft cleared).
+      assert assigns(view).profile_form_draft == nil
+    end
+
+    test "save_model_profile stores a non-blank timezone and omits a blank one", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "timezone" => "Asia/Shanghai"
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert (Map.get(profile, :timezone) || Map.get(profile, "timezone")) == "Asia/Shanghai"
+
+      # A blank timezone omits the key entirely on the next save.
+      render_hook(view, "edit_model_profile", %{"profile_id" => "default"})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "default",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "timezone" => ""
+      })
+
+      [profile] = current_models(view)
+      refute Map.has_key?(profile, :timezone) or Map.has_key?(profile, "timezone")
+    end
   end
 
   describe "ModelProfileHelpers.move_model_profile/3" do
