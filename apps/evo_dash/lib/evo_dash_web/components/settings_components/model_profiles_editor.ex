@@ -287,8 +287,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
         />
         <p class="text-[11px] text-base-content/60 mt-1">
-          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用，0 表示高峰时段不限流但仍使用该配置档 --%>{gettext(
-            "Optional; used only during peak hours. Leave empty to disable."
+          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用，0 表示高峰时段完全暂停该模型（0 个并发槽位） --%>{gettext(
+            "Optional; used only during peak hours. Leave empty to disable. Enter 0 to fully pause the model during peak hours."
           )}
         </p>
       </div>

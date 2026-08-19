@@ -503,8 +503,8 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   # evo_git schema owns the authoritative validation.
 
   # Blank/absent → {:ok, nil} (key omitted). A non-blank value must parse as a
-  # NON-NEGATIVE integer ("0" is valid — a zero peak concurrency disables peak
-  # throttling while still pinning the profile; "-1", "abc" are invalid; blank
+  # NON-NEGATIVE integer ("0" is valid — a zero peak concurrency HARD-PAUSES the
+  # model during peak windows (zero LLM slots); "-1", "abc" are invalid; blank
   # is NOT an error).
   defp parse_peak_concurrency(nil), do: {:ok, nil}
   defp parse_peak_concurrency(""), do: {:ok, nil}

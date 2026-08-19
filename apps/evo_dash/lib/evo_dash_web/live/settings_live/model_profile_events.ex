@@ -264,7 +264,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
                put_flash(socket, :error, gettext("Provider Options must be a JSON object (map)."))}
 
             {:error, "peak_concurrency_invalid"} ->
-              # 峰值并发必须为非负整数（0 表示在高峰时段禁用限流，但仍固定使用该配置档）
+              # 峰值并发必须为非负整数（0 表示高峰时段完全暂停该模型 — 0 个并发槽位）
               {:noreply,
                put_flash(
                  socket,
