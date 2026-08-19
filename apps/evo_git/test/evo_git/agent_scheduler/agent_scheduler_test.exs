@@ -12,6 +12,9 @@ defmodule EvoGit.AgentSchedulerTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.AgentScheduler
+  alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
@@ -156,5 +159,115 @@ defmodule EvoGit.AgentSchedulerTest do
 
     assert config.model_profiles ==
              GenServer.call(EvoGit.AgentScheduler, {:get_config, :model_profiles})
+  end
+
+  # --- LLM hard-pause (0-capacity, PeakHourEngine) ---
+
+  describe "LLM hard-pause (0-capacity model)" do
+    # Registers a fake agent whose ETS model_id resolves to the "default" pool.
+    defp register_agent(agent_id) do
+      state = %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/tmp/sched-hard-pause"},
+        llm_model: "test:model",
+        model_id: "default",
+        max_retries: 2,
+        max_depth: 1
+      }
+
+      Store.put_agent_state(agent_id, state)
+      on_exit(fn -> Store.delete_agent_state(agent_id) end)
+    end
+
+    defp agent_spec do
+      %AgentSpec{
+        context_node: %ContextNode{path: "./", repo: "/tmp/sched-hard-pause"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/tmp/sched-hard-pause",
+          base_commit: "abc",
+          current_commit: "abc"
+        },
+        agent_module: __MODULE__,
+        objective: "test"
+      }
+    end
+
+    setup do
+      # The live (old) PeakHourEngine in this worktree re-applies a FLOORED
+      # model_concurrency map on every "scheduler_config" PubSub broadcast. It
+      # does not yet know about the 0 hard-pause sentinel, so it would
+      # asynchronously resurrect `%{"default" => 0}` back to `%{"default" => 1}`
+      # between update_config and the assertions below. Suspend it for the
+      # duration of these integration tests — the floor-preservation semantics
+      # themselves are pinned by the pure-function tests in state_test.exs.
+      engine = Process.whereis(EvoGit.PeakHourEngine)
+      if engine, do: :sys.suspend(engine)
+      on_exit(fn -> if engine, do: :sys.resume(engine) end)
+      :ok
+    end
+
+    test "request_llm_slot fails fast with {:error, :no_capacity} after the engine drops a model to 0" do
+      agent_id = 9001
+      register_agent(agent_id)
+
+      # PeakHourEngine applies its dynamic map via update_config — the floor
+      # must keep the explicit 0 (hard-pause) instead of resurrecting it.
+      assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
+
+      # The GenServer call returns immediately — no hang, distinct error atom.
+      assert {:error, :no_capacity} = AgentScheduler.request_llm_slot(agent_id)
+
+      # The model was NOT resurrected by the floor.
+      assert AgentScheduler.get_config(:model_concurrency) == %{"default" => 0}
+    end
+
+    test "with_llm_slot raises a clear, model-resolving error on 0-capacity" do
+      agent_id = 9002
+      register_agent(agent_id)
+
+      assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
+
+      err =
+        assert_raise RuntimeError, ~r/0 LLM slots/, fn ->
+          AgentScheduler.with_llm_slot(agent_id, fn -> :ok end)
+        end
+
+      # The message resolves the model id for debuggability.
+      assert err.message =~ "default"
+    end
+
+    test "graceful cancel and force-kill still work for an affected agent" do
+      agent_id = 9003
+      ref = make_ref()
+      register_agent(agent_id)
+
+      # Top-level agent whose `from` pid is this test process — the force-kill
+      # scan key. The from ref is a fake GenServer.from; cancel replies to it.
+      meta = %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        task_id: "t0cap",
+        from: {self(), ref},
+        spec: agent_spec()
+      }
+
+      Store.put_sched_meta(agent_id, meta)
+      on_exit(fn -> Store.delete_sched_meta(agent_id) end)
+
+      # The agent's LLM request is REJECTED at 0 capacity — it received its
+      # reply, so nothing is wedged in a pending-request state.
+      assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
+      assert {:error, :no_capacity} = AgentScheduler.request_llm_slot(agent_id)
+
+      # Graceful cancel: notifies the agent (cancel message + flag) — :ok.
+      assert :ok = AgentScheduler.begin_graceful_cancel("t0cap")
+
+      # Force-kill: finds the top-level agent by caller pid, purges queues,
+      # releases slots, and removes ETS entries — :ok.
+      assert :ok = AgentScheduler.force_kill_task_agents(self())
+
+      assert Store.get_sched_meta(agent_id) == :error
+      assert Store.get_agent_state(agent_id) == :error
+      assert_received {^ref, {:error, :cancelled}}
+    end
   end
 end

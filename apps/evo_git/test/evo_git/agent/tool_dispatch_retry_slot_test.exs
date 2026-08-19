@@ -12,6 +12,8 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
@@ -173,5 +175,53 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     AgentScheduler.resume()
     refute AgentScheduler.paused?()
     assert {:error, _reason} = Task.await(retrying, 10_000)
+  end
+
+  test "0-capacity model fails fast with a clear error and ZERO retries" do
+    agent_id = 103
+    register_agent(agent_id)
+
+    # The live (old) PeakHourEngine re-applies a FLOORED model_concurrency map
+    # on every "scheduler_config" broadcast, which would asynchronously
+    # resurrect the hard-pause 0 back to the default. Suspend it so the
+    # 0-capacity request path below is deterministic (the pure-function
+    # floor-preservation semantics are pinned in state_test.exs).
+    engine = Process.whereis(EvoGit.PeakHourEngine)
+    if engine, do: :sys.suspend(engine)
+    on_exit(fn -> if engine, do: :sys.resume(engine) end)
+
+    # PeakHourEngine-style hard-pause: the dynamic map drops "default" to 0.
+    # The scheduler's floor must keep the explicit 0 (never resurrect it).
+    assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
+
+    log =
+      capture_log(fn ->
+        task =
+          Task.async(fn ->
+            try do
+              ToolDispatch.call_llm_with_retry(ReqLLM.Context.new(), [], [], agent_id, 3)
+              :no_raise
+            rescue
+              e -> {:raised, Exception.message(e)}
+            end
+          end)
+
+        # Timing proves ZERO retries: `rescue_only: []` lets the with_llm_slot
+        # no-capacity raise propagate IMMEDIATELY on the first attempt (no
+        # backoff sleep at all). If the raise were retried (the retry library's
+        # DEFAULT rescue_only: [RuntimeError]), max_retries=3 would sleep
+        # ~1s+2s+4s before re-raising (~6.3s+ total) — far beyond this 3.5s
+        # bound.
+        assert {:raised, message} = Task.await(task, 3_500)
+        assert message =~ "0 LLM slots"
+        assert message =~ "default"
+      end)
+
+    # The with_llm_slot warning is logged and visible.
+    assert log =~ "0 LLM slots"
+
+    # Restore capacity so sibling tests see a healthy pool (each test's setup
+    # re-applies the model_profiles map too, so this is belt-and-suspenders).
+    AgentScheduler.update_config(model_concurrency: %{"default" => 1})
   end
 end

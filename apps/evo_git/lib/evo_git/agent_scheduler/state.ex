@@ -92,7 +92,7 @@ defmodule EvoGit.AgentScheduler.State do
 
   @type t :: %__MODULE__{
           default_llm_max_concurrency: pos_integer(),
-          model_concurrency: %{String.t() => pos_integer()},
+          model_concurrency: %{String.t() => non_neg_integer()},
           model_profiles: [map()],
           agent_max_retries: non_neg_integer(),
           max_depth: pos_integer(),
@@ -201,8 +201,12 @@ defmodule EvoGit.AgentScheduler.State do
   @doc """
   Returns the concurrency limit for a given model_id, falling back to the
   state's `default_llm_max_concurrency` if the model is not in the map.
+
+  `0` is a valid value: it is the PeakHourEngine's hard-pause signal meaning
+  "this model has zero LLM slots right now" (a `Map.get` on an explicit `0`
+  entry returns 0, never the default).
   """
-  @spec concurrency_for(t(), String.t()) :: pos_integer()
+  @spec concurrency_for(t(), String.t()) :: non_neg_integer()
   def concurrency_for(%__MODULE__{} = state, model_id) do
     Map.get(state.model_concurrency, model_id, state.default_llm_max_concurrency)
   end
@@ -438,6 +442,14 @@ defmodule EvoGit.AgentScheduler.State do
   profile concurrencies above the new default are never lowered (profiles
   still win when their concurrency is higher).
 
+  An explicit `0` entry is the PeakHourEngine's **hard-pause** signal and is
+  preserved as-is (never floored): `{id, 0}` means "this model has zero LLM
+  slots during the peak window", and flooring it to `new_default` would
+  silently re-enable the model. This preservation is also the fixed-point
+  invariant that keeps the engine's re-broadcast loop stable: the engine emits
+  0 → State stores 0 → re-broadcast → engine re-checks `effective_concurrency`
+  → no-op.
+
   Note: this floor applies to runtime `update_config` only. At init, the file
   semantics remain "profile wins" (`from_model_profiles/2` does not floor).
   """
@@ -448,7 +460,7 @@ defmodule EvoGit.AgentScheduler.State do
       | default_llm_max_concurrency: new_default,
         model_concurrency:
           Map.new(state.model_concurrency, fn {id, concurrency} ->
-            {id, max(concurrency, new_default)}
+            {id, if(concurrency == 0, do: 0, else: max(concurrency, new_default))}
           end)
     }
   end
