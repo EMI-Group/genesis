@@ -12,8 +12,6 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
@@ -177,7 +175,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     assert {:error, _reason} = Task.await(retrying, 10_000)
   end
 
-  test "0-capacity model fails fast with a clear error and ZERO retries" do
+  test "0-capacity model blocks at slot acquisition until capacity is restored" do
     agent_id = 103
     register_agent(agent_id)
 
@@ -194,34 +192,36 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # The scheduler's floor must keep the explicit 0 (never resurrect it).
     assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
 
-    log =
-      capture_log(fn ->
-        task =
-          Task.async(fn ->
-            try do
-              ToolDispatch.call_llm_with_retry(ReqLLM.Context.new(), [], [], agent_id, 3)
-              :no_raise
-            rescue
-              e -> {:raised, Exception.message(e)}
-            end
-          end)
+    task = start_retrying_agent(agent_id, 3)
 
-        # Timing proves ZERO retries: `rescue_only: []` lets the with_llm_slot
-        # no-capacity raise propagate IMMEDIATELY on the first attempt (no
-        # backoff sleep at all). If the raise were retried (the retry library's
-        # DEFAULT rescue_only: [RuntimeError]), max_retries=3 would sleep
-        # ~1s+2s+4s before re-raising (~6.3s+ total) — far beyond this 3.5s
-        # bound.
-        assert {:raised, message} = Task.await(task, 3_500)
-        assert message =~ "0 LLM slots"
-        assert message =~ "default"
-      end)
+    try do
+      # A 0-capacity slot request is ENQUEUED (blocking-like-paused), not
+      # rejected: the task blocks at slot acquisition instead of raising the
+      # old "0 LLM slots" error, and no retry has run yet (Task.yield returns
+      # nil because the task is still alive, not finished).
+      assert Task.yield(task, 500) == nil
 
-    # The with_llm_slot warning is logged and visible.
-    assert log =~ "0 LLM slots"
+      # Restore capacity: the end-of-update grant_pending_on_resume sweep
+      # grants the queued slot request and the retry sequence runs against the
+      # connection-refused model.
+      assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 1})
 
-    # Restore capacity so sibling tests see a healthy pool (each test's setup
-    # re-applies the model_profiles map too, so this is belt-and-suspenders).
-    AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+      # The retries exhaust (connection refused is not a rate limit) with
+      # {:error, reason} — NOT a raise, and the reason carries no trace of the
+      # old fail-fast "0 LLM slots" message.
+      assert {:error, reason} = Task.await(task, 15_000)
+      refute Exception.message(reason) =~ "0 LLM slots"
+    after
+      # Failure-proof cleanup: a failed assertion above can leave the task
+      # blocked on the 0-capacity slot with an :infinity GenServer.call.
+      # Restore capacity (grants the queued waiter), terminate the task, and
+      # release any slot it may hold — no orphaned blocked process (or leaked
+      # holder) may survive into sibling tests, where a later update_config
+      # would otherwise grant the orphan and let it hog the single "default"
+      # slot.
+      AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+      Task.shutdown(task, :brutal_kill)
+      AgentScheduler.release_llm_slot(agent_id)
+    end
   end
 end
