@@ -409,5 +409,58 @@ defmodule EvoGit.AgentScheduler.StateTest do
       assert :queue.to_list(State.waiting_for(final, @default_model)) == []
       assert_received {^ref, :ok}
     end
+
+    test "floors entries below default WITHOUT the skip-floor opt (CLI -c semantics)" do
+      # A plain :model_concurrency update (no :model_concurrency_skip_floor)
+      # keeps the documented floor behavior: an active floor of 5 must hold.
+      state = State.apply_default_llm_concurrency_override(%State{}, 5)
+      assert state.default_llm_max_concurrency == 5
+
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"m" => 1}], state)
+
+      assert final.default_llm_max_concurrency == 5
+      assert final.model_concurrency == %{"m" => 5}
+      assert State.concurrency_for(final, "m") == 5
+    end
+
+    test "skip-floor opt stores the map verbatim (engine-owned floor)" do
+      state = State.apply_default_llm_concurrency_override(%State{}, 5)
+      assert state.default_llm_max_concurrency == 5
+
+      assert {:reply, :ok, final} =
+               State.do_update_config(
+                 [model_concurrency: %{"m" => 1}, model_concurrency_skip_floor: true],
+                 state
+               )
+
+      # PeakHourEngine's map is already floored (with explicit in-peak
+      # peak_concurrency exemptions) — the scheduler must NOT re-floor, or the
+      # engine's fixed-point re-check would see a different map and loop.
+      assert final.default_llm_max_concurrency == 5
+      assert final.model_concurrency == %{"m" => 1}
+      assert State.concurrency_for(final, "m") == 1
+    end
+
+    test "hard-pause 0 stays 0 in both modes (floor and skip-floor)" do
+      state = State.apply_default_llm_concurrency_override(%State{}, 5)
+
+      # Without the opt: the floor raises other entries but keeps the explicit 0.
+      assert {:reply, :ok, final} =
+               State.do_update_config([model_concurrency: %{"m" => 0}], state)
+
+      assert final.model_concurrency == %{"m" => 0}
+      assert State.concurrency_for(final, "m") == 0
+
+      # With the opt: stored verbatim, 0 stays 0.
+      assert {:reply, :ok, final2} =
+               State.do_update_config(
+                 [model_concurrency: %{"m" => 0}, model_concurrency_skip_floor: true],
+                 state
+               )
+
+      assert final2.model_concurrency == %{"m" => 0}
+      assert State.concurrency_for(final2, "m") == 0
+    end
   end
 end
