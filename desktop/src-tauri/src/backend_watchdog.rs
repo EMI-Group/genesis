@@ -43,9 +43,9 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 
@@ -319,9 +319,6 @@ pub struct BackendManager {
     env: Vec<(String, String)>,
     port: u16,
     backend_url: String,
-    /// Unix-epoch millis of the last dashboard-liveness signal. Only used
-    /// for the keeper thread's freshness window (best-effort).
-    dashboard_heartbeat_ms: AtomicI64,
 }
 
 impl BackendManager {
@@ -340,7 +337,6 @@ impl BackendManager {
             env,
             port,
             backend_url,
-            dashboard_heartbeat_ms: AtomicI64::new(0),
         }
     }
 
@@ -420,28 +416,6 @@ impl BackendManager {
     /// True once the user has armed the auto-update flow (`begin_update`).
     pub fn update_requested(&self) -> bool {
         self.update_intent.load(Ordering::SeqCst)
-    }
-
-    /// Records a dashboard-liveness signal (the `dashboard_ready` Tauri
-    /// command — invoked fire-and-forget by the dashboard's hook at mount,
-    /// on every socket reconnect, on every `quit-requested` reception, and
-    /// periodically (~every 5s) while the hook is mounted as a keepalive).
-    ///
-    /// Stamps the wall-clock time used by the keeper thread's freshness
-    /// window: a fresh heartbeat means the dashboard is live and must not be
-    /// re-navigated.
-    pub fn mark_dashboard_ready(&self) {
-        self.dashboard_heartbeat_ms
-            .store(now_ms(), Ordering::SeqCst);
-    }
-
-    /// True when the last dashboard heartbeat is within `within_ms` of
-    /// `now_ms`. Pure — the clock is passed in so the freshness logic is
-    /// unit-testable without clock injection. A never-seen heartbeat
-    /// (timestamp 0) is stale.
-    pub fn dashboard_heartbeat_fresh(&self, now_ms: i64, within_ms: i64) -> bool {
-        let last = self.dashboard_heartbeat_ms.load(Ordering::SeqCst);
-        last > 0 && now_ms - last <= within_ms
     }
 
     /// Waits up to [`SHUTDOWN_CHILD_WAIT`] for the child to actually exit on
@@ -759,15 +733,6 @@ impl BackendManager {
         self.policy
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-/// Current unix-epoch time in milliseconds. Only used for freshness windows
-/// (the keeper thread's heartbeat check).
-fn now_ms() -> i64 {
-    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(d) => d.as_millis() as i64,
-        Err(_) => 0,
     }
 }
 
@@ -1273,31 +1238,6 @@ mod tests {
         assert!(!should_install_update(false, true));
         assert!(!should_install_update(true, false));
         assert!(should_install_update(true, true));
-    }
-
-    #[test]
-    fn dashboard_heartbeat_freshness_window() {
-        let manager = BackendManager::new(
-            PathBuf::from("/nonexistent"),
-            vec![],
-            9999,
-            "http://localhost:9999".to_string(),
-        );
-        // Never seen → stale at any now value.
-        assert!(!manager.dashboard_heartbeat_fresh(1_000_000, 10_000));
-
-        manager.mark_dashboard_ready();
-        // Read the exact stored timestamp (same-module access) so the
-        // assertions are deterministic — no wall-clock racing.
-        let last = manager.dashboard_heartbeat_ms.load(Ordering::SeqCst);
-        assert!(last > 0, "mark_dashboard_ready must stamp the time");
-
-        // Fresh at the exact mark time and at the window boundary.
-        assert!(manager.dashboard_heartbeat_fresh(last, 10_000));
-        assert!(manager.dashboard_heartbeat_fresh(last + 9_999, 10_000));
-        assert!(manager.dashboard_heartbeat_fresh(last + 10_000, 10_000));
-        // Stale just beyond the boundary.
-        assert!(!manager.dashboard_heartbeat_fresh(last + 10_001, 10_000));
     }
 
     #[test]
