@@ -328,6 +328,45 @@ Payload/severity analysis of the remote dashboard's RPC surface (`EvoGit.RemoteN
 4. `list_tasks_paginated` — heavy blobs (result/logs/usage/archive_metadata) for all 25 rows though only consumed when a card is expanded; a lazy detail RPC would bound transfer.
 5. Dead surface: `get_agent_state/1` (no dashboard caller), `load_review_data/2` (no caller), `list_tasks/0` (no caller), `RemoteNode.list_tasks/1` (unused) — candidates for removal or deprecation if the UX workstream wants a leaner surface.
 
+## Mix Tasks
+
+### `mix changelog` — AI-powered changelog generation
+
+`mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]`
+generates a Keep-a-Changelog-style section for a new version in `CHANGELOG.md`
+(default file, relative to the cwd). It collects commits via
+`git log --no-merges --pretty=format:%H%x1f%s%x1f%b%x1e <range>` (`--to`
+defaults to `HEAD`; `--from` defaults to the last tag from
+`git describe --tags --abbrev=0`, falling back to full history when no tag
+exists), filters out version-bump commits (subject matching `^Bump version
+to`), and summarizes the rest with `ReqLLM.stream_object` into categorized
+entries (Added / Changed / Fixed / Removed / Security / Deprecated — only
+categories with entries; default model `deepseek:deepseek-v4-flash`,
+overridable via `--model`; `max_tokens` + `provider_options:
+[thinking: %{type: "disabled"}]`, mirroring the evo_dash translate task).
+**CHANGELOG.md maintenance**: a missing file is created with a `# Changelog`
+title, an intro line, and an empty `## [Unreleased]` section; an existing
+file gets the new `## [<version>] - <date>` section inserted right after the
+header (before the first existing `## ` section) — or the existing
+same-version section is REPLACED in place, so re-runs never duplicate. On LLM
+error the task prints the error and exits WITHOUT modifying CHANGELOG.md. After
+writing it asks `Commit the changelog file now? [Yn]`; on yes it stages only
+the changelog file and commits `Add changelog for v<version>` (never
+`git add -A`; git failures print manual instructions, never crash). The LLM
+call is routed through the app-env test seam
+`Application.get_env(:evo_git, :changelog_summarizer, &Mix.Tasks.Changelog.summarize_with_llm/3)`
+(default = the real ReqLLM implementation; tests set a deterministic stub).
+Module: `apps/evo_git/lib/mix/tasks/changelog.ex`.
+
+### `mix bump.version` — changelog prompt
+
+After a successful bump (and the optional version-files commit), `mix bump.version`
+asks `Generate changelog for v<version> now? [Yn]` and, on yes, delegates to
+`Mix.Tasks.Changelog.run([version])` — invoked DIRECTLY, not via
+`Mix.Task.run/2`, which refuses to re-run a task already run in the current
+Mix invocation ("has already been run" no-op). The prompt never fires on the
+"Version is already ... — nothing to do" early-return path.
+
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.
