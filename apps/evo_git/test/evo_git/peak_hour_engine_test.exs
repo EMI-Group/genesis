@@ -83,7 +83,7 @@ defmodule EvoGit.PeakHourEngineTest do
   end
 
   describe "engine integration (live scheduler + injected clock)" do
-    test "applies floored peak_concurrency inside a peak window" do
+    test "applies peak_concurrency below the default floor inside a peak window" do
       # 10:00 inside 09:00–12:00
       with_clock(fn -> fake_now(10) end)
 
@@ -93,14 +93,14 @@ defmodule EvoGit.PeakHourEngineTest do
         ]
       )
 
-      # Explicit floor lower than the peak value would lower it further — the
-      # floor is the LOWER bound: max(peak 2, default 3) = 3.
+      # An explicit in-peak peak_concurrency (2) is an intentional per-model
+      # setting and wins over the global default floor (3) — sent as-is.
       AgentScheduler.update_config(default_llm_max_concurrency: 3)
 
       assert :ok = PeakHourEngine.check()
 
-      # Peak applied (2 < 4) AND floored by the default (3 > 2).
-      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 3}
+      # Peak applied (2 < 4) AND exempt from the floor (2 < 3).
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
     end
 
     test "applies normal concurrency outside a peak window" do
@@ -217,6 +217,51 @@ defmodule EvoGit.PeakHourEngineTest do
       )
     end
 
+    test "peak_concurrency below the boot-derived floor applies (user scenario)" do
+      # Single profile with concurrency 5 → the boot-time default floor derives
+      # from the FIRST profile's concurrency (5). An explicit peak_concurrency
+      # 1 inside the window must apply as-is — not be floored back up to 5 —
+      # exactly what makes new tasks queue instead of launching with 5 slots.
+      with_clock(fn -> fake_now(14, 1) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "deepseek",
+            model: "deepseek:deepseek-v4-flash",
+            concurrency: 5,
+            peak_concurrency: 1,
+            peak_hours: [%{start: "14:00", end: "18:00"}]
+          }
+        ]
+      )
+
+      # Simulate the boot-derived floor (first profile's concurrency).
+      AgentScheduler.update_config(default_llm_max_concurrency: 5)
+
+      # 14:01 → inside the 14:00–18:00 window: the explicit peak 1 is exempt
+      # from the floor and applies as-is.
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"deepseek" => 1}
+
+      # Fixed point: a re-check while still in peak keeps the map at 1 (no
+      # flapping back to the floored 5).
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"deepseek" => 1}
+
+      # 13:59 → off-peak (before the window): normal concurrency 5.
+      with_clock(fn -> fake_now(13, 59) end)
+
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"deepseek" => 5}
+
+      # Back in peak → 1 again (the engine flips both ways).
+      with_clock(fn -> fake_now(14, 1) end)
+
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"deepseek" => 1}
+    end
+
     test "does not crash when the scheduler is down" do
       with_clock(fn -> fake_now(10) end)
 
@@ -292,9 +337,10 @@ defmodule EvoGit.PeakHourEngineTest do
   end
 
   describe "effective_map/3 (pure)" do
-    test "peak inside the window, floored by the default" do
+    test "peak inside the window below the default floor is preserved" do
       profiles = [%{id: "glm", concurrency: 4, peak_concurrency: 2, peak_hours: @window}]
-      assert PeakHourEngine.effective_map(profiles, 3, fake_now(10)) == %{"glm" => 3}
+      # Explicit in-peak peak_concurrency (2) is exempt from the floor (3).
+      assert PeakHourEngine.effective_map(profiles, 3, fake_now(10)) == %{"glm" => 2}
     end
 
     test "peak inside the window without a floor (default nil → 0)" do
