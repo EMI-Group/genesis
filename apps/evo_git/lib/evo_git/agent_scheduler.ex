@@ -257,11 +257,13 @@ defmodule EvoGit.AgentScheduler do
 
   @doc """
   Requests an LLM execution slot from the scheduler. Blocks the caller until a slot
-  is available (respects default_llm_max_concurrency). Returns :ok when granted.
-  Returns `{:error, :no_capacity}` immediately when the agent's model is
-  hard-paused at 0 LLM slots (peak hours) — never enqueued, never blocked.
+  is granted (respects default_llm_max_concurrency and per-model concurrency).
+  Returns :ok when granted. A 0-capacity model (peak hard-pause) does NOT fail
+  fast — the request enqueues and blocks exactly like the paused-scheduler case
+  and is granted when capacity returns. Returns `{:error, :cancelled}` when the
+  agent is purged from the waiting queue (force-kill / graceful cancel).
   """
-  @spec request_llm_slot(pos_integer(), timeout()) :: :ok | {:error, :no_capacity}
+  @spec request_llm_slot(pos_integer(), timeout()) :: :ok | {:error, :cancelled}
   def request_llm_slot(agent_id, timeout \\ :infinity) do
     GenServer.call(__MODULE__, {:request_llm_slot, agent_id}, timeout)
   end
@@ -318,18 +320,22 @@ defmodule EvoGit.AgentScheduler do
   Rate-limit error reporting should be handled by the caller inside the callback,
   before raising — the `after` block runs after any exception.
 
-  A non-`:ok` result from the slot request (e.g. `{:error, :cancelled}` when the
-  agent is purged from the waiting queue during a force-kill, or
-  `{:error, :no_capacity}` when the agent's model is hard-paused at 0 LLM slots)
-  raises instead of proceeding without a slot. The `:no_capacity` raise message
-  resolves the agent's model id so the failure is immediately debuggable.
+  The slot request BLOCKS until the slot is granted (`GenServer.call` with an
+  `:infinity` timeout): if all slots are busy, the model is in backoff, the
+  scheduler is paused, or the model has 0 capacity (peak hard-pause), the
+  request is enqueued and the caller waits. A queued request is granted when
+  capacity returns — including a 0-capacity model on peak exit, which flows
+  through `update_config` → the end-of-update `grant_pending_on_resume` sweep.
+
+  A non-`:ok` result from the slot request (`{:error, :cancelled}` when the
+  agent is purged from the waiting queue during a force-kill or graceful
+  cancel) raises instead of proceeding without a slot.
 
   The raise is deliberate: callers (`ToolDispatch.call_llm_with_retry/5`, context
   compression) already depend on a non-`:ok` slot result being an exception, and
   the retry loop is configured with `rescue_only: []` so the raise propagates on
-  the first attempt with zero retries (a returned `{:error, :no_capacity}` tuple
-  WOULD be retried by the retry library's `atoms: [:error]` default — the retry
-  macro retries any `{:error, _}` result from the block).
+  the first attempt with zero retries (a retried cancelled agent would be
+  pointless — the crash hands it to the scheduler's crash-retry/cancel machinery).
   """
   @spec with_llm_slot(pos_integer(), (-> result)) :: result when result: var
   def with_llm_slot(agent_id, fun) when is_function(fun, 0) do
@@ -342,20 +348,6 @@ defmodule EvoGit.AgentScheduler do
         after
           release_llm_slot(agent_id)
         end
-
-      {:error, :no_capacity} ->
-        model_id =
-          case Store.get_model_id(agent_id) do
-            nil -> "unknown"
-            "" -> "unknown"
-            id -> id
-          end
-
-        Logger.warning(
-          "Agent #{agent_id}: model '#{model_id}' has 0 LLM slots (hard-paused, e.g. peak hours) — LLM call rejected"
-        )
-
-        raise "Agent #{agent_id}: model '#{model_id}' has 0 LLM slots (paused during peak hours) — LLM call rejected"
 
       other ->
         raise "LLM slot request failed for agent #{agent_id}: #{inspect(other)}"
@@ -775,6 +767,19 @@ defmodule EvoGit.AgentScheduler do
       end
     end)
 
+    # 3. Purge the task's agents from the LLM/tool waiting queues. A queued
+    #    agent (e.g. blocked on a 0-capacity model's LLM slot, which now
+    #    blocks instead of failing fast) would never see the cancel message
+    #    while waiting — the purge replies {:error, :cancelled} to each
+    #    blocked caller, whose with_llm_slot/with_tool_slot raise via the
+    #    catch-all → agent crash → the crash-retry re-registration (gated on
+    #    register_cancelling_task from step 1) lands the retried agent in
+    #    cancel-grace, where it saves work and completes. Slot HOLDERS are
+    #    untouched — a running agent finishes its current call and reads the
+    #    cancel message at its next loop top. Purge is a no-op for agents not
+    #    in any queue, so ALL task agents are purged unconditionally.
+    {state, _status_updates} = Slots.purge_agents_from_queues(state, MapSet.new(agent_ids))
+
     Logger.info(
       "AgentScheduler: Began graceful cancel for task #{task_id} — #{length(agent_ids)} agent(s) notified"
     )
@@ -913,12 +918,6 @@ defmodule EvoGit.AgentScheduler do
       {:reply, :ok, new_state, status_updates} ->
         Lifecycle.apply_status_updates(status_updates)
         {:reply, :ok, new_state}
-
-      {:reply, {:error, _reason} = reply, new_state, status_updates} ->
-        # Hard-pause (0-capacity model): the caller gets {:error, :no_capacity}
-        # immediately — forwarded verbatim, never wedged in a pending request.
-        Lifecycle.apply_status_updates(status_updates)
-        {:reply, reply, new_state}
 
       {:noreply, new_state, status_updates} ->
         Lifecycle.apply_status_updates(status_updates)

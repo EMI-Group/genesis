@@ -205,47 +205,73 @@ defmodule EvoGit.AgentSchedulerTest do
       :ok
     end
 
-    test "request_llm_slot fails fast with {:error, :no_capacity} after the engine drops a model to 0" do
+    test "request_llm_slot blocks until capacity is restored" do
       agent_id = 9001
       register_agent(agent_id)
 
-      # PeakHourEngine applies its dynamic map via update_config — the floor
-      # must keep the explicit 0 (hard-pause) instead of resurrecting it.
+      # PeakHourEngine drops the model to 0 (hard-pause) — the request no
+      # longer fails fast; it enqueues and blocks until capacity returns.
       assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
 
-      # The GenServer call returns immediately — no hang, distinct error atom.
-      assert {:error, :no_capacity} = AgentScheduler.request_llm_slot(agent_id)
+      task = Task.async(fn -> AgentScheduler.request_llm_slot(agent_id) end)
 
-      # The model was NOT resurrected by the floor.
-      assert AgentScheduler.get_config(:model_concurrency) == %{"default" => 0}
+      try do
+        # Still blocked — the call does not return at 0 capacity.
+        assert Task.yield(task, 200) == nil
+
+        # Capacity restored → the end-of-update grant sweep replies :ok.
+        assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+        assert Task.await(task, 2_000) == :ok
+
+        # The restore took effect (the floor never resurrected the 0 either).
+        assert AgentScheduler.get_config(:model_concurrency) == %{"default" => 1}
+      after
+        # Guarantee: even on a failed assertion, unblock + kill the task so no
+        # orphaned blocked process leaks into later tests. Also release the slot
+        # the task may have acquired (request_llm_slot alone never releases) so
+        # no stale holder can starve the next test's grant sweep.
+        AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+        AgentScheduler.release_llm_slot(agent_id)
+        Task.shutdown(task, :brutal_kill)
+      end
     end
 
-    test "with_llm_slot raises a clear, model-resolving error on 0-capacity" do
+    test "with_llm_slot does not raise on 0-capacity; blocks until granted" do
       agent_id = 9002
       register_agent(agent_id)
 
       assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
 
-      err =
-        assert_raise RuntimeError, ~r/0 LLM slots/, fn ->
-          AgentScheduler.with_llm_slot(agent_id, fn -> :ok end)
-        end
+      task =
+        Task.async(fn -> AgentScheduler.with_llm_slot(agent_id, fn -> :llm_ran end) end)
 
-      # The message resolves the model id for debuggability.
-      assert err.message =~ "default"
+      try do
+        # No raise on 0-capacity — the request blocks like the paused case.
+        assert Task.yield(task, 200) == nil
+
+        assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+        assert Task.await(task, 2_000) == :llm_ran
+      after
+        AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+        AgentScheduler.release_llm_slot(agent_id)
+        Task.shutdown(task, :brutal_kill)
+      end
     end
 
-    test "graceful cancel and force-kill still work for an affected agent" do
+    test "graceful cancel unblocks a blocked agent; force-kill still works" do
       agent_id = 9003
       ref = make_ref()
       register_agent(agent_id)
 
       # Top-level agent whose `from` pid is this test process — the force-kill
       # scan key. The from ref is a fake GenServer.from; cancel replies to it.
+      # Status starts :running so the enqueue's :blocked transition is
+      # observable (apply_status_updates only flips :running <-> :blocked).
       meta = %SchedMeta{
         id: agent_id,
         depth: 0,
         task_id: "t0cap",
+        status: :running,
         from: {self(), ref},
         spec: agent_spec()
       }
@@ -253,21 +279,40 @@ defmodule EvoGit.AgentSchedulerTest do
       Store.put_sched_meta(agent_id, meta)
       on_exit(fn -> Store.delete_sched_meta(agent_id) end)
 
-      # The agent's LLM request is REJECTED at 0 capacity — it received its
-      # reply, so nothing is wedged in a pending-request state.
+      # The agent's LLM request BLOCKS at 0 capacity — it is enqueued, not
+      # rejected, so nothing is wedged; cancel/kill unblocks it.
       assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 0})
-      assert {:error, :no_capacity} = AgentScheduler.request_llm_slot(agent_id)
 
-      # Graceful cancel: notifies the agent (cancel message + flag) — :ok.
-      assert :ok = AgentScheduler.begin_graceful_cancel("t0cap")
+      task = Task.async(fn -> AgentScheduler.request_llm_slot(agent_id) end)
 
-      # Force-kill: finds the top-level agent by caller pid, purges queues,
-      # releases slots, and removes ETS entries — :ok.
-      assert :ok = AgentScheduler.force_kill_task_agents(self())
+      try do
+        # Wait until the request is actually enqueued (meta flipped to :blocked)
+        # — the graceful-cancel purge below must run AFTER the enqueue.
+        wait_until(
+          fn -> match?({:ok, %SchedMeta{status: :blocked}}, Store.get_sched_meta(agent_id)) end,
+          2_000
+        )
 
-      assert Store.get_sched_meta(agent_id) == :error
-      assert Store.get_agent_state(agent_id) == :error
-      assert_received {^ref, {:error, :cancelled}}
+        # Graceful cancel: purges the waiting queue, replying {:error, :cancelled}
+        # to the blocked caller (which makes its with_llm_slot raise → crash →
+        # crash-retry → cancel-grace) — :ok.
+        assert :ok = AgentScheduler.begin_graceful_cancel("t0cap")
+
+        # The blocked request returns {:error, :cancelled}.
+        assert Task.await(task, 2_000) == {:error, :cancelled}
+
+        # Force-kill: finds the top-level agent by caller pid, purges queues,
+        # releases slots, and removes ETS entries — :ok.
+        assert :ok = AgentScheduler.force_kill_task_agents(self())
+
+        assert Store.get_sched_meta(agent_id) == :error
+        assert Store.get_agent_state(agent_id) == :error
+        assert_received {^ref, {:error, :cancelled}}
+      after
+        AgentScheduler.update_config(model_concurrency: %{"default" => 1})
+        AgentScheduler.release_llm_slot(agent_id)
+        Task.shutdown(task, :brutal_kill)
+      end
     end
   end
 end
