@@ -328,6 +328,77 @@ Payload/severity analysis of the remote dashboard's RPC surface (`EvoGit.RemoteN
 4. `list_tasks_paginated` — heavy blobs (result/logs/usage/archive_metadata) for all 25 rows though only consumed when a card is expanded; a lazy detail RPC would bound transfer.
 5. Dead surface: `get_agent_state/1` (no dashboard caller), `load_review_data/2` (no caller), `list_tasks/0` (no caller), `RemoteNode.list_tasks/1` (unused) — candidates for removal or deprecation if the UX workstream wants a leaner surface.
 
+## Mix Tasks
+
+### `mix changelog` — AI-powered changelog generation
+
+`mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]`
+generates a Keep-a-Changelog-style section for a new version in `CHANGELOG.md`
+(default file, relative to the cwd). Collection is **PR/merge-aware**: it
+walks the first-parent line of the range via
+`git log --first-parent --pretty=format:%H%x1f%P%x1f%s%x1f%b%x1e <range>`
+(`--to` defaults to `HEAD`; `--from` defaults to the last tag from
+`git describe --tags --abbrev=0`, falling back to full history when no tag
+exists). Each **merge commit (≥ 2 parents) becomes one change** whose commits
+are exactly the branch commits it brought in
+(`git log --no-merges <merge>^1..<merge>` — `--no-merges` skips nested agent
+merges; GitHub-style single-commit merges yield one commit); the merge's own
+subject/body are noise and never feed the signal. Non-merge commits on the
+first-parent line become single-commit changes. Version-bump commits (subject
+matching `^Bump version to`) and obvious mechanical noise (`^Update mix
+hash`, `^Update CONTEXT.md`) are filtered from every change's commit list; a
+change left with no commits is dropped entirely (an all-filtered range prints
+`No commits found in the given range — nothing to summarize.` and exits).
+
+Summarization is **two-stage map-reduce** via `ReqLLM.stream_object` (default
+model `deepseek:deepseek-v4-flash`, overridable via `--model`; `max_tokens` +
+`provider_options: [thinking: %{type: "disabled"}]`, mirroring the evo_dash
+translate task): **stage 1** makes one LLM call per change taking that
+change's commits (hash + subject + body, indented exactly like the old flat
+prompt) and returns a **single concise user-facing summary line** for the
+change (nested per-commit grouping happens inside this call); **stage 2**
+makes one LLM call over the per-change summary lines (`- <summary>` each)
+with the existing Keep-a-Changelog prompt style and schema, producing the
+final categorized entries (Added / Changed / Fixed / Removed / Security /
+Deprecated — only categories with entries), which feed the unchanged
+`build_section/2`.
+
+**CHANGELOG.md maintenance**: a missing file is created with a `# Changelog`
+title, an intro line, and an empty `## [Unreleased]` section; an existing
+file gets the new `## [<version>] - <date>` section inserted right after the
+header (before the first existing `## ` section) — or the existing
+same-version section is REPLACED in place, so re-runs never duplicate. On LLM
+error the task prints the error and exits WITHOUT modifying CHANGELOG.md. After
+writing it asks `Commit the changelog file now? [Yn]`; on yes it stages only
+the changelog file and commits `Add changelog for v<version>` (never
+`git add -A`; git failures print manual instructions, never crash).
+
+**Test seams** (three `Application.get_env(:evo_git, ...)` seams, each
+defaulting to the real `ReqLLM` implementation; tests set deterministic
+stubs):
+- `:changelog_summarizer` — whole pipeline
+  `(model, version, prs) -> {:ok, entries} | {:error, reason}` where `prs`
+  is the PR list (`%{head_sha, commits: [%{hash, subject, body}]}`); default
+  `&Mix.Tasks.Changelog.summarize_pipeline/3`. `Mix.Tasks.Bump.Version`'s
+  integration stub (arity-3, args ignored) keeps working through this seam.
+- `:changelog_pr_summarizer` — stage 1 (map), one call per PR
+  `(model, version, pr) -> {:ok, summary :: String.t()} | {:error, reason}`;
+  default `&Mix.Tasks.Changelog.summarize_pr_with_llm/3`.
+- `:changelog_aggregator` — stage 2 (reduce)
+  `(model, version, summaries :: [String.t()]) -> {:ok, entries} | {:error, reason}`;
+  default `&Mix.Tasks.Changelog.aggregate_with_llm/3`.
+
+Module: `apps/evo_git/lib/mix/tasks/changelog.ex`.
+
+### `mix bump.version` — changelog prompt
+
+After a successful bump (and the optional version-files commit), `mix bump.version`
+asks `Generate changelog for v<version> now? [Yn]` and, on yes, delegates to
+`Mix.Tasks.Changelog.run([version])` — invoked DIRECTLY, not via
+`Mix.Task.run/2`, which refuses to re-run a task already run in the current
+Mix invocation ("has already been run" no-op). The prompt never fires on the
+"Version is already ... — nothing to do" early-return path.
+
 ## Constraints
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules.

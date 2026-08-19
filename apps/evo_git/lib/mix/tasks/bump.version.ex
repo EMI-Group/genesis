@@ -21,6 +21,11 @@ defmodule Mix.Tasks.Bump.Version do
   missing identity, ...), the bump itself still succeeded and the manual
   commit command is printed.
 
+  Finally, the task asks whether to generate a changelog section for the new
+  version (delegating to `mix changelog`). Declining skips changelog
+  generation entirely; accepting summarizes the commits since the last tag
+  with an LLM and updates `CHANGELOG.md`.
+
   ## Usage
 
       mix bump.version 0.2.0
@@ -76,6 +81,7 @@ defmodule Mix.Tasks.Bump.Version do
       Mix.shell().info("✓ Version bumped to #{version}")
       print_summary(version)
       maybe_commit(touched_files, version)
+      maybe_generate_changelog(version)
     end
   end
 
@@ -275,6 +281,20 @@ defmodule Mix.Tasks.Bump.Version do
     Commit the bumped files manually:
       git add #{Enum.join(files, " ")} && git commit -m "Bump version to #{version}"
     """)
+  end
+
+  # --- Changelog generation ------------------------------------------------
+
+  # Asks whether to generate an AI-powered changelog section for the new
+  # version and, on yes, delegates to the changelog task. The changelog module
+  # is invoked DIRECTLY (Mix.Tasks.Changelog.run/1) rather than via
+  # Mix.Task.run("changelog", ...) because Mix.Task.run/2 refuses to re-run a
+  # task already run in the current Mix invocation ("has already been run"
+  # no-op) — a direct call lets tests trigger generation more than once.
+  defp maybe_generate_changelog(version) do
+    if Mix.shell().yes?("Generate changelog for v#{version} now? [Yn]") do
+      Mix.Tasks.Changelog.run([version])
+    end
   end
 
   # --- Summary ------------------------------------------------------------

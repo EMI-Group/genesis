@@ -70,6 +70,8 @@ defmodule Mix.Tasks.Bump.VersionTest do
   } do
     Mix.shell(Mix.Shell.Process)
     send(self(), {:mix_shell_input, :yes?, true})
+    # Decline the changelog prompt — no LLM call, no CHANGELOG.md.
+    send(self(), {:mix_shell_input, :yes?, false})
 
     File.cd!(tmp_dir, fn ->
       Version.run([@new_version])
@@ -106,6 +108,8 @@ defmodule Mix.Tasks.Bump.VersionTest do
 
     # The interactive prompt was asked and the summary no longer suggests `git add -A`.
     assert_received {:mix_shell, :yes?, ["Commit the version bump files now? [Yn]"]}
+    assert_received {:mix_shell, :yes?, ["Generate changelog for v0.2.0 now? [Yn]"]}
+    refute File.exists?(Path.join(tmp_dir, "CHANGELOG.md"))
     infos = collect_infos()
     refute Enum.any?(infos, &String.contains?(&1, "git add -A"))
   end
@@ -114,6 +118,8 @@ defmodule Mix.Tasks.Bump.VersionTest do
     tmp_dir: tmp_dir
   } do
     Mix.shell(Mix.Shell.Process)
+    send(self(), {:mix_shell_input, :yes?, false})
+    # Decline the changelog prompt — no LLM call, no CHANGELOG.md.
     send(self(), {:mix_shell_input, :yes?, false})
 
     File.cd!(tmp_dir, fn ->
@@ -128,6 +134,10 @@ defmodule Mix.Tasks.Bump.VersionTest do
     {out, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
     assert out == "baseline\n"
 
+    # The changelog prompt was asked and declined — no changelog was generated.
+    assert_received {:mix_shell, :yes?, ["Generate changelog for v0.2.0 now? [Yn]"]}
+    refute File.exists?(Path.join(tmp_dir, "CHANGELOG.md"))
+
     # Manual instructions listing only the touched files were printed.
     infos = collect_infos()
 
@@ -140,6 +150,8 @@ defmodule Mix.Tasks.Bump.VersionTest do
   test "warns and does not crash when git commit fails (missing identity)", %{tmp_dir: tmp_dir} do
     Mix.shell(Mix.Shell.Process)
     send(self(), {:mix_shell_input, :yes?, true})
+    # Decline the changelog prompt — no LLM call, no CHANGELOG.md.
+    send(self(), {:mix_shell_input, :yes?, false})
 
     # Blank the repo-local identity so `git commit` fails — the bump itself
     # must still succeed and the task must not crash.
@@ -159,6 +171,10 @@ defmodule Mix.Tasks.Bump.VersionTest do
     # Manual instructions are printed as a fallback.
     infos = collect_infos()
     assert Enum.any?(infos, &String.contains?(&1, "git add VERSION"))
+
+    # The changelog prompt was asked and declined — no changelog was generated.
+    assert_received {:mix_shell, :yes?, ["Generate changelog for v0.2.0 now? [Yn]"]}
+    refute File.exists?(Path.join(tmp_dir, "CHANGELOG.md"))
   end
 
   test "does not prompt or change anything when the version is already current", %{
@@ -176,6 +192,63 @@ defmodule Mix.Tasks.Bump.VersionTest do
 
     {out, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
     assert out == "baseline\n"
+  end
+
+  test "generates and commits a changelog when the changelog prompt is confirmed", %{
+    tmp_dir: tmp_dir
+  } do
+    Mix.shell(Mix.Shell.Process)
+    # true: commit the bumped files; true: generate the changelog; true: commit
+    # the changelog file.
+    send(self(), {:mix_shell_input, :yes?, true})
+    send(self(), {:mix_shell_input, :yes?, true})
+    send(self(), {:mix_shell_input, :yes?, true})
+
+    previous = Application.get_env(:evo_git, :changelog_summarizer)
+
+    Application.put_env(:evo_git, :changelog_summarizer, fn _model, _version, _commits ->
+      {:ok,
+       [
+         %{category: "Added", text: "A shiny new feature"},
+         %{category: "Fixed", text: "A nasty bug"}
+       ]}
+    end)
+
+    on_exit(fn ->
+      if previous == nil do
+        Application.delete_env(:evo_git, :changelog_summarizer)
+      else
+        Application.put_env(:evo_git, :changelog_summarizer, previous)
+      end
+    end)
+
+    File.cd!(tmp_dir, fn ->
+      Version.run([@new_version])
+    end)
+
+    # The changelog was generated with the version section and categorized bullets.
+    changelog = Path.join(tmp_dir, "CHANGELOG.md")
+    assert File.exists?(changelog)
+
+    content = File.read!(changelog)
+    assert content =~ ~r/## \[0\.2\.0\] - \d{4}-\d{2}-\d{2}/
+    assert content =~ "### Added"
+    assert content =~ "- A shiny new feature"
+    assert content =~ "### Fixed"
+    assert content =~ "- A nasty bug"
+
+    assert_received {:mix_shell, :yes?, ["Generate changelog for v0.2.0 now? [Yn]"]}
+    assert_received {:mix_shell, :yes?, ["Commit the changelog file now? [Yn]"]}
+
+    # The changelog commit is a SECOND commit (after the bump commit), staging
+    # exactly CHANGELOG.md and nothing else.
+    {out, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
+    assert out == "Add changelog for v0.2.0\n"
+
+    {out, 0} =
+      System.cmd("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"], cd: tmp_dir)
+
+    assert out |> String.split("\n", trim: true) == ["CHANGELOG.md"]
   end
 
   # Drains all {:mix_shell, :info, [msg]} messages left in the test process mailbox.
