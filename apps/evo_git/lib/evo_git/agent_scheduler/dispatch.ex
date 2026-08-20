@@ -217,16 +217,18 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # worktree from WorktreeManager (1h call timeout) inside `run/2`;
     # WorktreeManager offloads the I/O to a spawned task, so multiple
     # subagents create worktrees in parallel.
-    dispatch_ctx = [
-      agent_id: agent_id,
-      depth: meta.depth,
-      repo_root: agent_repo_root,
-      repo_id: spec.repo_id,
-      worktree_path: worktree_path,
-      retries: retries,
-      spec: spec,
-      meta: meta
-    ]
+    dispatch_ctx =
+      [
+        agent_id: agent_id,
+        depth: meta.depth,
+        repo_root: agent_repo_root,
+        repo_id: spec.repo_id,
+        worktree_path: worktree_path,
+        retries: retries,
+        spec: spec,
+        meta: meta
+      ]
+      |> append_repo_less_ctx(spec, agent_repo_root)
 
     task =
       Task.Supervisor.async_nolink(
@@ -252,6 +254,19 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     }
   end
 
+  # For repo-less agents, carry the marker plus the resolved repo path in the
+  # dispatch context: the Runner skips `create_worktree_for_agent` and uses
+  # `repo_less_repo_path` as its `Process.get(:repo_path)`. No worktree is ever
+  # created for a repo-less agent — `worktree_path` above is synthetic (stored
+  # in sched_meta for cancel lookup) and never materialized on disk.
+  defp append_repo_less_ctx(ctx, spec, agent_repo_root) do
+    if Keyword.get(spec.opts, :repo_less) do
+      ctx ++ [repo_less: true, repo_less_repo_path: agent_repo_root]
+    else
+      ctx
+    end
+  end
+
   # --- Auto-Commit Fallback (agent process) ---
 
   @doc """
@@ -270,11 +285,18 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   """
   @spec commit_pending_in_worktree() :: :ok
   def commit_pending_in_worktree do
-    if wt = Process.get(:repo_path) do
-      do_commit_pending(wt)
-    end
+    if Process.get(:repo_less) do
+      # Repo-less agents have no worktree — and their repo path may point at
+      # the real Genesis source root, so running git add/commit here would
+      # commit the whole Genesis repo. Never touch git for repo-less agents.
+      :ok
+    else
+      if wt = Process.get(:repo_path) do
+        do_commit_pending(wt)
+      end
 
-    :ok
+      :ok
+    end
   end
 
   defp do_commit_pending(wt) do
@@ -506,7 +528,25 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   For foreign repo agents, looks up the foreign_repos map.
   """
   @spec resolve_agent_repo_root(AgentSpec.t(), State.t()) :: String.t() | nil
-  def resolve_agent_repo_root(spec, _state) do
+  def resolve_agent_repo_root(%AgentSpec{} = spec, state) do
+    if Keyword.get(spec.opts, :repo_less) do
+      # Repo-less agents (e.g. self-reflective/chatbot agents) run WITHOUT a
+      # git repo or worktree. Their phylo_node is nil, so the regular
+      # primary-repo branch below would crash on `spec.phylo_node.repo`.
+      # Resolve a plain binary instead — the real Genesis source root
+      # (self-reflective agents analyze the codebase that runs them) or the
+      # "[system]" placeholder. NOTE: the future
+      # `EvoGit.Runtime.SelfReflective.source_root/0` (a later workstream)
+      # should mirror this same env chain so both agree.
+      resolve_repo_less_root()
+    else
+      resolve_agent_repo_root_regular(spec, state)
+    end
+  end
+
+  # Regular repo-root resolution (primary worktree-suffix strip / foreign repo
+  # lookup), unchanged.
+  defp resolve_agent_repo_root_regular(spec, _state) do
     if spec.repo_id == "primary" do
       # spec.phylo_node.repo is either:
       # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
@@ -525,6 +565,16 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         nil -> nil
       end
     end
+  end
+
+  # Repo-less root resolution chain: `:self_reflective_source_root` app env →
+  # `GENESIS_SOURCE_ROOT` env var → `File.cwd!()` (dev = the genesis repo
+  # itself) → "[system]" fallback.
+  defp resolve_repo_less_root do
+    Application.get_env(:evo_git, :self_reflective_source_root) ||
+      System.get_env("GENESIS_SOURCE_ROOT") ||
+      File.cwd!() ||
+      "[system]"
   end
 
   # --- Queue Processing ---

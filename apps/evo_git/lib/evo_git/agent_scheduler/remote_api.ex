@@ -1027,10 +1027,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       started_at: nil,
       model_id: nil,
       repo_root: nil,
-      context_path: spec.context_node.path,
+      context_path: safe_context_path(spec.context_node),
       worktree: meta.worktree,
-      current_commit: spec.phylo_node.current_commit,
-      base_commit: spec.phylo_node.base_commit,
+      current_commit: safe_phylo_commit(spec.phylo_node, :current_commit),
+      base_commit: safe_phylo_commit(spec.phylo_node, :base_commit),
       task_id: meta.task_id,
       task_number: meta.task_number,
       retries: meta.retries
@@ -1042,7 +1042,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     objective = state.objective || meta.spec.objective
 
     # Prefer the live phylo_node (worktree-bound, advancing commit); fall back
-    # to the spec's phylo_node which is always populated.
+    # to the spec's phylo_node. For repo-less agents BOTH are nil (no worktree,
+    # no commits) — emit nil commits rather than crashing.
     phylo = state.phylo_node || meta.spec.phylo_node
 
     %{
@@ -1066,13 +1067,24 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       started_at: nil,
       model_id: state.model_id,
       repo_root: state.repo_root,
-      context_path: state.context_node.path,
+      context_path: safe_context_path(state.context_node),
       worktree: meta.worktree,
-      current_commit: phylo.current_commit,
-      base_commit: phylo.base_commit,
+      current_commit: safe_phylo_commit(phylo, :current_commit),
+      base_commit: safe_phylo_commit(phylo, :base_commit),
       task_id: meta.task_id,
       task_number: meta.task_number,
       retries: meta.retries
     }
   end
+
+  # Nil-tolerant phylo_node field read: repo-less agents carry a nil
+  # phylo_node (no worktree, no commits) — return nil instead of raising a
+  # KeyError on nil.
+  defp safe_phylo_commit(nil, _field), do: nil
+  defp safe_phylo_commit(phylo, field), do: Map.get(phylo, field)
+
+  # Nil-tolerant context_node path read (repo-less specs may carry a nil
+  # context_node).
+  defp safe_context_path(nil), do: nil
+  defp safe_context_path(node), do: node.path
 end
