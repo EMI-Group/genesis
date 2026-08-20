@@ -53,6 +53,7 @@ defmodule EvoDashWeb do
       on_mount(EvoDashWeb.LiveHooks.NodeAware)
       on_mount(EvoDashWeb.LiveHooks.DesktopQuit)
       on_mount(EvoDashWeb.LiveHooks.UpdateStatus)
+      on_mount(EvoDashWeb.LiveHooks.Guide)
 
       unquote(html_helpers())
     end
