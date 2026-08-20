@@ -62,7 +62,12 @@ defmodule EvoGit.Agent.Runner do
     repo_path = Process.get(:repo_path)
     full_path = Path.join(repo_path, node_path)
 
-    unless File.exists?(full_path) do
+    # Repo-less agents run without a git worktree (chatbot-style) — their
+    # repo_path points at the real Genesis source root or a placeholder binary
+    # (e.g. "[system]"), which is not a node directory, so the existence check
+    # is skipped entirely (the placeholder dir would kill the agent before it
+    # starts).
+    unless Process.get(:repo_less) == true or File.exists?(full_path) do
       Logger.error(
         "Agent #{agent_id}: Assigned node path does not exist: #{full_path} (node_path=#{node_path})"
       )
@@ -176,37 +181,61 @@ defmodule EvoGit.Agent.Runner do
     # (their callbacks are zero-arity, so the spec cannot be passed directly).
     Process.put(:custom_agent_id, Keyword.get(spec.opts, :custom_agent_id))
 
-    Process.put(:repo_path, worktree_path)
+    repo_less = Keyword.get(ctx, :repo_less)
 
-    # Request a FRESH worktree from WorktreeManager (1h call timeout —
-    # creation I/O runs offloaded in WorktreeManager, which monitors THIS
-    # process: if we die for any reason, the worktree is reclaimed). If this
-    # fails, the task crashes (caught by the :DOWN handler / crash recovery)
-    # rather than the GenServer — which is the desired behaviour: setup
-    # failure triggers scheduler crash-retry, and the retry's Runner requests
-    # another fresh worktree.
-    case EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent(
-           agent_id,
-           repo_root,
-           worktree_path,
-           spec,
-           meta,
-           self()
-         ) do
-      {:ok, ^worktree_path} ->
-        :ok
+    if repo_less do
+      # Repo-less ("system") mode: the agent runs WITHOUT a git worktree
+      # (chatbot-style). WorktreeManager is never involved — it does not
+      # monitor this agent, so there is no worktree to reclaim/prune on exit.
+      # The repo path is the real Genesis source root or a placeholder binary
+      # (e.g. "[system]"); git is never touched and files are never written
+      # (cardinal rule). Skills loading is gated on `is_binary`, so the
+      # placeholder is fine.
+      repo_less_path = Keyword.get(ctx, :repo_less_repo_path) || repo_root
 
-      {:error, reason} ->
-        raise "Failed to create worktree for agent #{agent_id}: #{inspect(reason)}"
-    end
+      Process.put(:repo_path, repo_less_path)
+      Process.put(:genesis_repo_root, repo_less_path)
+      Process.put(:repo_less, true)
 
-    if retries > 0 do
-      Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
-      Process.sleep(30_000 * retries)
+      Logger.info("AgentScheduler: Agent #{agent_id} starting in repo-less (system) mode")
+
+      if retries > 0 do
+        Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
+        Process.sleep(30_000 * retries)
+      end
     else
-      Logger.info(
-        "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
-      )
+      Process.put(:repo_path, worktree_path)
+
+      # Request a FRESH worktree from WorktreeManager (1h call timeout —
+      # creation I/O runs offloaded in WorktreeManager, which monitors THIS
+      # process: if we die for any reason, the worktree is reclaimed). If this
+      # fails, the task crashes (caught by the :DOWN handler / crash recovery)
+      # rather than the GenServer — which is the desired behaviour: setup
+      # failure triggers scheduler crash-retry, and the retry's Runner requests
+      # another fresh worktree.
+      case EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent(
+             agent_id,
+             repo_root,
+             worktree_path,
+             spec,
+             meta,
+             self()
+           ) do
+        {:ok, ^worktree_path} ->
+          :ok
+
+        {:error, reason} ->
+          raise "Failed to create worktree for agent #{agent_id}: #{inspect(reason)}"
+      end
+
+      if retries > 0 do
+        Logger.info("AgentScheduler: Retrying agent #{agent_id}, attempt #{retries}")
+        Process.sleep(30_000 * retries)
+      else
+        Logger.info(
+          "AgentScheduler: Agent #{agent_id} starting execution in worktree #{worktree_path}"
+        )
+      end
     end
   end
 
@@ -447,20 +476,27 @@ defmodule EvoGit.Agent.Runner do
   # errors propagate (crash) rather than being swallowed — this is salvage,
   # not error-masking. No try/rescue per repo conventions.
   defp maybe_recovery_auto_commit(%LoopState{}) do
-    repo_path = Process.get(:repo_path)
-
-    if repo_path do
-      case Git.status(repo_path) do
-        {:ok, ""} ->
-          :ok
-
-        {:ok, _status_output} ->
-          {:ok, _} = Git.add(repo_path, ".")
-          {:ok, _} = Git.commit(repo_path, "auto-commit: turn-limit recovery")
-          :ok
-      end
-    else
+    # Repo-less agents never touch git (cardinal rule) — their repo_path is a
+    # placeholder or the real source root, neither of which should be
+    # status'd/committed.
+    if Process.get(:repo_less) do
       :ok
+    else
+      repo_path = Process.get(:repo_path)
+
+      if repo_path do
+        case Git.status(repo_path) do
+          {:ok, ""} ->
+            :ok
+
+          {:ok, _status_output} ->
+            {:ok, _} = Git.add(repo_path, ".")
+            {:ok, _} = Git.commit(repo_path, "auto-commit: turn-limit recovery")
+            :ok
+        end
+      else
+        :ok
+      end
     end
   end
 

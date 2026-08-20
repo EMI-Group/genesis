@@ -147,6 +147,29 @@ defmodule EvoGit.CLI do
     EvoGit.CLI.Setup.run()
   end
 
+  defp dispatch(["reflect" | rest], opts) do
+    objective = get_input(rest, opts)
+
+    if objective do
+      runtime_opts = [objective: objective]
+      runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
+
+      # The CLI's -m is a user-locked choice — mark it so the dispatch priority
+      # chain skips the model-selection script for this task.
+      runtime_opts =
+        if opts[:model] do
+          Keyword.put(runtime_opts, :model_id_locked, true)
+        else
+          runtime_opts
+        end
+
+      EvoGit.Runtime.SelfReflective.run(runtime_opts)
+    else
+      IO.puts("Error: Reflect requires an objective (via argument or --file).")
+      print_help()
+    end
+  end
+
   defp dispatch(_, _opts) do
     IO.puts("Error: Unknown command or missing arguments.")
     print_help()
@@ -339,6 +362,7 @@ defmodule EvoGit.CLI do
     Usage:
       evogit genesis [options] [<prompt>]
       evogit evolve [options] <objective>
+      evogit reflect [options] <objective>
 
     Commands:
       genesis    Bootstrap the Context Tree and Phylogenetic Graph.
@@ -350,6 +374,9 @@ defmodule EvoGit.CLI do
                    'simple'   (Default) Top-down evolution for clear tasks.
                    'custom'   Run a custom agent (defined in agents.toml) as
                               the root agent. Requires --agent <id>.
+      reflect    Run a repo-less self-reflective agent that introspects the
+                 Genesis source itself (chatbot-style system Q&A). No repo
+                 changes, no merge — requires an <objective>.
       setup      Configure LLM provider and API key interactively.
                  A guided wizard helps you select a provider, choose a
                  model, and set your API key without manual file editing.

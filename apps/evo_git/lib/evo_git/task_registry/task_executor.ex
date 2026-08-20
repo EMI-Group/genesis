@@ -92,6 +92,17 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
     EvoGit.Runtime.SkillExtraction.run(runtime_opts)
   end
 
+  def execute_task(:reflect, opts, task_id) do
+    register_task_process(task_id)
+
+    # CRITICAL: do NOT call RuntimeOpts.build_common_runtime_opts here — it does
+    # `Keyword.fetch!(opts, :path)` which raises KeyError (reflect tasks are
+    # repo-less and have no :path). opts carries :objective, optional :model_id,
+    # optional :source_root, optional :task_id-ish keys from the dashboard /
+    # start_task tool.
+    EvoGit.Runtime.SelfReflective.run(opts ++ [task_id: task_id])
+  end
+
   @doc """
   Registers the current process (the spawned task process) in the
   `EvoGit.TaskRegistry.ProcessRegistry` under the `task_id` key. The Registry
