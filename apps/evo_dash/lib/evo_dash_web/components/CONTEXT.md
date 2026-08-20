@@ -121,6 +121,15 @@ The dashboard's sidebar "Active Tasks" section in `EvoDashWeb.Layouts.app` is fe
 
 Plain maps with keys: `id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at`. `opts` is a decoded keyword list (same as `TaskInfo.opts` — includes objective/prompt/mode). EXCLUDED: `logs`, `usage`, `archive_metadata` (and all other TaskInfo fields like `ref`).
 
+### Task detail view — flattened Objective / Agent Message cards (expanded card + zoom modals)
+
+The expanded task card detail view (`@show_details`, TasksLive only) shows **two direct cards** in a 2-column grid — the old nested "Options"/"Result" card level (with their inner "Objective"/"Agent Message" sub-headers) was removed:
+
+- **Objective card** (always, when an objective text exists): header `gettext("Objective")` + copy button (`id="task-<id>-objective-copy"`, `phx-hook="ClipboardCopy"`, `data-content={objective_text(@task.opts)}`) + "Full" button (`view_full_options` → Full Objective zoom modal). Body = `render_options(@task.opts)`: FULL objective text (no 300-char truncation) in a `max-h-48 overflow-y-auto` scrollable container + mode/path badges.
+- **Agent Message card** (guarded `Map.get(@task, :result)`): header `gettext("Agent Message")` + copy button (`id="task-<id>-result-copy"`, `data-content={result_copy_text(@task.result)}`) + "Full" button (`view_full_result` → Full Result zoom modal). Body = `render_result(@task.result)` — full content, scrollable; preserves the commit_sha/branch_name/tag/pr_url badges, the No Changes notice, and the Error/Crashed states (their sub-headers remain inside the body).
+
+Public pure helpers added for this: `objective_text/1` (`(opts[:prompt] || opts[:objective] || "") |> String.trim()` — shared with the collapsed-card preview) and `result_copy_text/1` (success/no-changes binary result → the string; `{:error, _}`/`{:exit, _}` → `inspect(reason, limit: :infinity)`; fallback → pretty inspect). Both are reused by the zoom modals in `tasks_live.ex` (Full Result modal `id="full-result-copy"`, Full Objective modal `id="full-options-copy"`, both in the `<:actions>` slot). The zoomed (`truncate: false`) branches keep `max-h-[70vh] overflow-y-auto`; TasksLive has the `"copied"` → "Copied to clipboard" flash handler (required for the ClipboardCopy hook push).
+
 ### Field-access rules for task-card components
 
 - **Dot access (`task.field`) is safe ONLY for contract keys.** On a plain map, a missing key raises `KeyError`; on a struct it returns nil. So any dot access to a non-contract key crashes once a summary map is fed in.
