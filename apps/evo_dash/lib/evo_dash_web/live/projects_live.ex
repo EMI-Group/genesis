@@ -49,6 +49,7 @@ defmodule EvoDashWeb.ProjectsLive do
         pending_tasks={@pending_tasks}
         desktop_quit_confirm={@desktop_quit_confirm}
         update_status={@update_status}
+        guide={@guide}
       >
         <%!--
           Full-bleed Phoenix LiveDashboard: no header chrome — the iframe
