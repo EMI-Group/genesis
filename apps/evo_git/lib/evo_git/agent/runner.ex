@@ -67,7 +67,7 @@ defmodule EvoGit.Agent.Runner do
     # (e.g. "[system]"), which is not a node directory, so the existence check
     # is skipped entirely (the placeholder dir would kill the agent before it
     # starts).
-    unless Process.get(:repo_less) or File.exists?(full_path) do
+    unless Process.get(:repo_less) == true or File.exists?(full_path) do
       Logger.error(
         "Agent #{agent_id}: Assigned node path does not exist: #{full_path} (node_path=#{node_path})"
       )

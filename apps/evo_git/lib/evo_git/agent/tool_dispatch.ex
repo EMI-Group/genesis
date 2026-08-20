@@ -687,7 +687,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Repo-less agents never write to disk, so the dirty-workspace check is
     # skipped entirely (the real Genesis source root being dirty is irrelevant,
     # and a dirty real repo would wedge completion with warnings).
-    if Process.get(:repo_less) or grace or not check_git_status do
+    if Process.get(:repo_less) == true or grace or not check_git_status do
       do_complete(complete_call, state)
     else
       repo_path = Process.get(:repo_path)
