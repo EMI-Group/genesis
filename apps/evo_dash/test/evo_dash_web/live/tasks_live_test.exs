@@ -898,4 +898,188 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
     end
   end
+
+  describe "task detail view" do
+    # Long objective/result fixtures: the old detail view truncated the
+    # objective at 300 chars server-side; the flattened view renders the full
+    # text in a scrollable container, so the tail marker must appear.
+    test "expanded card renders the flattened Objective and Agent Message cards", %{conn: conn} do
+      long_objective =
+        "Build a web app. " <>
+          String.duplicate("more words here ", 30) <> " OBJECTIVE TAIL MARKER"
+
+      long_result =
+        "The agent finished the work. " <>
+          String.duplicate("more words here ", 30) <> " RESULT TAIL MARKER"
+
+      id =
+        insert_fixture!(
+          opts: [prompt: long_objective, mode: "simple", path: "/tmp/test"],
+          result:
+            {:ok,
+             %{
+               result: long_result,
+               commit_sha: "abc1234",
+               branch_name: "genesis/agent_1",
+               tag: "v1.0.0",
+               pr_url: "https://example.com/pr"
+             }}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      # Flattened structure: "Objective" and "Agent Message" are direct h4 card
+      # headers. The old nested "Options"/"Result" card headers are gone —
+      # scoped to <h4> so the plain "Result"/"Options" words inside the
+      # `<!-- Full Result Modal -->` / `<!-- Full Options Modal -->` HTML
+      # comments (which HEEx emits verbatim) can't false-positive.
+      h4_headers = h4_header_texts(html)
+      assert "Objective" in h4_headers
+      assert "Agent Message" in h4_headers
+      refute "Options" in h4_headers
+      refute "Result" in h4_headers
+
+      # The full objective text renders (beyond the old 300-char truncation) in
+      # a scrollable container.
+      assert html =~ "OBJECTIVE TAIL MARKER"
+      assert html =~ "max-h-48"
+      assert html =~ "overflow-y-auto"
+
+      # Objective card: copy + Full buttons, with the full text in data-content.
+      assert html =~ ~s(phx-click="view_full_options")
+      assert attribute(html, "#task-#{id}-objective-copy", "phx-hook") == ["ClipboardCopy"]
+      assert data_content(html, "#task-#{id}-objective-copy") =~ "OBJECTIVE TAIL MARKER"
+
+      # Agent Message card: copy + Full buttons, with the full result text in
+      # data-content.
+      assert html =~ ~s(phx-click="view_full_result")
+      assert attribute(html, "#task-#{id}-result-copy", "phx-hook") == ["ClipboardCopy"]
+      assert data_content(html, "#task-#{id}-result-copy") =~ "RESULT TAIL MARKER"
+
+      # Result badges are preserved: branch, commit, tag, and PR link.
+      assert html =~ "genesis/agent_1"
+      assert html =~ "abc1234"
+      assert html =~ "v1.0.0"
+      assert html =~ "View PR"
+      assert html =~ ~s(href="https://example.com/pr")
+
+      # Mode/path badges render in the Objective card body.
+      assert html =~ "simple"
+      assert html =~ "/tmp/test"
+
+      # Toggling again collapses the detail cards.
+      collapsed = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      refute collapsed =~ "Agent Message"
+    end
+
+    test "error result renders the Error state and an inspected copy payload", %{conn: conn} do
+      id = insert_fixture!(result: {:error, "explosion happened"})
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      assert html =~ "Agent Message"
+      assert html =~ "Error"
+      assert html =~ "explosion happened"
+
+      # result_copy_text({:error, reason}) inspects the reason, so the copy
+      # payload is the quoted string "explosion happened" (Floki may or may not
+      # decode the &quot; entities — assert the stable substring).
+      assert data_content(html, "#task-#{id}-result-copy") =~ "explosion happened"
+    end
+
+    test "no-changes result renders the No Changes notice", %{conn: conn} do
+      id = insert_fixture!(result: {:ok, %{no_changes: true, result: "nothing to do"}})
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      assert html =~ "Agent Message"
+      assert html =~ "No Changes"
+      assert html =~ "The agent completed without making any changes to the codebase."
+      assert html =~ "nothing to do"
+      assert data_content(html, "#task-#{id}-result-copy") == "nothing to do"
+    end
+
+    test "view_full_result opens the zoomed Task Result modal with a copy button", %{conn: conn} do
+      long_result = "The agent finished the work. " <> String.duplicate("more words here ", 30)
+      id = insert_fixture!(result: {:ok, %{result: long_result}})
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      assert html =~ "Agent Message"
+
+      html = render_hook(view, "view_full_result", %{"task_id" => id})
+
+      assert html =~ "Task Result"
+      assert attribute(html, "#full-result-copy", "phx-hook") == ["ClipboardCopy"]
+      assert data_content(html, "#full-result-copy") == long_result
+    end
+
+    test "view_full_options opens the zoomed Full Objective modal with a copy button", %{
+      conn: conn
+    } do
+      long_objective =
+        "Build a web app. " <>
+          String.duplicate("more words here ", 30) <> " OBJECTIVE TAIL MARKER"
+
+      id = insert_fixture!(opts: [prompt: long_objective])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      _html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      html = render_hook(view, "view_full_options", %{"task_id" => id})
+
+      assert html =~ "Full Objective"
+      assert attribute(html, "#full-options-copy", "phx-hook") == ["ClipboardCopy"]
+      assert data_content(html, "#full-options-copy") == long_objective
+    end
+
+    test "copied event flashes the confirmation message", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "some objective"], result: {:ok, %{result: "some result"}})
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "copied", %{})
+
+      assert html =~ "Copied to clipboard"
+    end
+  end
+
+  # --- task detail view helpers ---
+
+  # Extracts the first matching element's attribute (Floki), mirroring the
+  # helper in project_components_test.exs.
+  defp attribute(html, selector, attr) do
+    [el] = Floki.find(Floki.parse_document!(html), selector)
+    el |> Floki.attribute(attr) |> Enum.map(&to_string/1)
+  end
+
+  # Returns the data-content attribute of the first matching element.
+  defp data_content(html, selector) do
+    [value] = attribute(html, selector, "data-content")
+    value
+  end
+
+  # The trimmed text of every <h4> on the page — used to pin the flattened
+  # card headers ("Objective"/"Agent Message") and refute the old nested
+  # "Options"/"Result" card headers.
+  defp h4_header_texts(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("h4")
+    |> Enum.map(fn el -> Floki.text(el) |> String.trim() end)
+  end
 end
