@@ -37,6 +37,27 @@ Spawn flow: `AgentScheduler.run_agent/2` (`agent_scheduler.ex:80-82`) → `handl
 
 **No reuse / no resume-checkout special-casing in the scheduler layer**: `prepare_new_worktree/5` always destroys leftovers (dir, branch) and creates fresh (worktrees.ex:61, 139-170) — a branch that already has commits is deleted first, then re-created from the spec's starting commit. The only exception is `Subagents.dispatch_ready_parent/3` (subagents.ex:355-390): a waiting parent keeps its LIVE worktree (no new checkout). A resumed TASK's "existing commits" are handled entirely upstream by setting `:starting_commit` in opts (see `task_registry/resume_context.ex`).
 
+## Repo-Nil Tolerance Map (for a repo-less/no-worktree agent type — investigation findings)
+
+Facts verified at the current HEAD about which scheduler paths tolerate `nil` repo/worktree fields and which hard-dereference them. **No repo-less agent exists today** — every agent in `agents/` runs in a worktree; a repo-less agent type must either bypass or guard the hard-dereference sites below.
+
+**Nil-tolerant (already):**
+- `AgentState.phylo_node` defaults to `nil` (agent_state.ex:44) and is written `nil` at registration (dispatch.ex:81) and on crash-retry reset (lifecycle.ex:162) — a transient `nil` phylo_node in ETS is the NORMAL state.
+- `AgentState.repo_root` defaults to `nil` (agent_state.ex:60) and `Dispatch.resolve_agent_repo_root/2` returns `nil` when a foreign repo id is missing from `spec.foreign_repos` (dispatch.ex:525).
+- `RemoteAPI.get_agent_state/1` (remote_api.ex:125-130) only drops `:context` (`%{state | context: nil}`) — no repo dereference. `get_agent_history/1` (remote_api.ex:102-113) reads only `state.context`.
+- `Dispatch.commit_pending_in_worktree/0` (dispatch.ex:272-278) is nil-safe: `if wt = Process.get(:repo_path)` → returns `:ok` when `:repo_path` is unset (Runner's `try/after` is safe for a repo-less agent).
+- Runner's skill loading already guards `repo_root` nil (`if repo_root && is_binary(repo_root)`, runner.ex:119).
+
+**Hard-dereferences (would crash on nil — a repo-less agent must guard/avoid these):**
+- `Dispatch.resolve_agent_repo_root/2` (dispatch.ex:509-528): primary-repo branch runs `String.split(spec.phylo_node.repo, ...)` — `nil` `spec.phylo_node` → FunctionClauseError. Called from `register_agent` (dispatch.ex:69) AND `do_try_dispatch` (dispatch.ex:204) — the latter runs in the scheduler GenServer process, so a crash here takes the scheduler down.
+- `Dispatch.do_try_dispatch/5` (dispatch.ex:204-211): builds `worktree_path = Path.join([agent_repo_root, ".genesis/workers", ...])` — `nil` repo_root → Path.join raises (in the scheduler process). The worktree path is stored in SchedMeta BEFORE the agent Task spawns (:213, :245).
+- `RemoteAPI.build_agent_summary/3` (remote_api.ex:1009-1038, 1040-1077): dereferences `phylo.current_commit`/`phylo.base_commit` where `phylo = state.phylo_node || meta.spec.phylo_node` (:1046, :1071-1072; nil-state branch reads `spec.phylo_node.current_commit` directly at :1032-1033) and `context_node.path` (:1030, :1069). A nil phylo_node (state AND spec) → KeyError, crashing the dashboard's `list_agents` RPC. `AgentSpec`'s `@enforce_keys` requires the `:phylo_node` KEY (agent_spec.ex:20) but NOT a non-nil value, so a repo-less spec could carry `phylo_node: nil` — `list_agents` would then crash.
+- `WorktreeManager.create_worktree_for_agent/6` (worktree_manager.ex:72-78, 6 args: `agent_id, repo_root, worktree_path, spec, meta, agent_pid`): with `nil` repo_root, `maybe_init_repo` → `workers_dir(nil)` = `Path.join(nil, ...)` raises; even past that, every git call (`Git.prune_worktrees(nil)`, `CowWorktree.create_worktree(nil, ...)`, worktrees.ex:101-135) fails → `{:error, {:worktree_create_failed, ...}}` → the Runner raises (runner.ex:199-200) → crash-retry.
+- **Worktree creation is a HARD PREREQUISITE of agent execution, and it happens INSIDE the agent process**: `do_try_dispatch` spawns the Task (dispatch.ex:231-237) → `module.run/2` → `Runner.setup_dispatch_context/1` (runner.ex:158-211) calls `WorktreeManager.create_worktree_for_agent/6` (runner.ex:188-195) BEFORE the agent loop; failure raises and the agent never enters the loop. `Runner.do_run/2` also requires `Process.get(:repo_path)`: `Path.join(repo_path, node_path)` + `File.exists?` validation (runner.ex:62-70) — `nil` repo_path crashes before the loop.
+- `Worktrees.assign_and_prepare_worktree/2` (worktrees.ex:233-259): bare matches `{:ok, meta} = Store.get_sched_meta(agent_id)` / `{:ok, %AgentState{}}` (:234-235), reads `spec.phylo_node.current_commit` (:238), runs `Git.clean`+`Git.checkout`, then writes the worktree-bound phylo_node (`repo: wt`) into AgentState (:244-250). `Worktrees.branch_name/2` (worktrees.ex:31-33) is repo-agnostic (`"evogit-agent-T#{task_number}-A#{task_local_id}"`, integer args) — only used for branch naming.
+- `SchedMeta` (sched_meta.ex:39-58) carries the repo touchpoints `worktree` (nil default, set at dispatch), `task_number`, `spec` (full `%AgentSpec{}` incl. phylo_node/repo_id/foreign_repos), `foreign_repo_commits`. No `repo_root` field. `Slots` has NO repo-specific state at all (pure per-model_id LLM/tool pools).
+- Runner's `try/after` auto-commit (`Runner.run/3`, runner.ex:41-53) is nil-safe only because `commit_pending_in_worktree/0` guards `:repo_path`; a repo-less agent would also skip `ToolDispatch.sync_current_commit_after_tools` (agent/tool_dispatch.ex:50-84 → `AgentScheduler.update_phylo_node/2`) since there is no worktree/commit to track.
+
 ## API Surface
 
 | Module | Description |
@@ -138,6 +159,20 @@ Handles the mechanics of registering and dispatching agents:
 4. `resolve_agent_repo_root/2` — Resolves repo root from spec (primary vs foreign repo)
 5. `dispatch_queued_agents/1` — Drains queue dispatching agents (used after resume)
 6. `process_queue/1` — Processes queue with ready-parent detection (delegates to Subagents)
+
+### Repo-path assumptions (relevant to any repo-less / no-worktree agent design)
+
+The whole scheduler dispatch path assumes every agent spec carries a real repo. Facts verified at dispatch.ex / worktrees.ex / worktree_manager.ex / runner.ex:
+
+- **`commit_pending_in_worktree/0` is fully safe on missing/non-git paths** (dispatch.ex:271-312): `Process.get(:repo_path)` nil → skips entirely, returns `:ok`. Non-nil but missing path → `Git.run/2`'s `File.dir?` guard returns `{:error, {:enoent, ...}}` (git.ex:64-66). Bare non-git dir → `git status --porcelain` exits 128 → `{:error, {128, "fatal: not a git repository..."}}` (git.ex:89-95). Both fall into the `with`'s `else error -> Logger.warning(...)` arm → `:ok`. Never raises (only environment-level raises possible: `Executable.resolve("git")` / `System.tmp_dir!` in `Git.commit/2`'s temp-file path). Call sites: `Runner.run/3` `try/after` (runner.ex:48-52 — cannot mask a `do_run` exception) and `SubagentProcessing.process_subagent_calls` (subagent_processing.ex:60, inline before `spawn_sub_agents`).
+- **Nil `repo_root` / `phylo_node.repo` CRASHES the scheduler GenServer** (no graceful path exists):
+  1. `resolve_agent_repo_root/2` (dispatch.ex:508-528): primary branch does `String.split(spec.phylo_node.repo, "/.genesis/workers/", parts: 2)` — a nil `phylo_node.repo` (`PhyloGraphNode` has `defstruct [:repo, :base_commit, :current_commit]`, repo defaults nil) raises `FunctionClauseError`. Called at registration (dispatch.ex:69), `run_agent` handler (agent_scheduler.ex:629), and `try_dispatch` (dispatch.ex:204).
+  2. `do_try_dispatch` (dispatch.ex:206-211): `worktree_path = Path.join([agent_repo_root, ".genesis/workers", "worker_T#{..}_A#{..}"])` — nil root raises `ArgumentError` (Path.join requires binaries). `worktree_path` is therefore NEVER nil in the dispatch_ctx when the ctx is built; a nil root crashes before the ctx exists.
+  3. `WorktreeManager.maybe_init_repo/2` → `Worktrees.workers_dir/1` (`Path.join(repo_root, ".genesis/workers")`, worktrees.ex:26) — nil root raises `ArgumentError` inside the WorktreeManager GenServer.
+  4. `Runner.setup_dispatch_context/1` (runner.ex:158-211) UNCONDITIONALLY calls `WorktreeManager.create_worktree_for_agent(agent_id, repo_root, worktree_path, spec, meta, self())` and raises `"Failed to create worktree..."` on `{:error, reason}` (runner.ex:188-201) — the agent Task crashes → scheduler crash-retry. `Process.put(:repo_path, worktree_path)` at runner.ex:179 is what `commit_pending_in_worktree` reads.
+- **`dispatch_ctx` keys** (dispatch.ex:220-229): `[agent_id:, depth:, repo_root:, repo_id:, worktree_path:, retries:, spec:, meta:]` — all `Keyword.fetch!`'d in `setup_dispatch_context` (runner.ex:159-166); `meta` is the full `%SchedMeta{}` (status `:pending | :running | :waiting | :ready | :blocked`). `SchedMeta.worktree` defaults to nil (sched_meta.ex:48) and is set in `do_try_dispatch` BEFORE the task spawn.
+- **Child AgentState gets `repo_id` + `repo_root` only — no worktree_path field** (dispatch.ex:79-95): `phylo_node` starts nil and is bound to the worktree later by `Worktrees.assign_and_prepare_worktree/2`. Each subagent gets its OWN fresh worker dir under the repo root (computed in `do_try_dispatch`), never the parent's path.
+- **Subagent validation never checks repo existence** (`validate_single_subagent/5`, subagents.ex:130-144): only depth, `ContextNode.is_ignored?`, and the spatial contract (which reads `spec.context_node.path` — nil context_node would raise via `.path` access). A spec with a nil/phantom repo passes validation and crashes later in dispatch/worktree creation.
 
 ### Subagent Management (Subagents module)
 
