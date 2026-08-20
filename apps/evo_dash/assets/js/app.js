@@ -932,8 +932,11 @@ const PlatformDetect = {
 // Guide on-mount hook (EvoDashWeb.LiveHooks.Guide) — scrolls the target into
 // view and applies a temporary highlight. The last payload is kept in a
 // module-level variable so mounted() re-applies it after a navigation (the
-// @guide assign persists server-side via the session; the DOM may need the
-// retry loop on the new page). Works in plain browsers too — no Tauri gating.
+// @guide assign is restored server-side from a per-tab store keyed by
+// guide_client_id — received via the connect params and stable across
+// push_navigate since the WebSocket connection persists; the DOM may need
+// the retry loop on the new page). Works in plain browsers too — no Tauri
+// gating.
 let lastGuideHighlight = null;
 
 const Guide = {
@@ -943,6 +946,11 @@ const Guide = {
         lastGuideHighlight = payload.selector;
         this.applyHighlight(payload.selector);
       }
+    });
+    // The server pushes "guide_cleared" when the guide is dismissed; drop the
+    // stored selector so a later remount/navigation doesn't re-apply it.
+    this.handleEvent("guide_cleared", () => {
+      lastGuideHighlight = null;
     });
     if (lastGuideHighlight) {
       this.applyHighlight(lastGuideHighlight);
@@ -1036,10 +1044,26 @@ const PaletteList = {
   }
 };
 
+// Guide retention: a stable per-tab id (sessionStorage-backed so it also
+// survives full reloads within the tab). The server-side Guide hook keys
+// its guide store by this id, received via the connect params.
+let guideClientId = null;
+if (typeof sessionStorage !== "undefined") {
+  guideClientId = sessionStorage.getItem("guide_client_id");
+}
+if (!guideClientId) {
+  guideClientId = (typeof crypto !== "undefined" && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : "g-" + Math.random().toString(36).slice(2);
+  if (typeof sessionStorage !== "undefined") {
+    try { sessionStorage.setItem("guide_client_id", guideClientId); } catch (e) {}
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
-  params: {_csrf_token: csrfToken},
+  params: {_csrf_token: csrfToken, guide_client_id: guideClientId},
   hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer},
 })
 
