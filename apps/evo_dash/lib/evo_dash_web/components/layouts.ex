@@ -53,6 +53,13 @@ defmodule EvoDashWeb.Layouts do
         "drives the notification dot on the System sidebar item when the phase is :available or :ready"
   )
 
+  attr(:guide, :map,
+    default: nil,
+    doc:
+      "the active Genesis Guide panel payload (seeded by EvoDashWeb.LiveHooks.Guide from the core guide_user tool broadcasts); " <>
+        "renders the floating guide panel when present"
+  )
+
   slot(:inner_block, required: true)
 
   def app(assigns) do
@@ -240,6 +247,12 @@ defmodule EvoDashWeb.Layouts do
              re-established on every page navigation. A no-op outside the
              Tauri desktop shell. --%>
         <div id="update-status-hook" phx-hook="UpdateStatus" />
+        <%!-- The Guide hook wrapper bridges the core guide_user tool broadcasts
+             to the floating Genesis Guide panel. Hooks only mount on elements
+             inside the LiveView root DOM, and this wrapper is part of the
+             shared app layout, so it is re-established on every page
+             navigation. --%>
+        <div id="guide-hook" phx-hook="Guide" />
       </div>
 
       <!-- Config Warning Banner -->
@@ -313,6 +326,47 @@ defmodule EvoDashWeb.Layouts do
               </button>
             </div>
           </div>
+        </div>
+      <% end %>
+
+      <!-- Floating "Genesis Guide" panel — driven by the Guide on-mount hook
+           (EvoDashWeb.LiveHooks.Guide) from the core guide_user tool
+           broadcasts of a running reflect task. Rendered in the shared app
+           layout so it can appear on ANY page. Top-right (fixed top-4 right-4
+           z-50) so it never overlaps the config-warning banner
+           (fixed bottom-4 right-4 z-40). Not auto-dismissed on navigation —
+           the guide continues across pages (retention handled by the hook's
+           session + the JS highlight re-apply). -->
+      <%= if @guide do %>
+        <div class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg p-4">
+          <div class="flex items-center gap-2 mb-2">
+            <.icon name="hero-sparkles" class="w-4 h-4 text-indigo-500 shrink-0" />
+            <%!-- 自省智能体向导 — 由运行中的 reflect 任务推送的引导提示 --%>
+            <h3 class="text-sm font-semibold flex-1 min-w-0">{gettext("Genesis Guide")}</h3>
+            <%= if @guide.dismissible do %>
+              <%!-- 关闭向导提示 --%>
+              <button
+                type="button"
+                class="p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                phx-click="guide_dismissed"
+                aria-label={gettext("Dismiss guide")}
+              >
+                <.icon name="hero-x-mark" class="w-4 h-4" />
+              </button>
+            <% end %>
+          </div>
+          <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">{@guide.message}</p>
+          <%= if is_binary(@guide.page) do %>
+            <div class="mt-3">
+              <.link
+                navigate={with_node_param(@guide.page, @current_node_id)}
+                class="btn btn-primary btn-sm"
+              >
+                <%!-- 跳转到引导指向的页面 --%>
+                {gettext("Go")}
+              </.link>
+            </div>
+          <% end %>
         </div>
       <% end %>
 
@@ -401,10 +455,12 @@ defmodule EvoDashWeb.Layouts do
   attr(:navigate, :string, required: true)
   attr(:current, :boolean, default: false)
   attr(:icon, :string, required: true)
+
   attr(:notification, :atom,
     default: nil,
     doc: "a phase atom (:available, :ready) that renders a notification dot at the right edge"
   )
+
   slot(:inner_block, required: true)
 
   defp sidebar_nav_link(assigns) do
