@@ -12,7 +12,7 @@ defmodule EvoDashWeb.LiveHooks.Guide do
   globally via `on_mount` in the `live_view/0` macro, after `UpdateStatus`) and
   keeps the `@guide` assign in sync with those broadcasts. The shared app
   layout (`EvoDashWeb.Layouts.app`) renders the assign as a floating "Genesis
-  Guide" panel, and the 8 `guide={@guide}` call sites in the live pages pass it
+  Guide" panel, and the `guide={@guide}` call sites in the live pages pass it
   through.
 
   Broadcasts are node-filtered FIRST through
