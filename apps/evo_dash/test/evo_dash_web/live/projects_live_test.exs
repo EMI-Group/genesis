@@ -2770,6 +2770,72 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  describe "reflect task mode" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "task_change to reflect works without a project and reveals the controls row", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # No project open — the mode select is hidden in the DOM, but the
+      # server-side task_change event still works.
+      html = render_change(view, "task_change", %{"mode" => "reflect"})
+
+      assert assigns(view)[:task_mode] == "reflect"
+
+      # disabled = is_nil(@active_project) and @task_mode != "reflect" — for
+      # reflect the controls row (Launch button + mode select) renders even
+      # without a project, and the welcome overlay is hidden.
+      assert html =~ "hero-rocket-launch"
+      assert html =~ ~s(name="mode")
+      refute html =~ "Open a project to get started"
+    end
+
+    test "reflect submit with no active project starts a repo-less task with mode reflect", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # No project active. Reflect is repo-less — task_submit's "no project
+      # selected" guard explicitly allows combined_mode == "reflect".
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{prompt: "ask genesis about itself", mode: "reflect"})
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # Assert on the persisted ROW's opts only — the :reflect core runtime is
+      # a parallel workstream; the spawned executor fails fast, so task status
+      # is never asserted (and never matters here). The type column's atom
+      # decode returns nil for :reflect until the evo_git codec whitelist
+      # gains it, so the mode opt is the authoritative marker of a reflect row.
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "ask genesis about itself"
+      assert opt(task, :path) == nil
+      refute has_opt?(task, :path)
+      refute has_opt?(task, "path")
+    end
+
+    test "repo mode submit without a project is still blocked", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{prompt: "build me a thing", mode: "evolve_simple"})
+
+      assert html =~ "No project selected. Please open a project first."
+      refute html =~ "task started with ID:"
+    end
+  end
+
   describe "custom agents — none configured" do
     setup do
       clear_recent_projects()
