@@ -177,6 +177,10 @@ defmodule EvoDashWeb.TaskFormComponents do
                   evolve_family_mode?(@mode) ->
                     gettext("Describe what you want to change or improve...")
 
+                  # zh_CN: 向 Genesis 提问（自省模式 — 无仓库，可与系统对话）
+                  @mode == "reflect" ->
+                    gettext("Ask Genesis about itself, its source, or tasks…")
+
                   true ->
                     gettext("Describe the codebase you want to create...")
                 end
@@ -319,6 +323,10 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <option value="custom_agent" selected={@mode == "custom_agent"}>
                   <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
                   {gettext("Custom Agent")}
+                </option>
+                <option value="reflect" selected={@mode == "reflect"}>
+                  <%!-- zh_CN: 自省智能体 — 无仓库、与系统对话（向 Genesis 提问） --%>
+                  {gettext("Self-Reflective")}
                 </option>
               </select>
 
