@@ -326,6 +326,49 @@ defmodule Mix.Tasks.ChangelogTest do
     assert hd(summaries) == "add feature X part 2"
   end
 
+  test "handles a merge commit that is not the first first-parent record", %{tmp_dir: tmp_dir} do
+    # Reproduces the leading-newline parsing bug: build a merge mid-history
+    # (off "fix bug B", merged back with --no-ff), then land one more commit on
+    # main AFTER the merge. The first-parent log (newest first) is then
+    # [post-merge, merge, fix bug B, add feature A] — the merge record is NOT
+    # first, so in the raw git output (`rec1\x1e\nrec2\x1e\n...`) it carries a
+    # leading "\n". The old split (`trim: true`) left that "\n" on the record,
+    # corrupting the merge's hash and making "<hash>^1..<hash>" an ambiguous
+    # git argument (fatal: unknown revision).
+    build_merge(tmp_dir, "feature-merged", ["add feature merged"])
+
+    File.write!(Path.join(tmp_dir, "file.txt"), "post-merge\n")
+    git(tmp_dir, ["add", "--all"])
+    git(tmp_dir, ["commit", "-q", "-m", "post-merge fix"])
+
+    install_stage_seams()
+    send(self(), {:mix_shell_input, :yes?, false})
+
+    File.cd!(tmp_dir, fn ->
+      Changelog.run([@new_version])
+    end)
+
+    prs = collect_pr_summaries()
+
+    # Collection succeeded: the merge's branch commit and the post-merge commit
+    # both surface as changes (the bug made collection fail entirely).
+    subjects = prs |> Enum.flat_map(& &1.commits) |> Enum.map(& &1.subject)
+    assert "add feature merged" in subjects
+    assert "post-merge fix" in subjects
+
+    # Every hash is clean — no leading newline leaked from the record separator.
+    refute Enum.any?(prs, &String.starts_with?(&1.head_sha, "\n"))
+    refute Enum.any?(prs, fn pr ->
+             Enum.any?(pr.commits, &String.starts_with?(&1.hash, "\n"))
+           end)
+
+    # The merge PR carries exactly the branch commit it brought in, and its
+    # head_sha is the merge commit (clean, so the ^1.. range resolved).
+    merge_pr = Enum.find(prs, fn pr -> Enum.map(pr.commits, & &1.subject) == ["add feature merged"] end)
+    assert merge_pr != nil
+    assert String.starts_with?(merge_pr.head_sha, "\n") == false
+  end
+
   test "excludes version-bump and mechanical commits from every PR", %{tmp_dir: tmp_dir} do
     # A direct version-bump commit on the first-parent line — must produce no PR.
     File.write!(Path.join(tmp_dir, "file.txt"), "v4\n")

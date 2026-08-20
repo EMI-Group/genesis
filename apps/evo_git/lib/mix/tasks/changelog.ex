@@ -189,7 +189,11 @@ defmodule Mix.Tasks.Changelog do
 
   # git log --first-parent over the range, including merge commits so the
   # mainline walk is PR-shaped. Each record carries hash, parents (space-
-  # separated full SHAs), subject, and body.
+  # separated full SHAs), subject, and body. Records are trimmed per edge:
+  # git joins each record with a newline (`rec1\x1e\nrec2\x1e\n`), so
+  # `trim: true` on the split alone leaves a leading `\n` on every record
+  # after the first — which would corrupt hashes and break `<sha>^1..<sha>`
+  # ranges built from them.
   defp git_log_first_parent(range) do
     format = "%H%x1f%P%x1f%s%x1f%b%x1e"
 
@@ -197,7 +201,9 @@ defmodule Mix.Tasks.Changelog do
       {:ok, output} ->
         entries =
           output
-          |> String.split(@record_sep, trim: true)
+          |> String.split(@record_sep)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
           |> Enum.flat_map(&parse_first_parent_record/1)
 
         {:ok, entries}
@@ -209,7 +215,9 @@ defmodule Mix.Tasks.Changelog do
 
   # The branch commits a merge brought in: git log --no-merges <merge>^1..<merge>.
   # --no-merges skips nested agent merges; a GitHub-style single-commit merge
-  # yields exactly one commit.
+  # yields exactly one commit. Records are trimmed per edge for the same
+  # inter-record-newline reason as git_log_first_parent/1 (a leading `\n` on a
+  # hash would make the `<hash>^1..<hash>` range passed in here ambiguous).
   defp git_log_no_merges(range) do
     format = "%H%x1f%s%x1f%b%x1e"
 
@@ -217,7 +225,9 @@ defmodule Mix.Tasks.Changelog do
       {:ok, output} ->
         commits =
           output
-          |> String.split(@record_sep, trim: true)
+          |> String.split(@record_sep)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
           |> Enum.flat_map(&parse_record/1)
 
         {:ok, commits}
