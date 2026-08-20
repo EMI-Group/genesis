@@ -1430,7 +1430,7 @@ defmodule EvoGit.StoreTest do
     end
 
     test "type field round-trips as atom for all known values" do
-      for type <- [:genesis, :evolve, :extract_skills] do
+      for type <- [:genesis, :evolve, :extract_skills, :reflect] do
         task = %TaskInfo{
           id: "type-#{type}",
           type: type,
@@ -1447,6 +1447,13 @@ defmodule EvoGit.StoreTest do
         assert is_atom(fetched.type)
         assert fetched.type == type
       end
+    end
+
+    test "type :reflect codec round-trips directly" do
+      # Direct codec pin for the :reflect (repo-less self-reflective) type atom,
+      # which lives in the Codec @known_atoms whitelist.
+      assert Codec.encode_atom(:reflect) == "reflect"
+      assert Codec.decode_atom("reflect") == :reflect
     end
 
     test "status field round-trips as atom for all known values" do
