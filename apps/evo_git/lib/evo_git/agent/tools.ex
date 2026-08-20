@@ -29,6 +29,33 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.SkillEnable
   alias EvoGit.Agent.Tools.SkillDisable
   alias EvoGit.Agent.Tools.SkillWhere
+  alias EvoGit.Agent.Tools.ListTasks
+  alias EvoGit.Agent.Tools.GetTask
+  alias EvoGit.Agent.Tools.StartTask
+  alias EvoGit.Agent.Tools.CancelTask
+  alias EvoGit.Agent.Tools.ForceKillTask
+  alias EvoGit.Agent.Tools.DeleteTask
+  alias EvoGit.Agent.Tools.GuideUser
+  alias EvoGit.Agent.Tools.SpawnInvestigator
+
+  # Tools that mutate the system (files, git, skills). Repo-less agents
+  # (chatbot-style, no worktree) must never touch git or write files —
+  # `execute/5` blocks these for such agents as defense-in-depth.
+  @write_tools [
+    "create_files",
+    "write_file",
+    "edit_file",
+    "make_dir",
+    "write_context",
+    "edit_context",
+    "run_bash",
+    "run_powershell",
+    "skill_add",
+    "skill_edit",
+    "skill_remove",
+    "skill_enable",
+    "skill_disable"
+  ]
 
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
@@ -60,7 +87,15 @@ defmodule EvoGit.Agent.Tools do
         SkillRemove.schema(),
         SkillEnable.schema(),
         SkillDisable.schema(),
-        SkillWhere.schema()
+        SkillWhere.schema(),
+        ListTasks.schema(),
+        GetTask.schema(),
+        StartTask.schema(),
+        CancelTask.schema(),
+        ForceKillTask.schema(),
+        DeleteTask.schema(),
+        GuideUser.schema(),
+        SpawnInvestigator.schema()
         # Git.schema(),
         # Curl.schema()
       ]
@@ -120,7 +155,7 @@ defmodule EvoGit.Agent.Tools do
   def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
 
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
-    execute_tool(tool_name, args, repo_path, repo_root, node_path)
+    maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path)
   end
 
   # Fallback: some LLMs double-encode the ENTIRE arguments object as a JSON
@@ -129,12 +164,25 @@ defmodule EvoGit.Agent.Tools do
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_binary(args) do
     case Jason.decode(args) do
       {:ok, decoded} when is_map(decoded) ->
-        execute_tool(tool_name, decoded, repo_path, repo_root, node_path)
+        maybe_block_repo_less(tool_name, decoded, repo_path, repo_root, node_path)
 
       _ ->
         "Error: tool arguments were received as a JSON-encoded string instead of a JSON object. " <>
           "Pass the arguments as a real JSON object, " <>
           "e.g. {\"args\": [\"-n\", \"pattern\"]}, not a string."
+    end
+  end
+
+  # Defense-in-depth write guard: repo-less agents (marked via
+  # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
+  # must never touch git or write files. Block write tools for them before
+  # dispatching; every execution path in `execute/5` routes through here so
+  # there is no bypass.
+  defp maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path) do
+    if Process.get(:repo_less) && tool_name in @write_tools do
+      "Error: this agent has read-only access to the system — the #{tool_name} tool is disabled."
+    else
+      execute_tool(tool_name, args, repo_path, repo_root, node_path)
     end
   end
 
@@ -238,6 +286,40 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("skill_where", args, repo_path, repo_root, _node_path) when is_map(args) do
     SkillWhere.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("list_tasks", args, repo_path, repo_root, _node_path) when is_map(args) do
+    ListTasks.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("get_task", args, repo_path, repo_root, _node_path) when is_map(args) do
+    GetTask.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("start_task", args, repo_path, repo_root, _node_path) when is_map(args) do
+    StartTask.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("cancel_task", args, repo_path, repo_root, _node_path) when is_map(args) do
+    CancelTask.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("force_kill_task", args, repo_path, repo_root, _node_path)
+       when is_map(args) do
+    ForceKillTask.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("delete_task", args, repo_path, repo_root, _node_path) when is_map(args) do
+    DeleteTask.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("guide_user", args, repo_path, repo_root, _node_path) when is_map(args) do
+    GuideUser.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("subagent_investigator", args, repo_path, repo_root, _node_path)
+       when is_map(args) do
+    SpawnInvestigator.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path)

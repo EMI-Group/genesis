@@ -48,40 +48,51 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def sync_current_commit_after_tools(%LoopState{} = state) do
-    repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
+    # Repo-less agents have no worktree and no phylo_node — skip git entirely.
+    if Process.get(:repo_less) do
+      :ok
+    else
+      repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-    case Git.rev_parse(repo_path) do
-      {:ok, current_sha} ->
-        {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
+      case Git.rev_parse(repo_path) do
+        {:ok, current_sha} ->
+          {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
 
-        if agent_state.phylo_node.current_commit != current_sha do
-          updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-          AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
-        end
+          if agent_state.phylo_node.current_commit != current_sha do
+            updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+            AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+          end
 
-      {:error, {code, msg}} ->
-        raise "Git rev_parse failed (#{code}): #{msg}"
+        {:error, {code, msg}} ->
+          raise "Git rev_parse failed (#{code}): #{msg}"
+      end
     end
   end
 
   # Syncs current commit and returns the SHA (for use in completion)
   defp sync_and_get_current_commit(%LoopState{} = state) do
-    repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
+    # Repo-less agents have no worktree and no phylo_node — no commit to sync;
+    # completion receives a nil commit_sha.
+    if Process.get(:repo_less) do
+      nil
+    else
+      repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
-    current_sha =
-      case Git.rev_parse(repo_path) do
-        {:ok, sha} -> sha
-        {:error, {code, msg}} -> raise "Git rev_parse failed (#{code}): #{msg}"
+      current_sha =
+        case Git.rev_parse(repo_path) do
+          {:ok, sha} -> sha
+          {:error, {code, msg}} -> raise "Git rev_parse failed (#{code}): #{msg}"
+        end
+
+      {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
+
+      if agent_state.phylo_node.current_commit != current_sha do
+        updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
+        AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
       end
 
-    {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-
-    if agent_state.phylo_node.current_commit != current_sha do
-      updated_phylo = %{agent_state.phylo_node | current_commit: current_sha}
-      AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
+      current_sha
     end
-
-    current_sha
   end
 
   # --- Main Turn ---
@@ -673,7 +684,10 @@ defmodule EvoGit.Agent.ToolDispatch do
       not state.in_grace_period and
         Map.get(complete_args, "check_git_status") != false
 
-    if grace or not check_git_status do
+    # Repo-less agents never write to disk, so the dirty-workspace check is
+    # skipped entirely (the real Genesis source root being dirty is irrelevant,
+    # and a dirty real repo would wedge completion with warnings).
+    if Process.get(:repo_less) or grace or not check_git_status do
       do_complete(complete_call, state)
     else
       repo_path = Process.get(:repo_path)
@@ -710,12 +724,17 @@ defmodule EvoGit.Agent.ToolDispatch do
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
     depth = AgentScheduler.current_depth()
 
+    # Repo-less agents have a nil phylo_node — passing nil base_commit is safe:
+    # CompleteTask.complete/4 guards git-note/archive writes on base_commit
+    # being truthy, so both are skipped for repo-less agents.
+    base_commit = if Process.get(:repo_less), do: nil, else: agent_state.phylo_node.base_commit
+
     final_result =
       CompleteTask.complete(
         state.agent_id,
         result,
         commit_sha,
-        base_commit: agent_state.phylo_node.base_commit,
+        base_commit: base_commit,
         parent_id: agent_state.parent_id,
         depth: depth,
         objective: agent_state.objective,
