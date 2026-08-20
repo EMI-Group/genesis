@@ -305,6 +305,15 @@ button, a, input, textarea, select, summary,
   animation: float 3s ease-in-out infinite;
 }
 
+/* Genesis Guide overlay: temporary highlight applied to the guided element by
+   the Guide JS hook (js/app.js) — a primary-color outline offset from the
+   element; removed by the hook after ~3s. */
+.guide-highlight {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+}
+
 /* Staggered delay classes */
 .animation-delay-100 { animation-delay: 100ms; }
 .animation-delay-200 { animation-delay: 200ms; }
