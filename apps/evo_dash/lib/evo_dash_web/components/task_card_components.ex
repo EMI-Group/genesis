@@ -91,7 +91,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
         <!-- Middle row: Objective text -->
         <div class="pr-2 -mt-2">
-          <% objective_text = (@task.opts[:prompt] || @task.opts[:objective] || "") |> String.trim() %>
+          <% objective_text = objective_text(@task.opts) %>
           <%= if objective_text != "" do %>
             <p
               class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
@@ -209,40 +209,64 @@ defmodule EvoDashWeb.TaskCardComponents do
           <div class="border-t border-base-200 pt-3 mt-1">
             <div class="space-y-4">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <!-- Objective card — full objective text (scrollable) + mode/path badges -->
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <div class="flex items-center justify-between mb-4">
                     <h4 class="text-sm font-bold flex items-center gap-2">
-                      <.icon name="hero-cog-8-tooth" class="size-4.5 text-primary" /> {gettext(
-                        "Options"
-                      )}
+                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-4.5 text-primary" />
+                      {gettext("Objective")}
                     </h4>
-                    <button
-                      class="btn btn-xs btn-ghost rounded-md"
-                      phx-click="view_full_options"
-                      phx-value-task_id={@task.id}
-                    >
-                      <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext("Full")}
-                    </button>
-                  </div>
-                  {render_options(@task.opts)}
-                </div>
-                <%= if Map.get(@task, :result) do %>
-                  <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                    <div class="flex items-center justify-between mb-4">
-                      <h4 class="text-sm font-bold flex items-center gap-2">
-                        <.icon name="hero-check-badge" class="size-4.5 text-success" /> {gettext(
-                          "Result"
-                        )}
-                      </h4>
+                    <div class="flex items-center gap-2">
+                      <button
+                        id={"task-#{@task.id}-objective-copy"}
+                        phx-hook="ClipboardCopy"
+                        data-content={objective_text(@task.opts)}
+                        class="btn btn-xs btn-ghost rounded-md"
+                      >
+                        <.icon name="hero-clipboard-document" class="size-3.5 mr-1" />
+                        <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
+                      </button>
                       <button
                         class="btn btn-xs btn-ghost rounded-md"
-                        phx-click="view_full_result"
+                        phx-click="view_full_options"
                         phx-value-task_id={@task.id}
                       >
                         <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext(
                           "Full"
                         )}
                       </button>
+                    </div>
+                  </div>
+                  {render_options(@task.opts)}
+                </div>
+                <%= if Map.get(@task, :result) do %>
+                  <!-- Agent Message card — full result content (scrollable) + badges -->
+                  <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                    <div class="flex items-center justify-between mb-4">
+                      <h4 class="text-sm font-bold flex items-center gap-2">
+                        <.icon name="hero-chat-bubble-left-ellipsis" class="size-4.5 text-success" />
+                        <%!-- zh_CN: 智能体的最终消息 --%>{gettext("Agent Message")}
+                      </h4>
+                      <div class="flex items-center gap-2">
+                        <button
+                          id={"task-#{@task.id}-result-copy"}
+                          phx-hook="ClipboardCopy"
+                          data-content={result_copy_text(@task.result)}
+                          class="btn btn-xs btn-ghost rounded-md"
+                        >
+                          <.icon name="hero-clipboard-document" class="size-3.5 mr-1" />
+                          <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
+                        </button>
+                        <button
+                          class="btn btn-xs btn-ghost rounded-md"
+                          phx-click="view_full_result"
+                          phx-value-task_id={@task.id}
+                        >
+                          <.icon name="hero-arrows-pointing-out" class="size-3.5 mr-1" /> {gettext(
+                            "Full"
+                          )}
+                        </button>
+                      </div>
                     </div>
                     {render_result(@task.result)}
                   </div>
@@ -484,9 +508,21 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Public helpers — render_options/2
   # ---------------------------------------------------------------------------
 
+  @doc """
+  Returns the objective text for a task's opts (the `:prompt`, falling back to
+  `:objective`), trimmed of surrounding whitespace. Shared by the collapsed-card
+  preview, the expanded Objective card (including its copy button), and
+  `render_options/2`.
+  """
+  def objective_text(opts) do
+    (opts[:prompt] || opts[:objective] || "") |> String.trim()
+  end
+
   def render_options(opts, render_opts \\ []) do
+    # `truncate: true` = the expanded-card body (scrollable, full text);
+    # `truncate: false` = the zoomed view (the modal's own container scrolls).
     truncate = Keyword.get(render_opts, :truncate, true)
-    primary_text = opts[:prompt] || opts[:objective] || ""
+    primary_text = objective_text(opts)
     mode = opts[:mode] || ""
     path = opts[:path] || ""
 
@@ -500,15 +536,11 @@ defmodule EvoDashWeb.TaskCardComponents do
     ~H"""
     <div class="space-y-3">
       <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Objective")}
-        </h5>
-        <div class="text-sm whitespace-pre-wrap break-words">
-          <%= if @truncate do %>
-            {String.slice(@primary_text, 0, 300)}{if String.length(@primary_text) > 300, do: "..."}
-          <% else %>
-            {@primary_text}
-          <% end %>
+        <div class={[
+          "text-sm whitespace-pre-wrap break-words",
+          if(@truncate, do: "max-h-48 overflow-y-auto", else: "")
+        ]}>
+          {@primary_text}
         </div>
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
@@ -550,9 +582,11 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   def render_result({:error, reason}, opts) do
+    # `truncate: true` = expanded-card body (full text, scrollable);
+    # `truncate: false` = zoomed view (the modal's own container scrolls).
     truncate = Keyword.get(opts, :truncate, true)
-    limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
+    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
 
     wrapper_class =
       if truncate,
@@ -560,9 +594,10 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      reason: inspect(reason, limit: limit),
+      reason: inspect(reason, limit: :infinity),
       size_class: size_class,
-      wrapper_class: wrapper_class
+      wrapper_class: wrapper_class,
+      scroll_class: scroll_class
     }
 
     ~H"""
@@ -570,15 +605,17 @@ defmodule EvoDashWeb.TaskCardComponents do
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
       </h5>
-      <pre class={["whitespace-pre-wrap break-words", @size_class]}><%= @reason %></pre>
+      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason %></pre>
     </div>
     """
   end
 
   def render_result({:exit, reason}, opts) do
+    # `truncate: true` = expanded-card body (full text, scrollable);
+    # `truncate: false` = zoomed view (the modal's own container scrolls).
     truncate = Keyword.get(opts, :truncate, true)
-    limit = if truncate, do: 100, else: :infinity
     size_class = if truncate, do: "text-xs", else: "text-sm"
+    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
 
     wrapper_class =
       if truncate,
@@ -586,9 +623,10 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      reason: inspect(reason, limit: limit),
+      reason: inspect(reason, limit: :infinity),
       size_class: size_class,
-      wrapper_class: wrapper_class
+      wrapper_class: wrapper_class,
+      scroll_class: scroll_class
     }
 
     ~H"""
@@ -596,7 +634,7 @@ defmodule EvoDashWeb.TaskCardComponents do
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
       </h5>
-      <pre class={["whitespace-pre-wrap break-words", @size_class]}><%= @reason %></pre>
+      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason %></pre>
     </div>
     """
   end
@@ -613,12 +651,8 @@ defmodule EvoDashWeb.TaskCardComponents do
     <div class={if @truncate, do: "space-y-3", else: "space-y-4"}>
       <%= if @truncate do %>
         <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" />
-            <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
-          </h5>
-          <div class="text-sm whitespace-pre-wrap break-words">
-            {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
+          <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+            {@result}
           </div>
         </div>
         <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
@@ -706,12 +740,14 @@ defmodule EvoDashWeb.TaskCardComponents do
           do: "bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner",
           else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
       }>
-        <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-          <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
-        </h5>
+        <%= if !@truncate do %>
+          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
+          </h5>
+        <% end %>
         <%= if @truncate do %>
-          <div class="text-sm whitespace-pre-wrap break-words">
-            {String.slice(@result, 0, 300)}{if String.length(@result) > 300, do: "..."}
+          <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
+            {@result}
           </div>
         <% else %>
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
@@ -756,7 +792,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   def render_result(%{result: result}, opts) do
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
-    inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
+    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
 
     wrapper_class =
       if truncate,
@@ -764,20 +800,21 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      result: inspect(result, inspect_opts),
+      result: inspect(result, pretty: true, limit: :infinity),
       size_class: size_class,
-      wrapper_class: wrapper_class
+      wrapper_class: wrapper_class,
+      scroll_class: scroll_class
     }
 
     ~H"""
-    <pre class={["overflow-x-auto", @size_class, @wrapper_class]}><%= @result %></pre>
+    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result %></pre>
     """
   end
 
   def render_result(result, opts) do
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
-    inspect_opts = if truncate, do: [pretty: true], else: [pretty: true, limit: :infinity]
+    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
 
     wrapper_class =
       if truncate,
@@ -785,13 +822,14 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      result: inspect(result, inspect_opts),
+      result: inspect(result, pretty: true, limit: :infinity),
       size_class: size_class,
-      wrapper_class: wrapper_class
+      wrapper_class: wrapper_class,
+      scroll_class: scroll_class
     }
 
     ~H"""
-    <pre class={["overflow-x-auto", @size_class, @wrapper_class]}><%= @result %></pre>
+    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result %></pre>
     """
   end
 
@@ -802,6 +840,20 @@ defmodule EvoDashWeb.TaskCardComponents do
   def render_result_full(assigns) do
     render_result(assigns, truncate: false)
   end
+
+  @doc """
+  Returns the copyable plain-text representation of a task result value.
+
+  Used by both the unzoomed "Agent Message" card copy button and the zoomed
+  Full Result modal copy button (`tasks_live.ex`). Success/no-changes results
+  copy the raw agent message; error/crash results copy the inspected reason
+  (unlimited); anything else falls back to a pretty-inspected representation.
+  """
+  def result_copy_text({:ok, %{result: result}}) when is_binary(result), do: result
+  def result_copy_text({:error, reason}), do: inspect(reason, limit: :infinity)
+  def result_copy_text({:exit, reason}), do: inspect(reason, limit: :infinity)
+  def result_copy_text(%{result: result}) when is_binary(result), do: result
+  def result_copy_text(result), do: inspect(result, pretty: true, limit: :infinity)
 
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
        when is_binary(branch) and branch != "", do: true

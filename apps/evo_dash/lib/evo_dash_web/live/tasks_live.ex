@@ -313,6 +313,17 @@ defmodule EvoDashWeb.TasksLive do
               {gettext("Task Result")}
             </:title>
             {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
+            <:actions>
+              <button
+                id="full-result-copy"
+                phx-hook="ClipboardCopy"
+                data-content={EvoDashWeb.TaskCardComponents.result_copy_text(@selected_result)}
+                class="btn btn-sm btn-ghost rounded-md"
+              >
+                <.icon name="hero-clipboard-document" class="size-4 mr-1.5" />
+                <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
+              </button>
+            </:actions>
           </EvoDashWeb.Helpers.modal>
         <% end %>
 
@@ -324,6 +335,17 @@ defmodule EvoDashWeb.TasksLive do
               {gettext("Full Objective")}
             </:title>
             <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>
+            <:actions>
+              <button
+                id="full-options-copy"
+                phx-hook="ClipboardCopy"
+                data-content={@selected_options}
+                class="btn btn-sm btn-ghost rounded-md"
+              >
+                <.icon name="hero-clipboard-document" class="size-4 mr-1.5" />
+                <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
+              </button>
+            </:actions>
           </EvoDashWeb.Helpers.modal>
         <% end %>
 
@@ -709,6 +731,12 @@ defmodule EvoDashWeb.TasksLive do
   @impl true
   def handle_event("close_options_modal", _params, socket) do
     close_options_modal(socket)
+  end
+
+  # Fired by the global ClipboardCopy JS hook after a successful copy.
+  @impl true
+  def handle_event("copied", _params, socket) do
+    {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
   end
 
   @impl true
