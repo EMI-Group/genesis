@@ -22,6 +22,7 @@ None — leaf directory (all modules at this level).
 
 ## Constraints
 
+- **Task-type atom whitelist in the SQLite Codec**: `EvoGit.TaskRegistry.start_task/2` (task_registry.ex:51-53) is TYPE-AGNOSTIC — any atom passes through to `TaskExecutor.execute_task/3`, which has one clause per type (`:genesis`, `:evolve`, `:extract_skills`) and NO catch-all (an unknown type raises `FunctionClauseError` in the spawned task process → task marked `:failed`). The persisted `type` column round-trips through `EvoGit.Store.Codec` whose `@known_atoms` whitelist (store/codec.ex:217-222) contains only `genesis evolve extract_skills` for the type field — `encode_atom` is total but `decode_atom` returns `nil` for non-whitelisted strings, so a NEW task type (e.g. `:reflect`/`:chat`) MUST be added to `@known_atoms` (and the comment at codec.ex:206) or its tasks load back with `type: nil`. The `TaskInfo.type` typespec (task_info.ex:29) is unconstrained (`atom() | nil`).
 - All modules are pure functions or ETS-only — no GenServer state, no I/O (aside from `Cleanup` which calls `EvoGit.Store` for deletion).
 - `Lease` module: all ETS access uses `:ets.info/1` first (returns `:undefined` for missing tables), avoiding `try/rescue`.
 - `Diagnostics`: logging only — never modifies state or raises.
