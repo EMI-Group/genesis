@@ -35,6 +35,8 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 |---|---|
 | `tools.ex` | Central dispatch: `schemas/0` returns tool schemas, `execute/5` dispatches by name |
 | Standard tools | `read_file`, `create_files`, `write_file`, `edit_file`, `make_dir`, `read_context`, `write_context`, `edit_context`, `run_bash`, `rg`, `glob`, `list_dir`, `search_web`, `search_context`, `search_history` |
+| System Control tools | `list_tasks`, `get_task`, `start_task`, `cancel_task`, `force_kill_task`, `delete_task`, `guide_user` — task-registry read/control + user-guidance tools implemented in `agent/tools/` (`EvoGit.Agent.Tools.ListTasks` etc.) |
+| `subagent_investigator` | Placeholder tool that spawns an `subagent_investigator` subagent (`EvoGit.Agent.Tools.SpawnInvestigator`) — schema/execute wired into `tools.ex`; the spawn logic lands with the SelfReflective agent workstream |
 | `CompleteTask` | Special completion tool injected by `use` macro; returns `%Result{}` |
 
 ### Delegation Hinting
@@ -124,3 +126,10 @@ Within the agent loop, the following raise on nil/missing `:repo_path` (all `|| 
 - `do_run/2` validates `Path.join(repo_path, node_path)` exists (`runner.ex:62-70`) → `{:error, :path_not_exist}` if not.
 - `do_commit_pending/1` in `AgentScheduler.Dispatch.commit_pending_in_worktree/0` (scheduler side, dispatch.ex:271-312) is the ONE repo-dependent path that is already repo-less-safe: nil `:repo_path` → no-op `:ok`; non-git dir → `Git.status` returns `{:error, {128, _}}` → logged warning, returns `:ok`. Called from `Runner.run/3`'s `after` block (`runner.ex:51`) and `SubagentProcessing.process_subagent_calls/3` (`subagent_processing.ex:60`).
 - `CompleteTask.complete/4` (`tools/complete_task.ex:128-190`): `%Result{}` construction sets `commit_sha` (enforced key), `branch` (derived from ETS `lookup_task_info/1` — repo-free, `{:error, :not_found}` → `{0, nil, 0}`), `repo_id` (`Process.get(:evogit_repo_id)`), `usage`; `tag/base_commit/agent_count/archive_records` stay nil. Git-note (`add_metadata_note`) and archive-ref writing (`write_archive_refs`) are both gated on `base_commit` (from `phylo_node`), so a repo-less agent with a nil phylo_node skips them naturally. The dirty-workspace check `CompleteTask.check_workspace_dirty/1` is tolerant (`_ -> {:clean, nil}` on git errors).
+
+## Repo-less Agents
+
+A repo-less agent runs WITHOUT a git worktree (chatbot-style). It is marked via `Process.get(:repo_less)` (set by the runner) and its `Process.get(:repo_path)` points at the real Genesis source root or a placeholder binary (not a worktree). Cardinal rule: **repo-less agents must never touch git or write files.**
+
+- **Write guard**: `EvoGit.Agent.Tools.execute/5` (`tools.ex`) blocks all write tools for repo-less agents, returning `"Error: this agent has read-only access to the system — the <name> tool is disabled."`. The blocked set is the `@write_tools` module attribute (`create_files`, `write_file`, `edit_file`, `make_dir`, `write_context`, `edit_context`, `run_bash`, `run_powershell`, `skill_add`, `skill_edit`, `skill_remove`, `skill_enable`, `skill_disable`). Both `execute/5` argument paths (map args and the JSON-string decode fallback) route through the shared `maybe_block_repo_less/5` helper, so there is no bypass.
+- **System-control tools**: `list_tasks`, `get_task`, `start_task`, `cancel_task`, `force_kill_task`, `delete_task`, `guide_user` (and the `subagent_investigator` placeholder) live in `agent/tools/` (`EvoGit.Agent.Tools.ListTasks`, `GetTask`, `StartTask`, `CancelTask`, `ForceKillTask`, `DeleteTask`, `GuideUser`, `SpawnInvestigator`). They are registered in `tools.ex` `schemas/0` + `execute_tool/5` for completeness/other agents; a future SelfReflective agent builds its own explicit tool list referencing the schema functions directly.
