@@ -11,7 +11,7 @@ JS object with lifecycle callbacks (`mounted`, `updated`, `destroyed`) registere
 ### Hook Registration
 
 All hooks are registered in `../app.js` in the `LiveSocket` constructor's `hooks:` map
-(lines 826-831 — `liveSocket` constructed at 827, `hooks:` map at 830):
+(lines 987-991 — `liveSocket` constructed at 987, `hooks:` map at 990):
 
 ```js
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
@@ -21,11 +21,11 @@ import AdaptiveInput from "./hooks/adaptive_input.js"
 import LegendTooltip from "./hooks/legend_tooltip.js"
 import DiffViewer from "./hooks/diff_viewer.js"
 // ...
-hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, PlatformDetect,
-        PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence,
-        BrowserNotifications, AutoClearFlash, ClipboardCopy,
-        AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade,
-        AdaptiveInput, LegendTooltip, DiffViewer, FocusInput, PaletteList}
+hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus,
+        PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence,
+        BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll,
+        DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip,
+        FocusInput, PaletteList, DiffViewer}
 ```
 
 ### Where each hook is defined
@@ -37,38 +37,67 @@ hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, Platfor
 | `NodeSwitchFade` | `./node_switch_fade.js` (own file, ES module default export) | `layouts.ex` `<main id="main-content" phx-hook="NodeSwitchFade" data-node-id=...>` — plays a 0.25s opacity fade when `data-node-id` changes |
 | `LegendTooltip` | `./legend_tooltip.js` (own file, ES module default export) | `agents_live.html.heex` legend chips (`phx-hook="LegendTooltip"` + `data-tip` + unique id) — renders the tip as a `position: fixed` element appended to `document.body` (DaisyUI `.tooltip` is clipped; see `live/CONTEXT.md`) |
 | `DiffViewer` | `./diff_viewer.js` (own file, ES module default export) | `review_components/diff_viewer.ex` `#diff-viewer` (`phx-hook="DiffViewer"`) — TWO merged responsibilities (LiveView 1.2 `phx-hook` accepts exactly ONE hook name; see Known Issues): (a) **client-side syntax highlighting** of diff cells with vendored highlight.js (see `../assets/CONTEXT.md` "Client-side syntax highlighting") — runs its pass in `mounted()` AND `updated()` (morphdom in-place patches don't re-init hooks, so `updated()` re-highlights new/changed rows). Per `.diff-file-section` reads `data-language` (lumis→hljs map: `c_sharp`→`csharp`, `text`→`plaintext`, else passthrough) and skips sections with unknown languages (`hljs.getLanguage` undefined); per `.diff-split-cell` skips `dataset.hl === "1"`-marked and empty/whitespace-only cells, runs `hljs.highlight(code, {language})` in try/catch (a throw leaves the cell as plain text — never breaks the page), assigns `innerHTML`, and marks `dataset.hl = "1"`. No-ops gracefully if hljs failed to load. (b) **scroll-to-file** — the `scroll_to_file` event handler registered in `mounted()` scrolls the `#main-scroll` container to the selected file section (50ms `setTimeout` to wait for the DOM patch; `scrollIntoView` fallback when the container is absent) |
-| `PathAutocomplete` | `../app.js` (inline, line 46) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) — Tab-completion to longest common prefix + real-time single-match autofill from datalist |
-| `DirectoryPicker` | `../app.js` (inline, line 140) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) — click pushes `directory_pick` to the server; listens for `picker_result:<id>` (protocol in `../assets/CONTEXT.md` Notes for Agents) |
-| `FilePicker` | `../app.js` (inline, line 267) | objective editor "+" attach-file button (`phx-hook="FilePicker"`, `data-picker-id="objective_file"`) — pushes `file_pick`/`file_pick_manual`, listens for `picker_result:<id>`; append-not-clobber textarea write (protocol in `../assets/CONTEXT.md` Notes for Agents) |
-| `StatePersistence` | `../app.js` (inline, line 422) | `projects_live.ex` dashboard root (`phx-hook="StatePersistence"`) — sessionStorage save/restore of dashboard state + client-side debounced form watching |
-| `BrowserNotifications` | `../app.js` (inline, line 495) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) — HTML5 notifications on `task_notification` events |
-| `ClipboardCopy` | `../app.js` (inline, line 510) | `settings_live.ex`, `welcome_complete_live.ex`, `projects_live.ex`, `review_components/header.ex` — copies `data-content` to clipboard on click, pushes `"copied"` |
-| `AutoClearFlash` | `../app.js` (inline, line 536) | `core_components.ex` flash component — auto-dismisses flash messages after 4s (except `client-error`/`server-error`) |
-| `AgentHistoryAutoScroll` | `../app.js` (inline, line 592) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) — rAF-based ease-out auto-scroll when at the bottom |
-| `TauriDetect` | `../app.js` (inline, line 679) | `projects_live.ex` `#tauri-detect` (`phx-hook="TauriDetect"`) — pushes `tauri_detected` |
-| `DesktopQuit` | `../app.js` (inline, line 695) | `layouts.ex` wrapper around `<main id="main-content">` — listens for Tauri `quit-requested`, pushes `desktop_quit_requested` |
-| `DesktopQuitConfirm` | `../app.js` (inline, line 733) | desktop quit dialog's red Quit button — invokes Tauri `begin_quit` then pushes `desktop_quit_confirmed` |
-| `PlatformDetect` | `../app.js` (inline, line 754) | `projects_live.ex` `#platform-detect` (`phx-hook="PlatformDetect"`) — pushes `platform_info` |
-| `DialogModal` | `../app.js` (inline, line 775) | (native `<dialog class="modal">` elements) — shows the dialog in the top layer, pushes `dialog_closed` on ESC/backdrop close |
-| `FocusInput` | `../app.js` (inline, line 797) | `project_components.ex` command palette search input — focus on mount + re-focus on update |
-| `PaletteList` | `../app.js` (inline, line 811) | `project_components.ex` command palette list — scrolls `[data-selected="true"]` into view on re-render |
+| `UpdateStatus` | `../app.js` (inline, line 826) | `layouts.ex` `<div id="update-status-hook" phx-hook="UpdateStatus" />` (line 242) — Tauri-updater bridge: module-level once-bound window listeners + once-started timers (see section below); no-op outside the Tauri shell |
+| `PathAutocomplete` | `../app.js` (inline, line 56) | `project_components.ex` path inputs (`phx-hook="PathAutocomplete"`) — Tab-completion to longest common prefix + real-time single-match autofill from datalist |
+| `DirectoryPicker` | `../app.js` (inline, line 150) | `project_components.ex` browse buttons (`phx-hook="DirectoryPicker"`) — click pushes `directory_pick` to the server; listens for `picker_result:<id>` (protocol in `../assets/CONTEXT.md` Notes for Agents) |
+| `FilePicker` | `../app.js` (inline, line 277) | objective editor "+" attach-file button (`phx-hook="FilePicker"`, `data-picker-id="objective_file"`) — pushes `file_pick`/`file_pick_manual`, listens for `picker_result:<id>`; append-not-clobber textarea write (protocol in `../assets/CONTEXT.md` Notes for Agents) |
+| `StatePersistence` | `../app.js` (inline, line 432) | `projects_live.ex` dashboard root (`phx-hook="StatePersistence"`) — sessionStorage save/restore of dashboard state + client-side debounced form watching |
+| `BrowserNotifications` | `../app.js` (inline, line 505) | `projects_live.ex` (`phx-hook="BrowserNotifications"`) — HTML5 notifications on `task_notification` events |
+| `ClipboardCopy` | `../app.js` (inline, line 520) | `settings_live.ex`, `welcome_complete_live.ex`, `projects_live.ex`, `review_components/header.ex` — copies `data-content` to clipboard on click, pushes `"copied"` |
+| `AutoClearFlash` | `../app.js` (inline, line 546) | `core_components.ex` flash component — auto-dismisses flash messages after 4s (except `client-error`/`server-error`) |
+| `AgentHistoryAutoScroll` | `../app.js` (inline, line 575) | `agents_live.html.heex` (`phx-hook="AgentHistoryAutoScroll"`) — rAF-based ease-out auto-scroll when at the bottom |
+| `TauriDetect` | `../app.js` (inline, line 662) | `projects_live.ex` `#tauri-detect` (`phx-hook="TauriDetect"`, line 102) — pushes `tauri_detected` |
+| `DesktopQuit` | `../app.js` (inline, line 689) | `layouts.ex` wrapper around `<main id="main-content">` (`#desktop-quit-hook`, line 231) — listens for Tauri `quit-requested`, pushes `desktop_quit_requested` |
+| `DesktopQuitConfirm` | `../app.js` (inline, line 791) | desktop quit dialog's red Quit button — invokes Tauri `begin_quit` then pushes `desktop_quit_confirmed` |
+| `PlatformDetect` | `../app.js` (inline, line 914) | `projects_live.ex` `#platform-detect` (`phx-hook="PlatformDetect"`, line 103) — pushes `platform_info` |
+| `DialogModal` | `../app.js` (inline, line 935) | (native `<dialog class="modal">` elements) — shows the dialog in the top layer, pushes `dialog_closed` on ESC/backdrop close |
+| `FocusInput` | `../app.js` (inline, line 957) | `project_components.ex` command palette search input — focus on mount + re-focus on update |
+| `PaletteList` | `../app.js` (inline, line 971) | `project_components.ex` command palette list — scrolls `[data-selected="true"]` into view on re-render |
 
-### SidebarCollapse — selector contract
+### UpdateStatus hook — module-level once-bound listener/timer pattern
 
-The sidebar-collapse hook manages desktop sidebar collapse with `localStorage`
-persistence (`"sidebar-collapsed"`, `"true"`/`"false"`). It toggles these selectors on the
-`<aside id="sidebar">` element (from `layouts.ex`):
+`UpdateStatus` (`app.js:822-911`) is the **reference pattern for a global push-based
+hook**: module-level `let updateListenersBound = false; let updateTimersStarted = false;
+let updateCurrentHook = null;` (app.js:822-824). `mounted()` (app.js:827-850) guards on
+the Tauri detection `const isTauri = !!(window.__TAURI__ || window.__TAURI_OS_INTERNALS__)`
+(app.js:829) and returns early outside the shell; sets `updateCurrentHook = this`; binds
+the three window listeners ONCE (app.js:835-840):
 
-- `.sidebar-label` — text spans hidden when collapsed (brand text, section headers, task labels)
-- `.sidebar-collapsed-only` — compact elements shown only when collapsed (task status dots + 6-char IDs)
-- `[data-sidebar-bottom-bar]` — bottom container: switches between `flex justify-between` (expanded) and `flex-col items-center` (collapsed)
-- `[data-sidebar-bottom-group]` — button group inside the bottom bar (same flex-dir toggle)
-- `#sidebar-collapse-toggle` — the chevron button; swaps `hero-chevron-double-left` ↔ `hero-chevron-double-right` via innerHTML regex replacement and updates its `title`
-- width: toggles `w-60` (expanded, 240px) ↔ `w-16` (collapsed, 64px). Overflow stays `overflow-visible` in BOTH states — dropdown menus (SSH node selector `w-72` = 288px, language, theme) extend beyond the expanded sidebar's `w-60` = 240px edge without being clipped. Do NOT re-add `overflow-hidden` on expand (it clips the node-selector dropdown).
+```js
+if (!updateListenersBound) {
+  updateListenersBound = true;
+  window.addEventListener("phx:update_check_requested", () => invokeUpdateCheck());
+  window.addEventListener("phx:update_download_requested", () => invokeUpdateDownload());
+  window.addEventListener("phx:update_apply_requested", () => invokeUpdateApply());
+}
+```
 
-**Critical**: the `updated()` callback re-applies state on every LiveView update because
-LiveView's morphdom resets server-rendered classes after navigation, which would otherwise
-undo the collapse state. This is why collapse state survives route changes.
+and starts the timers once (app.js:842-849): `setTimeout(() => invokeUpdateCheck(), 30000)`
++ `setInterval(() => invokeUpdateCheck(), 6 * 60 * 60 * 1000)`. `destroyed()` (app.js:851-858)
+only clears `updateCurrentHook` if it still points at this instance (another mount may have
+taken over). The `invoke*` functions (app.js:877-911) `window.__TAURI__.core.invoke(...)`
+the Rust commands and push results back via `pushUpdateEvent` (app.js:864-874 — guards the
+ref and try/catches `hook.pushEvent`). Server side: `EvoDashWeb.LiveHooks.UpdateStatus`
+(`lib/evo_dash_web/live_hooks/update_status.ex`) attaches `handle_info`+`handle_event`
+interceptors on EVERY page and is the reference pattern for a **server-side global push
+hook** (`live_hooks/CONTEXT.md:68-91`). This whole module is the model for any one-time
+global listener hook (e.g. a future `Guide` hook listening for `phx:guide_*` events).
+
+### Server→client push_event patterns
+
+Server `push_event(socket, "name", payload)` reaches the client two ways:
+
+1. **`this.handleEvent("name", cb)`** inside a hook (hook-level; listener lives until the
+   hook is destroyed, survives reconnects): `scroll_to_file` (diff_viewer.js:27-47),
+   `picker_result:<id>` (app.js:164, 319), `persist_state` (app.js:450),
+   `task_notification` (app.js:511), `desktop_quit_closed` (app.js:738). Callback receives
+   the payload as its argument (LiveSocket destructures the CustomEvent detail).
+2. **`window.addEventListener("phx:name", ...)`** — LiveSocket dispatches every server
+   push as a `CustomEvent("phx:" + event, {detail: payload})` on `window`
+   (`deps/phoenix_live_view/priv/static/phoenix_live_view.js:7645-7647` `dispatchEvent`),
+   so `e.detail` is the payload map. Examples: `phx:update_check_requested` (app.js:837),
+   `phx:page-loading-start/stop` (app.js:995-996, detail ignored), `phx:live_reload:attached`
+   (app.js:1014 — `({detail: reloader})` destructures the detail).
 
 ## Constraints
 
