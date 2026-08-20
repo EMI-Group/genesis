@@ -17,6 +17,7 @@ The full design specification is documented across the CONTEXT.md tree.
 
 - `./apps/evo_git/` → Core runtime (agents, scheduler, git adapter, runtime phases)
 - `./apps/evo_dash/` → Web dashboard (LiveView pages, components, task registry)
+- Self-reflective agent / `reflect` task mode / guide overlay → `./apps/evo_git/` (agent + repo-less runtime + task-control tools) + `./apps/evo_dash/` (reflect task mode + global guide hook/panel) — see "Self-Reflective Agent (repo-less)" section below
 - `./config/` → Environment-based Elixir configuration
 - `./rel/` → Mix release overlays (`rel/genesis/`, `rel/genesis_remote/` — vm.args + env scripts per release; distribution config for SSH remote dev)
 - `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
