@@ -170,7 +170,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     starting_commit={@task_starting_commit}
                     resume_from={@task_resume_from}
                     show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project)}
+                    disabled={is_nil(@active_project) and @task_mode != "reflect"}
                     archive={@task_archive}
                     model_profiles={@model_profiles}
                     selected_model_id={@selected_model_id}
@@ -318,7 +318,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     starting_commit={@task_starting_commit}
                     resume_from={@task_resume_from}
                     show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project)}
+                    disabled={is_nil(@active_project) and @task_mode != "reflect"}
                     archive={@task_archive}
                     model_profiles={@model_profiles}
                     selected_model_id={@selected_model_id}
@@ -1135,7 +1135,9 @@ defmodule EvoDashWeb.ProjectsLive do
     selected_agent_id = socket.assigns[:selected_agent_id]
 
     cond do
-      is_nil(path) ->
+      # Reflect mode is repo-less — no active project required. All repo
+      # modes (genesis/evolve/custom_agent) keep the existing guard.
+      is_nil(path) and combined_mode != "reflect" ->
         {:noreply,
          put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
 
@@ -2129,13 +2131,22 @@ defmodule EvoDashWeb.ProjectsLive do
         # selected custom agent as the root agent (the core contract's mode
         # string is "custom" — distinct from the UI's combined-mode string).
         "custom_agent" -> {:evolve, "custom"}
+        # Reflect mode is repo-less conversational: a :reflect task with no
+        # :path opt (no active project required).
+        "reflect" -> {:reflect, "reflect"}
         _ -> {:evolve, "simple"}
       end
 
     node_path = params["node_path"]
     archive = params["archive"] == "true"
 
-    opts = [path: path, mode: mode]
+    opts =
+      if combined_mode == "reflect" do
+        # Reflect is repo-less — no :path opt (active_project_path is nil).
+        [mode: mode]
+      else
+        [path: path, mode: mode]
+      end
 
     opts =
       if task_type == :genesis do
