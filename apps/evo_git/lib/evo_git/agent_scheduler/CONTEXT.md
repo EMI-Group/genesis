@@ -139,7 +139,19 @@ Handles the mechanics of registering and dispatching agents:
 5. `dispatch_queued_agents/1` — Drains queue dispatching agents (used after resume)
 6. `process_queue/1` — Processes queue with ready-parent detection (delegates to Subagents)
 
-### Subagent Management (Subagents module)
+### Repo-path assumptions (relevant to any repo-less / no-worktree agent design)
+
+The whole scheduler dispatch path assumes every agent spec carries a real repo. Facts verified at dispatch.ex / worktrees.ex / worktree_manager.ex / runner.ex:
+
+- **`commit_pending_in_worktree/0` is fully safe on missing/non-git paths** (dispatch.ex:271-312): `Process.get(:repo_path)` nil → skips entirely, returns `:ok`. Non-nil but missing path → `Git.run/2`'s `File.dir?` guard returns `{:error, {:enoent, ...}}` (git.ex:64-66). Bare non-git dir → `git status --porcelain` exits 128 → `{:error, {128, "fatal: not a git repository..."}}` (git.ex:89-95). Both fall into the `with`'s `else error -> Logger.warning(...)` arm → `:ok`. Never raises (only environment-level raises possible: `Executable.resolve("git")` / `System.tmp_dir!` in `Git.commit/2`'s temp-file path). Call sites: `Runner.run/3` `try/after` (runner.ex:48-52 — cannot mask a `do_run` exception) and `SubagentProcessing.process_subagent_calls` (subagent_processing.ex:60, inline before `spawn_sub_agents`).
+- **Nil `repo_root` / `phylo_node.repo` CRASHES the scheduler GenServer** (no graceful path exists):
+  1. `resolve_agent_repo_root/2` (dispatch.ex:508-528): primary branch does `String.split(spec.phylo_node.repo, "/.genesis/workers/", parts: 2)` — a nil `phylo_node.repo` (`PhyloGraphNode` has `defstruct [:repo, :base_commit, :current_commit]`, repo defaults nil) raises `FunctionClauseError`. Called at registration (dispatch.ex:69), `run_agent` handler (agent_scheduler.ex:629), and `try_dispatch` (dispatch.ex:204).
+  2. `do_try_dispatch` (dispatch.ex:206-211): `worktree_path = Path.join([agent_repo_root, ".genesis/workers", "worker_T#{..}_A#{..}"])` — nil root raises `ArgumentError` (Path.join requires binaries). `worktree_path` is therefore NEVER nil in the dispatch_ctx when the ctx is built; a nil root crashes before the ctx exists.
+  3. `WorktreeManager.maybe_init_repo/2` → `Worktrees.workers_dir/1` (`Path.join(repo_root, ".genesis/workers")`, worktrees.ex:26) — nil root raises `ArgumentError` inside the WorktreeManager GenServer.
+  4. `Runner.setup_dispatch_context/1` (runner.ex:158-211) UNCONDITIONALLY calls `WorktreeManager.create_worktree_for_agent(agent_id, repo_root, worktree_path, spec, meta, self())` and raises `"Failed to create worktree..."` on `{:error, reason}` (runner.ex:188-201) — the agent Task crashes → scheduler crash-retry. `Process.put(:repo_path, worktree_path)` at runner.ex:179 is what `commit_pending_in_worktree` reads.
+- **`dispatch_ctx` keys** (dispatch.ex:220-229): `[agent_id:, depth:, repo_root:, repo_id:, worktree_path:, retries:, spec:, meta:]` — all `Keyword.fetch!`'d in `setup_dispatch_context` (runner.ex:159-166); `meta` is the full `%SchedMeta{}` (status `:pending | :running | :waiting | :ready | :blocked`). `SchedMeta.worktree` defaults to nil (sched_meta.ex:48) and is set in `do_try_dispatch` BEFORE the task spawn.
+- **Child AgentState gets `repo_id` + `repo_root` only — no worktree_path field** (dispatch.ex:79-95): `phylo_node` starts nil and is bound to the worktree later by `Worktrees.assign_and_prepare_worktree/2`. Each subagent gets its OWN fresh worker dir under the repo root (computed in `do_try_dispatch`), never the parent's path.
+- **Subagent validation never checks repo existence** (`validate_single_subagent/5`, subagents.ex:130-144): only depth, `ContextNode.is_ignored?`, and the spatial contract (which reads `spec.context_node.path` — nil context_node would raise via `.path` access). A spec with a nil/phantom repo passes validation and crashes later in dispatch/worktree creation.
 
 Handles subagent validation, spawning, and result collection:
 
