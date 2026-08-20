@@ -22,7 +22,7 @@ msgstr "%{action} 成功。"
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} 無法使用——遠端連線子系統未在運行。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:395
+#: lib/evo_dash_web/components/task_card_components.ex:419
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
@@ -140,8 +140,8 @@ msgstr "<無文字內容>"
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>找不到您的服務商？</strong>您可以在下方的「模型」欄位中手動輸入任何模型字串，格式為 <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">服務商:模型名稱</code>。前往 <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> 查詢您的模型，或查看<a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">支援的服務商</a>。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:534
-#: lib/evo_dash_web/components/task_form_components.ex:646
+#: lib/evo_dash_web/components/task_form_components.ex:537
+#: lib/evo_dash_web/components/task_form_components.ex:649
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "用於作為基礎的 Git 提交 SHA、分支名稱或標籤。預設為 HEAD。"
@@ -230,14 +230,14 @@ msgstr "新增模型"
 msgid "Add a profile to get started, or use Quick Setup above."
 msgstr "新增設定檔以開始使用，或使用上方的快速設定。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:616
+#: lib/evo_dash_web/components/task_form_components.ex:619
 #, elixir-autogen, elixir-format
 msgid "Advanced Options"
 msgstr "進階選項"
 
-#: lib/evo_dash_web/components/task_card_components.ex:618
-#: lib/evo_dash_web/components/task_card_components.ex:648
-#: lib/evo_dash_web/components/task_card_components.ex:710
+#: lib/evo_dash_web/components/task_card_components.ex:248
+#: lib/evo_dash_web/components/task_card_components.ex:682
+#: lib/evo_dash_web/components/task_card_components.ex:745
 #, elixir-autogen, elixir-format
 msgid "Agent Message"
 msgstr "智能體訊息"
@@ -283,7 +283,7 @@ msgid "Agents"
 msgstr "智能體"
 
 #: lib/evo_dash_web/components/review_components/header.ex:269
-#: lib/evo_dash_web/components/task_card_components.ex:360
+#: lib/evo_dash_web/components/task_card_components.ex:384
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "已生成智能體"
@@ -364,7 +364,7 @@ msgstr "封存開始"
 msgid "Archive Start Ref"
 msgstr "歸檔起始參考"
 
-#: lib/evo_dash_web/components/task_form_components.ex:570
+#: lib/evo_dash_web/components/task_form_components.ex:573
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "封存智能體詳細資訊"
@@ -445,28 +445,28 @@ msgstr "分支"
 msgid "Browse"
 msgstr "瀏覽"
 
-#: lib/evo_dash_web/components/task_form_components.ex:492
+#: lib/evo_dash_web/components/task_form_components.ex:495
 #: lib/evo_dash_web/live/projects_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "建置系統"
 
 #: lib/evo_dash_web/components/review_components/header.ex:213
-#: lib/evo_dash_web/components/task_card_components.ex:297
+#: lib/evo_dash_web/components/task_card_components.ex:321
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "快取建立"
 
 #: lib/evo_dash_web/components/review_components/header.ex:115
 #: lib/evo_dash_web/components/review_components/header.ex:221
-#: lib/evo_dash_web/components/task_card_components.ex:305
+#: lib/evo_dash_web/components/task_card_components.ex:329
 #: lib/evo_dash_web/live/agents_live.html.heex:300
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "快取命中率"
 
 #: lib/evo_dash_web/components/review_components/header.ex:205
-#: lib/evo_dash_web/components/task_card_components.ex:289
+#: lib/evo_dash_web/components/task_card_components.ex:313
 #: lib/evo_dash_web/live/agents_live.html.heex:296
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
@@ -766,7 +766,7 @@ msgstr "成本"
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "無法載入差異資料。該分支可能已被外部修改。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:597
+#: lib/evo_dash_web/components/task_card_components.ex:635
 #, elixir-autogen, elixir-format
 msgid "Crashed"
 msgstr "已崩潰"
@@ -956,7 +956,7 @@ msgstr "請輸入您的 API 金鑰。"
 msgid "Enter your API key. It should start with"
 msgstr "請輸入您的 API 金鑰。應以"
 
-#: lib/evo_dash_web/components/task_card_components.ex:571
+#: lib/evo_dash_web/components/task_card_components.ex:606
 #: lib/evo_dash_web/live/settings_live.ex:1953
 #, elixir-autogen, elixir-format
 msgid "Error"
@@ -967,17 +967,12 @@ msgstr "錯誤"
 msgid "Error running '%{command}': %{error}"
 msgstr "執行「%{command}」時發生錯誤：%{error}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:314
-#, elixir-autogen, elixir-format
-msgid "Evolution"
-msgstr "演進"
-
 #: lib/evo_dash_web/live/settings_live.ex:115
 #, elixir-autogen, elixir-format
 msgid "Example model names:"
 msgstr "模型名稱範例："
 
-#: lib/evo_dash_web/components/task_card_components.ex:391
+#: lib/evo_dash_web/components/task_card_components.ex:415
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "執行日誌"
@@ -1002,7 +997,7 @@ msgid "Failed"
 msgstr "失敗"
 
 #: lib/evo_dash_web/live/projects_live.ex:1179
-#: lib/evo_dash_web/live/tasks_live.ex:753
+#: lib/evo_dash_web/live/tasks_live.ex:781
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "取消任務失敗：%{reason}"
@@ -1135,14 +1130,14 @@ msgstr "外部儲存庫是智能體在執行任務時可存取的額外程式碼
 msgid "Frequency Penalty"
 msgstr "頻率懲罰"
 
-#: lib/evo_dash_web/components/task_card_components.ex:224
-#: lib/evo_dash_web/components/task_card_components.ex:242
+#: lib/evo_dash_web/components/task_card_components.ex:234
+#: lib/evo_dash_web/components/task_card_components.ex:265
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "完整"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:657
-#: lib/evo_dash_web/live/tasks_live.ex:324
+#: lib/evo_dash_web/live/tasks_live.ex:335
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "完整目標"
@@ -1199,7 +1194,7 @@ msgid "Ignored"
 msgstr "已忽略"
 
 #: lib/evo_dash_web/components/review_components/header.ex:245
-#: lib/evo_dash_web/components/task_card_components.ex:333
+#: lib/evo_dash_web/components/task_card_components.ex:357
 #: lib/evo_dash_web/live/agents_live.html.heex:314
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
@@ -1208,7 +1203,7 @@ msgstr "輸入成本"
 #: lib/evo_dash_web/components/archive_components.ex:146
 #: lib/evo_dash_web/components/review_components.ex:213
 #: lib/evo_dash_web/components/review_components/header.ex:176
-#: lib/evo_dash_web/components/task_card_components.ex:261
+#: lib/evo_dash_web/components/task_card_components.ex:285
 #: lib/evo_dash_web/live/agents_live.html.heex:281
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
@@ -1354,7 +1349,7 @@ msgstr "模式：%{mode} | %{prompt}"
 
 #: lib/evo_dash_web/components/review_components/header.ex:277
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:250
-#: lib/evo_dash_web/components/task_card_components.ex:364
+#: lib/evo_dash_web/components/task_card_components.ex:388
 #: lib/evo_dash_web/live/agents_live.html.heex:128
 #, elixir-autogen, elixir-format
 msgid "Model"
@@ -1435,8 +1430,8 @@ msgstr "Nix 環境"
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr "未找到 CONTEXT.md — 已選取現有程式碼庫模式"
 
-#: lib/evo_dash_web/components/task_card_components.ex:626
-#: lib/evo_dash_web/components/task_card_components.ex:637
+#: lib/evo_dash_web/components/task_card_components.ex:660
+#: lib/evo_dash_web/components/task_card_components.ex:671
 #: lib/evo_dash_web/helpers.ex:149
 #, elixir-autogen, elixir-format
 msgid "No Changes"
@@ -1558,7 +1553,7 @@ msgstr "並行 LLM 請求槽位數量"
 #: lib/evo_dash_web/components/review_components.ex:53
 #: lib/evo_dash_web/components/review_components.ex:151
 #: lib/evo_dash_web/components/review_components/header.ex:68
-#: lib/evo_dash_web/components/task_card_components.ex:504
+#: lib/evo_dash_web/components/task_card_components.ex:217
 #: lib/evo_dash_web/live/agents_live.html.heex:146
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:56
 #, elixir-autogen, elixir-format
@@ -1573,7 +1568,7 @@ msgstr "目標"
 msgid "Open"
 msgstr "開啟"
 
-#: lib/evo_dash_web/components/task_form_components.ex:431
+#: lib/evo_dash_web/components/task_form_components.ex:434
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "開啟專案以開始使用"
@@ -1583,13 +1578,8 @@ msgstr "開啟專案以開始使用"
 msgid "Optional: Note for the skill extraction agent"
 msgstr "選擇性：給技能提取智能體的備註"
 
-#: lib/evo_dash_web/components/task_card_components.ex:215
-#, elixir-autogen, elixir-format
-msgid "Options"
-msgstr "選項"
-
 #: lib/evo_dash_web/components/review_components/header.ex:251
-#: lib/evo_dash_web/components/task_card_components.ex:339
+#: lib/evo_dash_web/components/task_card_components.ex:363
 #: lib/evo_dash_web/live/agents_live.html.heex:318
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
@@ -1598,7 +1588,7 @@ msgstr "輸出成本"
 #: lib/evo_dash_web/components/archive_components.ex:152
 #: lib/evo_dash_web/components/review_components.ex:217
 #: lib/evo_dash_web/components/review_components/header.ex:184
-#: lib/evo_dash_web/components/task_card_components.ex:269
+#: lib/evo_dash_web/components/task_card_components.ex:293
 #: lib/evo_dash_web/live/agents_live.html.heex:285
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
@@ -1855,7 +1845,6 @@ msgstr "重新啟動系統？"
 
 #: lib/evo_dash_web/components/archive_components.ex:96
 #: lib/evo_dash_web/components/review_components.ex:161
-#: lib/evo_dash_web/components/task_card_components.ex:233
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "結果"
@@ -1865,8 +1854,8 @@ msgstr "結果"
 msgid "Resume Scheduler"
 msgstr "恢復調度器"
 
-#: lib/evo_dash_web/components/task_form_components.ex:549
-#: lib/evo_dash_web/components/task_form_components.ex:663
+#: lib/evo_dash_web/components/task_form_components.ex:552
+#: lib/evo_dash_web/components/task_form_components.ex:666
 #, elixir-autogen, elixir-format
 msgid "Resume from"
 msgstr "從此繼續"
@@ -2114,14 +2103,14 @@ msgstr "從儀表板啟動任務，即可在此處查看智能體。"
 msgid "Started"
 msgstr "已開始"
 
-#: lib/evo_dash_web/components/task_form_components.ex:532
-#: lib/evo_dash_web/components/task_form_components.ex:641
+#: lib/evo_dash_web/components/task_form_components.ex:535
+#: lib/evo_dash_web/components/task_form_components.ex:644
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "起始提交"
 
-#: lib/evo_dash_web/components/task_form_components.ex:514
-#: lib/evo_dash_web/components/task_form_components.ex:622
+#: lib/evo_dash_web/components/task_form_components.ex:517
+#: lib/evo_dash_web/components/task_form_components.ex:625
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "起始節點"
@@ -2261,8 +2250,8 @@ msgstr "在設定中測試"
 msgid "Testing LLM connection..."
 msgstr "正在測試 LLM 連線…"
 
-#: lib/evo_dash_web/components/task_form_components.ex:551
-#: lib/evo_dash_web/components/task_form_components.ex:665
+#: lib/evo_dash_web/components/task_form_components.ex:554
+#: lib/evo_dash_web/components/task_form_components.ex:668
 #, elixir-autogen, elixir-format
 msgid "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
 msgstr "要從先前繼續的任務 ID。會將前一個任務的上下文（提交、目標與結果）注入到當前任務的目標中。"
@@ -2277,8 +2266,8 @@ msgstr "LLM 服務商名稱"
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "VM 將停止，必須手動重新啟動。所有記憶體中的運行時狀態（執行中的任務、調度器狀態、進行中的智能體）都將遺失。此操作無法撤銷。"
 
-#: lib/evo_dash_web/components/task_card_components.ex:629
-#: lib/evo_dash_web/components/task_card_components.ex:640
+#: lib/evo_dash_web/components/task_card_components.ex:663
+#: lib/evo_dash_web/components/task_card_components.ex:674
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any changes to the codebase."
 msgstr "智能體已完成，但未對程式碼庫做出任何變更。"
@@ -2293,8 +2282,8 @@ msgstr "智能體已完成，未進行任何程式碼變更。您可以從此調
 msgid "The model name"
 msgstr "模型名稱"
 
-#: lib/evo_dash_web/components/task_form_components.ex:516
-#: lib/evo_dash_web/components/task_form_components.ex:625
+#: lib/evo_dash_web/components/task_form_components.ex:519
+#: lib/evo_dash_web/components/task_form_components.ex:628
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "專案內開始演進的子目錄。使用 './' 表示根目錄。"
@@ -2327,7 +2316,7 @@ msgid "This will gracefully shut down the Erlang VM. All applications will be st
 msgstr "這將平滑關閉 Erlang VM。所有應用程式將依序停止。"
 
 #: lib/evo_dash_web/components/review_components/header.ex:169
-#: lib/evo_dash_web/components/task_card_components.ex:256
+#: lib/evo_dash_web/components/task_card_components.ex:280
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "詞元與成本用量"
@@ -2376,7 +2365,7 @@ msgstr "Top P"
 
 #: lib/evo_dash_web/components/review_components/header.ex:107
 #: lib/evo_dash_web/components/review_components/header.ex:257
-#: lib/evo_dash_web/components/task_card_components.ex:345
+#: lib/evo_dash_web/components/task_card_components.ex:369
 #: lib/evo_dash_web/live/agents_live.html.heex:322
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
@@ -2386,7 +2375,7 @@ msgstr "總成本"
 #: lib/evo_dash_web/components/review_components.ex:221
 #: lib/evo_dash_web/components/review_components/header.ex:99
 #: lib/evo_dash_web/components/review_components/header.ex:192
-#: lib/evo_dash_web/components/task_card_components.ex:277
+#: lib/evo_dash_web/components/task_card_components.ex:301
 #: lib/evo_dash_web/live/agents_live.html.heex:289
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
@@ -2482,8 +2471,8 @@ msgid "View Full Objective"
 msgstr "檢視完整目標"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:109
-#: lib/evo_dash_web/components/task_card_components.ex:699
-#: lib/evo_dash_web/components/task_card_components.ex:747
+#: lib/evo_dash_web/components/task_card_components.ex:733
+#: lib/evo_dash_web/components/task_card_components.ex:783
 #, elixir-autogen, elixir-format
 msgid "View PR"
 msgstr "檢視 PR"
@@ -2565,8 +2554,8 @@ msgstr "例如 claude-sonnet-4-6"
 msgid "e.g. gpt-4o or anthropic/claude-3.5-sonnet"
 msgstr "例如 gpt-4o 或 anthropic/claude-3.5-sonnet"
 
-#: lib/evo_dash_web/components/task_form_components.ex:527
-#: lib/evo_dash_web/components/task_form_components.ex:636
+#: lib/evo_dash_web/components/task_form_components.ex:530
+#: lib/evo_dash_web/components/task_form_components.ex:639
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "例如 ./src/components"
@@ -2576,8 +2565,8 @@ msgstr "例如 ./src/components"
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "例如：專注於此 PR 中發現的部署流程和資料庫遷移模式。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:543
-#: lib/evo_dash_web/components/task_form_components.ex:657
+#: lib/evo_dash_web/components/task_form_components.ex:546
+#: lib/evo_dash_web/components/task_form_components.ex:660
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "例如 abc1234 或 HEAD"
@@ -2636,7 +2625,7 @@ msgstr "https://api.my-provider.com/v1"
 msgid "just now"
 msgstr "剛剛"
 
-#: lib/evo_dash_web/components/task_card_components.ex:394
+#: lib/evo_dash_web/components/task_card_components.ex:418
 #, elixir-autogen, elixir-format
 msgid "last 20 of %{count}"
 msgstr "最後 %{count} 筆中的 20 筆"
@@ -2677,7 +2666,7 @@ msgstr "top_k"
 msgid "top_p"
 msgstr "top_p"
 
-#: lib/evo_dash_web/components/task_card_components.ex:370
+#: lib/evo_dash_web/components/task_card_components.ex:394
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "智能體總數（含子智能體）"
@@ -3002,11 +2991,6 @@ msgstr "收起側邊欄"
 msgid "Configure the local Genesis node identity and distribution settings."
 msgstr "設定本地啟元節點標識與分發設置。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:311
-#, elixir-autogen, elixir-format
-msgid "Create New"
-msgstr "新建"
-
 #: lib/evo_dash_web/components/layouts.ex:494
 #, elixir-autogen, elixir-format
 msgid "Dark"
@@ -3048,17 +3032,12 @@ msgstr "啟元是一款 AI 驅動的軟體開發框架。立即設定你的第�
 msgid "Go to Dashboard"
 msgstr "前往儀表板"
 
-#: lib/evo_dash_web/components/task_form_components.ex:308
-#, elixir-autogen, elixir-format
-msgid "Initialize Existing"
-msgstr "初始化現有"
-
 #: lib/evo_dash_web/components/layouts.ex:486
 #, elixir-autogen, elixir-format
 msgid "Light"
 msgstr "淺色模式"
 
-#: lib/evo_dash_web/components/task_form_components.ex:499
+#: lib/evo_dash_web/components/task_form_components.ex:502
 #: lib/evo_dash_web/live/projects_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "No build system"
@@ -3183,6 +3162,7 @@ msgstr "智能體報告"
 
 #: lib/evo_dash_web/live/projects_live.ex:1037
 #: lib/evo_dash_web/live/review_live.ex:338
+#: lib/evo_dash_web/live/tasks_live.ex:739
 #: lib/evo_dash_web/live/welcome_complete_live.ex:88
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
@@ -3313,7 +3293,7 @@ msgstr "此操作將平滑重啟遠端節點的 Erlang 虛擬機。遠端節點�
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "此操作將平滑關閉遠端節點的 Erlang 虛擬機。遠端節點上的所有應用程式將依序停止。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:581
+#: lib/evo_dash_web/components/task_form_components.ex:584
 #, elixir-autogen, elixir-format
 msgid "Archive agent detail"
 msgstr "封存智能體詳情"
@@ -3323,7 +3303,7 @@ msgstr "封存智能體詳情"
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "留空 = 自動偵測遠端作業系統/架構"
 
-#: lib/evo_dash_web/components/task_form_components.ex:583
+#: lib/evo_dash_web/components/task_form_components.ex:586
 #, elixir-autogen, elixir-format
 msgid "Collect per-agent metadata for review"
 msgstr "收集每個智能體的中繼資料以供檢閱"
@@ -3365,7 +3345,7 @@ msgstr "正在解壓縮"
 msgid "Generating cookie"
 msgstr "正在產生 Cookie"
 
-#: lib/evo_dash_web/components/task_form_components.ex:365
+#: lib/evo_dash_web/components/task_form_components.ex:368
 #, elixir-autogen, elixir-format
 msgid "Launch"
 msgstr "啟動"
@@ -3532,7 +3512,11 @@ msgid "Connection lost or failed"
 msgstr "連線已中斷或失敗"
 
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:123
+#: lib/evo_dash_web/components/task_card_components.ex:227
+#: lib/evo_dash_web/components/task_card_components.ex:258
 #: lib/evo_dash_web/live/projects_live.ex:226
+#: lib/evo_dash_web/live/tasks_live.ex:324
+#: lib/evo_dash_web/live/tasks_live.ex:346
 #: lib/evo_dash_web/live/welcome_complete_live.ex:55
 #, elixir-autogen, elixir-format
 msgid "Copy"
@@ -3772,7 +3756,7 @@ msgstr "智能體總數，包含運行中、阻塞（等待槽位）、等候及
 msgid "Try an example task"
 msgstr "試試範例任務"
 
-#: lib/evo_dash_web/components/task_form_components.ex:434
+#: lib/evo_dash_web/components/task_form_components.ex:437
 #, elixir-autogen, elixir-format
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "請使用頂端列中的專案選擇器來開啟或建立專案。"
@@ -3879,17 +3863,17 @@ msgstr "拒絕"
 msgid "Agent is queued, waiting to be scheduled. May be limited by LLM or tool concurrency. Consider increasing concurrency in Settings."
 msgstr "智能體已排入佇列，等待排程。可能受 LLM 或工具並發數量限制。可考慮在設定中提高並發數量。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:342
+#: lib/evo_dash_web/live/tasks_live.ex:364
 #, elixir-autogen, elixir-format
 msgid "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
 msgstr "此任務的所有智能體將被告知立即儲存變更並退出。中間結果將被儲存。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:364
+#: lib/evo_dash_web/live/tasks_live.ex:386
 #, elixir-autogen, elixir-format
 msgid "Cancel Task"
 msgstr "取消任務"
 
-#: lib/evo_dash_web/live/tasks_live.ex:338
+#: lib/evo_dash_web/live/tasks_live.ex:360
 #, elixir-autogen, elixir-format
 msgid "Cancel Task?"
 msgstr "取消任務？"
@@ -3909,17 +3893,17 @@ msgstr "取消中…"
 msgid "Danger zone"
 msgstr "危險區域"
 
-#: lib/evo_dash_web/live/tasks_live.ex:798
+#: lib/evo_dash_web/live/tasks_live.ex:826
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill task: %{reason}"
 msgstr "強制終止任務失敗：%{reason}"
 
-#: lib/evo_dash_web/live/tasks_live.ex:405
+#: lib/evo_dash_web/live/tasks_live.ex:427
 #, elixir-autogen, elixir-format
 msgid "Force Kill"
 msgstr "強制終止"
 
-#: lib/evo_dash_web/live/tasks_live.ex:379
+#: lib/evo_dash_web/live/tasks_live.ex:401
 #, elixir-autogen, elixir-format
 msgid "Force Kill Task?"
 msgstr "強制終止任務？"
@@ -3929,13 +3913,13 @@ msgstr "強制終止任務？"
 msgid "Force kill"
 msgstr "強制終止"
 
-#: lib/evo_dash_web/live/tasks_live.ex:383
+#: lib/evo_dash_web/live/tasks_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
 msgstr "立即停止此任務及其所有智能體。所有進度將完全遺失。此操作無法復原。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:356
-#: lib/evo_dash_web/live/tasks_live.ex:397
+#: lib/evo_dash_web/live/tasks_live.ex:378
+#: lib/evo_dash_web/live/tasks_live.ex:419
 #, elixir-autogen, elixir-format
 msgid "Keep Running"
 msgstr "繼續運行"
@@ -3950,8 +3934,8 @@ msgstr "待處理 — 將於智能體下一輪時加入"
 msgid "Ready"
 msgstr "就緒"
 
-#: lib/evo_dash_web/live/tasks_live.ex:347
-#: lib/evo_dash_web/live/tasks_live.ex:388
+#: lib/evo_dash_web/live/tasks_live.ex:369
+#: lib/evo_dash_web/live/tasks_live.ex:410
 #, elixir-autogen, elixir-format
 msgid "Task: %{task_id}"
 msgstr "任務：%{task_id}"
@@ -4179,12 +4163,12 @@ msgstr "正在套用更新…"
 msgid "Asia/Shanghai"
 msgstr "亞洲/上海"
 
-#: lib/evo_dash_web/components/task_form_components.ex:384
+#: lib/evo_dash_web/components/task_form_components.ex:387
 #, elixir-autogen, elixir-format
 msgid "Auto (by rules)"
 msgstr "自動（依規則）"
 
-#: lib/evo_dash_web/components/task_form_components.ex:338
+#: lib/evo_dash_web/components/task_form_components.ex:341
 #, elixir-autogen, elixir-format
 msgid "Auto (recommended)"
 msgstr "自動（建議）"
@@ -4241,7 +4225,7 @@ msgstr "建立自訂智能體，並為每個智能體設定模型選擇腳本。
 msgid "Current version: %{version}"
 msgstr "目前版本：%{version}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:318
+#: lib/evo_dash_web/components/task_form_components.ex:321
 #, elixir-autogen, elixir-format
 msgid "Custom Agent"
 msgstr "自訂智能體"
@@ -4346,7 +4330,7 @@ msgstr "刪除自訂智能體失敗：%{reason}"
 msgid "Failed to load review data."
 msgstr "無法載入審查資料。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:556
+#: lib/evo_dash_web/live/tasks_live.ex:578
 #, elixir-autogen, elixir-format
 msgid "Failed to load tasks."
 msgstr "無法載入任務。"
@@ -4509,7 +4493,7 @@ msgstr "沒有已關閉的議題"
 msgid "No custom agents defined"
 msgstr "尚未定義自訂智能體"
 
-#: lib/evo_dash_web/components/task_form_components.ex:408
+#: lib/evo_dash_web/components/task_form_components.ex:411
 #, elixir-autogen, elixir-format
 msgid "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
 msgstr "尚未定義任何自訂智能體。請在「設定 → 智能體」中新增一個，方可使用「自訂智能體」模式。"
@@ -4620,7 +4604,7 @@ msgstr "根架構師（深度 0）"
 msgid "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
 msgstr "以使用者定義的自訂智能體作為此程式碼庫上演進任務的根智能體。"
 
-#: lib/evo_dash_web/components/task_form_components.ex:416
+#: lib/evo_dash_web/components/task_form_components.ex:419
 #, elixir-autogen, elixir-format
 msgid "Runs the selected custom agent as the root agent of an evolution task."
 msgstr "將所選的自訂智能體作為演進任務的根智能體來執行。"
@@ -4765,3 +4749,18 @@ msgstr "高度委派"
 #, elixir-autogen, elixir-format
 msgid "low delegation"
 msgstr "低度委派"
+
+#: lib/evo_dash_web/components/task_form_components.ex:313
+#, elixir-autogen, elixir-format
+msgid "Create new project"
+msgstr "建立新專案"
+
+#: lib/evo_dash_web/components/task_form_components.ex:317
+#, elixir-autogen, elixir-format
+msgid "Evolve existing project"
+msgstr "演進既有專案"
+
+#: lib/evo_dash_web/components/task_form_components.ex:309
+#, elixir-autogen, elixir-format
+msgid "Initialize existing project"
+msgstr "初始化既有專案"
