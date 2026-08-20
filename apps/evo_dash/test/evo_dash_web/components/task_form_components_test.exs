@@ -222,9 +222,9 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
       assert html =~ ~s(name="mode")
       assert html =~ ~s(phx-change="task_change")
-      assert html =~ "Initialize Existing"
-      assert html =~ "Create New"
-      assert html =~ "Evolution"
+      assert html =~ "Initialize existing project"
+      assert html =~ "Create new project"
+      assert html =~ "Evolve existing project"
       assert html =~ "Custom Agent"
       assert html =~ ~s(value="custom_agent")
     end

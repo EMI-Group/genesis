@@ -305,13 +305,16 @@ defmodule EvoDashWeb.TaskFormComponents do
                 title={mode_description(@mode)}
               >
                 <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                  {gettext("Initialize Existing")}
+                  <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
+                  {gettext("Initialize existing project")}
                 </option>
                 <option value="genesis_new" selected={@mode == "genesis_new"}>
-                  {gettext("Create New")}
+                  <%!-- zh_CN: Create new project → "新建空白项目" --%>
+                  {gettext("Create new project")}
                 </option>
                 <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                  <%!-- zh_CN: Evolution → "演进" --%>{gettext("Evolution")}
+                  <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
+                  {gettext("Evolve existing project")}
                 </option>
                 <option value="custom_agent" selected={@mode == "custom_agent"}>
                   <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
