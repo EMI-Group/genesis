@@ -14,9 +14,9 @@ Genesis supports **SSH remote development** (like VSCode Remote SSH): a lightwei
 - `./lib/evo_git/core/` → `ContextNode` (spatial) and `PhyloGraphNode` (temporal) data structures
 - `./lib/evo_git/adapters/` → `Git` CLI adapter — thin wrapper around `System.cmd("git", ...)` — and `GitHub` (gh) CLI adapter — upstream detection + GitHub issue listing/markdown via the `gh` command
 - `./lib/evo_git/agent/` → Agent behaviour, tool library, context compression, subagent processing, usage tracking
-- `./lib/evo_git/agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner, Custom)
+- `./lib/evo_git/agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner, Custom, SelfReflective)
 - `./lib/evo_git/custom_agents/` → `EvoGit.CustomAgents` (agents.toml store) + `EvoGit.CustomAgents.ModelSelector` (per-agent model selection script)
-- `./lib/evo_git/runtime/` → Genesis, Evolution, and Prompts (LLM templates)
+- `./lib/evo_git/runtime/` → Genesis, Evolution, SelfReflective (repo-less runtime), and Prompts (LLM templates)
 - `./lib/evo_git/agent_scheduler/` → `AgentState`, `SchedMeta`, `Slots`, `Worktrees`, `WorktreeManager`, `RemoteAPI` — ETS schemas, helper logic, worktree lifecycle, and RPC-readable state API for remote (SSH) dashboard connections
 - `./lib/evo_git/config/` → `EvoGit.Config` — defaults, user TOML, credentials, API keys, version-state tracking
 - `./lib/evo_git/sandbox/` → `EvoGit.Sandbox` — multi-platform sandbox backends (Linux systemd-run, Linux bwrap, macOS sandbox-exec, passthrough)
