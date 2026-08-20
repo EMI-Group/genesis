@@ -153,6 +153,8 @@ The whole scheduler dispatch path assumes every agent spec carries a real repo. 
 - **Child AgentState gets `repo_id` + `repo_root` only — no worktree_path field** (dispatch.ex:79-95): `phylo_node` starts nil and is bound to the worktree later by `Worktrees.assign_and_prepare_worktree/2`. Each subagent gets its OWN fresh worker dir under the repo root (computed in `do_try_dispatch`), never the parent's path.
 - **Subagent validation never checks repo existence** (`validate_single_subagent/5`, subagents.ex:130-144): only depth, `ContextNode.is_ignored?`, and the spatial contract (which reads `spec.context_node.path` — nil context_node would raise via `.path` access). A spec with a nil/phantom repo passes validation and crashes later in dispatch/worktree creation.
 
+### Subagent Management (Subagents module)
+
 Handles subagent validation, spawning, and result collection:
 
 1. `spawn_validated_subagents/5` — Validates all specs, registers valid ones, replies immediately if all invalid. The parent agent commits its pending changes BEFORE calling `spawn_sub_agents` (done in the agent process via `Dispatch.commit_pending_in_worktree/0`), so the scheduler does not perform git operations.
