@@ -160,6 +160,97 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
     end
   end
 
+  describe "resolve_agent_repo_root/2 with repo-less agent" do
+    test "returns a binary for a repo-less agent without crashing on nil phylo_node" do
+      spec =
+        AgentSpec.new(
+          %ContextNode{path: "./", repo: "/tmp"},
+          nil,
+          EvoGit.Agents.SelfReflective,
+          "reflect on the codebase",
+          repo_less: true
+        )
+
+      result = Dispatch.resolve_agent_repo_root(spec, %State{})
+
+      # Never a KeyError on the nil phylo_node — a plain binary root instead
+      # (in the test env this is typically File.cwd!(); do not hardcode it).
+      assert is_binary(result)
+      assert result != ""
+    end
+
+    test "prefers the :self_reflective_source_root app env when set" do
+      original = Application.get_env(:evo_git, :self_reflective_source_root)
+
+      try do
+        Application.put_env(:evo_git, :self_reflective_source_root, "/tmp/fake-source")
+
+        spec =
+          AgentSpec.new(
+            %ContextNode{path: "./", repo: "/tmp"},
+            nil,
+            EvoGit.Agents.SelfReflective,
+            "x",
+            repo_less: true
+          )
+
+        assert Dispatch.resolve_agent_repo_root(spec, %State{}) == "/tmp/fake-source"
+      after
+        case original do
+          nil -> Application.delete_env(:evo_git, :self_reflective_source_root)
+          _ -> Application.put_env(:evo_git, :self_reflective_source_root, original)
+        end
+      end
+    end
+
+    test "falls back to the GENESIS_SOURCE_ROOT env var when the app env is absent" do
+      original_app_env = Application.get_env(:evo_git, :self_reflective_source_root)
+      original_sys_env = System.get_env("GENESIS_SOURCE_ROOT")
+
+      try do
+        Application.delete_env(:evo_git, :self_reflective_source_root)
+        System.put_env("GENESIS_SOURCE_ROOT", "/tmp/from-env")
+
+        spec =
+          AgentSpec.new(
+            %ContextNode{path: "./", repo: "/tmp"},
+            nil,
+            EvoGit.Agents.SelfReflective,
+            "x",
+            repo_less: true
+          )
+
+        assert Dispatch.resolve_agent_repo_root(spec, %State{}) == "/tmp/from-env"
+      after
+        case original_app_env do
+          nil -> Application.delete_env(:evo_git, :self_reflective_source_root)
+          _ -> Application.put_env(:evo_git, :self_reflective_source_root, original_app_env)
+        end
+
+        case original_sys_env do
+          nil -> System.delete_env("GENESIS_SOURCE_ROOT")
+          _ -> System.put_env("GENESIS_SOURCE_ROOT", original_sys_env)
+        end
+      end
+    end
+  end
+
+  describe "commit_pending_in_worktree/0 with repo-less agent" do
+    test "returns :ok without touching git when repo_less is set" do
+      Process.put(:repo_path, "/nonexistent")
+      Process.put(:repo_less, true)
+
+      try do
+        # No git is attempted (the repo path is deliberately bogus) — the
+        # repo_less branch short-circuits before any adapter call.
+        assert Dispatch.commit_pending_in_worktree() == :ok
+      after
+        Process.delete(:repo_less)
+        Process.delete(:repo_path)
+      end
+    end
+  end
+
   # --- Model Profile Resolution ---
 
   describe "resolve_model_for_agent/2" do
