@@ -350,6 +350,17 @@ hash`, `^Update CONTEXT.md`) are filtered from every change's commit list; a
 change left with no commits is dropped entirely (an all-filtered range prints
 `No commits found in the given range — nothing to summarize.` and exits).
 
+**Record parsing gotcha**: git's `--pretty=format:` output joins each commit's
+record with a newline, so the raw log reads `rec1\x1e\nrec2\x1e\n...`. The
+record-splitting helpers (`git_log_first_parent/1`, `git_log_no_merges/1`)
+must therefore split on `@record_sep` (`"\x1e"`) and then **trim each record
+per edge** (`Enum.map(&String.trim/1)` + reject empties) before field parsing
+— `String.split(..., trim: true)` alone only drops empty strings and leaves a
+leading `\n` on every record after the first, which corrupts hashes and makes
+the `<hash>^1..<hash>` merge range an ambiguous git argument (`fatal:
+ambiguous argument`). Any new git-log record parsing in this file must follow
+the same split → trim-per-record → reject-empty pipeline.
+
 Summarization is **two-stage map-reduce** via `ReqLLM.stream_object` (default
 model `deepseek:deepseek-v4-flash`, overridable via `--model`; `max_tokens` +
 `provider_options: [thinking: %{type: "disabled"}]`, mirroring the evo_dash
