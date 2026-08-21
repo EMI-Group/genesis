@@ -19,7 +19,10 @@ defmodule EvoDashWeb.SystemLiveTest do
       :update_active_task_ids,
       :update_winddown_timeout,
       :update_winddown_poll_ms,
-      :system_samples_runner
+      :system_samples_runner,
+      :source_status_runner,
+      :source_clone_runner,
+      :source_update_runner
     ]
 
     originals = Map.new(keys, fn key -> {key, Application.get_env(:evo_dash, key)} end)
@@ -1512,6 +1515,267 @@ defmodule EvoDashWeb.SystemLiveTest do
     end
   end
 
+  describe "genesis source card" do
+    # The card is local-only and load-on-mount: every test that mounts a LOCAL
+    # node spawns an async status load via `:source_status_runner` (resolved at
+    # spawn time inside the spawned Task — the same send-pattern seam idiom as
+    # the update card's `:update_check_runner`). Tests therefore inject it
+    # BEFORE `live/3`; the default runner degrades to
+    # `{:unavailable, :module_missing}` when the `EvoGit.SelfReflectiveSource`
+    # backend module is absent (it is, in this worktree) and must never be hit.
+    # Clone/update flows use the same seam pattern (`:source_clone_runner` /
+    # `:source_update_runner`). The 300ms runner sleeps give the transient
+    # busy states a deterministic observation window (same idiom as the update
+    # card's "Check now flow" test). Async results are flushed by polling the
+    # socket assigns (`await_view_assign/3`); `render_async/2` does not await
+    # TaskSupervisor children.
+
+    test "card renders on a local node", %{conn: conn} do
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view)[:source_card_visible] == true
+      assert html =~ ~s(id="genesis-source-card")
+      assert html =~ "Genesis Source"
+      assert html =~ "Genesis source checkout used by the self-reflective agent."
+    end
+
+    test "card is hidden when viewing a remote node", %{conn: conn} do
+      {:ok, view, html} = mount_remote_system(conn)
+
+      assert assigns(view)[:remote?] == true
+      assert assigns(view)[:source_card_visible] == false
+      refute html =~ ~s(id="genesis-source-card")
+      refute html =~ "Genesis Source"
+    end
+
+    test "not-cloned status shows the Clone button and explanation, no Update button", %{
+      conn: conn
+    } do
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, not_cloned_status())
+
+      html = render(view)
+      assert html =~ "The Genesis source has not been cloned yet."
+      assert html =~ ~s(id="clone-source")
+      assert html =~ "Clone"
+      refute html =~ "Cloning…"
+      refute html =~ ~s(id="update-source")
+    end
+
+    test "cloned status renders the checkout details, Update button, and reference line", %{
+      conn: conn
+    } do
+      status = source_status()
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, status)
+
+      html = render(view)
+      assert html =~ "deadbeef"
+      assert html =~ "feature/source"
+      assert html =~ "9.9.9"
+      assert html =~ "https://example.com/genesis.git"
+      assert html =~ "The self-reflective agent reads: /tmp/genesis-source"
+      assert html =~ ~s(id="update-source")
+      assert html =~ "Update"
+      refute html =~ ~s(id="clone-source")
+      refute html =~ "in use"
+      refute html =~ "An explicit override is in effect"
+    end
+
+    test "an explicit reference override shows the muted note and the in-use badge", %{
+      conn: conn
+    } do
+      status = source_status(%{reference: "/custom/genesis-root", is_reference: true})
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, status)
+
+      html = render(view)
+      assert html =~ "An explicit override is in effect"
+      assert html =~ "The self-reflective agent reads: /custom/genesis-root"
+      assert html =~ "in use"
+    end
+
+    test "status load shows the loading spinner until the status lands", %{conn: conn} do
+      test_pid = self()
+      status = source_status()
+
+      Application.put_env(:evo_dash, :source_status_runner, fn _ ->
+        send(test_pid, :source_status_task_started)
+        Process.sleep(500)
+        status
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # The runner signals it started, then sleeps — the loading spinner is
+      # observable for a deterministic window.
+      assert_receive :source_status_task_started, 1_000
+      html = render(view)
+      assert html =~ "Loading…"
+
+      await_view_assign(view, :source_status, status)
+      html = render(view)
+      refute html =~ "Loading…"
+      assert html =~ "The self-reflective agent reads: /tmp/genesis-source"
+    end
+
+    test "card shows the unavailable message when the backend module is missing", %{conn: conn} do
+      Application.put_env(:evo_dash, :source_status_runner, fn _ ->
+        {:unavailable, :module_missing}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, {:unavailable, :module_missing})
+
+      html = render(view)
+      assert html =~ "Genesis source is not available in this version"
+      refute html =~ ~s(id="clone-source")
+      refute html =~ ~s(id="update-source")
+    end
+
+    test "clone flow: busy state, then a successful clone flashes and refreshes the status", %{
+      conn: conn
+    } do
+      cloned = source_status(%{commit: "cafebabe"})
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
+
+      Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
+        Process.sleep(300)
+        {:ok, cloned}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, not_cloned_status())
+
+      html = render_click(view, "clone_source")
+      assert html =~ "Cloning…"
+
+      [clone_button] = Floki.find(Floki.parse_document!(html), ~s(button[id="clone-source"]))
+      assert Floki.attribute(clone_button, "disabled") != []
+
+      # The mutation result clears the busy flag and assigns the fresh status.
+      await_view_assign(view, :source_busy, nil)
+      await_view_assign(view, :source_status, cloned)
+
+      html = render(view)
+      assert html =~ "Genesis source cloned."
+      assert html =~ "cafebabe"
+      assert html =~ ~s(id="update-source")
+      refute html =~ ~s(id="clone-source")
+    end
+
+    test "clone flow: a failing clone shows the error flash and re-syncs the status", %{
+      conn: conn
+    } do
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
+
+      Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
+        Process.sleep(300)
+        {:error, "clone failed"}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, not_cloned_status())
+
+      html = render_click(view, "clone_source")
+      assert html =~ "Cloning…"
+
+      await_view_assign(view, :source_busy, nil)
+
+      html = render(view)
+      assert html =~ "Failed to clone the Genesis source."
+    end
+
+    test "update flow: busy state, then a successful update flashes and refreshes the status", %{
+      conn: conn
+    } do
+      original = source_status(%{commit: "deadbeef"})
+      updated = source_status(%{commit: "cafebabe"})
+
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> original end)
+
+      Application.put_env(:evo_dash, :source_update_runner, fn _ ->
+        Process.sleep(300)
+        {:ok, updated}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, original)
+
+      html = render_click(view, "update_source")
+      assert html =~ "Updating…"
+
+      [update_button] = Floki.find(Floki.parse_document!(html), ~s(button[id="update-source"]))
+      assert Floki.attribute(update_button, "disabled") != []
+
+      await_view_assign(view, :source_busy, nil)
+      await_view_assign(view, :source_status, updated)
+
+      html = render(view)
+      assert html =~ "Genesis source updated."
+      assert html =~ "cafebabe"
+    end
+
+    test "update flow: a failing update shows the error flash", %{conn: conn} do
+      status = source_status()
+      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
+
+      Application.put_env(:evo_dash, :source_update_runner, fn _ ->
+        Process.sleep(300)
+        {:error, "update failed"}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_view_assign(view, :source_status, status)
+
+      html = render_click(view, "update_source")
+      assert html =~ "Updating…"
+
+      await_view_assign(view, :source_busy, nil)
+
+      html = render(view)
+      assert html =~ "Failed to update the Genesis source."
+    end
+
+    test "clone/update events are no-ops when the card is hidden (remote node)", %{conn: conn} do
+      test_pid = self()
+
+      # Runners that would loudly fail if invoked — the hidden card must never
+      # spawn them.
+      Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
+        send(test_pid, :clone_runner_called)
+        {:ok, source_status()}
+      end)
+
+      Application.put_env(:evo_dash, :source_update_runner, fn _ ->
+        send(test_pid, :update_runner_called)
+        {:ok, source_status()}
+      end)
+
+      {:ok, view, _html} = mount_remote_system(conn)
+
+      assert assigns(view)[:source_card_visible] == false
+      assert assigns(view)[:source_status] == nil
+
+      render_click(view, "clone_source")
+      render_click(view, "update_source")
+
+      refute_receive :clone_runner_called, 200
+      refute_receive :update_runner_called, 200
+
+      assert assigns(view)[:source_busy] == nil
+      assert assigns(view)[:source_status] == nil
+    end
+  end
+
   # Floki-scopes the self-check term grid so disclosure assertions never see
   # the app layout's sidebar `<details>` theme dropdown (layouts.ex). The grid
   # container is `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">`
@@ -1542,6 +1806,86 @@ defmodule EvoDashWeb.SystemLiveTest do
   # The desktop-shell flag for the update card (restored by the setup on_exit).
   defp set_desktop do
     Application.put_env(:evo_dash, :desktop_release, true)
+  end
+
+  # --- Genesis Source card test helpers -------------------------------------
+
+  # A full Genesis Source status map as emitted by the
+  # `EvoGit.SelfReflectiveSource.status/0` backend contract (see SourceCard).
+  # Overrides let tests vary individual keys.
+  defp source_status, do: source_status(%{})
+
+  defp source_status(overrides) do
+    Map.merge(
+      %{
+        dir: "/tmp/genesis-source",
+        exists: true,
+        is_git_repo: true,
+        valid: true,
+        commit: "deadbeef",
+        branch: "feature/source",
+        version: "9.9.9",
+        remote_url: "https://example.com/genesis.git",
+        reference: nil,
+        is_reference: false
+      },
+      Map.new(overrides)
+    )
+  end
+
+  # The status of a checkout that has never been cloned (no commit/branch/etc.).
+  defp not_cloned_status do
+    source_status(%{exists: false, commit: nil, branch: nil, version: nil, remote_url: nil})
+  end
+
+  # Mounts the System page in a connected remote-node context (same pattern as
+  # the update card's "card is hidden when viewing a remote node" test and the
+  # "LLM Test in Settings link" test): isolates the config dir via XDG_CONFIG_HOME
+  # so the saved target never touches the developer's real ~/.config/genesis/,
+  # registers a fake connection manager so the `?node=` param resolves to a
+  # connected remote context, and returns `{view, html}` from `live/3`.
+  defp mount_remote_system(conn) do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_system_live_xdg_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      if original_xdg do
+        System.put_env("XDG_CONFIG_HOME", original_xdg)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    id = "test-target-#{System.unique_integer([:positive])}"
+
+    {:ok, _target} =
+      EvoGit.RemoteConnections.save(%{ssh_target: "user@host", id: id, name: "Test Target"})
+
+    on_exit(fn ->
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+      try do
+        EvoGit.RemoteConnections.delete(id)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    start_supervised!(
+      {EvoDashWeb.SystemLiveTest.ConnectionManager,
+       {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+    )
+
+    live(conn, "/system?node=" <> id)
   end
 
   # Resets the shared hub and synchronizes: the reset is a cast, so the
