@@ -129,7 +129,7 @@ defmodule EvoDashWeb.Layouts do
         <%= if !@simple_nav do %>
         <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
           <.sidebar_nav_link
-            navigate={with_node_param(~p"/", @current_node_id)}
+            navigate={with_node_param(~p"/projects", @current_node_id)}
             current={@current_page == :dashboard}
             icon="hero-squares-2x2"
           >{gettext("Projects")}</.sidebar_nav_link>
@@ -558,7 +558,7 @@ defmodule EvoDashWeb.Layouts do
   @doc """
   Maps current page atom to its route path.
   """
-  def current_page(:dashboard), do: "/"
+  def current_page(:dashboard), do: "/projects"
   def current_page(:phx_dashboard), do: "/dashboard"
   def current_page(:agents), do: "/agents"
   def current_page(:tasks), do: "/tasks"
