@@ -267,6 +267,47 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  describe "root route (GET /)" do
+    setup do
+      # Clear all recent projects so auto-load doesn't activate a stale project
+      for project <- EvoGit.TaskRegistry.list_recent_projects() do
+        EvoGit.TaskRegistry.remove_recent_project(project.path)
+      end
+
+      :ok
+    end
+
+    test "mounts ProjectsLive at / with the dashboard nav highlighted", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/")
+
+      # Projects page UI (empty state), not the chat page
+      assert html =~ "Open a project to get started"
+      refute html =~ "hero-rocket-launch"
+      refute html =~ "chat-form"
+      assert html =~ "project-omnibox"
+
+      # Sidebar :dashboard nav highlight — the Projects nav link renders
+      # aria-current="page" because ProjectsLive :index sets
+      # current_page={:dashboard} (URL-independent).
+      [link] = html |> Floki.parse_document!() |> Floki.find(~s(a[aria-current="page"]))
+      assert Floki.text(link) =~ "Projects"
+    end
+
+    test "highlights the dashboard nav on /projects too (URL-independent)", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/projects")
+
+      [link] = html |> Floki.parse_document!() |> Floki.find(~s(a[aria-current="page"]))
+      assert Floki.text(link) =~ "Projects"
+    end
+
+    test "mounts HomeLive at /home", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/home")
+
+      assert html =~ "Chat with Genesis"
+      assert html =~ ~s(id="chat-form")
+    end
+  end
+
   describe "opening a project" do
     test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
