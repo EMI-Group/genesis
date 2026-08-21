@@ -1917,7 +1917,7 @@ defmodule EvoDashWeb.ProjectsLive do
                 |> assign(:recent_projects, recent_projects)
                 |> assign(:project_palette_open, false)
                 |> assign(:palette_mode, :menu)
-                |> push_patch(to: "/?project=#{URI.encode(expanded)}")
+                |> push_patch(to: "/projects?project=#{URI.encode(expanded)}")
               else
                 socket
                 |> assign(:project_palette_open, false)
