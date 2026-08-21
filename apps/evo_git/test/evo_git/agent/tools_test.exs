@@ -19,6 +19,50 @@ defmodule EvoGit.Agent.ToolsTest do
       assert "write_context" in names
       assert "edit_context" in names
     end
+
+    test "tool names are unique (regression: 'Tool names must be unique' provider 400)" do
+      names = Enum.map(Tools.schemas(), & &1.name)
+      assert length(names) == length(Enum.uniq(names))
+    end
+
+    test "does NOT include the self-reflective/task-control tools (regression)" do
+      names = Enum.map(Tools.schemas(), & &1.name)
+
+      # These 8 tools belong to the repo-less SelfReflective agent's explicit
+      # available_tools/0 list only — never in the standard schemas/0 set. In
+      # particular, SpawnInvestigator's schema name "subagent_investigator"
+      # collides with the SubagentSchemas-generated tool of the same name that
+      # every agent with an Investigator subagent receives, which broke ALL
+      # normal coding agents with a provider 400 "Tool names must be unique".
+      for tool <- [
+            "list_tasks",
+            "get_task",
+            "start_task",
+            "cancel_task",
+            "force_kill_task",
+            "delete_task",
+            "guide_user",
+            "subagent_investigator"
+          ] do
+        refute tool in names, "expected #{inspect(tool)} to NOT be in Tools.schemas()"
+      end
+    end
+  end
+
+  describe "agent available_tools/0 uniqueness (regression: 'Tool names must be unique')" do
+    test "Manager.available_tools() has unique names and one subagent_investigator" do
+      # Manager's subagent_modules/0 includes EvoGit.Agents.Investigator, so its
+      # default available_tools/0 (Tools.schemas() ++ SubagentSchemas.schemas/1
+      # ++ [CompleteTask.schema()]) receives the real "subagent_investigator"
+      # subagent tool. This is the exact collision class that broke production
+      # when the placeholder SpawnInvestigator schema was inside Tools.schemas/0.
+      names =
+        EvoGit.Agents.Manager.available_tools()
+        |> Enum.map(&EvoGit.Agent.tool_name/1)
+
+      assert length(names) == length(Enum.uniq(names))
+      assert Enum.count(names, &(&1 == "subagent_investigator")) == 1
+    end
   end
 
   describe "execute/4 - read_file" do
