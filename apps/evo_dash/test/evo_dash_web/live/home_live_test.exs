@@ -126,6 +126,9 @@ defmodule EvoDashWeb.HomeLiveTest do
   # task runs the REAL runtime — with no LLM credentials it fails fast after
   # retries, with the user's real config its agent may block on an LLM slot —
   # so the cancel is what unblocks/cleans it up regardless of which happened.
+  # Additionally sweeps the agent's scheduler ETS rows (cancel/delete do not
+  # remove them), so the blocked agent cannot leak into agents_live_test.exs
+  # (which expects an empty agent registry).
   #
   # Cleanup in on_exit: ExUnit terminates the test supervisor (stopping the
   # isolated Store + TaskRegistry) BEFORE running on_exit callbacks, so the
@@ -142,6 +145,27 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       try do
         EvoGit.TaskRegistry.delete_task(task_id)
+      catch
+        :exit, _ -> :ok
+      end
+
+      # The reflect agent's scheduler rows (agent_id -> %{task_id: ...} in
+      # :evogit_sched_meta, plus :evogit_agent_state) are NOT removed by
+      # cancel/delete — the agent stays alive/blocked on an LLM slot with no
+      # credentials, so without this sweep its ETS rows leak into
+      # agents_live_test.exs (which expects an empty agent registry).
+      try do
+        if :ets.whereis(:evogit_sched_meta) != :undefined do
+          for {agent_id, meta} <- :ets.tab2list(:evogit_sched_meta),
+              Map.get(meta, :task_id) == task_id do
+            :ets.delete(:evogit_sched_meta, agent_id)
+
+            if :ets.whereis(:evogit_agent_state) != :undefined,
+              do: :ets.delete(:evogit_agent_state, agent_id)
+          end
+        end
+
+        :ok
       catch
         :exit, _ -> :ok
       end
