@@ -44,7 +44,7 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 | `GET /review/:task_id` | `ReviewLive` | Code review page — diff viewer with client-side highlight.js syntax highlighting, merge/reject/resume actions, optional GitHub PR creation |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer and token/cost usage display |
 | `GET /settings` | `SettingsLive` | Configuration File GUI editor (config.toml) with collapsible sections for LLM, User, Scheduler, Sandbox, Evolution, Truncation, Task History |
-| `GET /system` | `SystemLive` | System page: scheduler controls (pause/resume), system controls (restart/stop the Erlang VM), system self-check, plus usage guides and references (example config, CLI usage, FAQ, credentials) |
+| `GET /system` | `SystemLive` | System page: scheduler controls (pause/resume), system controls (restart/stop the Erlang VM), system self-check, Genesis Source card (clone/update of the local self-reflective source), plus usage guides and references (example config, CLI usage, FAQ, credentials) |
 | `/dashboard` | Phoenix.LiveDashboard | Built-in metrics/telemetry dashboard |
 
 ### Multi-Model LLM Support
