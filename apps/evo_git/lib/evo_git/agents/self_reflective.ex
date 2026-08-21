@@ -18,12 +18,14 @@ defmodule EvoGit.Agents.SelfReflective do
   alias EvoGit.Agent.Tools.Glob
   alias EvoGit.Agent.Tools.GuideUser
   alias EvoGit.Agent.Tools.ListDirectory
+  alias EvoGit.Agent.Tools.ListRecentProjects
   alias EvoGit.Agent.Tools.ListTasks
   alias EvoGit.Agent.Tools.Ripgrep
   alias EvoGit.Agent.Tools.SearchContext
   alias EvoGit.Agent.Tools.SearchHistory
   alias EvoGit.Agent.Tools.SpawnInvestigator
   alias EvoGit.Agent.Tools.StartTask
+  alias EvoGit.Agent.Tools.SystemInfo
   alias EvoGit.Agent.Tools.WebSearch
 
   def agent_type, do: :read
@@ -47,6 +49,8 @@ defmodule EvoGit.Agents.SelfReflective do
       DeleteTask.schema(),
       SpawnInvestigator.schema(),
       GuideUser.schema(),
+      ListRecentProjects.schema(),
+      SystemInfo.schema(),
       CompleteTask.schema()
     ]
 
@@ -71,7 +75,9 @@ defmodule EvoGit.Agents.SelfReflective do
        - `start_task` — start a new task with a `task_type` of "genesis", "evolve", "reflect", or "extract_skills", an `objective`, and optional `path`/`mode`/`starting_commit`/`model_id`. To CONTINUE or RESUME a previous task, pass `resume_from` with the task id of the prior task (typically with `task_type` "evolve").
        - `cancel_task` / `force_kill_task` / `delete_task` — cancel gracefully, force-kill, or delete tasks as appropriate
 
-    3. **Guide the user in the web dashboard.** Use `guide_user` to give the user advice, pointing them to specific pages (URL paths) and page elements (CSS selectors) in the dashboard whenever that would help them act on your suggestions.
+    3. **Know your environment and the user's context.** Use `list_recent_projects` to see the user's recently opened projects (name, path, last opened time) — so you know which project the user is referring to. Use `system_info` to report local platform and system facts (OS, architecture, hostname, current local/UTC time, Elixir/OTP versions, data directory) when asked what platform you're on, what time it is, etc.
+
+    4. **Guide the user in the web dashboard.** Use `guide_user` to give the user advice, pointing them to specific pages (URL paths) and page elements (CSS selectors) in the dashboard whenever that would help them act on your suggestions.
 
     # Important notes
 
