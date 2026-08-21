@@ -517,26 +517,86 @@ const BrowserNotifications = {
 };
 
 // ClipboardCopy hook: copies data-content to clipboard on click
+//
+// Copy strategy, in order:
+//   1. navigator.clipboard.writeText(content) — secure contexts only (https,
+//      localhost/127.0.0.1, file:). On rejection we fall through to the fallback
+//      instead of swallowing the error.
+//   2. Legacy fallback — a temporary hidden textarea + document.execCommand("copy").
+//      Works in non-secure contexts (plain HTTP served at a LAN IP / non-localhost
+//      hostname) and most webviews because it runs inside the user-gesture click
+//      handler. The user's prior text selection is restored afterwards.
+// On success the "copied" event is pushed (the server flashes "Copied to clipboard")
+// and the button's first svg is briefly tinted text-success. If BOTH paths fail the
+// failure is surfaced via console.warn — never a silent no-op.
 const ClipboardCopy = {
+  // Success handling shared by every copy path: push "copied" + brief icon tint
+  markCopied() {
+    this.pushEvent("copied", {});
+    const iconEl = this.el.querySelector("svg");
+    if (iconEl) {
+      const origClass = iconEl.getAttribute("class");
+      iconEl.setAttribute("class", origClass + " text-success");
+      setTimeout(() => {
+        iconEl.setAttribute("class", origClass);
+      }, 2000);
+    }
+  },
+
+  // Legacy fallback: hidden textarea + execCommand("copy"); returns true on success
+  copyViaExecCommand(content) {
+    const textarea = document.createElement("textarea");
+    textarea.value = content;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "absolute";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+
+    // Save the user's current selection so we can restore it afterwards
+    const selection = document.getSelection();
+    const prevRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch (err) {
+      console.warn("ClipboardCopy: execCommand('copy') threw", err);
+    }
+    document.body.removeChild(textarea);
+
+    if (selection && prevRange) {
+      selection.removeAllRanges();
+      selection.addRange(prevRange);
+    }
+    return ok;
+  },
+
   mounted() {
     this.el.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       const content = this.el.dataset.content;
-      if (content && navigator.clipboard) {
-        navigator.clipboard.writeText(content).then(() => {
-          // Push event so the LiveView shows a flash message
-          this.pushEvent("copied", {});
-          // Visual feedback: briefly show checkmark icon
-          const iconEl = this.el.querySelector("svg");
-          if (iconEl) {
-            const origClass = iconEl.getAttribute("class");
-            iconEl.setAttribute("class", origClass + " text-success");
-            setTimeout(() => {
-              iconEl.setAttribute("class", origClass);
-            }, 2000);
-          }
-        }).catch(() => {});
+      if (!content) return; // nothing meaningful to copy — no-op
+
+      const copyWithFallback = () => {
+        if (this.copyViaExecCommand(content)) {
+          this.markCopied();
+        } else {
+          console.warn("ClipboardCopy: copy failed — navigator.clipboard unavailable and execCommand('copy') returned false");
+        }
+      };
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(content)
+          .then(() => this.markCopied())
+          .catch((err) => {
+            console.warn("ClipboardCopy: navigator.clipboard.writeText rejected, trying execCommand fallback", err);
+            copyWithFallback();
+          });
+      } else {
+        copyWithFallback();
       }
     });
   }
