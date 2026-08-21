@@ -220,7 +220,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "renders the dashboard with task form and project selector", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/projects")
 
       # Task form is always visible, but the launch panel is hidden
       # without an active project
@@ -232,7 +232,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "project settings panel is present but collapsed when no project", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/projects")
 
       # The Configure dropdown is always present
       assert html =~ "Configure"
@@ -242,7 +242,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "task form shows empty-state hint when no project is active", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/projects")
 
       # The launch panel (mode select + launch button + model select) is
       # hidden entirely without an active project
@@ -252,7 +252,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "renders example task help block when no project is active", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/projects")
 
       # Explanation heading + how-it-works text
       assert html =~ "New to Genesis? Start with an example"
@@ -269,7 +269,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   describe "opening a project" do
     test "can open project via palette and form submission", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open the palette and switch to open-path mode
       render_click(view, "open_project_palette", %{})
@@ -293,7 +293,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "detects genesis_new mode for empty directory", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -308,7 +308,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "shows project info in selector after opening", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -323,7 +323,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "project settings panel shows config status", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -341,7 +341,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "project settings shows worktree init script status", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -359,7 +359,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "project settings shows no foreign repos by default", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -380,7 +380,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -400,7 +400,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   describe "opening project via URL params" do
     test "activates project from URL query param", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, _view, html} = live(conn, ~p"/?project=#{URI.encode(tmp_dir)}")
+      {:ok, _view, html} = live(conn, ~p"/projects?project=#{URI.encode(tmp_dir)}")
 
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
@@ -421,7 +421,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "shows error for non-existent directory", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -461,7 +461,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "foreign repos round-trip via restore_state event", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Simulate session restore with foreign repos (as they'd arrive from sessionStorage JSON).
       # The project must be a real directory so activate_project runs.
@@ -490,7 +490,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "restore_state with empty foreign repos does not error", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "restore_state", %{
         "project" => tmp_dir,
@@ -508,7 +508,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   describe "prompt textarea with phx-update=ignore" do
     test "objective textarea has phx-update=ignore attribute", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project so the task form renders
       render_click(view, "open_project_palette", %{})
@@ -527,7 +527,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "select_model does not modify the task_prompt assign", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project
       render_click(view, "open_project_palette", %{})
@@ -547,7 +547,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "task_change does not modify the task_prompt assign", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project
       render_click(view, "open_project_palette", %{})
@@ -573,7 +573,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "toggle_configure_dropdown opens and closes the dropdown", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/")
+      {:ok, view, html} = live(conn, ~p"/projects")
 
       # The dropdown content is ALWAYS in the DOM (hidden via CSS when closed)...
       assert html =~ "Task Options"
@@ -589,7 +589,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "close_configure_dropdown closes an open dropdown", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "toggle_configure_dropdown", %{})
 
@@ -604,7 +604,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "open_project_palette opens and close_project_palette closes it", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/")
+      {:ok, view, html} = live(conn, ~p"/projects")
 
       # Closed: the search input and backdrop are not rendered
       assert html =~ "Open a project..."
@@ -620,7 +620,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "palette_mode switches to open_path mode showing the path input", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
 
@@ -640,7 +640,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(recent_a, "recent-alpha")
       seed_recent_project(recent_b, "recent-beta")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       html = render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -655,7 +655,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       File.mkdir_p!(project_a)
       seed_recent_project(project_a, "my-alpha")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "open_project_palette", %{})
       assert html =~ "my-alpha"
@@ -671,7 +671,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       File.mkdir_p!(project_a)
       seed_recent_project(project_a, "my-alpha")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "open_project_palette", %{})
 
@@ -695,7 +695,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # Seed b LAST so the mount auto-load activates project_b, not project_a
       seed_recent_project(project_b, "my-beta")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       assert assigns(view)[:active_project_path] == project_b
 
       render_click(view, "open_project_palette", %{})
@@ -724,7 +724,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_a, "my-alpha")
       seed_recent_project(project_b, "my-beta")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
@@ -737,7 +737,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "palette_menu shows Create New Project and Open by Path actions", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "open_project_palette", %{})
       assert html =~ "Open Project by Path"
@@ -745,7 +745,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "palette_mode switches to new_project mode", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
 
@@ -761,7 +761,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_a, "my-alpha")
       seed_recent_project(project_b, "my-beta")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
 
@@ -788,7 +788,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_a, "aaa-project")
       seed_recent_project(project_b, "bbb-project")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       render_click(view, "open_project_palette", %{})
 
       # Initial: index 0 is selected (the first project)
@@ -807,7 +807,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "palette_keydown Escape closes the palette", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       render_click(view, "open_project_palette", %{})
 
       html = render_click(view, "palette_keydown", %{"key" => "Escape"})
@@ -819,7 +819,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       File.mkdir_p!(project)
       seed_recent_project(project, "enter-project")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       render_click(view, "open_project_palette", %{})
 
       # Enter on index 0 (the only recent project) selects it
@@ -843,7 +843,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       File.mkdir_p!(fs_only_path)
       seed_recent_project(recent_path, "alpha")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
@@ -871,7 +871,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       File.mkdir_p!(recent_path)
       seed_recent_project(recent_path, "alpha")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
@@ -891,7 +891,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open the palette and switch to Create New Project mode
       render_click(view, "open_project_palette", %{})
@@ -922,7 +922,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "activates the selected project", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "select_project", %{"path" => tmp_dir})
 
@@ -931,7 +931,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "shows an error for a non-existent path", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "select_project", %{"path" => "/nonexistent/select/project"})
 
@@ -945,7 +945,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "creates and activates a new project", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "new_project"})
@@ -980,7 +980,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "new_project"})
@@ -1027,7 +1027,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "new_project"})
@@ -1062,7 +1062,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # pre-existing directory in the BEAM cwd.
       relative = "Test#{System.unique_integer([:positive])}"
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "new_project"})
@@ -1100,7 +1100,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "open_project rejects relative paths with the full-path hint", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -1116,7 +1116,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "select_project rejects relative paths with the full-path hint", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "select_project", %{"path" => "Test"})
 
@@ -1131,7 +1131,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       missing =
         Path.join(System.tmp_dir!(), "genesis_nonexistent_#{System.unique_integer([:positive])}")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -1149,7 +1149,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "relative ?project= URL param is silently ignored", %{conn: conn} do
-      {:ok, view, html} = live(conn, "/?project=Test")
+      {:ok, view, html} = live(conn, "/projects?project=Test")
 
       # No crash; the page renders in the no-project empty state
       assert html =~ "Open a project to get started"
@@ -1165,7 +1165,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "create_project with a blank path still flashes Invalid project name", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "new_project"})
@@ -1189,7 +1189,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "renders the hint pill, dim overlay, and wiring when no project is active", %{
       conn: conn
     } do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/projects")
 
       # The hint pill (clickable, dismissible)
       assert html =~ ~s(class="no-project-hint)
@@ -1204,7 +1204,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "dismissing the hint hides the pill and lifts the overlay", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html = render_click(view, "dismiss_no_project_hint", %{})
 
@@ -1229,7 +1229,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "no notification for a task already terminal before mount", %{conn: conn} do
       insert_task_fixture!(status: :completed)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # The mount seed pre-notifies terminal ids, so a reload must not push a
       # browser notification for them.
@@ -1246,7 +1246,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # Terminal before mount -> part of the mount seed -> never notified
       insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Becomes terminal after mount -> newly-terminal -> notification pushed
       new_task =
@@ -1266,7 +1266,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "user-initiated delete_task does not notify", %{conn: conn} do
       task = insert_task_fixture!(status: :running)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "delete_task", %{"task_id" => task.id})
 
@@ -1281,7 +1281,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "user-initiated clear_task_history does not notify", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Terminal AFTER mount — would be newly-terminal on reload if the user
       # had not cleared the history.
@@ -1306,7 +1306,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project via the palette (open-path mode)
       render_click(view, "open_project_palette", %{})
@@ -1387,7 +1387,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a local project and fill in form state
       render_click(view, "open_project_palette", %{})
@@ -1408,7 +1408,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # Switch to the remote node context: handle_params re-runs and clears all
       # persisted/project state (each node context owns its own session state).
-      html = render_patch(view, "/?node=" <> id)
+      html = render_patch(view, "/projects?node=" <> id)
 
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:task_prompt] == ""
@@ -1436,7 +1436,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, html} = live(conn, "/?node=" <> id)
+      {:ok, view, html} = live(conn, "/projects?node=" <> id)
 
       # The connected view must render on the FIRST pass — `remote?` is derived
       # from the post-assign_node socket so a page load at a connected `?node=`
@@ -1492,7 +1492,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
       assert assigns(view)[:remote?] == true
 
       # Forged/raced event: the guard must reject it and leave the local
@@ -1510,7 +1510,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :error, last_error: "boom", node: nil}}}
       )
 
-      {:ok, view, html} = live(conn, "/?node=" <> id)
+      {:ok, view, html} = live(conn, "/projects?node=" <> id)
 
       assert html =~ "Cannot connect to Test Target"
       assert html =~ "boom"
@@ -1536,7 +1536,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "saved target with no connection manager shows the generic error", %{conn: conn} do
       id = save_target!()
 
-      {:ok, view, html} = live(conn, "/?node=" <> id)
+      {:ok, view, html} = live(conn, "/projects?node=" <> id)
 
       # No fake manager registered → status degrades to the disconnected default
       assert assigns(view)[:current_node_id] == id
@@ -1558,12 +1558,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :error, last_error: "boom", node: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       render_click(view, "switch_to_local", %{})
 
       # handle_node_selected push_patches to the current path WITHOUT ?node=
-      assert_patch(view, "/")
+      assert_patch(view, "/projects")
 
       html = render(view)
 
@@ -1582,7 +1582,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, view, html} = live(conn, "/?node=" <> id)
+      {:ok, view, html} = live(conn, "/projects?node=" <> id)
 
       assert assigns(view)[:current_node_id] == id
       assert %{phase: :connecting} = assigns(view)[:remote_status]
@@ -1604,7 +1604,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, _view, html} = live(conn, "/?node=" <> id)
+      {:ok, _view, html} = live(conn, "/projects?node=" <> id)
 
       # The palette trigger is replaced by a muted placeholder so no project
       # activation is possible while the remote target is pending
@@ -1620,7 +1620,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :error, last_error: "boom", node: nil}}}
       )
 
-      {:ok, _view, html} = live(conn, "/?node=" <> id)
+      {:ok, _view, html} = live(conn, "/projects?node=" <> id)
 
       # Same suppression in the failed/disconnected gate state
       refute html =~ ~s(phx-click="open_project_palette")
@@ -1634,7 +1634,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Forged/raced event: the guard must reject it and leave the palette closed
       render_click(view, "open_project_palette", %{})
@@ -1652,7 +1652,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Forged/raced submit: the palette is suppressed in the DOM but the event
       # can still arrive — the gate guard must reject it with a flash error and
@@ -1675,7 +1675,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -1785,14 +1785,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # The URL patch preserves the remote node context (`&node=` survives).
       assert socket.redirected ==
-               {:live, :patch, %{to: "/?project=#{URI.encode(tmp_dir)}&node=#{id}", kind: :push}}
+               {:live, :patch,
+                %{to: "/projects?project=#{URI.encode(tmp_dir)}&node=#{id}", kind: :push}}
     end
 
     test "foreign repo path input carries autocomplete wiring and a datalist", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a real local project, then expand settings + the add-repo form
       render_click(view, "open_project_palette", %{})
@@ -1818,7 +1819,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "restore_state", %{
         "node" => "some-remote",
@@ -1837,7 +1838,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "restore_state", %{
         "node" => "local",
@@ -1860,7 +1861,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       render_hook(view, "restore_state", %{
         "node" => "local",
@@ -1885,7 +1886,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -1936,7 +1937,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Wait for the real async load so the assigns are settled (the mount-
       # seeded degraded values equal the async degraded results either way).
@@ -1972,7 +1973,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
       render_async(view)
       assert assigns(view)[:active_project_path] == nil
 
@@ -2007,7 +2008,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2060,7 +2061,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
       assert assigns(view)[:remote?] == true
 
       # POSIX absolute — the node-aware validator accepts it even though a
@@ -2116,7 +2117,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "local render carries data-node-id=local on the dashboard root", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/")
+      {:ok, _view, html} = live(conn, ~p"/projects")
 
       assert html =~ ~s(data-node-id="local")
     end
@@ -2141,7 +2142,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Proves the remote context is active — the remote branch short-circuits
       # and never touches the picker module (real or fake).
@@ -2161,7 +2162,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Tauri-shell detection is orthogonal to the node context: the desktop
       # app can view a remote node, but the native picker runs on the LOCAL
@@ -2193,7 +2194,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "directory_pick", %{picker_id: "new-project"})
       assert_push_event(view, "picker_result:new-project", %{unavailable: true})
@@ -2212,7 +2213,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # The fake sends its result synchronously during handle_event; the
       # handle_info-driven push is delivered to the client afterwards.
@@ -2259,7 +2260,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       EvoDash.DirectoryPicker.Fake.set_file_result({:ok, file_path})
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
 
@@ -2299,7 +2300,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       EvoDash.DirectoryPicker.Fake.set_file_result({:ok, missing})
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
@@ -2324,7 +2325,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       EvoDash.DirectoryPicker.Fake.set_file_result(:cancelled)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
@@ -2349,7 +2350,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       EvoDash.DirectoryPicker.Fake.set_file_result(:unavailable)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
       assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
@@ -2365,7 +2366,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Proves the remote context is active — the remote branch short-circuits
       # and never touches the picker module (real or fake).
@@ -2393,7 +2394,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
       assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
@@ -2406,7 +2407,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       file_path = Path.join(tmp_dir, "manual-note.txt")
       File.write!(file_path, "Hello manual file")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_hook(view, "file_pick_manual", %{
         picker_id: "objective_file",
@@ -2433,7 +2434,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "file_pick_manual with an empty path pushes an error and keeps the prompt", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick_manual", %{
@@ -2452,7 +2453,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "file_pick_manual with a nil path pushes an error without crashing", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick_manual", %{
@@ -2470,7 +2471,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "file_pick_manual with missing params pushes an error without crashing", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # No path and no picker_id at all — must not crash the LiveView (the
       # handler falls back to @attach_picker_id for the push channel).
@@ -2484,7 +2485,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       missing = Path.join(tmp_dir, "missing-manual.txt")
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       before = assigns(view)[:task_prompt]
 
       render_hook(view, "file_pick_manual", %{
@@ -2525,7 +2526,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # No project open → controls row hidden; open one so the select renders.
       render_click(view, "open_project_palette", %{})
@@ -2546,7 +2547,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2567,7 +2568,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2597,7 +2598,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "Auto (default) threads no :agent opt", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2622,7 +2623,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "renders the Custom Agent mode option", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2639,7 +2640,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2664,7 +2665,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2684,7 +2685,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2712,7 +2713,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       conn: conn,
       tmp_dir: tmp_dir
     } do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2746,7 +2747,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "custom_agent mode persists/restores across form state", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2770,61 +2771,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
-  describe "reflect task mode" do
+  describe "task submit guards" do
     setup do
       clear_recent_projects()
       :ok
     end
 
-    test "task_change to reflect works without a project and reveals the controls row", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = live(conn, ~p"/")
-
-      # No project open — the mode select is hidden in the DOM, but the
-      # server-side task_change event still works.
-      html = render_change(view, "task_change", %{"mode" => "reflect"})
-
-      assert assigns(view)[:task_mode] == "reflect"
-
-      # disabled = is_nil(@active_project) and @task_mode != "reflect" — for
-      # reflect the controls row (Launch button + mode select) renders even
-      # without a project, and the welcome overlay is hidden.
-      assert html =~ "hero-rocket-launch"
-      assert html =~ ~s(name="mode")
-      refute html =~ "Open a project to get started"
-    end
-
-    test "reflect submit with no active project starts a repo-less task with mode reflect", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = live(conn, ~p"/")
-
-      # No project active. Reflect is repo-less — task_submit's "no project
-      # selected" guard explicitly allows combined_mode == "reflect".
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{prompt: "ask genesis about itself", mode: "reflect"})
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      # Assert on the persisted ROW's opts only — the :reflect core runtime is
-      # a parallel workstream; the spawned executor fails fast, so task status
-      # is never asserted (and never matters here). The type column's atom
-      # decode returns nil for :reflect until the evo_git codec whitelist
-      # gains it, so the mode opt is the authoritative marker of a reflect row.
-      assert opt(task, :mode) == "reflect"
-      assert opt(task, :objective) == "ask genesis about itself"
-      assert opt(task, :path) == nil
-      refute has_opt?(task, :path)
-      refute has_opt?(task, "path")
-    end
-
     test "repo mode submit without a project is still blocked", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       html =
         view
@@ -2843,7 +2797,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     test "agent select is absent", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -2886,7 +2840,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
       EvoGit.CustomAgents.reload()
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # The "" sentinel → the select renders "Auto (by rules)" as selected.
       assert assigns(view)[:selected_model_id] == ""
@@ -2932,7 +2886,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
       EvoGit.CustomAgents.reload()
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       assert assigns(view)[:selected_model_id] == ""
 
       render_click(view, "open_project_palette", %{})
@@ -2970,7 +2924,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          %{conn: conn, tmp_dir: tmp_dir} do
       write_model_profile_config()
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
 
       # No script configured → current behavior: first profile is the default
       # and no "Auto (by rules)" option renders.
@@ -3026,7 +2980,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         {EvoDashWeb.ProjectsLiveTest.ConnectionManager, {id, %{phase: :connecting, node: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # Pending remote context: @current_node stays the LOCAL node while
       # @current_node_id names the target (NodeAware pending branch) — so
@@ -3050,7 +3004,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/?node=" <> id)
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
 
       # handle_params spawns the grouped async load; mount/3 seeds the LOCAL
       # profiles first, so wait for the async (degraded) result to apply.
@@ -3167,7 +3121,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "hides the GitHub button when the upstream check fails", %{conn: conn, tmp_dir: tmp_dir} do
       make_evolve_project(tmp_dir)
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
 
       # The default :github_runner stub resolves to {:error, :no_github_upstream}.
@@ -3195,7 +3149,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
 
       # A resolved upstream with gh_available: false is treated as :error.
@@ -3215,7 +3169,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       put_github_seams(github_runner: ok_upstream_runner())
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
 
       github_status(view, :ok)
@@ -3247,7 +3201,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
       github_status(view, :ok)
 
@@ -3283,7 +3237,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
       github_status(view, :ok)
 
@@ -3301,7 +3255,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       put_github_seams(github_runner: ok_upstream_runner())
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
       github_status(view, :ok)
 
@@ -3339,7 +3293,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
       github_status(view, :ok)
 
@@ -3398,7 +3352,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         github_issue_markdown_runner: fn _node, _path, 42 -> {:ok, markdown} end
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
       github_status(view, :ok)
 
@@ -3473,7 +3427,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         github_issue_markdown_runner: fn _node, _path, _number -> {:error, :gh_not_available} end
       )
 
-      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, view, _html} = live(conn, ~p"/projects")
       open_project(view, tmp_dir)
       github_status(view, :ok)
 

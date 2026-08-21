@@ -109,10 +109,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       flush_review_load(view)
 
       # Click the ignore button — this triggers a navigation, so we assert the
-      # LiveView process terminates and the browser is redirected to "/".
+      # LiveView process terminates and the browser is redirected to "/projects".
       view |> element("button[phx-click='ignore']") |> render_click()
 
-      assert_redirect(view, "/")
+      assert_redirect(view, "/projects")
 
       # The cast runs async, but a synchronous get_task call guarantees all
       # prior casts to the registry have been processed.
@@ -186,7 +186,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       view |> element("button[phx-click='ignore']") |> render_click()
 
-      assert_redirect(view, "/")
+      assert_redirect(view, "/projects")
 
       assert TaskRegistry.get_task(task_id).review_status == :ignored
     end
@@ -369,7 +369,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       render_click(view, "merge", %{"target_branch" => "dev"})
 
       # The success flash mentions the chosen target branch.
-      flash = assert_redirect(view, "/")
+      flash = assert_redirect(view, "/projects")
 
       assert flash["success"] =~ "dev",
              "expected the success flash to mention the target branch, got: #{inspect(flash["success"])}"
@@ -609,7 +609,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       render_click(view, "auto_resolve")
 
-      assert_redirect(view, "/")
+      assert_redirect(view, "/projects")
 
       # The original task is marked :continued (mirroring the resume flow).
       assert TaskRegistry.get_task(task_id).review_status == :continued

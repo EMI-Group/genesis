@@ -93,9 +93,6 @@ defmodule EvoDashWeb.ThemeColor do
       "custom_agent" ->
         custom_color(resume?)
 
-      "reflect" ->
-        "oklch(0.75 0.15 85)"
-
       _ ->
         cond do
           String.starts_with?(mode, "genesis") -> "oklch(0.62 0.19 25)"

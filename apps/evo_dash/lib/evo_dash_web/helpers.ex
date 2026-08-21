@@ -707,13 +707,6 @@ defmodule EvoDashWeb.Helpers do
         "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
       )
 
-  def mode_description("reflect"),
-    # zh_CN: Reflect → "自省智能体"：无仓库的对话式智能体，可阅读 Genesis 源码、控制任务并引导用户
-    do:
-      gettext(
-        "A repo-less conversational agent that can read the Genesis source, control tasks, and guide the user."
-      )
-
   def mode_description(_), do: ""
 
   # ---------------------------------------------------------------------------

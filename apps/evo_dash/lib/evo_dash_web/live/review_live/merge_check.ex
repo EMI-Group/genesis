@@ -134,7 +134,9 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
                 "Auto-resolve task started. It will merge the changes and resolve conflicts; review its result when done."
               )
             )
-            |> push_navigate(to: Helpers.with_node_param("/", socket.assigns.current_node_id))
+            |> push_navigate(
+              to: Helpers.with_node_param("/projects", socket.assigns.current_node_id)
+            )
 
           {:error, reason} ->
             put_flash(

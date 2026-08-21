@@ -98,7 +98,7 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
       EvoGit.Config.VersionState.complete_onboarding()
     end
 
-    {:noreply, push_navigate(socket, to: "/")}
+    {:noreply, push_navigate(socket, to: "/projects")}
   end
 
   @impl true
