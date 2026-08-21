@@ -293,6 +293,144 @@ defmodule EvoDashWeb.SystemLive do
           </div>
         <% end %>
 
+        <%= if @source_card_visible do %>
+          <!-- Genesis Source card (local nodes only — a remote genesis_remote
+               daemon's self-reflective agent reads the REMOTE host's
+               filesystem, so clone/update must never act remotely) -->
+          <div
+            id="genesis-source-card"
+            class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6"
+          >
+            <div class="flex items-start gap-3">
+              <.icon name="hero-code-bracket-square" class="size-5 text-info shrink-0" />
+              <div>
+                <h2 class="text-base font-bold tracking-tight">
+                  {gettext("Genesis Source")} <% # zh_CN: "本地 Genesis 源码" %>
+                </h2>
+                <p class="text-sm text-base-content/60 mt-0.5">
+                  {gettext("Genesis source checkout used by the self-reflective agent.")} <% # zh_CN: "自省智能体使用的 Genesis 源码检出目录" %>
+                </p>
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <%= if @source_status_loading do %>
+                <div class="flex items-center gap-3 py-1">
+                  <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
+                  <span class="text-sm text-base-content/60">{gettext("Loading…")} <% # zh_CN: "正在加载" %></span>
+                </div>
+              <% else %>
+                <%= case @source_status do %>
+                  <% {:unavailable, _reason} -> %>
+                    <div class="flex items-center gap-2 py-1">
+                      <.icon name="hero-information-circle" class="size-4 text-info shrink-0" />
+                      <span class="text-sm text-info">
+                        {gettext("Genesis source is not available in this version")} <% # zh_CN: "当前版本不提供 Genesis 源码功能" %>
+                      </span>
+                    </div>
+                  <% nil -> %>
+                    <!-- No status yet — the async load assigns it shortly. -->
+                  <% status when is_map(status) -> %>
+                    <div class="space-y-1.5 text-sm">
+                      <div class="flex items-baseline gap-2 min-w-0">
+                        <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Directory")} <% # zh_CN: "目录" %></span>
+                        <span class="font-mono text-xs text-base-content/80 break-all min-w-0">
+                          {status.dir || ""}
+                        </span>
+                      </div>
+                      <%= if status.exists do %>
+                        <%= if status.commit do %>
+                          <div class="flex items-baseline gap-2 min-w-0">
+                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Commit")} <% # zh_CN: "提交" %></span>
+                            <span class="font-mono text-xs text-base-content/80">{status.commit}</span>
+                          </div>
+                        <% end %>
+                        <%= if status.branch do %>
+                          <div class="flex items-baseline gap-2 min-w-0">
+                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Branch")} <% # zh_CN: "分支" %></span>
+                            <span class="font-mono text-xs text-base-content/80">{status.branch}</span>
+                          </div>
+                        <% end %>
+                        <%= if status.version do %>
+                          <div class="flex items-baseline gap-2 min-w-0">
+                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Version")} <% # zh_CN: "版本" %></span>
+                            <span class="font-mono text-xs text-base-content/80">{status.version}</span>
+                          </div>
+                        <% end %>
+                        <%= if status.remote_url do %>
+                          <div class="flex items-baseline gap-2 min-w-0">
+                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Remote URL")} <% # zh_CN: "远程地址" %></span>
+                            <span class="font-mono text-xs text-base-content/80 break-all min-w-0">{status.remote_url}</span>
+                          </div>
+                        <% end %>
+                      <% else %>
+                        <p class="text-sm text-base-content/60 pt-1">
+                          {gettext("The Genesis source has not been cloned yet.")} <% # zh_CN: "尚未克隆 Genesis 源码" %>
+                        </p>
+                      <% end %>
+                    </div>
+
+                    <div class="mt-3">
+                      <%= if status.exists do %>
+                        <button
+                          id="update-source"
+                          type="button"
+                          phx-click="update_source"
+                          class="btn btn-primary btn-sm rounded-md gap-2"
+                          disabled={@source_busy != nil}
+                        >
+                          <.icon
+                            name="hero-arrow-path"
+                            class={"size-4 #{if @source_busy == :update, do: "animate-spin"}"}
+                          />
+                          {if @source_busy == :update,
+                            do: gettext("Updating…"),
+                            else: gettext("Update")} <% # zh_CN: "更新" %>
+                        </button>
+                      <% else %>
+                        <button
+                          id="clone-source"
+                          type="button"
+                          phx-click="clone_source"
+                          class="btn btn-primary btn-sm rounded-md gap-2"
+                          disabled={@source_busy != nil}
+                        >
+                          <.icon
+                            name="hero-arrow-path"
+                            class={"size-4 #{if @source_busy == :clone, do: "animate-spin"}"}
+                          />
+                          {if @source_busy == :clone,
+                            do: gettext("Cloning…"),
+                            else: gettext("Clone")} <% # zh_CN: "克隆" %>
+                        </button>
+                      <% end %>
+                    </div>
+
+                    <div class="mt-3 pt-3 border-t border-base-200/60">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm text-base-content/70">
+                          {gettext("The self-reflective agent reads: %{path}",
+                            path: source_reference_path(status)
+                          )} <% # zh_CN: "自省智能体读取的源码路径" %>
+                        </span>
+                        <%= if status.is_reference do %>
+                          <span class="badge badge-info badge-sm gap-1">
+                            {gettext("in use")} <% # zh_CN: "使用中" %>
+                          </span>
+                        <% end %>
+                      </div>
+                      <%= if source_override_in_effect?(status) do %>
+                        <p class="text-xs text-base-content/40 mt-1">
+                          {gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量或应用配置）" %>
+                        </p>
+                      <% end %>
+                    </div>
+                <% end %>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+
         <!-- System Self-Check -->
         <div>
           <div class="p-4 border-b border-slate-200 dark:border-slate-800">
@@ -841,7 +979,17 @@ defmodule EvoDashWeb.SystemLive do
         update_status: EvoDash.UpdateStatus.get(),
         update_apply_busy_count: nil,
         update_force_kill_count: nil,
-        update_winddown: false
+        update_winddown: false,
+        # Genesis Source card assigns (visibility is recomputed in
+        # handle_params/3 after assign_node; local-only by design — a remote
+        # genesis_remote daemon's self-reflective agent reads the REMOTE host's
+        # filesystem). `source_status_seq` is a monotonic spawn sequence,
+        # never reset (mirrors `chart_seed_seq`).
+        source_card_visible: false,
+        source_status: nil,
+        source_status_loading: false,
+        source_busy: nil,
+        source_status_seq: 0
       )
 
     {:ok, socket}
@@ -911,6 +1059,25 @@ defmodule EvoDashWeb.SystemLive do
         socket = Phoenix.LiveView.push_event(socket, "update_check_requested", %{})
         EvoDashWeb.SystemLive.UpdateCard.spawn_check_watchdog(self())
         socket
+      else
+        socket
+      end
+
+    # Genesis Source card: local-only (a remote genesis_remote daemon's
+    # self-reflective agent reads the REMOTE host's filesystem, so clone/update
+    # must never act remotely). When visible, load the status asynchronously —
+    # the dead render's task sends to a dead process, so the live handle_params
+    # re-spawns (connected? gate).
+    socket =
+      assign(
+        socket,
+        :source_card_visible,
+        EvoDashWeb.SystemLive.SourceCard.visible?(socket.assigns.current_node)
+      )
+
+    socket =
+      if socket.assigns.source_card_visible and connected?(socket) do
+        spawn_source_status_load(socket)
       else
         socket
       end
@@ -1089,6 +1256,28 @@ defmodule EvoDashWeb.SystemLive do
     {:noreply, socket}
   end
 
+  # --- Genesis Source card events (no-ops unless the card is visible) ---
+
+  @impl true
+  def handle_event("clone_source", _params, socket) do
+    if source_card_visible?(socket) and socket.assigns[:source_busy] == nil do
+      socket = assign(socket, :source_busy, :clone)
+      {:noreply, spawn_source_load(socket, :clone)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("update_source", _params, socket) do
+    if source_card_visible?(socket) and socket.assigns[:source_busy] == nil do
+      socket = assign(socket, :source_busy, :update)
+      {:noreply, spawn_source_load(socket, :update)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   # --- Software Update card events (all no-ops unless the card is visible) ---
 
   @impl true
@@ -1263,6 +1452,41 @@ defmodule EvoDashWeb.SystemLive do
        :error,
        gettext("Failed to stop running tasks. The update was not applied.")
      )}
+  end
+
+  # --- Genesis Source card messages ---
+
+  @impl true
+  def handle_info({:source_status_loaded, seq, node, result}, socket) do
+    if source_result_current?(socket, seq, node) do
+      {:noreply,
+       socket
+       |> assign(:source_status, result)
+       |> assign(:source_status_loading, false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_info({:source_clone_result, seq, node, result}, socket) do
+    if source_result_current?(socket, seq, node) do
+      {:noreply, apply_source_mutation_result(socket, result, :clone)}
+    else
+      # A newer operation superseded this result (e.g. a navigation-triggered
+      # status reload) — still clear the busy flag so the card never wedges on
+      # a spinner; the superseding status load assigns the fresh status.
+      {:noreply, assign(socket, :source_busy, nil)}
+    end
+  end
+
+  @impl true
+  def handle_info({:source_update_result, seq, node, result}, socket) do
+    if source_result_current?(socket, seq, node) do
+      {:noreply, apply_source_mutation_result(socket, result, :update)}
+    else
+      {:noreply, assign(socket, :source_busy, nil)}
+    end
   end
 
   @impl true
@@ -1493,6 +1717,111 @@ defmodule EvoDashWeb.SystemLive do
   # no-ops unless the card is visible (desktop shell + local node).
   defp update_card_visible?(socket) do
     socket.assigns[:update_card_visible] || false
+  end
+
+  # Gate for the Genesis Source card's event handlers — all source-card events
+  # are no-ops unless the card is visible (local node only).
+  defp source_card_visible?(socket) do
+    socket.assigns[:source_card_visible] || false
+  end
+
+  # Spawns an async status load for the Genesis Source card (see
+  # SourceCard.spawn_status_load/3). Bumps `source_status_seq` at spawn time —
+  # monotonic, never reset (mirrors `chart_seed_seq`) — so stale results are
+  # dropped by the handle_info stale-guard.
+  defp spawn_source_status_load(socket) do
+    spawn_source_load(socket, :status)
+  end
+
+  # Shared spawn for the Genesis Source card's three operations (status/clone/
+  # update). Each runner is injectable via its app-env seam (`:source_status_
+  # runner` / `:source_clone_runner` / `:source_update_runner`), resolved AT
+  # SPAWN TIME inside the task (see SourceCard). The status operation also sets
+  # the loading flag; clone/update set `:source_busy` in their event handlers.
+  defp spawn_source_load(socket, kind) do
+    parent = self()
+    node = socket.assigns.current_node
+    seq = socket.assigns.source_status_seq + 1
+    socket = assign(socket, :source_status_seq, seq)
+
+    case kind do
+      :status ->
+        EvoDashWeb.SystemLive.SourceCard.spawn_status_load(parent, seq, node)
+        assign(socket, :source_status_loading, true)
+
+      :clone ->
+        EvoDashWeb.SystemLive.SourceCard.spawn_clone(parent, seq, node)
+        socket
+
+      :update ->
+        EvoDashWeb.SystemLive.SourceCard.spawn_update(parent, seq, node)
+        socket
+    end
+  end
+
+  # Stale-guard for Genesis Source card results: drop when the result was
+  # spawned for a different node or a newer spawn (status/clone/update) has
+  # superseded it (seq is monotonic, never reset).
+  defp source_result_current?(socket, seq, node) do
+    node == socket.assigns.current_node and seq >= socket.assigns.source_status_seq
+  end
+
+  # Applies a clone/update runner result (see SourceCard for the shape
+  # contract). {:ok, status} assigns the fresh status + info flash;
+  # {:error, reason} flashes the failure and re-spawns a status load so the
+  # card reflects reality after a failed mutation; {:unavailable, reason} (the
+  # backend module is absent in this build) assigns the unavailable state.
+  # Every branch clears `:source_busy` (done above) and the mutation branches
+  # also clear `:source_status_loading` — a mutation that lands while a status
+  # load is in flight supersedes it (the stale status result is dropped by the
+  # seq stale-guard), so the card must never stay on the loading spinner.
+  defp apply_source_mutation_result(socket, result, kind) do
+    socket = assign(socket, :source_busy, nil)
+
+    case result do
+      {:ok, status} when is_map(status) ->
+        socket
+        |> assign(:source_status, status)
+        |> assign(:source_status_loading, false)
+        |> put_flash(:info, source_mutation_success_msg(kind))
+
+      {:error, _reason} ->
+        socket
+        |> spawn_source_status_load()
+        |> put_flash(:error, source_mutation_failure_msg(kind))
+
+      {:unavailable, reason} ->
+        socket
+        |> assign(:source_status, {:unavailable, reason})
+        |> assign(:source_status_loading, false)
+        |> put_flash(:error, gettext("Genesis source is not available in this version"))
+
+      _ ->
+        # Unknown result shape (should not happen with the stable contract) —
+        # never wedge the busy state; refresh the status to re-sync.
+        socket
+        |> spawn_source_status_load()
+        |> put_flash(:error, source_mutation_failure_msg(kind))
+    end
+  end
+
+  defp source_mutation_success_msg(:clone), do: gettext("Genesis source cloned.")
+  defp source_mutation_success_msg(:update), do: gettext("Genesis source updated.")
+
+  defp source_mutation_failure_msg(:clone), do: gettext("Failed to clone the Genesis source.")
+  defp source_mutation_failure_msg(:update), do: gettext("Failed to update the Genesis source.")
+
+  # The path the self-reflective agent actually reads: the explicit reference
+  # (GENESIS_SOURCE_ROOT / app-env override) when set, else the managed
+  # checkout dir. Rendered on the Genesis Source card's reference line.
+  defp source_reference_path(status) do
+    status.reference || status.dir || ""
+  end
+
+  # An explicit reference override (reference != the managed dir) is in effect
+  # — the card must not imply that clone/update act on what the agent reads.
+  defp source_override_in_effect?(status) do
+    status.reference != nil and status.reference != status.dir
   end
 
   # Remote nodes: NodeContext RPC degrades to []/%{}/false on failure, so no
