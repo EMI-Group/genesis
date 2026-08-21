@@ -67,7 +67,7 @@ defmodule EvoDash.MixProject do
       {:jason, "~> 1.2"},
       {:gettext, "~> 1.0"},
       {:phoenix_pubsub, "~> 2.2"},
-      {:bandit, "~> 1.5"},
+      {:bandit, "~> 1.12"},
       {:mdex, "~> 0.1"},
       {:floki, "~> 0.38.0", only: :test}
     ]
