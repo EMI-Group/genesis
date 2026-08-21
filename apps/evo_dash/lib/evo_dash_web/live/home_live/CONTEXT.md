@@ -62,7 +62,7 @@ Pure helpers for the agent stream + final result. Never raises.
 
 ## Constraints
 
-- **Scope**: `home_live.ex` + these support modules are NEW files; nothing else under `lib/` was modified. Router wiring (`live("/", HomeLive, :index)`) and the Projects page move to `/projects` are owned by a parallel agent — HomeLive compiles standalone until then.
+- **Scope**: `home_live.ex` + these support modules are self-contained (no other `lib/` files were touched by this feature); all node data goes through `EvoDash.NodeContext`. Router wiring: `live("/", HomeLive, :index)`; the Projects page moved to `/projects` in the same feature.
 - **All node data goes through `EvoDash.NodeContext`** (start/cancel/history/get_task/list_agents) with a `socket.assigns[:current_node] || node()` fallback.
 - **Async-only cross-node fetches**: agent lookup, history fetch, and terminal `get_task` run in `Task.Supervisor.start_child(EvoDash.TaskSupervisor, ...)` with `send(pid, ...)` results. Justified `try/rescue` at the async boundary ONLY (the closure runs OUTSIDE the LiveView process; a crash must never silently lose the result message — rescue returns `[]`/`nil` so the caller degrades instead of wedging). No `try/rescue` in the LiveView process itself.
 - **Two stale-guard counters — keep them separate**: `chat_fetch_seq` guards agent-lookup + history results; `chat_task_fetch_seq` (SEPARATE) guards the terminal `get_task` result. A late `agent_updated` broadcast (cross-topic PubSub reordering, graceful-cancel grace window) bumps the shared counter, which would stale-guard-drop the terminal result and wedge the chat in `:running` forever.
