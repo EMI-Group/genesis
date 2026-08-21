@@ -98,6 +98,22 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   end
 
   @doc """
+  Restores the `task_mode` assign from a persisted value, normalizing stale
+  mode strings. The reflect ("Self-Reflective") mode was removed from the task
+  form, so a `"reflect"` value persisted by an older session would restore
+  with the mode `<select>` offering no selected option — it is mapped to
+  `"evolve_simple"`. Nil/empty are skipped (same as `maybe_restore_assign/3`);
+  all other binary values restore as-is.
+  """
+  def maybe_restore_task_mode(socket, nil), do: socket
+  def maybe_restore_task_mode(socket, ""), do: socket
+
+  def maybe_restore_task_mode(socket, "reflect"), do: assign(socket, :task_mode, "evolve_simple")
+
+  def maybe_restore_task_mode(socket, mode) when is_binary(mode),
+    do: assign(socket, :task_mode, mode)
+
+  @doc """
   Restores the `show_project_settings` assign from a persisted boolean string.
   """
   def maybe_restore_show_project_settings(socket, "true"),
