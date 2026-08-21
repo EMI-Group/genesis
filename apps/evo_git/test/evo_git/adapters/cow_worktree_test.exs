@@ -10,6 +10,7 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Adapters.CowWorktree
+  alias EvoGit.TestSupport.Submodule
 
   @flag_key :evogit_cow_worktree_enabled
 
@@ -114,6 +115,7 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
       assert {:ok, files} = Git.ls_tree_names(repo, "HEAD")
 
       file_set = MapSet.new(files)
+
       assert MapSet.new(["a.txt", "sub/b.txt", "sub/deep/c.txt"]) ==
                MapSet.intersection(file_set, MapSet.new(["a.txt", "sub/b.txt", "sub/deep/c.txt"]))
     end
@@ -124,6 +126,22 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
       Git.run(["commit", "--allow-empty", "-m", "empty"], repo)
 
       assert {:ok, []} = Git.ls_tree_names(repo, "HEAD")
+    end
+
+    test "excludes gitlink/submodule entries" do
+      repo = make_repo("lstree_submodule")
+
+      write_file(repo, "file.txt", "content")
+      Submodule.add_gitlink(repo, "vendor/Sub")
+      commit_all(repo, "Add submodule gitlink")
+
+      assert {:ok, files} = Git.ls_tree_names(repo, "HEAD")
+
+      # The gitlink path (a directory in the source working tree, not a file)
+      # must not appear in the file list.
+      refute "vendor/Sub" in files
+      assert "file.txt" in files
+      assert ".gitmodules" in files
     end
   end
 
@@ -282,9 +300,44 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
       for file <- files do
         std_content = File.read!(Path.join(wt_std, file))
         cow_content = File.read!(Path.join(wt_cow, file))
+
         assert cow_content == std_content,
                "Content mismatch for #{file}: CoW=#{inspect(cow_content)}, std=#{inspect(std_content)}"
       end
+    end
+
+    test "succeeds with a gitlink submodule present (no cp fallback, no feature disable)" do
+      repo = make_repo("submodule")
+      worktree_path = make_worktree_path("submodule")
+      branch = "cow-branch-submodule"
+
+      write_file(repo, "file.txt", "content")
+      # Registers a populated nested repo as a gitlink (mode 160000) — the
+      # submodule path is a DIRECTORY in the source working tree, which is
+      # what made `cp` fail before gitlink paths were excluded.
+      Submodule.add_gitlink(repo, "vendor/Sub")
+      target = commit_all(repo, "Add submodule")
+
+      on_exit(fn -> cleanup_worktree(repo, worktree_path) end)
+
+      assert :ok =
+               CowWorktree.create_worktree(repo, worktree_path, target, branch, repo)
+
+      # Success means no {:fallback, :cp_failed} — the feature flag must NOT
+      # have been disabled.
+      refute CowWorktree.flag() == :disabled
+
+      # Regular files are still CoW-copied with correct content.
+      assert File.read!(Path.join(worktree_path, "file.txt")) == "content"
+
+      # The submodule path is an EMPTY placeholder dir — same behavior as
+      # `git worktree add` (submodules are not auto-populated).
+      assert File.dir?(Path.join(worktree_path, "vendor/Sub"))
+      assert File.ls!(Path.join(worktree_path, "vendor/Sub")) == []
+
+      # The placeholder is tracked (gitlink), not untracked — status is clean.
+      {:ok, porcelain} = Git.run(["status", "--porcelain"], worktree_path)
+      assert porcelain == "", "worktree status was not clean: #{inspect(porcelain)}"
     end
   end
 

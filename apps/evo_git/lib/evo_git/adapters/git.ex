@@ -359,16 +359,47 @@ defmodule EvoGit.Adapters.Git do
 
   @doc """
   Lists all file paths in a git tree (recursive).
-  Runs `git ls-tree -r --name-only <treeish>`.
+  Runs `git ls-tree -r <treeish>` and filters out gitlink/submodule entries
+  (type `commit`, mode `160000`) — those are not files, so the returned list
+  contains actual file paths only. Submodule dirs arrive in worktrees as
+  empty placeholders (same as `git worktree add`); populate them via
+  `git submodule update --init`.
   Returns `{:ok, [files]}` (empty list if no files) or `{:error, {tag, output}}`
   (see the module "## Return contract" section).
   """
   def ls_tree_names(repo_path, treeish)
       when is_binary(repo_path) and is_binary(treeish) do
-    case run(["ls-tree", "-r", "--name-only", treeish], repo_path) do
-      {:ok, ""} -> {:ok, []}
-      {:ok, output} -> {:ok, String.split(output, "\n", trim: true)}
-      error -> error
+    # Run WITHOUT `--name-only` so each line carries the entry type:
+    # `<mode> <type> <oid>\t<path>`. `--name-only` hides the type and would
+    # return gitlink paths too, which are directories (submodule checkouts)
+    # in the source working tree — copying them as files fails.
+    case run(["ls-tree", "-r", treeish], repo_path) do
+      {:ok, ""} ->
+        {:ok, []}
+
+      {:ok, output} ->
+        files =
+          output
+          |> String.split("\n", trim: true)
+          |> Enum.flat_map(fn line ->
+            case String.split(line, "\t", parts: 2) do
+              [meta, path] ->
+                # meta = "<mode> <type> <oid>"; type "commit" (mode 160000)
+                # marks a gitlink/submodule entry, not a file.
+                case String.split(meta, " ") do
+                  [_, "commit", _] -> []
+                  _ -> [path]
+                end
+
+              _ ->
+                []
+            end
+          end)
+
+        {:ok, files}
+
+      error ->
+        error
     end
   end
 

@@ -2,6 +2,7 @@ defmodule EvoGit.Adapters.GitTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.TestSupport.Submodule
 
   setup do
     tmp_dir =
@@ -463,6 +464,44 @@ defmodule EvoGit.Adapters.GitTest do
       on_exit(fn -> File.rm_rf!(other) end)
       Git.init(other)
       assert {:error, _} = Git.remote_url(other)
+    end
+  end
+
+  describe "add_worktree/4 with gitlink submodules" do
+    test "creates a worktree with empty placeholder submodule dir; clean/1 keeps it", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      # Register a populated nested repo as a gitlink (mode 160000).
+      Submodule.add_gitlink(tmp_dir, "vendor/Sub")
+      Git.commit(tmp_dir, "Add submodule gitlink")
+      {:ok, target} = Git.rev_parse(tmp_dir, "HEAD")
+
+      wt =
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_test_wt_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      on_exit(fn -> File.rm_rf!(wt) end)
+
+      # Standard `git worktree add` succeeds on a repo with gitlinks.
+      assert {:ok, _} = Git.add_worktree(tmp_dir, wt, target, "test-wt-branch")
+
+      # The submodule path arrives as an EMPTY placeholder dir (git does not
+      # auto-populate submodules in worktrees).
+      assert File.dir?(Path.join(wt, "vendor/Sub"))
+      assert File.ls!(Path.join(wt, "vendor/Sub")) == []
+
+      # `git clean -fd` must neither fail nor delete the tracked gitlink
+      # placeholder dir, and the worktree stays clean.
+      assert {:ok, _} = Git.clean(wt)
+      assert File.dir?(Path.join(wt, "vendor/Sub"))
+      assert File.ls!(Path.join(wt, "vendor/Sub")) == []
+      assert {:ok, ""} = Git.status(wt)
     end
   end
 end
