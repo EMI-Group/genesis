@@ -3,11 +3,11 @@ defmodule EvoGit.Runtime.SelfReflectiveTest do
 
   alias EvoGit.Runtime.SelfReflective
 
-  # The :self_reflective_source_root app env and the GENESIS_SOURCE_ROOT OS env
-  # var are global state; every assertion that reads source_root() must restore
-  # both afterwards so other tests and later assertions in this file see a
-  # clean state. This mirrors the on_exit restore discipline of
-  # test/evo_git/runtime/evolution_test.exs.
+  # The :self_reflective_source_root app env, the :self_reflective_source_dir
+  # app env, and the GENESIS_SOURCE_ROOT OS env var are global state; every
+  # assertion that reads source_root() must restore them afterwards so other
+  # tests and later assertions in this file see a clean state. This mirrors the
+  # on_exit restore discipline of test/evo_git/runtime/evolution_test.exs.
   describe "source_root/0" do
     test "app env wins over the env var" do
       with_self_reflective_env("/tmp/from-app-env", "/tmp/from-env-var", fn ->
@@ -123,10 +123,15 @@ defmodule EvoGit.Runtime.SelfReflectiveTest do
 
   # Sets/clears the :self_reflective_source_root app env and the
   # GENESIS_SOURCE_ROOT OS env var for the duration of fun, restoring both
-  # afterwards (nil/"" both mean "absent" to source_root/0).
+  # afterwards (nil/"" both mean "absent" to the chain). Also pins the managed
+  # clone dir (:self_reflective_source_dir) to a NON-EXISTENT path for the
+  # duration: since the chain now auto-references a valid managed clone at
+  # source_dir/0, a real managed clone under the real data dir must never
+  # hijack the chain in tests.
   defp with_self_reflective_env(app_env, env_var, fun) do
     original_app = Application.get_env(:evo_git, :self_reflective_source_root)
     original_var = System.get_env("GENESIS_SOURCE_ROOT")
+    original_dir = Application.get_env(:evo_git, :self_reflective_source_dir)
 
     if app_env do
       Application.put_env(:evo_git, :self_reflective_source_root, app_env)
@@ -140,11 +145,18 @@ defmodule EvoGit.Runtime.SelfReflectiveTest do
       System.delete_env("GENESIS_SOURCE_ROOT")
     end
 
+    Application.put_env(
+      :evo_git,
+      :self_reflective_source_dir,
+      "/nonexistent/evogit-selfref-source"
+    )
+
     try do
       fun.()
     after
       restore_app_env(original_app)
       restore_env_var(original_var)
+      restore_source_dir(original_dir)
     end
   end
 
@@ -162,6 +174,14 @@ defmodule EvoGit.Runtime.SelfReflectiveTest do
 
   defp restore_env_var(value) do
     System.put_env("GENESIS_SOURCE_ROOT", value)
+  end
+
+  defp restore_source_dir(nil) do
+    Application.delete_env(:evo_git, :self_reflective_source_dir)
+  end
+
+  defp restore_source_dir(value) do
+    Application.put_env(:evo_git, :self_reflective_source_dir, value)
   end
 
   # The scheduler is running in tests (started with the :evo_git app), so

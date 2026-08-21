@@ -98,6 +98,40 @@ defmodule EvoGit.Adapters.Git do
     run(["init"], path)
   end
 
+  @doc """
+  Clones a repository at `url` into `path`.
+
+  Extra args (e.g. `["--depth", "1"]`) are placed between `clone` and
+  `url`/`path`. Runs from the current working directory (clone does not need
+  a repository context). Returns `{:ok, output}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
+  """
+  def clone(url, path, args \\ []) when is_binary(url) and is_binary(path) and is_list(args) do
+    run(["clone" | args] ++ [url, path], File.cwd!())
+  end
+
+  @doc """
+  Fetches from the default remote (origin).
+
+  Extra args (e.g. `["--depth", "1"]`) are passed through. Returns
+  `{:ok, output}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
+  """
+  def fetch(path, args \\ []) when is_binary(path) and is_list(args) do
+    run(["fetch" | args], path)
+  end
+
+  @doc """
+  Fast-forwards the current branch to `ref` (`git merge --ff-only`).
+
+  Fails (exit 1) when the merge is not a fast-forward. Returns
+  `{:ok, output}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
+  """
+  def merge_ff_only(path, ref) when is_binary(path) and is_binary(ref) do
+    run(["merge", "--ff-only", ref], path)
+  end
+
   def add_worktree(repo_path, worktree_path, base_sha, branch_name \\ nil)
       when is_binary(repo_path) and is_binary(worktree_path) and is_binary(base_sha) do
     if branch_name && branch_exists?(repo_path, branch_name) do
@@ -219,6 +253,16 @@ defmodule EvoGit.Adapters.Git do
 
   def rev_parse(path, rev \\ "HEAD") when is_binary(path) and is_binary(rev) do
     run(["rev-parse", rev], path)
+  end
+
+  @doc """
+  Returns the abbreviated (short) commit SHA for `rev` (default `HEAD`).
+
+  Returns `{:ok, short_sha}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
+  """
+  def rev_parse_short(path, rev \\ "HEAD") when is_binary(path) and is_binary(rev) do
+    run(["rev-parse", "--short", rev], path)
   end
 
   @doc """
@@ -630,6 +674,17 @@ defmodule EvoGit.Adapters.Git do
       {output, 0} -> {:ok, String.trim(output)}
       {output, code} -> {:error, {code, String.trim(output)}}
     end
+  end
+
+  @doc """
+  Returns the URL of a remote (default `origin`).
+
+  Returns `{:ok, url}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section). A missing remote exits 1
+  and surfaces as `{:error, {:conflict, output}}`.
+  """
+  def remote_url(path, remote \\ "origin") when is_binary(path) and is_binary(remote) do
+    run(["remote", "get-url", remote], path)
   end
 
   @doc """

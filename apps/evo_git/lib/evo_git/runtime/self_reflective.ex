@@ -11,28 +11,18 @@ defmodule EvoGit.Runtime.SelfReflective do
   @doc """
   Resolves the Genesis source root — the directory the reflective agent reads.
 
-  Resolution chain: `:self_reflective_source_root` app env →
-  `GENESIS_SOURCE_ROOT` env var → `File.cwd!()` (dev: the genesis repo itself).
-  Returns the path (binary) or nil. MUST mirror the inline resolution in
-  `EvoGit.AgentScheduler.Dispatch.resolve_repo_less_root/0`
-  (agent_scheduler/dispatch.ex) so both agree — the scheduler resolves the
-  repo-less agent's repo root from the same chain when `spec.opts[:repo_less]`
-  is set.
+  Delegates to `EvoGit.SelfReflectiveSource.reference_path/0` — the single
+  source of truth for the chain: `:self_reflective_source_root` app env →
+  `GENESIS_SOURCE_ROOT` env var → the managed clone at
+  `EvoGit.SelfReflectiveSource.source_dir/0` when it exists and is a valid
+  Genesis checkout (auto-reference) → `nil`. Falls back to `File.cwd!()`
+  (dev: the genesis repo itself) when the chain resolves to nil. The
+  scheduler resolves the repo-less agent's repo root from the SAME chain via
+  `EvoGit.AgentScheduler.Dispatch.resolve_repo_less_root/0` — both delegate
+  to `SelfReflectiveSource.reference_path/0` so they always agree.
   """
   def source_root do
-    case Application.get_env(:evo_git, :self_reflective_source_root) do
-      path when is_binary(path) and path != "" ->
-        path
-
-      _ ->
-        case System.get_env("GENESIS_SOURCE_ROOT") do
-          path when is_binary(path) and path != "" ->
-            path
-
-          _ ->
-            File.cwd!()
-        end
-    end
+    EvoGit.SelfReflectiveSource.reference_path() || File.cwd!()
   end
 
   @doc """

@@ -20,8 +20,9 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Generic execution** | `run/2` — execute arbitrary `git` args in a directory |
 | **Worktree** | `add_worktree/4`, `prune_worktrees/1` |
 | **Working tree ops** | `checkout/2`, `reset_hard/2`, `clean/1`, `add/2`, `commit/2` |
-| **Merge** | `merge/2`, `merge_octopus/2`, `merge_base/3` — the two merge variants are thin wrappers over one private `do_merge/2` that goes through `run/2` (no raw `System.cmd` copy-paste) |
-| **Status / query** | `conflict_files/1`, `status/1`, `rev_parse/2`, `check_ignore/2` |
+| **Merge** | `merge/2`, `merge_octopus/2`, `merge_base/3`, `merge_ff_only/2` — the merge variants are thin wrappers over one private `do_merge/2` that goes through `run/2` (no raw `System.cmd` copy-paste); `merge_ff_only/2` is a direct `run(["merge", "--ff-only", ref], path)` |
+| **Status / query** | `conflict_files/1`, `status/1`, `rev_parse/2`, `rev_parse_short/2`, `check_ignore/2`, `remote_url/1,2` |
+| **Clone / sync** | `clone/2,3`, `fetch/2` — remote clone (extra args like `["--depth", "1"]` between `clone` and url/path; runs from `File.cwd!()`, no repo context) + fetch from origin; used by `EvoGit.SelfReflectiveSource` |
 | **Tree listing** | `ls_tree_names/2` — recursive file list in a git tree |
 | **History** | `log/2`, `file_history/3`, `show/2` |
 | **Diff** | `diff/4`, `file_diff/5`, `diff_stat/3`, `diff_numstat/3`, `diff_shortstat/3`, `diff_name_only/3` — changed file paths between two commits |
