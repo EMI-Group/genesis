@@ -185,6 +185,7 @@ defmodule EvoDashWeb.HomeLive do
           chat_agent_id: nil,
           agent_message_count: nil,
           chat_fetch_seq: 0,
+          chat_task_fetch_seq: 0,
           shift_down: false,
           current_path: ~p"/"
         )
@@ -207,6 +208,10 @@ defmodule EvoDashWeb.HomeLive do
 
   @impl true
   def handle_event("send_message", %{"message" => text}, socket), do: send_chat(socket, text)
+
+  @impl true
+  def handle_event("send_message", _params, socket),
+    do: send_chat(socket, socket.assigns[:chat_draft])
 
   @impl true
   def handle_event("chat_input", %{"message" => text}, socket) do
@@ -393,7 +398,9 @@ defmodule EvoDashWeb.HomeLive do
 
   @impl true
   def handle_info({:chat_task_loaded, node, seq, task_id, task}, socket) do
-    if stale?(socket, node, seq) or task_id != socket.assigns[:chat_task_id] do
+    if node != socket.assigns[:current_node] or
+         seq != socket.assigns[:chat_task_fetch_seq] or
+         task_id != socket.assigns[:chat_task_id] do
       {:noreply, socket}
     else
       {:noreply, finalize_terminal(socket, task)}
@@ -539,11 +546,12 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   # Spawns a supervised task fetch used to finalize the transcript with the
-  # preserved/final result. Bumps :chat_fetch_seq.
+  # preserved/final result. Bumps :chat_task_fetch_seq (its own counter, so a
+  # late history/lookup fetch can never invalidate the terminal result).
   defp async_fetch_task(socket) do
     task_id = socket.assigns[:chat_task_id]
     node = socket.assigns[:current_node] || node()
-    seq = socket.assigns[:chat_fetch_seq] + 1
+    seq = socket.assigns[:chat_task_fetch_seq] + 1
     pid = self()
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
@@ -560,7 +568,7 @@ defmodule EvoDashWeb.HomeLive do
       send(pid, {:chat_task_loaded, node, seq, task_id, task})
     end)
 
-    assign(socket, chat_fetch_seq: seq)
+    assign(socket, chat_task_fetch_seq: seq)
   end
 
   # Chat-specific handling of a task lifecycle event for OUR task (node filter
@@ -670,7 +678,8 @@ defmodule EvoDashWeb.HomeLive do
       chat_task_id: nil,
       chat_agent_id: nil,
       agent_message_count: nil,
-      chat_fetch_seq: 0
+      chat_fetch_seq: 0,
+      chat_task_fetch_seq: 0
     )
   end
 
