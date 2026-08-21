@@ -535,9 +535,10 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       # primary-repo branch below would crash on `spec.phylo_node.repo`.
       # Resolve a plain binary instead — the real Genesis source root
       # (self-reflective agents analyze the codebase that runs them) or the
-      # "[system]" placeholder. NOTE: the future
-      # `EvoGit.Runtime.SelfReflective.source_root/0` (a later workstream)
-      # should mirror this same env chain so both agree.
+      # "[system]" placeholder. Both this and
+      # `EvoGit.Runtime.SelfReflective.source_root/0` delegate to the shared
+      # `EvoGit.SelfReflectiveSource.reference_path/0` (single source of
+      # truth) so they always agree.
       resolve_repo_less_root()
     else
       resolve_agent_repo_root_regular(spec, state)
@@ -567,14 +568,15 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     end
   end
 
-  # Repo-less root resolution chain: `:self_reflective_source_root` app env →
-  # `GENESIS_SOURCE_ROOT` env var → `File.cwd!()` (dev = the genesis repo
-  # itself) → "[system]" fallback.
+  # Repo-less root resolution — single source of truth:
+  # `EvoGit.SelfReflectiveSource.reference_path/0` (`:self_reflective_source_root`
+  # app env → `GENESIS_SOURCE_ROOT` env var → the managed clone at
+  # `SelfReflectiveSource.source_dir/0` when valid) with the terminal
+  # `File.cwd!()` (dev = the genesis repo itself) → "[system]" fallback.
+  # `EvoGit.Runtime.SelfReflective.source_root/0` delegates to the same
+  # reference_path/0 so both agree.
   defp resolve_repo_less_root do
-    Application.get_env(:evo_git, :self_reflective_source_root) ||
-      System.get_env("GENESIS_SOURCE_ROOT") ||
-      File.cwd!() ||
-      "[system]"
+    EvoGit.SelfReflectiveSource.reference_path() || File.cwd!() || "[system]"
   end
 
   # --- Queue Processing ---

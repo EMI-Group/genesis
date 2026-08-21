@@ -5,7 +5,10 @@ defmodule EvoGit.Adapters.GitTest do
 
   setup do
     tmp_dir =
-      Path.join(System.tmp_dir!(), "evo_git_test_repo_" <> to_string(System.unique_integer()))
+      Path.join(
+        System.tmp_dir!(),
+        "evo_git_test_repo_" <> to_string(System.unique_integer([:positive]))
+      )
 
     File.mkdir_p!(tmp_dir)
     Git.init(tmp_dir)
@@ -347,6 +350,119 @@ defmodule EvoGit.Adapters.GitTest do
       # Resolve the feature branch SHA and merge it.
       {:ok, feature_sha} = Git.rev_parse(tmp_dir, "feature")
       assert {:ok, _} = Git.merge(tmp_dir, feature_sha)
+    end
+  end
+
+  describe "clone, fetch, merge_ff_only, rev_parse_short, remote_url" do
+    test "clone/3 shallow-clones a repository and clone/2 works with defaults", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "hello\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, branch} = Git.current_branch(tmp_dir)
+
+      # Never reuse a stale origin: System.unique_integer/1 is only unique
+      # per-VM, so a leaked origin from a previous run (whose on_exit did not
+      # clean it) can collide with this tmp_dir and reject the push below.
+      origin = tmp_dir <> "-origin"
+      File.rm_rf!(origin)
+      File.mkdir_p!(origin)
+      on_exit(fn -> File.rm_rf!(origin) end)
+      {:ok, _} = Git.run(["init", "--bare"], origin)
+      {:ok, _} = Git.run(["symbolic-ref", "HEAD", "refs/heads/#{branch}"], origin)
+      {:ok, _} = Git.run(["remote", "add", "origin", origin], tmp_dir)
+      {:ok, _} = Git.push_branch(tmp_dir, branch)
+
+      clone_dir = tmp_dir <> "-clone"
+      on_exit(fn -> File.rm_rf!(clone_dir) end)
+      assert {:ok, _} = Git.clone(origin, clone_dir, ["--depth", "1"])
+      assert File.read!(Path.join(clone_dir, "test.txt")) == "hello\n"
+
+      # Default-args variant (clone/2) works too.
+      clone2 = tmp_dir <> "-clone2"
+      on_exit(fn -> File.rm_rf!(clone2) end)
+      assert {:ok, _} = Git.clone(origin, clone2)
+      assert File.read!(Path.join(clone2, "test.txt")) == "hello\n"
+    end
+
+    test "fetch/2 and merge_ff_only/2 fast-forward a full clone", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "hello\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, branch} = Git.current_branch(tmp_dir)
+
+      origin = tmp_dir <> "-origin"
+      File.rm_rf!(origin)
+      File.mkdir_p!(origin)
+      on_exit(fn -> File.rm_rf!(origin) end)
+      {:ok, _} = Git.run(["init", "--bare"], origin)
+      {:ok, _} = Git.run(["symbolic-ref", "HEAD", "refs/heads/#{branch}"], origin)
+      {:ok, _} = Git.run(["remote", "add", "origin", origin], tmp_dir)
+      {:ok, _} = Git.push_branch(tmp_dir, branch)
+
+      # A FULL clone (merge --ff-only needs connected ancestry; a depth-1
+      # shallow clone severs it on re-fetch).
+      clone_dir = tmp_dir <> "-clone"
+      on_exit(fn -> File.rm_rf!(clone_dir) end)
+      assert {:ok, _} = Git.clone(origin, clone_dir)
+
+      # New commit pushed to origin, then fetch + ff-only merge.
+      File.write!(Path.join(tmp_dir, "test.txt"), "hello v2\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Second commit")
+      {:ok, _} = Git.push_branch(tmp_dir, branch)
+
+      assert {:ok, _} = Git.fetch(clone_dir)
+      assert {:ok, _} = Git.merge_ff_only(clone_dir, "origin/#{branch}")
+
+      {:ok, clone_head} = Git.rev_parse(clone_dir, "HEAD")
+      {:ok, source_head} = Git.rev_parse(tmp_dir, "HEAD")
+      assert clone_head == source_head
+      assert File.read!(Path.join(clone_dir, "test.txt")) == "hello v2\n"
+    end
+
+    test "rev_parse_short/2 returns the abbreviated HEAD sha", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "hello\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      {:ok, full} = Git.rev_parse(tmp_dir, "HEAD")
+      {:ok, short} = Git.rev_parse_short(tmp_dir)
+      assert String.starts_with?(full, short)
+      assert String.length(short) >= 7
+
+      # Explicit rev argument variant.
+      {:ok, short_head} = Git.rev_parse_short(tmp_dir, "HEAD")
+      assert short_head == short
+    end
+
+    test "remote_url/1,2 returns the origin URL and errors without a remote", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "hello\n")
+      Git.add(tmp_dir, "test.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      origin = tmp_dir <> "-origin"
+      File.rm_rf!(origin)
+      File.mkdir_p!(origin)
+      on_exit(fn -> File.rm_rf!(origin) end)
+      {:ok, _} = Git.run(["init", "--bare"], origin)
+      {:ok, _} = Git.run(["remote", "add", "origin", origin], tmp_dir)
+
+      assert {:ok, url} = Git.remote_url(tmp_dir)
+      assert url == origin
+
+      # Explicit remote-name variant.
+      assert {:ok, ^origin} = Git.remote_url(tmp_dir, "origin")
+
+      # A repo with no origin → error tuple.
+      other = tmp_dir <> "-noremote"
+      File.mkdir_p!(other)
+      on_exit(fn -> File.rm_rf!(other) end)
+      Git.init(other)
+      assert {:error, _} = Git.remote_url(other)
     end
   end
 end

@@ -162,28 +162,53 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
 
   describe "resolve_agent_repo_root/2 with repo-less agent" do
     test "returns a binary for a repo-less agent without crashing on nil phylo_node" do
-      spec =
-        AgentSpec.new(
-          %ContextNode{path: "./", repo: "/tmp"},
-          nil,
-          EvoGit.Agents.SelfReflective,
-          "reflect on the codebase",
-          repo_less: true
+      original_dir = Application.get_env(:evo_git, :self_reflective_source_dir)
+
+      try do
+        # Isolate the managed-dir step of the unified chain (point it at a
+        # non-existent path) so a real managed clone under the real data dir
+        # can never hijack the chain in tests.
+        Application.put_env(
+          :evo_git,
+          :self_reflective_source_dir,
+          "/nonexistent/evogit-selfref-source"
         )
 
-      result = Dispatch.resolve_agent_repo_root(spec, %State{})
+        spec =
+          AgentSpec.new(
+            %ContextNode{path: "./", repo: "/tmp"},
+            nil,
+            EvoGit.Agents.SelfReflective,
+            "reflect on the codebase",
+            repo_less: true
+          )
 
-      # Never a KeyError on the nil phylo_node — a plain binary root instead
-      # (in the test env this is typically File.cwd!(); do not hardcode it).
-      assert is_binary(result)
-      assert result != ""
+        result = Dispatch.resolve_agent_repo_root(spec, %State{})
+
+        # Never a KeyError on the nil phylo_node — a plain binary root instead
+        # (in the test env this is typically File.cwd!(); do not hardcode it).
+        assert is_binary(result)
+        assert result != ""
+      after
+        case original_dir do
+          nil -> Application.delete_env(:evo_git, :self_reflective_source_dir)
+          _ -> Application.put_env(:evo_git, :self_reflective_source_dir, original_dir)
+        end
+      end
     end
 
     test "prefers the :self_reflective_source_root app env when set" do
       original = Application.get_env(:evo_git, :self_reflective_source_root)
+      original_dir = Application.get_env(:evo_git, :self_reflective_source_dir)
 
       try do
         Application.put_env(:evo_git, :self_reflective_source_root, "/tmp/fake-source")
+
+        Application.put_env(
+          :evo_git,
+          :self_reflective_source_dir,
+          "/nonexistent/evogit-selfref-source"
+        )
 
         spec =
           AgentSpec.new(
@@ -200,16 +225,28 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
           nil -> Application.delete_env(:evo_git, :self_reflective_source_root)
           _ -> Application.put_env(:evo_git, :self_reflective_source_root, original)
         end
+
+        case original_dir do
+          nil -> Application.delete_env(:evo_git, :self_reflective_source_dir)
+          _ -> Application.put_env(:evo_git, :self_reflective_source_dir, original_dir)
+        end
       end
     end
 
     test "falls back to the GENESIS_SOURCE_ROOT env var when the app env is absent" do
       original_app_env = Application.get_env(:evo_git, :self_reflective_source_root)
       original_sys_env = System.get_env("GENESIS_SOURCE_ROOT")
+      original_dir = Application.get_env(:evo_git, :self_reflective_source_dir)
 
       try do
         Application.delete_env(:evo_git, :self_reflective_source_root)
         System.put_env("GENESIS_SOURCE_ROOT", "/tmp/from-env")
+
+        Application.put_env(
+          :evo_git,
+          :self_reflective_source_dir,
+          "/nonexistent/evogit-selfref-source"
+        )
 
         spec =
           AgentSpec.new(
@@ -230,6 +267,11 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
         case original_sys_env do
           nil -> System.delete_env("GENESIS_SOURCE_ROOT")
           _ -> System.put_env("GENESIS_SOURCE_ROOT", original_sys_env)
+        end
+
+        case original_dir do
+          nil -> Application.delete_env(:evo_git, :self_reflective_source_dir)
+          _ -> Application.put_env(:evo_git, :self_reflective_source_dir, original_dir)
         end
       end
     end
