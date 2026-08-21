@@ -445,7 +445,9 @@ defmodule EvoGit.Adapters.GitTest do
       Git.commit(tmp_dir, "Initial commit")
 
       origin = tmp_dir <> "-origin"
+      File.rm_rf!(origin)
       File.mkdir_p!(origin)
+      on_exit(fn -> File.rm_rf!(origin) end)
       {:ok, _} = Git.run(["init", "--bare"], origin)
       {:ok, _} = Git.run(["remote", "add", "origin", origin], tmp_dir)
 
