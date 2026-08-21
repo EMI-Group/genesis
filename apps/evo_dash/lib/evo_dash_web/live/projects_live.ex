@@ -171,7 +171,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     starting_commit={@task_starting_commit}
                     resume_from={@task_resume_from}
                     show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project) and @task_mode != "reflect"}
+                    disabled={is_nil(@active_project)}
                     archive={@task_archive}
                     model_profiles={@model_profiles}
                     selected_model_id={@selected_model_id}
@@ -319,7 +319,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     starting_commit={@task_starting_commit}
                     resume_from={@task_resume_from}
                     show_advanced={@show_advanced}
-                    disabled={is_nil(@active_project) and @task_mode != "reflect"}
+                    disabled={is_nil(@active_project)}
                     archive={@task_archive}
                     model_profiles={@model_profiles}
                     selected_model_id={@selected_model_id}
@@ -626,7 +626,7 @@ defmodule EvoDashWeb.ProjectsLive do
     # `socket` variable would read the PRE-assign_node value, so a page load at
     # a connected `?node=` URL would render the error gate on the first pass.
     socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
-    socket = assign(socket, :current_path, ~p"/")
+    socket = assign(socket, :current_path, ~p"/projects")
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
 
     # Node-aware refresh (custom agents + model-selection script state, model
@@ -1099,7 +1099,9 @@ defmodule EvoDashWeb.ProjectsLive do
 
       # Always restore task_mode from sessionStorage — the user's explicit choice
       # takes precedence over auto-detection when returning to a project.
-      socket = StatePersistence.maybe_restore_assign(socket, :task_mode, params["task_mode"])
+      # Normalizes a legacy persisted "reflect" value to "evolve_simple" (the
+      # reflect mode was removed from the task form).
+      socket = StatePersistence.maybe_restore_task_mode(socket, params["task_mode"])
 
       # Restore project if we don't already have one active.
       # Only restore project-specific assigns (node_path) when no project is
@@ -1136,9 +1138,9 @@ defmodule EvoDashWeb.ProjectsLive do
     selected_agent_id = socket.assigns[:selected_agent_id]
 
     cond do
-      # Reflect mode is repo-less — no active project required. All repo
-      # modes (genesis/evolve/custom_agent) keep the existing guard.
-      is_nil(path) and combined_mode != "reflect" ->
+      # All task modes now require an active project (reflect mode was
+      # removed) — keep the existing "No project selected" guard.
+      is_nil(path) ->
         {:noreply,
          put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
 
@@ -2048,8 +2050,8 @@ defmodule EvoDashWeb.ProjectsLive do
   # appends with `?` and would corrupt the existing `?project=` query.
   defp project_url(socket, path) do
     case socket.assigns[:current_node_id] do
-      nil -> "/?project=#{URI.encode(path)}"
-      node_id -> "/?project=#{URI.encode(path)}&node=#{node_id}"
+      nil -> "/projects?project=#{URI.encode(path)}"
+      node_id -> "/projects?project=#{URI.encode(path)}&node=#{node_id}"
     end
   end
 
@@ -2132,22 +2134,13 @@ defmodule EvoDashWeb.ProjectsLive do
         # selected custom agent as the root agent (the core contract's mode
         # string is "custom" — distinct from the UI's combined-mode string).
         "custom_agent" -> {:evolve, "custom"}
-        # Reflect mode is repo-less conversational: a :reflect task with no
-        # :path opt (no active project required).
-        "reflect" -> {:reflect, "reflect"}
         _ -> {:evolve, "simple"}
       end
 
     node_path = params["node_path"]
     archive = params["archive"] == "true"
 
-    opts =
-      if combined_mode == "reflect" do
-        # Reflect is repo-less — no :path opt (active_project_path is nil).
-        [mode: mode]
-      else
-        [path: path, mode: mode]
-      end
+    opts = [path: path, mode: mode]
 
     opts =
       if task_type == :genesis do
