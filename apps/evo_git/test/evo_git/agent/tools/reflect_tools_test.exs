@@ -1,8 +1,9 @@
 defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   @moduledoc """
   Tests for the self-reflective-agent tools: ListTasks, GetTask, StartTask,
-  CancelTask, ForceKillTask, DeleteTask, GuideUser, SpawnInvestigator, plus the
-  repo-less write guard in `EvoGit.Agent.Tools.execute/5`.
+  CancelTask, ForceKillTask, DeleteTask, GuideUser, SpawnInvestigator,
+  ListRecentProjects, SystemInfo, plus the repo-less write guard in
+  `EvoGit.Agent.Tools.execute/5`.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -14,9 +15,11 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   alias EvoGit.Agent.Tools.ForceKillTask
   alias EvoGit.Agent.Tools.GetTask
   alias EvoGit.Agent.Tools.GuideUser
+  alias EvoGit.Agent.Tools.ListRecentProjects
   alias EvoGit.Agent.Tools.ListTasks
   alias EvoGit.Agent.Tools.SpawnInvestigator
   alias EvoGit.Agent.Tools.StartTask
+  alias EvoGit.Agent.Tools.SystemInfo
 
   describe "ListTasks" do
     test "lists seeded tasks with id, status, type, project path, and objective" do
@@ -220,6 +223,103 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
 
       assert {:error, message} = SpawnInvestigator.execute(%{"objective" => "x"}, nil, nil)
       assert message == "Missing required argument 'path'. Please provide a valid value."
+    end
+  end
+
+  describe "ListRecentProjects" do
+    test "lists seeded recent projects with name, path, and last opened time" do
+      # Truncate to millisecond precision so the ISO string survives the Store
+      # round-trip (Codec.encode_datetime truncates to milliseconds).
+      last_opened = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+      :ok =
+        EvoGit.Store.put_project(EvoGit.Store, %EvoGit.RecentProject{
+          path: "/proj/a",
+          name: "Project A",
+          last_opened_at: last_opened
+        })
+
+      # list_recent_projects/0 reads LIVE from the Store, so direct Store
+      # seeding is visible — same idiom as seed_task!.
+      output = ListRecentProjects.execute(%{}, nil, nil)
+
+      assert output =~ "Project A"
+      assert output =~ "/proj/a"
+      assert output =~ DateTime.to_iso8601(last_opened)
+    end
+
+    test "returns No recent projects found for an empty registry" do
+      # The isolated TaskRegistryCase store is fresh per test (a new sqlite
+      # file is created in setup), so no cleanup of happy-path seeds is needed
+      # — same idiom as the ListTasks empty-registry test.
+      assert ListRecentProjects.execute(%{}, nil, nil) == "No recent projects found."
+    end
+
+    test "reports task system unavailable when the registry is down" do
+      registry = Process.whereis(EvoGit.TaskRegistry)
+      assert is_pid(registry)
+
+      # Unregistering only removes the name — the isolated registry process
+      # stays alive, so it can be re-registered in the after block.
+      Process.unregister(EvoGit.TaskRegistry)
+
+      try do
+        output = ListRecentProjects.execute(%{}, nil, nil)
+        assert output =~ "task system unavailable"
+      after
+        assert Process.register(registry, EvoGit.TaskRegistry) == true
+      end
+
+      assert Process.whereis(EvoGit.TaskRegistry) == registry
+    end
+
+    test "dispatch path works while repo_less", %{tmp_dir: tmp_dir} do
+      Process.put(:repo_less, true)
+
+      try do
+        # list_recent_projects is a read tool — it must not be blocked by the
+        # repo-less write guard.
+        assert EvoGit.Agent.Tools.execute("list_recent_projects", %{}, tmp_dir) ==
+                 "No recent projects found."
+      after
+        Process.delete(:repo_less)
+      end
+    end
+  end
+
+  describe "SystemInfo" do
+    test "returns a multi-line key: value report with all expected fields" do
+      output = SystemInfo.execute(%{}, nil, nil)
+
+      assert output =~ "os:"
+      assert output =~ "architecture:"
+      assert output =~ "hostname:"
+      assert output =~ "local time:"
+      assert output =~ "utc time:"
+      assert output =~ "elixir version:"
+      assert output =~ "otp version:"
+      assert output =~ "data directory:"
+      assert output =~ System.version()
+      assert output =~ System.otp_release()
+      assert output =~ EvoGit.Platform.data_dir()
+    end
+
+    test "dispatch path works while repo_less", %{tmp_dir: tmp_dir} do
+      Process.put(:repo_less, true)
+
+      try do
+        # system_info is a read-only, dependency-free tool — it must not be
+        # blocked by the repo-less write guard.
+        output = EvoGit.Agent.Tools.execute("system_info", %{}, tmp_dir)
+        assert output =~ "os:"
+        assert output =~ System.version()
+      after
+        Process.delete(:repo_less)
+      end
+    end
+
+    test "never raises on empty args" do
+      assert is_binary(SystemInfo.execute(%{}, nil, nil))
     end
   end
 
