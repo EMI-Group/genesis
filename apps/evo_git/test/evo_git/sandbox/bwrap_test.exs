@@ -148,6 +148,25 @@ defmodule EvoGit.Sandbox.BwrapTest do
     :ok
   end
 
+  # Sets the `:bwrap_capability` app-env override (the `capability/0` test
+  # seam — it takes precedence over both the persistent_term cache and the
+  # probe) for the duration of the test and restores the previous value on
+  # exit. Also erases the `{EvoGit.Sandbox.Bwrap, :capability}` persistent_term
+  # so a cached probe result can never leak into later tests.
+  defp with_capability_override(capability) do
+    original = Application.get_env(:evo_git, :bwrap_capability)
+    Application.put_env(:evo_git, :bwrap_capability, capability)
+
+    on_exit(fn ->
+      case original do
+        nil -> Application.delete_env(:evo_git, :bwrap_capability)
+        value -> Application.put_env(:evo_git, :bwrap_capability, value)
+      end
+
+      :persistent_term.erase({EvoGit.Sandbox.Bwrap, :capability})
+    end)
+  end
+
   describe "enabled?/0 and ensure_initialized/0" do
     test "enabled?/0 is false in the test env" do
       # The compile-time @mix_env == :test gate comes FIRST in enabled?/0 and
@@ -627,6 +646,121 @@ defmodule EvoGit.Sandbox.BwrapTest do
       args = Bwrap.args(System.tmp_dir!(), "bash", ["-c", wrapped_cmd], nil)
 
       assert Enum.take(args, -4) == ["--", "bash", "-c", wrapped_cmd]
+    end
+  end
+
+  describe "capability/0 — app-env override seam" do
+    test "returns the override verbatim without running a probe" do
+      with_capability_override(:degraded)
+
+      # The override must be honored as-is: no probe runs (bwrap may be
+      # missing/unusable in this environment), so the return value is simply
+      # the override — never :unusable or a probe result.
+      assert Bwrap.capability() == :degraded
+    end
+
+    test "returns a :full override verbatim too" do
+      with_capability_override(:full)
+      assert Bwrap.capability() == :full
+    end
+  end
+
+  describe "args/4 — capability degradation (rootless podman)" do
+    test "degraded: removes --unshare-pid but keeps every other flag" do
+      with_capability_override(:degraded)
+      redirect_xdg_config_home()
+
+      args = build_args()
+      cwd = System.tmp_dir!()
+      home = System.user_home!()
+
+      refute "--unshare-pid" in args,
+             "expected --unshare-pid removed in degraded mode, got: #{inspect(args)}"
+
+      # The namespace head is the full sequence minus exactly --unshare-pid.
+      assert Enum.take(args, 8) == [
+               "--die-with-parent",
+               "--new-session",
+               "--unshare-user-try",
+               "--unshare-ipc",
+               "--unshare-uts",
+               "--unshare-cgroup-try",
+               "--ro-bind",
+               "/"
+             ]
+
+      assert has_subsequence?(args, ["--ro-bind", "/", "/"])
+      assert has_subsequence?(args, ["--dev", "/dev"])
+      assert has_subsequence?(args, ["--proc", "/proc"])
+
+      # Writable binds (cwd + default cache dirs) survive.
+      assert has_subsequence?(args, ["--bind-try", cwd, cwd])
+
+      for dir <- @default_cache_dirs do
+        path = Path.join(home, dir)
+
+        assert has_subsequence?(args, ["--bind-try", path, path]),
+               "expected default cache-dir bind for #{dir} in degraded args, got: #{inspect(args)}"
+      end
+
+      # Deny tmpfs overlays survive.
+      for dir <- @deny_list do
+        path = Path.join(home, dir)
+
+        assert has_subsequence?(args, ["--tmpfs", path]),
+               "expected tmpfs overlay for #{dir} in degraded args, got: #{inspect(args)}"
+      end
+
+      # --chdir, the TMPDIR setenv, and the trailing -- cmd all survive.
+      assert has_subsequence?(args, ["--chdir", cwd])
+      assert has_subsequence?(args, ["--setenv", "TMPDIR", Sandbox.resolve_tmpdir()])
+      assert Enum.take(args, -2) == ["--", "/usr/bin/env"]
+    end
+
+    test "full: keeps the complete namespace shape including --unshare-pid" do
+      with_capability_override(:full)
+      args = build_args()
+
+      assert Enum.take(args, 9) == [
+               "--die-with-parent",
+               "--new-session",
+               "--unshare-user-try",
+               "--unshare-ipc",
+               "--unshare-pid",
+               "--unshare-uts",
+               "--unshare-cgroup-try",
+               "--ro-bind",
+               "/"
+             ]
+    end
+
+    test "unusable: args/4 still emits the full shape (documented choice)" do
+      with_capability_override(:unusable)
+      args = build_args()
+
+      assert Enum.take(args, 9) == [
+               "--die-with-parent",
+               "--new-session",
+               "--unshare-user-try",
+               "--unshare-ipc",
+               "--unshare-pid",
+               "--unshare-uts",
+               "--unshare-cgroup-try",
+               "--ro-bind",
+               "/"
+             ]
+    end
+
+    test "unusable: enabled?/0 stays false and capability/0 returns the override" do
+      with_capability_override(:unusable)
+      redirect_xdg_config_home()
+
+      # The @mix_env == :test gate short-circuits enabled?/0 to false BEFORE
+      # the :auto branch (Platform.bwrap_available?() and capability() !=
+      # :unusable) is ever evaluated, so the :auto path itself is not
+      # reachable in the test env — this pins the observable contract instead.
+      assert Bwrap.enabled?() == false
+      assert Bwrap.capability() == :unusable
     end
   end
 end
