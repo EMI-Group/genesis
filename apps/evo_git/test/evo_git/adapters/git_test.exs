@@ -5,7 +5,10 @@ defmodule EvoGit.Adapters.GitTest do
 
   setup do
     tmp_dir =
-      Path.join(System.tmp_dir!(), "evo_git_test_repo_" <> to_string(System.unique_integer()))
+      Path.join(
+        System.tmp_dir!(),
+        "evo_git_test_repo_" <> to_string(System.unique_integer([:positive]))
+      )
 
     File.mkdir_p!(tmp_dir)
     Git.init(tmp_dir)
@@ -359,8 +362,13 @@ defmodule EvoGit.Adapters.GitTest do
       Git.commit(tmp_dir, "Initial commit")
       {:ok, branch} = Git.current_branch(tmp_dir)
 
+      # Never reuse a stale origin: System.unique_integer/1 is only unique
+      # per-VM, so a leaked origin from a previous run (whose on_exit did not
+      # clean it) can collide with this tmp_dir and reject the push below.
       origin = tmp_dir <> "-origin"
+      File.rm_rf!(origin)
       File.mkdir_p!(origin)
+      on_exit(fn -> File.rm_rf!(origin) end)
       {:ok, _} = Git.run(["init", "--bare"], origin)
       {:ok, _} = Git.run(["symbolic-ref", "HEAD", "refs/heads/#{branch}"], origin)
       {:ok, _} = Git.run(["remote", "add", "origin", origin], tmp_dir)
@@ -385,7 +393,9 @@ defmodule EvoGit.Adapters.GitTest do
       {:ok, branch} = Git.current_branch(tmp_dir)
 
       origin = tmp_dir <> "-origin"
+      File.rm_rf!(origin)
       File.mkdir_p!(origin)
+      on_exit(fn -> File.rm_rf!(origin) end)
       {:ok, _} = Git.run(["init", "--bare"], origin)
       {:ok, _} = Git.run(["symbolic-ref", "HEAD", "refs/heads/#{branch}"], origin)
       {:ok, _} = Git.run(["remote", "add", "origin", origin], tmp_dir)
