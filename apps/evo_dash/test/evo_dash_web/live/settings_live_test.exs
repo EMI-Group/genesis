@@ -2242,6 +2242,24 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "Remote Configuration Unavailable"
     end
   end
+
+  describe "copy-to-clipboard" do
+    test "config-path copy button renders with the ClipboardCopy hook", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/settings")
+
+      assert html =~ ~s(id="settings-config-path-copy")
+      assert html =~ ~s(phx-hook="ClipboardCopy")
+      assert html =~ ~s(data-content=)
+    end
+
+    test "copied event flashes the confirmation message", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "copied", %{})
+
+      assert html =~ "Copied to clipboard"
+    end
+  end
 end
 
 # A minimal GenServer standing in for a real remote connection manager in

@@ -910,6 +910,11 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_event("copied", _params, socket) do
+    {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
+  end
+
+  @impl true
   def handle_event("search", params, socket), do: SearchEvents.handle_search(socket, params)
 
   # Prevents page reload when pressing Enter in the search form

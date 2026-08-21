@@ -859,6 +859,24 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "Agent change commit"
     end
 
+    test "summary copy button renders with the hook and copied event flashes", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+
+      html = flush_review_load(view)
+
+      # The summary copy button (conversation tab, the default) carries the
+      # ClipboardCopy hook and the agent summary as its data-content payload.
+      assert html =~ ~s(id="summary-copy-btn")
+      assert html =~ ~s(phx-hook="ClipboardCopy")
+      assert html =~ ~s(data-content="Agent summary")
+
+      # The "copied" event pushed by the hook flashes the confirmation.
+      html = render_hook(view, "copied", %{})
+
+      assert html =~ "Copied to clipboard"
+    end
     test "drops stale async load results", %{conn: conn} do
       task_id = seed_orphaned_review_task!()
 
