@@ -311,6 +311,22 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       render_submit(view, "send_message", %{"message" => "hello"})
 
+      # ALWAYS register the ETS sweep — the reflect agent may remain
+      # alive/blocked in the scheduler ETS even after the task itself fails
+      # fast: the `:failed` task event clears the view's chat_task_id (and the
+      # status goes :idle) while the agent row persists as :running. Gating the
+      # cleanup on chat_task_id would skip it exactly when the agent is still
+      # registered, leaking the row into agents_live_test.exs (which expects an
+      # empty agent registry). The persisted reflect row's id is authoritative
+      # (the sched_meta task_id is the same string).
+      reflect =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
+
+      if reflect != [] do
+        cleanup_task_on_exit(hd(reflect).id)
+      end
+
       # The real reflect task fails fast in the test env (no LLM config), so it
       # may already have cleared the task refs by the time render_submit
       # returns. Branch on that: nil → already :idle; otherwise inject a
@@ -320,7 +336,6 @@ defmodule EvoDashWeb.HomeLiveTest do
           :ok
 
         id ->
-          cleanup_task_on_exit(id)
           finalize_failed(view, id)
       end
 
