@@ -54,6 +54,35 @@ defmodule EvoGit.Sandbox.Bwrap do
   command + descendants) is one process group that `run_with_partial` can kill with a
   single negative-pgid `kill`.
 
+  ## Rootless container degradation (probe + `--unshare-pid` dropped)
+
+  In rootless podman containers — container root WITHOUT `CAP_SYS_ADMIN` (e.g.
+  `podman run` as an unprivileged user, `--userns=keep-id`), where `mount(2)` is
+  denied by the kernel — the full argv always exits 1 (`Creating new namespace
+  failed: Operation not permitted` / `Failed to make / slave` / `Can't mount proc
+  on /newroot/proc: Operation not permitted`). The escape hatch is the nested user
+  namespace: bwrap's existing `--unshare-user-try` creates one (`CLONE_NEWUSER` is
+  allowed in the container), and inside it the sandbox gains `CAP_SYS_ADMIN`, so
+  the bind/tmpfs/devtmpfs mounts all work. The only remaining blocker is that the
+  kernel refuses to mount a FRESH procfs inside a NEW pid namespace created within
+  a user namespace — hence `--unshare-pid` + `--proc` always fails there.
+
+  `probe_capability/0` detects this at runtime: it runs the FULL current argv
+  against a trivial command (`true`, `--chdir` to `resolve_tmpdir/0`); exit 0 →
+  `:full`. On failure it retries the same probe with `--unshare-pid` removed from
+  the argv (everything else — `--unshare-user-try`, `--ro-bind / /`, `--dev /dev`,
+  `--proc /proc`, the writable binds, deny tmpfs overlays — stays); exit 0 →
+  `:degraded`; else `:unusable`. The result is cached in `:persistent_term`
+  (`{EvoGit.Sandbox.Bwrap, :capability}`) with an override seam:
+  `Application.get_env(:evo_git, :bwrap_capability)` (any of `:full | :degraded |
+  :unusable | :unknown`) wins over the cache.
+
+  In `:degraded` mode `args/4` emits the SAME argv as today with `--unshare-pid`
+  REMOVED. Process isolation is lost (the sandbox can see other processes), but
+  filesystem isolation is unchanged and the timeout-cleanup process-group kill
+  still works (see below — `--new-session` setsid in bwrap's main process
+  remains). For `:full`/`:unknown`/`:unusable` the current shape is unchanged.
+
   ## Filesystem layout (order matters)
 
   1. `--ro-bind / /` — whole root read-only first ("everything readable, writes
@@ -114,8 +143,13 @@ defmodule EvoGit.Sandbox.Bwrap do
   belt-and-suspenders (killing bwrap triggers `--die-with-parent`; and because the
   sandboxed command is PID 1 in its pid namespace, its death makes the kernel
   SIGKILL every remaining namespace member — this also catches daemonized
-  grandchildren that escaped the process group). Partial output is recovered from
-  the temp file exactly like the other backends.
+  grandchildren that escaped the process group). In `:degraded` mode (see
+  "Rootless container degradation" above) there is NO pid namespace, so the
+  PID-1-in-namespace cleanup guarantee is absent — but the process-group kill
+  still works unchanged, because `--new-session` setsid in bwrap's main process
+  is independent of `--unshare-pid` (daemonized grandchildren that escaped the
+  process group are the residual gap). Partial output is recovered from the temp
+  file exactly like the other backends.
 
   ## Empirical validation note
 
@@ -123,7 +157,10 @@ defmodule EvoGit.Sandbox.Bwrap do
   (every flag accepted — bwrap fails only at the mount-setup stage in environments
   that block `mount(2)`). Real sandbox execution requires a host where `mount(2)`
   works (bare metal, privileged container, or unprivileged userns host); the
-  `@mix_env == :test` gate means tests never invoke real bwrap.
+  `@mix_env == :test` gate means tests never invoke real bwrap. The capability
+  probe (`probe_capability/0`) is the runtime substitute: it exercises the real
+  argv (full, then `--unshare-pid`-less) against the actual kernel and caches the
+  result.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
@@ -205,7 +242,11 @@ defmodule EvoGit.Sandbox.Bwrap do
         case EvoGit.Config.resolve([:sandbox, :mode]) do
           :enabled -> true
           :disabled -> false
-          :auto -> Platform.bwrap_available?()
+          # :auto — the binary must exist AND the environment must be able to
+          # actually run the sandbox (probe). A rootless-podman host that only
+          # reaches :degraded still counts as usable — the pid namespace is
+          # dropped but the filesystem isolation remains.
+          :auto -> Platform.bwrap_available?() and capability() != :unusable
         end
     end
   end
@@ -252,6 +293,106 @@ defmodule EvoGit.Sandbox.Bwrap do
   @doc "Generates the bwrap argument list."
   @spec args(String.t(), String.t(), [String.t()], String.t() | nil) :: [String.t()]
   def args(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
+    # In :degraded mode (rootless podman etc.) the environment cannot mount a
+    # fresh procfs inside a nested pid namespace, so --unshare-pid is dropped
+    # (see capability/0, probe_capability/0 and the moduledoc). Everything else
+    # in the argv is identical in both modes.
+    build_args(cwd, executable, args, repo_root, capability() != :degraded)
+  end
+
+  @doc """
+  Returns the cached bwrap capability for this environment.
+
+  Precedence: (a) `Application.get_env(:evo_git, :bwrap_capability)` when set
+  (test seam + ops override; any of `:full | :degraded | :unusable | :unknown`),
+  (b) the cached result in `:persistent_term` (key
+  `{EvoGit.Sandbox.Bwrap, :capability}`), (c) `probe_capability/0`, cached on
+  first use. Probing is skipped (→ `:unusable`) in the test env or when no
+  `bwrap` binary is on PATH.
+  """
+  @spec capability() :: :full | :degraded | :unusable | :unknown
+  def capability do
+    case Application.get_env(:evo_git, :bwrap_capability) do
+      value when value in [:full, :degraded, :unusable, :unknown] ->
+        value
+
+      _ ->
+        case :persistent_term.get({__MODULE__, :capability}, :none) do
+          :none ->
+            capability = probe_or_unusable()
+            :persistent_term.put({__MODULE__, :capability}, capability)
+            capability
+
+          cached when cached in [:full, :degraded, :unusable, :unknown] ->
+            cached
+        end
+    end
+  end
+
+  @doc """
+  Probes the current environment's bwrap capability (NO caching).
+
+  Runs a probe bwrap command using the FULL current argv shape (trivial command
+  `true`, `--chdir` to `EvoGit.Sandbox.resolve_tmpdir()`):
+
+    * exit 0 → `:full` — the full argv (incl. `--unshare-pid` + `--proc`) works;
+    * non-zero → retry the same probe with `--unshare-pid` removed from the
+      argv; exit 0 → `:degraded` — the environment cannot mount a fresh procfs
+      inside a nested pid namespace (rootless podman), so the pid namespace is
+      dropped;
+    * else → `:unusable`.
+
+  Rescues any exceptions (missing bwrap, etc.) → `:unusable`. Must NOT run in
+  the test env (`@mix_env == :test` gate — the existing module pattern).
+  """
+  @spec probe_capability() :: :full | :degraded | :unusable
+  def probe_capability do
+    if @mix_env == :test do
+      :unusable
+    else
+      cwd = EvoGit.Sandbox.resolve_tmpdir()
+
+      case probe_run(build_args(cwd, "true", [], nil, true)) do
+        0 ->
+          :full
+
+        _ ->
+          case probe_run(build_args(cwd, "true", [], nil, false)) do
+            0 -> :degraded
+            _ -> :unusable
+          end
+      end
+    end
+  rescue
+    _ -> :unusable
+  end
+
+  # Runs the probe argv with real bwrap, returning the exit code. Any exception
+  # (missing bwrap, etc.) maps to a non-zero sentinel — never raises into the
+  # caller.
+  defp probe_run(argv) do
+    case System.cmd("bwrap", argv, stderr_to_stdout: true) do
+      {_output, exit_code} -> exit_code
+    end
+  rescue
+    _ -> 127
+  end
+
+  # capability/0 fallback: skip probing in the test env or when no bwrap binary
+  # exists (the probe would only ever return :unusable anyway).
+  defp probe_or_unusable do
+    if @mix_env == :test or System.find_executable("bwrap") == nil do
+      :unusable
+    else
+      probe_capability()
+    end
+  end
+
+  # Shared argv builder — the single source of truth for the bwrap argv shape.
+  # `unshare_pid?` controls whether `--unshare-pid` is emitted: false in
+  # :degraded mode (see capability/0 and the moduledoc); every other flag is
+  # identical in both modes.
+  defp build_args(cwd, executable, args, repo_root, unshare_pid?) do
     home = System.user_home!()
 
     # Writable tmp dirs (always exist on Linux; --bind-try tolerates anything)
@@ -320,25 +461,29 @@ defmodule EvoGit.Sandbox.Bwrap do
         {executable, args}
       end
 
+    # user + cgroup use -try variants so the sandbox RUNS in the common
+    # cases (root-in-docker, unprivileged-with-userns); net is deliberately
+    # NOT unshared (network must keep working — see moduledoc). The pid
+    # namespace is dropped only in :degraded mode (unshare_pid? == false).
+    unshare_flags =
+      ["--unshare-user-try", "--unshare-ipc"] ++
+        if(unshare_pid?, do: ["--unshare-pid"], else: []) ++
+        ["--unshare-uts", "--unshare-cgroup-try"]
+
     [
       "--die-with-parent",
-      "--new-session",
-      # user + cgroup use -try variants so the sandbox RUNS in the common
-      # cases (root-in-docker, unprivileged-with-userns); net is deliberately
-      # NOT unshared (network must keep working — see moduledoc).
-      "--unshare-user-try",
-      "--unshare-ipc",
-      "--unshare-pid",
-      "--unshare-uts",
-      "--unshare-cgroup-try",
-      "--ro-bind",
-      "/",
-      "/",
-      "--dev",
-      "/dev",
-      "--proc",
-      "/proc"
+      "--new-session"
     ] ++
+      unshare_flags ++
+      [
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc"
+      ] ++
       tmp_bind_args ++
       writable_bind_args ++
       deny_args ++
@@ -358,7 +503,9 @@ defmodule EvoGit.Sandbox.Bwrap do
   There is no systemd unit to stop on timeout, so the enabled path opens the port
   directly, reads the OS PID, and kills the WHOLE bwrap process group
   (`kill -TERM -<pgid>` escalating to `-KILL`) — see the moduledoc for the process
-  model and the pid-namespace cleanup guarantee.
+  model and the pid-namespace cleanup guarantee (in `:degraded` mode there is no
+  pid namespace, so only the process-group kill applies — `kill_process_group`
+  itself is unchanged).
 
   Returns:
     * `{:ok, output, exit_code}` — command completed within timeout
@@ -494,6 +641,12 @@ defmodule EvoGit.Sandbox.Bwrap do
   # sandboxed command), and because the command is PID 1 in its pid namespace,
   # its death makes the kernel SIGKILL every remaining namespace member — this
   # also catches daemonized grandchildren that escaped the process group.
+  #
+  # In :degraded mode (capability/0 — --unshare-pid dropped, see the moduledoc)
+  # the command is NOT PID 1 in a namespace, so the kernel-wide namespace sweep
+  # is absent; the setsid-based process-group kill above still works unchanged
+  # (--new-session is independent of --unshare-pid), which is the documented
+  # cleanup in that mode.
   defp kill_process_group(os_pid) when is_integer(os_pid) do
     pid = Integer.to_string(os_pid)
 
