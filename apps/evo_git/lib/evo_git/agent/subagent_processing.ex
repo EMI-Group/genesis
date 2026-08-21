@@ -130,6 +130,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Get foreign repos from the agent's inherited state (per-task, not global)
     foreign_repos = state.foreign_repos
 
+    # Subagents inherit the rendered repo-notes block (markdown text) from the
+    # parent — the root agent already rendered it from the primary repo tree,
+    # so subagents render it in their own context without re-detection.
+    repo_notes = state.repo_notes
+
     Enum.map(indexed_calls, fn {call, index} ->
       name = ReqLLM.ToolCall.name(call)
       args = ReqLLM.ToolCall.args_map(call)
@@ -179,6 +184,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
               AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
                 repo_id: target_repo_id,
                 foreign_repos: foreign_repos,
+                repo_notes: repo_notes,
                 archive: parent_state.archive,
                 model_id: parent_state.model_id
               )

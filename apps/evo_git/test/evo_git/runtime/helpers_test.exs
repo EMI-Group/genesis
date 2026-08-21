@@ -445,4 +445,45 @@ defmodule EvoGit.Runtime.HelpersTest do
       assert Enum.map(result, & &1.id) |> Enum.sort() == ["a", "b"]
     end
   end
+
+  # ==========================================================================
+  # load_repo_notes/2
+  # ==========================================================================
+  describe "load_repo_notes/2" do
+    test "renders the note with gitlink paths when submodules exist", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      EvoGit.TestSupport.Submodule.add_gitlink(tmp_dir, "vendor/Sub")
+      Git.add(tmp_dir, ".")
+      Git.commit(tmp_dir, "Add submodule gitlink")
+      {:ok, sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      note = Helpers.load_repo_notes(tmp_dir, sha)
+
+      assert is_binary(note)
+      assert note =~ "## Git Submodules"
+      assert note =~ "This repository has git submodules at:"
+      assert note =~ "- `vendor/Sub`"
+      assert note =~ "git submodule update --init"
+      assert note =~ "empty placeholder directories"
+      assert note =~ "Never delete the placeholder dirs"
+      assert note =~ "do not commit inside submodules"
+    end
+
+    test "returns nil when the repo has no gitlinks", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      assert Helpers.load_repo_notes(tmp_dir, sha) == nil
+    end
+
+    test "returns nil on a bogus treeish (graceful degradation)", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      assert Helpers.load_repo_notes(tmp_dir, "bogus-treeish") == nil
+    end
+  end
 end

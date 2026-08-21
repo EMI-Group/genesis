@@ -23,7 +23,7 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Merge** | `merge/2`, `merge_octopus/2`, `merge_base/3`, `merge_ff_only/2` — the merge variants are thin wrappers over one private `do_merge/2` that goes through `run/2` (no raw `System.cmd` copy-paste); `merge_ff_only/2` is a direct `run(["merge", "--ff-only", ref], path)` |
 | **Status / query** | `conflict_files/1`, `status/1`, `rev_parse/2`, `rev_parse_short/2`, `check_ignore/2`, `remote_url/1,2` |
 | **Clone / sync** | `clone/2,3`, `fetch/2` — remote clone (extra args like `["--depth", "1"]` between `clone` and url/path; runs from `File.cwd!()`, no repo context) + fetch from origin; used by `EvoGit.SelfReflectiveSource` |
-| **Tree listing** | `ls_tree_names/2` — recursive file list in a git tree |
+| **Tree listing** | `ls_tree_names/2` — recursive file list in a git tree (gitlink/submodule entries excluded); `ls_tree_gitlinks/2` — recursive list of gitlink (submodule) paths only (mode `160000` / type `commit`). Both share the same private raw-output parser (`parse_ls_tree_output/2`), one keeping files, the other keeping gitlinks — sibling functions with the uniform `{:ok, [paths]} | {:error, {tag, output}}` contract. `ls_tree_gitlinks/2` feeds `EvoGit.Runtime.Helpers.load_repo_notes/2` for agent-facing submodule awareness. |
 | **History** | `log/2`, `file_history/3`, `show/2` |
 | **Diff** | `diff/4`, `file_diff/5`, `diff_stat/3`, `diff_numstat/3`, `diff_shortstat/3`, `diff_name_only/3` — changed file paths between two commits |
 | **Notes** | `add_note/4`, `remove_note/3`, `show_note/3`, `get_note/4`, `list_notes/2` |

@@ -155,6 +155,60 @@ defmodule EvoGit.Runtime.Helpers do
     merge_foreign_repos(toml_repos, cli_repos)
   end
 
+  @doc """
+  Loads the rendered git-submodules note block for a repo tree, or `nil` when
+  the repo has no gitlink (submodule) entries or detection fails (graceful
+  degradation — never crashes, no `try/rescue`).
+
+  The returned value is the ALREADY-RENDERED markdown block consumed by
+  `EvoGit.Agent.ContextBuilder.build_repo_notes_section/1`. Root spec builders
+  pass it to `AgentSpec.new(..., repo_notes: ...)` so every LLM agent working in
+  a repo with git submodules sees a concise note in its `<context>` block
+  (subagents inherit it — no re-detection).
+
+  ## Rendered note text
+
+      ## Git Submodules
+
+      This repository has git submodules at:
+      - `<path1>`
+      - `<path2>`
+
+      In agent worktrees these paths arrive as **empty placeholder directories** (same as native `git worktree add`). If your task needs their content, populate them with:
+
+          git submodule update --init [--recursive]
+
+      (requires network; the clone is shared across worktrees in `.git/modules`). Never delete the placeholder dirs — they are tracked gitlinks (`git clean -fd` won't remove them) — and do not create files inside them to "fill in" content. Changes inside a submodule belong to the submodule repo itself, not the superproject: do not commit inside submodules as part of this task.
+  """
+  @spec load_repo_notes(String.t(), String.t()) :: String.t() | nil
+  def load_repo_notes(repo_path, treeish)
+      when is_binary(repo_path) and is_binary(treeish) do
+    case Git.ls_tree_gitlinks(repo_path, treeish) do
+      {:ok, []} -> nil
+      {:ok, paths} -> render_repo_notes(paths)
+      {:error, _} -> nil
+    end
+  end
+
+  # Renders the git-submodules note block from gitlink paths. Single source of
+  # truth for the note text — root spec build sites go through load_repo_notes/2.
+  defp render_repo_notes(paths) do
+    bullets = paths |> Enum.map(&"- `#{&1}`") |> Enum.join("\n")
+
+    """
+    ## Git Submodules
+
+    This repository has git submodules at:
+    #{bullets}
+
+    In agent worktrees these paths arrive as **empty placeholder directories** (same as native `git worktree add`). If your task needs their content, populate them with:
+
+        git submodule update --init [--recursive]
+
+    (requires network; the clone is shared across worktrees in `.git/modules`). Never delete the placeholder dirs — they are tracked gitlinks (`git clean -fd` won't remove them) — and do not create files inside them to "fill in" content. Changes inside a submodule belong to the submodule repo itself, not the superproject: do not commit inside submodules as part of this task.
+    """
+  end
+
   def resolve_starting_commit(repo_path, nil) do
     EvoGit.Core.PhyloGraphNode.current_head(repo_path)
   end

@@ -378,29 +378,59 @@ defmodule EvoGit.Adapters.Git do
         {:ok, []}
 
       {:ok, output} ->
-        files =
-          output
-          |> String.split("\n", trim: true)
-          |> Enum.flat_map(fn line ->
-            case String.split(line, "\t", parts: 2) do
-              [meta, path] ->
-                # meta = "<mode> <type> <oid>"; type "commit" (mode 160000)
-                # marks a gitlink/submodule entry, not a file.
-                case String.split(meta, " ") do
-                  [_, "commit", _] -> []
-                  _ -> [path]
-                end
-
-              _ ->
-                []
-            end
-          end)
-
-        {:ok, files}
+        {:ok, parse_ls_tree_output(output, :files)}
 
       error ->
         error
     end
+  end
+
+  @doc """
+  Lists gitlink (submodule) paths in a git tree (recursive).
+  Runs `git ls-tree -r <treeish>` and keeps ONLY gitlink entries (type
+  `commit`, mode `160000`) — the paths of submodules registered in the tree.
+  Sibling of `ls_tree_names/2`: both share the same raw-output parser, one
+  keeping files, the other keeping gitlinks.
+  Returns `{:ok, [paths]}` (empty list if no gitlinks) or
+  `{:error, {tag, output}}` (see the module "## Return contract" section).
+  """
+  def ls_tree_gitlinks(repo_path, treeish)
+      when is_binary(repo_path) and is_binary(treeish) do
+    case run(["ls-tree", "-r", treeish], repo_path) do
+      {:ok, ""} ->
+        {:ok, []}
+
+      {:ok, output} ->
+        {:ok, parse_ls_tree_output(output, :gitlinks)}
+
+      error ->
+        error
+    end
+  end
+
+  # Shared parser for raw `git ls-tree -r <treeish>` output lines of the shape
+  # `<mode> <type> <oid>\t<path>`. `:files` keeps only non-gitlink entries;
+  # `:gitlinks` keeps only gitlink entries (type "commit", mode 160000).
+  defp parse_ls_tree_output(output, keep) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.flat_map(fn line ->
+      case String.split(line, "\t", parts: 2) do
+        [meta, path] ->
+          # meta = "<mode> <type> <oid>"; type "commit" (mode 160000)
+          # marks a gitlink/submodule entry, not a file.
+          gitlink? =
+            case String.split(meta, " ") do
+              [_, "commit", _] -> true
+              _ -> false
+            end
+
+          if gitlink? == (keep == :gitlinks), do: [path], else: []
+
+        _ ->
+          []
+      end
+    end)
   end
 
   @doc """

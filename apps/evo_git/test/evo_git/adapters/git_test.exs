@@ -467,6 +467,41 @@ defmodule EvoGit.Adapters.GitTest do
     end
   end
 
+  describe "ls_tree_gitlinks/2" do
+    test "returns gitlink paths, excluding regular files", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Submodule.add_gitlink(tmp_dir, "vendor/Sub")
+      Git.add(tmp_dir, ".")
+      Git.commit(tmp_dir, "Add file + submodule gitlink")
+
+      assert {:ok, gitlinks} = Git.ls_tree_gitlinks(tmp_dir, "HEAD")
+      assert gitlinks == ["vendor/Sub"]
+    end
+
+    test "returns empty list for a repo with no gitlinks", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      assert {:ok, []} = Git.ls_tree_gitlinks(tmp_dir, "HEAD")
+    end
+
+    test "returns empty list for an empty tree", %{tmp_dir: tmp_dir} do
+      Git.run(["commit", "--allow-empty", "-m", "empty"], tmp_dir)
+
+      assert {:ok, []} = Git.ls_tree_gitlinks(tmp_dir, "HEAD")
+    end
+
+    test "returns the uniform error contract for a bogus treeish", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+
+      assert {:error, {tag, _output}} = Git.ls_tree_gitlinks(tmp_dir, "bogus-treeish")
+      assert is_integer(tag) or tag in [:conflict, :enoent]
+    end
+  end
+
   describe "add_worktree/4 with gitlink submodules" do
     test "creates a worktree with empty placeholder submodule dir; clean/1 keeps it", %{
       tmp_dir: tmp_dir

@@ -114,9 +114,11 @@ defmodule EvoGit.Runtime.Evolution do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load(node_path, repo_path)
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
+    repo_notes = Helpers.load_repo_notes(repo_path, current_sha)
 
     case AgentSpec.new(context_node, phylo_node, agent_module, objective,
            foreign_repos: foreign_repos,
+           repo_notes: repo_notes,
            archive: Keyword.get(opts, :archive, false),
            task_id: Keyword.get(opts, :task_id),
            model_id: Keyword.get(opts, :model_id),

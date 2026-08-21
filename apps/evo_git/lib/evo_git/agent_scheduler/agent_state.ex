@@ -23,6 +23,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `repo_root` — absolute filesystem path to the repo root (for display/grouping). Set from scheduler state at registration.
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
+  - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `pending_user_messages` — list of user messages injected externally (via dashboard/RPC), drained at the top of each turn and appended to context as user-role messages
   - `cancel_requested` — set to true by the scheduler when the task is being gracefully cancelled; the runner checks/clears it at the top of each turn
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
@@ -59,6 +60,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     repo_id: "primary",
     repo_root: nil,
     foreign_repos: [],
+    repo_notes: nil,
     pending_user_messages: [],
     cancel_requested: nil
   ]
@@ -84,6 +86,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           compression_count: non_neg_integer(),
           total_tokens: non_neg_integer(),
           foreign_repos: [ForeignRepo.t()],
+          repo_notes: String.t() | nil,
           pending_user_messages: [String.t()],
           cancel_requested: boolean() | nil
         }

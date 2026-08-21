@@ -148,4 +148,59 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       assert ContextBuilder.tag_context_messages_with_turn(context, 1) == context
     end
   end
+
+  describe "build_repo_notes_section/1" do
+    @rendered_notes """
+    ## Git Submodules
+
+    This repository has git submodules at:
+    - `vendor/Sub`
+
+    In agent worktrees these paths arrive as **empty placeholder directories** (same as native `git worktree add`). If your task needs their content, populate them with:
+
+        git submodule update --init [--recursive]
+
+    (requires network; the clone is shared across worktrees in `.git/modules`). Never delete the placeholder dirs — they are tracked gitlinks (`git clean -fd` won't remove them) — and do not create files inside them to "fill in" content. Changes inside a submodule belong to the submodule repo itself, not the superproject: do not commit inside submodules as part of this task.
+    """
+
+    test "returns the rendered text as-is (trimmed) when present" do
+      assert ContextBuilder.build_repo_notes_section(@rendered_notes) == String.trim(@rendered_notes)
+    end
+
+    test "returns empty string for nil" do
+      assert ContextBuilder.build_repo_notes_section(nil) == ""
+    end
+
+    test "returns empty string for blank/whitespace-only text" do
+      assert ContextBuilder.build_repo_notes_section("   \n  ") == ""
+      assert ContextBuilder.build_repo_notes_section("") == ""
+    end
+
+    test "combined context body omits the section when repo_notes is nil (blank-filter)" do
+      context_tree = "Current Repository: /tmp/repo"
+
+      body =
+        [context_tree, ContextBuilder.build_foreign_repos_section([]),
+         ContextBuilder.build_repo_notes_section(nil)]
+        |> Enum.reject(&ContextBuilder.blank?/1)
+        |> Enum.join("\n\n")
+
+      refute body =~ "## Git Submodules"
+      assert body == context_tree
+    end
+
+    test "combined context body includes the section when repo_notes is present" do
+      context_tree = "Current Repository: /tmp/repo"
+
+      body =
+        [context_tree, ContextBuilder.build_foreign_repos_section([]),
+         ContextBuilder.build_repo_notes_section(@rendered_notes)]
+        |> Enum.reject(&ContextBuilder.blank?/1)
+        |> Enum.join("\n\n")
+
+      assert body =~ "## Git Submodules"
+      assert body =~ "- `vendor/Sub`"
+      assert body =~ "git submodule update --init"
+    end
+  end
 end

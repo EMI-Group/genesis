@@ -96,8 +96,14 @@ defmodule EvoGit.Agent.Runner do
       foreign_repos_section =
         EvoGit.Agent.ContextBuilder.build_foreign_repos_section(agent_state.foreign_repos)
 
+      # Rendered repo-notes block (git-submodules awareness) — "" when the repo
+      # has no gitlinks (or detection failed), so the blank-filter drops it and
+      # prompts for repos without submodules stay noise-free.
+      repo_notes_section =
+        EvoGit.Agent.ContextBuilder.build_repo_notes_section(agent_state.repo_notes)
+
       context_body =
-        [context_tree, foreign_repos_section]
+        [context_tree, foreign_repos_section, repo_notes_section]
         |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
         |> Enum.join("\n\n")
 
@@ -149,6 +155,7 @@ defmodule EvoGit.Agent.Runner do
         max_turns: max_turns,
         skill_schemas: skill_schemas,
         foreign_repos: agent_state.foreign_repos,
+        repo_notes: agent_state.repo_notes,
         delegation_level: agent_module.delegation_level()
       }
 

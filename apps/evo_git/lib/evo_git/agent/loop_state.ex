@@ -25,6 +25,7 @@ defmodule EvoGit.Agent.LoopState do
   - `turns_since_subagent` — turns elapsed since the last subagent delegation (resets to 0 on delegation or when the middle warning fires; used by the periodic middle reminder)
   - `skill_schemas` — tool schemas from enabled skills
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
+  - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
   - `usage` — cumulative token and cost usage tracking across all LLM calls (`EvoGit.Agent.Usage.t()`)
   - `delegation_hints` — map tracking write-tool calls to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when an agent should be nudged to spawn a subagent.
   - `read_delegation_hints` — map tracking read-tool calls (read_file, rg, glob, list_dir) to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when a high-level agent should be nudged to delegate investigation to a subagent.
@@ -52,6 +53,7 @@ defmodule EvoGit.Agent.LoopState do
     turns_since_subagent: 0,
     skill_schemas: [],
     foreign_repos: [],
+    repo_notes: nil,
     usage: %EvoGit.Agent.Usage{},
     delegation_hints: %{},
     read_delegation_hints: %{},
@@ -74,6 +76,7 @@ defmodule EvoGit.Agent.LoopState do
           turns_since_subagent: non_neg_integer(),
           skill_schemas: [ReqLLM.Tool.t()],
           foreign_repos: [ForeignRepo.t()],
+          repo_notes: String.t() | nil,
           usage: Usage.t(),
           delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}},
           read_delegation_hints: %{

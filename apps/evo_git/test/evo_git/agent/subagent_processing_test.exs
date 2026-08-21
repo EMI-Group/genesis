@@ -356,6 +356,53 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert %AgentSpec{} = spec
       assert spec.model_id == "default"
     end
+
+    test "child spec inherits the parent's repo_notes", %{agent_id: agent_id} do
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: DummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [],
+        repo_notes: "## Git Submodules\n\nThis repository has git submodules at:\n- `vendor/Sub`"
+      }
+
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_investigator",
+          ~s({"path":"./src","objective":"investigate src"})
+        )
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      assert spec.repo_notes == state.repo_notes
+    end
+
+    test "child spec repo_notes is nil when the parent has none", %{agent_id: agent_id} do
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: DummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: []
+      }
+
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "subagent_investigator",
+          ~s({"path":"./src","objective":"investigate src"})
+        )
+
+      [spec] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert %AgentSpec{} = spec
+      assert spec.repo_notes == nil
+    end
   end
 
   describe "format_subagent_result/1 with repo_id" do

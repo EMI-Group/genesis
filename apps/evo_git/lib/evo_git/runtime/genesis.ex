@@ -42,12 +42,14 @@ defmodule EvoGit.Runtime.Genesis do
     context_node = ContextNode.load("./", repo_path)
 
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
+    repo_notes = Helpers.load_repo_notes(repo_path, current_sha)
 
     {agent_module, agent_opts} =
       Helpers.resolve_root_agent(opts, ContextExtractor)
 
     case AgentSpec.new(context_node, phylo_node, agent_module, objective,
            foreign_repos: foreign_repos,
+           repo_notes: repo_notes,
            archive: Keyword.get(opts, :archive, false),
            task_id: Keyword.get(opts, :task_id),
            model_id: Keyword.get(opts, :model_id),
@@ -102,6 +104,7 @@ defmodule EvoGit.Runtime.Genesis do
       end
 
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
+    repo_notes = Helpers.load_repo_notes(repo_path, current_sha)
 
     # --- Phase 1: Architecture (Architect as root agent) ---
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
@@ -113,6 +116,7 @@ defmodule EvoGit.Runtime.Genesis do
     architect_spec =
       AgentSpec.new(context_node, phylo_node, agent_module, objective,
         foreign_repos: foreign_repos,
+        repo_notes: repo_notes,
         archive: Keyword.get(opts, :archive, false),
         task_id: task_id,
         model_id: Keyword.get(opts, :model_id),
@@ -159,6 +163,7 @@ defmodule EvoGit.Runtime.Genesis do
     architect_commit = architect_output.commit_sha || base_sha
     phylo_node = PhyloGraphNode.new(repo_path, architect_commit)
     context_node = ContextNode.load("./", repo_path)
+    repo_notes = Helpers.load_repo_notes(repo_path, architect_commit)
 
     architect_report = architect_output.result || "(No report provided by the architect)"
 
@@ -191,6 +196,7 @@ defmodule EvoGit.Runtime.Genesis do
     manager_spec =
       AgentSpec.new(context_node, phylo_node, agent_module, impl_objective,
         foreign_repos: foreign_repos,
+        repo_notes: repo_notes,
         archive: Keyword.get(opts, :archive, false),
         task_id: task_id,
         model_id: Keyword.get(opts, :model_id),

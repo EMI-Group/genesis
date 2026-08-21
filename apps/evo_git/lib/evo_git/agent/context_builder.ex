@@ -51,6 +51,21 @@ defmodule EvoGit.Agent.ContextBuilder do
     end
   end
 
+  @doc """
+  Builds the git-submodules note section for the first user prompt.
+
+  `repo_notes` is the ALREADY-RENDERED markdown block (produced by
+  `EvoGit.Runtime.Helpers.load_repo_notes/2` at root spec build) or `nil` when
+  the repo has no gitlink/submodule entries (or detection failed). Returns the
+  text as-is (trimmed), or `""` when nil/blank — mirroring
+  `build_foreign_repos_section/1`'s "empty string when absent" convention so
+  the runner's existing blank-filter drops it and no noise reaches prompts for
+  repos without submodules.
+  """
+  def build_repo_notes_section(repo_notes) do
+    if blank?(repo_notes), do: "", else: String.trim(repo_notes)
+  end
+
   # --- Blank Detection ---
 
   @doc """

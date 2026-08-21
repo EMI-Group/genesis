@@ -91,7 +91,8 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       repo_root: agent_repo_root,
       task_local_id: task_local_id,
       archive: Keyword.get(spec.opts, :archive, false),
-      foreign_repos: spec.foreign_repos
+      foreign_repos: spec.foreign_repos,
+      repo_notes: spec.repo_notes
     })
 
     # Scheduler metadata table: scheduling bookkeeping
