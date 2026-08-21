@@ -95,7 +95,7 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
       render_click(view, "go_to_dashboard", %{})
 
       # Same redirect-assertion style as the skip/get_started tests
-      assert_redirect(view, "/")
+      assert_redirect(view, "/projects")
 
       # Onboarding is marked complete: the version-state file now exists in
       # the temp config dir and records the current runtime version.
