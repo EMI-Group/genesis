@@ -928,6 +928,67 @@ const PlatformDetect = {
   }
 };
 
+// Guide hook: receives "guide_highlight" pushEvents from the server-side
+// Guide on-mount hook (EvoDashWeb.LiveHooks.Guide) — scrolls the target into
+// view and applies a temporary highlight. The last payload is kept in a
+// module-level variable so mounted() re-applies it after a navigation (the
+// @guide assign is restored server-side from a per-tab store keyed by
+// guide_client_id — received via the connect params and stable across
+// push_navigate since the WebSocket connection persists; the DOM may need
+// the retry loop on the new page). Works in plain browsers too — no Tauri
+// gating.
+let lastGuideHighlight = null;
+
+const Guide = {
+  mounted() {
+    this.handleEvent("guide_highlight", (payload) => {
+      if (payload && payload.selector) {
+        lastGuideHighlight = payload.selector;
+        this.applyHighlight(payload.selector);
+      }
+    });
+    // The server pushes "guide_cleared" when the guide is dismissed; drop the
+    // stored selector so a later remount/navigation doesn't re-apply it.
+    this.handleEvent("guide_cleared", () => {
+      lastGuideHighlight = null;
+    });
+    if (lastGuideHighlight) {
+      this.applyHighlight(lastGuideHighlight);
+    }
+  },
+  // Bounded retry: the guided element may render after the event arrives
+  // (~10 x 250ms), then give up silently.
+  applyHighlight(selector) {
+    let attempts = 0;
+    const tryHighlight = () => {
+      const target = document.querySelector(selector);
+      if (!target) {
+        if (attempts < 10) {
+          attempts += 1;
+          setTimeout(tryHighlight, 250);
+        }
+        return;
+      }
+      // Scroll: prefer the #main-scroll container (center the target within
+      // it), falling back to the element's own scrollIntoView.
+      const scroller = document.querySelector("#main-scroll");
+      if (scroller && scroller.contains(target)) {
+        const targetRect = target.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        scroller.scrollTo({
+          top: scroller.scrollTop + targetRect.top - scrollerRect.top - scroller.clientHeight / 2 + targetRect.height / 2,
+          behavior: "smooth"
+        });
+      } else {
+        target.scrollIntoView({behavior: "smooth", block: "center"});
+      }
+      target.classList.add("guide-highlight");
+      setTimeout(() => target.classList.remove("guide-highlight"), 3000);
+    };
+    tryHighlight();
+  }
+};
+
 // DialogModal hook: opens/closes <dialog class="modal"> elements in the
 // browser's top layer, immune to parent CSS containing blocks (backdrop-filter,
 // transform, etc.). Pushes "dialog_closed" when the dialog is dismissed via ESC
@@ -983,11 +1044,27 @@ const PaletteList = {
   }
 };
 
+// Guide retention: a stable per-tab id (sessionStorage-backed so it also
+// survives full reloads within the tab). The server-side Guide hook keys
+// its guide store by this id, received via the connect params.
+let guideClientId = null;
+if (typeof sessionStorage !== "undefined") {
+  guideClientId = sessionStorage.getItem("guide_client_id");
+}
+if (!guideClientId) {
+  guideClientId = (typeof crypto !== "undefined" && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : "g-" + Math.random().toString(36).slice(2);
+  if (typeof sessionStorage !== "undefined") {
+    try { sessionStorage.setItem("guide_client_id", guideClientId); } catch (e) {}
+  }
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
-  params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer},
+  params: {_csrf_token: csrfToken, guide_client_id: guideClientId},
+  hooks: {...colocatedHooks, TauriDetect, DesktopQuit, DesktopQuitConfirm, UpdateStatus, PlatformDetect, PathAutocomplete, DirectoryPicker, FilePicker, Guide, StatePersistence, BrowserNotifications, AutoClearFlash, ClipboardCopy, AgentHistoryAutoScroll, DialogModal, SidebarCollapse, NodeSwitchFade, AdaptiveInput, LegendTooltip, FocusInput, PaletteList, DiffViewer},
 })
 
 // Show progress bar on live navigation and form submits

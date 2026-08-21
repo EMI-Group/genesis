@@ -203,7 +203,7 @@ defmodule EvoGit.Store.Codec do
   def encode_atom(str) when is_binary(str), do: str
 
   # The complete set of known atom values across the three atom fields:
-  #   * type — :genesis, :evolve, :extract_skills
+  #   * type — :genesis, :evolve, :extract_skills, :reflect (repo-less)
   #   * status — :pending, :running, :finalizing, :completed, :failed,
   #     :cancelled, :cancelling
   #   * review_status — :open, :merged, :rejected, :continued, :ignored, :no_changes
@@ -215,7 +215,7 @@ defmodule EvoGit.Store.Codec do
   # code path that references them has run). Truly unknown/corrupt values fall
   # outside the whitelist and decode to nil.
   @known_atoms ~w(
-    genesis evolve extract_skills
+    genesis evolve extract_skills reflect
     pending running finalizing completed failed cancelled cancelling
     open merged rejected continued ignored no_changes
   )a

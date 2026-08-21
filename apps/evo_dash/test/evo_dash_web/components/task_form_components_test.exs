@@ -217,7 +217,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert model_class(html) =~ "truncate"
     end
 
-    test "mode select keeps its four options and task_change event" do
+    test "mode select keeps its five options and task_change event" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
       assert html =~ ~s(name="mode")
@@ -227,6 +227,20 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ "Evolve existing project"
       assert html =~ "Custom Agent"
       assert html =~ ~s(value="custom_agent")
+      # 5th mode: Self-Reflective — repo-less conversational mode.
+      assert html =~ "Self-Reflective"
+      assert html =~ ~s(value="reflect")
+    end
+
+    test "reflect mode renders the self-reflective textarea placeholder" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          mode: "reflect"
+        )
+
+      # Exact string from task_form_components.ex (Unicode ellipsis U+2026).
+      assert html =~ "Ask Genesis about itself, its source, or tasks…"
     end
 
     test "Launch button carries the server-rendered data-mode attribute" do
@@ -401,6 +415,20 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ "Build System"
       refute html =~ "Starting Commit"
       refute html =~ "Resume from"
+    end
+
+    test "reflect mode is NOT evolve-family — no advanced options and no build-system select" do
+      # Reflect is repo-less conversational: it gets neither the evolve-family
+      # advanced options (Starting Node / Starting Commit / Resume from) nor
+      # the genesis build-system select. The Archive toggle renders for all
+      # modes, so it is not asserted here either way.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_options_tab/1, mode: "reflect")
+
+      refute html =~ "Starting Node"
+      refute html =~ "Starting Commit"
+      refute html =~ "Resume from"
+      refute html =~ "Build System"
     end
   end
 

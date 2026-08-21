@@ -346,6 +346,58 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert summary.retries == 0
     end
 
+    test "emits nil commits for repo-less agents (nil phylo_node on spec and state)" do
+      # Repo-less agents (self-reflective) carry NO phylo_node anywhere — not
+      # on the spec, not on the agent state. build_agent_summary must emit nil
+      # commits instead of crashing with a KeyError.
+      repo_less_spec = %AgentSpec{
+        context_node: context_node(),
+        phylo_node: nil,
+        agent_module: EvoGit.Agents.SelfReflective,
+        objective: "reflect on the codebase"
+      }
+
+      meta = %SchedMeta{
+        id: 1,
+        depth: 0,
+        spec: repo_less_spec,
+        status: :running,
+        parent_id: nil,
+        task_id: "reflect001",
+        task_number: 1,
+        retries: 0
+      }
+
+      put_sched_meta(1, meta)
+      put_agent_state(1, agent_state(phylo_node: nil))
+
+      [summary] = RemoteAPI.list_agents()
+
+      assert is_nil(summary.current_commit)
+      assert is_nil(summary.base_commit)
+      assert summary.context_path == "./"
+      assert is_nil(summary.repo_root)
+      assert summary.task_id == "reflect001"
+    end
+
+    test "emits nil commits for a repo-less agent registered in sched_meta only" do
+      # Same nil-phylo_node guard on the missing-agent_state clause.
+      repo_less_spec = %AgentSpec{
+        context_node: context_node(),
+        phylo_node: nil,
+        agent_module: EvoGit.Agents.SelfReflective,
+        objective: "reflect"
+      }
+
+      put_sched_meta(9, %SchedMeta{id: 9, depth: 0, spec: repo_less_spec, task_id: "reflect002"})
+
+      [summary] = RemoteAPI.list_agents()
+
+      assert is_nil(summary.current_commit)
+      assert is_nil(summary.base_commit)
+      assert summary.context_path == "./"
+    end
+
     test "returns multiple agents" do
       put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
       put_sched_meta(2, %SchedMeta{id: 2, depth: 1, spec: agent_spec()})

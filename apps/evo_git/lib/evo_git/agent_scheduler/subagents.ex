@@ -371,6 +371,10 @@ defmodule EvoGit.AgentScheduler.Subagents do
     # Agent entry may be reaped by cancel_agent while a subagent completes in flight
     commit_sha =
       case Store.get_agent_state(agent_id) do
+        {:ok, %AgentState{phylo_node: nil}} ->
+          # Repo-less parent — no worktree/commits; only used for the log below.
+          "unknown"
+
         {:ok, agent_state} ->
           agent_state.phylo_node.current_commit
 

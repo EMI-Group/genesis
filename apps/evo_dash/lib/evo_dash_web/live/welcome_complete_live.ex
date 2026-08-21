@@ -23,6 +23,7 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
       pending_tasks={@pending_tasks}
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
+      guide={@guide}
     >
       <div class="min-h-screen lg:h-screen lg:overflow-hidden max-w-3xl mx-auto px-4 lg:px-6 py-3 lg:py-6 flex flex-col">
         <!-- Header (non-scrolling) -->

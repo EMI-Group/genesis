@@ -5,7 +5,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 
 ## Routing Table
 
-None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evolution.ex`, `pull_request.ex`, `worktree_init_script.ex`, `skill_extraction.ex`).
+None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evolution.ex`, `pull_request.ex`, `worktree_init_script.ex`, `skill_extraction.ex`, `self_reflective.ex`).
 
 ## API Surface
 
@@ -20,6 +20,7 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | Shared PR utilities: LLM-powered title generation, body formatting, push + PR creation via `gh` CLI. |
 | `EvoGit.Runtime.WorktreeInitScript` | `worktree_init_script.ex` | `build_systems/0`, `get_build_system/1`, `scripts_for/1` | Predefined catalog of Worktree Init Scripts for common build systems (Elixir, Node.js, Python, Rust, Go, None). Each entry provides unix (bash) and windows (PowerShell) scripts that copy dependencies/build artifacts from the source repo into new worktrees. Genesis Mode B writes the selected scripts to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) so the existing per-worktree init-script infrastructure picks them up. |
 | `EvoGit.Runtime.SkillExtraction` | `skill_extraction.ex` | `run/1` | Skill Extraction Phase — analyzes a completed PR's changes and distills reusable knowledge into EvoGit skills (`.agents/skills/`). Takes a keyword list of PR context opts (title, objective, summary, commit history, base_sha, commit_sha, user_note). Builds the objective from PR context and spawns a `SkillExtractor` agent. |
+| `EvoGit.Runtime.SelfReflective` | `self_reflective.ex` | `run/1`, `run/2`, `source_root/0`, `build_spec/2` | Repo-less self-reflective runtime — chatbot-style system introspection. `source_root/0` resolution chain: `:self_reflective_source_root` app env → `GENESIS_SOURCE_ROOT` env var → `File.cwd!()` (dev: the genesis repo) — mirrors `Dispatch.resolve_repo_less_root/0` so both agree. `run/2` builds a repo-less spec (phylo nil; context node loaded over the source root when it's a real dir, else a bare minimal `%ContextNode{}` with a `"[system]"` placeholder repo), spawns `EvoGit.Agents.SelfReflective` via `AgentScheduler.run_agent/1`, and returns `{:ok, %{result: ..., commit_sha: nil, branch_name: nil, tag: nil}}` — no git ops, no merge_and_report, no PR. `build_spec/2` is a test seam exposing the spec shape (`spec.opts[:repo_less] == true`). Task-type `:reflect` routes here via `TaskExecutor.execute_task/3` (see `task_registry/CONTEXT.md`). |
 
 ### `Genesis.run/2` — Step by Step
 

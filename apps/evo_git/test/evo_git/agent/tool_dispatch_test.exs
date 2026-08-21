@@ -1,6 +1,7 @@
 defmodule EvoGit.Agent.ToolDispatchTest do
   use ExUnit.Case, async: true
 
+  alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.ToolDispatch
 
   import ExUnit.CaptureLog
@@ -455,6 +456,34 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert Enum.sort(lines) == ["end1", "end2", "start1", "start2"]
       assert Enum.find_index(lines, &(&1 == "start2")) < Enum.find_index(lines, &(&1 == "end1"))
       assert elapsed < 1_800
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # sync_current_commit_after_tools/1 repo-less short-circuit
+  # ---------------------------------------------------------------------------
+
+  describe "sync_current_commit_after_tools/1 for repo-less agents" do
+    test "returns :ok without touching git or the scheduler" do
+      Process.put(:repo_less, true)
+      Process.put(:repo_path, "/nonexistent")
+
+      state = %LoopState{
+        agent_id: 1,
+        agent_module: EvoGit.Agents.SelfReflective,
+        depth: 0,
+        node_path: "./",
+        context: ReqLLM.Context.new()
+      }
+
+      try do
+        # The repo_less branch short-circuits before any git/scheduler call —
+        # the bogus repo_path and absent scheduler state prove no I/O occurs.
+        assert ToolDispatch.sync_current_commit_after_tools(state) == :ok
+      after
+        Process.delete(:repo_less)
+        Process.delete(:repo_path)
+      end
     end
   end
 end
