@@ -249,6 +249,11 @@ defmodule EvoGit.SelfReflectiveSourceTest do
   defp genesis_fixture!(label) do
     work = tmp_path!(label <> "-work")
     origin = tmp_path!(label <> "-origin")
+    # Defense-in-depth against crashed-run leaks: System.unique_integer/1 is
+    # only unique per-VM, so a stale dir from an earlier run could collide with
+    # this tmp_path — a stale origin holding old commits would reject the push.
+    File.rm_rf!(work)
+    File.rm_rf!(origin)
     File.mkdir_p!(work)
     {:ok, _} = Git.init(work)
     # The default branch name before any commit: `git symbolic-ref --short HEAD`
