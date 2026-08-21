@@ -1,10 +1,11 @@
 defmodule EvoDashWeb.PageControllerTest do
   use EvoDashWeb.ConnCase
 
-  # ProjectsLive redirects first-time users to /welcome via server-based
-  # detection (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the
-  # config dir to a temp directory and mark onboarding complete so the GET /
-  # renders the dashboard instead of redirecting.
+  # ProjectsLive (GET /) and HomeLive (GET /home) both redirect first-time
+  # users to /welcome via server-based detection
+  # (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the config
+  # dir to a temp directory and mark onboarding complete so both routes
+  # render their pages instead of redirecting.
   setup do
     tmp_config =
       Path.join(
@@ -33,9 +34,21 @@ defmodule EvoDashWeb.PageControllerTest do
     :ok
   end
 
-  test "GET /", %{conn: conn} do
+  test "GET / renders the Projects page", %{conn: conn} do
     conn = get(conn, ~p"/")
 
-    assert html_response(conn, 200) =~ "Genesis"
+    html = html_response(conn, 200)
+    # Projects page: command palette + task form present, no chat send form
+    assert html =~ "project-omnibox"
+    assert html =~ "AdaptiveInput"
+    refute html =~ "chat-form"
+  end
+
+  test "GET /home renders the chat page", %{conn: conn} do
+    conn = get(conn, ~p"/home")
+
+    html = html_response(conn, 200)
+    assert html =~ ~s(id="chat-form")
+    assert html =~ "Chat with Genesis"
   end
 end
