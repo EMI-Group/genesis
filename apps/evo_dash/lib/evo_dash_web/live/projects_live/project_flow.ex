@@ -524,8 +524,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # appends with `?` and would corrupt the existing `?project=` query.
   defp project_url(socket, path) do
     case socket.assigns[:current_node_id] do
-      nil -> "/?project=#{URI.encode(path)}"
-      node_id -> "/?project=#{URI.encode(path)}&node=#{node_id}"
+      nil -> "/projects?project=#{URI.encode(path)}"
+      node_id -> "/projects?project=#{URI.encode(path)}&node=#{node_id}"
     end
   end
 end

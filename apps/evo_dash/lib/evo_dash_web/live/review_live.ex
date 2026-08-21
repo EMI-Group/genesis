@@ -30,7 +30,7 @@ defmodule EvoDashWeb.ReviewLive do
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
           <p class="text-sm text-base-content/60 mb-4">{@error}</p>
-          <.link navigate={with_node_param(~p"/", @current_node_id)} class="btn btn-primary px-6 gap-2">
+          <.link navigate={with_node_param(~p"/projects", @current_node_id)} class="btn btn-primary px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
         </div>
@@ -46,7 +46,7 @@ defmodule EvoDashWeb.ReviewLive do
                 <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
               </.link>
             <% else %>
-              <.link navigate={with_node_param(~p"/", @current_node_id)} class="btn btn-ghost btn-sm gap-1 px-4">
+              <.link navigate={with_node_param(~p"/projects", @current_node_id)} class="btn btn-ghost btn-sm gap-1 px-4">
                 <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
               </.link>
             <% end %>
@@ -490,7 +490,7 @@ defmodule EvoDashWeb.ReviewLive do
         {:noreply,
          socket
          |> put_flash(:success, success_flash)
-         |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
+         |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
 
       {:conflict, details} ->
         {:noreply,
@@ -539,7 +539,7 @@ defmodule EvoDashWeb.ReviewLive do
            :info,
            gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name)
          )
-         |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
+         |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
 
       {:error, reason} ->
         {:noreply,
@@ -570,8 +570,8 @@ defmodule EvoDashWeb.ReviewLive do
     # context (same pattern as project_flow.ex's project_url/2).
     to =
       case socket.assigns.current_node_id do
-        nil -> ~p"/?#{query}"
-        node_id -> ~p"/?#{query}" <> "&node=" <> node_id
+        nil -> ~p"/projects?#{query}"
+        node_id -> ~p"/projects?#{query}" <> "&node=" <> node_id
       end
 
     flash_msg =
@@ -601,7 +601,7 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply,
      socket
      |> put_flash(:info, gettext("Review ignored and dismissed."))
-     |> push_navigate(to: with_node_param(~p"/", socket.assigns.current_node_id))}
+     |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
   end
 
   @impl true
