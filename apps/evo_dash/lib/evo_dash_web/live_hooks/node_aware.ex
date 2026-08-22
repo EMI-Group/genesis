@@ -637,7 +637,7 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   Builds a `push_patch` to the current page path with the `?node=` param,
   triggering a re-render via `handle_params`.
 
-  Each LiveView should set the `@current_path` assign (e.g. `~p"/"`,
+  Each LiveView should set the `@current_path` assign (e.g. `~p"/projects"`,
   `~p"/agents"`) so this helper can build the correct URL.
   """
   def handle_node_selected(socket, node_id) do
