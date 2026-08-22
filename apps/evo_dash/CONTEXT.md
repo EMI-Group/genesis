@@ -40,7 +40,8 @@ This is a Phoenix 1.8 umbrella child app (`:evo_dash`) that depends on the sibli
 
 | Route | LiveView | Purpose |
 |-------|----------|---------|
-| `GET /` | `HomeLive` | Home chat page — ChatGPT-style chat wired to the self-reflective agent (`:reflect` tasks); see "Home Chat Page" below |
+| `GET /` | `ProjectsLive` | Projects page — project-based task dashboard with auto-mode detection, task form, project settings (the root `/` renders the same LiveView + action as `/projects`, direct route, no redirect) |
+| `GET /home` | `HomeLive` | Home chat page — ChatGPT-style chat wired to the self-reflective agent (`:reflect` tasks); see "Home Chat Page" below |
 | `GET /projects` | `ProjectsLive` | Projects page — project-based task dashboard with auto-mode detection, task form, project settings |
 | `GET /review/:task_id` | `ReviewLive` | Code review page — diff viewer with client-side highlight.js syntax highlighting, merge/reject/resume actions, optional GitHub PR creation |
 | `GET /agents` | `AgentsLive` | Recursive agent tree inspector with chat history viewer and token/cost usage display |
