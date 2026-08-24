@@ -36,22 +36,23 @@ defmodule EvoGit.Agents.PromptFragments do
   # ── Worktree isolation notes ────────────────────────────────────────────────
 
   @doc """
-  Variant A of the worktree-isolation note — full three-sentence form.
+  Variant A of the worktree-isolation note — full four-sentence form.
 
   Used by: Executor, ContextExtractor, TaskScheduler, Investigator
   (each as a standalone paragraph).
   """
   def worktree_isolation_note do
-    "You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives."
+    "You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives. Your worktree lives under `.genesis/` at the project root — that `.genesis` folder is the framework's runtime/agent-worktree area, not project code."
   end
 
   @doc """
-  Variant A' of the worktree-isolation note — first two sentences only.
+  Variant A' of the worktree-isolation note — first two sentences plus the
+  `.genesis` worktree-location sentence (no subagent-spawning sentence).
 
   Used by: SkillExtractor (its prompt omits the subagent-spawning sentence).
   """
   def worktree_isolation_note_short do
-    "You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path."
+    "You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Your worktree lives under `.genesis/` at the project root — that `.genesis` folder is the framework's runtime/agent-worktree area, not project code."
   end
 
   @doc """
