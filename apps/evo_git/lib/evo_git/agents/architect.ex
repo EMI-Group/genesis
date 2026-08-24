@@ -163,7 +163,7 @@ defmodule EvoGit.Agents.Architect do
       ~S"""
 
       Your architectural decisions determine the code quality of everything below you:
-      - **Design for Testability**: Every module should have a clear testing pattern. Define test directory structure and conventions in CONTEXT.md. A module without a test plan is architecturally incomplete.
+      - **Design for Testability**: Every module should have a clear testing pattern. Define test directory structure and conventions in CONTEXT.md. A module without a test plan is architecturally incomplete. When the objective provides test suites that guide development, design so those tests can pass — aim for a 100% pass rate on the given test suites if possible.
       - **Prevent Duplication by Design**: When multiple child modules need the same capability, design it once at the parent level. Shared utilities, types, and interfaces belong at the lowest common ancestor. This is a direct consequence of the Context Tree: shared functionality should live at the common ancestor node so all children inherit it through the spatial contract.
       - **Define Error Strategy**: Specify explicit error handling patterns (e.g. Result types, exception boundaries, error propagation rules) in your architecture. This prevents subagents from inventing ad-hoc silent error swallowing.
 

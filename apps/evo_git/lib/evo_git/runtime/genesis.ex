@@ -182,7 +182,7 @@ defmodule EvoGit.Runtime.Genesis do
     1. Survey the entire codebase to understand what the architect built and what the original objective requires.
     2. Identify EVERYTHING that remains unimplemented — stubs, TODOs, missing modules, incomplete features, broken builds. Build a complete inventory of the gap between what exists and what the original objective demands.
     3. Delegate implementation aggressively to subagents at the correct child nodes. Drive each area to completion in parallel where possible.
-    4. Iterate until the codebase is FULLY functional: it must build successfully, tests must pass, and every feature demanded by the original objective must be implemented with real, working code — not stubs or placeholders.
+    4. Iterate until the codebase is FULLY functional: it must build successfully, tests must pass, and every feature demanded by the original objective must be implemented with real, working code — not stubs or placeholders. When tests are given to guide development, aim for a 100% pass rate on the given test suites if possible — treat them as the definition of done for your work.
     5. Polish: review for code quality, consistency, and completeness. The end product should be a finished, professional codebase.
 
     Do NOT treat this as "finish the architect's current task." Treat this as "deliver the complete codebase that the original objective asked for." You OWN the outcome. If something is incomplete, implement it. If something is broken, fix it. If something is missing, create it. Keep going until the original objective is fully and completely realized.
