@@ -1,23 +1,23 @@
 msgid ""
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:1908
+#: lib/evo_dash_web/live/settings_live.ex:1914
 #, elixir-autogen, elixir-format
 msgid "%{action} completed."
 msgstr "%{action} 已完成。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1904
+#: lib/evo_dash_web/live/settings_live.ex:1910
 #, elixir-autogen, elixir-format
 msgid "%{action} failed: %{reason}"
 msgstr "%{action} 失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1895
-#: lib/evo_dash_web/live/settings_live.ex:1898
+#: lib/evo_dash_web/live/settings_live.ex:1901
+#: lib/evo_dash_web/live/settings_live.ex:1904
 #, elixir-autogen, elixir-format
 msgid "%{action} succeeded."
 msgstr "%{action} 成功。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1889
+#: lib/evo_dash_web/live/settings_live.ex:1895
 #, elixir-autogen, elixir-format
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} 不可用 — 远程连接子系统未运行。"
@@ -69,14 +69,14 @@ msgstr "%{count} 个模型配置"
 msgid "%{count} setting(s) matching \"%{query}\""
 msgstr "找到 %{count} 个设置与“%{query}”匹配"
 
-#: lib/evo_dash_web/live/tasks_live.ex:196
+#: lib/evo_dash_web/live/tasks_live.ex:197
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
 msgstr[0] "找到 %{count} 个任务"
 msgstr[1] "找到 %{count} 个任务"
 
-#: lib/evo_dash_web/live/system_live.ex:407
+#: lib/evo_dash_web/live/system_live.ex:546
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
@@ -108,7 +108,7 @@ msgstr "%{count}秒前"
 msgid "%{n} slots"
 msgstr "%{n} 个并发槽位"
 
-#: lib/evo_dash_web/live/projects_live.ex:2235
+#: lib/evo_dash_web/live/projects_live.ex:2240
 #: lib/evo_dash_web/live/projects_live/github.ex:321
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
@@ -167,18 +167,18 @@ msgstr "此仓库的唯一标识符（例如 'original'、'upstream'）"
 msgid "API Key"
 msgstr "API 密钥"
 
-#: lib/evo_dash_web/live/settings_live.ex:1353
+#: lib/evo_dash_web/live/settings_live.ex:1359
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "API 密钥不能为空。"
 
 #: lib/evo_dash_web/components/settings_components.ex:363
-#: lib/evo_dash_web/live/welcome_live.ex:291
+#: lib/evo_dash_web/live/welcome_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "API 密钥已设置"
 
-#: lib/evo_dash_web/live/settings_live.ex:1383
+#: lib/evo_dash_web/live/settings_live.ex:1389
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "API 密钥已成功保存。"
@@ -193,24 +193,24 @@ msgstr "此仓库在本机上的绝对路径根目录"
 msgid "Actions"
 msgstr "操作"
 
-#: lib/evo_dash_web/components/layouts.ex:155
+#: lib/evo_dash_web/components/layouts.ex:162
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
 msgstr "活跃任务"
 
-#: lib/evo_dash_web/live/tasks_live.ex:150
+#: lib/evo_dash_web/live/tasks_live.ex:151
 #, elixir-autogen, elixir-format
 msgid "Active filters:"
 msgstr "活跃筛选条件："
 
 #: lib/evo_dash_web/components/project_components.ex:668
-#: lib/evo_dash_web/live/settings_live.ex:498
+#: lib/evo_dash_web/live/settings_live.ex:499
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr "添加"
 
-#: lib/evo_dash_web/live/settings_live.ex:372
-#: lib/evo_dash_web/live/settings_live.ex:509
+#: lib/evo_dash_web/live/settings_live.ex:373
+#: lib/evo_dash_web/live/settings_live.ex:510
 #, elixir-autogen, elixir-format
 msgid "Add Connection"
 msgstr "添加连接"
@@ -272,11 +272,11 @@ msgstr "智能体正在等待子智能体完成。除了等待别无他事。"
 msgid "Agent not found"
 msgstr "未找到智能体"
 
-#: lib/evo_dash_web/components/layouts.ex:133
+#: lib/evo_dash_web/components/layouts.ex:140
 #: lib/evo_dash_web/components/review_components/header.ex:125
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
-#: lib/evo_dash_web/live/projects_live.ex:350
-#: lib/evo_dash_web/live/settings_live.ex:528
+#: lib/evo_dash_web/live/projects_live.ex:351
+#: lib/evo_dash_web/live/settings_live.ex:529
 #: lib/evo_dash_web/live/system_live/charts.ex:268
 #, elixir-autogen, elixir-format
 msgid "Agents"
@@ -288,33 +288,33 @@ msgstr "智能体"
 msgid "Agents Spawned"
 msgstr "已生成智能体"
 
-#: lib/evo_dash_web/live/system_live.ex:61
+#: lib/evo_dash_web/live/system_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "Agents and slots are being granted normally."
 msgstr "智能体和槽位正在正常分配中。"
 
-#: lib/evo_dash_web/live/settings_live.ex:110
+#: lib/evo_dash_web/live/settings_live.ex:111
 #, elixir-autogen, elixir-format
 msgid "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
 msgstr "请先设置模型，智能体才能运行。前往 LLM 类别填写模型字段。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:79
+#: lib/evo_dash_web/live/tasks_live.ex:80
 #, elixir-autogen, elixir-format
 msgid "All Projects"
 msgstr "所有项目"
 
-#: lib/evo_dash_web/live/tasks_live.ex:97
+#: lib/evo_dash_web/live/tasks_live.ex:98
 #, elixir-autogen, elixir-format
 msgid "All Reviews"
 msgstr "所有审查状态"
 
-#: lib/evo_dash_web/live/tasks_live.ex:48
+#: lib/evo_dash_web/live/tasks_live.ex:49
 #, elixir-autogen, elixir-format
 msgid "All Statuses"
 msgstr "所有状态"
 
 #: lib/evo_dash_web/helpers.ex:566
-#: lib/evo_dash_web/live/system_live.ex:394
+#: lib/evo_dash_web/live/system_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "全部已配置"
@@ -324,7 +324,7 @@ msgstr "全部已配置"
 msgid "All critical configuration values are set"
 msgstr "所有关键配置项均已设置"
 
-#: lib/evo_dash_web/live/system_live.ex:629
+#: lib/evo_dash_web/live/system_live.ex:768
 #, elixir-autogen, elixir-format
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "所有内存中的运行时状态（运行中的任务、调度器状态、进行中的智能体）都将丢失。此操作不可撤销。"
@@ -375,24 +375,24 @@ msgstr "归档智能体详情"
 msgid "Archived Agent Details"
 msgstr "已归档智能体详情"
 
-#: lib/evo_dash_web/components/layouts.ex:536
-#: lib/evo_dash_web/components/layouts.ex:548
+#: lib/evo_dash_web/components/layouts.ex:592
+#: lib/evo_dash_web/components/layouts.ex:604
 #, elixir-autogen, elixir-format
 msgid "Attempting to reconnect"
 msgstr "正在尝试重新连接"
 
-#: lib/evo_dash_web/live/review_live.ex:49
-#: lib/evo_dash_web/live/welcome_live.ex:40
+#: lib/evo_dash_web/live/review_live.ex:50
+#: lib/evo_dash_web/live/welcome_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Back"
 msgstr "返回"
 
-#: lib/evo_dash_web/live/review_live.ex:33
+#: lib/evo_dash_web/live/review_live.ex:34
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "返回仪表盘"
 
-#: lib/evo_dash_web/live/review_live.ex:45
+#: lib/evo_dash_web/live/review_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Back to Review"
 msgstr "返回审查"
@@ -405,19 +405,19 @@ msgstr "起始提交"
 #: lib/evo_dash_web/components/settings_components.ex:222
 #: lib/evo_dash_web/components/settings_components.ex:299
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:243
-#: lib/evo_dash_web/live/welcome_live.ex:311
+#: lib/evo_dash_web/live/welcome_live.ex:312
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr "Base URL"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:62
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:140
-#: lib/evo_dash_web/live/welcome_live.ex:752
+#: lib/evo_dash_web/live/welcome_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "基础 URL 不能为空。"
 
-#: lib/evo_dash_web/live/system_live.ex:524
+#: lib/evo_dash_web/live/system_live.ex:663
 #, elixir-autogen, elixir-format
 msgid "Binary"
 msgstr "二进制文件"
@@ -427,13 +427,14 @@ msgstr "二进制文件"
 msgid "Blocked"
 msgstr "阻塞中"
 
-#: lib/evo_dash_web/live/settings_live.ex:322
-#: lib/evo_dash_web/live/settings_live.ex:818
+#: lib/evo_dash_web/live/settings_live.ex:323
+#: lib/evo_dash_web/live/settings_live.ex:819
 #, elixir-autogen, elixir-format
 msgid "Bootstrap"
 msgstr "引导"
 
 #: lib/evo_dash_web/components/archive_components.ex:137
+#: lib/evo_dash_web/live/system_live.ex:350
 #, elixir-autogen, elixir-format
 msgid "Branch"
 msgstr "分支"
@@ -446,7 +447,7 @@ msgid "Browse"
 msgstr "浏览"
 
 #: lib/evo_dash_web/components/task_form_components.ex:495
-#: lib/evo_dash_web/live/projects_live.ex:486
+#: lib/evo_dash_web/live/projects_live.ex:487
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "构建系统"
@@ -472,32 +473,32 @@ msgstr "缓存命中率"
 msgid "Cached Tokens"
 msgstr "缓存的词元"
 
-#: lib/evo_dash_web/components/layouts.ex:303
+#: lib/evo_dash_web/components/layouts.ex:316
 #: lib/evo_dash_web/components/project_components.ex:675
 #: lib/evo_dash_web/components/review_components/actions.ex:298
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:344
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:539
 #: lib/evo_dash_web/components/task_card_components.ex:142
 #: lib/evo_dash_web/live/agents_live.html.heex:699
-#: lib/evo_dash_web/live/settings_live.ex:492
-#: lib/evo_dash_web/live/system_live.ex:636
-#: lib/evo_dash_web/live/system_live.ex:680
-#: lib/evo_dash_web/live/system_live.ex:772
+#: lib/evo_dash_web/live/settings_live.ex:493
+#: lib/evo_dash_web/live/system_live.ex:775
+#: lib/evo_dash_web/live/system_live.ex:819
+#: lib/evo_dash_web/live/system_live.ex:911
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "取消"
 
-#: lib/evo_dash_web/live/tasks_live.ex:66
+#: lib/evo_dash_web/live/tasks_live.ex:67
 #, elixir-autogen, elixir-format
 msgid "Cancelled"
 msgstr "已取消"
 
-#: lib/evo_dash_web/live/projects_live.ex:1308
+#: lib/evo_dash_web/live/projects_live.ex:1313
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "无法移除主仓库。"
 
-#: lib/evo_dash_web/components/layouts.ex:636
+#: lib/evo_dash_web/components/layouts.ex:692
 #, elixir-autogen, elixir-format
 msgid "Change language"
 msgstr "切换语言"
@@ -507,12 +508,12 @@ msgstr "切换语言"
 msgid "Changed Files"
 msgstr "已变更文件"
 
-#: lib/evo_dash_web/live/review_live.ex:484
+#: lib/evo_dash_web/live/review_live.ex:485
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "更改已成功合并！分支 %{branch} 已被删除。"
 
-#: lib/evo_dash_web/live/review_live.ex:539
+#: lib/evo_dash_web/live/review_live.ex:540
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "更改已驳回。分支 %{branch} 已被删除。"
@@ -522,13 +523,13 @@ msgstr "更改已驳回。分支 %{branch} 已被删除。"
 msgid "Chat History / Session Memory"
 msgstr "聊天历史与会话记忆"
 
-#: lib/evo_dash_web/live/system_live.ex:376
+#: lib/evo_dash_web/live/system_live.ex:515
 #, elixir-autogen, elixir-format
 msgid "Checking system status..."
 msgstr "正在检查系统状态…"
 
-#: lib/evo_dash_web/live/system_live.ex:157
-#: lib/evo_dash_web/live/system_live.ex:318
+#: lib/evo_dash_web/live/system_live.ex:158
+#: lib/evo_dash_web/live/system_live.ex:457
 #, elixir-autogen, elixir-format
 msgid "Checking..."
 msgstr "正在检查…"
@@ -538,12 +539,12 @@ msgstr "正在检查…"
 msgid "Children"
 msgstr "子节点"
 
-#: lib/evo_dash_web/live/tasks_live.ex:304
+#: lib/evo_dash_web/live/tasks_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Clear History"
 msgstr "清空历史"
 
-#: lib/evo_dash_web/live/tasks_live.ex:302
+#: lib/evo_dash_web/live/tasks_live.ex:303
 #, elixir-autogen, elixir-format
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "清除所有已完成任务的历史记录？此操作不可撤销。"
@@ -557,17 +558,17 @@ msgstr "清除所有已完成任务的历史记录？此操作不可撤销。"
 msgid "Close"
 msgstr "关闭"
 
-#: lib/evo_dash_web/live/projects_live.ex:1502
+#: lib/evo_dash_web/live/projects_live.ex:1507
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "命令 '%{command}' 执行完成：\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1510
+#: lib/evo_dash_web/live/projects_live.ex:1515
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "命令 '%{command}' 执行失败（退出码 %{code}）：\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1475
+#: lib/evo_dash_web/live/projects_live.ex:1480
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "未找到命令：%{command}"
@@ -584,7 +585,7 @@ msgstr "提交"
 
 #: lib/evo_dash_web/components/archive_components.ex:181
 #: lib/evo_dash_web/components/review_components.ex:243
-#: lib/evo_dash_web/live/tasks_live.ex:60
+#: lib/evo_dash_web/live/tasks_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Completed"
 msgstr "已完成"
@@ -594,18 +595,18 @@ msgstr "已完成"
 msgid "Concurrency"
 msgstr "并发"
 
-#: lib/evo_dash_web/live/system_live.ex:383
+#: lib/evo_dash_web/live/system_live.ex:522
 #, elixir-autogen, elixir-format
 msgid "Configuration"
 msgstr "配置"
 
-#: lib/evo_dash_web/live/settings_live.ex:41
+#: lib/evo_dash_web/live/settings_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Configuration file"
 msgstr "配置文件"
 
-#: lib/evo_dash_web/live/settings_live.ex:976
-#: lib/evo_dash_web/live/settings_live.ex:1064
+#: lib/evo_dash_web/live/settings_live.ex:982
+#: lib/evo_dash_web/live/settings_live.ex:1070
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "配置已成功保存。"
@@ -625,7 +626,7 @@ msgstr "配置Nix开发环境集成，用于工具调用。"
 msgid "Configure external tool integrations such as web search."
 msgstr "配置外部工具集成，例如网络搜索。"
 
-#: lib/evo_dash_web/components/layouts.ex:264
+#: lib/evo_dash_web/components/layouts.ex:277
 #, elixir-autogen, elixir-format
 msgid "Configure now →"
 msgstr "立即配置 →"
@@ -655,30 +656,30 @@ msgstr "配置Web仪表盘的监听地址和端口。"
 msgid "Configure via the editor below"
 msgstr "通过下方编辑器进行配置"
 
-#: lib/evo_dash_web/live/settings_live.ex:75
+#: lib/evo_dash_web/live/settings_live.ex:76
 #, elixir-autogen, elixir-format
 msgid "Configure your LLM model in the LLM category to resolve these issues."
 msgstr "请在 LLM 类别中配置您的 LLM 模型以解决这些问题。"
 
-#: lib/evo_dash_web/live/settings_live.ex:348
+#: lib/evo_dash_web/live/settings_live.ex:349
 #, elixir-autogen, elixir-format
 msgid "Configure your SSH server in `~/.ssh/config` and set up SSH key authentication."
 msgstr "请在 `~/.ssh/config` 中配置 SSH 服务器并设置 SSH 密钥认证。"
 
-#: lib/evo_dash_web/live/settings_live.ex:330
-#: lib/evo_dash_web/live/settings_live.ex:1560
+#: lib/evo_dash_web/live/settings_live.ex:331
+#: lib/evo_dash_web/live/settings_live.ex:1566
 #, elixir-autogen, elixir-format
 msgid "Connect"
 msgstr "连接"
 
 #: lib/evo_dash_web/components/settings_components.ex:463
-#: lib/evo_dash_web/live/settings_live.ex:1950
-#: lib/evo_dash_web/live/welcome_live.ex:368
+#: lib/evo_dash_web/live/settings_live.ex:1956
+#: lib/evo_dash_web/live/welcome_live.ex:369
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "已连接"
 
-#: lib/evo_dash_web/live/settings_live.ex:1951
+#: lib/evo_dash_web/live/settings_live.ex:1957
 #, elixir-autogen, elixir-format
 msgid "Connecting..."
 msgstr "连接中..."
@@ -688,22 +689,22 @@ msgstr "连接中..."
 msgid "Connection Test"
 msgstr "连接测试"
 
-#: lib/evo_dash_web/live/settings_live.ex:182
+#: lib/evo_dash_web/live/settings_live.ex:183
 #, elixir-autogen, elixir-format
 msgid "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
 msgstr "连接数据存储在 `~/.config/genesis/remote_connections.toml` 中，与主配置文件分开存放。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1520
+#: lib/evo_dash_web/live/settings_live.ex:1526
 #, elixir-autogen, elixir-format
 msgid "Connection deleted."
 msgstr "连接已删除。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1526
+#: lib/evo_dash_web/live/settings_live.ex:1532
 #, elixir-autogen, elixir-format
 msgid "Connection not found."
 msgstr "未找到连接。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1499
+#: lib/evo_dash_web/live/settings_live.ex:1505
 #, elixir-autogen, elixir-format
 msgid "Connection saved."
 msgstr "连接已保存。"
@@ -724,18 +725,18 @@ msgid "Context tree detected — Evolution mode selected"
 msgstr "检测到上下文树 — 已选择演进模式"
 
 #: lib/evo_dash_web/helpers.ex:147
-#: lib/evo_dash_web/live/tasks_live.ex:109
-#: lib/evo_dash_web/live/tasks_live.ex:180
+#: lib/evo_dash_web/live/tasks_live.ex:110
+#: lib/evo_dash_web/live/tasks_live.ex:181
 #, elixir-autogen, elixir-format
 msgid "Continued"
 msgstr "已继续"
 
-#: lib/evo_dash_web/live/review_live.ex:578
+#: lib/evo_dash_web/live/review_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "Resuming from branch %{branch} at %{sha}"
 msgstr "从分支 %{branch} 的 %{sha} 处恢复"
 
-#: lib/evo_dash_web/live/review_live.ex:583
+#: lib/evo_dash_web/live/review_live.ex:584
 #, elixir-autogen, elixir-format
 msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr "正在从调查任务中恢复。已为您准备好新的演进任务表单。"
@@ -750,7 +751,7 @@ msgstr "控制智能体并发、重试行为和深度限制。"
 msgid "Copy agent summary"
 msgstr "复制智能体摘要"
 
-#: lib/evo_dash_web/live/settings_live.ex:50
+#: lib/evo_dash_web/live/settings_live.ex:51
 #, elixir-autogen, elixir-format
 msgid "Copy path"
 msgstr "复制路径"
@@ -761,7 +762,7 @@ msgstr "复制路径"
 msgid "Cost"
 msgstr "费用"
 
-#: lib/evo_dash_web/live/review_live.ex:203
+#: lib/evo_dash_web/live/review_live.ex:204
 #, elixir-autogen, elixir-format
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "无法加载差异数据。该分支可能已被外部修改。"
@@ -791,7 +792,7 @@ msgstr "当前提交"
 msgid "Custom model saved."
 msgstr "自定义模型已保存。"
 
-#: lib/evo_dash_web/components/layouts.ex:588
+#: lib/evo_dash_web/components/layouts.ex:644
 #, elixir-autogen, elixir-format
 msgid "Dark theme"
 msgstr "深色主题"
@@ -809,7 +810,7 @@ msgstr "默认值"
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:134
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:121
 #: lib/evo_dash_web/components/task_card_components.ex:200
-#: lib/evo_dash_web/live/settings_live.ex:228
+#: lib/evo_dash_web/live/settings_live.ex:229
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "删除"
@@ -851,7 +852,7 @@ msgstr "描述（可选）"
 msgid "Details"
 msgstr "详情"
 
-#: lib/evo_dash_web/live/settings_live.ex:291
+#: lib/evo_dash_web/live/settings_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "Detecting OS"
 msgstr "正在检测操作系统"
@@ -861,8 +862,8 @@ msgstr "正在检测操作系统"
 msgid "Dev Commands"
 msgstr "开发命令"
 
-#: lib/evo_dash_web/live/projects_live.ex:1921
-#: lib/evo_dash_web/live/projects_live.ex:1929
+#: lib/evo_dash_web/live/projects_live.ex:1926
+#: lib/evo_dash_web/live/projects_live.ex:1934
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:387
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
@@ -873,41 +874,41 @@ msgstr "目录不存在：%{path}"
 msgid "Directory does not exist: %{path}. Create a new project instead?"
 msgstr "目录不存在：%{path}。是否改为创建新项目？"
 
-#: lib/evo_dash_web/live/system_live.ex:478
-#: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:617
+#: lib/evo_dash_web/live/system_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "Disabled"
 msgstr "已禁用"
 
-#: lib/evo_dash_web/live/settings_live.ex:238
-#: lib/evo_dash_web/live/settings_live.ex:1572
+#: lib/evo_dash_web/live/settings_live.ex:239
+#: lib/evo_dash_web/live/settings_live.ex:1578
 #, elixir-autogen, elixir-format
 msgid "Disconnect"
 msgstr "断开连接"
 
-#: lib/evo_dash_web/live/settings_live.ex:1954
+#: lib/evo_dash_web/live/settings_live.ex:1960
 #, elixir-autogen, elixir-format
 msgid "Disconnected"
 msgstr "已断开"
 
-#: lib/evo_dash_web/live/settings_live.ex:1952
+#: lib/evo_dash_web/live/settings_live.ex:1958
 #, elixir-autogen, elixir-format
 msgid "Disconnecting..."
 msgstr "断开连接中..."
 
-#: lib/evo_dash_web/live/settings_live.ex:460
+#: lib/evo_dash_web/live/settings_live.ex:461
 #, elixir-autogen, elixir-format
 msgid "Dist Port"
 msgstr "分布式端口"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:124
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:111
-#: lib/evo_dash_web/live/settings_live.ex:220
+#: lib/evo_dash_web/live/settings_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Edit"
 msgstr "编辑"
 
-#: lib/evo_dash_web/live/settings_live.ex:370
+#: lib/evo_dash_web/live/settings_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "Edit Connection"
 msgstr "编辑连接"
@@ -922,8 +923,8 @@ msgstr "编辑配置文件"
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "检测到空目录 — 已选择新代码库模式"
 
-#: lib/evo_dash_web/live/system_live.ex:477
-#: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:616
+#: lib/evo_dash_web/live/system_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "Enabled"
 msgstr "已启用"
@@ -934,14 +935,14 @@ msgstr "已启用"
 msgid "End Commit"
 msgstr "结束提交"
 
-#: lib/evo_dash_web/live/settings_live.ex:353
+#: lib/evo_dash_web/live/settings_live.ex:354
 #, elixir-autogen, elixir-format
 msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`)."
 msgstr "输入 SSH 目标（与您在 `ssh` 后输入的字符串相同，例如 `gpu-server` 或 `user@host`）。"
 
 #: lib/evo_dash_web/components/settings_components.ex:364
-#: lib/evo_dash_web/live/welcome_live.ex:258
-#: lib/evo_dash_web/live/welcome_live.ex:292
+#: lib/evo_dash_web/live/welcome_live.ex:259
+#: lib/evo_dash_web/live/welcome_live.ex:293
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "输入您的 API 密钥"
@@ -957,17 +958,17 @@ msgid "Enter your API key. It should start with"
 msgstr "请输入您的 API 密钥，应以"
 
 #: lib/evo_dash_web/components/task_card_components.ex:606
-#: lib/evo_dash_web/live/settings_live.ex:1953
+#: lib/evo_dash_web/live/settings_live.ex:1959
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "错误"
 
-#: lib/evo_dash_web/live/projects_live.ex:1521
+#: lib/evo_dash_web/live/projects_live.ex:1526
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "运行 '%{command}' 时出错：%{error}"
 
-#: lib/evo_dash_web/live/settings_live.ex:115
+#: lib/evo_dash_web/live/settings_live.ex:116
 #, elixir-autogen, elixir-format
 msgid "Example model names:"
 msgstr "示例模型名称："
@@ -979,7 +980,7 @@ msgstr "执行日志"
 
 #: lib/evo_dash_web/components/archive_components.ex:35
 #: lib/evo_dash_web/components/review_components.ex:111
-#: lib/evo_dash_web/live/review_live.ex:144
+#: lib/evo_dash_web/live/review_live.ex:145
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "导出 JSON"
@@ -991,34 +992,34 @@ msgstr "导出 JSON"
 msgid "Extract Skills"
 msgstr "提取技能"
 
-#: lib/evo_dash_web/live/tasks_live.ex:63
+#: lib/evo_dash_web/live/tasks_live.ex:64
 #, elixir-autogen, elixir-format
 msgid "Failed"
 msgstr "失败"
 
-#: lib/evo_dash_web/live/projects_live.ex:1179
-#: lib/evo_dash_web/live/tasks_live.ex:781
+#: lib/evo_dash_web/live/projects_live.ex:1184
+#: lib/evo_dash_web/live/tasks_live.ex:782
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "取消任务失败：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:637
+#: lib/evo_dash_web/live/review_live.ex:638
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "创建拉取请求失败。请确保已安装并认证 'gh' 命令行工具。"
 
-#: lib/evo_dash_web/live/review_live.ex:416
+#: lib/evo_dash_web/live/review_live.ex:417
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "展开上下文失败：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:899
-#: lib/evo_dash_web/live/review_live.ex:927
+#: lib/evo_dash_web/live/review_live.ex:900
+#: lib/evo_dash_web/live/review_live.ex:928
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "加载 %{path} 的差异失败：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:548
+#: lib/evo_dash_web/live/review_live.ex:549
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes: %{reason}"
 msgstr "驳回更改失败：%{reason}"
@@ -1028,38 +1029,38 @@ msgstr "驳回更改失败：%{reason}"
 msgid "Failed to reset key: %{reason}"
 msgstr "重置密钥失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1390
-#: lib/evo_dash_web/live/welcome_live.ex:608
-#: lib/evo_dash_web/live/welcome_live.ex:717
+#: lib/evo_dash_web/live/settings_live.ex:1396
+#: lib/evo_dash_web/live/welcome_live.ex:609
+#: lib/evo_dash_web/live/welcome_live.ex:718
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "保存 API 密钥失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:998
-#: lib/evo_dash_web/live/settings_live.ex:1089
-#: lib/evo_dash_web/live/settings_live.ex:1646
-#: lib/evo_dash_web/live/welcome_live.ex:969
+#: lib/evo_dash_web/live/settings_live.ex:1004
+#: lib/evo_dash_web/live/settings_live.ex:1095
+#: lib/evo_dash_web/live/settings_live.ex:1652
+#: lib/evo_dash_web/live/welcome_live.ex:970
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "保存配置失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1509
+#: lib/evo_dash_web/live/settings_live.ex:1515
 #, elixir-autogen, elixir-format
 msgid "Failed to save: %{reason}"
 msgstr "保存失败：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:702
+#: lib/evo_dash_web/live/review_live.ex:703
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "启动技能提取失败：%{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2256
+#: lib/evo_dash_web/live/projects_live.ex:2261
 #: lib/evo_dash_web/live/projects_live/github.ex:330
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "启动任务失败：%{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:56
+#: lib/evo_dash_web/live/settings_live.ex:57
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "文件尚不存在"
@@ -1069,7 +1070,7 @@ msgstr "文件尚不存在"
 msgid "Files Changed"
 msgstr "变更文件"
 
-#: lib/evo_dash_web/live/system_live.ex:482
+#: lib/evo_dash_web/live/system_live.ex:621
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation"
 msgstr "文件系统隔离"
@@ -1090,7 +1091,7 @@ msgstr "筛选设置..."
 msgid "Finished"
 msgstr "已完成"
 
-#: lib/evo_dash_web/live/system_live.ex:531
+#: lib/evo_dash_web/live/system_live.ex:670
 #, elixir-autogen, elixir-format
 msgid "Flake valid"
 msgstr "Flake 有效"
@@ -1110,12 +1111,12 @@ msgstr "用于代理/聚合端点；标准服务商请留空。"
 msgid "Foreign Repositories"
 msgstr "外部仓库"
 
-#: lib/evo_dash_web/live/projects_live.ex:1295
+#: lib/evo_dash_web/live/projects_live.ex:1300
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "外部仓库 '%{repo_id}' 注册成功。"
 
-#: lib/evo_dash_web/live/projects_live.ex:1322
+#: lib/evo_dash_web/live/projects_live.ex:1327
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "外部仓库 '%{repo_id}' 已移除。"
@@ -1137,7 +1138,7 @@ msgid "Full"
 msgstr "完整"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:657
-#: lib/evo_dash_web/live/tasks_live.ex:335
+#: lib/evo_dash_web/live/tasks_live.ex:336
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "完整目标"
@@ -1168,7 +1169,7 @@ msgstr "Git"
 msgid "GitHub Username"
 msgstr "GitHub 用户名"
 
-#: lib/evo_dash_web/live/system_live.ex:94
+#: lib/evo_dash_web/live/system_live.ex:95
 #, elixir-autogen, elixir-format
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "平滑重启或停止 Erlang 虚拟机。重启会销毁并重新启动所有应用；停止则会优雅关闭虚拟机，之后需手动重新启动。两种情况下内存中的运行时状态都会丢失。"
@@ -1209,8 +1210,8 @@ msgstr "输入成本"
 msgid "Input Tokens"
 msgstr "输入词元"
 
-#: lib/evo_dash_web/live/settings_live.ex:1126
-#: lib/evo_dash_web/live/settings_live.ex:1145
+#: lib/evo_dash_web/live/settings_live.ex:1132
+#: lib/evo_dash_web/live/settings_live.ex:1151
 #: lib/evo_dash_web/live/settings_live/search_events.ex:65
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
@@ -1230,7 +1231,7 @@ msgstr "无效的项目名称"
 msgid "LLM"
 msgstr "LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:554
+#: lib/evo_dash_web/live/system_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "LLM Connection"
 msgstr "LLM 连接"
@@ -1241,7 +1242,7 @@ msgstr "LLM 连接"
 msgid "LLM Model"
 msgstr "LLM 模型"
 
-#: lib/evo_dash_web/live/system_live.ex:565
+#: lib/evo_dash_web/live/system_live.ex:704
 #, elixir-autogen, elixir-format
 msgid "LLM connection testing is now available on the Settings page."
 msgstr "LLM 连接测试现已在设置页面提供。"
@@ -1251,7 +1252,7 @@ msgstr "LLM 连接测试现已在设置页面提供。"
 msgid "Leave empty to use the default value."
 msgstr "留空则使用默认值。"
 
-#: lib/evo_dash_web/components/layouts.ex:579
+#: lib/evo_dash_web/components/layouts.ex:635
 #, elixir-autogen, elixir-format
 msgid "Light theme"
 msgstr "浅色主题"
@@ -1271,7 +1272,7 @@ msgstr "Linux 安全功能仅在 Linux 系统上使用 systemd-run 时可用。"
 msgid "Loading diff..."
 msgstr "正在加载差异…"
 
-#: lib/evo_dash_web/live/review_live.ex:58
+#: lib/evo_dash_web/live/review_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "正在加载审查数据..."
@@ -1281,7 +1282,7 @@ msgstr "正在加载审查数据..."
 msgid "Local"
 msgstr "本地"
 
-#: lib/evo_dash_web/live/settings_live.ex:426
+#: lib/evo_dash_web/live/settings_live.ex:427
 #, elixir-autogen, elixir-format
 msgid "Local Release Tarball"
 msgstr "本地二进制文件路径"
@@ -1292,7 +1293,7 @@ msgid "Manage Connections..."
 msgstr "管理连接..."
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:90
-#: lib/evo_dash_web/live/settings_live.ex:173
+#: lib/evo_dash_web/live/settings_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "Manage SSH connections to remote Genesis daemons."
 msgstr "管理到远程启元守护进程的SSH连接。"
@@ -1312,12 +1313,12 @@ msgstr "管理沙箱隔离、资源限制和进程约束。"
 msgid "Max Tokens"
 msgstr "最大词元数"
 
-#: lib/evo_dash_web/live/review_live.ex:499
+#: lib/evo_dash_web/live/review_live.ex:500
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
 msgstr "合并冲突！请手动解决。%{details}"
 
-#: lib/evo_dash_web/live/review_live.ex:507
+#: lib/evo_dash_web/live/review_live.ex:508
 #, elixir-autogen, elixir-format
 msgid "Merge failed: %{reason}"
 msgstr "合并失败：%{reason}"
@@ -1328,15 +1329,15 @@ msgid "Merge these changes into the current branch?"
 msgstr "将这些变更合并到当前分支？"
 
 #: lib/evo_dash_web/helpers.ex:145
-#: lib/evo_dash_web/live/tasks_live.ex:103
-#: lib/evo_dash_web/live/tasks_live.ex:176
+#: lib/evo_dash_web/live/tasks_live.ex:104
+#: lib/evo_dash_web/live/tasks_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "Merged"
 msgstr "已合并"
 
-#: lib/evo_dash_web/components/layouts.ex:255
+#: lib/evo_dash_web/components/layouts.ex:268
 #: lib/evo_dash_web/helpers.ex:573
-#: lib/evo_dash_web/live/settings_live.ex:65
+#: lib/evo_dash_web/live/settings_live.ex:66
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "缺少配置"
@@ -1377,7 +1378,7 @@ msgstr "模型配置文件"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:47
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:107
-#: lib/evo_dash_web/live/welcome_live.ex:738
+#: lib/evo_dash_web/live/welcome_live.ex:739
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "模型名称不能为空。"
@@ -1405,7 +1406,7 @@ msgid "N/A"
 msgstr "不适用"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:166
-#: lib/evo_dash_web/live/settings_live.ex:380
+#: lib/evo_dash_web/live/settings_live.ex:381
 #, elixir-autogen, elixir-format
 msgid "Name"
 msgstr "名称"
@@ -1420,7 +1421,7 @@ msgstr "已添加新配置 — 请填写详细信息并保存。"
 msgid "Nix"
 msgstr "Nix"
 
-#: lib/evo_dash_web/live/system_live.ex:509
+#: lib/evo_dash_web/live/system_live.ex:648
 #, elixir-autogen, elixir-format
 msgid "Nix Environment"
 msgstr "Nix 环境"
@@ -1437,12 +1438,12 @@ msgstr "未找到 CONTEXT.md — 已选择现有代码库模式"
 msgid "No Changes"
 msgstr "无变更"
 
-#: lib/evo_dash_web/live/settings_live.ex:108
+#: lib/evo_dash_web/live/settings_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "No LLM Model Configured"
 msgstr "未配置 LLM 模型"
 
-#: lib/evo_dash_web/live/projects_live.ex:338
+#: lib/evo_dash_web/live/projects_live.ex:339
 #, elixir-autogen, elixir-format
 msgid "No active agents"
 msgstr "暂无活跃智能体"
@@ -1457,12 +1458,12 @@ msgstr "当前无已注册的智能体"
 msgid "No archive data available for this task"
 msgstr "此任务暂无归档数据"
 
-#: lib/evo_dash_web/live/review_live.ex:191
+#: lib/evo_dash_web/live/review_live.ex:192
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "此任务没有可用的已归档智能体数据。"
 
-#: lib/evo_dash_web/live/review_live.ex:172
+#: lib/evo_dash_web/live/review_live.ex:173
 #, elixir-autogen, elixir-format
 msgid "No diff data available for this review."
 msgstr "此审查没有可用的差异数据。"
@@ -1502,12 +1503,12 @@ msgstr "尚未配置任何模型配置文件——请先添加一个配置"
 msgid "No prefix (hexadecimal)"
 msgstr "无前缀（十六进制）"
 
-#: lib/evo_dash_web/live/projects_live.ex:1140
+#: lib/evo_dash_web/live/projects_live.ex:1145
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "未选择项目。请先打开一个项目。"
 
-#: lib/evo_dash_web/live/settings_live.ex:340
+#: lib/evo_dash_web/live/settings_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "No remote connections configured."
 msgstr "未配置远程连接。"
@@ -1522,7 +1523,7 @@ msgstr "当前平台不支持沙箱，命令将直接在主机上运行。"
 msgid "No settings found matching \"%{query}\""
 msgstr "未找到与“%{query}”匹配的设置"
 
-#: lib/evo_dash_web/live/tasks_live.ex:217
+#: lib/evo_dash_web/live/tasks_live.ex:218
 #, elixir-autogen, elixir-format
 msgid "No tasks found"
 msgstr "未找到任务"
@@ -1594,7 +1595,7 @@ msgstr "输出成本"
 msgid "Output Tokens"
 msgstr "输出词元"
 
-#: lib/evo_dash_web/live/tasks_live.ex:291
+#: lib/evo_dash_web/live/tasks_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "Page %{current} of %{total}"
 msgstr "第 %{current}/%{total} 页"
@@ -1610,12 +1611,12 @@ msgstr "父节点"
 msgid "Path"
 msgstr "路径"
 
-#: lib/evo_dash_web/live/projects_live.ex:1247
+#: lib/evo_dash_web/live/projects_live.ex:1252
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "路径不能为空。"
 
-#: lib/evo_dash_web/live/system_live.ex:81
+#: lib/evo_dash_web/live/system_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Pause Scheduler"
 msgstr "暂停调度器"
@@ -1624,14 +1625,14 @@ msgstr "暂停调度器"
 #: lib/evo_dash_web/helpers.ex:76
 #: lib/evo_dash_web/live/agents_live.html.heex:62
 #: lib/evo_dash_web/live/system_live/charts.ex:114
-#: lib/evo_dash_web/live/tasks_live.ex:54
+#: lib/evo_dash_web/live/tasks_live.ex:55
 #, elixir-autogen, elixir-format
 msgid "Pending"
 msgstr "待处理"
 
-#: lib/evo_dash_web/components/layouts.ex:176
-#: lib/evo_dash_web/live/tasks_live.ex:100
-#: lib/evo_dash_web/live/tasks_live.ex:174
+#: lib/evo_dash_web/components/layouts.ex:183
+#: lib/evo_dash_web/live/tasks_live.ex:101
+#: lib/evo_dash_web/live/tasks_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Pending Review"
 msgstr "待审查"
@@ -1684,7 +1685,7 @@ msgstr "项目设置"
 msgid "Project created: %{path}"
 msgstr "项目已创建：%{path}"
 
-#: lib/evo_dash_web/components/layouts.ex:128
+#: lib/evo_dash_web/components/layouts.ex:135
 #, elixir-autogen, elixir-format
 msgid "Projects"
 msgstr "项目"
@@ -1699,7 +1700,7 @@ msgstr "提供具体说明，指明哪些知识应被捕捉为技能。"
 msgid "Provider"
 msgstr "服务商"
 
-#: lib/evo_dash_web/live/review_live.ex:628
+#: lib/evo_dash_web/live/review_live.ex:629
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "拉取请求已创建：%{title}"
@@ -1719,7 +1720,7 @@ msgstr "常用开发命令的快捷方式。点击「运行」执行。"
 msgid "Quick-select a model:"
 msgstr "快速选择模型："
 
-#: lib/evo_dash_web/live/system_live.ex:319
+#: lib/evo_dash_web/live/system_live.ex:458
 #, elixir-autogen, elixir-format
 msgid "Re-check"
 msgstr "重新检查"
@@ -1735,34 +1736,34 @@ msgid "Reject and delete these changes? This cannot be undone."
 msgstr "拒绝并删除这些变更？此操作不可撤销。"
 
 #: lib/evo_dash_web/helpers.ex:146
-#: lib/evo_dash_web/live/tasks_live.ex:106
-#: lib/evo_dash_web/live/tasks_live.ex:178
+#: lib/evo_dash_web/live/tasks_live.ex:107
+#: lib/evo_dash_web/live/tasks_live.ex:179
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "已拒绝"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:32
-#: lib/evo_dash_web/live/settings_live.ex:169
+#: lib/evo_dash_web/live/settings_live.ex:170
 #, elixir-autogen, elixir-format
 msgid "Remote Connections"
 msgstr "远程连接"
 
-#: lib/evo_dash_web/live/settings_live.ex:472
+#: lib/evo_dash_web/live/settings_live.ex:473
 #, elixir-autogen, elixir-format
 msgid "Remote Path"
 msgstr "远程路径"
 
-#: lib/evo_dash_web/live/projects_live.ex:395
+#: lib/evo_dash_web/live/projects_live.ex:396
 #, elixir-autogen, elixir-format
 msgid "Repo"
 msgstr "仓库"
 
-#: lib/evo_dash_web/live/projects_live.ex:1263
+#: lib/evo_dash_web/live/projects_live.ex:1268
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "仓库 '%{id}' 已注册。"
 
-#: lib/evo_dash_web/live/projects_live.ex:1314
+#: lib/evo_dash_web/live/projects_live.ex:1319
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "未找到仓库 '%{id}'。"
@@ -1772,7 +1773,7 @@ msgstr "未找到仓库 '%{id}'。"
 msgid "Repo ID"
 msgstr "仓库 ID"
 
-#: lib/evo_dash_web/live/projects_live.ex:1244
+#: lib/evo_dash_web/live/projects_live.ex:1249
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "仓库 ID 不能为空。"
@@ -1782,7 +1783,7 @@ msgstr "仓库 ID 不能为空。"
 msgid "Repo: %{repo_id}"
 msgstr "仓库：%{repo_id}"
 
-#: lib/evo_dash_web/live/system_live.ex:428
+#: lib/evo_dash_web/live/system_live.ex:567
 #, elixir-autogen, elixir-format
 msgid "Required Tools"
 msgstr "所需工具"
@@ -1792,7 +1793,7 @@ msgstr "所需工具"
 msgid "Required for OpenAI-compatible providers."
 msgstr "兼容 OpenAI 的服务商必需此项。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:141
+#: lib/evo_dash_web/live/tasks_live.ex:142
 #, elixir-autogen, elixir-format
 msgid "Reset"
 msgstr "重置"
@@ -1802,7 +1803,7 @@ msgstr "重置"
 msgid "Reset %{key} to default."
 msgstr "将 %{key} 重置为默认值。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:139
+#: lib/evo_dash_web/live/tasks_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Reset all filters"
 msgstr "重置所有筛选条件"
@@ -1812,7 +1813,7 @@ msgstr "重置所有筛选条件"
 msgid "Reset to default"
 msgstr "重置为默认"
 
-#: lib/evo_dash_web/live/system_live.ex:484
+#: lib/evo_dash_web/live/system_live.ex:623
 #, elixir-autogen, elixir-format
 msgid "Resource limits"
 msgstr "资源限制"
@@ -1832,13 +1833,13 @@ msgstr "资源"
 msgid "Response"
 msgstr "响应"
 
-#: lib/evo_dash_web/live/system_live.ex:107
-#: lib/evo_dash_web/live/system_live.ex:644
+#: lib/evo_dash_web/live/system_live.ex:108
+#: lib/evo_dash_web/live/system_live.ex:783
 #, elixir-autogen, elixir-format
 msgid "Restart System"
 msgstr "重启系统"
 
-#: lib/evo_dash_web/live/system_live.ex:614
+#: lib/evo_dash_web/live/system_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Restart System?"
 msgstr "是否重启系统？"
@@ -1849,7 +1850,7 @@ msgstr "是否重启系统？"
 msgid "Result"
 msgstr "结果"
 
-#: lib/evo_dash_web/live/system_live.ex:81
+#: lib/evo_dash_web/live/system_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Resume Scheduler"
 msgstr "恢复调度器"
@@ -1861,7 +1862,7 @@ msgid "Resume from"
 msgstr "从中恢复"
 
 #: lib/evo_dash_web/components/settings_components.ex:490
-#: lib/evo_dash_web/live/welcome_live.ex:378
+#: lib/evo_dash_web/live/welcome_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "Retest"
 msgstr "重新测试"
@@ -1874,7 +1875,7 @@ msgstr "重试次数"
 #: lib/evo_dash_web/components/remote_gate_components.ex:86
 #: lib/evo_dash_web/components/settings_components.ex:521
 #: lib/evo_dash_web/live/projects_live/remote_view.ex:286
-#: lib/evo_dash_web/live/welcome_live.ex:390
+#: lib/evo_dash_web/live/welcome_live.ex:391
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "重试"
@@ -1900,12 +1901,12 @@ msgstr "审查"
 msgid "Review Changes"
 msgstr "审查更改"
 
-#: lib/evo_dash_web/live/review_live.ex:30
+#: lib/evo_dash_web/live/review_live.ex:31
 #, elixir-autogen, elixir-format
 msgid "Review Not Available"
 msgstr "审查不可用"
 
-#: lib/evo_dash_web/live/review_live.ex:602
+#: lib/evo_dash_web/live/review_live.ex:603
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "审查已忽略并关闭。"
@@ -1915,37 +1916,37 @@ msgstr "审查已忽略并关闭。"
 msgid "Run"
 msgstr "运行"
 
-#: lib/evo_dash_web/components/layouts.ex:176
+#: lib/evo_dash_web/components/layouts.ex:183
 #: lib/evo_dash_web/helpers.ex:77
 #: lib/evo_dash_web/live/agents_live.html.heex:66
 #: lib/evo_dash_web/live/system_live/charts.ex:102
-#: lib/evo_dash_web/live/tasks_live.ex:51
+#: lib/evo_dash_web/live/tasks_live.ex:52
 #, elixir-autogen, elixir-format
 msgid "Running"
 msgstr "运行中"
 
-#: lib/evo_dash_web/live/system_live.ex:57
+#: lib/evo_dash_web/live/system_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Running agents continue. No new slots or agents will be granted until resumed."
 msgstr "运行中的智能体会继续执行。在恢复之前，不会分配新的槽位或智能体。"
 
-#: lib/evo_dash_web/live/settings_live.ex:392
+#: lib/evo_dash_web/live/settings_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "SSH Target"
 msgstr "SSH 目标"
 
-#: lib/evo_dash_web/live/settings_live.ex:358
+#: lib/evo_dash_web/live/settings_live.ex:359
 #, elixir-autogen, elixir-format
 msgid "SSH port, identity file, and other options are read from your SSH config — no need to enter them here."
 msgstr "SSH 端口、身份文件及其他选项均从您的 SSH 配置中读取 — 此处无需填写。"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:26
-#: lib/evo_dash_web/live/system_live.ex:461
+#: lib/evo_dash_web/live/system_live.ex:600
 #, elixir-autogen, elixir-format
 msgid "Sandbox"
 msgstr "沙箱"
 
-#: lib/evo_dash_web/live/settings_live.ex:496
+#: lib/evo_dash_web/live/settings_live.ex:497
 #, elixir-autogen, elixir-format
 msgid "Save"
 msgstr "保存"
@@ -1976,23 +1977,23 @@ msgstr "保存配置文件"
 msgid "Scheduler"
 msgstr "调度器"
 
-#: lib/evo_dash_web/live/system_live.ex:53
+#: lib/evo_dash_web/live/system_live.ex:54
 #, elixir-autogen, elixir-format
 msgid "Scheduler Active"
 msgstr "调度器活跃"
 
-#: lib/evo_dash_web/live/system_live.ex:52
+#: lib/evo_dash_web/live/system_live.ex:53
 #: lib/evo_dash_web/live/system_live/charts.ex:237
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "调度器已暂停"
 
-#: lib/evo_dash_web/live/system_live.ex:982
+#: lib/evo_dash_web/live/system_live.ex:1150
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "调度器已暂停。运行中的智能体会继续执行，但不会分配新的槽位或智能体。"
 
-#: lib/evo_dash_web/live/system_live.ex:966
+#: lib/evo_dash_web/live/system_live.ex:1134
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "调度器已恢复。新的智能体和槽位正在分配中。"
@@ -2002,7 +2003,7 @@ msgstr "调度器已恢复。新的智能体和槽位正在分配中。"
 msgid "Search Results"
 msgstr "搜索结果"
 
-#: lib/evo_dash_web/live/tasks_live.ex:126
+#: lib/evo_dash_web/live/tasks_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Search by task ID, prompt, or objective..."
 msgstr "按任务 ID、提示词或目标搜索…"
@@ -2013,7 +2014,7 @@ msgid "Select a provider to quickly configure your model and API key."
 msgstr "选择一个服务商以快速配置模型和 API 密钥。"
 
 #: lib/evo_dash_web/components/settings_components.ex:137
-#: lib/evo_dash_web/live/welcome_live.ex:138
+#: lib/evo_dash_web/live/welcome_live.ex:139
 #, elixir-autogen, elixir-format
 msgid "Select a variant:"
 msgstr "选择一个变体："
@@ -2023,7 +2024,7 @@ msgstr "选择一个变体："
 msgid "Select an agent to view details"
 msgstr "选择一个智能体以查看详情"
 
-#: lib/evo_dash_web/live/settings_live.ex:1438
+#: lib/evo_dash_web/live/settings_live.ex:1444
 #, elixir-autogen, elixir-format
 msgid "Selected profile has no model configured."
 msgstr "所选配置未设置模型。"
@@ -2034,7 +2035,7 @@ msgid "Server"
 msgstr "服务器"
 
 #: lib/evo_dash_web/components/settings_components.ex:354
-#: lib/evo_dash_web/live/welcome_live.ex:281
+#: lib/evo_dash_web/live/welcome_live.ex:282
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "设置"
@@ -2049,12 +2050,12 @@ msgstr "设置模型"
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "设置用于Git提交和协作的用户身份。"
 
-#: lib/evo_dash_web/live/settings_live.ex:286
+#: lib/evo_dash_web/live/settings_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Setting permissions"
 msgstr "正在设置权限"
 
-#: lib/evo_dash_web/components/layouts.ex:143
+#: lib/evo_dash_web/components/layouts.ex:150
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "设置"
@@ -2064,22 +2065,22 @@ msgstr "设置"
 msgid "Short description of what this repo does"
 msgstr "此仓库功能的简短描述"
 
-#: lib/evo_dash_web/live/tasks_live.ex:251
+#: lib/evo_dash_web/live/tasks_live.ex:252
 #, elixir-autogen, elixir-format
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "显示第 %{start}–%{end} 个，共 %{total} 个任务"
 
-#: lib/evo_dash_web/live/review_live.ex:692
+#: lib/evo_dash_web/live/review_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "技能提取任务已启动。您可以在仪表盘上监控其进度。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:413
+#: lib/evo_dash_web/live/welcome_live.ex:414
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "跳过"
 
-#: lib/evo_dash_web/components/layouts.ex:543
+#: lib/evo_dash_web/components/layouts.ex:599
 #, elixir-autogen, elixir-format
 msgid "Something went wrong!"
 msgstr "出错了！"
@@ -2115,7 +2116,7 @@ msgstr "起始提交"
 msgid "Starting Node"
 msgstr "起始节点"
 
-#: lib/evo_dash_web/live/settings_live.ex:312
+#: lib/evo_dash_web/live/settings_live.ex:313
 #, elixir-autogen, elixir-format
 msgid "Starting daemon"
 msgstr "正在启动守护进程"
@@ -2130,13 +2131,13 @@ msgstr "状态"
 msgid "Status Legend"
 msgstr "状态图例"
 
-#: lib/evo_dash_web/live/system_live.ex:115
-#: lib/evo_dash_web/live/system_live.ex:688
+#: lib/evo_dash_web/live/system_live.ex:116
+#: lib/evo_dash_web/live/system_live.ex:827
 #, elixir-autogen, elixir-format
 msgid "Stop System"
 msgstr "停止系统"
 
-#: lib/evo_dash_web/live/system_live.ex:658
+#: lib/evo_dash_web/live/system_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Stop System?"
 msgstr "是否停止系统？"
@@ -2146,43 +2147,43 @@ msgstr "是否停止系统？"
 msgid "Switch node"
 msgstr "切换节点"
 
-#: lib/evo_dash_web/components/layouts.ex:149
-#: lib/evo_dash_web/components/layouts.ex:478
+#: lib/evo_dash_web/components/layouts.ex:156
+#: lib/evo_dash_web/components/layouts.ex:534
 #, elixir-autogen, elixir-format
 msgid "System"
 msgstr "系统"
 
-#: lib/evo_dash_web/live/system_live.ex:91
+#: lib/evo_dash_web/live/system_live.ex:92
 #, elixir-autogen, elixir-format
 msgid "System Control"
 msgstr "系统控制"
 
-#: lib/evo_dash_web/live/system_live.ex:596
+#: lib/evo_dash_web/live/system_live.ex:735
 #, elixir-autogen, elixir-format
 msgid "System Dashboard"
 msgstr "系统仪表盘"
 
-#: lib/evo_dash_web/live/system_live.ex:302
+#: lib/evo_dash_web/live/system_live.ex:441
 #, elixir-autogen, elixir-format
 msgid "System Self-Check"
 msgstr "系统自检"
 
-#: lib/evo_dash_web/live/system_live.ex:1029
+#: lib/evo_dash_web/live/system_live.ex:1197
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "系统正在重启。请等待 Erlang 虚拟机恢复运行。"
 
-#: lib/evo_dash_web/live/system_live.ex:1072
+#: lib/evo_dash_web/live/system_live.ex:1240
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "系统正在停止。Erlang 虚拟机关闭后需手动重新启动。"
 
-#: lib/evo_dash_web/live/system_live.ex:304
+#: lib/evo_dash_web/live/system_live.ex:443
 #, elixir-autogen, elixir-format
 msgid "System status and health overview"
 msgstr "系统状态与运行状况概览"
 
-#: lib/evo_dash_web/components/layouts.ex:570
+#: lib/evo_dash_web/components/layouts.ex:626
 #, elixir-autogen, elixir-format
 msgid "System theme"
 msgstr "系统主题"
@@ -2197,7 +2198,7 @@ msgstr "任务历史"
 msgid "Task ID"
 msgstr "任务 ID"
 
-#: lib/evo_dash_web/live/tasks_live.ex:313
+#: lib/evo_dash_web/live/tasks_live.ex:314
 #, elixir-autogen, elixir-format
 msgid "Task Result"
 msgstr "任务结果"
@@ -2217,12 +2218,12 @@ msgstr "未找到任务"
 msgid "Task not found. It may have been deleted."
 msgstr "任务未找到。它可能已被删除。"
 
-#: lib/evo_dash_web/components/layouts.ex:138
+#: lib/evo_dash_web/components/layouts.ex:145
 #, elixir-autogen, elixir-format
 msgid "Tasks"
 msgstr "任务"
 
-#: lib/evo_dash_web/live/tasks_live.ex:222
+#: lib/evo_dash_web/live/tasks_live.ex:223
 #, elixir-autogen, elixir-format
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "从仪表盘启动任务后，任务将显示在此处。"
@@ -2234,18 +2235,18 @@ msgstr "温度"
 
 #: lib/evo_dash_web/components/settings_components.ex:427
 #: lib/evo_dash_web/components/settings_components.ex:451
-#: lib/evo_dash_web/live/welcome_live.ex:358
+#: lib/evo_dash_web/live/welcome_live.ex:359
 #, elixir-autogen, elixir-format
 msgid "Test Connection"
 msgstr "测试连接"
 
-#: lib/evo_dash_web/live/system_live.ex:575
+#: lib/evo_dash_web/live/system_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "Test in Settings"
 msgstr "在设置中测试"
 
 #: lib/evo_dash_web/components/settings_components.ex:457
-#: lib/evo_dash_web/live/welcome_live.ex:363
+#: lib/evo_dash_web/live/welcome_live.ex:364
 #, elixir-autogen, elixir-format
 msgid "Testing LLM connection..."
 msgstr "正在测试 LLM 连接……"
@@ -2261,7 +2262,7 @@ msgstr "从中继续的上一个任务 ID。将上一个任务的上下文（提
 msgid "The LLM provider name"
 msgstr "LLM 服务商名称"
 
-#: lib/evo_dash_web/live/system_live.ex:673
+#: lib/evo_dash_web/live/system_live.ex:812
 #, elixir-autogen, elixir-format
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "虚拟机将停止，需手动重新启动。所有内存中的运行时状态（运行中的任务、调度器状态、进行中的智能体）都将丢失。此操作不可撤销。"
@@ -2288,7 +2289,7 @@ msgstr "模型名称"
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "项目内开始演进的子目录。使用 './' 表示根目录。"
 
-#: lib/evo_dash_web/live/projects_live.ex:340
+#: lib/evo_dash_web/live/projects_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "There are no running agents on this remote node."
 msgstr "此远程节点上没有正在运行的智能体。"
@@ -2304,13 +2305,13 @@ msgstr "思考中"
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "此分支已不存在。您可以使用「忽略」将其关闭。"
 
-#: lib/evo_dash_web/live/system_live.ex:623
+#: lib/evo_dash_web/live/system_live.ex:762
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
 msgstr "这将平滑重启 Erlang 虚拟机。所有应用将被销毁并重新启动。"
 
-#: lib/evo_dash_web/components/layouts.ex:291
-#: lib/evo_dash_web/live/system_live.ex:667
+#: lib/evo_dash_web/components/layouts.ex:304
+#: lib/evo_dash_web/live/system_live.ex:806
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "这将优雅关闭 Erlang 虚拟机。所有应用将按顺序停止。"
@@ -2326,7 +2327,7 @@ msgstr "词元与成本使用"
 msgid "Token and Cost"
 msgstr "词元与成本"
 
-#: lib/evo_dash_web/live/projects_live.ex:401
+#: lib/evo_dash_web/live/projects_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Tokens"
 msgstr "词元"
@@ -2391,7 +2392,7 @@ msgstr "截断"
 msgid "Try a different search term."
 msgstr "试试其他搜索词。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:220
+#: lib/evo_dash_web/live/tasks_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Try adjusting your filters or search query."
 msgstr "请尝试调整筛选条件或搜索关键字。"
@@ -2409,8 +2410,8 @@ msgstr "输入模型字符串，或使用上方的快速设置"
 #: lib/evo_dash_web/helpers.ex:84
 #: lib/evo_dash_web/helpers.ex:150
 #: lib/evo_dash_web/helpers.ex:485
-#: lib/evo_dash_web/live/projects_live.ex:382
-#: lib/evo_dash_web/live/settings_live.ex:1955
+#: lib/evo_dash_web/live/projects_live.ex:383
+#: lib/evo_dash_web/live/settings_live.ex:1961
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "未知"
@@ -2420,16 +2421,16 @@ msgstr "未知"
 msgid "Unknown Repo"
 msgstr "未知仓库"
 
-#: lib/evo_dash_web/live/settings_live.ex:1202
+#: lib/evo_dash_web/live/settings_live.ex:1208
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:44
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:104
-#: lib/evo_dash_web/live/welcome_live.ex:519
-#: lib/evo_dash_web/live/welcome_live.ex:735
+#: lib/evo_dash_web/live/welcome_live.ex:520
+#: lib/evo_dash_web/live/welcome_live.ex:736
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "未知服务商。"
 
-#: lib/evo_dash_web/live/settings_live.ex:276
+#: lib/evo_dash_web/live/settings_live.ex:277
 #, elixir-autogen, elixir-format
 msgid "Uploading binary"
 msgstr "正在上传二进制文件"
@@ -2444,8 +2445,8 @@ msgstr "用户"
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "使用单个自上而下的智能体根据您的目标修改代码库。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1011
-#: lib/evo_dash_web/live/settings_live.ex:1104
+#: lib/evo_dash_web/live/settings_live.ex:1017
+#: lib/evo_dash_web/live/settings_live.ex:1110
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "验证失败。请修正以下错误。"
@@ -2477,7 +2478,7 @@ msgstr "查看完整目标"
 msgid "View PR"
 msgstr "查看 PR"
 
-#: lib/evo_dash_web/live/system_live.ex:598
+#: lib/evo_dash_web/live/system_live.ex:737
 #, elixir-autogen, elixir-format
 msgid "View system metrics, processes, and application telemetry"
 msgstr "查看系统指标、进程及应用遥测数据"
@@ -2496,7 +2497,7 @@ msgstr "等待中"
 msgid "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
 msgstr "警告：兼容 OpenAI 的 API 兼容性各有不同。根据服务商不同，部分功能（工具调用、流式输出、结构化输出）可能无法使用。"
 
-#: lib/evo_dash_web/components/layouts.ex:531
+#: lib/evo_dash_web/components/layouts.ex:587
 #, elixir-autogen, elixir-format
 msgid "We can't find the internet"
 msgstr "无法连接网络"
@@ -2529,7 +2530,7 @@ msgstr "关闭"
 msgid "directories"
 msgstr "个目录"
 
-#: lib/evo_dash_web/live/settings_live.ex:386
+#: lib/evo_dash_web/live/settings_live.ex:387
 #, elixir-autogen, elixir-format
 msgid "e.g. GPU Server"
 msgstr "例如：GPU 服务器"
@@ -2588,7 +2589,7 @@ msgstr "例如：abc1234 或 HEAD"
 msgid "empty"
 msgstr "空"
 
-#: lib/evo_dash_web/live/system_live.ex:527
+#: lib/evo_dash_web/live/system_live.ex:666
 #, elixir-autogen, elixir-format
 msgid "flake.nix"
 msgstr "flake.nix"
@@ -2608,7 +2609,7 @@ msgstr "genesis.toml"
 msgid "genesis.toml found — using project settings"
 msgstr "已找到 genesis.toml — 使用项目设置"
 
-#: lib/evo_dash_web/live/settings_live.ex:398
+#: lib/evo_dash_web/live/settings_live.ex:399
 #, elixir-autogen, elixir-format
 msgid "gpu-server or user@host"
 msgstr "gpu-server 或 user@host"
@@ -2619,7 +2620,7 @@ msgstr "gpu-server 或 user@host"
 msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
-#: lib/evo_dash_web/components/layouts.ex:344
+#: lib/evo_dash_web/components/layouts.ex:398
 #: lib/evo_dash_web/helpers.ex:304
 #, elixir-autogen, elixir-format
 msgid "just now"
@@ -2961,7 +2962,7 @@ msgstr "Web 仪表盘绑定的 IP 地址。出于安全考虑，默认使用回�
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
 msgstr "Web 仪表盘监听的端口。必须在 1024 到 65535 之间（出于安全原因，不支持 1024 以下的特权端口）。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:96
+#: lib/evo_dash_web/live/welcome_live.ex:97
 #, elixir-autogen, elixir-format
 msgid "Add your first LLM"
 msgstr "添加您的第一个大语言模型"
@@ -2971,17 +2972,17 @@ msgstr "添加您的第一个大语言模型"
 msgid "Advanced provider-specific options merged into the model spec map."
 msgstr "高级服务商专属选项，合并到模型规范映射中。"
 
-#: lib/evo_dash_web/components/layouts.ex:462
+#: lib/evo_dash_web/components/layouts.ex:518
 #, elixir-autogen, elixir-format
 msgid "Change theme"
 msgstr "切换主题"
 
-#: lib/evo_dash_web/live/welcome_live.ex:190
+#: lib/evo_dash_web/live/welcome_live.ex:191
 #, elixir-autogen, elixir-format
 msgid "Choose a model:"
 msgstr "选择模型："
 
-#: lib/evo_dash_web/components/layouts.ex:215
+#: lib/evo_dash_web/components/layouts.ex:222
 #, elixir-autogen, elixir-format
 msgid "Collapse sidebar"
 msgstr "收起侧边栏"
@@ -2991,12 +2992,12 @@ msgstr "收起侧边栏"
 msgid "Configure the local Genesis node identity and distribution settings."
 msgstr "配置本地启元节点的身份标识和分发设置。"
 
-#: lib/evo_dash_web/components/layouts.ex:494
+#: lib/evo_dash_web/components/layouts.ex:550
 #, elixir-autogen, elixir-format
 msgid "Dark"
 msgstr "深色"
 
-#: lib/evo_dash_web/live/welcome_live.ex:300
+#: lib/evo_dash_web/live/welcome_live.ex:301
 #, elixir-autogen, elixir-format
 msgid "Enter your API key for %{provider}."
 msgstr "输入 %{provider} 的 API 密钥。"
@@ -3016,29 +3017,29 @@ msgstr "额外配置必须是 JSON 对象（映射）。"
 msgid "Extra Config must be valid JSON."
 msgstr "额外配置必须是有效的 JSON。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:419
+#: lib/evo_dash_web/live/welcome_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "启元 %{version}"
 
-#: lib/evo_dash_web/live/welcome_live.ex:60
+#: lib/evo_dash_web/live/welcome_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "启元是一个由 AI 驱动的软件开发框架。让我们先配置您的第一个大语言模型来开始使用。"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:72
-#: lib/evo_dash_web/live/welcome_live.ex:84
+#: lib/evo_dash_web/live/welcome_complete_live.ex:73
+#: lib/evo_dash_web/live/welcome_live.ex:85
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
 msgstr "前往仪表盘"
 
-#: lib/evo_dash_web/components/layouts.ex:486
+#: lib/evo_dash_web/components/layouts.ex:542
 #, elixir-autogen, elixir-format
 msgid "Light"
 msgstr "浅色"
 
 #: lib/evo_dash_web/components/task_form_components.ex:502
-#: lib/evo_dash_web/live/projects_live.ex:488
+#: lib/evo_dash_web/live/projects_live.ex:489
 #, elixir-autogen, elixir-format
 msgid "No build system"
 msgstr "无构建系统"
@@ -3048,13 +3049,13 @@ msgstr "无构建系统"
 msgid "Node"
 msgstr "节点"
 
-#: lib/evo_dash_web/live/system_live.ex:421
-#: lib/evo_dash_web/live/welcome_live.ex:87
+#: lib/evo_dash_web/live/system_live.ex:560
+#: lib/evo_dash_web/live/welcome_live.ex:88
 #, elixir-autogen, elixir-format
 msgid "Open Settings"
 msgstr "打开设置"
 
-#: lib/evo_dash_web/live/projects_live.ex:1250
+#: lib/evo_dash_web/live/projects_live.ex:1255
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "路径必须为绝对路径。"
@@ -3079,7 +3080,7 @@ msgstr "服务商选项必须是有效的 JSON。"
 msgid "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
 msgstr "传递给 LLM API 的服务商专属选项。对于 OpenAI，'store' 默认自动为 false。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:74
+#: lib/evo_dash_web/live/welcome_live.ex:75
 #, elixir-autogen, elixir-format
 msgid "Ready to build!"
 msgstr "准备开始构建！"
@@ -3089,33 +3090,33 @@ msgstr "准备开始构建！"
 msgid "Recent Projects"
 msgstr "最近项目"
 
-#: lib/evo_dash_web/components/layouts.ex:66
+#: lib/evo_dash_web/components/layouts.ex:73
 #, elixir-autogen, elixir-format
 msgid "Toggle navigation"
 msgstr "切换导航"
 
-#: lib/evo_dash_web/live/welcome_live.ex:53
+#: lib/evo_dash_web/live/welcome_live.ex:54
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
 msgstr "欢迎使用启元"
 
-#: lib/evo_dash_web/live/welcome_live.ex:52
+#: lib/evo_dash_web/live/welcome_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "You're All Set!"
 msgstr "已准备就绪！"
 
-#: lib/evo_dash_web/live/welcome_live.ex:57
+#: lib/evo_dash_web/live/welcome_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
 msgstr "您的 LLM 已配置就绪。现在您可以使用启元开始构建和演进代码库了。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:77
+#: lib/evo_dash_web/live/welcome_live.ex:78
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured. You can manage it anytime in Settings."
 msgstr "您的 LLM 已配置完成。您可以随时在设置中进行管理。"
 
-#: lib/evo_dash_web/components/layouts.ex:173
-#: lib/evo_dash_web/components/layouts.ex:185
+#: lib/evo_dash_web/components/layouts.ex:180
+#: lib/evo_dash_web/components/layouts.ex:192
 #, elixir-autogen, elixir-format
 msgid "completed"
 msgstr "已完成"
@@ -3131,6 +3132,7 @@ msgid "Message sent to agent"
 msgstr "消息已发送至智能体"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:703
+#: lib/evo_dash_web/live/home_live.ex:149
 #, elixir-autogen, elixir-format
 msgid "Send"
 msgstr "发送"
@@ -3160,10 +3162,11 @@ msgstr "您的消息将在智能体下一轮运行时添加到其上下文中。
 msgid "Agent Report"
 msgstr "智能体报告"
 
-#: lib/evo_dash_web/live/projects_live.ex:1037
-#: lib/evo_dash_web/live/review_live.ex:338
-#: lib/evo_dash_web/live/tasks_live.ex:739
-#: lib/evo_dash_web/live/welcome_complete_live.ex:88
+#: lib/evo_dash_web/live/projects_live.ex:1038
+#: lib/evo_dash_web/live/review_live.ex:339
+#: lib/evo_dash_web/live/settings_live.ex:914
+#: lib/evo_dash_web/live/tasks_live.ex:740
+#: lib/evo_dash_web/live/welcome_complete_live.ex:89
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
 msgstr "已复制到剪贴板"
@@ -3188,107 +3191,107 @@ msgstr "原始文本"
 msgid "Rendered Markdown"
 msgstr "渲染后的 Markdown"
 
-#: lib/evo_dash_web/live/welcome_live.ex:927
+#: lib/evo_dash_web/live/welcome_live.ex:928
 #, elixir-autogen, elixir-format
 msgid "Alibaba Cloud (Qwen)"
 msgstr "阿里云（通义千问）"
 
-#: lib/evo_dash_web/live/welcome_live.ex:921
+#: lib/evo_dash_web/live/welcome_live.ex:922
 #, elixir-autogen, elixir-format
 msgid "Anthropic"
 msgstr "Anthropic"
 
-#: lib/evo_dash_web/live/welcome_live.ex:925
+#: lib/evo_dash_web/live/welcome_live.ex:926
 #, elixir-autogen, elixir-format
 msgid "DeepSeek"
 msgstr "DeepSeek"
 
-#: lib/evo_dash_web/live/welcome_live.ex:923
+#: lib/evo_dash_web/live/welcome_live.ex:924
 #, elixir-autogen, elixir-format
 msgid "Google"
 msgstr "Google"
 
-#: lib/evo_dash_web/live/welcome_live.ex:931
+#: lib/evo_dash_web/live/welcome_live.ex:932
 #, elixir-autogen, elixir-format
 msgid "MiniMax"
 msgstr "MiniMax"
 
-#: lib/evo_dash_web/live/welcome_live.ex:796
+#: lib/evo_dash_web/live/welcome_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Model and API key saved. You're all set!"
 msgstr "模型和 API 密钥已保存，一切就绪！"
 
-#: lib/evo_dash_web/live/welcome_live.ex:933
+#: lib/evo_dash_web/live/welcome_live.ex:934
 #, elixir-autogen, elixir-format
 msgid "Moonshot AI (Kimi)"
 msgstr "月之暗面（Kimi）"
 
-#: lib/evo_dash_web/live/welcome_live.ex:233
+#: lib/evo_dash_web/live/welcome_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
 msgstr "需要其他模型、自定义 API 地址或高级设置？跳过本页，前往完整的"
 
-#: lib/evo_dash_web/live/welcome_live.ex:200
+#: lib/evo_dash_web/live/welcome_live.ex:201
 #, elixir-autogen, elixir-format
 msgid "No models match your search."
 msgstr "没有符合搜索条件的模型。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:938
+#: lib/evo_dash_web/live/welcome_live.ex:939
 #, elixir-autogen, elixir-format
 msgid "OpenAI"
 msgstr "OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:937
+#: lib/evo_dash_web/live/welcome_live.ex:938
 #, elixir-autogen, elixir-format
 msgid "OpenAI-Compatible API"
 msgstr "兼容 OpenAI 的 API"
 
-#: lib/evo_dash_web/live/welcome_live.ex:935
+#: lib/evo_dash_web/live/welcome_live.ex:936
 #, elixir-autogen, elixir-format
 msgid "OpenRouter"
 msgstr "OpenRouter"
 
-#: lib/evo_dash_web/live/welcome_live.ex:590
+#: lib/evo_dash_web/live/welcome_live.ex:591
 #, elixir-autogen, elixir-format
 msgid "Please enter your API key first."
 msgstr "请先输入您的 API 密钥。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:339
+#: lib/evo_dash_web/live/welcome_live.ex:340
 #, elixir-autogen, elixir-format
 msgid "Save & Use this model"
 msgstr "保存并使用此模型"
 
-#: lib/evo_dash_web/live/welcome_live.ex:237
+#: lib/evo_dash_web/live/welcome_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "Settings page"
 msgstr "设置页面"
 
-#: lib/evo_dash_web/live/welcome_live.ex:929
+#: lib/evo_dash_web/live/welcome_live.ex:930
 #, elixir-autogen, elixir-format
 msgid "Z.ai (Zhipu AI)"
 msgstr "智谱 AI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:934
+#: lib/evo_dash_web/live/welcome_live.ex:935
 #, elixir-autogen, elixir-format
 msgid "xAI"
 msgstr "xAI"
 
-#: lib/evo_dash_web/live/system_live.ex:1012
+#: lib/evo_dash_web/live/system_live.ex:1180
 #, elixir-autogen, elixir-format
 msgid "Remote node is restarting. Please wait for it to come back up, then reconnect."
 msgstr "远程节点正在重启，请等待其恢复后再重新连接。"
 
-#: lib/evo_dash_web/live/system_live.ex:1054
+#: lib/evo_dash_web/live/system_live.ex:1222
 #, elixir-autogen, elixir-format
 msgid "Remote node is stopping. It will need to be started again on the remote host."
 msgstr "远程节点正在停止，需要在远程主机上重新启动。"
 
-#: lib/evo_dash_web/live/system_live.ex:619
+#: lib/evo_dash_web/live/system_live.ex:758
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the remote node's Erlang VM. All applications on the remote node will be torn down and restarted."
 msgstr "这将平滑重启远程节点的 Erlang 虚拟机，该节点上的所有应用都将被关闭并重新启动。"
 
-#: lib/evo_dash_web/live/system_live.ex:663
+#: lib/evo_dash_web/live/system_live.ex:802
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "这将平滑关闭远程节点的 Erlang 虚拟机，该节点上的所有应用将按顺序停止。"
@@ -3298,7 +3301,7 @@ msgstr "这将平滑关闭远程节点的 Erlang 虚拟机，该节点上的所�
 msgid "Archive agent detail"
 msgstr "归档智能体详情"
 
-#: lib/evo_dash_web/live/settings_live.ex:455
+#: lib/evo_dash_web/live/settings_live.ex:456
 #, elixir-autogen, elixir-format
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "留空则自动探测远程操作系统/架构"
@@ -3314,7 +3317,7 @@ msgstr "收集各智能体的元数据以供审查"
 msgid "Configure"
 msgstr "配置"
 
-#: lib/evo_dash_web/live/settings_live.ex:296
+#: lib/evo_dash_web/live/settings_live.ex:297
 #, elixir-autogen, elixir-format
 msgid "Copying config"
 msgstr "正在复制配置"
@@ -3325,22 +3328,22 @@ msgstr "正在复制配置"
 msgid "Create New Project"
 msgstr "创建新项目"
 
-#: lib/evo_dash_web/live/settings_live.ex:266
+#: lib/evo_dash_web/live/settings_live.ex:267
 #, elixir-autogen, elixir-format
 msgid "Downloading"
 msgstr "下载中"
 
-#: lib/evo_dash_web/live/settings_live.ex:271
+#: lib/evo_dash_web/live/settings_live.ex:272
 #, elixir-autogen, elixir-format
 msgid "Downloading locally"
 msgstr "正在本地下载"
 
-#: lib/evo_dash_web/live/settings_live.ex:281
+#: lib/evo_dash_web/live/settings_live.ex:282
 #, elixir-autogen, elixir-format
 msgid "Extracting"
 msgstr "解压中"
 
-#: lib/evo_dash_web/live/settings_live.ex:301
+#: lib/evo_dash_web/live/settings_live.ex:302
 #, elixir-autogen, elixir-format
 msgid "Generating cookie"
 msgstr "正在生成 cookie"
@@ -3350,7 +3353,7 @@ msgstr "正在生成 cookie"
 msgid "Launch"
 msgstr "启动"
 
-#: lib/evo_dash_web/live/settings_live.ex:438
+#: lib/evo_dash_web/live/settings_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Leave blank to auto-download the release on the remote"
 msgstr "留空将在远程自动下载发行版"
@@ -3381,12 +3384,12 @@ msgstr "打开项目..."
 msgid "Optional — leave empty and click Launch to initialize an existing codebase"
 msgstr "可选 — 留空并点击“启动”即可初始化现有代码库"
 
-#: lib/evo_dash_web/live/settings_live.ex:443
+#: lib/evo_dash_web/live/settings_live.ex:444
 #, elixir-autogen, elixir-format
 msgid "Platform (optional)"
 msgstr "平台（可选）"
 
-#: lib/evo_dash_web/live/settings_live.ex:261
+#: lib/evo_dash_web/live/settings_live.ex:262
 #, elixir-autogen, elixir-format
 msgid "Probing platform"
 msgstr "正在探测平台"
@@ -3421,7 +3424,7 @@ msgstr "缺少必需的工具（git 或 ripgrep）"
 msgid "Add path"
 msgstr "添加路径"
 
-#: lib/evo_dash_web/live/system_live.ex:366
+#: lib/evo_dash_web/live/system_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "All self-checks passed."
 msgstr "所有自检均已通过。"
@@ -3432,7 +3435,7 @@ msgstr "所有自检均已通过。"
 msgid "Cannot connect to %{name}"
 msgstr "无法连接到 %{name}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1976
+#: lib/evo_dash_web/live/projects_live.ex:1981
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:413
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
@@ -3454,37 +3457,37 @@ msgstr "容量：max_tool_concurrency。使用中：运行中的智能体（槽�
 msgid "Capacity: total model-profile concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "容量：模型配置文件的总并发数。使用中：运行中的智能体（槽位使用代理——槽位持有者不可见）。"
 
-#: lib/evo_dash_web/live/review_live.ex:478
+#: lib/evo_dash_web/live/review_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully into %{target}! Branch %{branch} has been deleted."
 msgstr "更改已成功合并到 %{target}！分支 %{branch} 已被删除。"
 
-#: lib/evo_dash_web/live/system_live.ex:560
+#: lib/evo_dash_web/live/system_live.ex:699
 #, elixir-autogen, elixir-format
 msgid "Check that your LLM provider is reachable with the configured API key."
 msgstr "请检查您的服务商是否可通过已配置的 API 密钥访问。"
 
-#: lib/evo_dash_web/live/system_live.ex:349
+#: lib/evo_dash_web/live/system_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "Checking system health..."
 msgstr "正在检查系统健康状况..."
 
-#: lib/evo_dash_web/live/system_live.ex:467
+#: lib/evo_dash_web/live/system_live.ex:606
 #, elixir-autogen, elixir-format
 msgid "Checks that agent commands can be isolated in a sandbox to protect your system."
 msgstr "检查智能体命令能否在沙箱中隔离运行，以保护您的系统。"
 
-#: lib/evo_dash_web/live/system_live.ex:434
+#: lib/evo_dash_web/live/system_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "Checks that the git and ripgrep command-line tools are installed and available on your PATH."
 msgstr "检查 git 和 ripgrep 命令行工具是否已安装并可在 PATH 中找到。"
 
-#: lib/evo_dash_web/live/system_live.ex:515
+#: lib/evo_dash_web/live/system_live.ex:654
 #, elixir-autogen, elixir-format
 msgid "Checks the Nix development environment used for reproducible builds."
 msgstr "检查用于可复现构建的 Nix 开发环境。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:108
+#: lib/evo_dash_web/live/welcome_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "Choose a provider:"
 msgstr "选择服务商："
@@ -3514,30 +3517,30 @@ msgstr "连接已断开或失败"
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:123
 #: lib/evo_dash_web/components/task_card_components.ex:227
 #: lib/evo_dash_web/components/task_card_components.ex:258
-#: lib/evo_dash_web/live/projects_live.ex:226
-#: lib/evo_dash_web/live/tasks_live.ex:324
-#: lib/evo_dash_web/live/tasks_live.ex:346
-#: lib/evo_dash_web/live/welcome_complete_live.ex:55
+#: lib/evo_dash_web/live/projects_live.ex:227
+#: lib/evo_dash_web/live/tasks_live.ex:325
+#: lib/evo_dash_web/live/tasks_live.ex:347
+#: lib/evo_dash_web/live/welcome_complete_live.ex:56
 #, elixir-autogen, elixir-format
 msgid "Copy"
 msgstr "复制"
 
-#: lib/evo_dash_web/live/projects_live.ex:1791
+#: lib/evo_dash_web/live/projects_live.ex:1796
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
 msgstr "远程节点上不存在该目录：%{path}"
 
-#: lib/evo_dash_web/live/system_live.ex:494
+#: lib/evo_dash_web/live/system_live.ex:633
 #, elixir-autogen, elixir-format
 msgid "Enable or install systemd-run. Sandboxing requires a systemd user session."
 msgstr "请启用或安装 systemd-run。沙箱功能需要 systemd 用户会话。"
 
-#: lib/evo_dash_web/live/system_live.ex:416
+#: lib/evo_dash_web/live/system_live.ex:555
 #, elixir-autogen, elixir-format
 msgid "Fix the missing or invalid settings in Settings."
 msgstr "请在设置中修复缺失或无效的配置。"
 
-#: lib/evo_dash_web/live/projects_live.ex:210
+#: lib/evo_dash_web/live/projects_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "Hide example"
 msgstr "隐藏示例"
@@ -3548,12 +3551,12 @@ msgstr "隐藏示例"
 msgid "In use"
 msgstr "使用中"
 
-#: lib/evo_dash_web/live/system_live.ex:446
+#: lib/evo_dash_web/live/system_live.ex:585
 #, elixir-autogen, elixir-format
 msgid "Install git and make sure it is available on your PATH."
 msgstr "请安装 git 并确保它可在 PATH 中找到。"
 
-#: lib/evo_dash_web/live/system_live.ex:451
+#: lib/evo_dash_web/live/system_live.ex:590
 #, elixir-autogen, elixir-format
 msgid "Install ripgrep and make sure it is available on your PATH."
 msgstr "请安装 ripgrep 并确保它可在 PATH 中找到。"
@@ -3594,7 +3597,7 @@ msgstr "合并到分支"
 msgid "Merge these changes into %{target}?"
 msgstr "将这些更改合并到 %{target}？"
 
-#: lib/evo_dash_web/live/projects_live.ex:207
+#: lib/evo_dash_web/live/projects_live.ex:208
 #, elixir-autogen, elixir-format
 msgid "New to Genesis? Start with an example"
 msgstr "刚接触启元？从一个示例开始"
@@ -3604,7 +3607,7 @@ msgstr "刚接触启元？从一个示例开始"
 msgid "Nix environment is enabled but not built"
 msgstr "Nix 环境已启用但尚未构建"
 
-#: lib/evo_dash_web/live/system_live.ex:500
+#: lib/evo_dash_web/live/system_live.ex:639
 #, elixir-autogen, elixir-format
 msgid "No sandbox backend is available on this system."
 msgstr "此系统上没有任何可用的沙箱后端。"
@@ -3614,7 +3617,7 @@ msgstr "此系统上没有任何可用的沙箱后端。"
 msgid "Not set — platform default writable paths are used."
 msgstr "未设置 — 将使用平台默认的可写路径。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:99
+#: lib/evo_dash_web/live/welcome_live.ex:100
 #, elixir-autogen, elixir-format
 msgid "Pick a provider, choose a model, then enter your API key. Keys are stored locally, never sent anywhere."
 msgstr "先选择服务商和模型，再输入你的 API 密钥。密钥仅存储在本地，绝不会发送到任何地方。"
@@ -3639,7 +3642,7 @@ msgstr "移除条目"
 msgid "Remove from recent projects"
 msgstr "从最近项目中移除"
 
-#: lib/evo_dash_web/live/welcome_live.ex:324
+#: lib/evo_dash_web/live/welcome_live.ex:325
 #, elixir-autogen, elixir-format
 msgid "Required for this provider."
 msgstr "该服务商必填项。"
@@ -3654,7 +3657,7 @@ msgstr "必需的设置缺失或无效"
 msgid "Sandbox is unavailable"
 msgstr "沙箱不可用"
 
-#: lib/evo_dash_web/live/system_live.ex:498
+#: lib/evo_dash_web/live/system_live.ex:637
 #, elixir-autogen, elixir-format
 msgid "Sandbox-exec sandboxing is unavailable on this system."
 msgstr "此系统上无法使用 sandbox-exec 沙箱功能。"
@@ -3674,7 +3677,7 @@ msgstr "刻度 0–%{max}"
 msgid "Scheduler Status"
 msgstr "调度器状态"
 
-#: lib/evo_dash_web/live/welcome_live.ex:173
+#: lib/evo_dash_web/live/welcome_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "Search models…"
 msgstr "搜索模型…"
@@ -3684,12 +3687,12 @@ msgstr "搜索模型…"
 msgid "Select a model above to configure credentials."
 msgstr "请先在上方选择一个模型以配置凭据。"
 
-#: lib/evo_dash_web/live/welcome_live.ex:400
+#: lib/evo_dash_web/live/welcome_live.ex:401
 #, elixir-autogen, elixir-format
 msgid "Select a provider and a model above to enter your API key."
 msgstr "请先在上方选择服务商和模型，然后输入你的 API 密钥。"
 
-#: lib/evo_dash_web/live/projects_live.ex:215
+#: lib/evo_dash_web/live/projects_live.ex:216
 #, elixir-autogen, elixir-format
 msgid "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
 msgstr "设定最终目标并启动，启元就会完成构建——它会规划架构、调度智能体并编写代码。"
@@ -3700,7 +3703,7 @@ msgstr "设定最终目标并启动，启元就会完成构建——它会规划
 msgid "Shell call"
 msgstr "Shell 调用"
 
-#: lib/evo_dash_web/live/projects_live.ex:209
+#: lib/evo_dash_web/live/projects_live.ex:210
 #, elixir-autogen, elixir-format
 msgid "Show example"
 msgstr "显示示例"
@@ -3711,7 +3714,7 @@ msgstr "显示示例"
 msgid "Switch to Local"
 msgstr "切换到本地"
 
-#: lib/evo_dash_web/live/system_live.ex:347
+#: lib/evo_dash_web/live/system_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "System needs attention"
 msgstr "系统需要关注"
@@ -3721,17 +3724,17 @@ msgstr "系统需要关注"
 msgid "System processes are not running correctly"
 msgstr "系统进程未正常运行"
 
-#: lib/evo_dash_web/live/system_live.ex:343
+#: lib/evo_dash_web/live/system_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "System running correctly"
 msgstr "系统运行正常"
 
-#: lib/evo_dash_web/live/system_live.ex:345
+#: lib/evo_dash_web/live/system_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "System running, but needs attention"
 msgstr "系统运行中，但需要关注"
 
-#: lib/evo_dash_web/live/system_live.ex:545
+#: lib/evo_dash_web/live/system_live.ex:684
 #, elixir-autogen, elixir-format
 msgid "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
 msgstr "无法构建 Nix 开发环境。请在设置中修复 flake 或禁用 Nix。"
@@ -3751,7 +3754,7 @@ msgstr "总数"
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "智能体总数及各状态计数：运行中、阻塞（等待槽位）、等待中和待处理。"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:48
+#: lib/evo_dash_web/live/welcome_complete_live.ex:49
 #, elixir-autogen, elixir-format
 msgid "Try an example task"
 msgstr "尝试一个示例任务"
@@ -3761,17 +3764,17 @@ msgstr "尝试一个示例任务"
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "使用顶栏中的项目选择器来打开或创建一个项目。"
 
-#: lib/evo_dash_web/live/projects_live.ex:238
+#: lib/evo_dash_web/live/projects_live.ex:239
 #, elixir-autogen, elixir-format
 msgid "Use this example"
 msgstr "使用此示例"
 
-#: lib/evo_dash_web/live/system_live.ex:389
+#: lib/evo_dash_web/live/system_live.ex:528
 #, elixir-autogen, elixir-format
 msgid "Verifies that the required settings — LLM provider, model, and API key — are configured."
 msgstr "验证必需配置——服务商、模型和 API 密钥——是否已设置。"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:61
+#: lib/evo_dash_web/live/welcome_complete_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr "你只需像这样描述最终目标——启元会自行规划架构、分配智能体并编写代码。"
@@ -3781,14 +3784,14 @@ msgstr "你只需像这样描述最终目标——启元会自行规划架构、
 msgid "e.g. ~/.cache/genesis"
 msgstr "例如 ~/.cache/genesis"
 
-#: lib/evo_dash_web/live/welcome_live.ex:320
+#: lib/evo_dash_web/live/welcome_live.ex:321
 #, elixir-autogen, elixir-format
 msgid "https://..."
 msgstr "https://..."
 
-#: lib/evo_dash_web/components/layouts.ex:106
-#: lib/evo_dash_web/components/layouts.ex:112
-#: lib/evo_dash_web/components/layouts.ex:116
+#: lib/evo_dash_web/components/layouts.ex:113
+#: lib/evo_dash_web/components/layouts.ex:119
+#: lib/evo_dash_web/components/layouts.ex:123
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis"
@@ -3826,12 +3829,12 @@ msgstr "打开或创建项目"
 msgid "Project path"
 msgstr "项目路径"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:36
+#: lib/evo_dash_web/live/welcome_complete_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr "在启元中，你只需编写高层级提示词：描述最终目标、你想要的特性以及要使用的框架。启元会规划架构、分派智能体，并编写代码。"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:33
+#: lib/evo_dash_web/live/welcome_complete_live.ex:34
 #, elixir-autogen, elixir-format
 msgid "Write high-level prompts, not code"
 msgstr "编写高层级提示词，而非代码"
@@ -3863,22 +3866,22 @@ msgstr "拒绝"
 msgid "Agent is queued, waiting to be scheduled. May be limited by LLM or tool concurrency. Consider increasing concurrency in Settings."
 msgstr "智能体已排队，等待调度。可能受限于 LLM 或工具并发限制。可考虑在设置中提高并发数。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:364
+#: lib/evo_dash_web/live/tasks_live.ex:365
 #, elixir-autogen, elixir-format
 msgid "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
 msgstr "该任务的所有智能体将被告知立即保存更改并退出。中间结果将被保存。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:386
+#: lib/evo_dash_web/live/tasks_live.ex:387
 #, elixir-autogen, elixir-format
 msgid "Cancel Task"
 msgstr "取消任务"
 
-#: lib/evo_dash_web/live/tasks_live.ex:360
+#: lib/evo_dash_web/live/tasks_live.ex:361
 #, elixir-autogen, elixir-format
 msgid "Cancel Task?"
 msgstr "取消任务？"
 
-#: lib/evo_dash_web/live/tasks_live.ex:57
+#: lib/evo_dash_web/live/tasks_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Cancelling"
 msgstr "取消中"
@@ -3893,17 +3896,17 @@ msgstr "正在取消…"
 msgid "Danger zone"
 msgstr "危险区域"
 
-#: lib/evo_dash_web/live/tasks_live.ex:826
+#: lib/evo_dash_web/live/tasks_live.ex:827
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill task: %{reason}"
 msgstr "强制终止任务失败：%{reason}"
 
-#: lib/evo_dash_web/live/tasks_live.ex:427
+#: lib/evo_dash_web/live/tasks_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Force Kill"
 msgstr "强制终止"
 
-#: lib/evo_dash_web/live/tasks_live.ex:401
+#: lib/evo_dash_web/live/tasks_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Force Kill Task?"
 msgstr "强制终止任务？"
@@ -3913,13 +3916,13 @@ msgstr "强制终止任务？"
 msgid "Force kill"
 msgstr "强制终止"
 
-#: lib/evo_dash_web/live/tasks_live.ex:405
+#: lib/evo_dash_web/live/tasks_live.ex:406
 #, elixir-autogen, elixir-format
 msgid "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
 msgstr "立即停止该任务及其所有智能体。所有进度将完全丢失，此操作无法撤销。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:378
-#: lib/evo_dash_web/live/tasks_live.ex:419
+#: lib/evo_dash_web/live/tasks_live.ex:379
+#: lib/evo_dash_web/live/tasks_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Keep Running"
 msgstr "继续运行"
@@ -3934,24 +3937,24 @@ msgstr "待处理 — 将在智能体的下一轮操作中添加"
 msgid "Ready"
 msgstr "就绪"
 
-#: lib/evo_dash_web/live/tasks_live.ex:369
-#: lib/evo_dash_web/live/tasks_live.ex:410
+#: lib/evo_dash_web/live/tasks_live.ex:370
+#: lib/evo_dash_web/live/tasks_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Task: %{task_id}"
 msgstr "任务：%{task_id}"
 
-#: lib/evo_dash_web/live/projects_live.ex:293
+#: lib/evo_dash_web/live/projects_live.ex:294
 #, elixir-autogen, elixir-format
 msgid "You are viewing a remote node. Tasks launched here will run on the remote machine."
 msgstr "您正在查看远程节点。在此处启动的任务将在远程机器上运行。"
 
-#: lib/evo_dash_web/live/settings_live.ex:1626
-#: lib/evo_dash_web/live/settings_live.ex:1725
+#: lib/evo_dash_web/live/settings_live.ex:1632
+#: lib/evo_dash_web/live/settings_live.ex:1731
 #, elixir-autogen, elixir-format
 msgid "Could not load configuration from the remote node: %{reason} — the node may be unreachable."
 msgstr "无法从远程节点加载配置：%{reason} — 该节点可能无法访问。"
 
-#: lib/evo_dash_web/live/settings_live.ex:90
+#: lib/evo_dash_web/live/settings_live.ex:91
 #, elixir-autogen, elixir-format
 msgid "Remote Configuration Unavailable"
 msgstr "远程配置不可用"
@@ -3966,7 +3969,7 @@ msgstr "自动解决冲突"
 msgid "Auto-resolve task started. It will merge the changes and resolve conflicts; review its result when done."
 msgstr "自动解决任务已启动。它将合并更改并解决冲突；完成后请检查其结果。"
 
-#: lib/evo_dash_web/live/review_live/merge_check.ex:151
+#: lib/evo_dash_web/live/review_live/merge_check.ex:153
 #, elixir-autogen, elixir-format
 msgid "Auto-resolve unavailable — no merge conflict detected."
 msgstr "自动解决不可用 — 未检测到合并冲突。"
@@ -3976,7 +3979,7 @@ msgstr "自动解决不可用 — 未检测到合并冲突。"
 msgid "Checking if merge is clean…"
 msgstr "正在检查合并是否无冲突……"
 
-#: lib/evo_dash_web/live/review_live/merge_check.ex:143
+#: lib/evo_dash_web/live/review_live/merge_check.ex:145
 #, elixir-autogen, elixir-format
 msgid "Failed to start auto-resolve: %{reason}"
 msgstr "启动自动解决失败：%{reason}"
@@ -3998,7 +4001,7 @@ msgstr[1] "在 %{count} 个文件中检测到合并冲突：%{files}"
 msgid "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
 msgstr "这将启动一个新的智能体任务来合并更改并解决冲突。当前任务将被标记为已延续。"
 
-#: lib/evo_dash_web/live/settings_live.ex:412
+#: lib/evo_dash_web/live/settings_live.ex:413
 #, elixir-autogen, elixir-format
 msgid "Advanced settings"
 msgstr "高级设置"
@@ -4026,7 +4029,7 @@ msgstr "确认附加文件路径"
 msgid "Failed to attach file: %{reason}"
 msgstr "附加文件失败：%{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1452
+#: lib/evo_dash_web/live/projects_live.ex:1457
 #, elixir-autogen, elixir-format
 msgid "File not found: %{path}"
 msgstr "未找到文件：%{path}"
@@ -4058,7 +4061,7 @@ msgstr "下移"
 msgid "Move up"
 msgstr "上移"
 
-#: lib/evo_dash_web/live/projects_live.ex:1447
+#: lib/evo_dash_web/live/projects_live.ex:1452
 #, elixir-autogen, elixir-format
 msgid "Please enter a file path."
 msgstr "请输入文件路径。"
@@ -4068,22 +4071,22 @@ msgstr "请输入文件路径。"
 msgid "Type a full file path…"
 msgstr "输入完整文件路径…"
 
-#: lib/evo_dash_web/components/layouts.ex:312
+#: lib/evo_dash_web/components/layouts.ex:325
 #, elixir-autogen, elixir-format
 msgid "Quit"
 msgstr "退出"
 
-#: lib/evo_dash_web/components/layouts.ex:287
+#: lib/evo_dash_web/components/layouts.ex:300
 #, elixir-autogen, elixir-format
 msgid "Quit Genesis?"
 msgstr "退出启元？"
 
-#: lib/evo_dash_web/components/layouts.ex:296
+#: lib/evo_dash_web/components/layouts.ex:309
 #, elixir-autogen, elixir-format
 msgid "Running tasks will be interrupted and may lose progress. The VM will stop and must be restarted again from the desktop app. This cannot be undone."
 msgstr "运行中的任务将被中断，可能会丢失进度。虚拟机将停止，必须从桌面应用重新启动。此操作无法撤销。"
 
-#: lib/evo_dash_web/live/settings_live.ex:307
+#: lib/evo_dash_web/live/settings_live.ex:308
 #, elixir-autogen, elixir-format
 msgid "Patching binaries"
 msgstr "修补二进制文件"
@@ -4093,12 +4096,12 @@ msgstr "修补二进制文件"
 msgid "\"read\" agents cannot modify files"
 msgstr "\"只读\"智能体无法修改文件"
 
-#: lib/evo_dash_web/live/system_live.ex:713
+#: lib/evo_dash_web/live/system_live.ex:852
 #, elixir-autogen, elixir-format
 msgid "%{count} task(s) still running"
 msgstr "%{count} 个任务仍在运行"
 
-#: lib/evo_dash_web/live/system_live.ex:758
+#: lib/evo_dash_web/live/system_live.ex:897
 #, elixir-autogen, elixir-format
 msgid "%{count} task(s) still running after waiting"
 msgstr "等待后仍有 %{count} 个任务在运行"
@@ -4148,12 +4151,12 @@ msgstr "一个为每个智能体生成时评估的 Elixir 表达式，用于选�
 msgid "An agent with this id already exists. Rename the agent or edit the existing one."
 msgstr "已存在具有此 ID 的智能体。请重命名该智能体或编辑现有的智能体。"
 
-#: lib/evo_dash_web/live/system_live.ex:735
+#: lib/evo_dash_web/live/system_live.ex:874
 #, elixir-autogen, elixir-format
 msgid "Apply & gracefully stop tasks"
 msgstr "应用更新并平滑停止任务"
 
-#: lib/evo_dash_web/live/system_live.ex:288
+#: lib/evo_dash_web/live/system_live.ex:289
 #, elixir-autogen, elixir-format
 msgid "Applying update…"
 msgstr "正在应用更新…"
@@ -4173,7 +4176,7 @@ msgstr "自动（按规则）"
 msgid "Auto (recommended)"
 msgstr "自动（推荐）"
 
-#: lib/evo_dash_web/live/system_live.ex:270
+#: lib/evo_dash_web/live/system_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "Automatic updates are not configured yet"
 msgstr "尚未配置自动更新"
@@ -4183,22 +4186,22 @@ msgstr "尚未配置自动更新"
 msgid "Built-in agent types this agent may spawn; none selected = no subagents"
 msgstr "此智能体可生成的內建智能体类型；未选择 = 无子智能体"
 
-#: lib/evo_dash_web/live/system_live.ex:275
+#: lib/evo_dash_web/live/system_live.ex:276
 #, elixir-autogen, elixir-format
 msgid "Check failed"
 msgstr "检查失败"
 
-#: lib/evo_dash_web/live/system_live.ex:134
+#: lib/evo_dash_web/live/system_live.ex:135
 #, elixir-autogen, elixir-format
 msgid "Check for and install the latest Genesis release."
 msgstr "检查并安装最新版本的启元。"
 
-#: lib/evo_dash_web/live/system_live.ex:158
+#: lib/evo_dash_web/live/system_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Check now"
 msgstr "立即检查"
 
-#: lib/evo_dash_web/live/system_live.ex:171
+#: lib/evo_dash_web/live/system_live.ex:172
 #, elixir-autogen, elixir-format
 msgid "Checking for updates…"
 msgstr "正在检查更新…"
@@ -4215,12 +4218,12 @@ msgid "Could not load GitHub issues. Make sure the GitHub CLI (gh) is installed 
 msgstr "无法加载 GitHub 问题。请确保已安装并认证 GitHub CLI (gh)。"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:61
-#: lib/evo_dash_web/live/settings_live.ex:532
+#: lib/evo_dash_web/live/settings_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "Create custom agents and configure the per-agent model selection script."
 msgstr "创建自定义智能体，并为每个智能体配置模型选择脚本。"
 
-#: lib/evo_dash_web/live/system_live.ex:138
+#: lib/evo_dash_web/live/system_live.ex:139
 #, elixir-autogen, elixir-format
 msgid "Current version: %{version}"
 msgstr "当前版本：%{version}"
@@ -4230,7 +4233,7 @@ msgstr "当前版本：%{version}"
 msgid "Custom Agent"
 msgstr "自定义智能体"
 
-#: lib/evo_dash_web/live/projects_live.ex:1152
+#: lib/evo_dash_web/live/projects_live.ex:1157
 #, elixir-autogen, elixir-format
 msgid "Custom Agent mode requires selecting a custom agent."
 msgstr "自定义智能体模式需要选择一个自定义智能体。"
@@ -4265,7 +4268,7 @@ msgstr "未找到自定义智能体。"
 msgid "Custom agent saved."
 msgstr "自定义智能体已保存。"
 
-#: lib/evo_dash_web/live/settings_live.ex:546
+#: lib/evo_dash_web/live/settings_live.ex:547
 #, elixir-autogen, elixir-format
 msgid "Custom agents are stored in `agents.toml`, next to the main configuration file."
 msgstr "自定义智能体存储在 `agents.toml` 中，位于主配置文件旁边。"
@@ -4275,7 +4278,7 @@ msgstr "自定义智能体存储在 `agents.toml` 中，位于主配置文件旁
 msgid "Daily time windows in 24h HH:MM local time. Two windows for one day are allowed, e.g. 09:00–12:00 and 14:00–18:00."
 msgstr "以24小时制 HH:MM 本地时间设置每日时间段。一天最多可设置两个时间段，例如 09:00–12:00 和 14:00–18:00。"
 
-#: lib/evo_dash_web/live/system_live.ex:727
+#: lib/evo_dash_web/live/system_live.ex:866
 #, elixir-autogen, elixir-format
 msgid "Defer"
 msgstr "稍后再说"
@@ -4305,7 +4308,7 @@ msgstr "删除此自定义智能体？"
 msgid "Description"
 msgstr "描述"
 
-#: lib/evo_dash_web/live/system_live.ex:223
+#: lib/evo_dash_web/live/system_live.ex:224
 #, elixir-autogen, elixir-format
 msgid "Download"
 msgstr "下载"
@@ -4325,12 +4328,12 @@ msgstr "示例"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "删除自定义智能体失败：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:855
+#: lib/evo_dash_web/live/review_live.ex:856
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "加载审查数据失败。"
 
-#: lib/evo_dash_web/live/tasks_live.ex:578
+#: lib/evo_dash_web/live/tasks_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "Failed to load tasks."
 msgstr "加载任务失败。"
@@ -4345,7 +4348,7 @@ msgstr "保存自定义智能体失败：%{reason}"
 msgid "Failed to save script: %{reason}"
 msgstr "保存脚本失败：%{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1263
+#: lib/evo_dash_web/live/system_live.ex:1453
 #, elixir-autogen, elixir-format
 msgid "Failed to stop running tasks. The update was not applied."
 msgstr "无法停止正在运行的任务，更新未应用。"
@@ -4360,12 +4363,12 @@ msgstr "修复"
 msgid "Fix this issue"
 msgstr "修复此问题"
 
-#: lib/evo_dash_web/live/system_live.ex:780
+#: lib/evo_dash_web/live/system_live.ex:919
 #, elixir-autogen, elixir-format
 msgid "Force Kill & Update"
 msgstr "强制终止并更新"
 
-#: lib/evo_dash_web/live/system_live.ex:754
+#: lib/evo_dash_web/live/system_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Force Kill & Update?"
 msgstr "确定要强制终止并更新吗？"
@@ -4375,7 +4378,7 @@ msgstr "确定要强制终止并更新吗？"
 msgid "Free-form description"
 msgstr "自由格式描述"
 
-#: lib/evo_dash_web/live/system_live.ex:184
+#: lib/evo_dash_web/live/system_live.ex:185
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version} is up to date"
 msgstr "启元 %{version} 已是最新版本"
@@ -4391,18 +4394,18 @@ msgstr "GitHub 问题"
 msgid "IANA timezone for interpreting peak hours (e.g. Asia/Shanghai). Leave empty to use the server's local time."
 msgstr "用于解释高峰时段的 IANA 时区（例如 Asia/Shanghai）。留空则使用服务器本地时间。"
 
-#: lib/evo_dash_web/live/system_live.ex:763
+#: lib/evo_dash_web/live/system_live.ex:902
 #, elixir-autogen, elixir-format
 msgid "In-flight work will be lost and tasks will need manual review."
 msgstr "进行中的工作将会丢失，任务需要人工审查。"
 
-#: lib/evo_dash_web/live/system_live.ex:174
-#: lib/evo_dash_web/live/system_live.ex:190
+#: lib/evo_dash_web/live/system_live.ex:175
+#: lib/evo_dash_web/live/system_live.ex:191
 #, elixir-autogen, elixir-format
 msgid "Last checked"
 msgstr "上次检查"
 
-#: lib/evo_dash_web/live/system_live.ex:258
+#: lib/evo_dash_web/live/system_live.ex:259
 #, elixir-autogen, elixir-format
 msgid "Latest version %{version} — no auto-update for this platform"
 msgstr "最新版本 %{version} — 此平台不支持自动更新"
@@ -4427,12 +4430,12 @@ msgstr "正在加载历史记录…"
 msgid "Loading issues…"
 msgstr "正在加载问题…"
 
-#: lib/evo_dash_web/live/projects_live.ex:306
+#: lib/evo_dash_web/live/projects_live.ex:307
 #, elixir-autogen, elixir-format
 msgid "Loading project…"
 msgstr "正在加载项目…"
 
-#: lib/evo_dash_web/live/tasks_live.ex:211
+#: lib/evo_dash_web/live/tasks_live.ex:212
 #, elixir-autogen, elixir-format
 msgid "Loading tasks..."
 msgstr "正在加载任务..."
@@ -4478,7 +4481,7 @@ msgstr "嵌套执行器（层级 2）"
 msgid "New Agent"
 msgstr "新建智能体"
 
-#: lib/evo_dash_web/live/system_live.ex:264
+#: lib/evo_dash_web/live/system_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "No auto update on this platform"
 msgstr "此平台不支持自动更新"
@@ -4589,7 +4592,7 @@ msgstr "提示词无效。"
 msgid "Remove time window"
 msgstr "删除时间段"
 
-#: lib/evo_dash_web/live/system_live.ex:247
+#: lib/evo_dash_web/live/system_live.ex:248
 #, elixir-autogen, elixir-format
 msgid "Restart & Update"
 msgstr "重启并更新"
@@ -4630,12 +4633,12 @@ msgstr "脚本约定"
 msgid "Script error"
 msgstr "脚本错误"
 
-#: lib/evo_dash_web/live/system_live.ex:131
+#: lib/evo_dash_web/live/system_live.ex:132
 #, elixir-autogen, elixir-format
 msgid "Software Update"
 msgstr "软件更新"
 
-#: lib/evo_dash_web/live/system_live.ex:709
+#: lib/evo_dash_web/live/system_live.ex:848
 #, elixir-autogen, elixir-format
 msgid "Stopping tasks…"
 msgstr "正在停止任务…"
@@ -4655,7 +4658,7 @@ msgstr "子智能体"
 msgid "Subagents must be a list of agent type names."
 msgstr "子智能体必须是智能体类型名称的列表。"
 
-#: lib/evo_dash_web/live/system_live.ex:702
+#: lib/evo_dash_web/live/system_live.ex:841
 #, elixir-autogen, elixir-format
 msgid "Tasks still running"
 msgstr "任务仍在运行"
@@ -4680,7 +4683,7 @@ msgstr "要使用的模型配置文件；无 = 自动选择"
 msgid "The system prompt that defines this agent's role"
 msgstr "定义此智能体角色的系统提示词"
 
-#: lib/evo_dash_web/live/system_live.ex:716
+#: lib/evo_dash_web/live/system_live.ex:855
 #, elixir-autogen, elixir-format
 msgid "The update can only be applied when no tasks are running. Gracefully stopping tasks asks their agents to save their work and finish; results are preserved for review."
 msgstr "仅在无任务运行时才能应用更新。平滑停止任务会要求智能体保存工作并完成收尾；结果将保留以供审查。"
@@ -4695,32 +4698,32 @@ msgstr "时区（可选）"
 msgid "Tools must be a list of tool names."
 msgstr "工具必须是工具名称的列表。"
 
-#: lib/evo_dash_web/components/layouts.ex:434
+#: lib/evo_dash_web/components/layouts.ex:490
 #, elixir-autogen, elixir-format
 msgid "Update available"
 msgstr "有可用更新"
 
-#: lib/evo_dash_web/live/system_live.ex:166
+#: lib/evo_dash_web/live/system_live.ex:167
 #, elixir-autogen, elixir-format
 msgid "Update information will appear here after the first check."
 msgstr "首次检查后，更新信息将显示在此处。"
 
-#: lib/evo_dash_web/components/layouts.ex:434
+#: lib/evo_dash_web/components/layouts.ex:490
 #, elixir-autogen, elixir-format
 msgid "Update ready to install"
 msgstr "更新已就绪，可安装"
 
-#: lib/evo_dash_web/live/system_live.ex:234
+#: lib/evo_dash_web/live/system_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "Update ready — version %{version}"
 msgstr "更新就绪 — 版本 %{version}"
 
-#: lib/evo_dash_web/live/system_live.ex:213
+#: lib/evo_dash_web/live/system_live.ex:214
 #, elixir-autogen, elixir-format
 msgid "Update via your package manager"
 msgstr "通过包管理器更新"
 
-#: lib/evo_dash_web/live/system_live.ex:198
+#: lib/evo_dash_web/live/system_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "Version %{version} is available"
 msgstr "版本 %{version} 可用"
@@ -4764,3 +4767,192 @@ msgstr "演进现有项目"
 #, elixir-autogen, elixir-format
 msgid "Initialize existing project"
 msgstr "初始化现有项目"
+
+#: lib/evo_dash_web/live/system_live.ex:424
+#, elixir-autogen, elixir-format
+msgid "An explicit override is in effect"
+msgstr "已存在显式覆盖"
+
+#: lib/evo_dash_web/live/home_live.ex:48
+#, elixir-autogen, elixir-format
+msgid "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
+msgstr "向启元提问、查看源码、控制任务，或获得仪表盘引导。"
+
+#: lib/evo_dash_web/live/home_live.ex:45
+#, elixir-autogen, elixir-format
+msgid "Chat with Genesis"
+msgstr "与启元对话"
+
+#: lib/evo_dash_web/live/home_live.ex:87
+#, elixir-autogen, elixir-format
+msgid "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
+msgstr "与启元助手对话：询问代码库、探索源码、控制运行中的任务，或获得仪表盘引导。"
+
+#: lib/evo_dash_web/live/system_live.ex:404
+#, elixir-autogen, elixir-format
+msgid "Clone"
+msgstr "克隆"
+
+#: lib/evo_dash_web/live/system_live.ex:403
+#, elixir-autogen, elixir-format
+msgid "Cloning…"
+msgstr "正在克隆…"
+
+#: lib/evo_dash_web/live/system_live.ex:344
+#, elixir-autogen, elixir-format
+msgid "Commit"
+msgstr "提交"
+
+#: lib/evo_dash_web/live/system_live.ex:336
+#, elixir-autogen, elixir-format
+msgid "Directory"
+msgstr "目录"
+
+#: lib/evo_dash_web/components/layouts.ex:352
+#, elixir-autogen, elixir-format
+msgid "Dismiss guide"
+msgstr "关闭指南"
+
+#: lib/evo_dash_web/live/system_live.ex:1811
+#, elixir-autogen, elixir-format
+msgid "Failed to clone the Genesis source."
+msgstr "克隆启元源码失败。"
+
+#: lib/evo_dash_web/live/home_live.ex:484
+#, elixir-autogen, elixir-format
+msgid "Failed to start the task: %{reason}"
+msgstr "启动任务失败：%{reason}"
+
+#: lib/evo_dash_web/live/home_live.ex:474
+#, elixir-autogen, elixir-format
+msgid "Failed to start the task: no task id returned"
+msgstr "启动任务失败：未返回任务 ID"
+
+#: lib/evo_dash_web/live/home_live.ex:276
+#, elixir-autogen, elixir-format
+msgid "Failed to stop: %{reason}"
+msgstr "停止失败：%{reason}"
+
+#: lib/evo_dash_web/live/system_live.ex:1812
+#, elixir-autogen, elixir-format
+msgid "Failed to update the Genesis source."
+msgstr "更新启元源码失败。"
+
+#: lib/evo_dash_web/components/layouts.ex:345
+#, elixir-autogen, elixir-format
+msgid "Genesis Guide"
+msgstr "启元指南"
+
+#: lib/evo_dash_web/live/system_live.ex:308
+#, elixir-autogen, elixir-format
+msgid "Genesis Source"
+msgstr "启元源码"
+
+#: lib/evo_dash_web/live/system_live.ex:311
+#, elixir-autogen, elixir-format
+msgid "Genesis source checkout used by the self-reflective agent."
+msgstr "自省智能体使用的启元源码检出。"
+
+#: lib/evo_dash_web/live/system_live.ex:1808
+#, elixir-autogen, elixir-format
+msgid "Genesis source cloned."
+msgstr "启元源码已克隆。"
+
+#: lib/evo_dash_web/live/system_live.ex:328
+#: lib/evo_dash_web/live/system_live.ex:1797
+#, elixir-autogen, elixir-format
+msgid "Genesis source is not available in this version"
+msgstr "此版本不提供启元源码"
+
+#: lib/evo_dash_web/live/system_live.ex:1809
+#, elixir-autogen, elixir-format
+msgid "Genesis source updated."
+msgstr "启元源码已更新。"
+
+#: lib/evo_dash_web/components/layouts.ex:366
+#, elixir-autogen, elixir-format
+msgid "Go"
+msgstr "开始"
+
+#: lib/evo_dash_web/live/system_live.ex:320
+#, elixir-autogen, elixir-format
+msgid "Loading…"
+msgstr "正在加载…"
+
+#: lib/evo_dash_web/live/home_live.ex:139
+#, elixir-autogen, elixir-format
+msgid "Message Genesis…"
+msgstr "给启元发消息…"
+
+#: lib/evo_dash_web/live/home_live.ex:59
+#, elixir-autogen, elixir-format
+msgid "New chat"
+msgstr "新对话"
+
+#: lib/evo_dash_web/live/home_live.ex:647
+#, elixir-autogen, elixir-format
+msgid "No response."
+msgstr "无响应。"
+
+#: lib/evo_dash_web/live/system_live.ex:362
+#, elixir-autogen, elixir-format
+msgid "Remote URL"
+msgstr "远程 URL"
+
+#: lib/evo_dash_web/live/home_live.ex:84
+#, elixir-autogen, elixir-format
+msgid "Start a conversation"
+msgstr "开始对话"
+
+#: lib/evo_dash_web/live/home_live.ex:68
+#, elixir-autogen, elixir-format
+msgid "Stop"
+msgstr "停止"
+
+#: lib/evo_dash_web/live/home_live.ex:656
+#, elixir-autogen, elixir-format
+msgid "Stopped."
+msgstr "已停止。"
+
+#: lib/evo_dash_web/live/system_live.ex:368
+#, elixir-autogen, elixir-format
+msgid "The Genesis source has not been cloned yet."
+msgstr "启元源码尚未克隆。"
+
+#: lib/evo_dash_web/live/home_live.ex:612
+#: lib/evo_dash_web/live/home_live.ex:632
+#, elixir-autogen, elixir-format
+msgid "The conversation was deleted."
+msgstr "对话已删除。"
+
+#: lib/evo_dash_web/live/system_live.ex:412
+#, elixir-autogen, elixir-format
+msgid "The self-reflective agent reads: %{path}"
+msgstr "自省智能体读取：%{path}"
+
+#: lib/evo_dash_web/live/home_live.ex:588
+#: lib/evo_dash_web/live/home_live.ex:637
+#: lib/evo_dash_web/live/home_live.ex:648
+#, elixir-autogen, elixir-format
+msgid "The task failed."
+msgstr "任务失败。"
+
+#: lib/evo_dash_web/live/system_live.ex:388
+#, elixir-autogen, elixir-format
+msgid "Update"
+msgstr "更新"
+
+#: lib/evo_dash_web/live/system_live.ex:387
+#, elixir-autogen, elixir-format
+msgid "Updating…"
+msgstr "正在更新…"
+
+#: lib/evo_dash_web/live/system_live.ex:356
+#, elixir-autogen, elixir-format
+msgid "Version"
+msgstr "版本"
+
+#: lib/evo_dash_web/live/system_live.ex:418
+#, elixir-autogen, elixir-format
+msgid "in use"
+msgstr "使用中"

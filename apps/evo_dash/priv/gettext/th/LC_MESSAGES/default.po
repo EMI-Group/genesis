@@ -1,23 +1,23 @@
 msgid ""
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:1908
+#: lib/evo_dash_web/live/settings_live.ex:1914
 #, elixir-autogen, elixir-format
 msgid "%{action} completed."
 msgstr "%{action} เสร็จสมบูรณ์แล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:1904
+#: lib/evo_dash_web/live/settings_live.ex:1910
 #, elixir-autogen, elixir-format
 msgid "%{action} failed: %{reason}"
 msgstr "%{action} ล้มเหลว: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1895
-#: lib/evo_dash_web/live/settings_live.ex:1898
+#: lib/evo_dash_web/live/settings_live.ex:1901
+#: lib/evo_dash_web/live/settings_live.ex:1904
 #, elixir-autogen, elixir-format
 msgid "%{action} succeeded."
 msgstr "%{action} สำเร็จแล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:1889
+#: lib/evo_dash_web/live/settings_live.ex:1895
 #, elixir-autogen, elixir-format
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} ไม่พร้อมใช้งาน — ระบบย่อยการเชื่อมต่อระยะไกลไม่ได้ทำงานอยู่"
@@ -69,14 +69,14 @@ msgstr "โปรไฟล์โมเดล %{count} รายการ"
 msgid "%{count} setting(s) matching \"%{query}\""
 msgstr "%{count} รายการตั้งค่าที่ตรงกับ \"%{query}\""
 
-#: lib/evo_dash_web/live/tasks_live.ex:196
+#: lib/evo_dash_web/live/tasks_live.ex:197
 #, elixir-autogen, elixir-format
 msgid "%{count} task found"
 msgid_plural "%{count} tasks found"
 msgstr[0] "พบ %{count} งาน"
 msgstr[1] "พบ %{count} งาน"
 
-#: lib/evo_dash_web/live/system_live.ex:407
+#: lib/evo_dash_web/live/system_live.ex:546
 #, elixir-autogen, elixir-format
 msgid "%{count} validation warning"
 msgid_plural "%{count} validation warnings"
@@ -108,7 +108,7 @@ msgstr "%{count} วินาทีที่แล้ว"
 msgid "%{n} slots"
 msgstr "%{n} ช่อง"
 
-#: lib/evo_dash_web/live/projects_live.ex:2235
+#: lib/evo_dash_web/live/projects_live.ex:2240
 #: lib/evo_dash_web/live/projects_live/github.ex:321
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
@@ -167,18 +167,18 @@ msgstr "รหัสเฉพาะสำหรับระบุพื้นท
 msgid "API Key"
 msgstr "คีย์ API"
 
-#: lib/evo_dash_web/live/settings_live.ex:1353
+#: lib/evo_dash_web/live/settings_live.ex:1359
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "คีย์ API ต้องไม่เว้นว่าง"
 
 #: lib/evo_dash_web/components/settings_components.ex:363
-#: lib/evo_dash_web/live/welcome_live.ex:291
+#: lib/evo_dash_web/live/welcome_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "API key is already set"
 msgstr "คีย์ API ถูกตั้งค่าไว้แล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:1383
+#: lib/evo_dash_web/live/settings_live.ex:1389
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "บันทึกคีย์ API สำเร็จแล้ว"
@@ -193,24 +193,24 @@ msgstr "พาธแบบสัมบูรณ์ไปยังโฟลเด
 msgid "Actions"
 msgstr "การดำเนินการ"
 
-#: lib/evo_dash_web/components/layouts.ex:155
+#: lib/evo_dash_web/components/layouts.ex:162
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
 msgstr "งานที่กำลังทำงาน"
 
-#: lib/evo_dash_web/live/tasks_live.ex:150
+#: lib/evo_dash_web/live/tasks_live.ex:151
 #, elixir-autogen, elixir-format
 msgid "Active filters:"
 msgstr "ตัวกรองที่ใช้งานอยู่:"
 
 #: lib/evo_dash_web/components/project_components.ex:668
-#: lib/evo_dash_web/live/settings_live.ex:498
+#: lib/evo_dash_web/live/settings_live.ex:499
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr "เพิ่ม"
 
-#: lib/evo_dash_web/live/settings_live.ex:372
-#: lib/evo_dash_web/live/settings_live.ex:509
+#: lib/evo_dash_web/live/settings_live.ex:373
+#: lib/evo_dash_web/live/settings_live.ex:510
 #, elixir-autogen, elixir-format
 msgid "Add Connection"
 msgstr "เพิ่มการเชื่อมต่อ"
@@ -272,11 +272,11 @@ msgstr "เอเจนต์กำลังรอให้เอเจนต์
 msgid "Agent not found"
 msgstr "ไม่พบเอเจนต์"
 
-#: lib/evo_dash_web/components/layouts.ex:133
+#: lib/evo_dash_web/components/layouts.ex:140
 #: lib/evo_dash_web/components/review_components/header.ex:125
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
-#: lib/evo_dash_web/live/projects_live.ex:350
-#: lib/evo_dash_web/live/settings_live.ex:528
+#: lib/evo_dash_web/live/projects_live.ex:351
+#: lib/evo_dash_web/live/settings_live.ex:529
 #: lib/evo_dash_web/live/system_live/charts.ex:268
 #, elixir-autogen, elixir-format
 msgid "Agents"
@@ -288,33 +288,33 @@ msgstr "เอเจนต์"
 msgid "Agents Spawned"
 msgstr "เอเจนต์ที่ถูกสร้าง"
 
-#: lib/evo_dash_web/live/system_live.ex:61
+#: lib/evo_dash_web/live/system_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "Agents and slots are being granted normally."
 msgstr "เอเจนต์และสล็อตกำลังได้รับการจัดสรรตามปกติ"
 
-#: lib/evo_dash_web/live/settings_live.ex:110
+#: lib/evo_dash_web/live/settings_live.ex:111
 #, elixir-autogen, elixir-format
 msgid "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
 msgstr "เอเจนต์จะทำงานไม่ได้จนกว่าคุณจะตั้งค่าโมเดล ไปที่หมวด LLM แล้วกรอกฟิลด์ Model"
 
-#: lib/evo_dash_web/live/tasks_live.ex:79
+#: lib/evo_dash_web/live/tasks_live.ex:80
 #, elixir-autogen, elixir-format
 msgid "All Projects"
 msgstr "โปรเจกต์ทั้งหมด"
 
-#: lib/evo_dash_web/live/tasks_live.ex:97
+#: lib/evo_dash_web/live/tasks_live.ex:98
 #, elixir-autogen, elixir-format
 msgid "All Reviews"
 msgstr "การตรวจสอบทั้งหมด"
 
-#: lib/evo_dash_web/live/tasks_live.ex:48
+#: lib/evo_dash_web/live/tasks_live.ex:49
 #, elixir-autogen, elixir-format
 msgid "All Statuses"
 msgstr "สถานะทั้งหมด"
 
 #: lib/evo_dash_web/helpers.ex:566
-#: lib/evo_dash_web/live/system_live.ex:394
+#: lib/evo_dash_web/live/system_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "กำหนดค่าครบแล้ว"
@@ -324,7 +324,7 @@ msgstr "กำหนดค่าครบแล้ว"
 msgid "All critical configuration values are set"
 msgstr "ค่ากำหนดสำคัญทั้งหมดได้รับการตั้งค่าแล้ว"
 
-#: lib/evo_dash_web/live/system_live.ex:629
+#: lib/evo_dash_web/live/system_live.ex:768
 #, elixir-autogen, elixir-format
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "สถานะรันไทม์ในหน่วยความจำทั้งหมด (งานที่กำลังทำงาน สถานะตัวจัดตาราง เอเจนต์ที่กำลังดำเนินการ) จะสูญหาย การกระทำนี้ไม่สามารถย้อนกลับได้"
@@ -375,24 +375,24 @@ msgstr "เก็บรายละเอียดเอเจนต์"
 msgid "Archived Agent Details"
 msgstr "รายละเอียดเอเจนต์ที่เก็บไว้"
 
-#: lib/evo_dash_web/components/layouts.ex:536
-#: lib/evo_dash_web/components/layouts.ex:548
+#: lib/evo_dash_web/components/layouts.ex:592
+#: lib/evo_dash_web/components/layouts.ex:604
 #, elixir-autogen, elixir-format
 msgid "Attempting to reconnect"
 msgstr "กำลังพยายามเชื่อมต่อใหม่"
 
-#: lib/evo_dash_web/live/review_live.ex:49
-#: lib/evo_dash_web/live/welcome_live.ex:40
+#: lib/evo_dash_web/live/review_live.ex:50
+#: lib/evo_dash_web/live/welcome_live.ex:41
 #, elixir-autogen, elixir-format
 msgid "Back"
 msgstr "กลับ"
 
-#: lib/evo_dash_web/live/review_live.ex:33
+#: lib/evo_dash_web/live/review_live.ex:34
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "กลับไปหน้าแดชบอร์ด"
 
-#: lib/evo_dash_web/live/review_live.ex:45
+#: lib/evo_dash_web/live/review_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Back to Review"
 msgstr "กลับไปตรวจสอบ"
@@ -405,19 +405,19 @@ msgstr "คอมมิตพื้นฐาน"
 #: lib/evo_dash_web/components/settings_components.ex:222
 #: lib/evo_dash_web/components/settings_components.ex:299
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:243
-#: lib/evo_dash_web/live/welcome_live.ex:311
+#: lib/evo_dash_web/live/welcome_live.ex:312
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr "URL ฐาน"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:62
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:140
-#: lib/evo_dash_web/live/welcome_live.ex:752
+#: lib/evo_dash_web/live/welcome_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Base URL cannot be empty."
 msgstr "URL ฐานต้องไม่เว้นว่าง"
 
-#: lib/evo_dash_web/live/system_live.ex:524
+#: lib/evo_dash_web/live/system_live.ex:663
 #, elixir-autogen, elixir-format
 msgid "Binary"
 msgstr "ไบนารี"
@@ -427,13 +427,14 @@ msgstr "ไบนารี"
 msgid "Blocked"
 msgstr "ถูกบล็อก"
 
-#: lib/evo_dash_web/live/settings_live.ex:322
-#: lib/evo_dash_web/live/settings_live.ex:818
+#: lib/evo_dash_web/live/settings_live.ex:323
+#: lib/evo_dash_web/live/settings_live.ex:819
 #, elixir-autogen, elixir-format
 msgid "Bootstrap"
 msgstr "บูตสแตรป"
 
 #: lib/evo_dash_web/components/archive_components.ex:137
+#: lib/evo_dash_web/live/system_live.ex:350
 #, elixir-autogen, elixir-format
 msgid "Branch"
 msgstr "แบรนช์"
@@ -446,7 +447,7 @@ msgid "Browse"
 msgstr "เรียกดู"
 
 #: lib/evo_dash_web/components/task_form_components.ex:495
-#: lib/evo_dash_web/live/projects_live.ex:486
+#: lib/evo_dash_web/live/projects_live.ex:487
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "ระบบบิลด์"
@@ -472,32 +473,32 @@ msgstr "อัตราการชนแคช"
 msgid "Cached Tokens"
 msgstr "โทเค็นที่แคชไว้"
 
-#: lib/evo_dash_web/components/layouts.ex:303
+#: lib/evo_dash_web/components/layouts.ex:316
 #: lib/evo_dash_web/components/project_components.ex:675
 #: lib/evo_dash_web/components/review_components/actions.ex:298
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:344
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:539
 #: lib/evo_dash_web/components/task_card_components.ex:142
 #: lib/evo_dash_web/live/agents_live.html.heex:699
-#: lib/evo_dash_web/live/settings_live.ex:492
-#: lib/evo_dash_web/live/system_live.ex:636
-#: lib/evo_dash_web/live/system_live.ex:680
-#: lib/evo_dash_web/live/system_live.ex:772
+#: lib/evo_dash_web/live/settings_live.ex:493
+#: lib/evo_dash_web/live/system_live.ex:775
+#: lib/evo_dash_web/live/system_live.ex:819
+#: lib/evo_dash_web/live/system_live.ex:911
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "ยกเลิก"
 
-#: lib/evo_dash_web/live/tasks_live.ex:66
+#: lib/evo_dash_web/live/tasks_live.ex:67
 #, elixir-autogen, elixir-format
 msgid "Cancelled"
 msgstr "ถูกยกเลิก"
 
-#: lib/evo_dash_web/live/projects_live.ex:1308
+#: lib/evo_dash_web/live/projects_live.ex:1313
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "ไม่สามารถลบที่เก็บหลักได้"
 
-#: lib/evo_dash_web/components/layouts.ex:636
+#: lib/evo_dash_web/components/layouts.ex:692
 #, elixir-autogen, elixir-format
 msgid "Change language"
 msgstr "เปลี่ยนภาษา"
@@ -507,12 +508,12 @@ msgstr "เปลี่ยนภาษา"
 msgid "Changed Files"
 msgstr "ไฟล์ที่เปลี่ยนแปลง"
 
-#: lib/evo_dash_web/live/review_live.ex:484
+#: lib/evo_dash_web/live/review_live.ex:485
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "รวมการเปลี่ยนแปลงเรียบร้อยแล้ว! แบรนช์ %{branch} ถูกลบแล้ว"
 
-#: lib/evo_dash_web/live/review_live.ex:539
+#: lib/evo_dash_web/live/review_live.ex:540
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "ปฏิเสธการเปลี่ยนแปลงแล้ว แบรนช์ %{branch} ถูกลบแล้ว"
@@ -522,13 +523,13 @@ msgstr "ปฏิเสธการเปลี่ยนแปลงแล้ว
 msgid "Chat History / Session Memory"
 msgstr "ประวัติการสนทนา / ความจำเซสชัน"
 
-#: lib/evo_dash_web/live/system_live.ex:376
+#: lib/evo_dash_web/live/system_live.ex:515
 #, elixir-autogen, elixir-format
 msgid "Checking system status..."
 msgstr "กำลังตรวจสอบสถานะระบบ..."
 
-#: lib/evo_dash_web/live/system_live.ex:157
-#: lib/evo_dash_web/live/system_live.ex:318
+#: lib/evo_dash_web/live/system_live.ex:158
+#: lib/evo_dash_web/live/system_live.ex:457
 #, elixir-autogen, elixir-format
 msgid "Checking..."
 msgstr "กำลังตรวจสอบ..."
@@ -538,12 +539,12 @@ msgstr "กำลังตรวจสอบ..."
 msgid "Children"
 msgstr "ลูก"
 
-#: lib/evo_dash_web/live/tasks_live.ex:304
+#: lib/evo_dash_web/live/tasks_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Clear History"
 msgstr "ล้างประวัติ"
 
-#: lib/evo_dash_web/live/tasks_live.ex:302
+#: lib/evo_dash_web/live/tasks_live.ex:303
 #, elixir-autogen, elixir-format
 msgid "Clear all finished task history? This cannot be undone."
 msgstr "ล้างประวัติงานที่เสร็จสิ้นทั้งหมด? การกระทำนี้ไม่สามารถยกเลิกได้"
@@ -557,17 +558,17 @@ msgstr "ล้างประวัติงานที่เสร็จสิ
 msgid "Close"
 msgstr "ปิด"
 
-#: lib/evo_dash_web/live/projects_live.ex:1502
+#: lib/evo_dash_web/live/projects_live.ex:1507
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "คำสั่ง '%{command}' เสร็จสมบูรณ์:\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1510
+#: lib/evo_dash_web/live/projects_live.ex:1515
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "คำสั่ง '%{command}' ล้มเหลว (ออกด้วยรหัส %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1475
+#: lib/evo_dash_web/live/projects_live.ex:1480
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "ไม่พบคำสั่ง: %{command}"
@@ -584,7 +585,7 @@ msgstr "คอมมิต"
 
 #: lib/evo_dash_web/components/archive_components.ex:181
 #: lib/evo_dash_web/components/review_components.ex:243
-#: lib/evo_dash_web/live/tasks_live.ex:60
+#: lib/evo_dash_web/live/tasks_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Completed"
 msgstr "เสร็จสมบูรณ์"
@@ -594,18 +595,18 @@ msgstr "เสร็จสมบูรณ์"
 msgid "Concurrency"
 msgstr "ภาวะพร้อมกัน"
 
-#: lib/evo_dash_web/live/system_live.ex:383
+#: lib/evo_dash_web/live/system_live.ex:522
 #, elixir-autogen, elixir-format
 msgid "Configuration"
 msgstr "การกำหนดค่า"
 
-#: lib/evo_dash_web/live/settings_live.ex:41
+#: lib/evo_dash_web/live/settings_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Configuration file"
 msgstr "ไฟล์กำหนดค่า"
 
-#: lib/evo_dash_web/live/settings_live.ex:976
-#: lib/evo_dash_web/live/settings_live.ex:1064
+#: lib/evo_dash_web/live/settings_live.ex:982
+#: lib/evo_dash_web/live/settings_live.ex:1070
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "บันทึกการกำหนดค่าสำเร็จแล้ว"
@@ -625,7 +626,7 @@ msgstr "กำหนดค่าการรวมสภาพแวดล้อ
 msgid "Configure external tool integrations such as web search."
 msgstr "กำหนดค่าการรวมเครื่องมือภายนอก เช่น การค้นหาเว็บ"
 
-#: lib/evo_dash_web/components/layouts.ex:264
+#: lib/evo_dash_web/components/layouts.ex:277
 #, elixir-autogen, elixir-format
 msgid "Configure now →"
 msgstr "กำหนดค่าตอนนี้ →"
@@ -655,30 +656,30 @@ msgstr "กำหนดค่าที่อยู่และพอร์ตท
 msgid "Configure via the editor below"
 msgstr "กำหนดค่าผ่านโปรแกรมแก้ไขด้านล่าง"
 
-#: lib/evo_dash_web/live/settings_live.ex:75
+#: lib/evo_dash_web/live/settings_live.ex:76
 #, elixir-autogen, elixir-format
 msgid "Configure your LLM model in the LLM category to resolve these issues."
 msgstr "กำหนดค่าโมเดล LLM ของคุณในหมวด LLM เพื่อแก้ไขปัญหาเหล่านี้"
 
-#: lib/evo_dash_web/live/settings_live.ex:348
+#: lib/evo_dash_web/live/settings_live.ex:349
 #, elixir-autogen, elixir-format
 msgid "Configure your SSH server in `~/.ssh/config` and set up SSH key authentication."
 msgstr "กำหนดค่าเซิร์ฟเวอร์ SSH ใน `~/.ssh/config` และตั้งค่าการรับรองความถูกต้องด้วยคีย์ SSH"
 
-#: lib/evo_dash_web/live/settings_live.ex:330
-#: lib/evo_dash_web/live/settings_live.ex:1560
+#: lib/evo_dash_web/live/settings_live.ex:331
+#: lib/evo_dash_web/live/settings_live.ex:1566
 #, elixir-autogen, elixir-format
 msgid "Connect"
 msgstr "เชื่อมต่อ"
 
 #: lib/evo_dash_web/components/settings_components.ex:463
-#: lib/evo_dash_web/live/settings_live.ex:1950
-#: lib/evo_dash_web/live/welcome_live.ex:368
+#: lib/evo_dash_web/live/settings_live.ex:1956
+#: lib/evo_dash_web/live/welcome_live.ex:369
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "เชื่อมต่อแล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:1951
+#: lib/evo_dash_web/live/settings_live.ex:1957
 #, elixir-autogen, elixir-format
 msgid "Connecting..."
 msgstr "กำลังเชื่อมต่อ..."
@@ -688,22 +689,22 @@ msgstr "กำลังเชื่อมต่อ..."
 msgid "Connection Test"
 msgstr "ทดสอบการเชื่อมต่อ"
 
-#: lib/evo_dash_web/live/settings_live.ex:182
+#: lib/evo_dash_web/live/settings_live.ex:183
 #, elixir-autogen, elixir-format
 msgid "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
 msgstr "ข้อมูลการเชื่อมต่อถูกเก็บไว้ใน `~/.config/genesis/remote_connections.toml` ซึ่งแยกจากไฟล์กำหนดค่าหลัก"
 
-#: lib/evo_dash_web/live/settings_live.ex:1520
+#: lib/evo_dash_web/live/settings_live.ex:1526
 #, elixir-autogen, elixir-format
 msgid "Connection deleted."
 msgstr "ลบการเชื่อมต่อแล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:1526
+#: lib/evo_dash_web/live/settings_live.ex:1532
 #, elixir-autogen, elixir-format
 msgid "Connection not found."
 msgstr "ไม่พบการเชื่อมต่อ"
 
-#: lib/evo_dash_web/live/settings_live.ex:1499
+#: lib/evo_dash_web/live/settings_live.ex:1505
 #, elixir-autogen, elixir-format
 msgid "Connection saved."
 msgstr "บันทึกการเชื่อมต่อแล้ว"
@@ -724,18 +725,18 @@ msgid "Context tree detected — Evolution mode selected"
 msgstr "ตรวจพบต้นไม้บริบท — เลือกโหมดวิวัฒนาการ"
 
 #: lib/evo_dash_web/helpers.ex:147
-#: lib/evo_dash_web/live/tasks_live.ex:109
-#: lib/evo_dash_web/live/tasks_live.ex:180
+#: lib/evo_dash_web/live/tasks_live.ex:110
+#: lib/evo_dash_web/live/tasks_live.ex:181
 #, elixir-autogen, elixir-format
 msgid "Continued"
 msgstr "ต่อเนื่อง"
 
-#: lib/evo_dash_web/live/review_live.ex:578
+#: lib/evo_dash_web/live/review_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "Resuming from branch %{branch} at %{sha}"
 msgstr "กำลังดำเนินการต่อจากแบรนช์ %{branch} ที่ %{sha}"
 
-#: lib/evo_dash_web/live/review_live.ex:583
+#: lib/evo_dash_web/live/review_live.ex:584
 #, elixir-autogen, elixir-format
 msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr "กำลังดำเนินการต่อจากงานตรวจสอบ มีแบบฟอร์มงานวิวัฒนาการใหม่เตรียมไว้ให้คุณแล้ว"
@@ -750,7 +751,7 @@ msgstr "ควบคุมภาวะพร้อมกันของเอเ
 msgid "Copy agent summary"
 msgstr "คัดลอกสรุปเอเจนต์"
 
-#: lib/evo_dash_web/live/settings_live.ex:50
+#: lib/evo_dash_web/live/settings_live.ex:51
 #, elixir-autogen, elixir-format
 msgid "Copy path"
 msgstr "คัดลอกพาธ"
@@ -761,7 +762,7 @@ msgstr "คัดลอกพาธ"
 msgid "Cost"
 msgstr "ต้นทุน"
 
-#: lib/evo_dash_web/live/review_live.ex:203
+#: lib/evo_dash_web/live/review_live.ex:204
 #, elixir-autogen, elixir-format
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "ไม่สามารถโหลดข้อมูล diff ได้ แบรนช์อาจถูกแก้ไขจากภายนอก"
@@ -791,7 +792,7 @@ msgstr "คอมมิตปัจจุบัน"
 msgid "Custom model saved."
 msgstr "บันทึกโมเดลที่กำหนดเองแล้ว"
 
-#: lib/evo_dash_web/components/layouts.ex:588
+#: lib/evo_dash_web/components/layouts.ex:644
 #, elixir-autogen, elixir-format
 msgid "Dark theme"
 msgstr "ธีมมืด"
@@ -809,7 +810,7 @@ msgstr "ค่าเริ่มต้น"
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:134
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:121
 #: lib/evo_dash_web/components/task_card_components.ex:200
-#: lib/evo_dash_web/live/settings_live.ex:228
+#: lib/evo_dash_web/live/settings_live.ex:229
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "ลบ"
@@ -851,7 +852,7 @@ msgstr "คำอธิบาย (ไม่บังคับ)"
 msgid "Details"
 msgstr "รายละเอียด"
 
-#: lib/evo_dash_web/live/settings_live.ex:291
+#: lib/evo_dash_web/live/settings_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "Detecting OS"
 msgstr "กำลังตรวจจับระบบปฏิบัติการ"
@@ -861,8 +862,8 @@ msgstr "กำลังตรวจจับระบบปฏิบัติก
 msgid "Dev Commands"
 msgstr "คำสั่งสำหรับนักพัฒนา"
 
-#: lib/evo_dash_web/live/projects_live.ex:1921
-#: lib/evo_dash_web/live/projects_live.ex:1929
+#: lib/evo_dash_web/live/projects_live.ex:1926
+#: lib/evo_dash_web/live/projects_live.ex:1934
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:387
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
@@ -873,41 +874,41 @@ msgstr "ไม่มีไดเรกทอรีนี้: %{path}"
 msgid "Directory does not exist: %{path}. Create a new project instead?"
 msgstr "ไม่มีไดเรกทอรีนี้: %{path} ต้องการสร้างโปรเจกต์ใหม่แทนหรือไม่?"
 
-#: lib/evo_dash_web/live/system_live.ex:478
-#: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:617
+#: lib/evo_dash_web/live/system_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "Disabled"
 msgstr "ปิดใช้งาน"
 
-#: lib/evo_dash_web/live/settings_live.ex:238
-#: lib/evo_dash_web/live/settings_live.ex:1572
+#: lib/evo_dash_web/live/settings_live.ex:239
+#: lib/evo_dash_web/live/settings_live.ex:1578
 #, elixir-autogen, elixir-format
 msgid "Disconnect"
 msgstr "ตัดการเชื่อมต่อ"
 
-#: lib/evo_dash_web/live/settings_live.ex:1954
+#: lib/evo_dash_web/live/settings_live.ex:1960
 #, elixir-autogen, elixir-format
 msgid "Disconnected"
 msgstr "ตัดการเชื่อมต่อแล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:1952
+#: lib/evo_dash_web/live/settings_live.ex:1958
 #, elixir-autogen, elixir-format
 msgid "Disconnecting..."
 msgstr "กำลังตัดการเชื่อมต่อ..."
 
-#: lib/evo_dash_web/live/settings_live.ex:460
+#: lib/evo_dash_web/live/settings_live.ex:461
 #, elixir-autogen, elixir-format
 msgid "Dist Port"
 msgstr "พอร์ต Dist"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:124
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:111
-#: lib/evo_dash_web/live/settings_live.ex:220
+#: lib/evo_dash_web/live/settings_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Edit"
 msgstr "แก้ไข"
 
-#: lib/evo_dash_web/live/settings_live.ex:370
+#: lib/evo_dash_web/live/settings_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "Edit Connection"
 msgstr "แก้ไขการเชื่อมต่อ"
@@ -922,8 +923,8 @@ msgstr "แก้ไขโปรไฟล์"
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "ตรวจพบไดเรกทอรีว่าง — เลือกโหมดโค้ดเบสใหม่"
 
-#: lib/evo_dash_web/live/system_live.ex:477
-#: lib/evo_dash_web/live/system_live.ex:521
+#: lib/evo_dash_web/live/system_live.ex:616
+#: lib/evo_dash_web/live/system_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "Enabled"
 msgstr "เปิดใช้งาน"
@@ -934,14 +935,14 @@ msgstr "เปิดใช้งาน"
 msgid "End Commit"
 msgstr "คอมมิตสิ้นสุด"
 
-#: lib/evo_dash_web/live/settings_live.ex:353
+#: lib/evo_dash_web/live/settings_live.ex:354
 #, elixir-autogen, elixir-format
 msgid "Enter the SSH target (the same string you'd type after `ssh`, e.g. `gpu-server` or `user@host`)."
 msgstr "ป้อนเป้าหมาย SSH (สตริงเดียวกับที่คุณพิมพ์หลัง `ssh` เช่น `gpu-server` หรือ `user@host`)"
 
 #: lib/evo_dash_web/components/settings_components.ex:364
-#: lib/evo_dash_web/live/welcome_live.ex:258
-#: lib/evo_dash_web/live/welcome_live.ex:292
+#: lib/evo_dash_web/live/welcome_live.ex:259
+#: lib/evo_dash_web/live/welcome_live.ex:293
 #, elixir-autogen, elixir-format
 msgid "Enter your API key"
 msgstr "ป้อนคีย์ API ของคุณ"
@@ -957,17 +958,17 @@ msgid "Enter your API key. It should start with"
 msgstr "ป้อนคีย์ API ของคุณ โดยต้องขึ้นต้นด้วย"
 
 #: lib/evo_dash_web/components/task_card_components.ex:606
-#: lib/evo_dash_web/live/settings_live.ex:1953
+#: lib/evo_dash_web/live/settings_live.ex:1959
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "ข้อผิดพลาด"
 
-#: lib/evo_dash_web/live/projects_live.ex:1521
+#: lib/evo_dash_web/live/projects_live.ex:1526
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "เกิดข้อผิดพลาดขณะรัน '%{command}': %{error}"
 
-#: lib/evo_dash_web/live/settings_live.ex:115
+#: lib/evo_dash_web/live/settings_live.ex:116
 #, elixir-autogen, elixir-format
 msgid "Example model names:"
 msgstr "ตัวอย่างชื่อโมเดล:"
@@ -979,7 +980,7 @@ msgstr "บันทึกการประมวลผล"
 
 #: lib/evo_dash_web/components/archive_components.ex:35
 #: lib/evo_dash_web/components/review_components.ex:111
-#: lib/evo_dash_web/live/review_live.ex:144
+#: lib/evo_dash_web/live/review_live.ex:145
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "ส่งออก JSON"
@@ -991,34 +992,34 @@ msgstr "ส่งออก JSON"
 msgid "Extract Skills"
 msgstr "แยกสกิล"
 
-#: lib/evo_dash_web/live/tasks_live.ex:63
+#: lib/evo_dash_web/live/tasks_live.ex:64
 #, elixir-autogen, elixir-format
 msgid "Failed"
 msgstr "ล้มเหลว"
 
-#: lib/evo_dash_web/live/projects_live.ex:1179
-#: lib/evo_dash_web/live/tasks_live.ex:781
+#: lib/evo_dash_web/live/projects_live.ex:1184
+#: lib/evo_dash_web/live/tasks_live.ex:782
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "ยกเลิกงานไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:637
+#: lib/evo_dash_web/live/review_live.ex:638
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "สร้าง pull request ไม่สำเร็จ ตรวจสอบให้แน่ใจว่าได้ติดตั้งและยืนยันตัวตน 'gh' CLI แล้ว"
 
-#: lib/evo_dash_web/live/review_live.ex:416
+#: lib/evo_dash_web/live/review_live.ex:417
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "ขยายบริบทไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:899
-#: lib/evo_dash_web/live/review_live.ex:927
+#: lib/evo_dash_web/live/review_live.ex:900
+#: lib/evo_dash_web/live/review_live.ex:928
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "โหลด diff สำหรับ %{path} ไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:548
+#: lib/evo_dash_web/live/review_live.ex:549
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes: %{reason}"
 msgstr "ปฏิเสธการเปลี่ยนแปลงไม่สำเร็จ: %{reason}"
@@ -1028,38 +1029,38 @@ msgstr "ปฏิเสธการเปลี่ยนแปลงไม่ส
 msgid "Failed to reset key: %{reason}"
 msgstr "รีเซ็ตคีย์ล้มเหลว: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1390
-#: lib/evo_dash_web/live/welcome_live.ex:608
-#: lib/evo_dash_web/live/welcome_live.ex:717
+#: lib/evo_dash_web/live/settings_live.ex:1396
+#: lib/evo_dash_web/live/welcome_live.ex:609
+#: lib/evo_dash_web/live/welcome_live.ex:718
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "บันทึกคีย์ API ล้มเหลว: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:998
-#: lib/evo_dash_web/live/settings_live.ex:1089
-#: lib/evo_dash_web/live/settings_live.ex:1646
-#: lib/evo_dash_web/live/welcome_live.ex:969
+#: lib/evo_dash_web/live/settings_live.ex:1004
+#: lib/evo_dash_web/live/settings_live.ex:1095
+#: lib/evo_dash_web/live/settings_live.ex:1652
+#: lib/evo_dash_web/live/welcome_live.ex:970
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "บันทึกการกำหนดค่าล้มเหลว: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1509
+#: lib/evo_dash_web/live/settings_live.ex:1515
 #, elixir-autogen, elixir-format
 msgid "Failed to save: %{reason}"
 msgstr "บันทึกล้มเหลว: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:702
+#: lib/evo_dash_web/live/review_live.ex:703
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "เริ่มต้นการสกัดทักษะไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2256
+#: lib/evo_dash_web/live/projects_live.ex:2261
 #: lib/evo_dash_web/live/projects_live/github.ex:330
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
 msgstr "เริ่มงานไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:56
+#: lib/evo_dash_web/live/settings_live.ex:57
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "ไฟล์ยังไม่มีอยู่"
@@ -1069,7 +1070,7 @@ msgstr "ไฟล์ยังไม่มีอยู่"
 msgid "Files Changed"
 msgstr "ไฟล์ที่เปลี่ยนแปลง"
 
-#: lib/evo_dash_web/live/system_live.ex:482
+#: lib/evo_dash_web/live/system_live.ex:621
 #, elixir-autogen, elixir-format
 msgid "Filesystem isolation"
 msgstr "การแยกระบบไฟล์"
@@ -1090,7 +1091,7 @@ msgstr "ค้นหาการตั้งค่า..."
 msgid "Finished"
 msgstr "เสร็จสิ้น"
 
-#: lib/evo_dash_web/live/system_live.ex:531
+#: lib/evo_dash_web/live/system_live.ex:670
 #, elixir-autogen, elixir-format
 msgid "Flake valid"
 msgstr "Flake ใช้ได้"
@@ -1110,12 +1111,12 @@ msgstr "สำหรับเอนด์พอยต์พร็อกซี/�
 msgid "Foreign Repositories"
 msgstr "พื้นที่เก็บข้อมูลภายนอก"
 
-#: lib/evo_dash_web/live/projects_live.ex:1295
+#: lib/evo_dash_web/live/projects_live.ex:1300
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "รีโมทที่เก็บ '%{repo_id}' ลงทะเบียนสำเร็จแล้ว"
 
-#: lib/evo_dash_web/live/projects_live.ex:1322
+#: lib/evo_dash_web/live/projects_live.ex:1327
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "รีโมทที่เก็บ '%{repo_id}' ลบออกสำเร็จแล้ว"
@@ -1137,7 +1138,7 @@ msgid "Full"
 msgstr "เต็ม"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:657
-#: lib/evo_dash_web/live/tasks_live.ex:335
+#: lib/evo_dash_web/live/tasks_live.ex:336
 #, elixir-autogen, elixir-format
 msgid "Full Objective"
 msgstr "วัตถุประสงค์เต็ม"
@@ -1168,7 +1169,7 @@ msgstr "Git"
 msgid "GitHub Username"
 msgstr "ชื่อผู้ใช้ GitHub"
 
-#: lib/evo_dash_web/live/system_live.ex:94
+#: lib/evo_dash_web/live/system_live.ex:95
 #, elixir-autogen, elixir-format
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "รีสตาร์ทแบบนุ่มนวลหรือหยุด Erlang VM การรีสตาร์ทจะยุบและเริ่มแอปพลิเคชันทั้งหมดใหม่ การหยุดจะปิด VM อย่างนุ่มนวลและต้องเริ่มต้นด้วยตนเองอีกครั้ง สถานะรันไทม์ในหน่วยความจำจะสูญหายในทั้งสองกรณี"
@@ -1209,8 +1210,8 @@ msgstr "ต้นทุนอินพุต"
 msgid "Input Tokens"
 msgstr "โทเค็นนำเข้า"
 
-#: lib/evo_dash_web/live/settings_live.ex:1126
-#: lib/evo_dash_web/live/settings_live.ex:1145
+#: lib/evo_dash_web/live/settings_live.ex:1132
+#: lib/evo_dash_web/live/settings_live.ex:1151
 #: lib/evo_dash_web/live/settings_live/search_events.ex:65
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
@@ -1230,7 +1231,7 @@ msgstr "ชื่อโปรเจกต์ไม่ถูกต้อง"
 msgid "LLM"
 msgstr "LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:554
+#: lib/evo_dash_web/live/system_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "LLM Connection"
 msgstr "การเชื่อมต่อ LLM"
@@ -1241,7 +1242,7 @@ msgstr "การเชื่อมต่อ LLM"
 msgid "LLM Model"
 msgstr "โมเดล LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:565
+#: lib/evo_dash_web/live/system_live.ex:704
 #, elixir-autogen, elixir-format
 msgid "LLM connection testing is now available on the Settings page."
 msgstr "การทดสอบการเชื่อมต่อ LLM พร้อมใช้งานแล้วที่หน้า Settings"
@@ -1251,7 +1252,7 @@ msgstr "การทดสอบการเชื่อมต่อ LLM พร�
 msgid "Leave empty to use the default value."
 msgstr "เว้นว่างไว้เพื่อใช้ค่าเริ่มต้น"
 
-#: lib/evo_dash_web/components/layouts.ex:579
+#: lib/evo_dash_web/components/layouts.ex:635
 #, elixir-autogen, elixir-format
 msgid "Light theme"
 msgstr "ธีมสว่าง"
@@ -1271,7 +1272,7 @@ msgstr "ฟีเจอร์ความปลอดภัยของ Linux �
 msgid "Loading diff..."
 msgstr "กำลังโหลดดิฟ..."
 
-#: lib/evo_dash_web/live/review_live.ex:58
+#: lib/evo_dash_web/live/review_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "กำลังโหลดข้อมูลการตรวจสอบ..."
@@ -1281,7 +1282,7 @@ msgstr "กำลังโหลดข้อมูลการตรวจสอ
 msgid "Local"
 msgstr "Local"
 
-#: lib/evo_dash_web/live/settings_live.ex:426
+#: lib/evo_dash_web/live/settings_live.ex:427
 #, elixir-autogen, elixir-format
 msgid "Local Release Tarball"
 msgstr "พาธไบนารีภายในเครื่อง"
@@ -1292,7 +1293,7 @@ msgid "Manage Connections..."
 msgstr "Manage Connections..."
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:90
-#: lib/evo_dash_web/live/settings_live.ex:173
+#: lib/evo_dash_web/live/settings_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "Manage SSH connections to remote Genesis daemons."
 msgstr "จัดการการเชื่อมต่อ SSH ไปยังเดมอน Genesis ระยะไกล"
@@ -1312,12 +1313,12 @@ msgstr "จัดการการแยกแซนด์บ็อกซ์ �
 msgid "Max Tokens"
 msgstr "โทเค็นสูงสุด"
 
-#: lib/evo_dash_web/live/review_live.ex:499
+#: lib/evo_dash_web/live/review_live.ex:500
 #, elixir-autogen, elixir-format
 msgid "Merge conflict! Please resolve manually. %{details}"
 msgstr "มีปัญหา Merge ขัดแย้ง! กรุณาแก้ไขด้วยตนเอง %{details}"
 
-#: lib/evo_dash_web/live/review_live.ex:507
+#: lib/evo_dash_web/live/review_live.ex:508
 #, elixir-autogen, elixir-format
 msgid "Merge failed: %{reason}"
 msgstr "Merge ล้มเหลว: %{reason}"
@@ -1328,15 +1329,15 @@ msgid "Merge these changes into the current branch?"
 msgstr "รวมการเปลี่ยนแปลงเหล่านี้เข้าสู่แบรนช์ปัจจุบัน?"
 
 #: lib/evo_dash_web/helpers.ex:145
-#: lib/evo_dash_web/live/tasks_live.ex:103
-#: lib/evo_dash_web/live/tasks_live.ex:176
+#: lib/evo_dash_web/live/tasks_live.ex:104
+#: lib/evo_dash_web/live/tasks_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "Merged"
 msgstr "รวมแล้ว"
 
-#: lib/evo_dash_web/components/layouts.ex:255
+#: lib/evo_dash_web/components/layouts.ex:268
 #: lib/evo_dash_web/helpers.ex:573
-#: lib/evo_dash_web/live/settings_live.ex:65
+#: lib/evo_dash_web/live/settings_live.ex:66
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "ไม่ได้กำหนดค่า"
@@ -1377,7 +1378,7 @@ msgstr "โปรไฟล์โมเดล"
 
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:47
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:107
-#: lib/evo_dash_web/live/welcome_live.ex:738
+#: lib/evo_dash_web/live/welcome_live.ex:739
 #, elixir-autogen, elixir-format
 msgid "Model name cannot be empty."
 msgstr "ชื่อโมเดลต้องไม่เว้นว่าง"
@@ -1405,7 +1406,7 @@ msgid "N/A"
 msgstr "N/A"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:166
-#: lib/evo_dash_web/live/settings_live.ex:380
+#: lib/evo_dash_web/live/settings_live.ex:381
 #, elixir-autogen, elixir-format
 msgid "Name"
 msgstr "ชื่อ"
@@ -1420,7 +1421,7 @@ msgstr "เพิ่มโปรไฟล์ใหม่แล้ว — กร�
 msgid "Nix"
 msgstr "Nix"
 
-#: lib/evo_dash_web/live/system_live.ex:509
+#: lib/evo_dash_web/live/system_live.ex:648
 #, elixir-autogen, elixir-format
 msgid "Nix Environment"
 msgstr "สภาพแวดล้อม Nix"
@@ -1437,12 +1438,12 @@ msgstr "ไม่พบ CONTEXT.md — เลือกโหมดโค้ด�
 msgid "No Changes"
 msgstr "ไม่มีการเปลี่ยนแปลง"
 
-#: lib/evo_dash_web/live/settings_live.ex:108
+#: lib/evo_dash_web/live/settings_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "No LLM Model Configured"
 msgstr "ไม่ได้กำหนดค่าโมเดล LLM"
 
-#: lib/evo_dash_web/live/projects_live.ex:338
+#: lib/evo_dash_web/live/projects_live.ex:339
 #, elixir-autogen, elixir-format
 msgid "No active agents"
 msgstr "ไม่มีเอเจนต์ที่กำลังทำงาน"
@@ -1457,12 +1458,12 @@ msgstr "ไม่มีเอเจนต์ที่ลงทะเบียน
 msgid "No archive data available for this task"
 msgstr "ไม่มีข้อมูลไฟล์เก็บถาวรสำหรับงานนี้"
 
-#: lib/evo_dash_web/live/review_live.ex:191
+#: lib/evo_dash_web/live/review_live.ex:192
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "ไม่มีข้อมูลเอเจนต์ที่เก็บถาวรสำหรับงานนี้"
 
-#: lib/evo_dash_web/live/review_live.ex:172
+#: lib/evo_dash_web/live/review_live.ex:173
 #, elixir-autogen, elixir-format
 msgid "No diff data available for this review."
 msgstr "ไม่มีข้อมูล diff สำหรับการตรวจสอบนี้"
@@ -1502,12 +1503,12 @@ msgstr "ไม่มีการกำหนดค่าโปรไฟล์โ
 msgid "No prefix (hexadecimal)"
 msgstr "ไม่มีคำนำหน้า (เลขฐานสิบหก)"
 
-#: lib/evo_dash_web/live/projects_live.ex:1140
+#: lib/evo_dash_web/live/projects_live.ex:1145
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "ยังไม่ได้เลือกโปรเจกต์ กรุณาเปิดโปรเจกต์ก่อน"
 
-#: lib/evo_dash_web/live/settings_live.ex:340
+#: lib/evo_dash_web/live/settings_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "No remote connections configured."
 msgstr "ไม่ได้กำหนดค่าการเชื่อมต่อระยะไกล"
@@ -1522,7 +1523,7 @@ msgstr "ไม่มีระบบแซนด์บ็อกซ์บนแพ
 msgid "No settings found matching \"%{query}\""
 msgstr "ไม่พบการตั้งค่าที่ตรงกับ \"%{query}\""
 
-#: lib/evo_dash_web/live/tasks_live.ex:217
+#: lib/evo_dash_web/live/tasks_live.ex:218
 #, elixir-autogen, elixir-format
 msgid "No tasks found"
 msgstr "ไม่พบงาน"
@@ -1594,7 +1595,7 @@ msgstr "ต้นทุนเอาต์พุต"
 msgid "Output Tokens"
 msgstr "โทเค็นส่งออก"
 
-#: lib/evo_dash_web/live/tasks_live.ex:291
+#: lib/evo_dash_web/live/tasks_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "Page %{current} of %{total}"
 msgstr "หน้า %{current} จาก %{total}"
@@ -1610,12 +1611,12 @@ msgstr "แม่"
 msgid "Path"
 msgstr "พาธ"
 
-#: lib/evo_dash_web/live/projects_live.ex:1247
+#: lib/evo_dash_web/live/projects_live.ex:1252
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "ที่อยู่พาธต้องไม่ว่างเปล่า"
 
-#: lib/evo_dash_web/live/system_live.ex:81
+#: lib/evo_dash_web/live/system_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Pause Scheduler"
 msgstr "หยุดตัวจัดตารางชั่วคราว"
@@ -1624,14 +1625,14 @@ msgstr "หยุดตัวจัดตารางชั่วคราว"
 #: lib/evo_dash_web/helpers.ex:76
 #: lib/evo_dash_web/live/agents_live.html.heex:62
 #: lib/evo_dash_web/live/system_live/charts.ex:114
-#: lib/evo_dash_web/live/tasks_live.ex:54
+#: lib/evo_dash_web/live/tasks_live.ex:55
 #, elixir-autogen, elixir-format
 msgid "Pending"
 msgstr "รอดำเนินการ"
 
-#: lib/evo_dash_web/components/layouts.ex:176
-#: lib/evo_dash_web/live/tasks_live.ex:100
-#: lib/evo_dash_web/live/tasks_live.ex:174
+#: lib/evo_dash_web/components/layouts.ex:183
+#: lib/evo_dash_web/live/tasks_live.ex:101
+#: lib/evo_dash_web/live/tasks_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Pending Review"
 msgstr "รอการตรวจสอบ"
@@ -1684,7 +1685,7 @@ msgstr "การตั้งค่าโปรเจกต์"
 msgid "Project created: %{path}"
 msgstr "สร้างโปรเจกต์แล้ว: %{path}"
 
-#: lib/evo_dash_web/components/layouts.ex:128
+#: lib/evo_dash_web/components/layouts.ex:135
 #, elixir-autogen, elixir-format
 msgid "Projects"
 msgstr "โปรเจกต์"
@@ -1699,7 +1700,7 @@ msgstr "ระบุคำแนะนำเฉพาะเจาะจงว่
 msgid "Provider"
 msgstr "ผู้ให้บริการ"
 
-#: lib/evo_dash_web/live/review_live.ex:628
+#: lib/evo_dash_web/live/review_live.ex:629
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "สร้าง pull request แล้ว: %{title}"
@@ -1719,7 +1720,7 @@ msgstr "ทางลัดสำหรับคำสั่งพัฒนาท
 msgid "Quick-select a model:"
 msgstr "เลือกโมเดลอย่างรวดเร็ว:"
 
-#: lib/evo_dash_web/live/system_live.ex:319
+#: lib/evo_dash_web/live/system_live.ex:458
 #, elixir-autogen, elixir-format
 msgid "Re-check"
 msgstr "ตรวจสอบอีกครั้ง"
@@ -1735,34 +1736,34 @@ msgid "Reject and delete these changes? This cannot be undone."
 msgstr "ปฏิเสธและลบการเปลี่ยนแปลงเหล่านี้? การดำเนินการนี้ไม่สามารถยกเลิกได้"
 
 #: lib/evo_dash_web/helpers.ex:146
-#: lib/evo_dash_web/live/tasks_live.ex:106
-#: lib/evo_dash_web/live/tasks_live.ex:178
+#: lib/evo_dash_web/live/tasks_live.ex:107
+#: lib/evo_dash_web/live/tasks_live.ex:179
 #, elixir-autogen, elixir-format
 msgid "Rejected"
 msgstr "ปฏิเสธ"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:32
-#: lib/evo_dash_web/live/settings_live.ex:169
+#: lib/evo_dash_web/live/settings_live.ex:170
 #, elixir-autogen, elixir-format
 msgid "Remote Connections"
 msgstr "การเชื่อมต่อระยะไกล"
 
-#: lib/evo_dash_web/live/settings_live.ex:472
+#: lib/evo_dash_web/live/settings_live.ex:473
 #, elixir-autogen, elixir-format
 msgid "Remote Path"
 msgstr "พาธระยะไกล"
 
-#: lib/evo_dash_web/live/projects_live.ex:395
+#: lib/evo_dash_web/live/projects_live.ex:396
 #, elixir-autogen, elixir-format
 msgid "Repo"
 msgstr "ที่เก็บ"
 
-#: lib/evo_dash_web/live/projects_live.ex:1263
+#: lib/evo_dash_web/live/projects_live.ex:1268
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "ที่เก็บ '%{id}' ลงทะเบียนไว้แล้ว"
 
-#: lib/evo_dash_web/live/projects_live.ex:1314
+#: lib/evo_dash_web/live/projects_live.ex:1319
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "ไม่พบที่เก็บ '%{id}'"
@@ -1772,7 +1773,7 @@ msgstr "ไม่พบที่เก็บ '%{id}'"
 msgid "Repo ID"
 msgstr "รหัสพื้นที่เก็บข้อมูล"
 
-#: lib/evo_dash_web/live/projects_live.ex:1244
+#: lib/evo_dash_web/live/projects_live.ex:1249
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "ID ที่เก็บต้องไม่ว่างเปล่า"
@@ -1782,7 +1783,7 @@ msgstr "ID ที่เก็บต้องไม่ว่างเปล่า
 msgid "Repo: %{repo_id}"
 msgstr "รีโป: %{repo_id}"
 
-#: lib/evo_dash_web/live/system_live.ex:428
+#: lib/evo_dash_web/live/system_live.ex:567
 #, elixir-autogen, elixir-format
 msgid "Required Tools"
 msgstr "เครื่องมือที่จำเป็น"
@@ -1792,7 +1793,7 @@ msgstr "เครื่องมือที่จำเป็น"
 msgid "Required for OpenAI-compatible providers."
 msgstr "จำเป็นสำหรับผู้ให้บริการที่รองรับ OpenAI"
 
-#: lib/evo_dash_web/live/tasks_live.ex:141
+#: lib/evo_dash_web/live/tasks_live.ex:142
 #, elixir-autogen, elixir-format
 msgid "Reset"
 msgstr "รีเซ็ต"
@@ -1802,7 +1803,7 @@ msgstr "รีเซ็ต"
 msgid "Reset %{key} to default."
 msgstr "รีเซ็ต %{key} เป็นค่าเริ่มต้น"
 
-#: lib/evo_dash_web/live/tasks_live.ex:139
+#: lib/evo_dash_web/live/tasks_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Reset all filters"
 msgstr "รีเซ็ตตัวกรองทั้งหมด"
@@ -1812,7 +1813,7 @@ msgstr "รีเซ็ตตัวกรองทั้งหมด"
 msgid "Reset to default"
 msgstr "รีเซ็ตเป็นค่าเริ่มต้น"
 
-#: lib/evo_dash_web/live/system_live.ex:484
+#: lib/evo_dash_web/live/system_live.ex:623
 #, elixir-autogen, elixir-format
 msgid "Resource limits"
 msgstr "ขีดจำกัดทรัพยากร"
@@ -1832,13 +1833,13 @@ msgstr "ทรัพยากร"
 msgid "Response"
 msgstr "การตอบกลับ"
 
-#: lib/evo_dash_web/live/system_live.ex:107
-#: lib/evo_dash_web/live/system_live.ex:644
+#: lib/evo_dash_web/live/system_live.ex:108
+#: lib/evo_dash_web/live/system_live.ex:783
 #, elixir-autogen, elixir-format
 msgid "Restart System"
 msgstr "รีสตาร์ทระบบ"
 
-#: lib/evo_dash_web/live/system_live.ex:614
+#: lib/evo_dash_web/live/system_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Restart System?"
 msgstr "รีสตาร์ทระบบ?"
@@ -1849,7 +1850,7 @@ msgstr "รีสตาร์ทระบบ?"
 msgid "Result"
 msgstr "ผลลัพธ์"
 
-#: lib/evo_dash_web/live/system_live.ex:81
+#: lib/evo_dash_web/live/system_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "Resume Scheduler"
 msgstr "ดำเนินการตัวจัดตารางต่อ"
@@ -1861,7 +1862,7 @@ msgid "Resume from"
 msgstr "ดำเนินการต่อจาก"
 
 #: lib/evo_dash_web/components/settings_components.ex:490
-#: lib/evo_dash_web/live/welcome_live.ex:378
+#: lib/evo_dash_web/live/welcome_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "Retest"
 msgstr "ทดสอบอีกครั้ง"
@@ -1874,7 +1875,7 @@ msgstr "การลองใหม่"
 #: lib/evo_dash_web/components/remote_gate_components.ex:86
 #: lib/evo_dash_web/components/settings_components.ex:521
 #: lib/evo_dash_web/live/projects_live/remote_view.ex:286
-#: lib/evo_dash_web/live/welcome_live.ex:390
+#: lib/evo_dash_web/live/welcome_live.ex:391
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "ลองใหม่"
@@ -1900,12 +1901,12 @@ msgstr "ตรวจสอบ"
 msgid "Review Changes"
 msgstr "ตรวจสอบการเปลี่ยนแปลง"
 
-#: lib/evo_dash_web/live/review_live.ex:30
+#: lib/evo_dash_web/live/review_live.ex:31
 #, elixir-autogen, elixir-format
 msgid "Review Not Available"
 msgstr "ไม่สามารถตรวจสอบได้"
 
-#: lib/evo_dash_web/live/review_live.ex:602
+#: lib/evo_dash_web/live/review_live.ex:603
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "การตรวจสอบถูกเพิกเฉยและยกเลิกแล้ว"
@@ -1915,37 +1916,37 @@ msgstr "การตรวจสอบถูกเพิกเฉยและย
 msgid "Run"
 msgstr "เรียกใช้"
 
-#: lib/evo_dash_web/components/layouts.ex:176
+#: lib/evo_dash_web/components/layouts.ex:183
 #: lib/evo_dash_web/helpers.ex:77
 #: lib/evo_dash_web/live/agents_live.html.heex:66
 #: lib/evo_dash_web/live/system_live/charts.ex:102
-#: lib/evo_dash_web/live/tasks_live.ex:51
+#: lib/evo_dash_web/live/tasks_live.ex:52
 #, elixir-autogen, elixir-format
 msgid "Running"
 msgstr "กำลังทำงาน"
 
-#: lib/evo_dash_web/live/system_live.ex:57
+#: lib/evo_dash_web/live/system_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Running agents continue. No new slots or agents will be granted until resumed."
 msgstr "เอเจนต์ที่กำลังทำงานดำเนินต่อไป จะไม่มีการจัดสรรสล็อตหรือเอเจนต์ใหม่จนกว่าจะดำเนินการต่อ"
 
-#: lib/evo_dash_web/live/settings_live.ex:392
+#: lib/evo_dash_web/live/settings_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "SSH Target"
 msgstr "เป้าหมาย SSH"
 
-#: lib/evo_dash_web/live/settings_live.ex:358
+#: lib/evo_dash_web/live/settings_live.ex:359
 #, elixir-autogen, elixir-format
 msgid "SSH port, identity file, and other options are read from your SSH config — no need to enter them here."
 msgstr "พอร์ต SSH, ไฟล์ระบุตัวตน และตัวเลือกอื่นๆ อ่านจากการกำหนดค่า SSH ของคุณ — ไม่จำเป็นต้องกรอกที่นี่"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:26
-#: lib/evo_dash_web/live/system_live.ex:461
+#: lib/evo_dash_web/live/system_live.ex:600
 #, elixir-autogen, elixir-format
 msgid "Sandbox"
 msgstr "แซนด์บ็อกซ์"
 
-#: lib/evo_dash_web/live/settings_live.ex:496
+#: lib/evo_dash_web/live/settings_live.ex:497
 #, elixir-autogen, elixir-format
 msgid "Save"
 msgstr "บันทึก"
@@ -1976,23 +1977,23 @@ msgstr "บันทึกโปรไฟล์"
 msgid "Scheduler"
 msgstr "ตัวจัดตาราง"
 
-#: lib/evo_dash_web/live/system_live.ex:53
+#: lib/evo_dash_web/live/system_live.ex:54
 #, elixir-autogen, elixir-format
 msgid "Scheduler Active"
 msgstr "ตัวจัดตารางกำลังทำงาน"
 
-#: lib/evo_dash_web/live/system_live.ex:52
+#: lib/evo_dash_web/live/system_live.ex:53
 #: lib/evo_dash_web/live/system_live/charts.ex:237
 #, elixir-autogen, elixir-format
 msgid "Scheduler Paused"
 msgstr "ตัวจัดตารางหยุดชั่วคราว"
 
-#: lib/evo_dash_web/live/system_live.ex:982
+#: lib/evo_dash_web/live/system_live.ex:1150
 #, elixir-autogen, elixir-format
 msgid "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
 msgstr "ตัวจัดตารางหยุดชั่วคราว เอเจนต์ที่กำลังทำงานดำเนินต่อไป แต่จะไม่มีการจัดสรรสล็อตหรือเอเจนต์ใหม่"
 
-#: lib/evo_dash_web/live/system_live.ex:966
+#: lib/evo_dash_web/live/system_live.ex:1134
 #, elixir-autogen, elixir-format
 msgid "Scheduler resumed. New agents and slots are being granted."
 msgstr "ตัวจัดตารางดำเนินการต่อ กำลังจัดสรรเอเจนต์และสล็อตใหม่"
@@ -2002,7 +2003,7 @@ msgstr "ตัวจัดตารางดำเนินการต่อ �
 msgid "Search Results"
 msgstr "ผลลัพธ์การค้นหา"
 
-#: lib/evo_dash_web/live/tasks_live.ex:126
+#: lib/evo_dash_web/live/tasks_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Search by task ID, prompt, or objective..."
 msgstr "ค้นหาด้วย ID งาน, พรอมต์ หรือวัตถุประสงค์..."
@@ -2013,7 +2014,7 @@ msgid "Select a provider to quickly configure your model and API key."
 msgstr "เลือกผู้ให้บริการเพื่อกำหนดค่าโมเดลและคีย์ API ของคุณอย่างรวดเร็ว"
 
 #: lib/evo_dash_web/components/settings_components.ex:137
-#: lib/evo_dash_web/live/welcome_live.ex:138
+#: lib/evo_dash_web/live/welcome_live.ex:139
 #, elixir-autogen, elixir-format
 msgid "Select a variant:"
 msgstr "เลือกตัวแปร:"
@@ -2023,7 +2024,7 @@ msgstr "เลือกตัวแปร:"
 msgid "Select an agent to view details"
 msgstr "เลือกเอเจนต์เพื่อดูรายละเอียด"
 
-#: lib/evo_dash_web/live/settings_live.ex:1438
+#: lib/evo_dash_web/live/settings_live.ex:1444
 #, elixir-autogen, elixir-format
 msgid "Selected profile has no model configured."
 msgstr "โปรไฟล์ที่เลือกไม่มีโมเดลที่กำหนดค่าไว้"
@@ -2034,7 +2035,7 @@ msgid "Server"
 msgstr "เซิร์ฟเวอร์"
 
 #: lib/evo_dash_web/components/settings_components.ex:354
-#: lib/evo_dash_web/live/welcome_live.ex:281
+#: lib/evo_dash_web/live/welcome_live.ex:282
 #, elixir-autogen, elixir-format
 msgid "Set"
 msgstr "ตั้งค่า"
@@ -2049,12 +2050,12 @@ msgstr "ตั้งค่าโมเดล"
 msgid "Set your user identity for Git commits and collaboration."
 msgstr "ตั้งค่าตัวตนผู้ใช้ของคุณสำหรับคอมมิต Git และการทำงานร่วมกัน"
 
-#: lib/evo_dash_web/live/settings_live.ex:286
+#: lib/evo_dash_web/live/settings_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Setting permissions"
 msgstr "กำลังตั้งค่าสิทธิ์"
 
-#: lib/evo_dash_web/components/layouts.ex:143
+#: lib/evo_dash_web/components/layouts.ex:150
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "การตั้งค่า"
@@ -2064,22 +2065,22 @@ msgstr "การตั้งค่า"
 msgid "Short description of what this repo does"
 msgstr "คำอธิบายสั้น ๆ ว่าพื้นที่เก็บข้อมูลนี้ทำหน้าที่อะไร"
 
-#: lib/evo_dash_web/live/tasks_live.ex:251
+#: lib/evo_dash_web/live/tasks_live.ex:252
 #, elixir-autogen, elixir-format
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "กำลังแสดงงานที่ %{start}–%{end} จากทั้งหมด %{total} งาน"
 
-#: lib/evo_dash_web/live/review_live.ex:692
+#: lib/evo_dash_web/live/review_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "เริ่มต้นงานสกัดทักษะแล้ว คุณสามารถติดตามความคืบหน้าได้บนแดชบอร์ด"
 
-#: lib/evo_dash_web/live/welcome_live.ex:413
+#: lib/evo_dash_web/live/welcome_live.ex:414
 #, elixir-autogen, elixir-format
 msgid "Skip"
 msgstr "ข้าม"
 
-#: lib/evo_dash_web/components/layouts.ex:543
+#: lib/evo_dash_web/components/layouts.ex:599
 #, elixir-autogen, elixir-format
 msgid "Something went wrong!"
 msgstr "เกิดข้อผิดพลาด!"
@@ -2115,7 +2116,7 @@ msgstr "คอมมิตเริ่มต้น"
 msgid "Starting Node"
 msgstr "โหนดเริ่มต้น"
 
-#: lib/evo_dash_web/live/settings_live.ex:312
+#: lib/evo_dash_web/live/settings_live.ex:313
 #, elixir-autogen, elixir-format
 msgid "Starting daemon"
 msgstr "กำลังเริ่มเดมอน"
@@ -2130,13 +2131,13 @@ msgstr "สถานะ"
 msgid "Status Legend"
 msgstr "คำอธิบายสถานะ"
 
-#: lib/evo_dash_web/live/system_live.ex:115
-#: lib/evo_dash_web/live/system_live.ex:688
+#: lib/evo_dash_web/live/system_live.ex:116
+#: lib/evo_dash_web/live/system_live.ex:827
 #, elixir-autogen, elixir-format
 msgid "Stop System"
 msgstr "หยุดระบบ"
 
-#: lib/evo_dash_web/live/system_live.ex:658
+#: lib/evo_dash_web/live/system_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Stop System?"
 msgstr "หยุดระบบ?"
@@ -2146,43 +2147,43 @@ msgstr "หยุดระบบ?"
 msgid "Switch node"
 msgstr "Switch node"
 
-#: lib/evo_dash_web/components/layouts.ex:149
-#: lib/evo_dash_web/components/layouts.ex:478
+#: lib/evo_dash_web/components/layouts.ex:156
+#: lib/evo_dash_web/components/layouts.ex:534
 #, elixir-autogen, elixir-format
 msgid "System"
 msgstr "ระบบ"
 
-#: lib/evo_dash_web/live/system_live.ex:91
+#: lib/evo_dash_web/live/system_live.ex:92
 #, elixir-autogen, elixir-format
 msgid "System Control"
 msgstr "การควบคุมระบบ"
 
-#: lib/evo_dash_web/live/system_live.ex:596
+#: lib/evo_dash_web/live/system_live.ex:735
 #, elixir-autogen, elixir-format
 msgid "System Dashboard"
 msgstr "แดชบอร์ดระบบ"
 
-#: lib/evo_dash_web/live/system_live.ex:302
+#: lib/evo_dash_web/live/system_live.ex:441
 #, elixir-autogen, elixir-format
 msgid "System Self-Check"
 msgstr "การตรวจสอบระบบด้วยตนเอง"
 
-#: lib/evo_dash_web/live/system_live.ex:1029
+#: lib/evo_dash_web/live/system_live.ex:1197
 #, elixir-autogen, elixir-format
 msgid "System is restarting. Please wait while the Erlang VM comes back up."
 msgstr "ระบบกำลังรีสตาร์ท โปรดรอขณะที่ Erlang VM เริ่มต้นใหม่"
 
-#: lib/evo_dash_web/live/system_live.ex:1072
+#: lib/evo_dash_web/live/system_live.ex:1240
 #, elixir-autogen, elixir-format
 msgid "System is stopping. The Erlang VM will shut down and must be started again manually."
 msgstr "ระบบกำลังหยุด Erlang VM จะปิดลงและต้องเริ่มต้นด้วยตนเองอีกครั้ง"
 
-#: lib/evo_dash_web/live/system_live.ex:304
+#: lib/evo_dash_web/live/system_live.ex:443
 #, elixir-autogen, elixir-format
 msgid "System status and health overview"
 msgstr "ภาพรวมสถานะและความสมบูรณ์ของระบบ"
 
-#: lib/evo_dash_web/components/layouts.ex:570
+#: lib/evo_dash_web/components/layouts.ex:626
 #, elixir-autogen, elixir-format
 msgid "System theme"
 msgstr "ธีมระบบ"
@@ -2197,7 +2198,7 @@ msgstr "ประวัติงาน"
 msgid "Task ID"
 msgstr "รหัสงาน"
 
-#: lib/evo_dash_web/live/tasks_live.ex:313
+#: lib/evo_dash_web/live/tasks_live.ex:314
 #, elixir-autogen, elixir-format
 msgid "Task Result"
 msgstr "ผลลัพธ์ของงาน"
@@ -2217,12 +2218,12 @@ msgstr "ไม่พบงาน"
 msgid "Task not found. It may have been deleted."
 msgstr "ไม่พบงาน อาจถูกลบไปแล้ว"
 
-#: lib/evo_dash_web/components/layouts.ex:138
+#: lib/evo_dash_web/components/layouts.ex:145
 #, elixir-autogen, elixir-format
 msgid "Tasks"
 msgstr "งาน"
 
-#: lib/evo_dash_web/live/tasks_live.ex:222
+#: lib/evo_dash_web/live/tasks_live.ex:223
 #, elixir-autogen, elixir-format
 msgid "Tasks will appear here once you start them from the dashboard."
 msgstr "งานจะปรากฏที่นี่เมื่อคุณเริ่มงานจากแดชบอร์ด"
@@ -2234,18 +2235,18 @@ msgstr "อุณหภูมิ"
 
 #: lib/evo_dash_web/components/settings_components.ex:427
 #: lib/evo_dash_web/components/settings_components.ex:451
-#: lib/evo_dash_web/live/welcome_live.ex:358
+#: lib/evo_dash_web/live/welcome_live.ex:359
 #, elixir-autogen, elixir-format
 msgid "Test Connection"
 msgstr "ทดสอบการเชื่อมต่อ"
 
-#: lib/evo_dash_web/live/system_live.ex:575
+#: lib/evo_dash_web/live/system_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "Test in Settings"
 msgstr "ทดสอบใน Settings"
 
 #: lib/evo_dash_web/components/settings_components.ex:457
-#: lib/evo_dash_web/live/welcome_live.ex:363
+#: lib/evo_dash_web/live/welcome_live.ex:364
 #, elixir-autogen, elixir-format
 msgid "Testing LLM connection..."
 msgstr "กำลังทดสอบการเชื่อมต่อ LLM..."
@@ -2261,7 +2262,7 @@ msgstr "ID ของงานก่อนหน้าที่จะดำเน
 msgid "The LLM provider name"
 msgstr "ชื่อผู้ให้บริการ LLM"
 
-#: lib/evo_dash_web/live/system_live.ex:673
+#: lib/evo_dash_web/live/system_live.ex:812
 #, elixir-autogen, elixir-format
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "VM จะหยุดและต้องรีสตาร์ทด้วยตนเอง สถานะรันไทม์ในหน่วยความจำทั้งหมด (งานที่กำลังทำงาน สถานะตัวจัดตาราง เอเจนต์ที่กำลังดำเนินการ) จะสูญหาย การกระทำนี้ไม่สามารถย้อนกลับได้"
@@ -2288,7 +2289,7 @@ msgstr "ชื่อโมเดล"
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "ไดเรกทอรีย่อยภายในโปรเจกต์ที่จะเริ่มวิวัฒนาการจาก ใช้ './' สำหรับราก"
 
-#: lib/evo_dash_web/live/projects_live.ex:340
+#: lib/evo_dash_web/live/projects_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "There are no running agents on this remote node."
 msgstr "ไม่มีเอเจนต์ที่กำลังทำงานบนโหนดระยะไกลนี้"
@@ -2304,13 +2305,13 @@ msgstr "กำลังคิด"
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "แบรนช์นี้ไม่มีอยู่อีกต่อไป คุณสามารถยกเลิกได้ด้วยปุ่มละเว้น"
 
-#: lib/evo_dash_web/live/system_live.ex:623
+#: lib/evo_dash_web/live/system_live.ex:762
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the Erlang VM. All applications will be torn down and restarted."
 msgstr "การดำเนินการนี้จะรีสตาร์ท Erlang VM แบบนุ่มนวล แอปพลิเคชันทั้งหมดจะถูกยุบและเริ่มต้นใหม่"
 
-#: lib/evo_dash_web/components/layouts.ex:291
-#: lib/evo_dash_web/live/system_live.ex:667
+#: lib/evo_dash_web/components/layouts.ex:304
+#: lib/evo_dash_web/live/system_live.ex:806
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "การดำเนินการนี้จะปิด Erlang VM อย่างนุ่มนวล แอปพลิเคชันทั้งหมดจะถูกหยุดตามลำดับ"
@@ -2326,7 +2327,7 @@ msgstr "การใช้โทเค็นและต้นทุน"
 msgid "Token and Cost"
 msgstr "โทเค็นและต้นทุน"
 
-#: lib/evo_dash_web/live/projects_live.ex:401
+#: lib/evo_dash_web/live/projects_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Tokens"
 msgstr "โทเค็น"
@@ -2391,7 +2392,7 @@ msgstr "การตัดทอน"
 msgid "Try a different search term."
 msgstr "ลองใช้คำค้นหาอื่น"
 
-#: lib/evo_dash_web/live/tasks_live.ex:220
+#: lib/evo_dash_web/live/tasks_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Try adjusting your filters or search query."
 msgstr "ลองปรับตัวกรองหรือข้อความค้นหาของคุณ"
@@ -2409,8 +2410,8 @@ msgstr "พิมพ์สตริงโมเดลหรือใช้กา
 #: lib/evo_dash_web/helpers.ex:84
 #: lib/evo_dash_web/helpers.ex:150
 #: lib/evo_dash_web/helpers.ex:485
-#: lib/evo_dash_web/live/projects_live.ex:382
-#: lib/evo_dash_web/live/settings_live.ex:1955
+#: lib/evo_dash_web/live/projects_live.ex:383
+#: lib/evo_dash_web/live/settings_live.ex:1961
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "ไม่ทราบ"
@@ -2420,16 +2421,16 @@ msgstr "ไม่ทราบ"
 msgid "Unknown Repo"
 msgstr "รีโปที่ไม่รู้จัก"
 
-#: lib/evo_dash_web/live/settings_live.ex:1202
+#: lib/evo_dash_web/live/settings_live.ex:1208
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:44
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:104
-#: lib/evo_dash_web/live/welcome_live.ex:519
-#: lib/evo_dash_web/live/welcome_live.ex:735
+#: lib/evo_dash_web/live/welcome_live.ex:520
+#: lib/evo_dash_web/live/welcome_live.ex:736
 #, elixir-autogen, elixir-format
 msgid "Unknown provider."
 msgstr "ไม่รู้จักผู้ให้บริการ"
 
-#: lib/evo_dash_web/live/settings_live.ex:276
+#: lib/evo_dash_web/live/settings_live.ex:277
 #, elixir-autogen, elixir-format
 msgid "Uploading binary"
 msgstr "กำลังอัปโหลดไบนารี"
@@ -2444,8 +2445,8 @@ msgstr "ผู้ใช้"
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "ใช้เอเจนต์แบบบนลงล่างเพียงตัวเดียวเพื่อปรับเปลี่ยนโค้ดเบสตามวัตถุประสงค์ของคุณ"
 
-#: lib/evo_dash_web/live/settings_live.ex:1011
-#: lib/evo_dash_web/live/settings_live.ex:1104
+#: lib/evo_dash_web/live/settings_live.ex:1017
+#: lib/evo_dash_web/live/settings_live.ex:1110
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "การตรวจสอบล้มเหลว กรุณาแก้ไขข้อผิดพลาดด้านล่าง"
@@ -2477,7 +2478,7 @@ msgstr "ดูวัตถุประสงค์เต็ม"
 msgid "View PR"
 msgstr "ดู PR"
 
-#: lib/evo_dash_web/live/system_live.ex:598
+#: lib/evo_dash_web/live/system_live.ex:737
 #, elixir-autogen, elixir-format
 msgid "View system metrics, processes, and application telemetry"
 msgstr "ดูเมตริกระบบ กระบวนการ และเทเลเมทรีของแอปพลิเคชัน"
@@ -2496,7 +2497,7 @@ msgstr "กำลังรอ"
 msgid "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
 msgstr "คำเตือน: API ที่รองรับ OpenAI มีความเข้ากันได้แตกต่างกันไป ฟีเจอร์บางอย่าง (การเรียกใช้เครื่องมือ การสตรีม ผลลัพธ์แบบมีโครงสร้าง) อาจไม่ทำงานขึ้นอยู่กับผู้ให้บริการ"
 
-#: lib/evo_dash_web/components/layouts.ex:531
+#: lib/evo_dash_web/components/layouts.ex:587
 #, elixir-autogen, elixir-format
 msgid "We can't find the internet"
 msgstr "ไม่พบการเชื่อมต่ออินเทอร์เน็ต"
@@ -2529,7 +2530,7 @@ msgstr "ปิด"
 msgid "directories"
 msgstr "ไดเรกทอรี"
 
-#: lib/evo_dash_web/live/settings_live.ex:386
+#: lib/evo_dash_web/live/settings_live.ex:387
 #, elixir-autogen, elixir-format
 msgid "e.g. GPU Server"
 msgstr "เช่น GPU Server"
@@ -2588,7 +2589,7 @@ msgstr "เช่น abc1234 หรือ HEAD"
 msgid "empty"
 msgstr "ว่าง"
 
-#: lib/evo_dash_web/live/system_live.ex:527
+#: lib/evo_dash_web/live/system_live.ex:666
 #, elixir-autogen, elixir-format
 msgid "flake.nix"
 msgstr "flake.nix"
@@ -2608,7 +2609,7 @@ msgstr "genesis.toml"
 msgid "genesis.toml found — using project settings"
 msgstr "พบ genesis.toml — ใช้การตั้งค่าของโปรเจกต์"
 
-#: lib/evo_dash_web/live/settings_live.ex:398
+#: lib/evo_dash_web/live/settings_live.ex:399
 #, elixir-autogen, elixir-format
 msgid "gpu-server or user@host"
 msgstr "gpu-server หรือ user@host"
@@ -2619,7 +2620,7 @@ msgstr "gpu-server หรือ user@host"
 msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
-#: lib/evo_dash_web/components/layouts.ex:344
+#: lib/evo_dash_web/components/layouts.ex:398
 #: lib/evo_dash_web/helpers.ex:304
 #, elixir-autogen, elixir-format
 msgid "just now"
@@ -2961,7 +2962,7 @@ msgstr "ที่อยู่ IP ที่แดชบอร์ดเว็บ�
 msgid "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
 msgstr "พอร์ตที่แดชบอร์ดเว็บฟัง ต้องอยู่ระหว่าง 1024 ถึง 65535 (พอร์ตที่มีสิทธิพิเศษต่ำกว่า 1024 ไม่รองรับด้วยเหตุผลด้านความปลอดภัย)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:96
+#: lib/evo_dash_web/live/welcome_live.ex:97
 #, elixir-autogen, elixir-format
 msgid "Add your first LLM"
 msgstr "เพิ่ม LLM ตัวแรกของคุณ"
@@ -2971,17 +2972,17 @@ msgstr "เพิ่ม LLM ตัวแรกของคุณ"
 msgid "Advanced provider-specific options merged into the model spec map."
 msgstr "ตัวเลือกเฉพาะผู้ให้บริการขั้นสูงที่ผสานเข้าในแผนผัง spec ของโมเดล"
 
-#: lib/evo_dash_web/components/layouts.ex:462
+#: lib/evo_dash_web/components/layouts.ex:518
 #, elixir-autogen, elixir-format
 msgid "Change theme"
 msgstr "เปลี่ยนธีม"
 
-#: lib/evo_dash_web/live/welcome_live.ex:190
+#: lib/evo_dash_web/live/welcome_live.ex:191
 #, elixir-autogen, elixir-format
 msgid "Choose a model:"
 msgstr "เลือกโมเดล:"
 
-#: lib/evo_dash_web/components/layouts.ex:215
+#: lib/evo_dash_web/components/layouts.ex:222
 #, elixir-autogen, elixir-format
 msgid "Collapse sidebar"
 msgstr "ยุบแถบด้านข้าง"
@@ -2991,12 +2992,12 @@ msgstr "ยุบแถบด้านข้าง"
 msgid "Configure the local Genesis node identity and distribution settings."
 msgstr "กำหนดค่าข้อมูลประจำตัวของโหนด Genesis ในเครื่องและการตั้งค่าการกระจาย"
 
-#: lib/evo_dash_web/components/layouts.ex:494
+#: lib/evo_dash_web/components/layouts.ex:550
 #, elixir-autogen, elixir-format
 msgid "Dark"
 msgstr "มืด"
 
-#: lib/evo_dash_web/live/welcome_live.ex:300
+#: lib/evo_dash_web/live/welcome_live.ex:301
 #, elixir-autogen, elixir-format
 msgid "Enter your API key for %{provider}."
 msgstr "ป้อนคีย์ API สำหรับ %{provider}"
@@ -3016,29 +3017,29 @@ msgstr "Extra Config ต้องเป็นวัตถุ JSON (แผนท�
 msgid "Extra Config must be valid JSON."
 msgstr "Extra Config ต้องเป็น JSON ที่ถูกต้อง"
 
-#: lib/evo_dash_web/live/welcome_live.ex:419
+#: lib/evo_dash_web/live/welcome_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
 msgstr "Genesis %{version}"
 
-#: lib/evo_dash_web/live/welcome_live.ex:60
+#: lib/evo_dash_web/live/welcome_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
 msgstr "Genesis คือเฟรมเวิร์กพัฒนาซอฟต์แวร์ที่ขับเคลื่อนด้วย AI มาตั้งค่า LLM ตัวแรกของคุณเพื่อเริ่มต้นกันเถอะ"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:72
-#: lib/evo_dash_web/live/welcome_live.ex:84
+#: lib/evo_dash_web/live/welcome_complete_live.ex:73
+#: lib/evo_dash_web/live/welcome_live.ex:85
 #, elixir-autogen, elixir-format
 msgid "Go to Dashboard"
 msgstr "ไปที่แดชบอร์ด"
 
-#: lib/evo_dash_web/components/layouts.ex:486
+#: lib/evo_dash_web/components/layouts.ex:542
 #, elixir-autogen, elixir-format
 msgid "Light"
 msgstr "สว่าง"
 
 #: lib/evo_dash_web/components/task_form_components.ex:502
-#: lib/evo_dash_web/live/projects_live.ex:488
+#: lib/evo_dash_web/live/projects_live.ex:489
 #, elixir-autogen, elixir-format
 msgid "No build system"
 msgstr "ไม่มีระบบบิวด์"
@@ -3048,13 +3049,13 @@ msgstr "ไม่มีระบบบิวด์"
 msgid "Node"
 msgstr "โหนด"
 
-#: lib/evo_dash_web/live/system_live.ex:421
-#: lib/evo_dash_web/live/welcome_live.ex:87
+#: lib/evo_dash_web/live/system_live.ex:560
+#: lib/evo_dash_web/live/welcome_live.ex:88
 #, elixir-autogen, elixir-format
 msgid "Open Settings"
 msgstr "เปิดการตั้งค่า"
 
-#: lib/evo_dash_web/live/projects_live.ex:1250
+#: lib/evo_dash_web/live/projects_live.ex:1255
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "เส้นทางต้องเป็นเส้นทางสัมบูรณ์"
@@ -3079,7 +3080,7 @@ msgstr "ตัวเลือกผู้ให้บริการต้อง
 msgid "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
 msgstr "ตัวเลือกเฉพาะผู้ให้บริการที่ส่งไปยัง API ของ LLM สำหรับ OpenAI ค่า 'store' จะเริ่มต้นเป็น false โดยอัตโนมัติ"
 
-#: lib/evo_dash_web/live/welcome_live.ex:74
+#: lib/evo_dash_web/live/welcome_live.ex:75
 #, elixir-autogen, elixir-format
 msgid "Ready to build!"
 msgstr "พร้อมที่จะสร้างแล้ว!"
@@ -3089,33 +3090,33 @@ msgstr "พร้อมที่จะสร้างแล้ว!"
 msgid "Recent Projects"
 msgstr "โปรเจกต์ล่าสุด"
 
-#: lib/evo_dash_web/components/layouts.ex:66
+#: lib/evo_dash_web/components/layouts.ex:73
 #, elixir-autogen, elixir-format
 msgid "Toggle navigation"
 msgstr "สลับการนำทาง"
 
-#: lib/evo_dash_web/live/welcome_live.ex:53
+#: lib/evo_dash_web/live/welcome_live.ex:54
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
 msgstr "ยินดีต้อนรับสู่ Genesis"
 
-#: lib/evo_dash_web/live/welcome_live.ex:52
+#: lib/evo_dash_web/live/welcome_live.ex:53
 #, elixir-autogen, elixir-format
 msgid "You're All Set!"
 msgstr "คุณพร้อมแล้ว!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:57
+#: lib/evo_dash_web/live/welcome_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
 msgstr "LLM ของคุณได้รับการกำหนดค่าและพร้อมใช้งานแล้ว คุณสามารถเริ่มสร้างและวิวัฒนาการโค้ดเบสด้วย Genesis ได้ทันที"
 
-#: lib/evo_dash_web/live/welcome_live.ex:77
+#: lib/evo_dash_web/live/welcome_live.ex:78
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured. You can manage it anytime in Settings."
 msgstr "LLM ของคุณได้รับการกำหนดค่าแล้ว คุณสามารถจัดการได้ทุกครั้งในการตั้งค่า"
 
-#: lib/evo_dash_web/components/layouts.ex:173
-#: lib/evo_dash_web/components/layouts.ex:185
+#: lib/evo_dash_web/components/layouts.ex:180
+#: lib/evo_dash_web/components/layouts.ex:192
 #, elixir-autogen, elixir-format
 msgid "completed"
 msgstr "เสร็จสมบูรณ์"
@@ -3131,6 +3132,7 @@ msgid "Message sent to agent"
 msgstr "ส่งข้อความไปยังเอเจนต์แล้ว"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:703
+#: lib/evo_dash_web/live/home_live.ex:149
 #, elixir-autogen, elixir-format
 msgid "Send"
 msgstr "ส่ง"
@@ -3160,10 +3162,11 @@ msgstr "ข้อความของคุณจะถูกเพิ่มเ
 msgid "Agent Report"
 msgstr "รายงานเอเจนต์"
 
-#: lib/evo_dash_web/live/projects_live.ex:1037
-#: lib/evo_dash_web/live/review_live.ex:338
-#: lib/evo_dash_web/live/tasks_live.ex:739
-#: lib/evo_dash_web/live/welcome_complete_live.ex:88
+#: lib/evo_dash_web/live/projects_live.ex:1038
+#: lib/evo_dash_web/live/review_live.ex:339
+#: lib/evo_dash_web/live/settings_live.ex:914
+#: lib/evo_dash_web/live/tasks_live.ex:740
+#: lib/evo_dash_web/live/welcome_complete_live.ex:89
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
 msgstr "คัดลอกไปยังคลิปบอร์ดแล้ว"
@@ -3188,107 +3191,107 @@ msgstr "ข้อความดิบ"
 msgid "Rendered Markdown"
 msgstr "มาร์กดาวน์ที่แสดงผล"
 
-#: lib/evo_dash_web/live/welcome_live.ex:927
+#: lib/evo_dash_web/live/welcome_live.ex:928
 #, elixir-autogen, elixir-format
 msgid "Alibaba Cloud (Qwen)"
 msgstr "Alibaba Cloud (Qwen)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:921
+#: lib/evo_dash_web/live/welcome_live.ex:922
 #, elixir-autogen, elixir-format
 msgid "Anthropic"
 msgstr "Anthropic"
 
-#: lib/evo_dash_web/live/welcome_live.ex:925
+#: lib/evo_dash_web/live/welcome_live.ex:926
 #, elixir-autogen, elixir-format
 msgid "DeepSeek"
 msgstr "DeepSeek"
 
-#: lib/evo_dash_web/live/welcome_live.ex:923
+#: lib/evo_dash_web/live/welcome_live.ex:924
 #, elixir-autogen, elixir-format
 msgid "Google"
 msgstr "Google"
 
-#: lib/evo_dash_web/live/welcome_live.ex:931
+#: lib/evo_dash_web/live/welcome_live.ex:932
 #, elixir-autogen, elixir-format
 msgid "MiniMax"
 msgstr "MiniMax"
 
-#: lib/evo_dash_web/live/welcome_live.ex:796
+#: lib/evo_dash_web/live/welcome_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Model and API key saved. You're all set!"
 msgstr "บันทึกโมเดลและคีย์ API แล้ว คุณพร้อมใช้งานแล้ว!"
 
-#: lib/evo_dash_web/live/welcome_live.ex:933
+#: lib/evo_dash_web/live/welcome_live.ex:934
 #, elixir-autogen, elixir-format
 msgid "Moonshot AI (Kimi)"
 msgstr "Moonshot AI (Kimi)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:233
+#: lib/evo_dash_web/live/welcome_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
 msgstr "ต้องการโมเดลอื่น, URL ฐาน API แบบกำหนดเอง, หรือการตั้งค่าขั้นสูงหรือไม่? ข้ามหน้านี้ไปที่"
 
-#: lib/evo_dash_web/live/welcome_live.ex:200
+#: lib/evo_dash_web/live/welcome_live.ex:201
 #, elixir-autogen, elixir-format
 msgid "No models match your search."
 msgstr "ไม่มีโมเดลที่ตรงกับคำค้นหาของคุณ"
 
-#: lib/evo_dash_web/live/welcome_live.ex:938
+#: lib/evo_dash_web/live/welcome_live.ex:939
 #, elixir-autogen, elixir-format
 msgid "OpenAI"
 msgstr "OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:937
+#: lib/evo_dash_web/live/welcome_live.ex:938
 #, elixir-autogen, elixir-format
 msgid "OpenAI-Compatible API"
 msgstr "API ที่เข้ากันได้กับ OpenAI"
 
-#: lib/evo_dash_web/live/welcome_live.ex:935
+#: lib/evo_dash_web/live/welcome_live.ex:936
 #, elixir-autogen, elixir-format
 msgid "OpenRouter"
 msgstr "OpenRouter"
 
-#: lib/evo_dash_web/live/welcome_live.ex:590
+#: lib/evo_dash_web/live/welcome_live.ex:591
 #, elixir-autogen, elixir-format
 msgid "Please enter your API key first."
 msgstr "กรุณากรอกคีย์ API ก่อน"
 
-#: lib/evo_dash_web/live/welcome_live.ex:339
+#: lib/evo_dash_web/live/welcome_live.ex:340
 #, elixir-autogen, elixir-format
 msgid "Save & Use this model"
 msgstr "บันทึกและใช้โมเดลนี้"
 
-#: lib/evo_dash_web/live/welcome_live.ex:237
+#: lib/evo_dash_web/live/welcome_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "Settings page"
 msgstr "หน้าการตั้งค่า"
 
-#: lib/evo_dash_web/live/welcome_live.ex:929
+#: lib/evo_dash_web/live/welcome_live.ex:930
 #, elixir-autogen, elixir-format
 msgid "Z.ai (Zhipu AI)"
 msgstr "Z.ai (Zhipu AI)"
 
-#: lib/evo_dash_web/live/welcome_live.ex:934
+#: lib/evo_dash_web/live/welcome_live.ex:935
 #, elixir-autogen, elixir-format
 msgid "xAI"
 msgstr "xAI"
 
-#: lib/evo_dash_web/live/system_live.ex:1012
+#: lib/evo_dash_web/live/system_live.ex:1180
 #, elixir-autogen, elixir-format
 msgid "Remote node is restarting. Please wait for it to come back up, then reconnect."
 msgstr "โหนดระยะไกลกำลังรีสตาร์ท กรุณารอให้กลับมาออนไลน์แล้วจึงเชื่อมต่อใหม่"
 
-#: lib/evo_dash_web/live/system_live.ex:1054
+#: lib/evo_dash_web/live/system_live.ex:1222
 #, elixir-autogen, elixir-format
 msgid "Remote node is stopping. It will need to be started again on the remote host."
 msgstr "โหนดระยะไกลกำลังหยุดทำงาน จะต้องเริ่มต้นใหม่บนโฮสต์ระยะไกล"
 
-#: lib/evo_dash_web/live/system_live.ex:619
+#: lib/evo_dash_web/live/system_live.ex:758
 #, elixir-autogen, elixir-format
 msgid "This will gracefully restart the remote node's Erlang VM. All applications on the remote node will be torn down and restarted."
 msgstr "การดำเนินการนี้จะรีสตาร์ท Erlang VM ของโหนดระยะไกลแบบนุ่มนวล แอปพลิเคชันทั้งหมดบนโหนดระยะไกลจะถูกปิดและรีสตาร์ทใหม่"
 
-#: lib/evo_dash_web/live/system_live.ex:663
+#: lib/evo_dash_web/live/system_live.ex:802
 #, elixir-autogen, elixir-format
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "การดำเนินการนี้จะปิด Erlang VM ของโหนดระยะไกลแบบนุ่มนวล แอปพลิเคชันทั้งหมดบนโหนดระยะไกลจะถูกหยุดตามลำดับ"
@@ -3298,7 +3301,7 @@ msgstr "การดำเนินการนี้จะปิด Erlang VM �
 msgid "Archive agent detail"
 msgstr "เก็บรายละเอียดเอเจนต์"
 
-#: lib/evo_dash_web/live/settings_live.ex:455
+#: lib/evo_dash_web/live/settings_live.ex:456
 #, elixir-autogen, elixir-format
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "เว้นว่าง = ตรวจจับ OS/สถาปัตยกรรมของเครื่องระยะไกลอัตโนมัติ"
@@ -3314,7 +3317,7 @@ msgstr "รวบรวมข้อมูลเมตาของแต่ละ
 msgid "Configure"
 msgstr "กำหนดค่า"
 
-#: lib/evo_dash_web/live/settings_live.ex:296
+#: lib/evo_dash_web/live/settings_live.ex:297
 #, elixir-autogen, elixir-format
 msgid "Copying config"
 msgstr "กำลังคัดลอกการตั้งค่า"
@@ -3325,22 +3328,22 @@ msgstr "กำลังคัดลอกการตั้งค่า"
 msgid "Create New Project"
 msgstr "สร้างโปรเจกต์ใหม่"
 
-#: lib/evo_dash_web/live/settings_live.ex:266
+#: lib/evo_dash_web/live/settings_live.ex:267
 #, elixir-autogen, elixir-format
 msgid "Downloading"
 msgstr "กำลังดาวน์โหลด"
 
-#: lib/evo_dash_web/live/settings_live.ex:271
+#: lib/evo_dash_web/live/settings_live.ex:272
 #, elixir-autogen, elixir-format
 msgid "Downloading locally"
 msgstr "กำลังดาวน์โหลดในเครื่อง"
 
-#: lib/evo_dash_web/live/settings_live.ex:281
+#: lib/evo_dash_web/live/settings_live.ex:282
 #, elixir-autogen, elixir-format
 msgid "Extracting"
 msgstr "กำลังแตกไฟล์"
 
-#: lib/evo_dash_web/live/settings_live.ex:301
+#: lib/evo_dash_web/live/settings_live.ex:302
 #, elixir-autogen, elixir-format
 msgid "Generating cookie"
 msgstr "กำลังสร้างคุกกี้"
@@ -3350,7 +3353,7 @@ msgstr "กำลังสร้างคุกกี้"
 msgid "Launch"
 msgstr "เปิดใช้งาน"
 
-#: lib/evo_dash_web/live/settings_live.ex:438
+#: lib/evo_dash_web/live/settings_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "Leave blank to auto-download the release on the remote"
 msgstr "เว้นว่างเพื่อดาวน์โหลดรีลีสบนเครื่องระยะไกลโดยอัตโนมัติ"
@@ -3381,12 +3384,12 @@ msgstr "เปิดโปรเจกต์..."
 msgid "Optional — leave empty and click Launch to initialize an existing codebase"
 msgstr "ไม่บังคับ — เว้นว่างไว้แล้วคลิกเปิดใช้งานเพื่อเริ่มต้นโค้ดเบสที่มีอยู่"
 
-#: lib/evo_dash_web/live/settings_live.ex:443
+#: lib/evo_dash_web/live/settings_live.ex:444
 #, elixir-autogen, elixir-format
 msgid "Platform (optional)"
 msgstr "แพลตฟอร์ม (ไม่บังคับ)"
 
-#: lib/evo_dash_web/live/settings_live.ex:261
+#: lib/evo_dash_web/live/settings_live.ex:262
 #, elixir-autogen, elixir-format
 msgid "Probing platform"
 msgstr "กำลังตรวจสอบแพลตฟอร์ม"
@@ -3421,7 +3424,7 @@ msgstr "เครื่องมือที่จำเป็น (git หรื
 msgid "Add path"
 msgstr "เพิ่มเส้นทาง"
 
-#: lib/evo_dash_web/live/system_live.ex:366
+#: lib/evo_dash_web/live/system_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "All self-checks passed."
 msgstr "การตรวจสอบตนเองทั้งหมดผ่านแล้ว"
@@ -3432,7 +3435,7 @@ msgstr "การตรวจสอบตนเองทั้งหมดผ่
 msgid "Cannot connect to %{name}"
 msgstr "ไม่สามารถเชื่อมต่อไปยัง %{name} ได้"
 
-#: lib/evo_dash_web/live/projects_live.ex:1976
+#: lib/evo_dash_web/live/projects_live.ex:1981
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:413
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
@@ -3454,37 +3457,37 @@ msgstr "ความจุ: max_tool_concurrency. ใช้งานอยู่
 msgid "Capacity: total model-profile concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "ความจุ: ผลรวมภาวะพร้อมกันของโปรไฟล์โมเดล. ใช้งานอยู่: เอเจนต์ที่กำลังทำงาน (ตัวแทนการใช้สล็อต — ผู้ถือสล็อตไม่เปิดเผย)"
 
-#: lib/evo_dash_web/live/review_live.ex:478
+#: lib/evo_dash_web/live/review_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully into %{target}! Branch %{branch} has been deleted."
 msgstr "รวมการเปลี่ยนแปลงเข้ากับ %{target} สำเร็จแล้ว! แบรนช์ %{branch} ถูกลบแล้ว"
 
-#: lib/evo_dash_web/live/system_live.ex:560
+#: lib/evo_dash_web/live/system_live.ex:699
 #, elixir-autogen, elixir-format
 msgid "Check that your LLM provider is reachable with the configured API key."
 msgstr "ตรวจสอบว่าผู้ให้บริการ LLM ของคุณสามารถเข้าถึงได้ด้วยคีย์ API ที่กำหนดค่าไว้"
 
-#: lib/evo_dash_web/live/system_live.ex:349
+#: lib/evo_dash_web/live/system_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "Checking system health..."
 msgstr "กำลังตรวจสอบสุขภาพของระบบ..."
 
-#: lib/evo_dash_web/live/system_live.ex:467
+#: lib/evo_dash_web/live/system_live.ex:606
 #, elixir-autogen, elixir-format
 msgid "Checks that agent commands can be isolated in a sandbox to protect your system."
 msgstr "ตรวจสอบว่าคำสั่งของเอเจนต์สามารถแยกออกจากกันในแซนด์บ็อกซ์เพื่อปกป้องระบบของคุณ"
 
-#: lib/evo_dash_web/live/system_live.ex:434
+#: lib/evo_dash_web/live/system_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "Checks that the git and ripgrep command-line tools are installed and available on your PATH."
 msgstr "ตรวจสอบว่าเครื่องมือบรรทัดคำสั่ง git และ ripgrep ได้รับการติดตั้งและพร้อมใช้งานบน PATH ของคุณ"
 
-#: lib/evo_dash_web/live/system_live.ex:515
+#: lib/evo_dash_web/live/system_live.ex:654
 #, elixir-autogen, elixir-format
 msgid "Checks the Nix development environment used for reproducible builds."
 msgstr "ตรวจสอบสภาพแวดล้อมการพัฒนาของ Nix ที่ใช้สำหรับการสร้างที่สามารถทำซ้ำได้"
 
-#: lib/evo_dash_web/live/welcome_live.ex:108
+#: lib/evo_dash_web/live/welcome_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "Choose a provider:"
 msgstr "เลือกผู้ให้บริการ:"
@@ -3514,30 +3517,30 @@ msgstr "การเชื่อมต่อขาดหายหรือล้
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:123
 #: lib/evo_dash_web/components/task_card_components.ex:227
 #: lib/evo_dash_web/components/task_card_components.ex:258
-#: lib/evo_dash_web/live/projects_live.ex:226
-#: lib/evo_dash_web/live/tasks_live.ex:324
-#: lib/evo_dash_web/live/tasks_live.ex:346
-#: lib/evo_dash_web/live/welcome_complete_live.ex:55
+#: lib/evo_dash_web/live/projects_live.ex:227
+#: lib/evo_dash_web/live/tasks_live.ex:325
+#: lib/evo_dash_web/live/tasks_live.ex:347
+#: lib/evo_dash_web/live/welcome_complete_live.ex:56
 #, elixir-autogen, elixir-format
 msgid "Copy"
 msgstr "คัดลอก"
 
-#: lib/evo_dash_web/live/projects_live.ex:1791
+#: lib/evo_dash_web/live/projects_live.ex:1796
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
 msgstr "ไดเรกทอรีไม่มีอยู่บนโหนดระยะไกล: %{path}"
 
-#: lib/evo_dash_web/live/system_live.ex:494
+#: lib/evo_dash_web/live/system_live.ex:633
 #, elixir-autogen, elixir-format
 msgid "Enable or install systemd-run. Sandboxing requires a systemd user session."
 msgstr "เปิดใช้งานหรือติดตั้ง systemd-run การใช้แซนด์บ็อกซ์ต้องมีเซสชันผู้ใช้ systemd"
 
-#: lib/evo_dash_web/live/system_live.ex:416
+#: lib/evo_dash_web/live/system_live.ex:555
 #, elixir-autogen, elixir-format
 msgid "Fix the missing or invalid settings in Settings."
 msgstr "แก้ไขการตั้งค่าที่ขาดหายไปหรือไม่ถูกต้องในการตั้งค่า"
 
-#: lib/evo_dash_web/live/projects_live.ex:210
+#: lib/evo_dash_web/live/projects_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "Hide example"
 msgstr "ซ่อนตัวอย่าง"
@@ -3548,12 +3551,12 @@ msgstr "ซ่อนตัวอย่าง"
 msgid "In use"
 msgstr "ใช้งานอยู่"
 
-#: lib/evo_dash_web/live/system_live.ex:446
+#: lib/evo_dash_web/live/system_live.ex:585
 #, elixir-autogen, elixir-format
 msgid "Install git and make sure it is available on your PATH."
 msgstr "ติดตั้ง git และตรวจสอบให้แน่ใจว่าพร้อมใช้งานบน PATH ของคุณ"
 
-#: lib/evo_dash_web/live/system_live.ex:451
+#: lib/evo_dash_web/live/system_live.ex:590
 #, elixir-autogen, elixir-format
 msgid "Install ripgrep and make sure it is available on your PATH."
 msgstr "ติดตั้ง ripgrep และตรวจสอบให้แน่ใจว่าพร้อมใช้งานบน PATH ของคุณ"
@@ -3594,7 +3597,7 @@ msgstr "รวมเข้ากับแบรนช์"
 msgid "Merge these changes into %{target}?"
 msgstr "รวมการเปลี่ยนแปลงเหล่านี้เข้ากับ %{target}?"
 
-#: lib/evo_dash_web/live/projects_live.ex:207
+#: lib/evo_dash_web/live/projects_live.ex:208
 #, elixir-autogen, elixir-format
 msgid "New to Genesis? Start with an example"
 msgstr "ยังใหม่กับ Genesis? เริ่มจากตัวอย่าง"
@@ -3604,7 +3607,7 @@ msgstr "ยังใหม่กับ Genesis? เริ่มจากตั�
 msgid "Nix environment is enabled but not built"
 msgstr "เปิดใช้งานสภาพแวดล้อม Nix แล้วแต่ยังไม่ได้สร้าง"
 
-#: lib/evo_dash_web/live/system_live.ex:500
+#: lib/evo_dash_web/live/system_live.ex:639
 #, elixir-autogen, elixir-format
 msgid "No sandbox backend is available on this system."
 msgstr "ไม่มีแบ็กเอนด์แซนด์บ็อกซ์พร้อมใช้งานบนระบบนี้"
@@ -3614,7 +3617,7 @@ msgstr "ไม่มีแบ็กเอนด์แซนด์บ็อกซ
 msgid "Not set — platform default writable paths are used."
 msgstr "ไม่มีการตั้งค่า — ใช้เส้นทางที่เขียนได้ตามค่าเริ่มต้นของแพลตฟอร์ม"
 
-#: lib/evo_dash_web/live/welcome_live.ex:99
+#: lib/evo_dash_web/live/welcome_live.ex:100
 #, elixir-autogen, elixir-format
 msgid "Pick a provider, choose a model, then enter your API key. Keys are stored locally, never sent anywhere."
 msgstr "เลือกผู้ให้บริการ เลือกโมเดล จากนั้นกรอก API key ของคุณ คีย์จะถูกจัดเก็บในเครื่องเท่านั้น ไม่ถูกส่งไปที่ใด"
@@ -3639,7 +3642,7 @@ msgstr "ลบรายการ"
 msgid "Remove from recent projects"
 msgstr "ลบออกจากโปรเจกต์ล่าสุด"
 
-#: lib/evo_dash_web/live/welcome_live.ex:324
+#: lib/evo_dash_web/live/welcome_live.ex:325
 #, elixir-autogen, elixir-format
 msgid "Required for this provider."
 msgstr "จำเป็นสำหรับผู้ให้บริการนี้"
@@ -3654,7 +3657,7 @@ msgstr "การตั้งค่าที่จำเป็นหายไป
 msgid "Sandbox is unavailable"
 msgstr "แซนด์บ็อกซ์ไม่พร้อมใช้งาน"
 
-#: lib/evo_dash_web/live/system_live.ex:498
+#: lib/evo_dash_web/live/system_live.ex:637
 #, elixir-autogen, elixir-format
 msgid "Sandbox-exec sandboxing is unavailable on this system."
 msgstr "ไม่สามารถใช้แซนด์บ็อกซ์แบบ sandbox-exec บนระบบนี้ได้"
@@ -3674,7 +3677,7 @@ msgstr "สเกล 0–%{max}"
 msgid "Scheduler Status"
 msgstr "สถานะตัวจัดตาราง"
 
-#: lib/evo_dash_web/live/welcome_live.ex:173
+#: lib/evo_dash_web/live/welcome_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "Search models…"
 msgstr "ค้นหาโมเดล…"
@@ -3684,12 +3687,12 @@ msgstr "ค้นหาโมเดล…"
 msgid "Select a model above to configure credentials."
 msgstr "เลือกโมเดลด้านบนเพื่อกำหนดค่าข้อมูลประจำตัว"
 
-#: lib/evo_dash_web/live/welcome_live.ex:400
+#: lib/evo_dash_web/live/welcome_live.ex:401
 #, elixir-autogen, elixir-format
 msgid "Select a provider and a model above to enter your API key."
 msgstr "เลือกผู้ให้บริการและโมเดลด้านบนเพื่อกรอก API key ของคุณ"
 
-#: lib/evo_dash_web/live/projects_live.ex:215
+#: lib/evo_dash_web/live/projects_live.ex:216
 #, elixir-autogen, elixir-format
 msgid "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
 msgstr "ตั้งเป้าหมายสุดท้าย เปิดใช้งาน แล้ว Genesis จะสร้างมันขึ้นมาให้ — มันจะออกแบบสถาปัตยกรรม มอบหมายงานให้เอเจนต์ และเขียนโค้ดให้"
@@ -3700,7 +3703,7 @@ msgstr "ตั้งเป้าหมายสุดท้าย เปิด�
 msgid "Shell call"
 msgstr "การเรียกใช้เชลล์"
 
-#: lib/evo_dash_web/live/projects_live.ex:209
+#: lib/evo_dash_web/live/projects_live.ex:210
 #, elixir-autogen, elixir-format
 msgid "Show example"
 msgstr "แสดงตัวอย่าง"
@@ -3711,7 +3714,7 @@ msgstr "แสดงตัวอย่าง"
 msgid "Switch to Local"
 msgstr "สลับเป็นโหมดท้องถิ่น"
 
-#: lib/evo_dash_web/live/system_live.ex:347
+#: lib/evo_dash_web/live/system_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "System needs attention"
 msgstr "ระบบต้องการการดูแล"
@@ -3721,17 +3724,17 @@ msgstr "ระบบต้องการการดูแล"
 msgid "System processes are not running correctly"
 msgstr "กระบวนการของระบบทำงานไม่ถูกต้อง"
 
-#: lib/evo_dash_web/live/system_live.ex:343
+#: lib/evo_dash_web/live/system_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "System running correctly"
 msgstr "ระบบทำงานอย่างถูกต้อง"
 
-#: lib/evo_dash_web/live/system_live.ex:345
+#: lib/evo_dash_web/live/system_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "System running, but needs attention"
 msgstr "ระบบกำลังทำงาน แต่ต้องการการดูแล"
 
-#: lib/evo_dash_web/live/system_live.ex:545
+#: lib/evo_dash_web/live/system_live.ex:684
 #, elixir-autogen, elixir-format
 msgid "The Nix dev environment could not be built. Fix the flake or disable Nix in Settings."
 msgstr "ไม่สามารถสร้างสภาพแวดล้อมการพัฒนาของ Nix ได้ แก้ไข flake หรือปิดใช้งาน Nix ในการตั้งค่า"
@@ -3751,7 +3754,7 @@ msgstr "ทั้งหมด"
 msgid "Total agents with running, blocked (waiting for a slot), waiting, and pending counts."
 msgstr "จำนวนเอเจนต์ทั้งหมดพร้อมสถานะกำลังทำงาน, ถูกบล็อก (รอสล็อต), รอ, และรอดำเนินการ."
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:48
+#: lib/evo_dash_web/live/welcome_complete_live.ex:49
 #, elixir-autogen, elixir-format
 msgid "Try an example task"
 msgstr "ลองใช้งานตัวอย่าง"
@@ -3761,17 +3764,17 @@ msgstr "ลองใช้งานตัวอย่าง"
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "ใช้ตัวเลือกโปรเจกต์ในแถบด้านบนเพื่อเปิดหรือสร้างโปรเจกต์"
 
-#: lib/evo_dash_web/live/projects_live.ex:238
+#: lib/evo_dash_web/live/projects_live.ex:239
 #, elixir-autogen, elixir-format
 msgid "Use this example"
 msgstr "ใช้ตัวอย่างนี้"
 
-#: lib/evo_dash_web/live/system_live.ex:389
+#: lib/evo_dash_web/live/system_live.ex:528
 #, elixir-autogen, elixir-format
 msgid "Verifies that the required settings — LLM provider, model, and API key — are configured."
 msgstr "ตรวจสอบว่าการตั้งค่าที่จำเป็น — ผู้ให้บริการ LLM โมเดล และคีย์ API — ได้รับการกำหนดค่าแล้ว"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:61
+#: lib/evo_dash_web/live/welcome_complete_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr "คุณเพียงแค่บรรยายเป้าหมายปลายทางแบบนี้ — Genesis จะจัดการสถาปัตยกรรม มอบหมายงานให้เอเจนต์ และเขียนโค้ดให้เอง"
@@ -3781,14 +3784,14 @@ msgstr "คุณเพียงแค่บรรยายเป้าหมา
 msgid "e.g. ~/.cache/genesis"
 msgstr "เช่น ~/.cache/genesis"
 
-#: lib/evo_dash_web/live/welcome_live.ex:320
+#: lib/evo_dash_web/live/welcome_live.ex:321
 #, elixir-autogen, elixir-format
 msgid "https://..."
 msgstr "https://..."
 
-#: lib/evo_dash_web/components/layouts.ex:106
-#: lib/evo_dash_web/components/layouts.ex:112
-#: lib/evo_dash_web/components/layouts.ex:116
+#: lib/evo_dash_web/components/layouts.ex:113
+#: lib/evo_dash_web/components/layouts.ex:119
+#: lib/evo_dash_web/components/layouts.ex:123
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis"
@@ -3826,12 +3829,12 @@ msgstr "เปิดหรือสร้างโปรเจกต์"
 msgid "Project path"
 msgstr "เส้นทางโปรเจกต์"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:36
+#: lib/evo_dash_web/live/welcome_complete_live.ex:37
 #, elixir-autogen, elixir-format
 msgid "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
 msgstr "ใน Genesis คุณเพียงแค่เขียนพรอมต์ระดับสูง: อธิบายเป้าหมายสุดท้าย ฟีเจอร์ที่ต้องการ และเฟรมเวิร์กที่จะใช้ Genesis จะเป็นผู้จัดการสถาปัตยกรรม มอบหมายงานให้เอเจนต์ และเขียนโค้ดเอง"
 
-#: lib/evo_dash_web/live/welcome_complete_live.ex:33
+#: lib/evo_dash_web/live/welcome_complete_live.ex:34
 #, elixir-autogen, elixir-format
 msgid "Write high-level prompts, not code"
 msgstr "เขียนพรอมต์ระดับสูง ไม่ใช่โค้ด"
@@ -3863,22 +3866,22 @@ msgstr "ปฏิเสธ"
 msgid "Agent is queued, waiting to be scheduled. May be limited by LLM or tool concurrency. Consider increasing concurrency in Settings."
 msgstr "เอเจนต์อยู่ในคิว รอการจัดตาราง อาจถูกจำกัดด้วยภาวะพร้อมกันของ LLM หรือเครื่องมือ แนะนำให้เพิ่มภาวะพร้อมกันในการตั้งค่า"
 
-#: lib/evo_dash_web/live/tasks_live.ex:364
+#: lib/evo_dash_web/live/tasks_live.ex:365
 #, elixir-autogen, elixir-format
 msgid "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
 msgstr "เอเจนต์ทั้งหมดของงานนี้จะได้รับแจ้งให้บันทึกการเปลี่ยนแปลงและออกจากระบบทันที ผลลัพธ์ระหว่างทางจะถูกบันทึกไว้"
 
-#: lib/evo_dash_web/live/tasks_live.ex:386
+#: lib/evo_dash_web/live/tasks_live.ex:387
 #, elixir-autogen, elixir-format
 msgid "Cancel Task"
 msgstr "ยกเลิกงาน"
 
-#: lib/evo_dash_web/live/tasks_live.ex:360
+#: lib/evo_dash_web/live/tasks_live.ex:361
 #, elixir-autogen, elixir-format
 msgid "Cancel Task?"
 msgstr "ยกเลิกงาน?"
 
-#: lib/evo_dash_web/live/tasks_live.ex:57
+#: lib/evo_dash_web/live/tasks_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Cancelling"
 msgstr "กำลังยกเลิก"
@@ -3893,17 +3896,17 @@ msgstr "กำลังยกเลิก…"
 msgid "Danger zone"
 msgstr "โซนอันตราย"
 
-#: lib/evo_dash_web/live/tasks_live.ex:826
+#: lib/evo_dash_web/live/tasks_live.ex:827
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill task: %{reason}"
 msgstr "ไม่สามารถบังคับหยุดงานได้: %{reason}"
 
-#: lib/evo_dash_web/live/tasks_live.ex:427
+#: lib/evo_dash_web/live/tasks_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Force Kill"
 msgstr "บังคับหยุด"
 
-#: lib/evo_dash_web/live/tasks_live.ex:401
+#: lib/evo_dash_web/live/tasks_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Force Kill Task?"
 msgstr "บังคับหยุดงาน?"
@@ -3913,13 +3916,13 @@ msgstr "บังคับหยุดงาน?"
 msgid "Force kill"
 msgstr "บังคับยุติ"
 
-#: lib/evo_dash_web/live/tasks_live.ex:405
+#: lib/evo_dash_web/live/tasks_live.ex:406
 #, elixir-autogen, elixir-format
 msgid "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
 msgstr "หยุดงานและเอเจนต์ทั้งหมดทันที ความคืบหน้าทั้งหมดจะสูญหายโดยสิ้นเชิง การดำเนินการนี้ไม่สามารถย้อนกลับได้"
 
-#: lib/evo_dash_web/live/tasks_live.ex:378
-#: lib/evo_dash_web/live/tasks_live.ex:419
+#: lib/evo_dash_web/live/tasks_live.ex:379
+#: lib/evo_dash_web/live/tasks_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Keep Running"
 msgstr "ให้ทำงานต่อ"
@@ -3934,24 +3937,24 @@ msgstr "รอดำเนินการ — จะถูกเพิ่มใ�
 msgid "Ready"
 msgstr "พร้อม"
 
-#: lib/evo_dash_web/live/tasks_live.ex:369
-#: lib/evo_dash_web/live/tasks_live.ex:410
+#: lib/evo_dash_web/live/tasks_live.ex:370
+#: lib/evo_dash_web/live/tasks_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Task: %{task_id}"
 msgstr "งาน: %{task_id}"
 
-#: lib/evo_dash_web/live/projects_live.ex:293
+#: lib/evo_dash_web/live/projects_live.ex:294
 #, elixir-autogen, elixir-format
 msgid "You are viewing a remote node. Tasks launched here will run on the remote machine."
 msgstr "คุณกำลังดูโหนดระยะไกล งานที่เปิดใช้ที่นี่จะทำงานบนเครื่องระยะไกล"
 
-#: lib/evo_dash_web/live/settings_live.ex:1626
-#: lib/evo_dash_web/live/settings_live.ex:1725
+#: lib/evo_dash_web/live/settings_live.ex:1632
+#: lib/evo_dash_web/live/settings_live.ex:1731
 #, elixir-autogen, elixir-format
 msgid "Could not load configuration from the remote node: %{reason} — the node may be unreachable."
 msgstr "ไม่สามารถโหลดการตั้งค่าจากโหนดระยะไกลได้: %{reason} — โหนดอาจไม่สามารถเข้าถึงได้"
 
-#: lib/evo_dash_web/live/settings_live.ex:90
+#: lib/evo_dash_web/live/settings_live.ex:91
 #, elixir-autogen, elixir-format
 msgid "Remote Configuration Unavailable"
 msgstr "การตั้งค่าระยะไกลไม่พร้อมใช้งาน"
@@ -3966,7 +3969,7 @@ msgstr "แก้ไขความขัดแย้งอัตโนมัต
 msgid "Auto-resolve task started. It will merge the changes and resolve conflicts; review its result when done."
 msgstr "เริ่มงานแก้ไขอัตโนมัติแล้ว ระบบจะรวมการเปลี่ยนแปลงและจัดการข้อขัดแย้งให้ โปรดตรวจสอบผลลัพธ์เมื่อเสร็จสิ้น"
 
-#: lib/evo_dash_web/live/review_live/merge_check.ex:151
+#: lib/evo_dash_web/live/review_live/merge_check.ex:153
 #, elixir-autogen, elixir-format
 msgid "Auto-resolve unavailable — no merge conflict detected."
 msgstr "ไม่สามารถแก้ไขอัตโนมัติได้ — ตรวจไม่พบข้อขัดแย้งในการรวมแบรนช์"
@@ -3976,7 +3979,7 @@ msgstr "ไม่สามารถแก้ไขอัตโนมัติไ
 msgid "Checking if merge is clean…"
 msgstr "กำลังตรวจสอบว่าการรวมแบรนช์สะอาดหรือไม่…"
 
-#: lib/evo_dash_web/live/review_live/merge_check.ex:143
+#: lib/evo_dash_web/live/review_live/merge_check.ex:145
 #, elixir-autogen, elixir-format
 msgid "Failed to start auto-resolve: %{reason}"
 msgstr "ไม่สามารถเริ่มการแก้ไขอัตโนมัติได้: %{reason}"
@@ -3998,7 +4001,7 @@ msgstr[1] "ตรวจพบความขัดแย้งในการร
 msgid "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
 msgstr "การดำเนินการนี้จะเริ่มงานเอเจนต์ใหม่ที่จะรวมการเปลี่ยนแปลงและแก้ไขความขัดแย้ง งานปัจจุบันจะถูกทำเครื่องหมายว่าดำเนินการต่อ"
 
-#: lib/evo_dash_web/live/settings_live.ex:412
+#: lib/evo_dash_web/live/settings_live.ex:413
 #, elixir-autogen, elixir-format
 msgid "Advanced settings"
 msgstr "การตั้งค่าขั้นสูง"
@@ -4026,7 +4029,7 @@ msgstr "ยืนยันเส้นทางไฟล์ที่แนบ"
 msgid "Failed to attach file: %{reason}"
 msgstr "ไม่สามารถแนบไฟล์ได้: %{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1452
+#: lib/evo_dash_web/live/projects_live.ex:1457
 #, elixir-autogen, elixir-format
 msgid "File not found: %{path}"
 msgstr "ไม่พบไฟล์: %{path}"
@@ -4058,7 +4061,7 @@ msgstr "เลื่อนลง"
 msgid "Move up"
 msgstr "เลื่อนขึ้น"
 
-#: lib/evo_dash_web/live/projects_live.ex:1447
+#: lib/evo_dash_web/live/projects_live.ex:1452
 #, elixir-autogen, elixir-format
 msgid "Please enter a file path."
 msgstr "กรุณากรอกเส้นทางของไฟล์"
@@ -4068,22 +4071,22 @@ msgstr "กรุณากรอกเส้นทางของไฟล์"
 msgid "Type a full file path…"
 msgstr "พิมพ์เส้นทางไฟล์แบบเต็ม…"
 
-#: lib/evo_dash_web/components/layouts.ex:312
+#: lib/evo_dash_web/components/layouts.ex:325
 #, elixir-autogen, elixir-format
 msgid "Quit"
 msgstr "ออกจากโปรแกรม"
 
-#: lib/evo_dash_web/components/layouts.ex:287
+#: lib/evo_dash_web/components/layouts.ex:300
 #, elixir-autogen, elixir-format
 msgid "Quit Genesis?"
 msgstr "ออกจาก Genesis?"
 
-#: lib/evo_dash_web/components/layouts.ex:296
+#: lib/evo_dash_web/components/layouts.ex:309
 #, elixir-autogen, elixir-format
 msgid "Running tasks will be interrupted and may lose progress. The VM will stop and must be restarted again from the desktop app. This cannot be undone."
 msgstr "งานที่กำลังรันอยู่จะถูกขัดจังหวะและอาจสูญเสียความคืบหน้า VM จะหยุดทำงานและต้องรีสตาร์ทใหม่จากแอปเดสก์ท็อป การดำเนินการนี้ไม่สามารถย้อนกลับได้"
 
-#: lib/evo_dash_web/live/settings_live.ex:307
+#: lib/evo_dash_web/live/settings_live.ex:308
 #, elixir-autogen, elixir-format
 msgid "Patching binaries"
 msgstr "กำลังแพตช์ไบนารี"
@@ -4093,12 +4096,12 @@ msgstr "กำลังแพตช์ไบนารี"
 msgid "\"read\" agents cannot modify files"
 msgstr "เอเจนต์แบบ \"อ่านอย่างเดียว\" ไม่สามารถแก้ไขไฟล์ได้"
 
-#: lib/evo_dash_web/live/system_live.ex:713
+#: lib/evo_dash_web/live/system_live.ex:852
 #, elixir-autogen, elixir-format
 msgid "%{count} task(s) still running"
 msgstr "ยังมีงาน %{count} รายการที่กำลังทำงานอยู่"
 
-#: lib/evo_dash_web/live/system_live.ex:758
+#: lib/evo_dash_web/live/system_live.ex:897
 #, elixir-autogen, elixir-format
 msgid "%{count} task(s) still running after waiting"
 msgstr "ยังมีงาน %{count} รายการที่กำลังทำงานอยู่หลังจากการรอ"
@@ -4148,12 +4151,12 @@ msgstr "นิพจน์ Elixir ที่ถูกประเมินสำ�
 msgid "An agent with this id already exists. Rename the agent or edit the existing one."
 msgstr "มีเอเจนต์ที่มี id นี้อยู่แล้ว กรุณาเปลี่ยนชื่อเอเจนต์หรือแก้ไขเอเจนต์ที่มีอยู่"
 
-#: lib/evo_dash_web/live/system_live.ex:735
+#: lib/evo_dash_web/live/system_live.ex:874
 #, elixir-autogen, elixir-format
 msgid "Apply & gracefully stop tasks"
 msgstr "นำไปใช้และหยุดงานแบบนุ่มนวล"
 
-#: lib/evo_dash_web/live/system_live.ex:288
+#: lib/evo_dash_web/live/system_live.ex:289
 #, elixir-autogen, elixir-format
 msgid "Applying update…"
 msgstr "กำลังนำอัปเดตไปใช้…"
@@ -4173,7 +4176,7 @@ msgstr "อัตโนมัติ (ตามกฎ)"
 msgid "Auto (recommended)"
 msgstr "อัตโนมัติ (แนะนำ)"
 
-#: lib/evo_dash_web/live/system_live.ex:270
+#: lib/evo_dash_web/live/system_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "Automatic updates are not configured yet"
 msgstr "ยังไม่ได้กำหนดค่าการอัปเดตอัตโนมัติ"
@@ -4183,22 +4186,22 @@ msgstr "ยังไม่ได้กำหนดค่าการอัปเ
 msgid "Built-in agent types this agent may spawn; none selected = no subagents"
 msgstr "ประเภทเอเจนต์ในตัวที่เอเจนต์นี้สามารถสร้างได้; ไม่เลือกใดๆ = ไม่มีเอเจนต์ย่อย"
 
-#: lib/evo_dash_web/live/system_live.ex:275
+#: lib/evo_dash_web/live/system_live.ex:276
 #, elixir-autogen, elixir-format
 msgid "Check failed"
 msgstr "การตรวจสอบล้มเหลว"
 
-#: lib/evo_dash_web/live/system_live.ex:134
+#: lib/evo_dash_web/live/system_live.ex:135
 #, elixir-autogen, elixir-format
 msgid "Check for and install the latest Genesis release."
 msgstr "ตรวจสอบและติดตั้ง Genesis เวอร์ชันล่าสุด"
 
-#: lib/evo_dash_web/live/system_live.ex:158
+#: lib/evo_dash_web/live/system_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Check now"
 msgstr "ตรวจสอบตอนนี้"
 
-#: lib/evo_dash_web/live/system_live.ex:171
+#: lib/evo_dash_web/live/system_live.ex:172
 #, elixir-autogen, elixir-format
 msgid "Checking for updates…"
 msgstr "กำลังตรวจสอบอัปเดต…"
@@ -4215,12 +4218,12 @@ msgid "Could not load GitHub issues. Make sure the GitHub CLI (gh) is installed 
 msgstr "ไม่สามารถโหลด GitHub issues ได้ โปรดตรวจสอบว่า GitHub CLI (gh) ได้ติดตั้งและเข้าสู่ระบบแล้ว"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:61
-#: lib/evo_dash_web/live/settings_live.ex:532
+#: lib/evo_dash_web/live/settings_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "Create custom agents and configure the per-agent model selection script."
 msgstr "สร้างเอเจนต์แบบกำหนดเองและกำหนดค่าสคริปต์เลือกโมเดลสำหรับแต่ละเอเจนต์"
 
-#: lib/evo_dash_web/live/system_live.ex:138
+#: lib/evo_dash_web/live/system_live.ex:139
 #, elixir-autogen, elixir-format
 msgid "Current version: %{version}"
 msgstr "เวอร์ชันปัจจุบัน: %{version}"
@@ -4230,7 +4233,7 @@ msgstr "เวอร์ชันปัจจุบัน: %{version}"
 msgid "Custom Agent"
 msgstr "เอเจนต์กำหนดเอง"
 
-#: lib/evo_dash_web/live/projects_live.ex:1152
+#: lib/evo_dash_web/live/projects_live.ex:1157
 #, elixir-autogen, elixir-format
 msgid "Custom Agent mode requires selecting a custom agent."
 msgstr "โหมด Custom Agent จำเป็นต้องเลือกเอเจนต์แบบกำหนดเอง"
@@ -4265,7 +4268,7 @@ msgstr "ไม่พบเอเจนต์แบบกำหนดเอง"
 msgid "Custom agent saved."
 msgstr "บันทึกเอเจนต์แบบกำหนดเองแล้ว"
 
-#: lib/evo_dash_web/live/settings_live.ex:546
+#: lib/evo_dash_web/live/settings_live.ex:547
 #, elixir-autogen, elixir-format
 msgid "Custom agents are stored in `agents.toml`, next to the main configuration file."
 msgstr "เอเจนต์แบบกำหนดเองจะถูกเก็บไว้ใน `agents.toml` ซึ่งอยู่ถัดจากไฟล์การกำหนดค่าหลัก"
@@ -4275,7 +4278,7 @@ msgstr "เอเจนต์แบบกำหนดเองจะถูกเ
 msgid "Daily time windows in 24h HH:MM local time. Two windows for one day are allowed, e.g. 09:00–12:00 and 14:00–18:00."
 msgstr "ช่วงเวลาในแต่ละวันในรูปแบบ 24 ชั่วโมง HH:MM ตามเวลาท้องถิ่น อนุญาตให้กำหนดได้สองช่วงต่อวัน เช่น 09:00–12:00 และ 14:00–18:00"
 
-#: lib/evo_dash_web/live/system_live.ex:727
+#: lib/evo_dash_web/live/system_live.ex:866
 #, elixir-autogen, elixir-format
 msgid "Defer"
 msgstr "เลื่อนออกไป"
@@ -4305,7 +4308,7 @@ msgstr "ลบเอเจนต์แบบกำหนดเองนี้ห
 msgid "Description"
 msgstr "คำอธิบาย"
 
-#: lib/evo_dash_web/live/system_live.ex:223
+#: lib/evo_dash_web/live/system_live.ex:224
 #, elixir-autogen, elixir-format
 msgid "Download"
 msgstr "ดาวน์โหลด"
@@ -4325,12 +4328,12 @@ msgstr "ตัวอย่าง"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "ไม่สามารถลบเอเจนต์แบบกำหนดเองได้: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:855
+#: lib/evo_dash_web/live/review_live.ex:856
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "ไม่สามารถโหลดข้อมูลรีวิวได้"
 
-#: lib/evo_dash_web/live/tasks_live.ex:578
+#: lib/evo_dash_web/live/tasks_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "Failed to load tasks."
 msgstr "ไม่สามารถโหลดรายการงานได้"
@@ -4345,7 +4348,7 @@ msgstr "ไม่สามารถบันทึกเอเจนต์แบ
 msgid "Failed to save script: %{reason}"
 msgstr "ไม่สามารถบันทึกสคริปต์ได้: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1263
+#: lib/evo_dash_web/live/system_live.ex:1453
 #, elixir-autogen, elixir-format
 msgid "Failed to stop running tasks. The update was not applied."
 msgstr "ไม่สามารถหยุดงานที่กำลังทำงานอยู่ได้ จึงไม่ได้นำอัปเดตไปใช้"
@@ -4360,12 +4363,12 @@ msgstr "แก้ไข"
 msgid "Fix this issue"
 msgstr "แก้ไข issue นี้"
 
-#: lib/evo_dash_web/live/system_live.ex:780
+#: lib/evo_dash_web/live/system_live.ex:919
 #, elixir-autogen, elixir-format
 msgid "Force Kill & Update"
 msgstr "บังคับหยุดและอัปเดต"
 
-#: lib/evo_dash_web/live/system_live.ex:754
+#: lib/evo_dash_web/live/system_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Force Kill & Update?"
 msgstr "บังคับหยุดและอัปเดต?"
@@ -4375,7 +4378,7 @@ msgstr "บังคับหยุดและอัปเดต?"
 msgid "Free-form description"
 msgstr "คำอธิบายอิสระ"
 
-#: lib/evo_dash_web/live/system_live.ex:184
+#: lib/evo_dash_web/live/system_live.ex:185
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version} is up to date"
 msgstr "Genesis %{version} เป็นเวอร์ชันล่าสุดแล้ว"
@@ -4391,18 +4394,18 @@ msgstr "GitHub Issues"
 msgid "IANA timezone for interpreting peak hours (e.g. Asia/Shanghai). Leave empty to use the server's local time."
 msgstr "เขตเวลา IANA สำหรับตีความช่วงเวลาสูงสุด (เช่น Asia/Shanghai) เว้นว่างไว้เพื่อใช้เวลาท้องถิ่นของเซิร์ฟเวอร์"
 
-#: lib/evo_dash_web/live/system_live.ex:763
+#: lib/evo_dash_web/live/system_live.ex:902
 #, elixir-autogen, elixir-format
 msgid "In-flight work will be lost and tasks will need manual review."
 msgstr "งานที่กำลังดำเนินการอยู่จะสูญหาย และงานจะต้องได้รับการตรวจสอบด้วยตนเอง"
 
-#: lib/evo_dash_web/live/system_live.ex:174
-#: lib/evo_dash_web/live/system_live.ex:190
+#: lib/evo_dash_web/live/system_live.ex:175
+#: lib/evo_dash_web/live/system_live.ex:191
 #, elixir-autogen, elixir-format
 msgid "Last checked"
 msgstr "ตรวจสอบล่าสุด"
 
-#: lib/evo_dash_web/live/system_live.ex:258
+#: lib/evo_dash_web/live/system_live.ex:259
 #, elixir-autogen, elixir-format
 msgid "Latest version %{version} — no auto-update for this platform"
 msgstr "เวอร์ชันล่าสุด %{version} — ไม่มีการอัปเดตอัตโนมัติสำหรับแพลตฟอร์มนี้"
@@ -4427,12 +4430,12 @@ msgstr "กำลังโหลดประวัติ…"
 msgid "Loading issues…"
 msgstr "กำลังโหลด issues…"
 
-#: lib/evo_dash_web/live/projects_live.ex:306
+#: lib/evo_dash_web/live/projects_live.ex:307
 #, elixir-autogen, elixir-format
 msgid "Loading project…"
 msgstr "กำลังโหลดโปรเจกต์…"
 
-#: lib/evo_dash_web/live/tasks_live.ex:211
+#: lib/evo_dash_web/live/tasks_live.ex:212
 #, elixir-autogen, elixir-format
 msgid "Loading tasks..."
 msgstr "กำลังโหลดรายการงาน..."
@@ -4478,7 +4481,7 @@ msgstr "ตัวดำเนินการแบบซ้อน (ระดั�
 msgid "New Agent"
 msgstr "เอเจนต์ใหม่"
 
-#: lib/evo_dash_web/live/system_live.ex:264
+#: lib/evo_dash_web/live/system_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "No auto update on this platform"
 msgstr "ไม่มีการอัปเดตอัตโนมัติบนแพลตฟอร์มนี้"
@@ -4589,7 +4592,7 @@ msgstr "พรอมต์ไม่ถูกต้อง"
 msgid "Remove time window"
 msgstr "ลบช่วงเวลา"
 
-#: lib/evo_dash_web/live/system_live.ex:247
+#: lib/evo_dash_web/live/system_live.ex:248
 #, elixir-autogen, elixir-format
 msgid "Restart & Update"
 msgstr "รีสตาร์ทและอัปเดต"
@@ -4630,12 +4633,12 @@ msgstr "ข้อกำหนดของสคริปต์"
 msgid "Script error"
 msgstr "ข้อผิดพลาดของสคริปต์"
 
-#: lib/evo_dash_web/live/system_live.ex:131
+#: lib/evo_dash_web/live/system_live.ex:132
 #, elixir-autogen, elixir-format
 msgid "Software Update"
 msgstr "อัปเดตซอฟต์แวร์"
 
-#: lib/evo_dash_web/live/system_live.ex:709
+#: lib/evo_dash_web/live/system_live.ex:848
 #, elixir-autogen, elixir-format
 msgid "Stopping tasks…"
 msgstr "กำลังหยุดงาน…"
@@ -4655,7 +4658,7 @@ msgstr "เอเจนต์ย่อย"
 msgid "Subagents must be a list of agent type names."
 msgstr "ซับเอเจนต์ต้องเป็นรายชื่อของชื่อประเภทเอเจนต์"
 
-#: lib/evo_dash_web/live/system_live.ex:702
+#: lib/evo_dash_web/live/system_live.ex:841
 #, elixir-autogen, elixir-format
 msgid "Tasks still running"
 msgstr "ยังมีงานที่กำลังทำงานอยู่"
@@ -4680,7 +4683,7 @@ msgstr "โปรไฟล์โมเดลที่จะใช้; ไม่�
 msgid "The system prompt that defines this agent's role"
 msgstr "พรอมต์ระบบที่กำหนดบทบาทของเอเจนต์นี้"
 
-#: lib/evo_dash_web/live/system_live.ex:716
+#: lib/evo_dash_web/live/system_live.ex:855
 #, elixir-autogen, elixir-format
 msgid "The update can only be applied when no tasks are running. Gracefully stopping tasks asks their agents to save their work and finish; results are preserved for review."
 msgstr "สามารถนำอัปเดตไปใช้ได้เมื่อไม่มีงานที่กำลังทำงานอยู่เท่านั้น การหยุดงานแบบนุ่มนวลจะขอให้เอเจนต์บันทึกงานและดำเนินการให้เสร็จ ผลลัพธ์จะถูกเก็บไว้สำหรับการตรวจสอบ"
@@ -4695,32 +4698,32 @@ msgstr "เขตเวลา (ไม่บังคับ)"
 msgid "Tools must be a list of tool names."
 msgstr "เครื่องมือต้องเป็นรายชื่อของชื่อเครื่องมือ"
 
-#: lib/evo_dash_web/components/layouts.ex:434
+#: lib/evo_dash_web/components/layouts.ex:490
 #, elixir-autogen, elixir-format
 msgid "Update available"
 msgstr "มีอัปเดตให้ใช้งาน"
 
-#: lib/evo_dash_web/live/system_live.ex:166
+#: lib/evo_dash_web/live/system_live.ex:167
 #, elixir-autogen, elixir-format
 msgid "Update information will appear here after the first check."
 msgstr "ข้อมูลอัปเดตจะปรากฏที่นี่หลังจากการตรวจสอบครั้งแรก"
 
-#: lib/evo_dash_web/components/layouts.ex:434
+#: lib/evo_dash_web/components/layouts.ex:490
 #, elixir-autogen, elixir-format
 msgid "Update ready to install"
 msgstr "พร้อมติดตั้งอัปเดต"
 
-#: lib/evo_dash_web/live/system_live.ex:234
+#: lib/evo_dash_web/live/system_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "Update ready — version %{version}"
 msgstr "พร้อมอัปเดต — เวอร์ชัน %{version}"
 
-#: lib/evo_dash_web/live/system_live.ex:213
+#: lib/evo_dash_web/live/system_live.ex:214
 #, elixir-autogen, elixir-format
 msgid "Update via your package manager"
 msgstr "อัปเดตผ่านตัวจัดการแพ็กเกจของคุณ"
 
-#: lib/evo_dash_web/live/system_live.ex:198
+#: lib/evo_dash_web/live/system_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "Version %{version} is available"
 msgstr "มีเวอร์ชัน %{version} ที่พร้อมใช้งาน"
@@ -4764,3 +4767,192 @@ msgstr "วิวัฒนาการโปรเจกต์ที่มีอ
 #, elixir-autogen, elixir-format
 msgid "Initialize existing project"
 msgstr "เริ่มต้นโปรเจกต์ที่มีอยู่"
+
+#: lib/evo_dash_web/live/system_live.ex:424
+#, elixir-autogen, elixir-format
+msgid "An explicit override is in effect"
+msgstr "มีการแทนที่อย่างชัดเจนอยู่"
+
+#: lib/evo_dash_web/live/home_live.ex:48
+#, elixir-autogen, elixir-format
+msgid "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
+msgstr "ถามเกี่ยวกับ Genesis ตรวจสอบซอร์สโค้ด ควบคุมงาน และรับคำแนะนำการใช้งานแดชบอร์ด"
+
+#: lib/evo_dash_web/live/home_live.ex:45
+#, elixir-autogen, elixir-format
+msgid "Chat with Genesis"
+msgstr "แชทกับ Genesis"
+
+#: lib/evo_dash_web/live/home_live.ex:87
+#, elixir-autogen, elixir-format
+msgid "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
+msgstr "แชทกับผู้ช่วย Genesis: สอบถามเกี่ยวกับโค้ดเบส สำรวจซอร์สโค้ด ควบคุมงานที่กำลังทำงาน หรือรับคำแนะนำการใช้งานแดชบอร์ด"
+
+#: lib/evo_dash_web/live/system_live.ex:404
+#, elixir-autogen, elixir-format
+msgid "Clone"
+msgstr "โคลน"
+
+#: lib/evo_dash_web/live/system_live.ex:403
+#, elixir-autogen, elixir-format
+msgid "Cloning…"
+msgstr "กำลังโคลน…"
+
+#: lib/evo_dash_web/live/system_live.ex:344
+#, elixir-autogen, elixir-format
+msgid "Commit"
+msgstr "คอมมิต"
+
+#: lib/evo_dash_web/live/system_live.ex:336
+#, elixir-autogen, elixir-format
+msgid "Directory"
+msgstr "ไดเรกทอรี"
+
+#: lib/evo_dash_web/components/layouts.ex:352
+#, elixir-autogen, elixir-format
+msgid "Dismiss guide"
+msgstr "ปิดคู่มือ"
+
+#: lib/evo_dash_web/live/system_live.ex:1811
+#, elixir-autogen, elixir-format
+msgid "Failed to clone the Genesis source."
+msgstr "ไม่สามารถโคลนซอร์ส Genesis ได้"
+
+#: lib/evo_dash_web/live/home_live.ex:484
+#, elixir-autogen, elixir-format
+msgid "Failed to start the task: %{reason}"
+msgstr "ไม่สามารถเริ่มงานได้: %{reason}"
+
+#: lib/evo_dash_web/live/home_live.ex:474
+#, elixir-autogen, elixir-format
+msgid "Failed to start the task: no task id returned"
+msgstr "ไม่สามารถเริ่มงานได้: ไม่มีการส่งคืนรหัสงาน"
+
+#: lib/evo_dash_web/live/home_live.ex:276
+#, elixir-autogen, elixir-format
+msgid "Failed to stop: %{reason}"
+msgstr "ไม่สามารถหยุดได้: %{reason}"
+
+#: lib/evo_dash_web/live/system_live.ex:1812
+#, elixir-autogen, elixir-format
+msgid "Failed to update the Genesis source."
+msgstr "ไม่สามารถอัปเดตซอร์ส Genesis ได้"
+
+#: lib/evo_dash_web/components/layouts.ex:345
+#, elixir-autogen, elixir-format
+msgid "Genesis Guide"
+msgstr "คู่มือ Genesis"
+
+#: lib/evo_dash_web/live/system_live.ex:308
+#, elixir-autogen, elixir-format
+msgid "Genesis Source"
+msgstr "ซอร์ส Genesis"
+
+#: lib/evo_dash_web/live/system_live.ex:311
+#, elixir-autogen, elixir-format
+msgid "Genesis source checkout used by the self-reflective agent."
+msgstr "เช็คเอาต์ซอร์ส Genesis ที่ใช้โดยเอเจนต์สะท้อนตนเอง"
+
+#: lib/evo_dash_web/live/system_live.ex:1808
+#, elixir-autogen, elixir-format
+msgid "Genesis source cloned."
+msgstr "โคลนซอร์ส Genesis แล้ว"
+
+#: lib/evo_dash_web/live/system_live.ex:328
+#: lib/evo_dash_web/live/system_live.ex:1797
+#, elixir-autogen, elixir-format
+msgid "Genesis source is not available in this version"
+msgstr "ซอร์ส Genesis ไม่พร้อมใช้งานในเวอร์ชันนี้"
+
+#: lib/evo_dash_web/live/system_live.ex:1809
+#, elixir-autogen, elixir-format
+msgid "Genesis source updated."
+msgstr "อัปเดตซอร์ส Genesis แล้ว"
+
+#: lib/evo_dash_web/components/layouts.ex:366
+#, elixir-autogen, elixir-format
+msgid "Go"
+msgstr "ไป"
+
+#: lib/evo_dash_web/live/system_live.ex:320
+#, elixir-autogen, elixir-format
+msgid "Loading…"
+msgstr "กำลังโหลด…"
+
+#: lib/evo_dash_web/live/home_live.ex:139
+#, elixir-autogen, elixir-format
+msgid "Message Genesis…"
+msgstr "พิมพ์ข้อความถึง Genesis…"
+
+#: lib/evo_dash_web/live/home_live.ex:59
+#, elixir-autogen, elixir-format
+msgid "New chat"
+msgstr "แชทใหม่"
+
+#: lib/evo_dash_web/live/home_live.ex:647
+#, elixir-autogen, elixir-format
+msgid "No response."
+msgstr "ไม่มีการตอบกลับ"
+
+#: lib/evo_dash_web/live/system_live.ex:362
+#, elixir-autogen, elixir-format
+msgid "Remote URL"
+msgstr "URL ระยะไกล"
+
+#: lib/evo_dash_web/live/home_live.ex:84
+#, elixir-autogen, elixir-format
+msgid "Start a conversation"
+msgstr "เริ่มบทสนทนา"
+
+#: lib/evo_dash_web/live/home_live.ex:68
+#, elixir-autogen, elixir-format
+msgid "Stop"
+msgstr "หยุด"
+
+#: lib/evo_dash_web/live/home_live.ex:656
+#, elixir-autogen, elixir-format
+msgid "Stopped."
+msgstr "หยุดแล้ว"
+
+#: lib/evo_dash_web/live/system_live.ex:368
+#, elixir-autogen, elixir-format
+msgid "The Genesis source has not been cloned yet."
+msgstr "ยังไม่ได้โคลนซอร์ส Genesis"
+
+#: lib/evo_dash_web/live/home_live.ex:612
+#: lib/evo_dash_web/live/home_live.ex:632
+#, elixir-autogen, elixir-format
+msgid "The conversation was deleted."
+msgstr "บทสนทนาถูกลบแล้ว"
+
+#: lib/evo_dash_web/live/system_live.ex:412
+#, elixir-autogen, elixir-format
+msgid "The self-reflective agent reads: %{path}"
+msgstr "เอเจนต์สะท้อนตนเองอ่าน: %{path}"
+
+#: lib/evo_dash_web/live/home_live.ex:588
+#: lib/evo_dash_web/live/home_live.ex:637
+#: lib/evo_dash_web/live/home_live.ex:648
+#, elixir-autogen, elixir-format
+msgid "The task failed."
+msgstr "งานล้มเหลว"
+
+#: lib/evo_dash_web/live/system_live.ex:388
+#, elixir-autogen, elixir-format
+msgid "Update"
+msgstr "อัปเดต"
+
+#: lib/evo_dash_web/live/system_live.ex:387
+#, elixir-autogen, elixir-format
+msgid "Updating…"
+msgstr "กำลังอัปเดต…"
+
+#: lib/evo_dash_web/live/system_live.ex:356
+#, elixir-autogen, elixir-format
+msgid "Version"
+msgstr "เวอร์ชัน"
+
+#: lib/evo_dash_web/live/system_live.ex:418
+#, elixir-autogen, elixir-format
+msgid "in use"
+msgstr "ใช้งานอยู่"
