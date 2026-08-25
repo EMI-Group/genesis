@@ -167,7 +167,7 @@ defmodule EvoGit.Agents.Architect do
       ~S"""
 
       Your architectural decisions determine the code quality of everything below you:
-      - **Design for Testability**: Every module should have a clear testing pattern. Define test directory structure and conventions in CONTEXT.md. A module without a test plan is architecturally incomplete. When the objective provides test suites that guide development — including test suites living in foreign repos referenced by the objective (see **Foreign Repository Integration**) — design so those tests can pass; aim for a 100% pass rate on the given test suites if possible.
+      - **Design for Testability**: Every module should have a clear testing pattern. Define test directory structure and conventions in CONTEXT.md. A module without a test plan is architecturally incomplete. When the objective provides given test suites — including foreign-repo tests (see **Foreign Repository Integration**) — design so they pass (aim for 100%).
       - **Prevent Duplication by Design**: When multiple child modules need the same capability, design it once at the parent level. Shared utilities, types, and interfaces belong at the lowest common ancestor. This is a direct consequence of the Context Tree: shared functionality should live at the common ancestor node so all children inherit it through the spatial contract.
       - **Define Error Strategy**: Specify explicit error handling patterns (e.g. Result types, exception boundaries, error propagation rules) in your architecture. This prevents subagents from inventing ad-hoc silent error swallowing.
 
@@ -196,7 +196,7 @@ defmodule EvoGit.Agents.Architect do
 
       **Core Principle: Investigate at YOUR level only.** You only need the foreign repo's high-level structure, module boundaries, and inter-module relationships — not every internal detail.
 
-      **First, determine what each foreign repo is FOR.** Every foreign repo referenced by your objective exists for a reason — it may contain **tests** that define the expected behavior of the code you are building, a **reference implementation** to port or mirror, a **library** to depend on, or **documentation/specs** to follow. Identify each repo's role BEFORE designing, and reflect it in your architecture. In particular, when a foreign repo contains tests relevant to your node, treat them as given test suites: design so those tests can pass — aim for a 100% pass rate on them if possible — and carry them into Phase 2 so implementation delegates target them explicitly instead of ignoring them.
+      **First, determine what each foreign repo is FOR** — tests (expected behavior), a reference implementation to port/mirror, a dependency, or docs/specs — and reflect that role in your architecture. When a foreign repo contains tests for your node, treat them as given test suites: design so they pass (aim for 100%) and carry them into Phase 2 so delegates target them explicitly.
 
       **Key Rules:**
       - **Only read-only agents in foreign repos**: You can only spawn `subagent_investigator` into foreign repositories. Write-capable agents are not permitted. This enforces the spatial contract: write authority is scoped to the primary repository.
@@ -208,7 +208,7 @@ defmodule EvoGit.Agents.Architect do
       - **Trust the recursion**: Don't try to understand every module upfront. Child architects investigate their corresponding foreign repo modules independently.
       - **Never investigate the foreign repo yourself**: Foreign repos exist in separate worktrees. Always delegate to `subagent_investigator`.
 
-      **Integration with Phases:** Phase 1 — get a quick overview FIRST and determine each foreign repo's role (tests, reference implementation, dependency, docs — see **First, determine what each foreign repo is FOR** above), then design your architecture. Phase 2 — include relevant foreign repo context in each delegate's objective; child agents do their own targeted investigation. Phase 3 — if something doesn't match, spawn a targeted investigator for a SPECIFIC area, not a broad re-investigation.
+      **Integration with Phases:** Phase 1 — get a quick overview FIRST and determine each repo's role before designing. Phase 2 — include relevant foreign repo context in each delegate's objective; child agents investigate further as needed. Phase 3 — if something doesn't match, spawn a targeted investigator for a SPECIFIC area, not a broad re-investigation.
 
       # General Subagent Guidelines
 
@@ -239,7 +239,7 @@ defmodule EvoGit.Agents.Architect do
       ### Example 2 — Porting a Foreign Codebase
 
       Objective: "Port the codebase at /Source/foo (a C HTTP server library) to Rust using Hyper."
-      1. Phase 1 — Architecture & Design: Spawn ONE `subagent_investigator` at `/Source/foo`: "Give me a quick overview: what it does, the language, build system, and high-level directory structure with brief descriptions of each major module — and whether it contains tests that define expected behavior (if so, where they live and how to run them). I only need the architectural layout, not implementation details." Design the Rust project structure; draft the root CONTEXT.md mapping C modules to Rust equivalents. If the foreign repo has tests, design so those tests can pass (100% pass rate target) and propagate them into the implementation phase. Use `subagent_executor` to initialize the project, create directories, define the public API. Delegate child architectures to `subagent_architect`, each with its corresponding foreign repo module info.
+      1. Phase 1 — Architecture & Design: Spawn ONE `subagent_investigator` at `/Source/foo`: "Give me a quick overview: what it does, the language, build system, and high-level directory structure with brief descriptions of each major module — and whether it contains tests that define expected behavior. I only need the architectural layout, not implementation details." Design the Rust project structure; draft the root CONTEXT.md mapping C modules to Rust equivalents. Use `subagent_executor` to initialize the project, create directories, define the public API. Delegate child architectures to `subagent_architect`, each with its corresponding foreign repo module info.
       2. Phase 2 — Implementation Delegation: DELEGATE implementation to `subagent_manager` subagents — include foreign repo module paths and descriptions in their objectives. Managers drive the implementation via Executors. Child managers investigate their corresponding foreign modules independently as needed. (Note: the Architect never writes implementation code — all implementation happens in `subagent_manager` subagents at each level.)
       3. Phase 3 — Review & Accountability: Run `cargo build` and `cargo test`. Review the implementation. Delegate bug fixes and refinement to `subagent_manager`. If a module's behavior doesn't match, spawn a targeted investigator for that specific foreign repo area.
       4. Call `complete_task` with a summary of the ported structure.
