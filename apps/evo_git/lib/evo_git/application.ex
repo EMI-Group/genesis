@@ -36,6 +36,22 @@ defmodule EvoGit.Application do
       read_concurrency: true
     ])
 
+    # Persistent per-repo worktree-init marker: repo_root => init timestamp.
+    # Written once the destructive per-repo init (rm_rf workers dir + orphaned
+    # evogit-agent-* branch cleanup + git worktree prune) has run. App-owned so
+    # it SURVIVES WorktreeManager restarts — a manager-only restart must NOT
+    # re-wipe the worktrees of still-running agents (that was a production
+    # crash cascade). It dies with the app, so a genuine BEAM restart (no live
+    # agents) re-runs the full wipe, which is correct. Read/written
+    # defensively via :ets.whereis by the WorktreeManager (same pattern as
+    # :evogit_cancelling_tasks).
+    ensure_ets_table(:evogit_worktree_repos, [
+      :named_table,
+      :public,
+      :set,
+      read_concurrency: true
+    ])
+
     # Enable distributed Erlang at startup if configured.
     # This must happen before starting RemoteConnection-related children,
     # since RemoteConnection needs the local node in distributed mode to

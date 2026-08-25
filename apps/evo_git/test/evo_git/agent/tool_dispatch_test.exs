@@ -486,4 +486,79 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       end
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # sync_current_commit_after_tools/1 error hardening
+  # ---------------------------------------------------------------------------
+
+  describe "sync_current_commit_after_tools/1 error hardening" do
+    test "raises a clear 'worktree vanished' error when the repo path does not exist" do
+      # Ensure :repo_less is NOT set — otherwise the sync short-circuits.
+      Process.delete(:repo_less)
+      Process.put(:repo_path, "/nonexistent/tool_dispatch_worktree")
+
+      state = %LoopState{
+        agent_id: 1,
+        agent_module: EvoGit.Agents.SelfReflective,
+        depth: 0,
+        node_path: "./",
+        context: ReqLLM.Context.new()
+      }
+
+      try do
+        error =
+          assert_raise RuntimeError, fn ->
+            ToolDispatch.sync_current_commit_after_tools(state)
+          end
+
+        assert error.message =~ "Worktree vanished while agent was running (removed mid-run)"
+        assert error.message =~ "Repository path does not exist"
+        assert error.message =~ "fresh worktree"
+        refute error.message =~ "Git rev_parse failed"
+      after
+        Process.delete(:repo_path)
+        Process.delete(:repo_less)
+      end
+    end
+
+    test "preserves the old error shape for non-enoent git failures" do
+      repo_root =
+        Path.join(
+          System.tmp_dir!(),
+          "tool_dispatch_rev_parse_#{:erlang.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(repo_root)
+
+      # An empty repo (no commits, no HEAD) makes `git rev-parse HEAD` exit 128
+      # with "fatal: ambiguous argument 'HEAD'..." → {:error, {128, output}} →
+      # the old-shape error message.
+      {:ok, _} = EvoGit.Adapters.Git.init(repo_root)
+
+      Process.delete(:repo_less)
+      Process.put(:repo_path, repo_root)
+
+      state = %LoopState{
+        agent_id: 1,
+        agent_module: EvoGit.Agents.SelfReflective,
+        depth: 0,
+        node_path: "./",
+        context: ReqLLM.Context.new()
+      }
+
+      try do
+        error =
+          assert_raise RuntimeError, fn ->
+            ToolDispatch.sync_current_commit_after_tools(state)
+          end
+
+        assert error.message =~ "Git rev_parse failed"
+        refute error.message =~ "Worktree vanished"
+      after
+        Process.delete(:repo_path)
+        Process.delete(:repo_less)
+        File.rm_rf!(repo_root)
+      end
+    end
+  end
 end

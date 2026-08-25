@@ -20,6 +20,21 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   - Per-agent serialization of re-create requests: a retry Runner arriving
     while the previous create is still in flight has its request queued in
     `pending_requests` and is started when the previous create finishes.
+  - Crash-restart safety (this GenServer is a one_for_one child of
+    `EvoGit.Supervisor` — a crash restarts IT without killing the running
+    agent Tasks, which keep running in their live worktrees):
+    * The destructive per-repo init (rm_rf workers dir + orphaned branch
+      cleanup + prune) is gated on a PERSISTENT marker in the app-owned ETS
+      table `:evogit_worktree_repos` (created in `EvoGit.Application.start/2`,
+      same pattern as `:evogit_cancelling_tasks`). The marker survives
+      WorktreeManager restarts — a manager-only restart SKIPS the wipe,
+      preserving live agents' worktrees; it dies with the app, so a genuine
+      BEAM restart (no live agents) re-runs the full wipe. Reading/writing is
+      defensive via `:ets.whereis` (a missing table means "uninitialized").
+    * On restart, live agents are re-monitored from their scheduler ETS rows
+      (`:evogit_sched_meta` worktree + task_ref, `:evogit_agent_state`
+      repo_root + task_local_id), so `:DOWN`-driven cleanup keeps working for
+      agents whose worktrees predate the crash.
 
   The AgentScheduler itself never touches worktree I/O.
   """
@@ -81,20 +96,23 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   @impl true
   def init(_opts) do
-    {:ok,
-     %{
-       # repos whose workers dir has been initialized (lazy, once per repo)
-       repos: %{},
-       # agent_id => %{worktree_path, repo_root, branch_name, creating, monitor_ref}
-       agents: %{},
-       # monitor ref => agent_id
-       monitors: %{},
-       # agents that died while their create was still in flight
-       pending_cleanup: MapSet.new(),
-       # agent_id => {from, request_params} — re-create request that arrived
-       # while the previous create was still in flight
-       pending_requests: %{}
-     }}
+    state = %{
+      # agent_id => %{worktree_path, repo_root, branch_name, creating, monitor_ref}
+      agents: %{},
+      # monitor ref => agent_id
+      monitors: %{},
+      # agents that died while their create was still in flight
+      pending_cleanup: MapSet.new(),
+      # agent_id => {from, request_params} — re-create request that arrived
+      # while the previous create was still in flight
+      pending_requests: %{}
+    }
+
+    # Crash-restart path: this GenServer restarts WITHOUT killing the running
+    # agent Tasks. Re-monitor the live agents (worktree already created before
+    # the crash) from their scheduler ETS rows so :DOWN-driven cleanup keeps
+    # working. Tolerant — missing/stale rows are skipped, never crashes init.
+    {:ok, rebuild_monitors(state)}
   end
 
   @impl true
@@ -231,14 +249,33 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # --- Private Helpers ---
 
   # Initializes the workers directory for a repo the first time it is
-  # requested. Safe: no worktrees for this repo can exist yet — this is the
-  # first request.
+  # requested after the app started. The destructive wipe (rm_rf the whole
+  # workers dir + orphaned branch cleanup + prune) is gated on a PERSISTENT
+  # marker in the app-owned ETS table `:evogit_worktree_repos`:
+  #
+  # - Marker present → the wipe already ran for this repo. This is the
+  #   WorktreeManager-only restart case: agents whose worktrees were created
+  #   before the crash are STILL RUNNING, so re-wiping would delete their live
+  #   worktrees and branches (the production crash cascade). Skip the wipe;
+  #   only ensure the workers dir exists (git worktree add needs the parent)
+  #   via the tolerant `WorktreeRetry.mkdir_p_retry/2`.
+  # - Marker absent → full wipe (no worktrees for this repo can exist yet —
+  #   either the app just started and no create has ever run, or the BEAM
+  #   restarted, in which case all agents are dead). Then record the marker.
+  # - Table missing entirely (`:ets.whereis` → `:undefined`, e.g. tests that
+  #   do not start the app) → treated as marker absent → full wipe, mirroring
+  #   the `:evogit_cancelling_tasks` defensive pattern.
   defp maybe_init_repo(state, repo_root) do
-    if Map.has_key?(state.repos, repo_root) do
-      state
-    else
-      worker_base = workers_dir(repo_root)
+    worker_base = workers_dir(repo_root)
 
+    if worktree_repo_initialized?(repo_root) do
+      Logger.debug(
+        "WorktreeManager: Repo #{repo_root} already initialized " <>
+          "(persistent marker) — skipping destructive wipe"
+      )
+
+      ensure_workers_dir(worker_base)
+    else
       Logger.info("WorktreeManager: Initializing worktree directory at #{worker_base}")
 
       # Use non-bang variant — when the scheduler crashes and restarts while
@@ -278,8 +315,48 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
             path: worker_base
       end
 
-      %{state | repos: Map.put(state.repos, repo_root, true)}
+      mark_worktree_repo_initialized(repo_root)
     end
+
+    state
+  end
+
+  # Ensures the workers dir exists for an already-initialized repo
+  # (WorktreeManager-only restart). Tolerant: a failure is logged — the
+  # create request itself will fail loudly if the parent dir cannot be
+  # created; NOT caching success means the next request retries mkdir_p.
+  defp ensure_workers_dir(worker_base) do
+    case WorktreeRetry.mkdir_p_retry(worker_base) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "WorktreeManager: Could not create worker directory #{worker_base}: " <>
+            "#{inspect(reason)}"
+        )
+    end
+  end
+
+  # Returns true when the destructive per-repo init has already run for this
+  # repo (persistent marker present). Defensive against a missing table — the
+  # app creates `:evogit_worktree_repos` in Application.start/2; tests create
+  # it in setup (same pattern as the `:evogit_cancelling_tasks` reads).
+  defp worktree_repo_initialized?(repo_root) do
+    case :ets.whereis(:evogit_worktree_repos) do
+      :undefined -> false
+      _tid -> :ets.member(:evogit_worktree_repos, repo_root)
+    end
+  end
+
+  # Records the persistent per-repo init marker (repo_root => init timestamp).
+  defp mark_worktree_repo_initialized(repo_root) do
+    case :ets.whereis(:evogit_worktree_repos) do
+      :undefined -> :ok
+      _tid -> :ets.insert(:evogit_worktree_repos, {repo_root, System.system_time(:second)})
+    end
+
+    :ok
   end
 
   # Registers the agent (monitor + agents/monitors maps) and spawns the
@@ -392,5 +469,79 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     end
 
     :ok
+  end
+
+  # --- Crash-restart re-monitoring (Bug 3) ---
+
+  # Rebuilds the agents/monitors registrations from scheduler ETS after a
+  # WorktreeManager-only restart. The manager's in-memory maps were lost with
+  # the crash, but running agents' `:evogit_sched_meta` rows still carry their
+  # live worktree path + `%Task{}` ref (Dispatch.try_dispatch/2 sets both
+  # BEFORE the agent's Runner requests the worktree) and their
+  # `:evogit_agent_state` row carries `repo_root`/`task_local_id`. Re-monitor
+  # them so `:DOWN`-driven cleanup keeps working for agents whose worktrees
+  # predate the crash — otherwise their worktree dirs + branches leak until
+  # the next full BEAM restart.
+  #
+  # Tolerant by construction: agents that died while the manager was down have
+  # their rows reaped by the scheduler (or are skipped here); a monitor on an
+  # already-dead pid delivers an immediate `:DOWN`, which flows through the
+  # normal cleanup path. Queued/not-yet-created agents (worktree nil, or no
+  # task_ref) are skipped — they register when they make their create request.
+  # Never crashes init.
+  defp rebuild_monitors(state) do
+    case :ets.whereis(:evogit_sched_meta) do
+      :undefined ->
+        state
+
+      _tid ->
+        :ets.foldl(
+          fn {agent_id, meta}, acc -> rebuild_monitor(acc, agent_id, meta) end,
+          state,
+          :evogit_sched_meta
+        )
+    end
+  end
+
+  # Re-monitors a single live agent. The rebuilt entry shape EXACTLY matches
+  # what `handle_info({:DOWN, ...})` and `destroy_worktree/3` expect on the
+  # normal path: `%{worktree_path, repo_root, branch_name, creating: false,
+  # monitor_ref}` plus the reverse `monitors` map entry — so cleanup after the
+  # restart is identical to the normal path.
+  defp rebuild_monitor(state, agent_id, meta) do
+    with %{worktree: worktree, task_ref: %Task{} = task_ref, task_number: task_number}
+         when is_binary(worktree) and is_integer(task_number) <- meta,
+         {:ok, agent_state} <- Store.get_agent_state(agent_id),
+         %{task_local_id: task_local_id, repo_root: repo_root} <- agent_state,
+         true <- is_integer(task_local_id),
+         false <- Map.has_key?(state.agents, agent_id) do
+      ref = Process.monitor(task_ref.pid)
+
+      %{
+        state
+        | agents:
+            Map.put(state.agents, agent_id, %{
+              worktree_path: worktree,
+              repo_root: repo_root || derive_repo_root(worktree),
+              branch_name: Worktrees.branch_name(task_number, task_local_id),
+              creating: false,
+              monitor_ref: ref
+            }),
+          monitors: Map.put(state.monitors, ref, agent_id)
+      }
+    else
+      _ ->
+        state
+    end
+  end
+
+  # Derives the repo root from a worktree path (primary-repo layout), mirroring
+  # `Dispatch.resolve_agent_repo_root/2`'s worktree-suffix strip. Used only as
+  # a fallback when the AgentState `repo_root` is missing.
+  defp derive_repo_root(worktree_path) do
+    case String.split(worktree_path, "/.genesis/workers/", parts: 2) do
+      [root, _rest] -> root
+      [_] -> worktree_path
+    end
   end
 end

@@ -63,8 +63,8 @@ defmodule EvoGit.Agent.ToolDispatch do
             AgentScheduler.update_phylo_node(state.agent_id, updated_phylo)
           end
 
-        {:error, {code, msg}} ->
-          raise "Git rev_parse failed (#{code}): #{msg}"
+        {:error, reason} ->
+          raise_rev_parse_error(reason)
       end
     end
   end
@@ -81,7 +81,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       current_sha =
         case Git.rev_parse(repo_path) do
           {:ok, sha} -> sha
-          {:error, {code, msg}} -> raise "Git rev_parse failed (#{code}): #{msg}"
+          {:error, reason} -> raise_rev_parse_error(reason)
         end
 
       {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
@@ -93,6 +93,24 @@ defmodule EvoGit.Agent.ToolDispatch do
 
       current_sha
     end
+  end
+
+  # Raises a clear, diagnosable error for a failed `Git.rev_parse`. A missing
+  # repo/worktree directory (`:enoent` — `Git.run/2`'s pre-check returns
+  # `{:error, {:enoent, "Repository path does not exist: ..."}}`) means the
+  # worktree was removed while the agent was running (e.g. a WorktreeManager
+  # crash cascade): the agent cannot continue without its repo, but the
+  # operator must be told the retry will start from a fresh worktree. All
+  # other error shapes keep the original opaque message.
+  defp raise_rev_parse_error({:enoent, msg}) do
+    raise(
+      "Worktree vanished while agent was running (removed mid-run): #{msg} — " <>
+        "the retried agent will get a fresh worktree; uncommitted work is lost by design of the retry"
+    )
+  end
+
+  defp raise_rev_parse_error({code, msg}) do
+    raise "Git rev_parse failed (#{code}): #{msg}"
   end
 
   # --- Main Turn ---

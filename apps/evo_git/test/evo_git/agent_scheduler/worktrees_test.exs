@@ -40,11 +40,23 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
+    # The WorktreeManager's persistent per-repo init-marker table. The lib
+    # owns this table in production (created in EvoGit.Application.start/2);
+    # until that merge lands, tests create it themselves. Track whether THIS
+    # test created it so on_exit deletes it ONLY if self-created (never an
+    # app-owned table).
+    worktree_repos_self_created = create_worktree_repos_ets()
     clear_ets()
 
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
       clear_ets()
+
+      if worktree_repos_self_created do
+        if :ets.whereis(:evogit_worktree_repos) != :undefined do
+          :ets.delete(:evogit_worktree_repos)
+        end
+      end
     end)
 
     {:ok, %{tmp_dir: tmp_dir, base_sha: base_sha}}
@@ -64,6 +76,67 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
     if :ets.whereis(:evogit_sched_meta) != :undefined,
       do: :ets.delete_all_objects(:evogit_sched_meta)
+  end
+
+  # Creates the WorktreeManager's persistent per-repo init-marker table when
+  # the app does not own it yet (pre-lib-merge test env). Returns true when
+  # THIS test created it (so on_exit can delete it), false when the app owns
+  # it. Mirrors the app's table options (:named_table/:public/:set +
+  # read_concurrency), same as the other scheduler tables.
+  defp create_worktree_repos_ets do
+    if :ets.whereis(:evogit_worktree_repos) == :undefined do
+      :ets.new(:evogit_worktree_repos, [:named_table, :public, :set, read_concurrency: true])
+      true
+    else
+      false
+    end
+  end
+
+  # Builds a well-formed %Task{} struct carrying the given pid — the shape
+  # Dispatch.try_dispatch/2 stores in SchedMeta.task_ref (production sets
+  # worktree + task_ref BEFORE the Runner requests the worktree). The
+  # crash-restart re-monitor (rebuild_monitor/3) only reads task_ref.pid, but
+  # the struct must be constructible — Elixir >= 1.18 Task enforces
+  # [:mfa, :owner, :ref].
+  defp task_ref_for(pid) do
+    %Task{pid: pid, ref: make_ref(), owner: pid, mfa: {DummyAgent, :run, []}}
+  end
+
+  # Restarts the WorktreeManager so its `init/1` runs again — the crash-restart
+  # code path under test (`rebuild_monitors/1` + marker-gated `maybe_init_repo`).
+  # The running agent Tasks keep going in their live worktrees: that is exactly
+  # the crash-cascade scenario under test.
+  #
+  # NOTE — deliberately NOT `Process.exit(pid, :kill)`: the full-dir suite ALSO
+  # crash-restarts other supervisor children (PubSubTest kills the PubSub
+  # Throttle), and EvoGit.Supervisor's default restart intensity is 3 restarts /
+  # 5s. Repeated `:kill` restarts across files exhaust the budget — on the
+  # intensity-exceeded path the supervisor permanently stops the child (and
+  # tears down the whole app), which made these tests flaky in the full-dir
+  # run (the 3rd kill in this file + PubSubTest's kill = 4 restarts in the
+  # window). The supervisor's explicit terminate_child + restart_child pair
+  # runs the SAME `start_link` → `init` → `rebuild_monitors` path as a crash
+  # restart (that is the code under test) WITHOUT consuming the
+  # automatic-restart budget — the same pattern the suite already uses to
+  # restart Store/TaskRegistry/SystemSampler.
+  defp restart_manager(timeout \\ 10_000) do
+    old_pid = Process.whereis(WorktreeManager)
+    assert is_pid(old_pid)
+
+    :ok = Supervisor.terminate_child(EvoGit.Supervisor, WorktreeManager)
+    assert {:ok, new_pid} = Supervisor.restart_child(EvoGit.Supervisor, WorktreeManager)
+    assert new_pid != old_pid
+
+    # restart_child is synchronous (the name registers inside start_link), but
+    # keep the poll as belt-and-braces for slow filesystems/CI.
+    wait_until(
+      fn ->
+        Process.whereis(WorktreeManager) == new_pid
+      end,
+      timeout
+    )
+
+    new_pid
   end
 
   # --- Agent registration helpers ---
@@ -464,6 +537,203 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
         assert File.exists?(Path.join(wt_path, "init-marker.txt"))
       end
+    end
+  end
+
+  # ==========================================================================
+  # WorktreeManager crash-restart — persistent per-repo marker (Bug 2/3)
+  # ==========================================================================
+  #
+  # The WorktreeManager is a one_for_one child of EvoGit.Supervisor: a crash
+  # restarts ONLY it, while the running agent Tasks keep executing in their
+  # live worktrees. The fix gates the destructive per-repo init (rm_rf workers
+  # dir + orphaned-branch cleanup + prune) on a persistent marker in the
+  # `:evogit_worktree_repos` ETS table and re-monitors live agents from their
+  # scheduler ETS rows on restart. `restart_manager/0` restarts the manager
+  # through the supervisor's terminate_child + restart_child pair (same
+  # start_link → init path as a crash restart, but without exhausting the
+  # supervisor's automatic-restart budget — see its doc comment).
+  describe "WorktreeManager crash-restart" do
+    test "restart does NOT wipe live worktrees (marker present)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # Agent 1 creates a live worktree — the create pipeline runs
+      # maybe_init_repo, which records the persistent per-repo marker.
+      agent_id_1 = unique_agent_id()
+      {spec, meta} = register_agent(agent_id_1, tmp_dir, base_sha)
+      wt1 = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch1 = "evogit-agent-T1-A1"
+
+      assert {:ok, ^wt1} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id_1,
+                 tmp_dir,
+                 wt1,
+                 spec,
+                 meta,
+                 self()
+               )
+
+      assert File.dir?(wt1)
+      assert Git.branch_exists?(tmp_dir, branch1)
+
+      # Mirror production: Dispatch.try_dispatch/2 sets worktree + task_ref in
+      # the sched_meta row BEFORE the Runner requests the worktree — the
+      # crash-restart re-monitor (rebuild_monitor/3) needs both.
+      Store.put_sched_meta(agent_id_1, %{meta | worktree: wt1, task_ref: task_ref_for(self())})
+
+      # Restart ONLY the manager (one_for_one child of EvoGit.Supervisor;
+      # the running agent Tasks keep going in their live worktrees).
+      restart_manager()
+
+      # Marker present → the destructive wipe is skipped → the live worktree
+      # and its branch survive the restart.
+      assert File.dir?(wt1)
+      assert Git.branch_exists?(tmp_dir, branch1)
+
+      # A second agent can still create its own worktree after the restart
+      # (the marker-present init only ensures the workers dir exists).
+      agent_id_2 = unique_agent_id()
+      {spec2, meta2} = register_agent(agent_id_2, tmp_dir, base_sha, task_number: 2)
+      wt2 = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T2_A1")
+
+      assert {:ok, ^wt2} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id_2,
+                 tmp_dir,
+                 wt2,
+                 spec2,
+                 meta2,
+                 self()
+               )
+
+      assert File.dir?(wt1)
+      assert File.dir?(wt2)
+    end
+
+    test "marker-absent restart re-runs the full wipe", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      workers_dir = Worktrees.workers_dir(tmp_dir)
+
+      # Agent 1's create runs maybe_init_repo and records the marker.
+      agent_id_1 = unique_agent_id()
+      {spec, meta} = register_agent(agent_id_1, tmp_dir, base_sha)
+      wt1 = Path.join(workers_dir, "worker_T1_A1")
+
+      assert {:ok, ^wt1} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id_1,
+                 tmp_dir,
+                 wt1,
+                 spec,
+                 meta,
+                 self()
+               )
+
+      assert File.dir?(wt1)
+      assert :ets.member(:evogit_worktree_repos, tmp_dir)
+
+      # Leftover junk inside the workers dir (simulates artifacts from a
+      # previous BEAM run). Placed AFTER the first create so it survives until
+      # the marker is removed below — the first create's init already wiped
+      # the (empty) workers dir.
+      sentinel = Path.join(workers_dir, "sentinel")
+      File.write!(sentinel, "sentinel")
+      assert File.exists?(sentinel)
+
+      # Remove the marker — simulating a genuine BEAM/app restart, where the
+      # app-owned table dies with it and no live agents exist.
+      :ets.delete(:evogit_worktree_repos, tmp_dir)
+      refute :ets.member(:evogit_worktree_repos, tmp_dir)
+
+      restart_manager()
+
+      # A second agent's create re-runs the full wipe (marker absent): the
+      # sentinel AND agent 1's worktree are removed, then a fresh worktree is
+      # created for agent 2.
+      agent_id_2 = unique_agent_id()
+      {spec2, meta2} = register_agent(agent_id_2, tmp_dir, base_sha, task_number: 2)
+      wt2 = Path.join(workers_dir, "worker_T2_A1")
+
+      assert {:ok, ^wt2} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id_2,
+                 tmp_dir,
+                 wt2,
+                 spec2,
+                 meta2,
+                 self()
+               )
+
+      refute File.exists?(sentinel)
+      refute File.dir?(wt1)
+      assert File.dir?(wt2)
+    end
+
+    test "restart re-monitors live agents → exit triggers cleanup", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      # Controllable agent: creates its own worktree, then waits for the
+      # test's exit signal (same pattern as the normal/crash-exit tests).
+      parent = self()
+
+      agent =
+        spawn(fn ->
+          result =
+            WorktreeManager.create_worktree_for_agent(
+              agent_id,
+              tmp_dir,
+              wt_path,
+              spec,
+              meta,
+              self()
+            )
+
+          send(parent, {:created, result})
+
+          receive do
+            :exit_please -> Process.exit(self(), :kill)
+          end
+        end)
+
+      # Wait for the create call to FULLY complete — NOT just for the dir to
+      # appear: the CoW pipeline creates the empty worktree dir early
+      # (`git worktree add --no-checkout`), so `File.dir?` can pass while the
+      # create task is still in flight. Proceeding then (manager kill + agent
+      # exit) would race the in-flight create: the rebuilt monitor's :DOWN
+      # cleanup removes the dir, but the create task's `Git.add_worktree`
+      # fallback recreates it — leaving an orphaned worktree with no monitor.
+      # 30s deadline like the other create tests.
+      assert_receive {:created, {:ok, ^wt_path}}, 30_000
+      assert File.dir?(wt_path)
+      assert Git.branch_exists?(tmp_dir, branch)
+
+      # Mirror production: the sched_meta row carries the live worktree +
+      # %Task{} ref so the crash-restart re-monitor can find the agent.
+      Store.put_sched_meta(agent_id, %{meta | worktree: wt_path, task_ref: task_ref_for(agent)})
+
+      restart_manager()
+
+      # Robustness: re-put the rows after the restart too (harmless) so the
+      # re-monitor definitely sees them even if the restart raced the write.
+      Store.put_sched_meta(agent_id, %{meta | worktree: wt_path, task_ref: task_ref_for(agent)})
+
+      # Release the agent — the REBUILT monitor delivers :DOWN → cleanup.
+      send(agent, :exit_please)
+
+      wait_until(
+        fn -> not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch) end,
+        30_000
+      )
     end
   end
 
