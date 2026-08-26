@@ -24,3 +24,45 @@ None — leaf directory (four module files: `status.ex`, `charts.ex`, `update_ca
 - The module contains pure functions — no I/O, no socket, no process calls. (`UpdateCard`/`SourceCard` are the exceptions: async spawn helpers that run on `EvoDash.TaskSupervisor`.)
 - Follows the project-wide `try/rescue` anti-pattern policy — the ONLY rescue is at the async boundary in the `SourceCard` spawn functions (a crashing runner must not wedge the card's loading/busy state).
 - The Genesis Source card is **local-only** by design: `SourceCard.visible?/1` returns `node in [nil, node()]`, so clone/update never act on a remote node (a remote daemon's self-reflective agent reads the remote host's filesystem).
+
+## Notes for Agents — System self-check design (health banner + check grid)
+
+The self-check section (System page) is a merged health banner + responsive 2D grid of check-term cells:
+
+- **Overall health banner** (full-width, top of the self-check section, ALWAYS rendered — including during `:checking`, where it shows a neutral spinning "Checking system health..." state): derived by `Status.overall_health/1` from `health_checks/1` (private in `system_live.ex`) — a map of the five check assigns plus `sandbox_shown`/`nix_shown` flags mirroring the cell gating in the template. Returns `%{status: :ok | :warning | :error | :loading, reasons: [String.t()]}`:
+  - `:loading` when any ALWAYS-critical assign (supervisor/config/tools) is nil — nil checks render neutral, never as errors.
+  - `:error` when any critical check fails: process tree (`Status.supervisor_healthy?/1`), configuration (`Status.config_ok?/1`), tools (`Status.tools_status/1 != :ok`), or sandbox (`Status.sandbox_status/1 != :ok` **only when `sandbox_shown`**).
+  - `:warning` when only non-critical issues exist: nix enabled-but-not-built (`Status.nix_status/1 != :ok`, **only when `nix_shown`**) — deliberately NOT a hard failure (nix is optional).
+  - `reasons` are gettext-wrapped human-readable strings ("Required settings are missing or invalid", "A required tool (git or ripgrep) is missing", "Sandbox is unavailable", …) rendered as a bullet list under the banner headline ("System running correctly" / "System needs attention" / "System running, but needs attention").
+  - `@config_status` carries the remote config status on a remote node, so the banner needs no extra RPC.
+- **Check grid**: `div.grid.grid-cols-1.md:grid-cols-2.gap-3` with one `check_cell/1` per term: Configuration, Required Tools, Sandbox (gated `EvoDashWeb.PlatformInfo.show_sandbox?(@platform_os)`), Nix Environment (gated `@nix_check != nil and enabled and available`), LLM Connection (info status, `~p"/settings?category=llm&node=…"` link).
+- **DOM contract (AUTHORITATIVE — do not deviate)**: check cells do NOT emit `<details>`/`<summary>` — the header is a plain `<div class="flex items-center gap-3 p-4">`, and the detail + `:fix` slot are always rendered (fix gated `@status not in [:ok, :info] and @fix != []`). Do NOT re-add a disclosure.
+- **Test markers**: title spans render exactly as `<span class="font-semibold text-sm">{title}</span>` so `>Sandbox</span>` / `>Nix Environment</span>` markers match; "flake.nix"/"Flake valid"/"hero-lock-closed"/"sandbox-exec (macOS)"/"bwrap (Linux)" detail strings are unchanged. `Status.format_backend/1` maps `:bwrap` → "bwrap (Linux)" (badge `badge-success` in the check grid); `Status.sandbox_status/1` treats bwrap with `capabilities.filesystem_isolation` as `:ok`.
+- **Supervisor health feeds ONLY the merged banner**: there is no "Genesis Process Tree" row and no `supervisor_status/1` component.
+- **`~p` gotcha**: interpolating into the PATH portion of a static route (`~p"/settings#{…}"`) emits a compile-time "no route path" warning (test_path materializes the interpolation as `"1"` → `/settings1`); use `with_node_param/2` (appends `?node=` — only safe for query-less URLs) or interpolate in the query portion only.
+
+## System page charts (SVG, zero JS)
+
+- Hand-rolled server-rendered SVG — ZERO JS dependencies (the vendored asset set is fixed; do not add JS/CSS for charts).
+- `EvoDashWeb.SystemLive.Charts`: `push/2,3` (ring buffer, cap 60), `llm_series/1`/`tool_series/1`/`agents_series/1` (series builders with gettext names), `y_max/1` (max×1.2 headroom, floor 4), `y_for/2`, `path_for/2` + `pad_to_capacity/2` (SVG `d` strings, zero left-pad). Components (`use Phoenix.Component` + gettext + CoreComponents `icon`): `charts_section/1` (header + paused badge + 3-card grid) and `chart_card/1` (legend + SVG sparkline, "Collecting data…" placeholder while `samples == []`). Markup: `<svg viewBox="0 0 300 100" preserveAspectRatio="none">` + `vector-effect="non-scaling-stroke"`; the Capacity series renders as a `static: true` dashed horizontal line.
+- **Consumes the PRE-AGGREGATED sample maps broadcast by the evo_git system sampler DIRECTLY** — the aggregation logic lives in the evo_git sampler, NOT here. Sample keys: `llm_used, llm_waiting, tool_used, tool_waiting, llm_capacity, tool_capacity, agents_total, agents_running, agents_blocked, agents_waiting, agents_pending, scheduler_alive`.
+- **Push contract**: `{:system_sample, node, seq, sample}` every 3s from a node-side sampler. **Seed**: on mount/node-switch ONE async `EvoDash.NodeContext.get_recent_system_samples(current_node)` runs via `EvoDash.TaskSupervisor` + self-message `{:system_samples_seeded, seq, node, result}` + stale-guard (monotonic `chart_seed_seq` + node); on error ONE retry after 3s (one-shot, gated by `chart_seed_retried` — NOT periodic); on node switch the buffer is cleared + re-seeded. The `:system_samples_runner` app-env test seam is resolved AT SPAWN TIME. `{:scheduler_config_updated, node}` → `spawn_paused_load/1`. Remote nodes: pure PubSub (samples arrive via the cluster).
+
+## Async node-aware loads on System page
+
+- `spawn_node_loads/1` spawns TWO `EvoDash.TaskSupervisor` tasks: `spawn_paused_load/1` → `{:paused_state, node, paused}` (gated by `scheduler_alive?/1`) and `PlatformInfo.os_for_node(node)` → `{:platform_os_result, node, os}`.
+- Both `handle_info` clauses are stale-guarded on `socket.assigns.current_node == node`.
+- Mount defaults: `scheduler_paused: false`; `platform_os` takes the local fast-path only (`current_node in [nil, node()]` → synchronous `os_for_node` call, preserving the `:platform_os_override` test seam).
+- Test idiom: `await_view_assign(view, key, value)`.
+
+## Genesis Source card detail
+
+- Local-only (`SourceCard.visible?/1` = `node in [nil, node()]`); a remote daemon's self-reflective agent reads the REMOTE host's filesystem, so clone/update must never act remotely.
+- Guarded backend: `Code.ensure_loaded?(EvoGit.SelfReflectiveSource)` + `apply/3` (a direct call to the missing module emits an "undefined function" compile warning) — absent backend → `{:unavailable, :module_missing}`; async-boundary rescue → `{:unavailable, :runner_error}`.
+- Seams resolved at spawn: `:source_status_runner` (raw status map or `{:unavailable, reason}`), `:source_clone_runner` / `:source_update_runner` (`{:ok, status} | {:error, reason} | {:unavailable, reason}`).
+- Status map contract: `%{dir:, exists:, is_git_repo:, valid:, commit:, branch:, version:, remote_url:, reference:, is_reference:}`.
+
+## SystemLive platform gating (EvoDashWeb.PlatformInfo)
+
+- Sandbox self-check **cell** wrapped in `if PlatformInfo.show_sandbox?(@platform_os)` (no "Not Available"/"Disabled" messaging on Windows/unknown); Nix Environment **cell** wrapped in `if @nix_check != nil and @nix_check.enabled and @nix_check.available` (nix hidden when disabled in config OR binary not found — `EvoGit.Nix.enabled?/0` + `EvoGit.Platform.nix_available?/0`).
+- `platform_os` assigned in mount + handle_params (after `assign_node/2`). `safe_system_checks/1` — checks run on the LOCAL VM; only the config status is fetched remotely. The same gating predicates drive the health-banner aggregation via `health_checks/1`.
