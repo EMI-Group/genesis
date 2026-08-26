@@ -47,7 +47,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 
 **Error tuples** (for tests): probe → `{:error, {:probe_failed, {:exit_status, n} | :timeout | {:unexpected_output, out}}}` or `{:error, :unsupported_platform}`; download → `{:error, {:download_failed, {:exit_status, n} | :timeout | {:local, detail} | {:local_scp, detail}}}`; platform override → `{:error, {:invalid_platform, p}}` / `{:error, :unsupported_platform}` (e.g. `windows_x64` — daemon launcher only supports Linux/macOS). `download_url/1` → `{:ok, url, "latest"}` (deterministic, keys the local cache).
 
-**Notes**: `remote_connection.ex` is ~1680 lines — all pure logic lives in `remote_bootstrap.ex` (incl. `parse_unit_environment/1`, the unit-environment parser used by daemon-identity verification); the rest is ssh/scp/curl/wget orchestration + stage broadcasting + state transitions deliberately kept in `RemoteConnection`. `@bootstrap_call_timeout_ms` 900s (download can be slow); `@download_timeout_ms` 300s.
+**Notes**: `remote_connection.ex` is ~1680 lines — all pure logic lives in `remote_bootstrap.ex` (incl. `parse_unit_environment/1`, the unit-environment parser used by daemon-identity verification); the rest is ssh/scp/curl/wget orchestration + stage broadcasting + state transitions deliberately kept in `RemoteConnection`. `@bootstrap_call_timeout_ms` 900s, `@download_timeout_ms` 300s.
 
 ### Known Issues — Remote Daemon Cookie / Connect Failures (`node_connect_failed`)
 
