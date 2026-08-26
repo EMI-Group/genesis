@@ -23,7 +23,6 @@ None — leaf directory (Elixir config files only).
 - **`dev.local.exs`**: Optional, git-ignored, for developer-specific overrides.
 - **Umbrella layout**: Asset paths reference `apps/evo_dash/assets`.
 - **LLM config split**: Elixir config handles HTTP timeouts/infrastructure; TOML handles model selection, concurrency, API keys. These are separate systems that don't overlap.
-- **Backward compat**: `EvoGit.Defaults` module delegates all calls to `EvoGit.Config.resolve/1`
 
 ## LLM-Related Configuration
 
