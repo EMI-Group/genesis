@@ -182,6 +182,10 @@ Documented limitation: a same-second + same-size external rewrite on coarse-mtim
 - `save_user_config/1` does NOT auto-reload the scheduler state — after saving, the dashboard (SettingsLive) calls `reload_remote_config` but IGNORES its return → a silent stale-config window until a manual reload.
 - `RemoteConnections` does NOT auto-create an empty `remote_connections.toml` (unlike the config skeleton behavior) — the file appears only when a target is actually saved.
 
+## Web Search Provider Config
+
+Web search (`[tools.search]`) supports providers `[:tavily, :perplexity, :exa, :bing, :brave]`. The **single source of truth** for the provider list is `EvoGit.Config.Schema.Definitions.search_providers/0` (module attribute `@search_providers` in `schema/definitions.ex`) — do NOT hardcode the list elsewhere. It is used by BOTH the schema `in:` validation (`[:tools, :search, :provider]`) and `EvoGit.Config.atomize_enum_values/1`, which atomizes the `provider` value and each provider section's `search_depth` against `[:basic, :advanced]` generically via that accessor. `tools_search_enabled?/0` is provider-generic: it resolves the SELECTED provider's own `api_key_credential_key` (with a tavily fallback) — no per-provider branching needed.
+
 ## Constraints
 - `save_user_config/1` → `config.toml`; `save_credentials/1` → `credentials.toml`. Both create the config dir if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.

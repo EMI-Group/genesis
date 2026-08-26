@@ -97,6 +97,16 @@ defmodule EvoGit.Config do
       # tavily.max_results = 10        # 1-50
       # tavily.timeout = 60000         # milliseconds
       # tavily.max_bytes = 16384       # max output bytes
+      # perplexity.api_key_credential_key = "PERPLEXITY_API_KEY"
+      # perplexity.base_url = "https://api.perplexity.ai/chat/completions"
+      # perplexity.search_depth = "basic"
+      # perplexity.model = "sonar"
+      # exa.api_key_credential_key = "EXA_API_KEY"
+      # exa.base_url = "https://api.exa.ai/search"
+      # bing.api_key_credential_key = "BING_SEARCH_API_KEY"
+      # bing.base_url = "https://api.bing.microsoft.com/v7.0/search"
+      # brave.api_key_credential_key = "BRAVE_SEARCH_API_KEY"
+      # brave.base_url = "https://api.search.brave.com/res/v1/web/search"
 
   ## Credentials File Format (credentials.toml)
 
@@ -237,19 +247,24 @@ defmodule EvoGit.Config do
         search_config = Map.get(tools_config, :search, %{})
 
         if is_map(search_config) do
+          providers = EvoGit.Config.Schema.Definitions.search_providers()
           provider = Map.get(search_config, :provider)
-          new_provider = atomize_if_string(provider, [:tavily])
+          new_provider = atomize_if_string(provider, providers)
           acc = put_in(acc, [:tools, :search, :provider], new_provider)
 
-          tavily_config = Map.get(search_config, :tavily, %{})
+          # Atomize each provider section's search_depth generically — the
+          # provider list comes from the schema (single source of truth).
+          Enum.reduce(providers, acc, fn prov, acc ->
+            provider_config = Map.get(search_config, prov, %{})
 
-          if is_map(tavily_config) do
-            search_depth = Map.get(tavily_config, :search_depth)
-            new_depth = atomize_if_string(search_depth, [:basic, :advanced])
-            put_in(acc, [:tools, :search, :tavily, :search_depth], new_depth)
-          else
-            acc
-          end
+            if is_map(provider_config) do
+              search_depth = Map.get(provider_config, :search_depth)
+              new_depth = atomize_if_string(search_depth, [:basic, :advanced])
+              put_in(acc, [:tools, :search, prov, :search_depth], new_depth)
+            else
+              acc
+            end
+          end)
         else
           acc
         end
