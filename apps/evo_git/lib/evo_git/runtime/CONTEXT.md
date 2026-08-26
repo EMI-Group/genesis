@@ -5,7 +5,7 @@ Implements the two-phase execution engine of EvoGit: **Genesis** (initial codeba
 
 ## Routing Table
 
-None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evolution.ex`, `pull_request.ex`, `worktree_init_script.ex`, `skill_extraction.ex`, `self_reflective.ex`).
+None — leaf directory (modules: `runtime.ex` (parent dir `../runtime.ex`), `helpers.ex`, `genesis.ex`, `evolution.ex`, `pull_request.ex`, `worktree_init_script.ex`, `skill_extraction.ex`, `self_reflective.ex`).
 
 ## API Surface
 
@@ -13,172 +13,113 @@ None — leaf directory (modules: `runtime.ex`, `helpers.ex`, `genesis.ex`, `evo
 
 | Module | File | Public API | Description |
 |--------|------|------------|-------------|
-| `EvoGit.Runtime` | `../runtime.ex` | `ensure_repo/1` | Top-level coordinator. `ensure_repo/1` initializes a git repo with `.gitignore` if missing. The CLI (`EvoGit.CLI`) calls `Genesis.run/2` and `Evolution.run/2` directly — there is no combined orchestration entry point. |
-| `EvoGit.Runtime.Helpers` | `helpers.ex` | `merge_and_report/3`, `notify_finalizing/1`, `generate_branch_name/1`, `new_codebase?/1`, `validate_node_path/2`, `resolve_starting_commit/2`, `load_foreign_repos/2`, `merge_foreign_repos/2` | Shared helper functions for both runtime phases — branch creation, change detection, node path validation, commit resolution. `load_foreign_repos/2` merges `genesis.toml` foreign repos with CLI-provided repos (CLI takes precedence) and is used by all four runtime call sites (Genesis Mode A, Genesis Mode B, Evolution, SkillExtraction). **`merge_foreign_repos/2` normalizes BOTH lists via `EvoGit.Core.ForeignRepo.normalize/1` before the dedup-by-id merge (unparseable entries dropped)** — entries may arrive as `%ForeignRepo{}` structs, atom-keyed maps, or string-keyed maps (opts persisted to SQLite round-trip through the Codec JSON and come back string-keyed); raw dot-access on map entries crashed with `KeyError`. |
+| `EvoGit.Runtime` | `../runtime.ex` | `ensure_repo/1` | Initializes a git repo with `.gitignore` if missing. The CLI calls `Genesis.run/2` / `Evolution.run/2` directly — no combined orchestration entry point. |
+| `EvoGit.Runtime.Helpers` | `helpers.ex` | `merge_and_report/3`, `notify_finalizing/1`, `generate_branch_name/1`, `new_codebase?/1`, `validate_node_path/2`, `resolve_starting_commit/2`, `load_foreign_repos/2`, `merge_foreign_repos/2` | Shared helpers for both phases — branch creation, change detection, node path validation, commit resolution. `load_foreign_repos/2` merges `genesis.toml` foreign repos with CLI-provided repos (CLI precedence); used by all four runtime call sites (Genesis Mode A/B, Evolution, SkillExtraction). `merge_foreign_repos/2` normalizes BOTH lists via `EvoGit.Core.ForeignRepo.normalize/1` before dedup-by-id merge (unparseable entries dropped) — entries may be `%ForeignRepo{}` structs, atom-keyed, or string-keyed maps (SQLite Codec JSON round-trip); raw dot-access on map entries raises `KeyError`. |
 | `EvoGit.Runtime.Genesis` | `genesis.ex` | `run/2` | Stage 1 — Creation/Analysis. Auto-detects mode. Returns `{:ok, %{commit_sha, result, tag, branch_name, pr_url}}` or `{:ok, %{..., no_changes: true}}`. |
-| `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Supports `:simple` mode only. Same return shape as Genesis. |
+| `EvoGit.Runtime.Evolution` | `evolution.ex` | `run/2` | Stage 2 — Evolutionary Loop. Modes `:simple` and `:custom`. Same return shape as Genesis. |
 | `EvoGit.Runtime.PullRequest` | `pull_request.ex` | `try_create/4`, `generate_title/2`, `format_body/2` | Shared PR utilities: LLM-powered title generation, body formatting, push + PR creation via `gh` CLI. |
-| `EvoGit.Runtime.WorktreeInitScript` | `worktree_init_script.ex` | `build_systems/0`, `get_build_system/1`, `scripts_for/1` | Predefined catalog of Worktree Init Scripts for common build systems (Elixir, Node.js, Python, Rust, Go, None). Each entry provides unix (bash) and windows (PowerShell) scripts that copy dependencies/build artifacts from the source repo into new worktrees. Genesis Mode B writes the selected scripts to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) so the existing per-worktree init-script infrastructure picks them up. |
-| `EvoGit.Runtime.SkillExtraction` | `skill_extraction.ex` | `run/1` | Skill Extraction Phase — analyzes a completed PR's changes and distills reusable knowledge into EvoGit skills (`.agents/skills/`). Takes a keyword list of PR context opts (title, objective, summary, commit history, base_sha, commit_sha, user_note). Builds the objective from PR context and spawns a `SkillExtractor` agent. |
-| `EvoGit.Runtime.SelfReflective` | `self_reflective.ex` | `run/1`, `run/2`, `source_root/0`, `build_spec/2` | Repo-less self-reflective runtime — chatbot-style system introspection. `source_root/0` delegates to the SHARED chain `EvoGit.SelfReflectiveSource.reference_path/0` (`:self_reflective_source_root` app env → `GENESIS_SOURCE_ROOT` env var → valid managed clone at `<data_dir>/genesis-source`) with terminal fallback `File.cwd!()` (dev: the genesis repo) — same implementation as `Dispatch.resolve_repo_less_root/0`, so both always agree. `run/2` builds a repo-less spec (phylo nil; context node loaded over the source root when it's a real dir, else a bare minimal `%ContextNode{}` with a `"[system]"` placeholder repo), spawns `EvoGit.Agents.SelfReflective` via `AgentScheduler.run_agent/1`, and returns `{:ok, %{result: ..., commit_sha: nil, branch_name: nil, tag: nil}}` — no git ops, no merge_and_report, no PR. `build_spec/2` is a test seam exposing the spec shape (`spec.opts[:repo_less] == true`). Task-type `:reflect` routes here via `TaskExecutor.execute_task/3` (see `task_registry/CONTEXT.md`). |
+| `EvoGit.Runtime.WorktreeInitScript` | `worktree_init_script.ex` | `build_systems/0`, `get_build_system/1`, `scripts_for/1` | Predefined catalog of Worktree Init Scripts for common build systems (Elixir, Node.js, Python, Rust, Go, None); per entry unix (bash) + windows (PowerShell) scripts that copy deps/build artifacts from the source repo into new worktrees. Genesis Mode B writes selected scripts to `genesis.toml` as `script.linux`/`script.macos`/`script.windows` variants. |
+| `EvoGit.Runtime.SkillExtraction` | `skill_extraction.ex` | `run/1` | Analyzes a completed PR's changes and distills reusable knowledge into EvoGit skills (`.agents/skills/`). Takes a PR-context keyword list (title, objective, summary, commit history, base_sha, commit_sha, user_note), builds the objective, and spawns a `SkillExtractor` agent. |
+| `EvoGit.Runtime.SelfReflective` | `self_reflective.ex` | `run/1`, `run/2`, `source_root/0`, `build_spec/2` | Repo-less self-reflective runtime — chatbot-style system introspection. `source_root/0` delegates to the shared chain `EvoGit.SelfReflectiveSource.reference_path/0` (`:self_reflective_source_root` app env → `GENESIS_SOURCE_ROOT` env var → valid managed clone at `<data_dir>/genesis-source`), terminal fallback `File.cwd!()` — same implementation as `Dispatch.resolve_repo_less_root/0`. `run/2` builds a repo-less spec (phylo nil; context node over the source root when a real dir, else bare `%ContextNode{}` with `"[system]"` placeholder repo), spawns `EvoGit.Agents.SelfReflective` via `AgentScheduler.run_agent/1`, returns `{:ok, %{result: ..., commit_sha: nil, branch_name: nil, tag: nil}}` — no git ops, no merge_and_report, no PR. `build_spec/2` is a test seam (`spec.opts[:repo_less] == true`). Task-type `:reflect` routes here via `TaskExecutor.execute_task/3` (see `task_registry/CONTEXT.md`). |
 
-### `Genesis.run/2` — Step by Step
+### `Genesis.run/2` — Steps
 
-1. **Parse options**: Extracts `repo_path` (default `File.cwd!()`), `foreign_repos`.
-2. **Register foreign repos**: If `foreign_repos` provided, registers them with `AgentScheduler`.
-3. **Ensure repo**: Calls `Runtime.ensure_repo/1` to `git init` if needed.
-4. **Get HEAD**: `PhyloGraphNode.current_head/1` → current commit SHA.
-5. **Detect mode**: `new_codebase?/1` checks if directory has files beyond `.git`, `README.md`, `.genesis`, `.gitignore`.
-6. **Worktree init script (Mode B only)**: Before spawning the agent, `Genesis` reads `build_system` from opts (selected interactively via CLI or via `--build-system` flag), looks up predefined scripts via `WorktreeInitScript.scripts_for/1`, and writes them to `genesis.toml` as OS-specific variants (`script.linux`, `script.macos`, `script.windows`) via `ProjectConfig.write_worktree_script/2` so the existing per-worktree init-script infra copies deps/build cache into new worktrees. Skipped when no build system is selected or `:none` is chosen.
-7. **Dispatch agent**:
-   - **Mode A (Existing)** → `ContextExtractor` agent (read-only, builds CONTEXT.md tree via recursive subagent extraction).
-   - **Mode B (New)** → `Architect` agent (read-write, 3-phase: architecture & design → implementation delegation → review & accountability). Also spawns a second root Manager agent for implementation.
-8. **AgentSpec construction**: `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
-9. **Post-processing** (`merge_and_report/3`): Compares base SHA vs agent's final SHA. If changed, creates `genesis/agent_<hex>` branch at agent commit, optionally creates PR. If unchanged, returns `no_changes: true`.
+1. Parse opts: `repo_path` (default `File.cwd!()`), `foreign_repos`; register foreign repos with `AgentScheduler`.
+2. `Runtime.ensure_repo/1` (`git init` if needed); HEAD via `PhyloGraphNode.current_head/1`.
+3. Detect mode via `new_codebase?/1` (files beyond `.git`, `README.md`, `.genesis`, `.gitignore`).
+4. Mode B only: read `build_system` opt (CLI `--build-system`), `WorktreeInitScript.scripts_for/1` → write `script.linux`/`script.macos`/`script.windows` to `genesis.toml` via `ProjectConfig.write_worktree_script/2`. Skipped when no build system or `:none`.
+5. Dispatch: **Mode A (Existing)** → `ContextExtractor` (read-only, recursive CONTEXT.md tree extraction). **Mode B (New)** → `Architect` (read-write, 3-phase: architecture & design → implementation delegation → review & accountability) + second root `Manager` for implementation.
+6. `AgentSpec.new(context_node, phylo_node, agent_module, objective)` → `AgentScheduler.run_agent/1` (blocks until complete).
+7. Post-processing `merge_and_report/3`: base SHA vs final SHA; changed → `genesis/agent_<hex>` branch at agent commit (+ optional PR); unchanged → `no_changes: true`.
 
-### `Evolution.run/2` — Step by Step
+### `Evolution.run/2` — Steps
 
-1. **Parse options**: Extracts `repo_path`, `mode`, `node_path` (default `"./"`), `foreign_repos`.
-2. **Normalize mode** (`mode_atom/1`, `@doc false` test wrapper): `nil`/absent, `:simple`, or `"simple"` → `:simple`; `:custom` or `"custom"` → `:custom`; ANY other value logs a warning ("unknown mode ..., falling back to simple") and falls back to `:simple` (backward compatible — legacy task opts may carry other values).
-3. **Custom mode validation**: when mode is `:custom`, an explicit `agent:` opt is REQUIRED — nil/empty raises `ArgumentError` ("custom mode requires an agent id; pass agent: <id> (defined in agents.toml)") BEFORE any repo/git I/O; unknown ids raise in `Helpers.resolve_root_agent/2`.
-4. **Register foreign repos**: Same as Genesis.
-5. **Ensure repo + get HEAD**: Same as Genesis.
-6. **Validate node path**: `validate_node_path/2` ensures path is relative, directory exists, and contains `CONTEXT.md` (root `"./"` always passes).
-7. **Dispatch agent**: `:simple` spawns a `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents); `:custom` spawns the `EvoGit.Agents.Custom` root agent bound to the `agent:` id (definition resolved from `agents.toml` at run time). Both modes share one private flow (`run_resolved_root_agent/7`) parameterized by the resolved root-agent module/opts.
-8. **Post-processing**: Same `merge_and_report/3` pattern — creates `genesis/agent_<hex>` branch, optionally PR.
+1. Parse opts: `repo_path`, `mode`, `node_path` (default `"./"`), `foreign_repos`.
+2. `mode_atom/1` (`@doc false` test wrapper): nil/absent, `:simple`, `"simple"` → `:simple`; `:custom`/`"custom"` → `:custom`; ANY other value → warning + `:simple` fallback.
+3. Custom mode requires an `agent:` opt — nil/empty raises `ArgumentError` ("custom mode requires an agent id; pass agent: <id> (defined in agents.toml)") BEFORE repo/git I/O; unknown ids raise in `Helpers.resolve_root_agent/2`.
+4. Register foreign repos; ensure repo + HEAD (same as Genesis).
+5. `validate_node_path/2`: path relative, dir exists, contains `CONTEXT.md` (root `"./"` always passes).
+6. Dispatch: `:simple` → `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents); `:custom` → `EvoGit.Agents.Custom` root bound to the `agent:` id. Both modes share one private flow `run_resolved_root_agent/7` parameterized by the resolved root-agent module/opts.
+7. Post-processing: same `merge_and_report/3` pattern.
 
 ### `starting_commit` Opt — Evolution Only (Genesis Ignores It)
 
-`TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` (`task_registry/runtime_opts.ex:32-37`) passes `:starting_commit` into runtime opts for BOTH `:genesis` and `:evolve` tasks, and the CLI passes it for evolve (`cli.ex:89`, flag `--starting-commit`, `cli/parser.ex:34`). But **only `Evolution.run/2` reads it** (`evolution.ex:14,23` → `Helpers.resolve_starting_commit/2`, `helpers.ex:167-180`: nil → `PhyloGraphNode.current_head/1`; ref → `Git.rev_parse`, error propagates as phase error). `Genesis.run/2` has no `starting_commit` clause — it always starts from `PhyloGraphNode.current_head(repo_path)` (`genesis.ex:23`), so a `:starting_commit` in genesis opts is silently ignored. `ResumeContext.apply_resume_context/3` (`task_registry/resume_context.ex:43-54`) sets `:starting_commit` to the previous task's `commit_sha` for evolve-resume tasks (context block prepended to the objective, `resume_context.ex:114-119`).
+`TaskRegistry.RuntimeOpts.build_common_runtime_opts/3` (`task_registry/runtime_opts.ex:32-37`) passes `:starting_commit` into runtime opts for BOTH `:genesis` and `:evolve`; the CLI passes it for evolve (`cli.ex:89`, `--starting-commit`, `cli/parser.ex:34`). **Only `Evolution.run/2` reads it** (`evolution.ex:14,23` → `Helpers.resolve_starting_commit/2`, `helpers.ex:167-180`: nil → `PhyloGraphNode.current_head/1`; ref → `Git.rev_parse`, error propagates as phase error). `Genesis.run/2` has no `starting_commit` clause — it always starts from `PhyloGraphNode.current_head(repo_path)` (`genesis.ex:23`); a genesis `:starting_commit` is silently ignored. `ResumeContext.apply_resume_context/3` (`task_registry/resume_context.ex:43-54`) sets `:starting_commit` to the previous task's `commit_sha` for evolve-resume tasks (context block prepended to the objective).
 
-**How the starting commit reaches the agent**: resolved SHA → `PhyloGraphNode.new(repo_path, current_sha)` (`phylo_graph_node.ex:23-24`, both `base_commit` and `current_commit` = the SHA) → `AgentSpec.phylo_node` → `AgentScheduler.run_agent/1` (`agent_scheduler.ex:593-641`) → the worktree is created AT that commit: `Worktrees.create_worktree/6` (`worktrees.ex:96-137`) uses `spec.phylo_node.current_commit` for `CowWorktree.create_worktree` / `Git.add_worktree`, and `assign_and_prepare_worktree/2` (`worktrees.ex:233-259`) rebuilds the worktree-bound phylo node (repo = worktree path) into ETS. The commit SHA is NOT injected into the prompt text — the agent learns its starting point from the worktree contents; `base_commit`/`current_commit` are only in ETS state (and described abstractly in Manager's `system_prompt/0`, `agents/manager.ex:57,63`).
+**Path to the agent**: resolved SHA → `PhyloGraphNode.new(repo_path, current_sha)` (`phylo_graph_node.ex:23-24`; both `base_commit`/`current_commit` = SHA) → `AgentSpec.phylo_node` → `AgentScheduler.run_agent/1` (`agent_scheduler.ex:593-641`) → worktree created AT that commit: `Worktrees.create_worktree/6` (`worktrees.ex:96-137`) uses `spec.phylo_node.current_commit` for `CowWorktree.create_worktree`/`Git.add_worktree`; `assign_and_prepare_worktree/2` (`worktrees.ex:233-259`) rebuilds the worktree-bound phylo node (repo = worktree path) into ETS. The SHA is NOT injected into prompt text — the agent learns its starting point from the worktree contents (`base_commit`/`current_commit` live only in ETS; described abstractly in Manager's `system_prompt/0`, `agents/manager.ex:57,63`).
 
-### Genesis Mode B Second Root — Unconditional, No Commit-Based Condition
+### Genesis Mode B Second Root
 
-The second root (`Manager`) spawns only in Mode B after a successful Architect run (`genesis.ex:110-123` → `run_implementation_phase/8`, `genesis.ex:132-217`). There is NO condition on repo non-emptiness or `starting_commit != base` — Mode B itself is gated only by `resolve_mode/2` (`genesis.ex:238-244`: explicit `:mode` opt or `Helpers.new_codebase?/1`, `helpers.ex:113-121`). The Manager's phylo node starts at the architect's final commit (`architect_output.commit_sha || base_sha`, `genesis.ex:143-144`). Both roots share one `task_id` (generated upfront, `genesis.ex:68-72`); the scheduler's cancel guard (`agent_scheduler.ex:597-607`) refuses the second root when the task is cancelling. On implementation-phase failure the architect's output is merged as partial success (`genesis.ex:208-216`).
+The second root (`Manager`) spawns only in Mode B after a successful Architect run (`genesis.ex:110-123` → `run_implementation_phase/8`, `genesis.ex:132-217`). No condition on repo non-emptiness or `starting_commit != base` — Mode B is gated only by `resolve_mode/2` (`genesis.ex:238-244`: explicit `:mode` opt or `Helpers.new_codebase?/1`, `helpers.ex:113-121`). The Manager's phylo node starts at the architect's final commit (`architect_output.commit_sha || base_sha`, `genesis.ex:143-144`). Both roots share one `task_id` (`genesis.ex:68-72`); the scheduler's cancel guard (`agent_scheduler.ex:597-607`) refuses the second root when the task is cancelling. On implementation-phase failure the architect's output is merged as partial success (`genesis.ex:208-216`).
 
-### No Merge/Conflict in `merge_and_report` — `Task.resolve_conflict/3` Is Dead Code
+### `merge_and_report` Never Merges — `Task.resolve_conflict/3` Is Dead Code
 
-`merge_and_report/3` (`helpers.ex:11-100`) never merges branches: it only `rev_parse`s HEAD and `Git.create_branch(repo_path, branch_name, final_sha)` (`helpers.ex:24`) — the agent commit is NOT merged into any target branch; PR creation is not done here either. There is therefore no conflict path in the phases. The "special merge task" exists but is dead code: `EvoGit.Task.resolve_conflict/3` (`task.ex:115-190`) git-merges `incoming_sha` into `phylo_node.current_commit` and, on `{:error, {:conflict, _}}`, spawns one `Manager` agent per conflicted file with an inline conflict-resolution prompt (`task.ex:157-165`), then commits. **No caller exists anywhere in `apps/`** (rg-verified). Actual branch merging with conflict reporting lives in `EvoGit.Review.merge_branch/2,3` (dashboard Review flow — returns `{:conflict, details}`).
+`merge_and_report/3` (`helpers.ex:11-100`) only `rev_parse`s HEAD + `Git.create_branch(repo_path, branch_name, final_sha)` (`helpers.ex:24`) — the agent commit is NOT merged into any target branch; PR creation is not done here. No conflict path in the phases. `EvoGit.Task.resolve_conflict/3` (`task.ex:115-190`) is dead code (no caller anywhere in `apps/`, rg-verified): it git-merges `incoming_sha` into `phylo_node.current_commit` and, on `{:error, {:conflict, _}}`, spawns one `Manager` per conflicted file with an inline conflict-resolution prompt (`task.ex:157-165`), then commits. Real branch merging with conflict reporting lives in `EvoGit.Review.merge_branch/2,3` (dashboard Review flow → `{:conflict, details}`).
 
-### `PullRequest.try_create/4` — Step by Step
+### `PullRequest.try_create/4` — Steps
 
-1. **Check `gh` CLI available** via `Git.gh_available?/0`.
-2. **Check origin remote** via `Git.has_origin_remote?/1`. If none, attempts `Git.create_origin_remote/1` to create one.
-3. **Determine base branch** from `Git.origin_default_branch/1`.
-4. **Generate title**: Calls `generate_title/2` which optionally uses LLM (ReqLLM streaming) to produce ≤8-word title. Falls back to branch name.
-5. **Format body**: Standard header with `## 🤖 Auto-generated by EvoGit` + agent result.
-6. **Push branch** via `Git.push_branch/2`.
-7. **Create PR** via `Git.create_pull_request/5`.
-8. **Returns** PR URL on success, `nil` on any failure (never raises).
+1. `Git.gh_available?/0` check.
+2. `Git.has_origin_remote?/1`; if none, `Git.create_origin_remote/1`.
+3. Base branch from `Git.origin_default_branch/1`.
+4. `generate_title/2` — optional LLM (ReqLLM streaming) ≤8-word title, falls back to branch name.
+5. `format_body/2` — header `## 🤖 Auto-generated by EvoGit` + agent result.
+6. `Git.push_branch/2` → `Git.create_pull_request/5`.
+7. Returns PR URL on success, `nil` on any failure (never raises).
 
 ## Constraints
 
-- Both phases follow the same pattern: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
-- Agent changes go to **isolated branches** (`genesis/agent_<hex>`), never directly to the working tree. PR creation is optional (requires `gh` CLI).
-- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — both phases delegate to `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
+- Both phases: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
+- Agent changes go to **isolated branches** (`genesis/agent_<hex>`), never the working tree. PR creation is optional (requires `gh` CLI).
+- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
 - No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
-- PR creation is best-effort and never fails the overall phase — all PR errors are logged and return `nil`.
-- `node_path` validation in Evolution requires a `CONTEXT.md` at the target directory (except root).
+- PR creation is best-effort and never fails the phase — all PR errors are logged and return `nil`.
+- Evolution `node_path` validation requires a `CONTEXT.md` at the target directory (except root).
 
 ### Task Status & Event Emission (Dashboard Contract)
-`EvoGit.TaskRegistry` (in `:evo_git`, started by `EvoGit.Application`) tracks task status via TWO mechanisms:
-1. **PubSub** on topic `"tasks"`: the ONLY emitter in the runtime phase modules is `Helpers.notify_finalizing/1` (`helpers.ex:72-76` — `notify_finalizing(nil)` is a `:ok` no-op, broadcast at line 75), broadcasting `{:task_updated, task_id, :finalizing, node()}` (node = `node()` at broadcast time). It is called immediately after `AgentScheduler.run_agent/1` returns and BEFORE `merge_and_report/3`. **Callers (current line refs): `genesis.ex:57` (Mode A success arm), `genesis.ex:216` (Mode B implementation-phase success arm), `genesis.ex:246` (Mode B implementation-phase ERROR arm — partial-success path where the architect's result is merged/reported, so it is NOT strictly success-only), `evolution.ex:55` (success arm), `skill_extraction.ex:34` (success arm).** When the caller passes no `task_id` (e.g. plain CLI path, where `Keyword.get(opts, :task_id)` is nil), the call is a no-op — no broadcast happens; the dashboard path (`TaskExecutor`) always passes `task_id`. No `:failed`, `:completed`, or `:running` is EVER broadcast on `"tasks"` from the runtime phase modules; the full status set (`:running`, `:cancelling`, `:completed`, `:failed`, `:cancelled`, `:finalizing`, plus `nil` for review-status/review-metadata mutations and `{:task_deleted, task_id, node()}` for deletions) is emitted by `EvoGit.TaskRegistry` (see `lib/evo_git/task_registry/CONTEXT.md`). (`AgentScheduler.PubSub` broadcasts on *different* topics — `@agent_topic` (`"agents"`) / `@config_topic` (`"scheduler_config"`) — with different message shapes: on `"agents"` `{:agent_registered, agent_id, summary, node}`, `{:agent_updated, agent_id, changed_fields, node}`, `{:agent_removed, agent_id, node}`, `{:agents_updated, node}`; on `"scheduler_config"` `{:scheduler_config_updated, node}`.)
-2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): when the runtime process exits, ANY non-`{:ok, _}` result (including `{:error, _}`) is mapped to `:failed`.
 
-3. **Finalizing window & `merge_and_report/3` blocking behavior**: the window between the `:finalizing` broadcast and the phase's return contains ONLY: the PubSub broadcast itself, (Mode B success) pure in-memory `Usage.add`/result merging (`genesis.ex:219-236`), and `merge_and_report/3`'s git calls — `Git.rev_parse` (`git rev-parse HEAD`, helpers.ex:16 → git.ex:162-164) and `Git.create_branch` (`git branch <name> <sha>`, helpers.ex:24 → git.ex:409-412). Both go through `Git.run/2` → raw `System.cmd` with **NO timeout option → `:infinity`** (git.ex:18-29) — they can block indefinitely on a slow filesystem (e.g. NFS-mounted home on a remote daemon). `merge_and_report/3` (helpers.ex:11-100) NEVER raises and ALWAYS returns `{:ok, map}`: branch-creation failure and even `rev_parse` failure fall through to success maps with `branch_name: nil` (helpers.ex:43-61, 82-98); `no_changes: true` when base==final SHA. It does NOT create PRs — `pr_url`/`pr_title` are always `nil`; PR creation lives in `PullRequest.try_create/4`, called only from `EvoGit.Review` (review.ex:331), never from the phases. Worktree cleanup is NOT in the window: `WorktreeManager` reclaims + destroys the worktree via its process monitor on agent process exit (`:DOWN` — `File.rm_rf` worktree dir → `Git.prune_worktrees` → `Git.delete_branch`), so it happens asynchronously in the WorktreeManager GenServer and never blocks the finalizing path (`Lifecycle.recycle_agent/2` before `run_agent/1` replies performs no worktree I/O).
+`EvoGit.TaskRegistry` (started by `EvoGit.Application`) tracks task status via TWO mechanisms:
 
-**Critical implication**: Every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — propagating `{:error, _}` to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` to the top-level caller in two cases:
-- Top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238).
-- Top-level agent cancelled → `{:error, :cancelled}` (lifecycle.ex:72).
-A graceful agent return of `{:error, :recovery_failed}` / `{:error, :path_not_exist}` also flows through and is mapped to `:failed` (these exit the Task `:normal` but are non-`{:ok, _}`). See `agent_scheduler/lifecycle.ex` and the `:DOWN` handler (`agent_scheduler.ex:826`) for the full crash→retry→permanent-failure cascade.
+1. **PubSub topic `"tasks"`**: the ONLY runtime-phase emitter is `Helpers.notify_finalizing/1` (`helpers.ex:72-76`; `notify_finalizing(nil)` = `:ok` no-op), broadcasting `{:task_updated, task_id, :finalizing, node()}` immediately after `AgentScheduler.run_agent/1` returns, BEFORE `merge_and_report/3`. Callers: `genesis.ex:57` (Mode A success), `genesis.ex:216` (Mode B implementation success), `genesis.ex:246` (Mode B implementation ERROR arm — partial-success, architect result merged/reported), `evolution.ex:55`, `skill_extraction.ex:34`. No `task_id` (plain CLI path) → no-op; the dashboard path (`TaskExecutor`) always passes it. No `:failed`/`:completed`/`:running` is EVER broadcast on `"tasks"` from the runtime phase modules — the full status set (`:running`, `:cancelling`, `:completed`, `:failed`, `:cancelled`, `:finalizing`, plus `nil` for review-status/review-metadata mutations and `{:task_deleted, task_id, node()}` for deletions) is emitted by `EvoGit.TaskRegistry` (see `lib/evo_git/task_registry/CONTEXT.md`). `AgentScheduler.PubSub` uses different topics/shapes: `"agents"` → `{:agent_registered|:agent_updated|:agent_removed, ..., node}` + `{:agents_updated, node}`; `"scheduler_config"` → `{:scheduler_config_updated, node}`.
+2. **Task monitor exit** (`Task.Supervisor.async_nolink` in `EvoGit.TaskRegistry`): any non-`{:ok, _}` runtime-process result (incl. `{:error, _}`) maps to `:failed`.
+
+**Finalizing window** (between the `:finalizing` broadcast and the phase return) contains ONLY: the broadcast, (Mode B success) in-memory `Usage.add`/result merging (`genesis.ex:219-236`), and `merge_and_report/3`'s git calls — `Git.rev_parse` (helpers.ex:16 → git.ex:162-164) + `Git.create_branch` (helpers.ex:24 → git.ex:409-412), both via `Git.run/2` → raw `System.cmd` with **NO timeout (`:infinity`)** (git.ex:18-29) — they can block indefinitely on a slow filesystem (e.g. NFS-mounted home on a remote daemon). `merge_and_report/3` NEVER raises and ALWAYS returns `{:ok, map}`: branch-creation/`rev_parse` failure → success maps with `branch_name: nil` (helpers.ex:43-61, 82-98); `no_changes: true` when base==final SHA. It does NOT create PRs (`pr_url`/`pr_title` always `nil`; PR creation is `PullRequest.try_create/4`, called only from `EvoGit.Review` review.ex:331). Worktree cleanup is NOT in the window: `WorktreeManager` reclaims + destroys via its process monitor on agent exit (`:DOWN` — `File.rm_rf` → `Git.prune_worktrees` → `Git.delete_branch`), asynchronous, never blocks the finalizing path (`Lifecycle.recycle_agent/2` before `run_agent/1` replies performs no worktree I/O).
+
+**Critical implication**: every runtime entry point (`Genesis.run/2`, `Evolution.run/2`, `SkillExtraction.run/1`) returns whatever `AgentScheduler.run_agent/1` returns on the `error` arm — `{:error, _}` propagates to the dashboard, which marks the task `:failed`. The scheduler replies `{:error, _}` in two cases: top-level agent permanently failed (crashed `agent_max_retries` times) → `{:error, :agent_max_retries_exceeded}` (lifecycle.ex:238); top-level agent cancelled → `{:error, :cancelled}` (lifecycle.ex:72). Graceful `{:error, :recovery_failed}` / `{:error, :path_not_exist}` also map to `:failed` (exit the Task `:normal` but non-`{:ok, _}`). See `agent_scheduler/lifecycle.ex` + the `:DOWN` handler (`agent_scheduler.ex:826`) for the full crash→retry→permanent-failure cascade.
 
 ### ETS Table Ownership & Crash Resilience
 
-The three scheduler ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) are created in **`EvoGit.Application.start/2`** (`application.ex:13-15`) via the idempotent `ensure_ets_table/2` helper, owned by the long-lived application process. `AgentScheduler.init/1` only performs a defensive check (warning if a table is missing). The tables survive an `AgentScheduler` crash/restart.
-
-**Supervision structure**: `EvoGit.AgentGroupSupervisor` uses `strategy: :one_for_all` wrapping `EvoGit.TaskSupervisor` and `EvoGit.AgentScheduler` — if the `AgentScheduler` GenServer crashes, the `TaskSupervisor` is also killed and restarted, tearing down ALL running agent Task processes, so an AgentScheduler crash never leaves orphaned agents running. Agent Tasks are spawned via `Task.Supervisor.async_nolink/4` (monitored by the scheduler, NOT linked to the wrapper).
-
-**`merge_and_report/3` is failure-tolerant**: `helpers.ex:11-100` uses `with`/graceful `else` clauses and always returns `{:ok, _}` — branch-creation failure and even `rev_parse` failure fall through to success maps with `branch_name: nil` (the agent's committed work is valid even if branch creation fails).
-
+- The three scheduler ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_archive_records`) are created in `EvoGit.Application.start/2` (`application.ex:13-15`) via the idempotent `ensure_ets_table/2`, owned by the long-lived application process; `AgentScheduler.init/1` only warns if a table is missing. Tables survive an `AgentScheduler` crash/restart.
+- `EvoGit.AgentGroupSupervisor` is `strategy: :one_for_all` over `EvoGit.TaskSupervisor` + `EvoGit.AgentScheduler` — a scheduler crash kills/restarts the TaskSupervisor, tearing down ALL running agent Tasks (no orphaned agents). Agent Tasks are spawned via `Task.Supervisor.async_nolink/4` (monitored by the scheduler, NOT linked to the wrapper).
+- `merge_and_report/3` is failure-tolerant: `with`/graceful `else` clauses, always `{:ok, _}` — failure → `branch_name: nil`, the agent's committed work remains valid.
 - Foreign repos are registered with `AgentScheduler` at the start of each phase if provided.
 
 ## Agent Spawning & Coordination
 
 ### How Agents Are Spawned
 
-Both phases build an `AgentSpec` struct and call `AgentScheduler.run_agent/1` (synchronous GenServer call that blocks until the agent completes):
+Both phases build an `AgentSpec` and call `AgentScheduler.run_agent/1` (synchronous GenServer call blocking until the agent completes):
 
 ```
 AgentSpec.new(context_node, phylo_node, agent_module, objective, opts)
 |> AgentScheduler.run_agent()
 ```
 
-The scheduler (`AgentScheduler`):
-1. Assigns a unique `task_id` (GUID) and `task_number` (short integer), and `agent_id` (format: `T<task_number>_A<task_local_id>`).
-2. Computes the worktree path (directory: `worker_T<task_number>_A<task_local_id>`) and stores it in sched_meta — **no worktree I/O here**.
-3. Stores initial state in two ETS tables: `:evogit_agent_state` (agent-owned) and `:evogit_sched_meta` (scheduler-owned).
-4. Spawns a Task process that runs the agent loop.
-5. Inside the agent Task, `Runner.setup_dispatch_context/1` requests a FRESH worktree from `WorktreeManager.create_worktree_for_agent/6` (1-hour call; lazy per-repo init + the create pipeline — `git clean`/checkout/init script — run offloaded inside WorktreeManager).
-6. The agent calls `complete_task` when done (or crashes/is cancelled) → WorktreeManager reclaims the worktree via its `:DOWN` process monitor, scheduler replies to caller.
+The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short integer), `agent_id` (`T<task_number>_A<task_local_id>`); 2) computes the worktree path (`worker_T<task_number>_A<task_local_id>`) into sched_meta — **no worktree I/O here**; 3) stores initial state in `:evogit_agent_state` (agent-owned) + `:evogit_sched_meta` (scheduler-owned); 4) spawns a Task running the agent loop; 5) inside the Task, `Runner.setup_dispatch_context/1` requests a FRESH worktree from `WorktreeManager.create_worktree_for_agent/6` (1-hour call; lazy per-repo init + the create pipeline — `git clean`/checkout/init script — offloaded inside WorktreeManager); 6) on `complete_task`/crash/cancel → WorktreeManager reclaims the worktree via its `:DOWN` process monitor, scheduler replies to caller.
 
 ### Agent Hierarchy by Phase
 
-**Genesis Mode A (Existing Codebase)**:
-```
-ContextExtractor (root)
-  ├── subagent_context_extractor (child dir 1)
-  │     └── subagent_context_extractor (grandchild...)
-  ├── subagent_context_extractor (child dir 2)
-  └── ...
-```
-
-**Genesis Mode B (New Codebase)**:
-```
-Architect (root — architecture phase)
-  ├── subagent_genesis_planner (optional — large-scale planning)
-  ├── subagent_executor (design artifacts: CONTEXT.md, init commands, directories, public API stubs)
-  ├── subagent_architect (child dir architecture)
-  │     ├── subagent_architect (grandchild...)
-  │     └── subagent_executor (design artifacts)
-  └── subagent_manager (implementation delegation)
-
-Manager (root — implementation phase, second root agent, same task_id)
-  ├── subagent_executor (code changes)
-  ├── subagent_manager (child subtree implementation)
-  └── ...
-```
-Note: Mode B spawns TWO sequential root agents sharing a task_id — Architect first (architecture), then Manager (implementation).
-
-**Evolution Simple Mode**:
-```
-Manager (target node)
-  ├── subagent_task_scheduler (complex objectives — produces execution sequence)
-  ├── subagent_investigator (codebase exploration)
-  ├── subagent_executor (code changes)
-  ├── subagent_manager (delegation to child nodes)
-  └── ...
-```
-
-**Evolution Custom Mode**:
-```
-EvoGit.Agents.Custom (root, resolved from agents.toml via the `agent:` opt)
-  └── ... (subagent modules declared in the custom agent definition)
-```
-Custom agents are ROOT agents only — the `EvoGit.Agents.Custom` module resolves its definition (system prompt, tools, subagents, max_turns, model_id) at run time from `agents.toml` via the process-dictionary `:custom_agent_id` bridge.
+- **Genesis Mode A (Existing)**: `ContextExtractor` root → recursive `subagent_context_extractor` children (one per child dir).
+- **Genesis Mode B (New)**: `Architect` root (architecture phase; optional `subagent_genesis_planner` for large-scale planning, `subagent_executor` for design artifacts — CONTEXT.md/init commands/directories/API stubs, recursive `subagent_architect` + `subagent_executor` per child dir, `subagent_manager` for implementation delegation) → then `Manager` root (implementation phase, second root agent, same `task_id`) → `subagent_executor`/`subagent_manager` subtrees. Mode B spawns TWO sequential root agents sharing a `task_id`.
+- **Evolution Simple Mode**: `Manager` (target node) → `subagent_task_scheduler` (complex objectives — execution sequence), `subagent_investigator` (codebase exploration), `subagent_executor` (code changes), `subagent_manager` (child-node delegation).
+- **Evolution Custom Mode**: `EvoGit.Agents.Custom` root (resolved from agents.toml via the `agent:` opt) → subagent modules declared in the custom agent definition. Custom agents are ROOT-only; the module resolves its definition (system prompt, tools, subagents, max_turns, model_id) at run time from `agents.toml` via the process-dictionary `:custom_agent_id` bridge.
 
 ### Subagent Spawning Mechanics
 
-Agents call `AgentScheduler.spawn_sub_agents/2` (from within the agent process). The scheduler:
-- Validates depth doesn't exceed `max_agent_depth`.
-- Checks the parent's path isn't git-ignored.
-- Marks parent as `:waiting` (parent Task is blocked until subagents complete; its worktree stays alive — reclaim happens only on process exit, via WorktreeManager's `:DOWN` monitor).
-- Dispatches each subagent with its own fresh worktree and incremented task-local ID.
-- Blocks until all subagents complete, returns results in order.
+`AgentScheduler.spawn_sub_agents/2` (from within the agent process): validates depth ≤ `max_agent_depth`; checks the parent's path isn't git-ignored; marks parent `:waiting` (parent Task blocked; its worktree stays alive — reclaim only on process exit via WorktreeManager's `:DOWN` monitor); dispatches each subagent with its own fresh worktree + incremented task-local ID; blocks until all subagents complete, returns results in order.
 
 ## Phase Transitions
 
-There is **no automatic transition** between Genesis and Evolution. The CLI dispatches them as independent commands:
+No automatic transition between Genesis and Evolution — the CLI dispatches them as independent commands:
 
 ```bash
 # Genesis — must be called first to bootstrap the Context Tree
@@ -188,7 +129,7 @@ evogit genesis "Create a web app" --mode new
 evogit evolve "Fix the login bug" --mode simple
 ```
 
-The `EvoGit.Runtime` module does not have a combined entry point. Each phase is invoked directly:
+`EvoGit.Runtime` has no combined entry point; each phase is invoked directly:
 - `EvoGit.CLI.dispatch(["genesis", ...])` → `Genesis.run/2`
 - `EvoGit.CLI.dispatch(["evolve", ...])` → `Evolution.run/2`
 
@@ -196,31 +137,24 @@ The `EvoGit.Runtime` module does not have a combined entry point. Each phase is 
 
 | Dependency | Role in Runtime |
 |------------|----------------|
-| `EvoGit.Core.PhyloGraphNode` | Temporal state — tracks base_commit and current_commit in the git DAG |
+| `EvoGit.Core.PhyloGraphNode` | Temporal state — tracks base_commit/current_commit in the git DAG |
 | `EvoGit.Core.ContextNode` | Spatial state — represents a directory node in the Context Tree |
 | `EvoGit.AgentScheduler` | Lifecycle manager — scheduling, ETS state, slot management, subagent spawning (worktree lifecycle owned by `EvoGit.AgentScheduler.WorktreeManager`) |
 | `EvoGit.AgentSpec` | Structured specification passed to scheduler (context_node + phylo_node + module + objective) |
 | `EvoGit.Agent.Result` | Structured agent output (result string, commit_sha, tag, branch, base_commit) |
-| `EvoGit.Agents.Architect` | Genesis Mode B agent — 3-phase: architecture & design → implementation delegation → review & accountability. Accountable for all code in its node path but delegates implementation to Manager subagents. |
+| `EvoGit.Agents.Architect` | Genesis Mode B agent — 3-phase: architecture & design → implementation delegation → review & accountability; accountable for all code in its node path, delegates implementation to Manager subagents |
 | `EvoGit.Agents.ContextExtractor` | Genesis Mode A agent — read-only context extraction |
-| `EvoGit.Agents.Manager` | Evolution simple mode agent — planning, delegation, validation; also used in genesis as the second root agent for implementation (after Architect establishes architecture) |
+| `EvoGit.Agents.Manager` | Evolution simple-mode root — planning, delegation, validation; also Genesis second root for implementation (after Architect) |
 | `EvoGit.Agents.Executor` | Code implementation subagent (spawned by Manager) |
 | `EvoGit.Agents.TaskScheduler` | Lightweight task scheduling subagent (spawned by Manager for complex tasks) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
-| `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases |
+| `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used directly by runtime phases (`resolve_conflict/3` is dead code) |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
 
 ## Known Issues — repo_path Resolution vs. BEAM cwd (dashboard Windows path bug)
 
-**Q: Why can a picked folder land under the app's own directory?** All three runtime `run/2` entry points resolve a possibly-relative/name-only `:repo_path` against the **BEAM process cwd**:
-
-- `genesis.ex:20`, `evolution.ex:20`, `skill_extraction.ex:13`: `repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()`
-
-If `opts[:repo_path]` is a bare name or relative path (e.g. `"Test"`), `Path.expand/1` resolves it against the backend cwd. In the desktop app the Tauri sidecar spawns the release launcher with **no `current_dir` set** (`desktop/src-tauri/src/sidecar.rs:147-152`), so the BEAM cwd is inherited from the Tauri process — typically the app install/data dir (Windows: `%LOCALAPPDATA%\genesis-desktop`). Result: `"Test"` → `c:/Users/<user>/AppData/Local/genesis-desktop/Test`. Worse, `Runtime.ensure_repo/1` (`runtime.ex:14-32`) **silently `File.mkdir_p!`s + git-inits** a missing repo dir — a name-only path does not error; it creates a stray repo under the app dir.
-
-**The exact error string "Directory does not exist: <path>" in evo_git is produced ONLY by `Helpers.validate_node_path/2` (`helpers.ex:136`),** called from `evolution.ex:35` (evolve tasks with a `:node_path` opt). The message prints the raw `node_path` (the repo-relative node sub-path), NOT the joined `abs_path`. Note the first branch (`helpers.ex:126-129`) rejects absolute node_paths with a different message ("Node path must be relative..."), so on a Windows host the reported full-path string (`c:/Users/.../Test`) could NOT originate from here via the dashboard's local project-open flow — it comes from the **dashboard-side** flash messages that print the raw submitted path: `apps/evo_dash/lib/evo_dash_web/live/projects_live/project_flow.ex` `open_project/2`/`select_project/2` and `projects_live.ex` `handle_palette_key/3` (`"Enter"` in `:menu` mode — activates a recent project). The dashboard reduces the picked absolute path to its basename only in the JS File System Access API fallback (`apps/evo_dash/assets/js/app.js:171` — `fillInput(handle.name)`), after which `Path.expand/1` (`project_flow.ex:33,98,130`) resolves the bare name against the BEAM cwd.
-
-**No absolute-ness/existence validation of `:path`/`:repo_path` exists anywhere between the dashboard and the runtime.** `TaskRegistry.start_task/2` (`task_registry.ex:51-54`) → `RuntimeOpts.build_common_runtime_opts` (`runtime_opts.ex:17` — `Keyword.fetch!(opts, :path)`, verbatim) → runtime. The only existence checks: `Adapters.Git.run/2` pre-check `File.dir?(cd)` → `{:error, {:enoent, "Repository path does not exist: #{cd}"}}` (`adapters/git.ex:45`) and `validate_node_path/2` (node sub-paths only). `TaskRegistry.add_recent_project/2` (`task_registry.ex:481-494`) stores the path verbatim — no expansion, no validation.
-
-**Fix direction:** validate/expand the project path at the task boundary (TaskRegistry or RuntimeOpts) and reject non-absolute paths; the dashboard's `ProjectFlow` already expands before registering recents, so the runtime should do the same (and/or `Runtime.ensure_repo/1` should require an absolute path).
-hould do the same (and/or `Runtime.ensure_repo/1` should require an absolute path).
+- All three `run/2` entry points resolve a possibly-relative/name-only `:repo_path` against the **BEAM process cwd**: `genesis.ex:20`, `evolution.ex:20`, `skill_extraction.ex:13` — `repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()`.
+- The desktop Tauri sidecar spawns the release launcher with **no `current_dir` set** (`desktop/src-tauri/src/sidecar.rs:147-152`) → BEAM cwd inherited from the Tauri process (typically the app install/data dir; Windows: `%LOCALAPPDATA%\genesis-desktop`). `"Test"` → `c:/Users/<user>/AppData/Local/genesis-desktop/Test`. `Runtime.ensure_repo/1` (`runtime.ex:14-32`) **silently `File.mkdir_p!`s + git-inits** a missing repo dir — a name-only path creates a stray repo under the app dir instead of erroring.
+- The string "Directory does not exist: <path>" in evo_git is produced ONLY by `Helpers.validate_node_path/2` (`helpers.ex:136`), called from `evolution.ex:35` (evolve tasks with a `:node_path` opt); it prints the raw `node_path` (repo-relative sub-path), NOT the joined `abs_path`. The first branch (`helpers.ex:126-129`) rejects absolute node_paths ("Node path must be relative..."), so on a Windows host the reported full-path string comes from dashboard-side flash messages that print the raw submitted path: `apps/evo_dash/lib/evo_dash_web/live/projects_live/project_flow.ex` `open_project/2`/`select_project/2`; `projects_live.ex` `handle_palette_key/3` (`"Enter"` in `:menu` mode). The dashboard reduces a picked absolute path to its basename only in the JS File System Access API fallback (`apps/evo_dash/assets/js/app.js:171` — `fillInput(handle.name)`), after which `Path.expand/1` (`project_flow.ex:33,98,130`) resolves the bare name against the BEAM cwd.
+- **No absolute-ness/existence validation of `:path`/`:repo_path` exists between the dashboard and the runtime**: `TaskRegistry.start_task/2` (`task_registry.ex:51-54`) → `RuntimeOpts.build_common_runtime_opts` (`runtime_opts.ex:17` — `Keyword.fetch!(opts, :path)`, verbatim) → runtime. Only existence checks: `Adapters.Git.run/2` pre-check `File.dir?(cd)` → `{:error, {:enoent, "Repository path does not exist: #{cd}"}}` (`adapters/git.ex:45`) and `validate_node_path/2` (node sub-paths only). `TaskRegistry.add_recent_project/2` (`task_registry.ex:481-494`) stores the path verbatim — no expansion, no validation.
+- **Fix direction**: validate/expand the project path at the task boundary (TaskRegistry or RuntimeOpts) and reject non-absolute paths; the dashboard's `ProjectFlow` already expands before registering recents, so the runtime should do the same (and/or `Runtime.ensure_repo/1` should require an absolute path).
