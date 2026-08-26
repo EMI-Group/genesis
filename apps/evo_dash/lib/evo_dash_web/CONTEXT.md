@@ -63,6 +63,12 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 | `GET /dashboard` | `ProjectsLive` (`:system_dashboard`) | Full-bleed Phoenix LiveDashboard wrapper: renders `Layouts.app` with an iframe filling the main content area (`src=~p"/phoenix/dashboard/home"`, `min-height: calc(100vh - 2rem)`), no header chrome. |
 | `/phoenix/dashboard` | `Phoenix.LiveDashboard` | Built-in metrics/telemetry dashboard (embedded via the `/dashboard` iframe). |
 
+### Task mode resolution & `:reflect` (web↔core contract)
+
+Dashboard combined-mode strings (`"genesis_new"`/`"genesis_existing"`/`"evolve_simple"`/`"custom_agent"`) map to `{task_type, core_mode_string}` in `ProjectsLive.do_task_submit/4` (`projects_live.ex:2123-2133`): `{:genesis, "new"|"existing"}`, `{:evolve, "simple"|"custom"}` (unknown strings fall back to `{:evolve, "simple"}`). The core `EvoGit.TaskRegistry.RuntimeOpts.mode_atom/2` (`apps/evo_git/lib/evo_git/task_registry/runtime_opts.ex:124-125`) dispatches to `genesis_mode_atom/1` (`"new"`/`"existing"`) or `evolution_mode_atom/1` (`"simple"`/`"custom"` — `"custom"` IS accepted, runtime_opts.ex:98-99). Unknown evolution modes raise `ArgumentError` (runtime_opts.ex:101-102); `:genesis` with mode `"custom"` raises "custom mode is evolve-only" (runtime_opts.ex:110-112).
+
+**:reflect (repo-less chat) facts**: reflect tasks carry NO `:path` in opts and run with nil `project_path`; result shape `{:ok, %{result: <text>, commit_sha: nil, branch_name: nil, tag: nil}}`. `:reflect` IS in `EvoGit.Store.Codec` `@known_atoms` (store/codec.ex:217-218). `TaskExecutor.execute_task(:reflect, ...)` routes directly to `Runtime.SelfReflective.run`, deliberately bypassing `build_common_runtime_opts` (which `Keyword.fetch!(:path)`-raises) — `RuntimeOpts.mode_atom/2` needs no reflect clause. Full chat/send-flow detail: `live/home_live/CONTEXT.md`; core agent/runtime: `apps/evo_git/CONTEXT.md` "Self-Reflective Agent (repo-less)".
+
 ## Constraints
 - All web modules use `use EvoDashWeb, <role>` as their entrypoint — do not bypass the shared `__using__` macro.
 - New interactive pages should be LiveViews in `live/`, not controllers in `controllers/`.
