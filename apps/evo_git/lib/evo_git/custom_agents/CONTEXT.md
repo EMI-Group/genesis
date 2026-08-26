@@ -1,7 +1,6 @@
 # Custom Agents & Model Selection
 
 ## Intent
-
 Houses the two modules implementing user-defined custom agents (`agents.toml`) and per-agent model selection:
 
 - `EvoGit.CustomAgents` (`../custom_agents.ex`) — pure-function TOML file store for custom agent definitions, living at `<config_dir>/agents.toml` (next to `config.toml`).
@@ -11,7 +10,7 @@ Houses the two modules implementing user-defined custom agents (`agents.toml`) a
 
 ### `EvoGit.CustomAgents` (TOML store)
 
-Pure functions, NO GenServer — every call reads/writes the TOML file directly (fresh read per call; nothing is cached in this module, so external edits are picked up automatically).
+Pure functions, NO GenServer — every call reads/writes the TOML file directly (fresh read per call; nothing cached in this module, so external edits are picked up automatically).
 
 - `path/0` → full path of the `agents.toml` file.
 - `list/0` → `[definition_map]` (atom-keyed, schema-defaults applied; `[]` when missing/empty). Lenient: unknown values pass through unvalidated; skeleton file auto-created on first access.
@@ -22,39 +21,9 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 - `save_model_selection_script/1` → `:ok | {:error, term}` (empty string removes the key; preserves `[[agents]]`).
 - `reload/0` → `:ok` — invalidates the `ModelSelector` compile cache (guarded with `Code.ensure_loaded?/1` + `function_exported?/3`).
 
-**Validation error atoms** (`save/1` only — reads never raise):
-`:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
+**Validation error atoms** (`save/1` only — reads never raise): `:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
 
-**Definition map** (atom keys, defaults applied on save):
-
-```elixir
-%{
-  id: "code_reviewer",        # auto-slugified from name when absent
-  name: "Code Reviewer",      # required
-  description: nil,           # optional
-  prompt: "You are...",       # required
-  agent_type: :read_write,    # default :read_write (| :read)
-  delegation_level: :low,     # default :low (| :high)
-  model_id: nil,              # default model PROFILE id; nil = auto
-  max_turns: nil,             # per-agent turn cap override
-  tools: nil,                 # whitelist of tool-name strings; nil = all
-  subagents: []               # default []; built-in type-name STRINGS
-}
-```
-
-TOML example:
-
-```toml
-[model_selection]
-script = "if agent.custom_agent_id == \"code_reviewer\", do: \"deepseek-reasoner\", else: nil"
-
-[[agents]]
-name = "Code Reviewer"
-prompt = "You are..."
-agent_type = "read"
-delegation_level = "low"
-subagents = ["executor", "investigator"]
-```
+**Definition map** (atom keys, defaults applied on save): `%{id (auto-slugified from name when absent), name (required), description (optional), prompt (required), agent_type (:read_write default | :read), delegation_level (:low default | :high), model_id (default model PROFILE id; nil = auto), max_turns (per-agent turn cap override), tools (whitelist of tool-name STRINGS; nil = all), subagents (default []; built-in type-name STRINGS)}`.
 
 ### `EvoGit.CustomAgents.ModelSelector` (script evaluator)
 
