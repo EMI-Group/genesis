@@ -128,24 +128,7 @@ All pure logic lives in `EvoGit.Powershell` (lib/evo_git/powershell.ex), applied
 - 3-level configuration: `EvoGit.Config` merges defaults → user TOML → runtime overrides.
 
 ## First User Prompt Assembly
-The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two XML-delimited blocks separated by a markdown horizontal rule:
-
-```
-<context>
-{context_tree}
-
-{foreign_repos_section}  ← omitted when blank
-</context>
-
----
-
-<objective>
-{objective}  ← entire block omitted when there is no objective
-</objective>
-```
-
-- **`build_dynamic_context/1`** and **`build_foreign_repos_section/1`** produce the section bodies; only the delimiting is structured.
-- Blank sections (no foreign repos, or no objective) are dropped entirely — no dangling rules, empty headers, or empty XML blocks. The `---` delimiter appears only between two non-blank blocks.
+The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two XML-delimited blocks separated by a `---` rule — `<context>` (context_tree + `{foreign_repos_section}`, omitted when blank), then `<objective>` (`{objective}`, omitted when there is no objective). **`build_dynamic_context/1`** + **`build_foreign_repos_section/1`** produce the section bodies. Blank sections are dropped entirely — no dangling rules, empty headers, or empty XML blocks; `---` appears only between two non-blank blocks.
 
 ## ReqLLM Finch Pool Reconciliation (`EvoGit.ReqLLMPool`)
 
