@@ -149,7 +149,7 @@ The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's firs
 
 ## ReqLLM Finch Pool Reconciliation (`EvoGit.ReqLLMPool`)
 
-`lib/evo_git/req_llm_pool.ex` — dynamic runtime reconciliation of the ReqLLM Finch HTTP pool (`ReqLLM.Finch`), fixing the "Finch was unable to provide a connection within the timeout due to excess queuing" RuntimeError (deps/finch/lib/finch/http1/pool.ex:81-90) that occurs when runtime concurrency changes outgrow the boot-time pool size.
+`lib/evo_git/req_llm_pool.ex` — dynamic runtime reconciliation of the ReqLLM Finch HTTP pool (`ReqLLM.Finch`), fixing the "Finch was unable to provide a connection within the timeout due to excess queuing" RuntimeError (deps/finch/lib/finch/http1/pool.ex:81-90) that occurs when runtime concurrency outgrows the boot-time pool size.
 
 **Public API:** `desired_count(total)` → `max(total + 2, 8)` (single source of truth — `config/runtime.exs` delegates to it); `error_target_count(total)` → `max(ceil(total * 1.5), 8)`; `effective_concurrency(model_concurrency_map, default)` → `max(sum of map values, default)` for non-empty maps, falls back to `default` for empty/nil; `reconcile(total, finch \\ ReqLLM.Finch)` → grow pools to `desired_count`; `bump_for_excess_queuing(model_concurrency_map, default, finch \\ ReqLLM.Finch)` → grow pools to the 1.5x target; `excess_queuing_error?(reason)` → matcher for the Finch error (bare `%RuntimeError{message}` with "excess queuing", `%ReqLLM.Error.API.Stream{reason, cause}` inspecting to it, or inspect-fallback like `TruncationFeedback.is_rate_limit_error?/1`).
 
