@@ -128,7 +128,7 @@ All pure logic lives in `EvoGit.Powershell` (lib/evo_git/powershell.ex), applied
 - 3-level configuration: `EvoGit.Config` merges defaults → user TOML → runtime overrides.
 
 ## First User Prompt Assembly
-The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two distinct, XML-delimited blocks separated by a markdown horizontal rule:
+The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two XML-delimited blocks separated by a markdown horizontal rule:
 
 ```
 <context>
