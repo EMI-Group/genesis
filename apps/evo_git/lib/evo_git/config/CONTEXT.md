@@ -177,6 +177,11 @@ Keys loaded into ReqLLM's in-process key store on load. Only one key needed (mat
 
 Documented limitation: a same-second + same-size external rewrite on coarse-mtime filesystems may be missed (theoretical — modern ext4/APFS/NTFS have ns granularity).
 
+**Two-level caching — disk cache vs scheduler state:**
+- The ACTUAL runtime config cache is the **AgentScheduler GenServer state**: `RemoteAPI.get_config/0` reads the cached scheduler state (resolved at boot / last reload); `reload_config/0` re-reads disk via `Config.resolve()` (stat-validated) and replaces the scheduler state; `get_config_status/0` re-reads disk per call to report `:missing`/`:warnings`/`:ok?` truthfully.
+- `save_user_config/1` does NOT auto-reload the scheduler state — after saving, the dashboard (SettingsLive) calls `reload_remote_config` but IGNORES its return → a silent stale-config window until a manual reload.
+- `RemoteConnections` does NOT auto-create an empty `remote_connections.toml` (unlike the config skeleton behavior) — the file appears only when a target is actually saved.
+
 ## Constraints
 - `save_user_config/1` → `config.toml`; `save_credentials/1` → `credentials.toml`. Both create the config dir if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
