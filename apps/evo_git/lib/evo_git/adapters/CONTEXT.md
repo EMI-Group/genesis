@@ -58,6 +58,15 @@ Notes on specific functions:
 - `merge/2`/`merge_octopus/2` share one private `do_merge/2` → `run/2`; conflict (exit 1) → `{:error, {:conflict, output}}`, other exits → `{:error, {code, output}}`.
 - **Merge dry-runs use NO worktrees**: `Review.check_merge/3` runs `git merge-tree --write-tree --name-only --no-messages <branch_sha> <target_sha>` via `run/2` — an in-memory real merge touching no worktree, index, or ref (nothing ever created under `.genesis/`). Requires git >= 2.38. Clean → exit 0 (stdout = resulting tree OID); conflict → exit 1 (stdout = conflicted tree OID line(s) + one conflicted path per line; OID lines dropped by shape `~r/^[0-9a-f]{40}$/`); exit-1 non-conflict errors (e.g. missing ref) → `{:error, {:merge_failed, output}}`; other failures → `{code, output}`. No `merge_abort` helper exists. After a conflicted `merge/2` the repo is left mid-merge (MERGE_HEAD + unmerged index + conflict markers); `git checkout --force <branch>` clears all three (so `Review.merge_into_other`'s `force_restore_branch` discards the conflicted state), but `Review.merge_into_current` (target == checked-out branch) returns `{:conflict, details}` with NO restore — the repo stays mid-merge on that branch.
 
+### GitEnv — commit identity & environment (`git_env.ex`)
+
+`EvoGit.GitEnv.git_env(repo_path)` builds the environment for every git invocation (used by `EvoGit.Adapters.Git` and the sandbox backends via `git_env_list/1`).
+
+- **Commit-identity priority**: (1) inherited environment (`System.get_env/1`, non-empty; empty string treated as unset, mirroring git) — NEVER clobbered; (2) repository's effective `git config user.name`/`user.email` (no scope flag → repo → global → system); (3) fallback `"Genesis"`/`"noreply@evogit.ai"` only when nothing is configured anywhere, so automated commits never fail "Please tell me who you are".
+- **Memoized per repo path** in `:persistent_term` (`{GitEnv, :config_identity, repo_path}`; the `nil` key = global/no-repo resolution). Stale-until-VM-restart is an accepted trade-off (avoids 2 extra process spawns per git invocation); inherited env vars are read fresh at call time, never memoized. Only bare `git_env/0` calls (nil path) resolve global-level identity.
+- Test helper: `GitEnv.clear_config_identity_cache/1` (`@doc false`).
+- `git_env/1` always sets `LC_ALL=C` + `GIT_EDITOR` (resolved `true` path); used by both `EvoGit.Adapters.Git` and the sandbox backends (`git_env_list/1`).
+
 ## Known Issues — Windows argv quoting (`-m` vs `-F`)
 
 **Never pass arbitrary user/LLM-generated content (commit messages, note content) as a `-m` argv element.** On Windows, git-for-Windows' MSYS2 runtime re-parses the command line: embedded double quotes split an argument into multiple argv tokens, and a token starting with `>` is treated as an option switch (`error: unknown switch `>'`). Hit with `git notes add -m <JSON metadata>` (pretty-printed JSON always contains quotes, newlines, and often `>`/`->`).
