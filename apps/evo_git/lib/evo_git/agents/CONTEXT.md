@@ -1,7 +1,7 @@
 # EvoGit Agent Type Implementations
 
 ## Intent
-Contains agent type modules that implement the `EvoGit.Agent` behaviour. Each module defines a specialized agent role with its own system prompt, tool set, and subagent delegation configuration. These are the concrete agent implementations used by the runtime and scheduler.
+Contains agent type modules that implement the `EvoGit.Agent` behaviour. Each module defines a specialized agent role with its own system prompt, tool set, and subagent delegation configuration — the concrete agent implementations used by the runtime and scheduler.
 
 ## Routing Table
 (No subdirectories — all agent type modules are at this level.)
@@ -26,66 +26,35 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 
 ### PromptFragments — Prompt Composition Library
 
-`EvoGit.Agents.PromptFragments` (`prompt_fragments.ex`) is **NOT an agent** — it does not `use EvoGit.Agent` and has no system prompt of its own. It is a library of verbatim shared prompt text that the 8 built-in agent `system_prompt/0` functions compose from (via `~S"""...""" <> PromptFragments.X() <> "..."` concatenation) instead of copy-pasting. It exists to eliminate the 4–7× copy-pasted boilerplate across prompts — a single source of truth for shared prompt text. (`EvoGit.Agents.Custom` — the user-defined `prompt` field of its definition — and `EvoGit.Agents.SelfReflective` — a fully inline literal — are the two agent modules whose prompts do NOT come from fragments.)
+`EvoGit.Agents.PromptFragments` (`prompt_fragments.ex`) is **NOT an agent** — it does not `use EvoGit.Agent` and has no system prompt of its own. It is a library of verbatim shared prompt text that the 8 built-in agent `system_prompt/0` functions compose from (via `~S"""...""" <> PromptFragments.X() <> "..."` concatenation) instead of copy-pasting — a single source of truth eliminating the 4–7× copy-pasted boilerplate across prompts. (`EvoGit.Agents.Custom` — the user-defined `prompt` field — and `EvoGit.Agents.SelfReflective` — a fully inline literal — are the two modules whose prompts do NOT come from fragments.)
 
 **Invariants:**
 - The composed `system_prompt/0` strings are **byte-identical** (character-for-character) to the prompt text they reproduce — agent behavior depends on exact wording, so any wording change must be deliberate.
 - Fragments carry **NO trailing newline**; callers add `"\n"` explicitly (or mid-line `" "` joiners) so mid-line composition stays exact.
 - Near-duplicates are **deliberate separate functions** (or stay inline in the owning module) — never normalized/merged.
 
-**Function inventory (28 functions, grouped by theme):**
+**Function inventory (28 functions, grouped by theme; verbatim first lines live in `prompt_fragments.ex`):**
 
-| Function | First line (verbatim start) | Used by |
-|---|---|---|
-| **Worktree isolation notes** | | |
-| `worktree_isolation_note/0` | "You are currently working in an isolated worktree. The current working directory is automatically set…" | Executor, ContextExtractor, TaskScheduler, Investigator |
-| `worktree_isolation_note_short/0` | First two sentences of variant A (no subagent-spawning sentence) | SkillExtractor |
-| `subagent_worktree_tail_isolated/0` | "Each subagent runs in its OWN isolated worktree — never include worktree paths…" | Manager, Architect |
-| **Delegation principles** | | |
-| `delegation_investigation_sentence/0` | "Investigating child subtrees yourself is rarely the best use of your turns — a subagent can do it faster…" | Manager, Investigator |
-| `delegation_occasional_reads_sentence/0` | "Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files…" | Manager, Investigator, GenesisPlanner |
-| **Genesis architecture** | | |
-| `genesis_architecture_header/0` | "# Genesis System Architecture\n\nGenesis is a recursive software development framework" | Manager, Architect |
-| `context_tree_routing_table_clause/0` | "as both documentation (Intent, API Surface, Constraints) and a **Routing Table** (a map of…)" | Manager, Architect |
-| `phylogenetic_graph_sentence/0` | "Code evolves through a DAG of immutable Git commits." | Manager, Architect |
-| `transient_memory_clause/0` | "in the Context Tree (CONTEXT.md files) or the Phylogenetic Graph (Git history)." | Manager, Architect |
-| `recursive_loop_intro/0` | "Every agent at every level has the same fundamental loop: read CONTEXT.md" | Manager, Architect |
-| `recursive_loop_tail/0` | "→ delegate to deepest correct child → validate → complete." | Manager, Architect |
-| **Sibling paths & routing tables** | | |
-| `routing_sibling_prefix/0` | "Routing tables primarily map to child subdirectories, but may also include sibling paths…" | Manager, Architect |
-| `sibling_example_parenthetical/0` | "`../tests/auth_tests/` → Authentication test suite (sibling — read-only, escalate writes to parent)" | Manager, Architect, ContextExtractor |
-| **Code quality & file structure** | | |
-| `solid_principles_sentence/0` | "Single Responsibility (each file has one reason to change), Low Coupling…" | Manager, Architect |
-| `large_files_intro/0` | "Some files are long for a good reason — generated code, comprehensive test suites…" | Manager, Architect |
-| `large_files_remediation/0` | "leave a short comment at the top of the file explaining its role…" | Manager, Architect |
-| `user_config_specifies_clause/0` | "the user or project config specifies a particular structure, convention, or file organization," | Manager, Architect |
-| `file_structure_expectations_prefix/0` | "file-structure expectations in the objective (e.g., \"keep files under ~1000 lines…" | Manager, Architect |
-| **Context Tree definition** | | |
-| `context_tree_definition_clause/0` | "spatial, recursive representation of the codebase structure." | Architect, ContextExtractor |
-| `routing_table_markdown_list_clause/0` | "simple markdown list mapping each area/module/feature to its owning child subdirectory" | Architect, ContextExtractor |
-| `delegate_without_investigating_clause/0` | "where to delegate work without investigating the subtree." | Architect, ContextExtractor |
-| **CONTEXT.md = current state, not history** | | |
-| `context_current_state_clause/0` | "CONTEXT.md documents the **current state** of the code — what is TRUE NOW…" — the shared "current state, not history" paragraph, extended with active-maintenance guidance (keep CONTEXT.md concise by pruning when adding; write findings at the best-fit child/descendant node with a routing-table entry at the current level; extract oversized sections into skills; the `... [Content Truncated] ...` marker in a read CONTEXT.md signals the file exceeded the per-file ~64 KB truncation limit — prune it) | Manager, Architect, Investigator, ContextExtractor |
-| **Shared canonical phrases** | | |
-| `standard_sections_enum/0` | "standard sections (Intent, API Surface, Constraints, Routing Table)" | Architect, Investigator |
-| `context_chain_example/0` | "CONTEXT.md chain from `./` → `./src/` → `./src/auth/` → `./src/auth/oauth/`" | Manager, Architect |
-| `genesis_context_header/0` | "# Genesis Context\n\nGenesis models the codebase as a **Context Tree**: …`CONTEXT.md`" | TaskScheduler, GenesisPlanner |
-| **Foreign repositories** | | |
-| `foreign_repo_absolute_path_clause/0` | "a foreign repository (an absolute path like `/Source/original-proj`)," | Architect, ContextExtractor |
-| `foreign_repo_spawn_right_level/0` | "- **Spawn at the right level**: When you know the foreign repo's structure" | Architect, ContextExtractor |
-| **Objective scope** | | |
-| `objective_not_in_node_prefix/0` | "If the objective clearly does not belong to your" | Executor, ContextExtractor |
+| Theme | Functions (users) |
+|---|---|
+| **Worktree isolation** | `worktree_isolation_note/0` (Executor, ContextExtractor, TaskScheduler, Investigator); `worktree_isolation_note_short/0` (SkillExtractor); `subagent_worktree_tail_isolated/0` (Manager, Architect) |
+| **Delegation principles** | `delegation_investigation_sentence/0` (Manager, Investigator); `delegation_occasional_reads_sentence/0` (Manager, Investigator, GenesisPlanner) |
+| **Genesis architecture** | `genesis_architecture_header/0`, `context_tree_routing_table_clause/0`, `phylogenetic_graph_sentence/0`, `transient_memory_clause/0`, `recursive_loop_intro/0`, `recursive_loop_tail/0` (all Manager, Architect) |
+| **Sibling paths & routing tables** | `routing_sibling_prefix/0` (Manager, Architect); `sibling_example_parenthetical/0` (Manager, Architect, ContextExtractor) |
+| **Code quality & file structure** | `solid_principles_sentence/0`, `large_files_intro/0`, `large_files_remediation/0`, `user_config_specifies_clause/0`, `file_structure_expectations_prefix/0` (all Manager, Architect) |
+| **Context Tree definition** | `context_tree_definition_clause/0`, `routing_table_markdown_list_clause/0`, `delegate_without_investigating_clause/0` (all Architect, ContextExtractor) |
+| **CONTEXT.md = current state, not history** | `context_current_state_clause/0` (Manager, Architect, Investigator, ContextExtractor) — the shared "current state, not history" paragraph + active-maintenance guidance (keep CONTEXT.md concise by pruning when adding; write findings at the best-fit child/descendant node with a routing-table entry at the current level; extract oversized sections into skills; the `... [Content Truncated] ...` marker in a read CONTEXT.md signals the file exceeded the per-file ~64 KB truncation limit — prune it) |
+| **Shared canonical phrases** | `standard_sections_enum/0` (Architect, Investigator); `context_chain_example/0` (Manager, Architect); `genesis_context_header/0` (TaskScheduler, GenesisPlanner) |
+| **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0` (Architect, ContextExtractor) |
+| **Objective scope** | `objective_not_in_node_prefix/0` (Executor, ContextExtractor) |
 
 ## Notes for Agents (prompt composition)
 
-- **Architect foreign-repo role rule (in `architect.ex` "Foreign Repository Integration")**: the Architect must determine what each foreign repo is FOR (tests / reference implementation / dependency / docs) before designing, and treat foreign-repo test suites as given tests to design for (100% pass-rate target) that carry into Phase 2. Do not remove this when editing the prompt; it fixes the real-world failure mode where tests were implicitly supplied as foreign repos and the Architect ignored them.
-- **Prompt boilerplate lives in `prompt_fragments.ex`.** When editing an agent system prompt, update the fragment module — either edit the shared fragment (if the text is shared) or add a new fragment function there. **Never inline copy-paste** prompt boilerplate into an agent module.
+- **Architect foreign-repo role rule** (in `architect.ex` "Foreign Repository Integration"): the Architect must determine what each foreign repo is FOR (tests / reference implementation / dependency / docs) before designing, and treat foreign-repo test suites as given tests to design for (100% pass-rate target) that carry into Phase 2. Do not remove when editing the prompt — it fixes the real-world failure mode where tests were implicitly supplied as foreign repos and the Architect ignored them.
+- **Prompt boilerplate lives in `prompt_fragments.ex`.** When editing an agent system prompt, update the fragment module — edit the shared fragment (if shared) or add a new fragment function there. **Never inline copy-paste** prompt boilerplate into an agent module.
 - **Extract new shared text** (verbatim, shared by ≥2 prompts) as a new function in `prompt_fragments.ex` with a `@doc` noting which modules use it and any "do NOT merge" warnings.
 - **Near-duplicates are deliberate variants** — preserve them as separate functions or leave them inline; never normalize/reword/merge (behavior depends on exact wording).
-- **Verification practice (golden dump):** after any prompt change, dump every agent's `system_prompt/0` before and after and diff — outputs must match character-for-character unless a deliberate wording change was made. E.g.:
-  ```bash
-  mix run --no-start -e 'mods = [EvoGit.Agents.Manager, EvoGit.Agents.Executor, EvoGit.Agents.TaskScheduler, EvoGit.Agents.Investigator, EvoGit.Agents.Architect, EvoGit.Agents.ContextExtractor, EvoGit.Agents.SkillExtractor, EvoGit.Agents.GenesisPlanner]; File.write!(Path.join(System.fetch_env!("TMPDIR"), "prompts.txt"), Enum.map_join(mods, "\n=====SEP=====\n", fn m -> "#{inspect(m)}\n" <> m.system_prompt() end))'
-  ```
+- **Golden dump verification:** after any prompt change, dump every agent's `system_prompt/0` before and after and diff — outputs must match character-for-character unless a deliberate wording change was made (e.g. `mix run --no-start -e 'mods = [EvoGit.Agents.Manager, ...]; ...'`).
 - **Fragments carry no trailing newline** — callers add `"\n"` explicitly; a fragment that must end a line without a newline (mid-line composition) is composed with `" "` joiners inline in the caller.
 - The guard-check pattern `never include worktree paths|OWN isolated worktree` should match ONLY `prompt_fragments.ex` plus any intentional single-module inline variants (documented in fragment `@doc`s).
 
