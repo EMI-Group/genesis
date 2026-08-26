@@ -65,7 +65,7 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | `routing_table_markdown_list_clause/0` | "simple markdown list mapping each area/module/feature to its owning child subdirectory" | Architect, ContextExtractor |
 | `delegate_without_investigating_clause/0` | "where to delegate work without investigating the subtree." | Architect, ContextExtractor |
 | **CONTEXT.md = current state, not history** | | |
-| `context_current_state_clause/0` | "CONTEXT.md documents the **current state** of the code — what is TRUE NOW…" | Manager, Architect, Investigator, ContextExtractor |
+| `context_current_state_clause/0` | "CONTEXT.md documents the **current state** of the code — what is TRUE NOW…" — the shared "current state, not history" paragraph, extended with active-maintenance guidance (keep CONTEXT.md concise by pruning when adding; write findings at the best-fit child/descendant node with a routing-table entry at the current level; extract oversized sections into skills; the `... [Content Truncated] ...` marker in a read CONTEXT.md signals the file exceeded the per-file ~64 KB truncation limit — prune it) | Manager, Architect, Investigator, ContextExtractor |
 | **Shared canonical phrases** | | |
 | `standard_sections_enum/0` | "standard sections (Intent, API Surface, Constraints, Routing Table)" | Architect, Investigator |
 | `context_chain_example/0` | "CONTEXT.md chain from `./` → `./src/` → `./src/auth/` → `./src/auth/oauth/`" | Manager, Architect |

@@ -315,6 +315,14 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   @doc """
   "CONTEXT.md documents the **current state** of the code — what is TRUE NOW …"
 
+  Shared "current state, not history" paragraph, extended with active
+  CONTEXT.md maintenance guidance: keep files concise by pruning when adding
+  new content, write findings at the best-fit child/descendant node (with a
+  routing-table entry at the current level) instead of hoarding them in the
+  parent, and extract oversized sections into skills; and treat the
+  `... [Content Truncated] ...` marker in a read CONTEXT.md as a signal the
+  file exceeded the per-file limit.
+
   Used by: Manager (standalone paragraph after the "CONTEXT.md is your
   long-term memory" bullet), Architect (continuation sentence at the end of
   the "Every directory (node) has a short CONTEXT.md file serving two
@@ -323,7 +331,7 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   Documentation section list, before the Routing Table item).
   """
   def context_current_state_clause do
-    "CONTEXT.md documents the **current state** of the code — what is TRUE NOW (intent, API surface, constraints, current known issues, current design decisions) — not a change log. Do NOT record history in CONTEXT.md: no records of past behaviors, no \"was X, now Y\" notes, no \"bug fixed\" or \"FIXED\" annotations, no dated changelog entries. A bug or gotcha that exists NOW may be recorded (e.g. under `## Known Issues`) — but once it is fixed, DELETE the related text outright (use `edit_context` to remove the stale entry); do not annotate it as fixed. To inspect past versions or change history of CONTEXT.md or any file, use git — `git log -p -- <path>` or the `search_history` tool — git history IS the change log, not CONTEXT.md."
+    "CONTEXT.md documents the **current state** of the code — what is TRUE NOW (intent, API surface, constraints, current known issues, current design decisions) — not a change log. Do NOT record history in CONTEXT.md: no records of past behaviors, no \"was X, now Y\" notes, no \"bug fixed\" or \"FIXED\" annotations, no dated changelog entries. A bug or gotcha that exists NOW may be recorded (e.g. under `## Known Issues`) — but once it is fixed, DELETE the related text outright (use `edit_context` to remove the stale entry); do not annotate it as fixed. To inspect past versions or change history of CONTEXT.md or any file, use git — `git log -p -- <path>` or the `search_history` tool — git history IS the change log, not CONTEXT.md. Actively maintain CONTEXT.md: when you add new content, prune or condense stale or redundant text in the same pass so the file stays concise — git history preserves what you remove, nothing is lost. Write each finding at the level where it belongs: if it concerns a child or descendant node, put it in that node's CONTEXT.md (via `write_context`/`edit_context` at that path) and add a routing-table entry at the current level pointing to it, rather than hoarding it in the parent. If a section keeps growing despite pruning, extract the detailed content into a skill (`.agents/skills/`, the skills system — `skill_add`/`skill_enable`) and leave a brief pointer in CONTEXT.md. If a CONTEXT.md you read shows a `... [Content Truncated] ...` marker, that file has grown past the per-file size limit (each CONTEXT.md is truncated individually at ~64 KB, not the chain as a whole) — treat it as a signal to prune the file to the essentials and push detail down to child nodes or into a skill."
   end
 
   # ── Foreign repositories (Architect + ContextExtractor) ──────────────────
