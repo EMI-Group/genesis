@@ -11,6 +11,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 - `./adapters/` → Git CLI adapter — all git operations go through this module
 - `./runtime/` → Genesis, Evolution, PR helpers, Skill Extraction
 - `./config/` → Unified 3-level configuration resolver (defaults → user TOML → runtime overrides), schema definitions, LLM catalog, platform detection, project config
+- `./cli/` → CLI argument parsing (`EvoGit.CLI.Parser`), interactive setup wizard (`EvoGit.CLI.Setup`)
 - `./custom_agents/` → `EvoGit.CustomAgents` store + `ModelSelector` (agents.toml + per-agent model-selection script)
 - `./sandbox/` → Multi-platform sandbox backends (Linux systemd-run, Linux bwrap, macOS sandbox-exec, passthrough)
 - `./skills/` → Dynamic skill tools system — YAML-frontmatter markdown skills as LLM-callable tools
