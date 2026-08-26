@@ -13,7 +13,7 @@ Rust source for the Genesis Tauri v2 desktop shell: `main.rs` (entry point, tray
 | `backend_watchdog.rs` | `BackendManager` — monitors/restarts the backend child, error page, quit/update intent flags |
 | `sidecar_path.rs` | `resolve_launcher` — shared candidate-dir launcher resolution (GUI + headless) |
 
-## Lifetime Pipe (TCP hold — replaces the parent-pid handshake)
+## Lifetime Pipe (TCP hold)
 
 Contract with the Elixir backend (fixed on the Elixir side — do not change):
 - Env var **`EVOGIT_LIFETIME_PORT`** = the lifetime listener's port (bound on 127.0.0.1). The backend connects to `127.0.0.1:<port>` and blocks on recv; any close/error = shell dead → backend `System.stop(0)`.
