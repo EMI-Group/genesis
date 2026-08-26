@@ -1,10 +1,9 @@
 # Config — Unified Configuration Resolver
 
 ## Intent
-Contains `EvoGit.Config`, the single source of truth for non-project configuration. Merges application defaults with user config (`~/.config/genesis/config.toml`), loads API keys from credentials into ReqLLM's key store, and provides write capability for persisting user config changes plus a diagnostic function for configuration completeness.
+`EvoGit.Config` — single source of truth for non-project configuration: merges application defaults with user config (`~/.config/genesis/config.toml`), loads API keys from credentials into ReqLLM's key store, persists user config changes, and diagnoses configuration completeness.
 
 ## Routing Table
-
 - `./schema/` → Config schema definitions — pure data describing config keys, types, defaults, and validation rules
 
 ## API Surface
@@ -12,68 +11,66 @@ Contains `EvoGit.Config`, the single source of truth for non-project configurati
 ### `EvoGit.Config`
 | Function | Description |
 |----------|-------------|
-| `resolve/0` | Returns merged config map (defaults + user config). Runtime overrides live in `AgentScheduler` state, not here. |
-| `resolve/1` | Returns resolved value for a specific key path (atom or list of atoms) |
-| `user_config/0` | Reads and returns parsed `config.toml`, or `%{}` if not found. Cached in `:persistent_term` with `File.stat` mtime+size validation (see "Config Caching" below). |
-| `save_user_config/1` | Persists a config map to `config.toml`. Creates config directory if needed. Invalidates the config-file cache on success. Returns `:ok` or `{:error, reason}`. |
-| `save_credentials/1` | Merges and persists API key map to `credentials.toml`. Sets keys via ReqLLM.put_key for immediate in-process use. Invalidates the credentials-file cache on success. Returns `:ok` or `{:error, reason}`. |
-| `config_status/0` | Returns diagnostic map with `:missing`, `:warnings`, and `:ok?`. Checks LLM model presence and API key presence. GitHub username is **optional** — it is NOT checked here (a missing username does not affect `:ok?`, `:missing`, or `:warnings`). |
-| `credentials/0` | Reads `credentials.toml`, loads each key-value pair into ReqLLM's key store via ReqLLM.put_key, returns parsed map. Cached in `:persistent_term` with `File.stat` mtime+size validation (put_key runs only on cache miss; see "Config Caching" below). |
-| `defaults/0` | Returns built-in application defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
-| `config_path/0` | Returns the full path to `config.toml` |
-| `config_dir/0` | Returns platform-specific config directory (XDG/macos/windows). Delegates to `EvoGit.Platform.config_dir("genesis")`. |
-| `credentials_path/0` | Returns full path to `credentials.toml` |
+| `resolve/0` | Merged config map (defaults + user config). Runtime overrides live in `AgentScheduler` state, not here. |
+| `resolve/1` | Resolved value for a key path (atom or list of atoms) |
+| `user_config/0` | Parsed `config.toml`, or `%{}` if not found. Cached in `:persistent_term` with `File.stat` mtime+size validation (see "Config Caching"). |
+| `save_user_config/1` | Persists config map to `config.toml` (creates config dir). Invalidates cache on success. `:ok \| {:error, reason}` |
+| `save_credentials/1` | Merges/persists API key map to `credentials.toml`; sets keys via `ReqLLM.put_key` for immediate in-process use. Invalidates cache. `:ok \| {:error, reason}` |
+| `config_status/0` | Diagnostic map `:missing`/`:warnings`/`:ok?`. Checks LLM model presence + API key presence. GitHub username optional — NOT checked (does not affect `:ok?`/`:missing`/`:warnings`). |
+| `credentials/0` | Reads `credentials.toml`, loads each key into ReqLLM's key store, returns parsed map. Cached (put_key runs only on cache miss). |
+| `defaults/0` | Built-in defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
+| `config_path/0` | Full path to `config.toml` |
+| `config_dir/0` | Platform config dir (XDG/macos/windows). Delegates to `EvoGit.Platform.config_dir("genesis")`. |
+| `credentials_path/0` | Full path to `credentials.toml` |
 
 ### `EvoGit.Config.LLMCatalog` (provider/model shortcuts)
 | Function | Description |
 |----------|-------------|
-| `providers/0` | Returns list of predefined provider entries (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba) with models |
-| `provider_models/1` | Returns model shortcuts for a given provider atom |
-| `resolve_model/2` | Resolves `{provider_atom, model_input}` to `"provider:model"` string (backward-compat string form) |
-| `resolve_model_spec/3` | Map-producing analog of `resolve_model/2`. Returns `%{provider: atom, id: string}` plus optional `base_url`/`extra`. Opts: `:base_url`, `:variant`, `:extra`. |
-| `requires_base_url?/1` | Returns whether a provider requires a custom `base_url` (reads the `requires_base_url` flag; default `false`). `:openai_compatible` → `true`. |
-| `find_provider/1` | Finds provider entry by atom (checks `provider_atoms` list) |
-| `unknown_provider_help/0` | Returns guidance text with links to llmdb.xyz and ReqLLM docs |
-| `known_credential_keys/0` | Returns all unique credential key names from the catalog |
+| `providers/0` | Predefined providers (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba) with models |
+| `provider_models/1` | Model shortcuts for a provider atom |
+| `resolve_model/2` | `{provider_atom, model_input}` → `"provider:model"` string (backward-compat) |
+| `resolve_model_spec/3` | Map analog: `%{provider: atom, id: string}` + optional `base_url`/`extra`. Opts `:base_url`, `:variant`, `:extra`. |
+| `requires_base_url?/1` | Provider requires custom `base_url` (flag; default `false`). `:openai_compatible` → `true`. |
+| `find_provider/1` | Provider entry by atom (checks `provider_atoms`) |
+| `unknown_provider_help/0` | Guidance text (llmdb.xyz + ReqLLM docs links) |
+| `known_credential_keys/0` | All unique credential key names from the catalog |
 
 ### `EvoGit.Config.VersionState` (upgrade detection)
-Tracks the last-seen Genesis version in `version_state.toml` (in the config dir) so the dashboard can detect upgrades. Defaults to `"0.8.0"` when no file exists (avoids spurious upgrade detection for users already on 0.8.0).
+Tracks last-seen Genesis version in `version_state.toml` (config dir); defaults to `"0.8.0"` when no file exists.
 | Function | Description |
 |----------|-------------|
-| `get_version/0` | Returns the recorded version string (defaults to `"0.8.0"` if file absent/unparseable/missing key) |
-| `current_version/0` | Returns runtime version via `Application.spec(:evo_git, :vsn) \|> to_string()` |
-| `save_version/1` | Persists a version string to the file. `:ok \| {:error, reason}`. Also callable as `save_version/0` (persists `current_version/0`). |
-| `upgraded?/0` | Returns `true` if recorded version differs from current version |
-| `record_current_version/0` | Convenience — persists `current_version/0`. Call after showing update log. |
+| `get_version/0` | Recorded version string (default `"0.8.0"` if absent/unparseable/missing key) |
+| `current_version/0` | Runtime version via `Application.spec(:evo_git, :vsn) \|> to_string()` |
+| `save_version/1` | Persists version string. `:ok \| {:error, reason}`. Also `save_version/0` (persists `current_version/0`). |
+| `upgraded?/0` | `true` if recorded version ≠ current version |
+| `record_current_version/0` | Persists `current_version/0`. Call after showing update log. |
 
 ### `EvoGit.Platform` (cross-platform utilities)
 | Function | Description |
 |----------|-------------|
-| `os/0` | Returns `:linux`, `:macos`, `:windows`, or `:unknown` |
-| `config_dir/1` | Platform-specific config dir (XDG/Linux, Application Support/macOS, APPDATA/Windows) |
-| `data_dir/1` | Platform-specific data dir |
-| `shell/0` | Returns `"bash"` or `"powershell"` |
-| `shell_args/1` | Returns `["-c", cmd]` (Unix) or PowerShell `-EncodedCommand` args (Windows, via EvoGit.Powershell) |
-| `systemd_available?/0` | Returns true on Linux with systemd |
-| `nix_available?/0` | Returns true when the `nix` binary is found in PATH (Linux and macOS) |
+| `os/0` | `:linux`, `:macos`, `:windows`, or `:unknown` |
+| `config_dir/1` | Config dir (XDG/Linux, Application Support/macOS, APPDATA/Windows) |
+| `data_dir/1` | Platform data dir |
+| `shell/0` | `"bash"` or `"powershell"` |
+| `shell_args/1` | `["-c", cmd]` (Unix) or PowerShell `-EncodedCommand` args (Windows, via `EvoGit.Powershell`) |
+| `systemd_available?/0` | Linux + systemd |
+| `nix_available?/0` | `nix` binary in PATH (Linux and macOS) |
 
 ### `EvoGit.ProjectConfig` (per-repo genesis.toml)
 | Function | Description |
 |----------|-------------|
 | `read/1` | Parses `genesis.toml` from repo root |
-| `worktree_script/1` | Returns worktree init script for current OS (backward-compat wrapper) |
-| `worktree_script/2` | Returns worktree init script for given OS, with variant resolution |
-| `write_worktree_script/2` | Writes/merges worktree init script (inline content) into `genesis.toml` `[worktree].script`; preserves existing sections/keys |
-| `commands/1` | Returns map of user-defined dev command shortcuts from `[commands]` section |
-| `foreign_repos/1` | Returns list of `ForeignRepo` structs |
+| `worktree_script/1` | Worktree init script for current OS (backward-compat wrapper) |
+| `worktree_script/2` | Worktree init script for given OS, with variant resolution |
+| `write_worktree_script/2` | Writes/merges worktree init script into `genesis.toml` `[worktree].script`; preserves existing sections/keys |
+| `commands/1` | User-defined dev command shortcuts from `[commands]` |
+| `foreign_repos/1` | `ForeignRepo` structs |
 
 ### genesis.toml Structure
 ```toml
 [worktree]
-# Single fallback script (any OS):
-script = "..." 
-# OR OS-specific variants (TOML dotted keys):
-script.linux = "..."
+script = "..."                 # Single fallback script (any OS)
+script.linux = "..."           # OR OS-specific variants (TOML dotted keys)
 script.macos = "..."
 script.windows = "..."
 # Resolution: script.<current_os> → script (fallback) → nil
@@ -90,66 +87,63 @@ name = "Legacy Project"
 ### Worktree Init Script Environment Variables
 | Variable | Description |
 |----------|-------------|
-| `SOURCE_REPO_PATH` | The main repository checkout path |
-| `TARGET_WORKTREE_PATH` | The newly created worktree path |
-| `SOURCE_WORKTREE_PATH` | Parent agent's worktree path (or `SOURCE_REPO_PATH` for top-level agents) |
+| `SOURCE_REPO_PATH` | Main repository checkout path |
+| `TARGET_WORKTREE_PATH` | Newly created worktree path |
+| `SOURCE_WORKTREE_PATH` | Parent agent's worktree path (`SOURCE_REPO_PATH` for top-level agents) |
 
-### Configuration Levels (priority: low → high)
-1. **Application defaults** — Hardcoded in `defaults/0` (no model, no username)
+### Configuration Levels (priority low → high)
+1. **Application defaults** — `defaults/0` (no model, no username)
 2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
-3. **Runtime overrides** — Session-level, stored in `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`. Applied via CLI flags (`-c`, `-m`, `--retries`, etc.) or dashboard settings panel.
+3. **Runtime overrides** — `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`; set by CLI flags (`-c`, `-m`, `--retries`) or dashboard settings.
 
 ### config.toml Structure
 ```toml
 [scheduler]
-default_llm_max_concurrency = 3   # Default per-LLM concurrency when a model profile doesn't specify its own
-max_tool_concurrency = 2     # Max concurrent tool executions
-agent_max_retries = 3        # Crash-retry limit per agent
-max_agent_depth = 8          # Max subagent recursion depth
-max_retries = 15             # Max total LLM API retries
+default_llm_max_concurrency = 3   # Per-LLM concurrency when a model profile has none
+max_tool_concurrency = 2          # Max concurrent tool executions
+agent_max_retries = 3             # Crash-retry limit per agent
+max_agent_depth = 8               # Max subagent recursion depth
+max_retries = 15                  # Max total LLM API retries
 
 [llm]
-model = "provider:model"     # REQUIRED. e.g. "anthropic:claude-sonnet-4-20250514"
+model = "provider:model"          # REQUIRED, e.g. "anthropic:claude-sonnet-4-20250514"
 compression_threshold_tokens = 100_000  # Token limit before context compression
 
 [user]
-github_username = "..."      # For PR creation
+github_username = "..."           # For PR creation
 
 [sandbox]
-mode = "auto"                # "auto" | "enabled" | "disabled"
-backend = "auto"             # "auto" | "systemd" | "bwrap" — sandbox backend selection
-write_paths = []             # Optional user-defined writable paths for sandboxed tools
-                             # (unset/nil = use platform default writable paths; set,
-                             # including an empty list, = REPLACES the built-in list)
+mode = "auto"                     # "auto" | "enabled" | "disabled"
+backend = "auto"                  # "auto" | "systemd" | "bwrap"
+write_paths = []                  # Optional; unset/nil = platform defaults, set (incl. []) = REPLACES built-in list
 
 [nix]
-enabled = false              # Run tool calls inside a cached Nix dev environment (requires flake.nix in config dir)
-flake_output = nil           # Optional: e.g. "devShells.x86_64-linux.default"
+enabled = false                   # Run tool calls inside a cached Nix dev environment (requires flake.nix in config dir)
+flake_output = nil                # Optional, e.g. "devShells.x86_64-linux.default"
 ```
 
-**`[[llm.models]]` profile fields**: each profile supports `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus the OPTIONAL peak-hour fields `peak_concurrency`, `peak_hours`, and `timezone`:
-
+**`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`:
 ```toml
 [[llm.models]]
 id = "glm"
 concurrency = 4        # normal (off-peak) concurrency
 peak_concurrency = 2   # optional — effective concurrency during peak windows (0 = hard pause)
-peak_hours = [         # optional — list of daily windows (local wall-clock unless timezone set)
+peak_hours = [         # optional — daily windows (local wall-clock unless timezone set)
   { start = "09:00", end = "12:00" },
   { start = "14:00", end = "18:00" }
 ]
 timezone = "Asia/Shanghai"  # optional — IANA tz for this profile's peak windows
 ```
 
-- `peak_concurrency` — when present must be a NON-NEGATIVE integer (`0` = hard pause: the model gets zero LLM slots during peak windows, never raised by the `default_llm_max_concurrency` floor; negatives, floats, strings → validation error at `[:llm, :models, <idx>, :peak_concurrency]`); absent → off-peak `concurrency` always applies.
-- `peak_hours` — list of maps with `start`/`end` `"HH:MM"` 24h strings (atom- or string-keyed; TOML decoding may produce string keys). Windows are half-open `[start, end)`; `start > end` = overnight wrap; absent / `[]` / invalid → disabled (normal `concurrency` 24/7). `peak_hours` present without `peak_concurrency` → legal no-op (defaults to `concurrency`).
-- `timezone` — optional IANA timezone name (e.g. `"Asia/Shanghai"`, `"America/New_York"`): when present, the profile's peak computations (in-peak checks + next-transition wakeups) use that timezone's wall clock, DST-aware; absent / empty / nil → server local wall clock (legacy). Validated by `EvoGit.PeakHours.validate_timezone/1` (single source of truth): nil/"" valid; unknown IANA name / no tz database configured → error at `[:llm, :models, <idx>, :timezone]`. Requires the tz database at boot — `Calendar.put_time_zone_database(Tz.TimeZoneDatabase)` in `EvoGit.Application.start/2` (`tz` ~> 0.28 dep; IANA data pre-compiled at build time, no auto-update/network updater enabled).
-- **Validation ownership**: window parsing/format/overlap checks are delegated to `EvoGit.PeakHours.validate_windows/1` (single source of truth — the schema does NOT re-implement format/overlap logic). `Schema.validate/1` reports `%ValidationError{}`s at `[:llm, :models, <idx>, :peak_hours]` (non-list) or `[:llm, :models, <idx>, :peak_hours, <window_idx>]` (invalid entry/window; the overlap error is reported at the index of the later overlapping window).
-- All peak-hour fields (incl. `timezone`) survive config resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys are never stripped — and reach `state.model_profiles` unchanged, where the runtime reads them from `get_config(:model_profiles)`.
+- `peak_concurrency` — NON-NEGATIVE integer when present (`0` = hard pause: zero LLM slots during peak, never raised by the `default_llm_max_concurrency` floor; negatives/floats/strings → validation error at `[:llm, :models, <idx>, :peak_concurrency]`); absent → off-peak `concurrency` always applies.
+- `peak_hours` — list of maps with `start`/`end` `"HH:MM"` 24h strings (atom- or string-keyed; TOML may yield string keys). Half-open `[start, end)`; `start > end` = overnight wrap; absent/`[]`/invalid → disabled (normal `concurrency` 24/7). `peak_hours` without `peak_concurrency` → legal no-op.
+- `timezone` — optional IANA name (e.g. `"Asia/Shanghai"`): when present, all peak computations for that profile (in-peak checks + next-transition wakeups) use that tz wall clock, DST-aware; absent/empty/nil → server local wall clock. Validated by `EvoGit.PeakHours.validate_timezone/1` (single source of truth): nil/"" valid; unknown IANA name / no tz database → error at `[:llm, :models, <idx>, :timezone]`. Requires tz database at boot: `Calendar.put_time_zone_database(Tz.TimeZoneDatabase)` in `EvoGit.Application.start/2` (`tz ~> 0.28`; IANA data pre-compiled, no auto-update).
+- **Validation ownership**: window parse/format/overlap checks delegate to `EvoGit.PeakHours.validate_windows/1` (single source of truth — schema does NOT re-implement). `Schema.validate/1` reports `%ValidationError{}` at `[:llm, :models, <idx>, :peak_hours]` (non-list) or `[:llm, :models, <idx>, :peak_hours, <window_idx>]` (invalid entry; overlap error at the later window's index).
+- Peak-hour fields (incl. `timezone`) survive resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys never stripped — reaching `state.model_profiles`, read via `get_config(:model_profiles)`.
 
-**`[sandbox] backend` semantics**: `[:sandbox, :backend]` is an `:atom` schema key (default `:auto`, validation `[in: [:auto, :systemd, :bwrap]]`) selecting the Linux sandbox backend. `:auto` tries systemd-run first, then bubblewrap (`bwrap`), then no sandbox when neither is available (macOS always uses sandbox-exec regardless — bwrap is Linux-only). `:systemd` forces systemd-run (no sandbox if systemd is unavailable); `:bwrap` forces bubblewrap — filesystem isolation only, no resource limits — useful in Docker/containers where systemd is unavailable, and falls back to no sandbox if `bwrap` is unavailable. **The `[sandbox.resources]` and `[sandbox.process]` keys are systemd-only and ignored when bwrap is the active backend.** String values from config.toml are atomized by the `atomize_enum_values/1` pipeline step (`"auto" | "systemd" | "bwrap"` → atoms) before `Schema.validate`.
+**`[sandbox] backend`**: `:atom` schema key, default `:auto`, validation `[in: [:auto, :systemd, :bwrap]]`. `:auto` tries systemd-run → bwrap → no sandbox (macOS always uses sandbox-exec; bwrap is Linux-only). `:systemd` forces systemd-run (no sandbox if systemd unavailable). `:bwrap` forces bubblewrap — filesystem isolation only, no resource limits; falls back to no sandbox if `bwrap` unavailable. **`[sandbox.resources]`/`[sandbox.process]` are systemd-only, ignored with bwrap.** String values atomized by `atomize_enum_values/1` before `Schema.validate`.
 
-**`[sandbox] write_paths` semantics**: `[:sandbox, :write_paths]` is a `:list_of_strings` schema key (default `nil`). Unset/nil means the sandbox backends use their platform-default writable paths; set (including an explicitly empty list) REPLACES the built-in list — `[]` disables those writable paths entirely. The value survives the resolve pipeline (`deep_merge` → `atomize_enum_values` → `Schema.validate`) and any non-list/non-string-list value surfaces as a validation error (never a crash). **Consumed by the sandbox backends** (`EvoGit.Sandbox.Linux.args/4` and `EvoGit.Sandbox.MacOS.generate_profile/2` resolve it via `EvoGit.Config.resolve([:sandbox, :write_paths])`): nil → platform default cache-dir list; set (incl. `[]`) → replaces the built-in cache-dir list only; `~`-prefixed entries expand to `System.user_home!()`, absolute entries as-is, relative entries joined to `$HOME`. Structural paths (cwd, tmp, nix store, repo `.git`) are always appended regardless; deny lists are never affected. Details in `sandbox/CONTEXT.md`.
+**`[sandbox] write_paths`**: `:list_of_strings` schema key, default `nil`. nil → sandbox backends use platform-default writable paths; set (incl. `[]`) → REPLACES the built-in list (`[]` disables those writable paths entirely). Non-list/non-string-list → validation error (never crash). Consumed by `EvoGit.Sandbox.Linux.args/4` + `EvoGit.Sandbox.MacOS.generate_profile/2` via `EvoGit.Config.resolve([:sandbox, :write_paths])`: nil → default cache-dir list; set → replaces built-in cache-dir list only; `~`-prefixed entries expand to `System.user_home!()`, absolute as-is, relative joined to `$HOME`. Structural paths (cwd, tmp, nix store, repo `.git`) always appended; deny lists never affected. Details: `sandbox/CONTEXT.md`.
 
 ### credentials.toml Structure
 ```toml
@@ -161,35 +155,34 @@ DEEPSEEK_API_KEY = "sk-..."
 GROQ_API_KEY = "gsk_..."
 TAVILY_API_KEY = "tvly-..."
 ```
-Keys are loaded into ReqLLM's in-process key store on load. Only one key needed (matching the LLM model's provider).
+Keys loaded into ReqLLM's in-process key store on load. Only one key needed (matching the LLM model's provider).
 
 ## Config Caching
 
-`user_config/0` and `credentials/0` cache their **parsed TOML maps** in `:persistent_term`, keyed by file path, storing `{mtime, size, parsed_map}` (private helper `cached_file_read/2`, config.ex ~line 920).
+`user_config/0` and `credentials/0` cache **parsed TOML maps** in `:persistent_term` keyed by file path, storing `{mtime, size, parsed_map}` (private `cached_file_read/2`, config.ex ~line 920).
 
-**Design:**
-- Every call runs `File.stat(path)` (cheap). On `{:ok, stat}`: if a cached entry exists with **matching mtime AND size**, the cached map is returned; otherwise the file is read + TOML-decoded, stored with the current stat, and returned. On `{:error, _}` (missing/unreadable): returns `%{}`, no warning log.
-- **Per-path keys** (`{EvoGit.Config, :file_cache, path}`): tests flipping `XDG_CONFIG_HOME`/`APPDATA` between calls resolve different paths → different keys → no staleness; stale entries for old paths linger harmlessly.
-- **Explicit invalidation**: `save_user_config/1` and `save_credentials/1` erase the entry for their path after a successful `File.write`. (mtime validation would eventually catch the rewrite anyway; the erase covers coarse-mtime filesystems and same-second same-size rewrites.)
-- **External-edit freshness**: any external change to `config.toml`/`credentials.toml` while the app runs is picked up by the mtime+size check on the next call. This is what makes `RemoteAPI.reload_config/0` → `Config.resolve()` observe fresh disk content.
-- **Parse-failure edge**: if the file exists but read/decode fails, `read_toml_file/3` logs its warning and returns the default — that result IS cached with the current stat, so the warning is not re-emitted on every call until the file changes.
-- **`credentials/0` shares the same mechanism** (separate path key). Cache hits store what `read_credentials_file/1` RETURNS (i.e., after its `ReqLLM.put_key` loop) — the ReqLLM side effects run only on an actual file read (cache miss); on a hit the keys were already loaded at first read, and `save_credentials/1` also sets them explicitly.
+- Every call runs `File.stat(path)`: matching mtime AND size → cached map; else read + TOML-decode + store. `{:error, _}` (missing/unreadable) → `%{}`, no warning log.
+- **Per-path keys** (`{EvoGit.Config, :file_cache, path}`): tests flipping `XDG_CONFIG_HOME`/`APPDATA` resolve different paths → no staleness; stale old-path entries linger harmlessly.
+- **Explicit invalidation**: `save_user_config/1`/`save_credentials/1` erase their path's entry after successful `File.write` (covers coarse-mtime filesystems + same-second same-size rewrites).
+- **External-edit freshness**: external changes to `config.toml`/`credentials.toml` are picked up by the mtime+size check on next call — this is what makes `RemoteAPI.reload_config/0` → `Config.resolve()` observe fresh disk content.
+- **Parse-failure edge**: on read/decode failure `read_toml_file/3` logs a warning and returns the default; that result IS cached with the current stat, so the warning isn't re-emitted until the file changes.
+- **`credentials/0` shares the mechanism** (separate path key): cache stores the post-`put_key` result, so `ReqLLM.put_key` side effects run only on an actual file read (cache miss); `save_credentials/1` also sets them explicitly.
 
-**What is NOT cached:**
-- **The `resolve/0` pipeline** (deep_merge → atomize_enum_values → migrate_llm_models → Schema.validate) runs on EVERY call — deliberately, because it has a side effect: `Process.put(:evo_git_config_validation_errors, ...)` (config.ex ~line 153), which `config_status/0` reads from the **calling process's** dictionary (config.ex ~line 634). Caching the resolved map would break validation-error propagation.
+**NOT cached:**
+- **The `resolve/0` pipeline** (deep_merge → atomize_enum_values → migrate_llm_models → Schema.validate) runs on EVERY call — it has a side effect: `Process.put(:evo_git_config_validation_errors, ...)` (config.ex ~153), read by `config_status/0` from the **calling process's** dict (config.ex ~634). Caching would break validation-error propagation.
 - `defaults/0` — pure, cheap.
-- `read_toml_file/3` itself (`@doc false`) — deliberately NOT cached: `project_config.ex` and `remote_connections.ex` use it for `genesis.toml` / `remote_connections.toml`, which must stay fresh. The cache lives only inside `user_config/0` and `credentials/0`.
+- `read_toml_file/3` itself (`@doc false`) — `project_config.ex`/`remote_connections.ex` use it for `genesis.toml`/`remote_connections.toml`, which must stay fresh. The cache lives only inside `user_config/0`/`credentials/0`.
 
-**`config_status/0` truthfulness**: it calls `resolve()` + `credentials()` per invocation; the cache only serves already-validated (mtime+size-matched) file content, so missing/warning lists reflect the current on-disk state.
+`config_status/0` truthfulness: calls `resolve()` + `credentials()` per invocation; the cache only serves validated (mtime+size-matched) content, so missing/warning lists reflect current on-disk state.
 
-**Documented limitation**: a same-second + same-size external rewrite on a filesystem with coarse mtime granularity may be missed (modern ext4/APFS/NTFS have ns granularity, so this is theoretical in practice).
+Documented limitation: a same-second + same-size external rewrite on coarse-mtime filesystems may be missed (theoretical — modern ext4/APFS/NTFS have ns granularity).
 
 ## Constraints
-- `save_user_config/1` writes to `config.toml` and `save_credentials/1` writes to `credentials.toml`. Both create the config directory if needed.
+- `save_user_config/1` → `config.toml`; `save_credentials/1` → `credentials.toml`. Both create the config dir if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
-- Config directory follows XDG conventions via `EvoGit.Platform.os()`.
-- All file reads use `case File.read/1` (non-crashing) with explicit error handling via `with`/`case`, not `try/rescue`.
-- All config access should go through `EvoGit.Config.resolve/1` directly.
-- Model format: either a `"provider:model"` string (preferred, resolves through LLMDB for cost tracking) OR a map spec `%{provider: atom, id: string, base_url: string, extra: %{...}}` (ReqLLM-native). Map model specs are normalized at **resolve time** (`normalize_model_map/1` in `atomize_enum_values/1`): simple models (only `:provider`+`:id`) become `"provider:id"` strings, models with override keys (`:base_url`, `:extra`, etc.) stay as atomized maps — both are LLMDB-compatible formats that ReqLLM natively resolves. String model specs pass through as-is (no parsing). The `[[llm.models]]` data layer supports multiple endpoints per provider+model via per-profile `base_url`. The provider atom determines which API key env var is used.
-- `config_status/0` checks: LLM model presence, at least one API key. GitHub username is **optional** — a missing username does NOT appear in `:missing`/`:warnings` or make `:ok?` false.
-- **Crash resilience (untrusted user config boundary)**: The `resolve/0` → `config_status()` pipeline MUST NEVER raise on any user-provided config content, including valid TOML with wrong value types (e.g. `llm = "string"` instead of a `[llm]` table). `deep_merge/2` discards type-mismatched user values (keeping the default map). `migrate_llm_models/1`, `atomize_enum_values/1`, `Schema.model_profiles/1`, and `Schema.validate/1` all guard against non-map structures. `Schema.validate/1` uses `safe_get_in` (not `get_in`) to avoid Access-behaviour crashes on non-map intermediate values. Bad config produces `validation_errors` but does not crash the caller — the user must always be able to boot the app and access the settings page.
+- Config dir follows XDG conventions via `EvoGit.Platform.os()`.
+- All file reads use `case File.read/1` (non-crashing) with explicit `with`/`case` handling — no `try/rescue`.
+- All config access should go through `EvoGit.Config.resolve/1`.
+- **Model format**: `"provider:model"` string (preferred; resolves through LLMDB for cost tracking) OR map spec `%{provider: atom, id: string, base_url: string, extra: %{...}}` (ReqLLM-native). Map specs normalized at resolve time (`normalize_model_map/1` in `atomize_enum_values/1`): simple models (only `:provider`+`:id`) → `"provider:id"` strings; models with override keys (`:base_url`, `:extra`) stay as atomized maps. Both are LLMDB-compatible; string specs pass through as-is. `[[llm.models]]` supports multiple endpoints per provider+model via per-profile `base_url`. The provider atom determines which API key env var is used.
+- `config_status/0` checks: LLM model presence + at least one API key. GitHub username **optional** — a missing username does NOT appear in `:missing`/`:warnings` nor make `:ok?` false.
+- **Crash resilience (untrusted user config boundary)**: the `resolve/0` → `config_status()` pipeline MUST NEVER raise on any user-provided content (incl. valid TOML with wrong value types, e.g. `llm = "string"`). `deep_merge/2` discards type-mismatched values (keeping defaults); `migrate_llm_models/1`, `atomize_enum_values/1`, `Schema.model_profiles/1`, `Schema.validate/1` guard non-map structures; `Schema.validate/1` uses `safe_get_in` (not `get_in`) to avoid Access-behaviour crashes. Bad config → `validation_errors`, never a crash — the user must always boot the app and reach the settings page.
