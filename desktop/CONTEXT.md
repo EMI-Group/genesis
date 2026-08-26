@@ -18,7 +18,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 | `src-tauri/src/main.rs` | Rust entry point — initializes Tauri, builds system tray (Show Window · separator · Quit Genesis menu), spawns backend, opens window, intercepts close-to-tray; registers the `begin_quit` command; tray Quit shows+focuses the window and emits `quit-requested` to the webview for the web-page confirm flow |
 | `src-tauri/src/sidecar.rs` | Backend lifecycle: env config (PHX_IP bind address, PORT), spawn release launcher process, health-check polling, shutdown |
 | `src-tauri/Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
-| `src-tauri/tauri.conf.json` | Tauri config: window settings, trayIcon config, resource bundle reference, bundle metadata |
+| `src-tauri/tauri.conf.json` | Tauri config: productName/mainBinaryName, updater plugin (endpoints, pubkey), resource bundle reference, bundle metadata (no config-declared window — the window is Rust-built) |
 | `src-tauri/capabilities/default.json` | Tauri v2 permissions: shell (release launcher) |
 | `src-tauri/resources/genesis-backend/` | Placeholder directory where the built Elixir release (`_build/prod/rel/genesis_desktop/`) is placed before `cargo tauri build` |
 
