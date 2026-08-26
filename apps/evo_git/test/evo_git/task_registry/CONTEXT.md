@@ -33,6 +33,9 @@ ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle 
    - evo_dash `tasks_live_test.exs:227` — LiveView `:finalizing` broadcast handling (not registry restart recovery).
 2. **`:failed` → `:finalizing` via the CAST path** (`update_task_status/4`) is untested — only the PubSub path is covered (`persistence_test.exs:698-731`).
 
+### Known lib quirk (verified, tests pin the reachable semantics)
+`TaskRegistry.resolve_recheck_task/3`'s `{:ok, %{branch_name: _}}` result-extraction branch is **unreachable at runtime** — `handle_info({:recheck_task, _})` gates on `Lease.sched_meta_has_active_agents?/1` (true when ANY ETS entry exists for the task_id → reschedules), while `Lease.lookup_sched_meta_result/1` (which supplies the result) REQUIRES an entry with `parent_id == nil` to exist. Mutually exclusive → the only reachable recheck outcome is `{:completed, nil}` (warning logged); the handler is unreachable (nothing schedules the first recheck).
+
 ## Harness — `test/support/task_registry_case.ex` (82 lines)
 
 - 6 test modules use `EvoGit.TaskRegistryCase, async: false` (persistence, lease_heartbeat, cleanup, store_skip_and_log, merge_context, task_executor_reflect); the pure modules (diagnostics, resume_context, runtime_opts) use plain `ExUnit.Case, async: true`.
