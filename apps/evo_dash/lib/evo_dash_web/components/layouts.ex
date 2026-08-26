@@ -21,7 +21,7 @@ defmodule EvoDashWeb.Layouts do
 
   attr(:current_page, :atom,
     default: nil,
-    doc: "the current page atom (:dashboard, :agents) for active nav highlighting"
+    doc: "the current page atom (:dashboard, :agents, :help) for active nav highlighting"
   )
 
   attr(:config_status, :map, default: nil)
@@ -154,6 +154,11 @@ defmodule EvoDashWeb.Layouts do
             icon="hero-server-stack"
             notification={update_status_notification(@update_status)}
           >{gettext("System")}</.sidebar_nav_link>
+          <.sidebar_nav_link
+            navigate={with_node_param(~p"/help", @current_node_id)}
+            current={@current_page == :help}
+            icon="hero-question-mark-circle"
+          ><%!-- 帮助 — 指向自省代理聊天页面的侧边栏入口 --%>{gettext("Help")}</.sidebar_nav_link>
 
           <!-- Task Indicators Section -->
           <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">

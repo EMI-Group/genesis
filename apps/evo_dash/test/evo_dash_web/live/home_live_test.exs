@@ -206,7 +206,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "render" do
     test "renders the idle chat page", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/home")
+      {:ok, _view, html} = live(conn, "/help")
 
       assert html =~ "Chat with Genesis"
       assert html =~ "Start a conversation"
@@ -229,7 +229,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "send message" do
     test "starts a reflect task with the right opts", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       html = render_submit(view, "send_message", %{"message" => "hello genesis"})
 
@@ -254,7 +254,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "second message carries the transcript preamble", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       # Establish the transcript deterministically via :sys.replace_state (the
       # real reflect-task lifecycle is async and out of scope — see the
@@ -292,7 +292,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Seed an unrelated task to prove the empty submit creates NO new row.
       fixture_id = insert_task_fixture!(opts: [path: "/tmp/test", objective: "fixture"])
 
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       html = render_submit(view, "send_message", %{"message" => "   "})
 
@@ -307,7 +307,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "new chat" do
     test "resets the chat to the idle empty state", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       render_submit(view, "send_message", %{"message" => "hello"})
 
@@ -375,7 +375,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         File.rm_rf!(tmp_config)
       end)
 
-      assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/home")
+      assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/help")
     end
   end
 
@@ -412,7 +412,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "streaming display" do
     test "assistant text from the history fetch appears in the bubble", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
@@ -430,7 +430,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "agent_registered sets the chat agent and triggers the history fetch", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -468,7 +468,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "foreign-node events are ignored", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_fetch_seq]
       seed_running_chat(view)
@@ -504,7 +504,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     # with the CURRENT chat_task_fetch_seq (read dynamically). The handler only
     # reads Map.get(task, :status)/:result, so a plain map works.
     test "completed task with a result renders the final answer", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
@@ -528,7 +528,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "completed task without a result renders No response", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
@@ -545,7 +545,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "completed task with an error result renders The task failed", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
@@ -562,7 +562,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "cancelled task with a preserved result renders it", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
@@ -580,7 +580,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "cancelled task without a result renders Stopped", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
@@ -594,7 +594,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "deleted task renders the conversation-deleted marker", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seq = assigns(view)[:chat_task_fetch_seq]
       seed_running_chat(view)
@@ -608,7 +608,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "failed task event finalizes the transcript", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seed_running_chat(view)
       send(view.pid, {:task_updated, "t1", :failed, node()})
@@ -620,7 +620,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "task deleted event finalizes the transcript", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seed_running_chat(view)
       send(view.pid, {:task_deleted, "t1", node()})
@@ -636,7 +636,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "stop cancels a pending task and finalizes it", %{conn: conn} do
       fixture_id = insert_task_fixture!(status: :pending)
 
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       seed_chat_state(view, %{
         chat_status: :running,
@@ -682,7 +682,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "stop with no task is a no-op", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home")
+      {:ok, view, _html} = live(conn, "/help")
 
       html = render_click(view, "stop", %{})
 
@@ -715,14 +715,14 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "?node= resolves the remote node", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home?node=test-remote")
+      {:ok, view, _html} = live(conn, "/help?node=test-remote")
 
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
       assert assigns(view).current_node_id == "test-remote"
     end
 
     test "send routes through NodeContext to the remote and fails fast", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home?node=test-remote")
+      {:ok, view, _html} = live(conn, "/help?node=test-remote")
 
       html = render_submit(view, "send_message", %{"message" => "hi remote"})
 
@@ -734,7 +734,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "node switch resets the chat and local events are ignored remotely", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/home?node=test-remote")
+      {:ok, view, _html} = live(conn, "/help?node=test-remote")
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
 
       # Seed some chat state so the reset is observable.
@@ -749,8 +749,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = render(view)
       refute html =~ "The task failed."
 
-      # Patching back to "/home" (no ?node=) switches to local → reset_chat.
-      html = render_patch(view, "/home")
+      # Patching back to "/help" (no ?node=) switches to local → reset_chat.
+      html = render_patch(view, "/help")
       assert assigns(view).current_node == node()
       assert html =~ "Start a conversation"
       assert assigns(view).chat_status == :idle

@@ -28,7 +28,7 @@ defmodule EvoDashWeb.HomeLive do
     ~H"""
     <EvoDashWeb.Layouts.app
       flash={@flash}
-      current_page={:dashboard}
+      current_page={:help}
       current_node_id={@current_node_id}
       current_node_name={@current_node_name}
       running_tasks={@running_tasks}
@@ -187,7 +187,7 @@ defmodule EvoDashWeb.HomeLive do
           chat_fetch_seq: 0,
           chat_task_fetch_seq: 0,
           shift_down: false,
-          current_path: ~p"/home"
+          current_path: ~p"/help"
         )
 
       {:ok, socket}
@@ -202,7 +202,7 @@ defmodule EvoDashWeb.HomeLive do
     # Node switch (local↔remote, pending→connected): the old chat task belongs
     # to the old node — drop all chat state so foreign agents/tasks never match.
     socket = if socket.assigns[:current_node] != prev_node, do: reset_chat(socket), else: socket
-    socket = assign(socket, current_path: ~p"/home")
+    socket = assign(socket, current_path: ~p"/help")
     {:noreply, socket}
   end
 

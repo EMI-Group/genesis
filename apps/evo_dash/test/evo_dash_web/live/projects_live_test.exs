@@ -300,8 +300,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert Floki.text(link) =~ "Projects"
     end
 
-    test "mounts HomeLive at /home", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/home")
+    test "mounts HomeLive at /help", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/help")
 
       assert html =~ "Chat with Genesis"
       assert html =~ ~s(id="chat-form")

@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.PageControllerTest do
   use EvoDashWeb.ConnCase
 
-  # ProjectsLive (GET /) and HomeLive (GET /home) both redirect first-time
+  # ProjectsLive (GET /) and HomeLive (GET /help) both redirect first-time
   # users to /welcome via server-based detection
   # (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the config
   # dir to a temp directory and mark onboarding complete so both routes
@@ -44,8 +44,8 @@ defmodule EvoDashWeb.PageControllerTest do
     refute html =~ "chat-form"
   end
 
-  test "GET /home renders the chat page", %{conn: conn} do
-    conn = get(conn, ~p"/home")
+  test "GET /help renders the chat page", %{conn: conn} do
+    conn = get(conn, ~p"/help")
 
     html = html_response(conn, 200)
     assert html =~ ~s(id="chat-form")

@@ -47,7 +47,7 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 | Route | LiveView | Purpose |
 |-------|----------|---------|
 | `GET /` | `ProjectsLive` | Projects page (root) — project selector, task form, project settings, task history. URL-based project state via `?project=<path>` query param. |
-| `GET /home` | `HomeLive` | Home chat page — chatbot-style conversation interface. |
+| `GET /help` | `HomeLive` | Home chat page — chatbot-style conversation interface. |
 | `GET /projects` | `ProjectsLive` | Projects page — project selector, task form, project settings, task history. URL-based project state via `?project=<path>` query param. |
 | `GET /welcome` | `WelcomeLive` | Onboarding page — stepwise first-LLM quick setup (provider → variant → model → credentials); `skip`/`get_started` redirect to `/welcome/complete`. |
 | `GET /welcome/complete` | `WelcomeCompleteLive` | Onboarding completion page — example task (copyable demo objective via the `ClipboardCopy` hook) + "Go to Dashboard" button that completes onboarding and navigates to `/projects`. |

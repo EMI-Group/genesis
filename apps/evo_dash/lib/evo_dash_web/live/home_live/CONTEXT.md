@@ -2,7 +2,7 @@
 
 ## Intent
 
-`EvoDashWeb.HomeLive` (`home_live.ex`) is the ChatGPT-style chat page rendered at `GET /home` — the conversation surface wired to the repo-less `:reflect` self-reflective agent. The user talks to Genesis itself: send a message → a `:reflect` task starts on the viewed node → the task's root agent (`EvoGit.Agents.SelfReflective`) runs repo-less (read-only Genesis source access + WebSearch + task-control + guide_user tools) → its assistant turns stream into chat bubbles → the terminal task result finalizes the transcript. Everything is push-based (PubSub) and node-aware (`?node=`), with all cross-node fetches off the LiveView process.
+`EvoDashWeb.HomeLive` (`home_live.ex`) is the ChatGPT-style chat page rendered at `GET /help` — the conversation surface wired to the repo-less `:reflect` self-reflective agent. The user talks to Genesis itself: send a message → a `:reflect` task starts on the viewed node → the task's root agent (`EvoGit.Agents.SelfReflective`) runs repo-less (read-only Genesis source access + WebSearch + task-control + guide_user tools) → its assistant turns stream into chat bubbles → the terminal task result finalizes the transcript. Everything is push-based (PubSub) and node-aware (`?node=`), with all cross-node fetches off the LiveView process.
 
 The support modules under `home_live/` keep `home_live.ex` (~700 lines) focused on LiveView wiring; all heavy lifting is pure and unit-testable.
 
@@ -10,7 +10,7 @@ The support modules under `home_live/` keep `home_live.ex` (~700 lines) focused 
 
 ### `EvoDashWeb.HomeLive` (`home_live.ex`)
 
-LiveView with `use EvoDashWeb, :live_view` (SetLocale/NodeAware/DesktopQuit/UpdateStatus/Guide on-mount hooks automatic) + `use Gettext, backend: EvoDashWeb.Gettext`. Renders through `EvoDashWeb.Layouts.app` with `current_page={:dashboard}` (the active-nav atom that highlights the Projects nav item — HomeLive renders at `/home`).
+LiveView with `use EvoDashWeb, :live_view` (SetLocale/NodeAware/DesktopQuit/UpdateStatus/Guide on-mount hooks automatic) + `use Gettext, backend: EvoDashWeb.Gettext`. Renders through `EvoDashWeb.Layouts.app` with `current_page={:help}` (the active-nav atom that highlights the sidebar Help nav item — HomeLive renders at `/help`).
 
 **State assigns** (seeded in `mount/3`):
 
@@ -25,7 +25,7 @@ LiveView with `use EvoDashWeb, :live_view` (SetLocale/NodeAware/DesktopQuit/Upda
 | `chat_fetch_seq` | monotonic stale-guard counter for agent-lookup + history fetches |
 | `chat_task_fetch_seq` | SEPARATE monotonic counter for the terminal `get_task` fetch (see Constraints) |
 | `shift_down` | shift-latch for Enter-to-submit (see Notes for Agents) |
-| `current_path` | `~p"/home"` — required by NodeAware's node-switch `push_patch` |
+| `current_path` | `~p"/help"` — required by NodeAware's node-switch `push_patch` |
 
 **Events**: `send_message` (form `phx-submit`, `"message"` param; a fallback clause uses `chat_draft`), `chat_input` (draft sync), `chat_keydown`/`chat_keyup` (Enter/Shift latch), `new_chat` (reset, idle-only), `stop` (graceful cancel).
 
@@ -62,12 +62,12 @@ Pure helpers for the agent stream + final result. Never raises.
 
 ## Constraints
 
-- **Scope**: `home_live.ex` + these support modules are self-contained (no other `lib/` files were touched by this feature); all node data goes through `EvoDash.NodeContext`. Router wiring: `live("/home", HomeLive, :index)`; the root `/` maps to the Projects page (`ProjectsLive`, also mounted at `/projects`).
+- **Scope**: `home_live.ex` + these support modules are self-contained (no other `lib/` files were touched by this feature); all node data goes through `EvoDash.NodeContext`. Router wiring: `live("/help", HomeLive, :index)`; the root `/` maps to the Projects page (`ProjectsLive`, also mounted at `/projects`).
 - **All node data goes through `EvoDash.NodeContext`** (start/cancel/history/get_task/list_agents) with a `socket.assigns[:current_node] || node()` fallback.
 - **Async-only cross-node fetches**: agent lookup, history fetch, and terminal `get_task` run in `Task.Supervisor.start_child(EvoDash.TaskSupervisor, ...)` with `send(pid, ...)` results. Justified `try/rescue` at the async boundary ONLY (the closure runs OUTSIDE the LiveView process; a crash must never silently lose the result message — rescue returns `[]`/`nil` so the caller degrades instead of wedging). No `try/rescue` in the LiveView process itself.
 - **Two stale-guard counters — keep them separate**: `chat_fetch_seq` guards agent-lookup + history results; `chat_task_fetch_seq` (SEPARATE) guards the terminal `get_task` result. A late `agent_updated` broadcast (cross-topic PubSub reordering, graceful-cancel grace window) bumps the shared counter, which would stale-guard-drop the terminal result and wedge the chat in `:running` forever.
 - **Terminal handling**: `:completed`/`:cancelled` → `async_fetch_task` → `finalize_terminal` (nil task → "The conversation was deleted."; `:completed` → `extract_final_text` → text / "No response." / "The task failed."; `:cancelled` → preserved result text or "Stopped." — graceful cancel preserves the result when the agent completed). `:failed` → "The task failed." + `clear_task_refs`. `{:task_deleted, ...}` → "The conversation was deleted." + `clear_task_refs`. `clear_task_refs` nils task/agent refs + `chat_status: :idle`, KEEPS the transcript (New chat re-enabled; prevents duplicate finalization from repeated broadcasts).
-- **Node switch** (`handle_params/3`): capture `prev_node` BEFORE `NodeAware.assign_node/2`; a change → `reset_chat/1` (the old task belongs to the old node; prevents foreign task/agent matches). `current_path` re-assigned `~p"/home"` on every params run.
+- **Node switch** (`handle_params/3`): capture `prev_node` BEFORE `NodeAware.assign_node/2`; a change → `reset_chat/1` (the old task belongs to the old node; prevents foreign task/agent matches). `current_path` re-assigned `~p"/help"` on every params run.
 - **Onboarding**: dead-render only, `Code.ensure_loaded?(EvoGit.Config.VersionState)`-guarded `onboarding_needed?/0` → `push_navigate(socket, to: "/welcome")` (mirrors ProjectsLive; avoids redirect loops).
 - **i18n**: all user-facing strings gettext-wrapped; ambiguous labels carry zh_CN meaning comments (e.g. "Chat with Genesis" → "与 Genesis 对话", "New chat" → "新对话", "Stop" → "停止", "Send" → "发送", "Start a conversation" → "开始对话"). NO gettext extract/merge/translate during development.
 

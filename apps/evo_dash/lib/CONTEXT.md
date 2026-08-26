@@ -37,7 +37,7 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 | LiveView | Route | Purpose |
 |----------|-------|---------|
 | `ProjectsLive` | `GET /` | Projects page (root) — project tabs, task form, task cards, project settings |
-| `HomeLive` | `GET /home` | Home chat page — ChatGPT-style chat wired to the self-reflective agent (`:reflect` tasks); see `apps/evo_dash/CONTEXT.md` → "Home Chat Page" |
+| `HomeLive` | `GET /help` | Home chat page — ChatGPT-style chat wired to the self-reflective agent (`:reflect` tasks); see `apps/evo_dash/CONTEXT.md` → "Home Chat Page" |
 | `ProjectsLive` | `GET /projects` | Projects page: project tabs, task form, task cards, project settings |
 | `AgentsLive` | `GET /agents` | Agent tree inspector with chat history |
 | `SettingsLive` | `GET /settings` | Runtime scheduler config (concurrency, retries, depth, model) |
