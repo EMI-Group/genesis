@@ -569,6 +569,7 @@ defmodule EvoDashWeb.Layouts do
   def current_page(:tasks), do: "/tasks"
   def current_page(:settings), do: "/settings"
   def current_page(:system), do: "/system"
+  def current_page(:help), do: "/help"
   def current_page(:review), do: "/review/:task_id"
   def current_page(:welcome), do: "/welcome"
 
