@@ -20,7 +20,7 @@ The Rust source for the Genesis Tauri v2 desktop shell. It launches the standard
 | `src/backend_watchdog.rs` | Backend crash watchdog: monitors the child process, restarts it with backoff on unexpected exit, shows an error page in the WebView while down, reloads the dashboard on recovery (`RestartPolicy`, `classify_exit`, `tcp_accepting`, `percent_encode`/`error_page_data_url`, `BackendManager`) |
 | `src/sidecar_path.rs` | Shared launcher-path resolution (`resolve_launcher/2`) — first existing candidate wins, descriptive error listing all candidates when none exist; used by both GUI (`sidecar.rs`) and headless (`main.rs`) modes; contains the unit tests |
 | `Cargo.toml` | Rust dependencies (tauri v2 with `devtools` + `tray-icon` features, tauri-plugin-shell, tauri-plugin-single-instance, reqwest) |
-| `tauri.conf.json` | Tauri config: window settings, trayIcon config, release resource reference, bundle metadata |
+| `tauri.conf.json` | Tauri config: productName/mainBinaryName, updater plugin (endpoints, pubkey), release resource reference, bundle metadata (no config-declared window — the window is Rust-built) |
 | `capabilities/default.json` | Tauri v2 permissions: shell (release launcher). No tray permission needed — tray managed from Rust. |
 | `icons/icon.png` | 512x512 RGBA EVOX-brand icon (transparent background) — derived from `apps/evo_dash/priv/static/images/logo.svg`; kept as the standard source icon, not referenced by `bundle.icon` (which lists only `32x32.png`, `128x128.png`, `icon.icns`, `icon.ico`) |
 
