@@ -64,7 +64,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   ## Adding a New Provider
 
   To add a new search provider:
-  1. Add the provider atom to `EvoGit.Config.Schema.search_providers/0`
+  1. Add the provider atom to `EvoGit.Config.Schema.Definitions.search_providers/0`
      and the `[:tools, :search, :provider]` validation list
   2. Add a config section `[:tools, :search, :<provider>]` in the schema
      with at minimum `:api_key_credential_key` and `:base_url`
