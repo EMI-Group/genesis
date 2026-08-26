@@ -214,9 +214,10 @@ defmodule EvoGit.Agent.Tools.WebSearchProviders do
     case response_body do
       %{"choices" => [%{"message" => %{"content" => content}} | _]} when is_binary(content) ->
         citations =
-          response_body
-          |> Map.get("citations", [])
-          |> Enum.filter(&is_binary/1)
+          case Map.get(response_body, "citations") do
+            list when is_list(list) -> Enum.filter(list, &is_binary/1)
+            _ -> []
+          end
 
         {:ok, %{kind: :answer, text: content, citations: citations}}
 
