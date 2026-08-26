@@ -78,6 +78,31 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:tools, :search, :tavily, :max_results] in paths
       assert [:tools, :search, :tavily, :timeout] in paths
       assert [:tools, :search, :tavily, :max_bytes] in paths
+      assert [:tools, :search, :perplexity, :api_key_credential_key] in paths
+      assert [:tools, :search, :perplexity, :base_url] in paths
+      assert [:tools, :search, :perplexity, :search_depth] in paths
+      assert [:tools, :search, :perplexity, :max_results] in paths
+      assert [:tools, :search, :perplexity, :timeout] in paths
+      assert [:tools, :search, :perplexity, :max_bytes] in paths
+      assert [:tools, :search, :perplexity, :model] in paths
+      assert [:tools, :search, :exa, :api_key_credential_key] in paths
+      assert [:tools, :search, :exa, :base_url] in paths
+      assert [:tools, :search, :exa, :search_depth] in paths
+      assert [:tools, :search, :exa, :max_results] in paths
+      assert [:tools, :search, :exa, :timeout] in paths
+      assert [:tools, :search, :exa, :max_bytes] in paths
+      assert [:tools, :search, :bing, :api_key_credential_key] in paths
+      assert [:tools, :search, :bing, :base_url] in paths
+      assert [:tools, :search, :bing, :search_depth] in paths
+      assert [:tools, :search, :bing, :max_results] in paths
+      assert [:tools, :search, :bing, :timeout] in paths
+      assert [:tools, :search, :bing, :max_bytes] in paths
+      assert [:tools, :search, :brave, :api_key_credential_key] in paths
+      assert [:tools, :search, :brave, :base_url] in paths
+      assert [:tools, :search, :brave, :search_depth] in paths
+      assert [:tools, :search, :brave, :max_results] in paths
+      assert [:tools, :search, :brave, :timeout] in paths
+      assert [:tools, :search, :brave, :max_bytes] in paths
 
       # Server
       assert [:server, :listen_ip] in paths
@@ -119,8 +144,18 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 67 schemas" do
-      assert length(Schema.all_schemas()) == 67
+    test "has exactly 92 schemas" do
+      assert length(Schema.all_schemas()) == 92
+    end
+
+    test "search_providers/0 returns all supported providers" do
+      assert EvoGit.Config.Schema.Definitions.search_providers() == [
+               :tavily,
+               :perplexity,
+               :exa,
+               :bing,
+               :brave
+             ]
     end
   end
 
@@ -195,6 +230,37 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.tools.search.tavily.max_results == 10
       assert defaults.tools.search.tavily.timeout == 60000
       assert defaults.tools.search.tavily.max_bytes == 16384
+      assert defaults.tools.search.perplexity.api_key_credential_key == "PERPLEXITY_API_KEY"
+
+      assert defaults.tools.search.perplexity.base_url ==
+               "https://api.perplexity.ai/chat/completions"
+
+      assert defaults.tools.search.perplexity.search_depth == :basic
+      assert defaults.tools.search.perplexity.max_results == 10
+      assert defaults.tools.search.perplexity.timeout == 60000
+      assert defaults.tools.search.perplexity.max_bytes == 16384
+      assert defaults.tools.search.perplexity.model == "sonar"
+      assert defaults.tools.search.exa.api_key_credential_key == "EXA_API_KEY"
+      assert defaults.tools.search.exa.base_url == "https://api.exa.ai/search"
+      assert defaults.tools.search.exa.search_depth == :basic
+      assert defaults.tools.search.exa.max_results == 10
+      assert defaults.tools.search.exa.timeout == 60000
+      assert defaults.tools.search.exa.max_bytes == 16384
+      assert defaults.tools.search.bing.api_key_credential_key == "BING_SEARCH_API_KEY"
+      assert defaults.tools.search.bing.base_url == "https://api.bing.microsoft.com/v7.0/search"
+      assert defaults.tools.search.bing.search_depth == :basic
+      assert defaults.tools.search.bing.max_results == 10
+      assert defaults.tools.search.bing.timeout == 60000
+      assert defaults.tools.search.bing.max_bytes == 16384
+      assert defaults.tools.search.brave.api_key_credential_key == "BRAVE_SEARCH_API_KEY"
+
+      assert defaults.tools.search.brave.base_url ==
+               "https://api.search.brave.com/res/v1/web/search"
+
+      assert defaults.tools.search.brave.search_depth == :basic
+      assert defaults.tools.search.brave.max_results == 10
+      assert defaults.tools.search.brave.timeout == 60000
+      assert defaults.tools.search.brave.max_bytes == 16384
 
       # Server
       assert defaults.server.listen_ip == "127.0.0.1"
@@ -255,7 +321,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:nix]) == 2
       assert length(grouped[:git]) == 2
       assert length(grouped[:server]) == 2
-      assert length(grouped[:tools]) == 8
+      assert length(grouped[:tools]) == 33
       assert length(grouped[:node]) == 6
     end
 
@@ -277,6 +343,12 @@ defmodule EvoGit.Config.SchemaTest do
     test "returns ok for valid config (defaults)" do
       config = Schema.defaults()
       assert {:ok, _} = Schema.validate(config)
+    end
+
+    test "accepts all search providers" do
+      for provider <- [:perplexity, :exa, :bing, :brave] do
+        assert {:ok, _} = Schema.validate(%{tools: %{search: %{provider: provider}}})
+      end
     end
 
     test "catches pos_integer with negative value" do
