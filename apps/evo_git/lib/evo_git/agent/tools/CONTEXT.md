@@ -21,7 +21,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `run_git` | Execute git commands (disabled in schemas) | Read/Write | Yes |
 | `glob` | File pattern matching | Read | No |
 | `list_dir` | List directory contents | Read | No |
-| `search_web` | Web search via configurable provider (Tavily by default) | Read | No |
+| `search_web` | Web search via configurable provider — Tavily, Perplexity (Sonar), Exa, Bing, or Brave (Tavily by default) | Read | No |
 | `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |
@@ -45,6 +45,10 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 4. **Write tools**: Validate spatial scope via `Shared.validate_file_scope/3` before writing
 5. **Sandboxed tools**: Call `EvoGit.sandbox_run/4` which wraps commands in `systemd-run`
 6. **Result**: All execute functions return a string (success or error message)
+
+### Web Search Providers (provider-adapter architecture)
+
+`WebSearch` (`web_search.ex`) supports five providers — `:tavily`, `:perplexity`, `:exa`, `:bing`, `:brave` — selected via `EvoGit.Config.resolve()` (`[:tools, :search, :provider]`, default `:tavily`; unknown/nil normalizes to `:tavily`). Per-provider request building and response parsing are **pure, I/O-free functions** in `EvoGit.Agent.Tools.WebSearchProviders` (`web_search_providers.ex`): `build_request/5` → `{:ok, %{method: :post \| :get, url:, headers:, body:}}` and `parse_response/2` → `{:ok, %{kind: :results, entries: [%{title, url, content}]}}` (Tavily/Exa/Bing/Brave) or `{:ok, %{kind: :answer, text:, citations:}}` (Perplexity). `WebSearch` itself keeps the schema/validations/API-key resolution and does the real HTTP via `Req`; the HTTP call is routed through the `:web_search_http_runner` app-env test seam (read at call time, default = private Req runner), and `do_web_search/4` is `@doc false` public so execute-level tests can drive the full tail with hardcoded provider maps. The provider list's single source of truth is `EvoGit.Config.Schema.search_providers/0` (landing via a parallel branch); this module reads the provider atom generically via `EvoGit.Config.resolve()` and needs no per-provider changes beyond a `WebSearchProviders` adapter clause. Param applicability: `search_depth` is Tavily/Exa-only (Exa maps advanced→`type: "neural"`, basic→`"keyword"`); `max_results` is ignored by Perplexity (as is `search_depth`).
 
 ## Known Issues / Notes for Agents
 
