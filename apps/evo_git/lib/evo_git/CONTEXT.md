@@ -109,7 +109,7 @@ The SSH remote-bootstrap release asset is a **`.tar.xz`** archive: `genesis_remo
 
 ## Windows PowerShell Invocation — `-EncodedCommand`
 
-**Why `-EncodedCommand`:** `powershell.exe -Command <script>` spawned from Erlang is broken by construction — PowerShell re-joins the raw command line and re-parses it as PowerShell code, so Erlang spawn quoting gets mangled; a lost script arg falls back to INTERACTIVE mode, which with closed/EOF stdin exits 0 with NO output. Secondary: PS 5.1 writes piped output via `[Console]::OutputEncoding` (OEM/UTF-16) — `EvoGit.UTF8.ensure_utf8/1` treats a UTF-16LE BOM as invalid UTF-8.
+**Why `-EncodedCommand`:** `powershell.exe -Command <script>` spawned from Erlang is broken by construction — PowerShell re-joins the raw command line and re-parses it as PowerShell code, so Erlang spawn quoting gets mangled; a lost script arg falls back to INTERACTIVE mode, exiting 0 with NO output on closed/EOF stdin. Secondary: PS 5.1 writes piped output via `[Console]::OutputEncoding` (OEM/UTF-16) — `EvoGit.UTF8.ensure_utf8/1` treats a UTF-16LE BOM as invalid UTF-8.
 
 **Invocation:** spawn `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <b64>` where b64 = base64(UTF-16LE of `& { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; <script> } *>&1`). `-EncodedCommand` eliminates ALL command-line quoting/parsing; the OutputEncoding line forces UTF-8 output; `*>&1` merges all streams incl. Write-Host/information. No `<`/input redirection.
 
