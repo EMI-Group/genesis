@@ -17,11 +17,10 @@ Struct: `path`, `repo`, `repo_id` (defaults to `"primary"`).
 | Function | Description |
 |---|---|
 | `is_ignored?/1` | Checks if the node's path (or any parent) is gitignored |
-| `load/2,3` | Creates a ContextNode from a filesystem path |
-| `hierarchy_nodes/2,3` | Returns the full chain of ContextNodes from repo root to given path |
-| `read_context/1` | Reads CONTEXT.md for directories, file content for files |
-| `context_file_path/1` | Returns the relative path to the context-bearing file |
-| `build_context/2` | Assembles full AI-ready context string by traversing hierarchy |
+| `normalize_relpath/1` | Normalizes a relative path to canonical `"./foo/bar"`; raises on absolute paths |
+| `load/2,3` | Creates a ContextNode from a filesystem path (`repo_id` for multi-repo) |
+| `hierarchy_nodes/2,3` | Full chain of ContextNodes from repo root to given path (`{:ok, nodes} \| {:error, :invalid_path}`) |
+| `build_context/2` | Assembles full AI-ready context string by traversing hierarchy (directories only; YAML frontmatter stripped via `EvoGit.Skills.strip_front_matter/1`) |
 
 > The agent loop calls `build_context/2` and `EvoGit.Skills.hierarchical_skill_names/2` separately — there is no combined context+skills load function. `hierarchical_skill_names/2` has live callers in `agent/runner.ex` (skill loading at agent startup) and `agent/tools/skill/skill_list.ex`.
 
@@ -47,7 +46,7 @@ Struct: `id` (string), `root` (absolute path), `name` (optional string).
 | Function | Description |
 |---|---|
 | `new/3` | Creates a ForeignRepo struct with expanded root path |
-| `normalize/1` | Coerces any persisted/CLI shape into a `%ForeignRepo{}` struct (`%ForeignRepo{}` passthrough; atom-keyed or string-keyed maps; `"path"`/`:path` accepted as a root fallback); returns `nil` for unparseable input (callers map lists through it and drop `nil`s). Exists because `TaskInfo.opts` persist to SQLite via `Store.Codec` JSON and come back with `:foreign_repos` as STRING-keyed maps — raw dot-access on those crashes with `KeyError`. Used centrally by `TaskRegistry.MergeContext` and `Runtime.Helpers.merge_foreign_repos/2` |
+| `normalize/1` | Coerces any persisted/CLI shape into a `%ForeignRepo{}` struct (`%ForeignRepo{}` passthrough; atom-keyed or string-keyed maps; `"path"`/`:path` accepted as a root fallback); returns `nil` for unparseable input (callers map lists through it and drop `nil`s). Needed because `TaskInfo.opts` persist to SQLite via `Store.Codec` JSON and come back with `:foreign_repos` as STRING-keyed maps — raw dot-access crashes with `KeyError`. Used centrally by `TaskRegistry.MergeContext` and `Runtime.Helpers.merge_foreign_repos/2` |
 | `primary_id/0` | Returns the primary repo identifier (`"primary"`) |
 | `primary?/1` | Checks if a repo id is the primary repo |
 | `normalize_path/2` | Normalizes an absolute path to a relative path within this repo |
@@ -57,11 +56,7 @@ Struct: `id` (string), `root` (absolute path), `name` (optional string).
 ## Constraints
 
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd` or shell calls.
-- `ContextNode.build_context/2` truncates CONTEXT.md content at `context_max_bytes` (default 64 KB) to bound AI prompt size. Truncation is UTF-8-safe (uses `String.byte_slice/3`, the Elixir stdlib function that works on bytes and adjusts to eliminate truncated codepoints).
+- `ContextNode.build_context/2` truncates CONTEXT.md content at `context_max_bytes` (default 64 KB, resolved via `EvoGit.Config.resolve([:truncation, :context_max_bytes])`), appending `"\n... [Content Truncated] ..."`. Truncation is UTF-8-safe via `String.byte_slice/3` (works on bytes, adjusts to eliminate truncated codepoints — never splits a multi-byte char). **Any truncation site must use `String.byte_slice/3` — never raw `binary_part/3` on potentially-multibyte content** (same approach in `EvoGit.Sandbox.Helpers.truncate_output/2` and `read_truncated/3`).
 - `PhyloGraphNode`: `base_commit` is immutable after creation; only `current_commit` advances.
 - All `ContextNode` paths use `"./"` convention; absolute or `..`-prefixed paths are rejected.
 - File names mirror module names (`context_node.ex` → `ContextNode`).
-
-## UTF-8-Safe Truncation in `build_context/2`
-
-`ContextNode.build_context/2` truncates large CONTEXT.md content at `context_max_bytes` (default 64 KB) with `String.byte_slice/3` (Elixir stdlib), which works on bytes and then adjusts to eliminate truncated codepoints — a multi-byte UTF-8 character (e.g. em-dash `—` = `0xE2 0x80 0x94`) is never split, so the context string handed to the LLM request pipeline is always valid UTF-8. The same approach is used in `EvoGit.Sandbox.Helpers.truncate_output/2` and `read_truncated/3` (sandbox output truncation). **Any truncation site must use `String.byte_slice/3` — never raw `binary_part/3` on potentially-multibyte content.**
