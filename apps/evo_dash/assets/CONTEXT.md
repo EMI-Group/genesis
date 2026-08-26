@@ -67,3 +67,30 @@ The review diff viewer highlights code in the BROWSER (no server-side highlighte
 - **(i) No old DaisyUI `--b1/--b2/--b3/--bc/--p` namespace.** Because DaisyUI is loaded with `themes: false`, only the new `--color-base-100/-200/-300`, `--color-base-content`, `--color-primary` (etc.) variables exist — they are defined by the two `@plugin "../vendor/daisyui-theme"` blocks at the top of `app.css`. Custom rules MUST use the `--color-base-*` namespace. For alpha, use `color-mix(in oklab, var(--color-base-100) 98%, transparent)` (or `in oklch` for accent colors) — never `oklch(var(--x) / a)` nesting: `oklch()` cannot take a variable that is already an `oklch()` color, so the declaration is silently dropped. Grep `--b1|--b2|--b3|--bc|var(--p)` after any CSS work to confirm no regressions.
 - **(ii) `.dashboard-topbar` must NOT have `backdrop-filter`.** `backdrop-filter` creates a containing block, which traps the fixed-position command-palette backdrop/overlay (`.project-palette-backdrop`, `.project-palette-overlay` — both descendants of the topbar) so they only cover the ~50px topbar strip instead of the viewport. The topbar's translucency comes from `background: color-mix(in oklab, var(--color-base-100) 80%, transparent)` alone. Other elements keep their `backdrop-filter` (`.glass-card`, `.input-card`, the palette backdrop/overlay themselves).
 - **(iii) Input ring + layered glow are UNIFIED on the base `.input-card` rule** (`app.css`, Adaptive Input Layout section): the accent-tinted border, the layered glow `box-shadow` (base card elevation shadow, plus a FAINT 2px accent ring at low alpha — `0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent)` — and a two-layer background glow: a mid glow with negative spread (`0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent)`) and a wide, very-low-alpha bloom with positive spread (`0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent)`) so the accent reads as depth BEHIND the card rather than a ring hugging it), and the 2px accent top-edge gradient (`.input-card::before`) live on the BASE rules and apply to BOTH layouts (compact and expanded render identically). Do NOT add layout-specific shadows to `.input-layout[data-layout=...] .input-card` rules — only sizing/centering (compact) and flex (expanded) belong there.
+
+## Static Assets (`priv/static/`)
+
+| File | Purpose |
+|------|---------|
+| `favicon.ico` | Browser tab icon (also used as the Notification icon in `assets/js/app.js:422`) — **DERIVED from `images/logo.svg`** |
+| `images/favicon.svg` | Apple-touch-icon (`root.html.heex:19`) — **DERIVED from `images/logo.svg`** (square-fitted variant: logo centered on a transparent square canvas, `viewBox="0 0 16002.59 16002.59"` with the logo group translated `translate(0 1513.45)`) |
+| `robots.txt` | Standard web crawler directives (all commented out) |
+| `images/logo.svg` | **Brand logo** (source of truth for all favicon assets) — dark gray `#373435` + red `#C8383C` on transparent background, non-square (`viewBox="0 0 16002.59 12975.69"`, aspect ≈ 1.2334) |
+| `images/logo-alt.svg` | Brand logo dark-theme variant (white + red); referenced directly as SVG only — no derived assets |
+
+**Regeneration recipe (run whenever `images/logo.svg` changes):**
+
+```bash
+# 1. Render PNGs at nominal widths 16/32/48/64/128/256 — height follows the
+#    logo's aspect ratio (1.2334), transparent background, no distortion:
+for W in 16 32 48 64 128 256; do
+  inkscape --export-type=png --export-filename=favicon-$W.png --export-width=$W priv/static/images/logo.svg
+done
+# 2. Combine into a multi-size ICO with alpha. Prefer PNG-compressed entries
+#    (compact, ~28 KB); a Python one-liner stitching ICONDIR + PNG blobs works,
+#    or ImageMagick: magick favicon-16.png ... favicon-256.png favicon.ico
+#    (note: IM writes uncompressed BMP entries → ~300 KB; PNG entries are better)
+cp favicon.ico priv/static/favicon.ico
+# 3. favicon.svg = square-fitted copy of logo.svg (square viewBox, logo group
+#    centered via transform="translate(0 <(squareH - logoH)/2>)", width/height 180)
+```
