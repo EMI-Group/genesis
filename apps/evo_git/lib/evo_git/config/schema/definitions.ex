@@ -3,6 +3,14 @@ defmodule EvoGit.Config.Schema.Definitions do
   Schema definitions — pure data describing every config key.
   """
 
+  @search_providers [:tavily, :perplexity, :exa, :bing, :brave]
+
+  @doc """
+  Returns the list of supported web search providers.
+  """
+  @spec search_providers() :: [atom()]
+  def search_providers, do: @search_providers
+
   @doc """
   Returns all configuration key schemas as a flat list of maps.
 
@@ -559,7 +567,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         key_path: [:tools, :search, :provider],
         type: :atom,
         default: :tavily,
-        validation: [in: [:tavily]],
+        validation: [in: @search_providers],
         category: :tools,
         sub_category: nil,
         description: "Search service provider."
@@ -611,6 +619,231 @@ defmodule EvoGit.Config.Schema.Definitions do
       },
       %{
         key_path: [:tools, :search, :tavily, :max_bytes],
+        type: :pos_integer,
+        default: 16384,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum output size in bytes."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :api_key_credential_key],
+        type: :string,
+        default: "PERPLEXITY_API_KEY",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Credential key name for the Perplexity API key."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :base_url],
+        type: :string,
+        default: "https://api.perplexity.ai/chat/completions",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Perplexity API endpoint URL."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :search_depth],
+        type: :atom,
+        default: :basic,
+        validation: [in: [:basic, :advanced]],
+        category: :tools,
+        sub_category: nil,
+        description: "Search depth (basic or advanced)."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :max_results],
+        type: :pos_integer,
+        default: 10,
+        validation: [min: 1, max: 50],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum number of search results (1-50)."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :timeout],
+        type: :pos_integer,
+        default: 60000,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Search request timeout in milliseconds."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :max_bytes],
+        type: :pos_integer,
+        default: 16384,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum output size in bytes."
+      },
+      %{
+        key_path: [:tools, :search, :perplexity, :model],
+        type: :string,
+        default: "sonar",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Perplexity model to use for search."
+      },
+      %{
+        key_path: [:tools, :search, :exa, :api_key_credential_key],
+        type: :string,
+        default: "EXA_API_KEY",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Credential key name for the Exa API key."
+      },
+      %{
+        key_path: [:tools, :search, :exa, :base_url],
+        type: :string,
+        default: "https://api.exa.ai/search",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Exa API endpoint URL."
+      },
+      %{
+        key_path: [:tools, :search, :exa, :search_depth],
+        type: :atom,
+        default: :basic,
+        validation: [in: [:basic, :advanced]],
+        category: :tools,
+        sub_category: nil,
+        description: "Search depth (basic or advanced)."
+      },
+      %{
+        key_path: [:tools, :search, :exa, :max_results],
+        type: :pos_integer,
+        default: 10,
+        validation: [min: 1, max: 50],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum number of search results (1-50)."
+      },
+      %{
+        key_path: [:tools, :search, :exa, :timeout],
+        type: :pos_integer,
+        default: 60000,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Search request timeout in milliseconds."
+      },
+      %{
+        key_path: [:tools, :search, :exa, :max_bytes],
+        type: :pos_integer,
+        default: 16384,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum output size in bytes."
+      },
+      %{
+        key_path: [:tools, :search, :bing, :api_key_credential_key],
+        type: :string,
+        default: "BING_SEARCH_API_KEY",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Credential key name for the Bing Search API key."
+      },
+      %{
+        key_path: [:tools, :search, :bing, :base_url],
+        type: :string,
+        default: "https://api.bing.microsoft.com/v7.0/search",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Bing Search API endpoint URL."
+      },
+      %{
+        key_path: [:tools, :search, :bing, :search_depth],
+        type: :atom,
+        default: :basic,
+        validation: [in: [:basic, :advanced]],
+        category: :tools,
+        sub_category: nil,
+        description: "Search depth (basic or advanced)."
+      },
+      %{
+        key_path: [:tools, :search, :bing, :max_results],
+        type: :pos_integer,
+        default: 10,
+        validation: [min: 1, max: 50],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum number of search results (1-50)."
+      },
+      %{
+        key_path: [:tools, :search, :bing, :timeout],
+        type: :pos_integer,
+        default: 60000,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Search request timeout in milliseconds."
+      },
+      %{
+        key_path: [:tools, :search, :bing, :max_bytes],
+        type: :pos_integer,
+        default: 16384,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum output size in bytes."
+      },
+      %{
+        key_path: [:tools, :search, :brave, :api_key_credential_key],
+        type: :string,
+        default: "BRAVE_SEARCH_API_KEY",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Credential key name for the Brave Search API key."
+      },
+      %{
+        key_path: [:tools, :search, :brave, :base_url],
+        type: :string,
+        default: "https://api.search.brave.com/res/v1/web/search",
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Brave Search API endpoint URL."
+      },
+      %{
+        key_path: [:tools, :search, :brave, :search_depth],
+        type: :atom,
+        default: :basic,
+        validation: [in: [:basic, :advanced]],
+        category: :tools,
+        sub_category: nil,
+        description: "Search depth (basic or advanced)."
+      },
+      %{
+        key_path: [:tools, :search, :brave, :max_results],
+        type: :pos_integer,
+        default: 10,
+        validation: [min: 1, max: 50],
+        category: :tools,
+        sub_category: nil,
+        description: "Maximum number of search results (1-50)."
+      },
+      %{
+        key_path: [:tools, :search, :brave, :timeout],
+        type: :pos_integer,
+        default: 60000,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description: "Search request timeout in milliseconds."
+      },
+      %{
+        key_path: [:tools, :search, :brave, :max_bytes],
         type: :pos_integer,
         default: 16384,
         validation: [],
