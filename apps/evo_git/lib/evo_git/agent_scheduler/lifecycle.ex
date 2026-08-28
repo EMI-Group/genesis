@@ -229,6 +229,12 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
           {:ok, meta} ->
             Store.put_sched_meta(agent_id, %{meta | result_sent: true})
 
+            # Inject this agent's subtree foreign-repo commit map into the result
+            # BEFORE the parent/root split, so both the subagent path
+            # (Subagents.store_sub_result rolls it up into the parent's map) and
+            # the root reply path carry it.
+            result = inject_foreign_repo_commits(result, meta.foreign_repo_commits)
+
             if meta.parent_id do
               Subagents.store_sub_result(meta.parent_id, agent_id, result)
               state = Subagents.maybe_resume_parent(state, meta.parent_id)
@@ -349,4 +355,19 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   end
 
   def inject_archive_records(result, _records), do: result
+
+  @doc """
+  Injects the foreign repo commits map into a successful `%EvoGit.Agent.Result{}`
+  tuple. Non-success results pass through unchanged.
+
+  Uses `Map.put/3` (NOT struct update) because the `foreign_repo_commits` field
+  is being introduced in parallel by the agent stream — it may not exist on the
+  struct yet; `Map.put` is behaviorally identical once the field lands.
+  """
+  def inject_foreign_repo_commits({:ok, %EvoGit.Agent.Result{} = res}, commits)
+      when is_map(commits) do
+    {:ok, Map.put(res, :foreign_repo_commits, commits)}
+  end
+
+  def inject_foreign_repo_commits(result, _commits), do: result
 end
