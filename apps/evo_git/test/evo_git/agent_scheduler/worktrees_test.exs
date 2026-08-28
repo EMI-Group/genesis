@@ -13,6 +13,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   alias EvoGit.AgentScheduler.Worktrees
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
 
   import ExUnit.CaptureLog
@@ -173,7 +174,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   defp register_agent(agent_id, tmp_dir, base_sha, opts \\ []) do
     task_number = Keyword.get(opts, :task_number, 1)
     task_local_id = Keyword.get(opts, :task_local_id, 1)
-    spec = build_spec(tmp_dir, base_sha)
+    repo_id = Keyword.get(opts, :repo_id, "primary")
+    spec = %{build_spec(tmp_dir, base_sha) | repo_id: repo_id}
     meta = build_meta(agent_id, spec, task_number)
     Store.put_agent_state(agent_id, build_agent_state(tmp_dir, task_local_id))
     Store.put_sched_meta(agent_id, meta)
@@ -537,6 +539,88 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
         assert File.exists?(Path.join(wt_path, "init-marker.txt"))
       end
+    end
+  end
+
+  # ==========================================================================
+  # per-repo init scoping — foreign repos preserve real task branches
+  # ==========================================================================
+  #
+  # `maybe_init_repo/3` is private; it runs inside the public
+  # `create_worktree_for_agent/6` GenServer call, gated on
+  # `EvoGit.Core.ForeignRepo.primary?(spec.repo_id)` (worktree_manager.ex:152/161).
+  # On a repo's FIRST create request (persistent per-repo init marker
+  # `:evogit_worktree_repos` absent) it wipes the workers dir AND deletes EVERY
+  # `evogit-agent-*` branch — but ONLY for the PRIMARY repo. Foreign repos may
+  # hold REAL task work from previous runs, so their lazy init must skip the
+  # destructive steps. Each test uses its own fresh temp repo (no marker yet)
+  # so the first-create path is what runs.
+  describe "per-repo init scoping (foreign vs primary)" do
+    test "foreign repo first init preserves real task branches (no orphan cleanup)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # A REAL task branch from a previous run — a plain ref at HEAD, never
+      # checked out: exactly what the primary-repo orphan cleanup
+      # (`clean_orphaned_branches/1`) would delete.
+      real_branch = "evogit-agent-T99-A99"
+      {:ok, _} = Git.create_branch(tmp_dir, real_branch, base_sha)
+      assert Git.branch_exists?(tmp_dir, real_branch)
+
+      # First create for this repo (fresh temp repo — no persistent marker
+      # yet), with a FOREIGN repo id: the lazy per-repo init must skip the
+      # destructive wipe (rm_rf workers dir + orphaned-branch cleanup).
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha, repo_id: "original")
+      refute ForeignRepo.primary?(spec.repo_id)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+
+      assert {:ok, ^wt_path} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id,
+                 tmp_dir,
+                 wt_path,
+                 spec,
+                 meta,
+                 self()
+               )
+
+      # The real task branch must SURVIVE the foreign-repo init. (The create
+      # itself makes its own evogit-agent-T1-A1 worktree branch — assert only
+      # on the pre-existing real branch.)
+      assert Git.branch_exists?(tmp_dir, real_branch)
+      assert File.dir?(wt_path)
+    end
+
+    test "primary repo first init wipes real task branches (orphan cleanup)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      real_branch = "evogit-agent-T99-A99"
+      {:ok, _} = Git.create_branch(tmp_dir, real_branch, base_sha)
+      assert Git.branch_exists?(tmp_dir, real_branch)
+
+      # Primary repo id → the destructive first-init runs: rm_rf the workers
+      # dir + `clean_orphaned_branches/1` deletes EVERY evogit-agent-* branch.
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha, repo_id: "primary")
+      assert ForeignRepo.primary?(spec.repo_id)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+
+      assert {:ok, ^wt_path} =
+               WorktreeManager.create_worktree_for_agent(
+                 agent_id,
+                 tmp_dir,
+                 wt_path,
+                 spec,
+                 meta,
+                 self()
+               )
+
+      # The real task branch is GONE — cleaned up by the primary-repo orphan
+      # cleanup, while the fresh worktree is created normally.
+      refute Git.branch_exists?(tmp_dir, real_branch)
+      assert File.dir?(wt_path)
     end
   end
 

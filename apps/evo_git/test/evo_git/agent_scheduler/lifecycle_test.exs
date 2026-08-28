@@ -10,11 +10,13 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Agent.Result
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.Lifecycle
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
+  alias EvoGit.AgentScheduler.Subagents
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
@@ -763,6 +765,88 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert_raise MatchError, fn ->
         AgentScheduler.update_total_tokens(999_999, 100)
       end
+    end
+  end
+
+  describe "store_sub_result/3 — 3-level foreign-repo-commits roll-up" do
+    # Seeds a SchedMeta row for an agent that has spawned subagents, carrying
+    # the given pre-accumulated foreign repo commits.
+    defp frc_sched_meta(agent_id, sub_indices, frc) do
+      %SchedMeta{
+        id: agent_id,
+        depth: 0,
+        spec: agent_spec(),
+        sub_agent_indices: sub_indices,
+        sub_agent_results: %{},
+        foreign_repo_commits: frc
+      }
+    end
+
+    test "rolls up foreign-repo commits across three levels, child wins for shared keys" do
+      # 3-level tree: root agent1 -> sub-manager agent2 -> executor agent3.
+      agent1 = 101
+      agent2 = 102
+      agent3 = 103
+
+      # agent1 already has its OWN direct foreign work on "foreign1" before
+      # delegating — a pre-existing entry the deeper subtree view must override.
+      put_sched_meta(
+        agent1,
+        frc_sched_meta(agent1, %{agent2 => 0}, %{"foreign1" => "agent1_sha"})
+      )
+
+      put_sched_meta(agent2, frc_sched_meta(agent2, %{agent3 => 0}, %{}))
+
+      # Level 3: the executor completes with its own foreign-repo commit.
+      Subagents.store_sub_result(
+        agent2,
+        agent3,
+        {:ok,
+         %Result{
+           result: "exec done",
+           commit_sha: nil,
+           foreign_repo_commits: %{"foreign1" => "exec_sha"}
+         }}
+      )
+
+      {:ok, agent2_meta} = get_sched_meta(agent2)
+      assert agent2_meta.foreign_repo_commits == %{"foreign1" => "exec_sha"}
+
+      # Level 2: the sub-manager completes. Its completion result carries BOTH
+      # its subtree view (agent3's commits, as injected by Lifecycle) AND its
+      # own direct foreign work (commit_sha "mid_sha" on repo "foreign2").
+      result2 =
+        {:ok,
+         %Result{
+           result: "mid done",
+           commit_sha: "mid_sha",
+           repo_id: "foreign2",
+           foreign_repo_commits: %{"foreign1" => "exec_sha"}
+         }}
+
+      Subagents.store_sub_result(agent1, agent2, result2)
+
+      {:ok, agent1_meta} = get_sched_meta(agent1)
+      # Map.merge is child-wins: agent2's subtree view (carrying agent3's deeper
+      # "exec_sha") overrides agent1's own "agent1_sha" for "foreign1", while the
+      # direct commit on "foreign2" is recorded via Map.put.
+      assert agent1_meta.foreign_repo_commits == %{
+               "foreign1" => "exec_sha",
+               "foreign2" => "mid_sha"
+             }
+
+      # Root reply: Lifecycle.inject_foreign_repo_commits replaces the result's
+      # field with the accumulated subtree map from sched_meta.
+      root_result =
+        Lifecycle.inject_foreign_repo_commits(
+          {:ok, %Result{result: "root done", commit_sha: nil}},
+          agent1_meta.foreign_repo_commits
+        )
+
+      assert {:ok, %Result{} = root} = root_result
+      # Use Map.get — the field may be absent in some result shapes.
+      assert Map.get(root, :foreign_repo_commits) ==
+               %{"foreign1" => "exec_sha", "foreign2" => "mid_sha"}
     end
   end
 

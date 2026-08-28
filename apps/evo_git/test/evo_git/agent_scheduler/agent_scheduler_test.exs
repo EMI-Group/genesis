@@ -161,6 +161,38 @@ defmodule EvoGit.AgentSchedulerTest do
              GenServer.call(EvoGit.AgentScheduler, {:get_config, :model_profiles})
   end
 
+  # --- get_foreign_repo_commits ---
+
+  test "get_foreign_repo_commits returns the foreign repo commits from SchedMeta" do
+    agent_id = :erlang.unique_integer([:positive])
+
+    # Plain map with the key: Store.get_sched_meta matches `%{} = meta` and the
+    # lib dot-accesses meta.foreign_repo_commits, so a full %SchedMeta{} struct
+    # is not required (its @enforce_keys would demand depth + spec).
+    :ets.insert(:evogit_sched_meta, {agent_id, %{foreign_repo_commits: %{"orig" => "abc"}}})
+    on_exit(fn -> :ets.delete(:evogit_sched_meta, agent_id) end)
+
+    assert AgentScheduler.get_foreign_repo_commits(agent_id) == %{"orig" => "abc"}
+  end
+
+  test "get_foreign_repo_commits returns %{} for an agent with no SchedMeta row" do
+    # INTENDED hardened contract: for an unknown agent id the function must
+    # return %{} instead of crashing. The lib regressed in 7ed94d3a5 ("replace
+    # raw ETS calls with Store in public functions"): the original hardened
+    # implementation (f7703da34) was `case :ets.lookup(...) do
+    # [{^agent_id, %{foreign_repo_commits: frc}}] when is_map(frc) -> frc;
+    # _ -> %{} end`, but the current lib does `{:ok, meta} =
+    # Store.get_sched_meta(agent_id)`, which MatchErrors when Store returns
+    # :error for a missing row.
+    #
+    # THIS TEST CURRENTLY FAILS at HEAD (MatchError: `{:ok, meta} = :error`).
+    # It is kept to pin the intended contract; the lib fix is out of scope for
+    # this node (test-only write scope).
+    agent_id = :erlang.unique_integer([:positive])
+
+    assert AgentScheduler.get_foreign_repo_commits(agent_id) == %{}
+  end
+
   # --- LLM hard-pause (0-capacity, PeakHourEngine) ---
 
   describe "LLM hard-pause (0-capacity model)" do

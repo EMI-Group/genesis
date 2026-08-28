@@ -121,6 +121,71 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       expanded = "/home/user/repo/any/path.ex"
       assert Shared.validate_file_scope(expanded, nil, repo_path) == :ok
     end
+
+    test "rejects write path inside a read-only foreign repository" do
+      Process.put(:foreign_repos, [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: "/home/user/orig", writable: false}
+      ])
+
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      result =
+        Shared.validate_file_scope("/home/user/orig/lib/app.ex", "./lib", "/home/user/repo")
+
+      assert {:error, message} = result
+      refute result == :ok
+      assert message =~ "read-only foreign repository"
+      assert message =~ "/home/user/orig"
+    end
+
+    test "rejects write path nested deep inside a read-only foreign repository" do
+      Process.put(:foreign_repos, [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: "/home/user/orig", writable: false}
+      ])
+
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      result =
+        Shared.validate_file_scope(
+          "/home/user/orig/deep/nested/file.ex",
+          "./lib",
+          "/home/user/repo"
+        )
+
+      assert {:error, message} = result
+      assert message =~ "read-only foreign repository"
+      assert message =~ "/home/user/orig"
+    end
+
+    test "allows write path inside a writable foreign repository" do
+      Process.put(:foreign_repos, [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: "/home/user/orig", writable: true}
+      ])
+
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      assert Shared.validate_file_scope("/home/user/orig/lib/app.ex", "./lib", "/home/user/orig") ==
+               :ok
+    end
+
+    test "allows file in primary repo even when a read-only foreign repo is registered" do
+      Process.put(:foreign_repos, [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: "/home/user/orig", writable: false}
+      ])
+
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      assert Shared.validate_file_scope("/home/user/repo/lib/app.ex", "./lib", "/home/user/repo") ==
+               :ok
+    end
+
+    test "allows file when no foreign repos are registered" do
+      Process.put(:foreign_repos, [])
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      assert Shared.validate_file_scope("/home/user/repo/lib/app.ex", "./lib", "/home/user/repo") ==
+               :ok
+    end
   end
 
   describe "fetch_array_arg/2" do
@@ -176,8 +241,11 @@ defmodule EvoGit.Agent.Tools.SharedTest do
 
   describe "fetch_optional_boolean_arg/3" do
     test "returns the value when it is a boolean" do
-      assert Shared.fetch_optional_boolean_arg(%{"commit" => false}, "commit", true) == {:ok, false}
-      assert Shared.fetch_optional_boolean_arg(%{"commit" => true}, "commit", false) == {:ok, true}
+      assert Shared.fetch_optional_boolean_arg(%{"commit" => false}, "commit", true) ==
+               {:ok, false}
+
+      assert Shared.fetch_optional_boolean_arg(%{"commit" => true}, "commit", false) ==
+               {:ok, true}
     end
 
     test "returns the default when the key is absent" do
@@ -186,7 +254,9 @@ defmodule EvoGit.Agent.Tools.SharedTest do
     end
 
     test "returns an error when the value is not a boolean" do
-      assert {:error, message} = Shared.fetch_optional_boolean_arg(%{"commit" => "yes"}, "commit", true)
+      assert {:error, message} =
+               Shared.fetch_optional_boolean_arg(%{"commit" => "yes"}, "commit", true)
+
       assert message =~ "commit must be a boolean"
     end
   end
@@ -230,7 +300,9 @@ defmodule EvoGit.Agent.Tools.SharedTest do
   describe "get_optional_boolean/3" do
     test "returns the value directly when it is a boolean" do
       assert Shared.get_optional_boolean(%{"search_notes" => true}, "search_notes", true) == true
-      assert Shared.get_optional_boolean(%{"search_notes" => false}, "search_notes", true) == false
+
+      assert Shared.get_optional_boolean(%{"search_notes" => false}, "search_notes", true) ==
+               false
     end
 
     test "returns the default when the key is absent" do
@@ -239,12 +311,14 @@ defmodule EvoGit.Agent.Tools.SharedTest do
 
     test "interprets truthy string variants as true" do
       for val <- ["true", "True", "TRUE", "1"] do
-        assert Shared.get_optional_boolean(%{"search_notes" => val}, "search_notes", false) == true
+        assert Shared.get_optional_boolean(%{"search_notes" => val}, "search_notes", false) ==
+                 true
       end
     end
 
     test "treats other strings as false (falls back to default)" do
-      assert Shared.get_optional_boolean(%{"search_notes" => "yes"}, "search_notes", false) == false
+      assert Shared.get_optional_boolean(%{"search_notes" => "yes"}, "search_notes", false) ==
+               false
     end
   end
 end

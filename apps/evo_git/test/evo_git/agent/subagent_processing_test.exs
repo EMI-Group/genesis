@@ -1,6 +1,8 @@
 defmodule EvoGit.Agent.SubagentProcessingTest do
   use ExUnit.Case, async: true
 
+  @moduletag :tmp_dir
+
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentProcessing
   alias EvoGit.Core.ForeignRepo
@@ -402,6 +404,204 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       assert %AgentSpec{} = spec
       assert spec.repo_notes == nil
+    end
+  end
+
+  describe "build_subagent_specs/3 — foreign repo phylo nodes" do
+    alias EvoGit.Agent.LoopState
+    alias EvoGit.AgentSpec
+    alias EvoGit.Adapters.Git
+    alias EvoGit.AgentScheduler.AgentState
+    alias EvoGit.Agents.Investigator
+    alias EvoGit.Core.ContextNode
+    alias EvoGit.Core.PhyloGraphNode
+
+    # A dummy agent module that lists Investigator as a subagent module,
+    # so subagent_module_for/2 can resolve the tool name. (Named differently
+    # from the model_id-inheritance describe's module to avoid redefinition.)
+    defmodule ForeignDummyAgentModule do
+      def subagent_modules, do: [Investigator]
+    end
+
+    setup do
+      # Ensure the ETS table exists (app may already create it)
+      if :ets.whereis(:evogit_agent_state) == :undefined do
+        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      end
+
+      agent_id = 99_998
+
+      # Insert a parent AgentState with a specific model_id
+      parent_state = %AgentState{
+        context_node: %ContextNode{path: "./", repo: "/test/repo"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/test/repo",
+          base_commit: "abc123",
+          current_commit: "abc123"
+        },
+        llm_model: "test-model",
+        max_retries: 3,
+        max_depth: 5,
+        model_id: "claude-sonnet"
+      }
+
+      :ets.insert(:evogit_agent_state, {agent_id, parent_state})
+
+      # Set the repo_path in the process dictionary
+      previous_repo_path = Process.get(:repo_path)
+      Process.put(:repo_path, "/test/repo")
+
+      on_exit(fn ->
+        :ets.delete(:evogit_agent_state, agent_id)
+        # Restore previous repo_path
+        if previous_repo_path do
+          Process.put(:repo_path, previous_repo_path)
+        else
+          Process.delete(:repo_path)
+        end
+      end)
+
+      %{agent_id: agent_id}
+    end
+
+    # Initializes a real git repository in `dir`, creating one commit per
+    # {filename, content, commit_message} triple and returning the SHAs in
+    # commit order.
+    defp init_repo(dir, commits) do
+      System.cmd("git", ["init", "-q"], cd: dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: dir)
+      System.cmd("git", ["config", "user.name", "Test User"], cd: dir)
+      System.cmd("git", ["config", "commit.gpgsign", "false"], cd: dir)
+
+      Enum.map(commits, fn {file, content, msg} ->
+        File.write!(Path.join(dir, file), content)
+        {:ok, _} = Git.add(dir, ".")
+        {:ok, _} = Git.commit(dir, msg)
+        {:ok, sha} = Git.rev_parse(dir)
+        sha
+      end)
+    end
+
+    defp foreign_call(path) do
+      ReqLLM.ToolCall.new(
+        "call_1",
+        "subagent_investigator",
+        Jason.encode!(%{"path" => path, "objective" => "investigate foreign repo"})
+      )
+    end
+
+    test "missing foreign repo root returns an error tuple, no crash",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      missing_root = Path.join(tmp_dir, "does_not_exist")
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignDummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", missing_root)],
+        repo_notes: nil
+      }
+
+      call = foreign_call(missing_root)
+
+      assert [{:error, {call_result, 0, msg}}] =
+               SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert call_result == call
+      assert msg =~ "foreign repository path does not exist or is not a git repository"
+    end
+
+    test "per-repo base_sha is honored as the foreign phylo starting commit",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+      [sha1] = init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignDummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, base_sha: sha1)],
+        repo_notes: nil
+      }
+
+      call = foreign_call(foreign_root)
+
+      assert [
+               %AgentSpec{
+                 repo_id: "orig",
+                 phylo_node: %PhyloGraphNode{
+                   repo: ^foreign_root,
+                   base_commit: ^sha1,
+                   current_commit: ^sha1
+                 }
+               }
+             ] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+    end
+
+    test "per-repo base_sha takes precedence over the tracked foreign_repo_commits map",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+
+      [sha1, sha2] =
+        init_repo(foreign_root, [
+          {"file.txt", "one", "c1"},
+          {"file2.txt", "two", "c2"}
+        ])
+
+      refute sha1 == sha2
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignDummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, base_sha: sha1)],
+        repo_notes: nil
+      }
+
+      call = foreign_call(foreign_root)
+
+      # The tracked commit (sha2) must NOT win over the per-repo base_sha (sha1)
+      assert [
+               %AgentSpec{
+                 phylo_node: %PhyloGraphNode{
+                   repo: ^foreign_root,
+                   base_commit: ^sha1,
+                   current_commit: ^sha1
+                 }
+               }
+             ] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{"orig" => sha2})
+    end
+
+    test "invalid base_sha returns an error tuple", %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignDummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, base_sha: "deadbeef")],
+        repo_notes: nil
+      }
+
+      call = foreign_call(foreign_root)
+
+      assert [{:error, {call_result, 0, msg}}] =
+               SubagentProcessing.build_subagent_specs([{call, 0}], state, %{})
+
+      assert call_result == call
+      assert msg =~ "base commit 'deadbeef' for foreign repository 'orig' does not exist"
     end
   end
 
