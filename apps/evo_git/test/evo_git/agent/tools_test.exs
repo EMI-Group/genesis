@@ -753,6 +753,88 @@ defmodule EvoGit.Agent.ToolsTest do
         refute "search_web" in names
       end)
     end
+
+    test "curl is NOT included in read_only_schemas/0 (removed — write-capable tool)" do
+      names = Enum.map(Tools.read_only_schemas(), & &1.name)
+      refute "curl" in names
+    end
+  end
+
+  describe "execute/5 - read-only foreign repo write gate" do
+    test "blocks write tools inside a read-only foreign repo", %{tmp_dir: tmp_dir} do
+      with_read_only_foreign_repo(tmp_dir, fn repo_path ->
+        for {name, args} <- [
+              {"write_file", %{"file_path" => "test.txt", "content" => "x"}},
+              {"edit_file",
+               %{"file_path" => "test.txt", "old_string" => "a", "new_string" => "b"}},
+              {"write_context", %{"dir_path" => "lib", "content" => "x"}},
+              {"run_bash", %{"command" => "echo hi"}},
+              {"run_git", %{"args" => ["status"]}},
+              {"curl", %{"url" => "https://example.com", "output" => "x.html"}}
+            ] do
+          result = Tools.execute(name, args, repo_path)
+
+          assert result =~ "read-only foreign repository",
+                 "expected #{inspect(name)} to be blocked in a read-only foreign repo, got: #{inspect(result)}"
+        end
+      end)
+    end
+
+    test "blocks the JSON-encoded whole-args form inside a read-only foreign repo", %{
+      tmp_dir: tmp_dir
+    } do
+      with_read_only_foreign_repo(tmp_dir, fn repo_path ->
+        result =
+          Tools.execute(
+            "write_file",
+            Jason.encode!(%{"file_path" => "test.txt", "content" => "x"}),
+            repo_path
+          )
+
+        assert result =~ "read-only foreign repository"
+      end)
+    end
+
+    test "allows write tools inside a WRITABLE foreign repo", %{tmp_dir: tmp_dir} do
+      with_foreign_repo(tmp_dir, [writable: true], fn repo_path ->
+        result =
+          Tools.execute(
+            "write_file",
+            %{"file_path" => "sub/file.txt", "content" => "x"},
+            repo_path
+          )
+
+        assert result =~ "Successfully wrote to"
+      end)
+    end
+
+    test "allows write tools in the primary repo even when foreign repos exist", %{
+      tmp_dir: tmp_dir
+    } do
+      with_primary_repo(tmp_dir, fn repo_path ->
+        result =
+          Tools.execute(
+            "write_file",
+            %{"file_path" => "sub/file.txt", "content" => "x"},
+            repo_path
+          )
+
+        assert result =~ "Successfully wrote to"
+      end)
+    end
+
+    test "allows write tools when there are no foreign repos at all", %{tmp_dir: tmp_dir} do
+      with_no_foreign_repos(tmp_dir, fn repo_path ->
+        result =
+          Tools.execute(
+            "write_file",
+            %{"file_path" => "sub/file.txt", "content" => "x"},
+            repo_path
+          )
+
+        assert result =~ "Successfully wrote to"
+      end)
+    end
   end
 
   describe "EvoGit.Config.tools_search_enabled?/0" do
@@ -831,6 +913,73 @@ defmodule EvoGit.Agent.ToolsTest do
       schema2 = EvoGit.Agent.Tools.WebSearch.schema(some: :opts)
       assert schema1.name == schema2.name
     end
+  end
+
+  # Runs `fun` with the process-dict keys that `maybe_block_read_only_foreign_repo/5`
+  # reads (`:foreign_repos`, `:evogit_repo_id`, `:repo_path`) set to the given
+  # values. Restores any prior values on exit (the test process's dictionary
+  # dies with the test anyway; this is belt-and-braces).
+  defp with_repo_role(foreign_repos, repo_id, repo_path, fun) do
+    prior = {Process.get(:foreign_repos), Process.get(:evogit_repo_id), Process.get(:repo_path)}
+
+    on_exit(fn ->
+      {prior_foreign, prior_id, prior_path} = prior
+      restore_process_key(:foreign_repos, prior_foreign)
+      restore_process_key(:evogit_repo_id, prior_id)
+      restore_process_key(:repo_path, prior_path)
+    end)
+
+    Process.put(:foreign_repos, foreign_repos)
+    Process.put(:evogit_repo_id, repo_id)
+    Process.put(:repo_path, repo_path)
+
+    fun.(repo_path)
+  end
+
+  defp restore_process_key(_key, nil), do: :ok
+  defp restore_process_key(key, value), do: Process.put(key, value)
+
+  # Agent operating inside a READ-ONLY foreign repo: the id matches the foreign
+  # repo entry and the repo_path lives under the foreign root's workers dir.
+  defp with_read_only_foreign_repo(tmp_dir, fun) do
+    foreign_root = Path.join(tmp_dir, "foreign")
+    repo_path = Path.join([foreign_root, ".genesis", "workers", "worker_T1_A1"])
+
+    with_repo_role(
+      [%EvoGit.Core.ForeignRepo{id: "orig", root: foreign_root, writable: false}],
+      "orig",
+      repo_path,
+      fun
+    )
+  end
+
+  defp with_foreign_repo(tmp_dir, opts, fun) do
+    foreign_root = Path.join(tmp_dir, "foreign")
+    repo_path = Path.join([foreign_root, ".genesis", "workers", "worker_T1_A1"])
+
+    with_repo_role(
+      [%EvoGit.Core.ForeignRepo{id: "orig", root: foreign_root, writable: opts[:writable]}],
+      "orig",
+      repo_path,
+      fun
+    )
+  end
+
+  # Primary-repo agent: repo_id is the primary id and repo_path sits OUTSIDE the
+  # foreign root, so the resolve_path fallback cannot re-match the foreign repo.
+  defp with_primary_repo(tmp_dir, fun) do
+    with_repo_role(
+      [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: Path.join(tmp_dir, "foreign"), writable: false}
+      ],
+      EvoGit.Core.ForeignRepo.primary_id(),
+      tmp_dir,
+      fun
+    )
+  end
+
+  defp with_no_foreign_repos(tmp_dir, fun) do
+    with_repo_role([], EvoGit.Core.ForeignRepo.primary_id(), tmp_dir, fun)
   end
 
   # Runs `fun` with XDG_CONFIG_HOME pointed at a fresh temp directory that
