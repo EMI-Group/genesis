@@ -132,6 +132,38 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       assert Enum.count(result, &(&1 == "/tmp")) == 1
       refute "Test" in result
     end
+
+    @tag :tmp_dir
+    test "trailing slash lists the directory's own contents immediately", %{tmp_dir: tmp_dir} do
+      subdir = Path.join(tmp_dir, "alpha")
+      File.mkdir_p!(subdir)
+
+      result = Project.path_suggestions(tmp_dir <> "/", [])
+
+      assert subdir in result
+      assert Enum.all?(result, &String.starts_with?(&1, tmp_dir <> "/"))
+      refute tmp_dir in result
+    end
+
+    test "bare tilde lists the home directory's entries" do
+      home = Path.expand("~")
+
+      result = Project.path_suggestions("~", [])
+
+      # Children of home only — home itself must NOT appear (the pre-fix behavior
+      # listed the PARENT of home filtered by the home basename). Vacuous-pass on an
+      # empty HOME is acceptable: the regression pin is that home itself never
+      # appears.
+      assert Enum.all?(result, &String.starts_with?(&1, home <> "/"))
+      refute home in result
+    end
+
+    test "recent projects match by substring of the full path" do
+      result =
+        Project.path_suggestions("proj", [%{path: "/home/test/sources/project", name: "project"}])
+
+      assert result == ["/home/test/sources/project"]
+    end
   end
 
   describe "normalize_remote_project_path/2" do
@@ -399,6 +431,28 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
 
       assert Enum.any?(result, &(&1 == "/tmp"))
       refute Enum.any?(result, &(&1 == "relative/repo"))
+    end
+
+    test "recent projects match by case-insensitive substring (infix)" do
+      recents = [%{path: "/home/test/sources/project", name: "project"}]
+
+      # Remote filesystem suggestions degrade to [] (no real daemon answers the
+      # RPC against the fake node), so the result IS the filtered recents.
+      for query <- ["proj", "Proj", "test/sources"] do
+        assert Project.path_suggestions(@remote_node, query, recents) ==
+                 ["/home/test/sources/project"]
+      end
+    end
+
+    test "empty query matches all recents" do
+      recents = [
+        %{path: "/home/a", name: "a"},
+        %{path: "/home/b", name: "b"}
+      ]
+
+      result = Project.path_suggestions(@remote_node, "", recents)
+      assert "/home/a" in result
+      assert "/home/b" in result
     end
   end
 
