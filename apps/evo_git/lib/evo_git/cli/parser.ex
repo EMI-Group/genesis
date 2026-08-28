@@ -150,6 +150,16 @@ defmodule EvoGit.CLI.Parser do
   Supports two formats:
     - `"id:path"` — explicit id and path
     - `"path"` — bare path, uses directory basename as id
+
+  Windows drive-letter absolute paths (`C:\\...`, `D:/...`) are always treated
+  as a bare `"path"` — the leading `C:` is NOT interpreted as an id prefix.
+
+  ## Read-only by default
+
+  `-R` foreign repos are **read-only** by default (`writable: false`,
+  `base_sha: nil`). There is no CLI flag to mark a repo writable or pin its
+  starting commit — the mechanism for that is the `genesis.toml`
+  `[foreign_repos.<id>]` keys `writable = true` / `base_sha = "..."`.
   """
   def parse_foreign_repos(opts) do
     case Keyword.get_values(opts, :foreign_repo) do
@@ -158,17 +168,38 @@ defmodule EvoGit.CLI.Parser do
 
       values ->
         Enum.map(values, fn spec ->
-          case String.split(spec, ":", parts: 2) do
-            [path] ->
+          case split_foreign_repo_spec(spec) do
+            {:bare, path} ->
               # No id specified, use directory basename
               id = path |> Path.basename()
               EvoGit.Core.ForeignRepo.new(id, path)
 
-            [id_str, path] ->
+            {:id, id_str, path} ->
               EvoGit.Core.ForeignRepo.new(id_str, path)
           end
         end)
     end
+  end
+
+  # Splits an `-R` spec into `{:id, id, path}` or `{:bare, path}`.
+  #
+  # `"id:path"` → `{:id, "id", "path"}`; a bare `"path"` → `{:bare, path}`.
+  # A Windows drive-letter absolute path (`C:\...`, `D:/...`) is a single path
+  # token — the drive letter is never mistaken for an id.
+  defp split_foreign_repo_spec(spec) do
+    if drive_letter_abs_path?(spec) do
+      {:bare, spec}
+    else
+      case String.split(spec, ":", parts: 2) do
+        [path] -> {:bare, path}
+        [id_str, path] -> {:id, id_str, path}
+      end
+    end
+  end
+
+  # Matches a Windows drive-letter absolute path prefix (`C:\`, `D:/`, ...).
+  defp drive_letter_abs_path?(spec) do
+    Regex.match?(~r/^[a-zA-Z]:[\\\/]/, spec)
   end
 
   @doc false
