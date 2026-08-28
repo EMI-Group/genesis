@@ -15,6 +15,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   attr(:merge_targets, :list, default: [])
   attr(:default_merge_target, :string, default: nil)
   attr(:merge_status, :map, default: nil)
+  attr(:repo_id, :string, default: "primary")
 
   def action_buttons(assigns) do
     ~H"""
@@ -30,12 +31,14 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <%= if @branch_exists do %>
           <%= if @merge_targets != [] do %>
             <form id="merge-form" phx-submit="merge" phx-change="merge_target_change" class="contents">
+              <input type="hidden" name="repo_id" value={@repo_id} />
               <label class="flex items-center gap-2">
                 <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Merge into")}</span>
                 <select
                   name="target_branch"
                   class="select select-sm select-bordered rounded-lg"
                   aria-label={gettext("Merge into branch")}
+                  phx-value-repo_id={@repo_id}
                 >
                   <option
                     :for={name <- @merge_targets}
@@ -62,6 +65,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             <button
               class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
               phx-click="merge"
+              phx-value-repo_id={@repo_id}
               phx-confirm={gettext("Merge these changes into the current branch?")}
               disabled={@loading}
             >
@@ -230,8 +234,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   end
 
   # First ~4 conflicting file names joined with ", ", with a "…" suffix when
-  # more exist.
-  defp conflict_files_summary(files) do
+  # more exist. Public so review_components.ex (merge_outcomes_panel/1) can
+  # reuse it via defdelegate.
+  def conflict_files_summary(files) do
     shown = Enum.take(files, 4)
 
     case Enum.drop(files, 4) do
