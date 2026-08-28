@@ -523,4 +523,113 @@ defmodule EvoGit.PeakHourEngineTest do
              ) == @six_hours_ms
     end
   end
+
+  describe "canonical integer-minute windows (regression)" do
+    test "in-peak applies peak_concurrency, off-peak applies concurrency" do
+      with_clock(fn -> fake_now(10) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: [%{start: 540, end: 720}]
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 3)
+
+      # 10:00 inside 09:00–12:00 → explicit in-peak 2 wins over the floor 3.
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
+
+      # 22:00 off-peak → normal concurrency 4.
+      with_clock(fn -> fake_now(22) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
+    end
+
+    test "string-keyed integer windows (TOML-decoded shape)" do
+      with_clock(fn -> fake_now(10) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: [%{"start" => 540, "end" => 720}]
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 3)
+
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
+    end
+
+    test "boundary times: start inclusive, end exclusive" do
+      with_clock(fn -> fake_now(9, 0) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: [%{start: 540, end: 720}]
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 3)
+
+      # 09:00 = window start → in peak → 2.
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
+
+      # 12:00 = window end → off peak (half-open) → 4.
+      with_clock(fn -> fake_now(12, 0) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
+    end
+
+    test "overnight integer windows wrap midnight" do
+      # 22:00–06:00 overnight window.
+      with_clock(fn -> fake_now(23) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 1,
+            peak_hours: [%{start: 1320, end: 360}]
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 3)
+
+      # 23:00 and 05:00 inside [22:00, 24:00) ∪ [00:00, 06:00) → peak 1.
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 1}
+
+      with_clock(fn -> fake_now(5) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 1}
+
+      # 07:00 after the window → normal concurrency 4.
+      with_clock(fn -> fake_now(7) end)
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
+    end
+  end
 end

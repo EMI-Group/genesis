@@ -546,4 +546,25 @@ defmodule EvoGit.PeakHoursTest do
                nil
     end
   end
+
+  describe "canonical integer-minute windows (regression)" do
+    test "validate_windows/1 accepts canonical integer-minute windows" do
+      assert {:ok, [%{start: 540, end: 720}]} =
+               PeakHours.validate_windows([%{start: 540, end: 720}])
+
+      assert {:ok, [%{start: 540, end: 720}]} =
+               PeakHours.validate_windows([%{"start" => 540, "end" => 720}])
+    end
+
+    test "parse_window/1 accepts integer-minute values" do
+      assert {:ok, %{start: 540, end: 720}} = PeakHours.parse_window(%{start: 540, end: 720})
+
+      assert {:ok, %{start: 540, end: 720}} =
+               PeakHours.parse_window(%{"start" => 540, "end" => 720})
+    end
+
+    test "mixed string/integer representations are rejected" do
+      assert {:error, {:invalid_format, _}} = PeakHours.parse_window(%{start: "09:00", end: 720})
+    end
+  end
 end
