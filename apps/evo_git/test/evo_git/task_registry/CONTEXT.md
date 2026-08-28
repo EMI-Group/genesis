@@ -38,7 +38,7 @@ ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle 
 
 ## Harness — `test/support/task_registry_case.ex` (82 lines)
 
-- 6 test modules use `EvoGit.TaskRegistryCase, async: false` (persistence, lease_heartbeat, cleanup, store_skip_and_log, merge_context, task_executor_reflect); the pure modules (diagnostics, resume_context, runtime_opts) use plain `ExUnit.Case, async: true`.
+- 7 test modules use `EvoGit.TaskRegistryCase, async: false` (persistence, lease_heartbeat, cleanup, store_skip_and_log, merge_context, resume_context, task_executor_reflect); the pure modules (diagnostics, runtime_opts) use plain `ExUnit.Case, async: true`.
 - `setup`: `Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)` + `(..., EvoGit.Store)` (kills production children so they don't auto-restart); creates a unique temp dir `System.tmp_dir!()/evogit_test_tasks_<unique>`; starts a FRESH `EvoGit.Store` (`start_supervised({EvoGit.Store, data_dir: sqlite_path})`) and FRESH `TaskRegistry` (`start_supervised({TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry})`) — fresh empty SQLite DB per test.
 - `on_exit`: `File.rm_rf(root)` + `Supervisor.restart_child` of Store and TaskRegistry.
 - Helpers: `trigger_cleanup!/0` (direct `Cleanup.cleanup_expired_tasks(EvoGit.Store)`), `cleanup_process/1`, `old_age_days/0` / `within_age_days/0` (read runtime config, fallback 14).
