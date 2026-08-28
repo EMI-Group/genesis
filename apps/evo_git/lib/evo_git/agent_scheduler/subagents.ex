@@ -192,10 +192,12 @@ defmodule EvoGit.AgentScheduler.Subagents do
   @doc """
   Validates that a subagent spec obeys spatial contract rules.
 
-  Cross-repo delegation enforces read-only access — only `:read` agent types
-  are allowed in foreign repos. Same-repo delegation checks that the child
-  node is a descendant of (or same as) the parent node when the child is a
-  read-write agent.
+  Cross-repo delegation enforces read-only access unless the target repo's
+  task-level entry is explicitly writable — `:read` agent types are always
+  allowed in foreign repos; `:read_write` agent types require the repo to be
+  listed as writable in `spec.foreign_repos`. Same-repo delegation checks that
+  the child node is a descendant of (or same as) the parent node when the
+  child is a read-write agent.
   """
   @spec validate_spatial_contract_for_spec(
           pos_integer(),
@@ -208,20 +210,37 @@ defmodule EvoGit.AgentScheduler.Subagents do
         spec
       ) do
     cond do
-      # Cross-repo delegation: enforce read-only access for foreign repos
+      # Cross-repo delegation: read-write agents may only be spawned into
+      # foreign repos whose TASK-LEVEL entry is explicitly marked writable.
+      # The target repo's role is resolved from spec.foreign_repos (the
+      # task-level list of %ForeignRepo{} structs carried into subagent specs),
+      # never from the path alone — an unknown repo id is read-only by default.
       spec.repo_id != parent_repo_id ->
         if spec.agent_module.agent_type() == :read_write do
-          {:error,
-           {:foreign_repo_read_only,
-            """
-            Read-write agents cannot be spawned in foreign repositories.
-            Use read-only agent types instead:
-            - subagent_investigator — for investigating and analyzing code
-            - subagent_task_scheduler — for planning and scheduling tasks
+          case Enum.find(spec.foreign_repos || [], fn
+                 %{id: id} -> id == spec.repo_id
+                 _ -> false
+               end) do
+            %{writable: true} ->
+              :ok
 
-            Foreign repos are read-only to prevent unintended modifications.
-            If you need to apply changes based on foreign repo findings, do so in your primary repository.
-            """}}
+            _ ->
+              {:error,
+               {:foreign_repo_read_only,
+                """
+                This foreign repository is read-only for this task. Foreign repos
+                may be writable for a task — changes are committed to
+                evogit-agent-* branches, tracked by the task, and never merged
+                back by the task — but this particular repo is not marked writable.
+
+                Use read-only agent types instead:
+                - subagent_investigator — for investigating and analyzing code
+                - subagent_task_scheduler — for planning and scheduling tasks
+
+                If your objective requires changes in this foreign repo, report
+                back to the user or parent agent instead of writing directly.
+                """}}
+          end
         else
           :ok
         end
@@ -281,16 +300,31 @@ defmodule EvoGit.AgentScheduler.Subagents do
         idx = Map.get(parent.sub_agent_indices, sub_id)
         results = Map.put(parent.sub_agent_results, idx, result)
 
+        # Roll up the completing subagent's subtree commits: its result carries
+        # the per-repo commits of its own subtree (injected by Lifecycle at
+        # completion), so multi-level trees accumulate at the root. Child
+        # entries override the parent's for the same repo_id — the child's
+        # subtree view is fresher.
+        base_commits =
+          case result do
+            {:ok, %EvoGit.Agent.Result{} = res} ->
+              child_frc = Map.get(res, :foreign_repo_commits, %{})
+              Map.merge(parent.foreign_repo_commits, child_frc)
+
+            _ ->
+              parent.foreign_repo_commits
+          end
+
         # Track foreign repo commit SHAs — when a foreign-repo subagent completes,
         # record its commit so subsequent subagents can start from it instead of HEAD.
         foreign_repo_commits =
           case result do
             {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
             when is_binary(sha) and not is_nil(repo_id) and repo_id != "primary" ->
-              Map.put(parent.foreign_repo_commits, repo_id, sha)
+              Map.put(base_commits, repo_id, sha)
 
             _ ->
-              parent.foreign_repo_commits
+              base_commits
           end
 
         Store.put_sched_meta(parent_id, %{
