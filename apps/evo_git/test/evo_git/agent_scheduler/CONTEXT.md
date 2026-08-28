@@ -13,10 +13,6 @@ ExUnit tests for the `EvoGit.AgentScheduler` subsystem — scheduling (no worktr
 - `slots_test.exs` → LLM/tool slot pools, hard-pause 0-capacity
 - `store_test.exs` / `state_test.exs` / `remote_api_test.exs` / `dispatch_test.exs` / `dispatch_custom_agents_test.exs` / `pubsub_test.exs` / `worktree_retry_test.exs` → ETS store, state/pool config, RPC surface, dispatch, PubSub throttle, retry helpers
 
-## Known Issues
-
-- **`AgentScheduler.get_foreign_repo_commits/1` is NOT hardened at HEAD** — `agent_scheduler_test.exs` "returns %{} for an agent with no SchedMeta row" FAILS with `MatchError: {:ok, meta} = :error` at lib `agent_scheduler.ex:254`. The original hardened form (`case :ets.lookup ... _ -> %{} end`, commit f7703da34) was regressed by 7ed94d3a5 ("replace raw ETS calls with Store in public functions"). The test deliberately pins the intended contract; the 2-line lib fix (restore the case/guard form) is outside this node's write scope — delegate to the lib node. When fixed, this test goes green and this entry must be DELETED.
-
 ## Constraints
 
 - `agent_scheduler_test.exs`, `lifecycle_test.exs`, `worktrees_test.exs`, `slots_test.exs`, `store_test.exs`, `state_test.exs`, `remote_api_test.exs`, `pubsub_test.exs` are `async: false` (global ETS / live scheduler); `subagents_test.exs`, `dispatch_test.exs`, `worktree_retry_test.exs` are `async: true`.
