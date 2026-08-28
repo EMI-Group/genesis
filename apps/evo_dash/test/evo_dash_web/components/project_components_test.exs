@@ -4,6 +4,7 @@ defmodule EvoDashWeb.ProjectComponentsTest do
   import Phoenix.LiveViewTest
 
   alias EvoDashWeb.ProjectComponents
+  alias EvoGit.Core.ForeignRepo
 
   # Component-level tests for the command-palette project selector
   # (`project_omnibox/1`): the client-side wiring that makes keyboard
@@ -275,6 +276,279 @@ defmodule EvoDashWeb.ProjectComponentsTest do
       assert html =~ ~s(<datalist id="foreign-repo-path-suggestions">)
       assert html =~ ~s(<option value="/tmp/alpha"></option>)
       assert html =~ ~s(<option value="/tmp/beta"></option>)
+    end
+  end
+
+  # Multi-repo read-write foreign repos (writable flag + starting commit):
+  # the Add Foreign Repo form carries a `writable` checkbox and a `base_sha`
+  # input (value seeded from `new_repo_base_sha`), the repo-list rows render a
+  # "Writable" badge + base_sha `<code>` when present, and each non-primary repo
+  # row has an edit-in-place flow (`edit_foreign_repo` / `save_foreign_repo` /
+  # `cancel_edit_foreign_repo`). The component reads the three new assigns
+  # (`new_repo_base_sha`, `editing_foreign_repo_id`, `foreign_repo_edit_form`)
+  # defensively so it renders fine when they are absent.
+  describe "foreign repo writable/base_sha UI" do
+    test "add form renders the writable checkbox and base_sha input with the seeded value" do
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo: true,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          new_repo_base_sha: "abc123",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert [writable_input] = Floki.find(parse(html), "input[name=writable]")
+      assert Floki.attribute(writable_input, "type") == ["checkbox"]
+      assert Floki.attribute(writable_input, "value") == ["true"]
+      # default unchecked
+      assert Floki.attribute(writable_input, "checked") == []
+
+      assert [base_sha_input] = Floki.find(parse(html), "input[name=base_sha]")
+      assert Floki.attribute(base_sha_input, "value") == ["abc123"]
+    end
+
+    test "add form renders an empty base_sha value when new_repo_base_sha is absent" do
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [],
+          show_add_foreign_repo: true,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert [base_sha_input] = Floki.find(parse(html), "input[name=base_sha]")
+      assert Floki.attribute(base_sha_input, "value") == [""]
+    end
+
+    test "repo list renders the writable badge and base_sha code for a writable repo" do
+      repo = %ForeignRepo{
+        id: "original",
+        root: "/Source/original",
+        description: "The original codebase",
+        writable: true,
+        base_sha: "abc123"
+      }
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert [badge] = Floki.find(parse(html), ".badge-warning")
+      assert Floki.text(badge) =~ "Writable"
+
+      assert [code] = Floki.find(parse(html), "code")
+      assert Floki.text(code) =~ "abc123"
+      assert html =~ "/Source/original"
+    end
+
+    test "repo list omits the writable badge and base_sha code for a read-only repo" do
+      repo = %ForeignRepo{
+        id: "original",
+        root: "/Source/original",
+        writable: false,
+        base_sha: nil
+      }
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert Floki.find(parse(html), ".badge-warning") == []
+      assert Floki.find(parse(html), "code") == []
+    end
+
+    test "repo rows carry the edit button with the repo id value" do
+      repo = %ForeignRepo{id: "original", root: "/Source/original"}
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert [edit_btn] = Floki.find(parse(html), "button[phx-click=edit_foreign_repo]")
+      assert Floki.attribute(edit_btn, "phx-value-repo_id") == ["original"]
+      assert html =~ "hero-pencil"
+    end
+
+    test "primary repo row has no edit or remove buttons" do
+      repo = %ForeignRepo{id: "primary", root: "/Source/project"}
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert Floki.find(parse(html), "button[phx-click=edit_foreign_repo]") == []
+      assert Floki.find(parse(html), "button[phx-click=remove_foreign_repo]") == []
+    end
+
+    test "editing_foreign_repo_id renders the inline edit form with the edit-form values" do
+      repo = %ForeignRepo{id: "original", root: "/Source/original", description: "old"}
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          editing_foreign_repo_id: "original",
+          foreign_repo_edit_form: %{
+            repo_id: "original",
+            path: "/Source/original",
+            description: "updated desc",
+            writable: true,
+            base_sha: "def456"
+          },
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert html =~ ~s(phx-submit="save_foreign_repo")
+      assert html =~ ~s(phx-click="cancel_edit_foreign_repo")
+
+      # repo_id is read-only display
+      assert [repo_id_input] = Floki.find(parse(html), "input[name=repo_id]")
+      assert Floki.attribute(repo_id_input, "readonly") != []
+      assert Floki.attribute(repo_id_input, "value") == ["original"]
+
+      # path is editable, seeded from the edit form
+      assert [path_input] = Floki.find(parse(html), "input[name=path]")
+      assert Floki.attribute(path_input, "readonly") == []
+      assert Floki.attribute(path_input, "value") == ["/Source/original"]
+
+      # description seeded from the edit form
+      assert [desc_input] = Floki.find(parse(html), "input[name=description]")
+      assert Floki.attribute(desc_input, "value") == ["updated desc"]
+
+      # writable checkbox checked from the edit form
+      assert [writable_input] = Floki.find(parse(html), "input[name=writable]")
+      assert Floki.attribute(writable_input, "checked") != []
+
+      # base_sha seeded from the edit form
+      assert [base_sha_input] = Floki.find(parse(html), "input[name=base_sha]")
+      assert Floki.attribute(base_sha_input, "value") == ["def456"]
+
+      # Save + Cancel buttons
+      assert [save_btn] = Floki.find(parse(html), "button[type=submit]")
+      assert Floki.text(save_btn) =~ "Save"
+      assert html =~ "hero-check"
+    end
+
+    test "inline edit form falls back to repo values when the edit-form map is absent" do
+      repo = %ForeignRepo{id: "original", root: "/Source/original", description: "old"}
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          editing_foreign_repo_id: "original",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      assert html =~ ~s(phx-submit="save_foreign_repo")
+
+      assert [path_input] = Floki.find(parse(html), "input[name=path]")
+      assert Floki.attribute(path_input, "value") == ["/Source/original"]
+
+      assert [desc_input] = Floki.find(parse(html), "input[name=description]")
+      assert Floki.attribute(desc_input, "value") == ["old"]
+
+      assert [writable_input] = Floki.find(parse(html), "input[name=writable]")
+      assert Floki.attribute(writable_input, "checked") == []
+    end
+
+    test "nil editing_foreign_repo_id renders no inline edit form" do
+      repo = %ForeignRepo{id: "original", root: "/Source/original"}
+
+      html =
+        render_component(&ProjectComponents.project_settings_tab/1,
+          active_project: "/home/user/project",
+          project_config: nil,
+          worktree_script: nil,
+          commands: %{},
+          foreign_repos: [repo],
+          show_add_foreign_repo: false,
+          new_repo_id: "",
+          new_repo_path: "",
+          new_repo_description: "",
+          tauri_detected: false,
+          platform: "linux"
+        )
+
+      refute html =~ ~s(phx-submit="save_foreign_repo")
+      refute html =~ ~s(phx-click="cancel_edit_foreign_repo")
+      # the read view still renders
+      assert html =~ "/Source/original"
     end
   end
 
