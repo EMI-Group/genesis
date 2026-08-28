@@ -4,16 +4,18 @@ defmodule EvoGit.TaskRegistry.ResumeContextTest do
   used by TaskExecutor when an evolve task resumes from a previous task
   (`:resume_from`).
 
-  `build_resume_context_block/1` is a pure function over a `%TaskInfo{}`
-  struct (no git/DB needed), so the tests construct structs directly.
-  `apply_resume_context/3` is deliberately NOT tested here — it calls
-  `EvoGit.TaskRegistry.get_task/1`, which requires a running TaskRegistry +
-  Store.
+  `build_resume_context_block/1` and `extract_result_summary/1` are pure
+  functions over a `%TaskInfo{}` struct (no git/DB needed), so the tests
+  construct structs directly. `apply_resume_context/3` calls
+  `EvoGit.TaskRegistry.get_task/1` plus the Store-backed runtime-opts builder,
+  so it runs on `EvoGit.TaskRegistryCase` — an isolated TaskRegistry + Store
+  on a temporary SQLite database (mirroring the merge-context test fixture
+  pattern).
   """
 
-  use ExUnit.Case, async: true
+  use EvoGit.TaskRegistryCase, async: false
 
-  alias EvoGit.TaskInfo
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskRegistry.ResumeContext
 
   describe "build_resume_context_block/1" do
@@ -190,9 +192,126 @@ defmodule EvoGit.TaskRegistry.ResumeContextTest do
     end
   end
 
+  describe "apply_resume_context/3" do
+    test "nil previous task: normalizes string-keyed caller foreign_repos into structs" do
+      resume_from = "missing_task_#{System.unique_integer([:positive])}"
+
+      {objective, runtime_opts} =
+        ResumeContext.apply_resume_context(
+          [
+            path: "/tmp/resume-context-next",
+            mode: "simple",
+            objective: "Continue the work.",
+            foreign_repos: [
+              %{"id" => "orig", "root" => "/tmp/orig", "writable" => true, "base_sha" => "b1"}
+            ],
+            resume_from: resume_from
+          ],
+          "task_1",
+          resume_from
+        )
+
+      # The caller's string-keyed map (a Codec round-trip shape) is normalized
+      # back into a %ForeignRepo{} struct with writable/base_sha intact.
+      assert [%ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "b1"}] =
+               Keyword.get(runtime_opts, :foreign_repos)
+
+      # No previous task — the objective is not prepended with a context block.
+      assert objective == "Continue the work."
+    end
+
+    test "found previous task: threads struct foreign_repos and overrides starting_commit" do
+      prev = insert_prev_task!(result: {:ok, %{result: "Done."}})
+
+      {objective, runtime_opts} =
+        ResumeContext.apply_resume_context(
+          [
+            path: "/tmp/resume-context-next",
+            mode: "simple",
+            objective: "Continue the work.",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "b1"}
+            ],
+            resume_from: prev.id
+          ],
+          "task_1",
+          prev.id
+        )
+
+      # The previous task's end commit takes priority as :starting_commit.
+      assert Keyword.get(runtime_opts, :starting_commit) == "commit222"
+
+      # Struct inputs pass through normalized (writable/base_sha intact).
+      assert [%ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "b1"}] =
+               Keyword.get(runtime_opts, :foreign_repos)
+
+      # The previous task's context block is prepended to the objective.
+      assert String.starts_with?(objective, "--- Previous Task Context ---")
+    end
+
+    test "overrides a caller repo's base_sha from the previous task's result repos map" do
+      prev =
+        insert_prev_task!(result: {:ok, %{"repos" => %{"orig" => %{"commit_sha" => "new_sha"}}}})
+
+      {_objective, runtime_opts} =
+        ResumeContext.apply_resume_context(
+          [
+            path: "/tmp/resume-context-next",
+            mode: "simple",
+            objective: "Continue the work.",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "old_sha"}
+            ],
+            resume_from: prev.id
+          ],
+          "task_1",
+          prev.id
+        )
+
+      assert [%ForeignRepo{id: "orig", writable: true, base_sha: "new_sha"}] =
+               Keyword.get(runtime_opts, :foreign_repos)
+    end
+
+    test "does not add a :foreign_repos key when the caller has none (nil previous task)" do
+      resume_from = "missing_task_#{System.unique_integer([:positive])}"
+
+      {_objective, runtime_opts} =
+        ResumeContext.apply_resume_context(
+          [
+            path: "/tmp/resume-context-next",
+            mode: "simple",
+            objective: "Continue the work.",
+            resume_from: resume_from
+          ],
+          "task_1",
+          resume_from
+        )
+
+      refute Keyword.has_key?(runtime_opts, :foreign_repos)
+    end
+
+    test "does not add a :foreign_repos key when the caller has none (previous task found)" do
+      prev = insert_prev_task!()
+
+      {_objective, runtime_opts} =
+        ResumeContext.apply_resume_context(
+          [
+            path: "/tmp/resume-context-next",
+            mode: "simple",
+            objective: "Continue the work.",
+            resume_from: prev.id
+          ],
+          "task_1",
+          prev.id
+        )
+
+      refute Keyword.has_key?(runtime_opts, :foreign_repos)
+    end
+  end
+
   # --- fixtures ---
 
-  defp build_task(overrides \\ []) do
+  defp build_task(overrides) do
     unique = System.unique_integer([:positive])
 
     base = %TaskInfo{
@@ -211,5 +330,14 @@ defmodule EvoGit.TaskRegistry.ResumeContextTest do
     }
 
     struct!(base, overrides)
+  end
+
+  defp persist_task!(%TaskInfo{} = task) do
+    EvoGit.Store.put_task(EvoGit.Store, task)
+    task
+  end
+
+  defp insert_prev_task!(overrides \\ []) do
+    build_task(overrides) |> persist_task!()
   end
 end
