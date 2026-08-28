@@ -90,6 +90,15 @@ defmodule EvoDashWeb.ReviewLive do
 
               <!-- Unified review card: tab bar + content -->
               <div class="review-card">
+                <%= if @merge_outcomes != [] do %>
+                  <EvoDashWeb.ReviewComponents.merge_outcomes_panel outcomes={@merge_outcomes} />
+                <% end %>
+                <%= if length(@review_repos) > 1 do %>
+                  <EvoDashWeb.ReviewComponents.repo_tabs
+                    repos={@review_repos}
+                    active_repo_id={@active_repo_id}
+                  />
+                <% end %>
                 <!-- Tab Bar (sticky header of the card) -->
                 <div class="review-card-tabs">
                   <EvoDashWeb.ReviewComponents.review_tabs
@@ -126,6 +135,7 @@ defmodule EvoDashWeb.ReviewLive do
 
                         <!-- Action Buttons -->
                         <EvoDashWeb.ReviewComponents.action_buttons
+                          repo_id={@active_repo_id}
                           branch_exists={@branch_exists}
                           can_resume={@can_resume}
                           has_pr={@has_pr}
@@ -159,9 +169,9 @@ defmodule EvoDashWeb.ReviewLive do
                       <%= if @review_data do %>
                         <EvoDashWeb.ReviewComponents.split_diff_layout
                           files={@review_data.files}
-                          expanded_files={@expanded_files}
-                          selected_file={@selected_file}
-                          file_context_levels={@file_context_levels}
+                          expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
+                          selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
+                          file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
                         />
                       <% else %>
                         <div class="p-8 text-center">
@@ -266,6 +276,9 @@ defmodule EvoDashWeb.ReviewLive do
         merge_targets: [],
         default_merge_target: nil,
         merge_status: nil,
+        review_repos: [],
+        active_repo_id: "primary",
+        merge_outcomes: [],
         load_generation: 0,
         last_broadcast_task_id: nil
       )
@@ -330,6 +343,19 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
+  def handle_event("switch_repo", %{"repo_id" => repo_id}, socket) do
+    # Whitelist-validate the submitted repo id against the known review repos
+    # (never String.to_atom on client input). Per-repo diff state is keyed by
+    # repo_id and persists across switches — only the active id and the flat
+    # projections change.
+    if repo_id in Enum.map(socket.assigns.review_repos, & &1.repo_id) do
+      {:noreply, socket |> assign(:active_repo_id, repo_id) |> project_active_repo()}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("toggle_summary_view", %{"mode" => mode}, socket) do
     {:noreply, assign(socket, :summary_raw, mode == "raw")}
   end
@@ -356,10 +382,22 @@ defmodule EvoDashWeb.ReviewLive do
     target_id = "file-section-#{file_path_to_id(path)}"
 
     socket =
-      assign(socket,
-        selected_file: path,
-        review_tab: :files_changed
-      )
+      if socket.assigns.live_action == :commit do
+        # :commit route keeps today's legacy flat path-keyed state.
+        assign(socket,
+          selected_file: path,
+          review_tab: :files_changed
+        )
+      else
+        # SHOW route: per-repo selection map keyed by repo_id — selecting a
+        # file in one repo must not clobber another repo's selection.
+        selected =
+          Map.put(socket.assigns.selected_file || %{}, socket.assigns.active_repo_id, path)
+
+        socket
+        |> assign(selected_file: selected, review_tab: :files_changed)
+        |> project_active_repo()
+      end
       |> push_event("scroll_to_file", %{target_id: target_id})
 
     # Trigger diff loading if file diff is nil
@@ -368,16 +406,37 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("toggle_file_expansion", %{"path" => path}, socket) do
-    expanded_files = socket.assigns.expanded_files
-    current = Map.get(expanded_files, path, false)
-    new_expanded = Map.put(expanded_files, path, !current)
-    socket = assign(socket, :expanded_files, new_expanded)
+    if socket.assigns.live_action == :commit do
+      # :commit route keeps today's legacy flat path-keyed behavior.
+      expanded_files = socket.assigns.expanded_files
+      current = Map.get(expanded_files, path, false)
+      new_expanded = Map.put(expanded_files, path, !current)
+      socket = assign(socket, :expanded_files, new_expanded)
 
-    # If expanding a file whose diff is nil, trigger lazy load
-    if !current do
-      maybe_load_diff(socket, path)
+      # If expanding a file whose diff is nil, trigger lazy load
+      if !current do
+        maybe_load_diff(socket, path)
+      else
+        {:noreply, socket}
+      end
     else
-      {:noreply, socket}
+      # SHOW route: per-repo expansion map keyed by repo_id — toggle only the
+      # ACTIVE repo's submap.
+      expanded = socket.assigns.expanded_files || %{}
+      sub = Map.get(expanded, socket.assigns.active_repo_id, %{})
+
+      sub =
+        if Map.get(sub, path, false), do: Map.delete(sub, path), else: Map.put(sub, path, true)
+
+      expanded = Map.put(expanded, socket.assigns.active_repo_id, sub)
+
+      socket =
+        socket
+        |> assign(:expanded_files, expanded)
+        |> project_active_repo()
+
+      # If expanding a file whose diff is nil, trigger lazy load
+      maybe_load_diff(socket, path)
     end
   end
 
@@ -393,7 +452,16 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("expand_context", %{"path" => path}, socket) do
-    current_level = Map.get(socket.assigns.file_context_levels, path, 3)
+    # SHOW route reads the context level from the ACTIVE repo's submap;
+    # :commit keeps today's legacy flat path-keyed state.
+    current_level =
+      if socket.assigns.live_action == :commit do
+        Map.get(socket.assigns.file_context_levels, path, 3)
+      else
+        socket.assigns.file_context_levels
+        |> Map.get(socket.assigns.active_repo_id, %{})
+        |> Map.get(path, 3)
+      end
 
     new_level =
       cond do
@@ -421,13 +489,23 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("merge", params, socket) do
-    %{
-      repo_path: repo_path,
-      branch_name: branch_name,
-      task_id: task_id,
-      merge_targets: merge_targets,
-      default_merge_target: default_merge_target
-    } = socket.assigns
+    %{task_id: task_id, review_repos: review_repos} = socket.assigns
+
+    # The submitting repo comes from the merge form's hidden `repo_id` input
+    # (falling back to the currently active repo, then "primary"); whitelist
+    # against the known review-repo ids — never String.to_atom on client input.
+    submitting_repo_id =
+      case params["repo_id"] do
+        repo_id when is_binary(repo_id) and repo_id != "" -> repo_id
+        _ -> socket.assigns.active_repo_id
+      end
+
+    submitting_repo_id =
+      if Enum.any?(review_repos, &(&1.repo_id == submitting_repo_id)) do
+        submitting_repo_id
+      else
+        "primary"
+      end
 
     # The target branch comes from the merge form's `target_branch` select;
     # a plain `phx-click="merge"` (legacy path) submits no params.
@@ -443,77 +521,131 @@ defmodule EvoDashWeb.ReviewLive do
           nil
       end
 
-    # Sanity check: when a known branch list was loaded, only accept a
-    # submitted target that is a member of it; otherwise fall back to the
-    # resolved default (or no target).
-    target =
-      if target != nil and merge_targets != [] and target not in merge_targets do
-        default_merge_target
-      else
-        target
-      end
+    # Per-repo merge plan: the submitting repo uses the form target (validated
+    # against ITS known branch list, falling back to ITS resolved default);
+    # every other repo merges into its own resolved default (nil → the 3-arity
+    # default-resolving path).
+    plan =
+      Enum.map(review_repos, fn repo ->
+        if repo.repo_id == submitting_repo_id do
+          # Sanity check: when a known branch list was loaded, only accept a
+          # submitted target that is a member of it; otherwise fall back to the
+          # repo's resolved default (or no target).
+          resolved_target =
+            if target != nil and repo.merge_targets != [] and target not in repo.merge_targets do
+              repo.default_merge_target
+            else
+              target
+            end
 
-    # The effective target (explicitly chosen or the resolved default) is
-    # what the merge actually used — mention it in the success flash.
-    effective_target = target || default_merge_target
+          {repo, resolved_target}
+        else
+          {repo, repo.default_merge_target}
+        end
+      end)
+
+    # The effective target (explicitly chosen or the resolved default) for the
+    # SUBMITTING repo is what its merge actually used — mention it in the
+    # success flash.
+    {submitting_repo, effective_target} =
+      Enum.find(plan, fn {repo, _target} -> repo.repo_id == submitting_repo_id end)
 
     # All review git operations run on the node being viewed: local → direct
-    # call, remote → RPC to the remote daemon's filesystem. RemoteNode
-    # returns the verbatim underlying value in both paths, so the existing
-    # pattern matches below are unchanged.
+    # call, remote → RPC to the remote daemon's filesystem. RemoteNode returns
+    # the verbatim underlying value in both paths. Test seam: the merge runner
+    # is resolved from application env at CALL time (mirrors MergeCheck's
+    # :merge_check_runner) so tests can stub out the real repo-touching merge.
     node = socket.assigns.current_node
 
-    result =
-      if target do
-        EvoDash.NodeContext.merge_branch(node, repo_path, branch_name, target)
-      else
-        EvoDash.NodeContext.merge_branch(node, repo_path, branch_name)
-      end
-
-    case result do
-      {:ok, _sha} ->
-        EvoDash.NodeContext.set_review_status(node, task_id, :merged)
-
-        success_flash =
-          if effective_target do
-            gettext(
-              "Changes merged successfully into %{target}! Branch %{branch} has been deleted.",
-              target: effective_target,
-              branch: branch_name
-            )
-          else
-            gettext("Changes merged successfully! Branch %{branch} has been deleted.",
-              branch: branch_name
-            )
+    merge_fun =
+      case Application.get_env(:evo_dash, :review_merge_runner, nil) do
+        nil ->
+          fn node, repo_path, branch_name, merge_target ->
+            if merge_target do
+              EvoDash.NodeContext.merge_branch(node, repo_path, branch_name, merge_target)
+            else
+              EvoDash.NodeContext.merge_branch(node, repo_path, branch_name)
+            end
           end
 
-        {:noreply,
-         socket
-         |> put_flash(:success, success_flash)
-         |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
+        fun ->
+          fun
+      end
 
-      {:conflict, details} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           gettext("Merge conflict! Please resolve manually. %{details}",
-             details: truncate_string(details, 200)
-           )
-         )}
+    results =
+      Enum.map(plan, fn {repo, merge_target} ->
+        result = merge_fun.(node, repo.repo_path, repo.branch_name, merge_target)
+        {repo.repo_id, merge_target, result}
+      end)
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, gettext("Merge failed: %{reason}", reason: inspect(reason)))}
+    if Enum.all?(results, fn {_repo_id, _target, result} -> match?({:ok, _sha}, result) end) do
+      EvoDash.NodeContext.set_review_status(node, task_id, :merged)
+
+      success_flash =
+        if effective_target do
+          gettext(
+            "Changes merged successfully into %{target}! Branch %{branch} has been deleted.",
+            target: effective_target,
+            branch: submitting_repo.branch_name
+          )
+        else
+          gettext("Changes merged successfully! Branch %{branch} has been deleted.",
+            branch: submitting_repo.branch_name
+          )
+        end
+
+      {:noreply,
+       socket
+       |> put_flash(:success, success_flash)
+       |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
+    else
+      # Partial success / any failure: report every repo's outcome (merged
+      # ones too — partial-success visibility) and STAY on the page. Never
+      # navigate away from a partially applied merge.
+      outcomes =
+        Enum.map(results, fn {repo_id, merge_target, result} ->
+          case result do
+            {:ok, sha} ->
+              %{repo_id: repo_id, status: :merged, detail: to_string(sha), target: merge_target}
+
+            {:conflict, details} ->
+              %{
+                repo_id: repo_id,
+                status: :conflict,
+                detail: truncate_string(details, 200),
+                target: merge_target
+              }
+
+            {:error, reason} ->
+              %{repo_id: repo_id, status: :error, detail: inspect(reason), target: merge_target}
+          end
+        end)
+
+      failed_count =
+        Enum.count(results, fn {_repo_id, _target, result} -> not match?({:ok, _sha}, result) end)
+
+      {:noreply,
+       socket
+       |> assign(:merge_outcomes, outcomes)
+       |> put_flash(
+         :error,
+         gettext(
+           "Merge failed in %{count} of %{total} repositories. See the merge results below.",
+           count: failed_count,
+           total: length(results)
+         )
+       )}
     end
   end
 
   @impl true
   def handle_event("merge_target_change", params, socket) do
     # The merge form's target-branch select changed: the support module
-    # updates the default target and re-runs the async dry-run merge check.
-    {:noreply, EvoDashWeb.ReviewLive.MergeCheck.handle_target_change(socket, params)}
+    # updates the changed repo's default target and re-runs its async dry-run
+    # merge check. Re-project afterwards so action_buttons reads the ACTIVE
+    # repo's flat @merge_status / @default_merge_target.
+    socket = EvoDashWeb.ReviewLive.MergeCheck.handle_target_change(socket, params)
+    {:noreply, project_active_repo(socket)}
   end
 
   @impl true
@@ -525,38 +657,82 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("reject", _params, socket) do
-    %{repo_path: repo_path, branch_name: branch_name, task_id: task_id} = socket.assigns
+    %{task_id: task_id, review_repos: review_repos} = socket.assigns
 
+    # Reject (delete) the agent branch in EVERY review repo — the same
+    # broadcast semantics as merge. All review git operations run on the node
+    # being viewed (local → direct call, remote → RPC). Test seam mirrors
+    # :review_merge_runner, resolved at call time.
     node = socket.assigns.current_node
 
-    case EvoDash.NodeContext.reject_branch(node, repo_path, branch_name) do
-      :ok ->
-        EvoDash.NodeContext.set_review_status(node, task_id, :rejected)
+    reject_fun =
+      Application.get_env(:evo_dash, :review_reject_runner) ||
+        (&EvoDash.NodeContext.reject_branch/3)
 
-        {:noreply,
-         socket
-         |> put_flash(
-           :info,
-           gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_name)
+    results =
+      Enum.map(review_repos, fn repo ->
+        result = reject_fun.(node, repo.repo_path, repo.branch_name)
+        {repo.repo_id, result}
+      end)
+
+    if Enum.all?(results, fn {_repo_id, result} -> result == :ok end) do
+      EvoDash.NodeContext.set_review_status(node, task_id, :rejected)
+
+      branch_names =
+        review_repos
+        |> Enum.map(& &1.branch_name)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.join(", ")
+
+      {:noreply,
+       socket
+       |> put_flash(
+         :info,
+         gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_names)
+       )
+       |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
+    else
+      # Partial reject: report every repo's outcome and STAY on the page —
+      # never dismiss a partially applied reject silently.
+      outcomes =
+        Enum.map(results, fn {repo_id, result} ->
+          case result do
+            :ok ->
+              %{repo_id: repo_id, status: :rejected}
+
+            {:error, reason} ->
+              %{repo_id: repo_id, status: :error, detail: inspect(reason)}
+          end
+        end)
+
+      failed_count = Enum.count(results, fn {_repo_id, result} -> result != :ok end)
+
+      {:noreply,
+       socket
+       |> assign(:merge_outcomes, outcomes)
+       |> put_flash(
+         :error,
+         # zh_CN: 多仓库评审中拒绝（删除分支）失败——"repositories" 指所有可写仓库，下方面板展示各仓库的拒绝结果
+         gettext(
+           "Failed to reject changes in %{count} of %{total} repositories. See the merge results below.",
+           count: failed_count,
+           total: length(results)
          )
-         |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :error,
-           gettext("Failed to reject changes: %{reason}", reason: inspect(reason))
-         )}
+       )}
     end
   end
 
   @impl true
   def handle_event("resume", _params, socket) do
-    commit_sha = socket.assigns.commit_sha
-    branch_name = socket.assigns.branch_name
+    # PRIMARY-scoped (documented limitation): repo-scoped fields come from the
+    # "primary" entry explicitly, never from the flat (active-repo-projected)
+    # assigns — a foreign repo tab must not change what resume prepares.
+    primary = Enum.find(socket.assigns.review_repos, &(&1.repo_id == "primary"))
+
+    commit_sha = primary && primary.commit_sha
+    branch_name = primary && primary.branch_name
     task_id = socket.assigns.task_id
-    repo_path = socket.assigns.repo_path
+    repo_path = primary && primary.repo_path
 
     EvoDash.NodeContext.set_review_status(socket.assigns.current_node, task_id, :continued)
 
@@ -606,8 +782,13 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("create_pr", _params, socket) do
-    %{repo_path: repo_path, branch_name: branch_name, objective: objective, agent_summary: result} =
-      socket.assigns
+    # PRIMARY-scoped (documented limitation): see the resume handler.
+    primary = Enum.find(socket.assigns.review_repos, &(&1.repo_id == "primary"))
+
+    repo_path = primary && primary.repo_path
+    branch_name = primary && primary.branch_name
+
+    %{objective: objective, agent_summary: result} = socket.assigns
 
     socket = assign(socket, :action_loading, true)
 
@@ -654,15 +835,21 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("confirm_extract_skills", %{"user_note" => user_note}, socket) do
+    # PRIMARY-scoped (documented limitation): repo-scoped fields (incl. the
+    # commit history for the PR description) come from the "primary" entry
+    # explicitly, never from the flat (active-repo-projected) assigns.
+    primary = Enum.find(socket.assigns.review_repos, &(&1.repo_id == "primary"))
+
     %{
-      repo_path: repo_path,
       title: title,
       objective: objective,
-      agent_summary: summary,
-      base_sha: base_sha,
-      commit_sha: commit_sha,
-      commits: commits
+      agent_summary: summary
     } = socket.assigns
+
+    repo_path = primary && primary.repo_path
+    base_sha = primary && primary.base_sha
+    commit_sha = primary && primary.commit_sha
+    commits = (primary && primary.commits) || []
 
     # Build the commit history string from the CommitInfo list
     commit_history = format_commit_history(commits)
@@ -773,9 +960,16 @@ defmodule EvoDashWeb.ReviewLive do
     else
       case result do
         {:ok, assigns_map} ->
-          socket = assign(socket, assigns_map)
+          socket =
+            socket
+            |> assign(assigns_map)
+            # Stale merge outcomes must not survive a reload (a re-fetched page
+            # starts with a clean per-repo outcome report).
+            |> assign(:merge_outcomes, [])
+
           # The merge check MUST be sequenced here, after the loaded assigns
-          # (merge_targets/branch_name/branch_exists/...) are in place.
+          # (merge_targets/branch_name/branch_exists/...) are in place. load_data
+          # already projects the primary flat assigns, so no re-projection here.
           {:noreply, EvoDashWeb.ReviewLive.MergeCheck.maybe_start(socket)}
 
         {:error, reason} ->
@@ -800,11 +994,15 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:merge_check_result, task_id, node, target, result}, socket) do
-    # Async dry-run merge check finished. Result-shape validation and
-    # stale-message guarding live in the support module.
+  def handle_info({:merge_check_result, task_id, node, repo_id, target, result}, socket) do
+    # Async dry-run merge check finished (tagged per repo). Result-shape
+    # validation and stale-message guarding live in the support module;
+    # re-project afterwards so action_buttons reads the ACTIVE repo's flat
+    # @merge_status.
     {:noreply,
-     EvoDashWeb.ReviewLive.MergeCheck.handle_result(socket, task_id, node, target, result)}
+     socket
+     |> EvoDashWeb.ReviewLive.MergeCheck.handle_result(task_id, node, repo_id, target, result)
+     |> project_active_repo()}
   end
 
   @impl true
@@ -958,32 +1156,109 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
-  # Updates a file's diff in the appropriate data source (commit_data or review_data)
-  # and sets the context level and expanded state.
+  # Updates a file's diff in the appropriate data source (commit_data or
+  # review_data) and sets the context level and expanded state. On the SHOW
+  # route the diff is written into the ACTIVE repo's entry inside
+  # @review_repos, and the diff-state maps (selected_file / expanded_files /
+  # file_context_levels) are updated for that repo; the :commit route keeps
+  # today's legacy flat path-keyed behavior.
   defp update_file_diff_in_socket(socket, path, diff_string, context_level) do
-    data_key =
-      if socket.assigns.live_action == :commit, do: :commit_data, else: :review_data
+    if socket.assigns.live_action == :commit do
+      data = socket.assigns.commit_data
 
-    data = Map.get(socket.assigns, data_key)
+      updated_files =
+        Enum.map(data.files, fn f ->
+          if f.path == path do
+            %{f | diff: diff_string}
+          else
+            f
+          end
+        end)
 
-    updated_files =
-      Enum.map(data.files, fn f ->
-        if f.path == path do
-          %{f | diff: diff_string}
-        else
-          f
-        end
-      end)
+      updated_data = %{data | files: updated_files}
+      expanded_files = Map.put(socket.assigns.expanded_files, path, true)
+      file_context_levels = Map.put(socket.assigns.file_context_levels, path, context_level)
 
-    updated_data = %{data | files: updated_files}
-    expanded_files = Map.put(socket.assigns.expanded_files, path, true)
-    file_context_levels = Map.put(socket.assigns.file_context_levels, path, context_level)
+      assign(socket, [
+        {:commit_data, updated_data},
+        {:expanded_files, expanded_files},
+        {:file_context_levels, file_context_levels}
+      ])
+    else
+      repo_id = socket.assigns.active_repo_id
 
-    assign(socket, [
-      {data_key, updated_data},
-      {:expanded_files, expanded_files},
-      {:file_context_levels, file_context_levels}
-    ])
+      review_repos =
+        Enum.map(socket.assigns.review_repos, fn repo ->
+          if repo.repo_id == repo_id do
+            case repo.review_data do
+              nil ->
+                repo
+
+              data ->
+                updated_files =
+                  Enum.map(data.files, fn f ->
+                    if f.path == path, do: %{f | diff: diff_string}, else: f
+                  end)
+
+                %{repo | review_data: %{data | files: updated_files}}
+            end
+          else
+            repo
+          end
+        end)
+
+      expanded = socket.assigns.expanded_files || %{}
+      expanded_sub = Map.put(Map.get(expanded, repo_id, %{}), path, true)
+      expanded = Map.put(expanded, repo_id, expanded_sub)
+
+      levels = socket.assigns.file_context_levels || %{}
+      levels_sub = Map.put(Map.get(levels, repo_id, %{}), path, context_level)
+      levels = Map.put(levels, repo_id, levels_sub)
+
+      socket
+      |> assign(
+        review_repos: review_repos,
+        selected_file: Map.put(socket.assigns.selected_file || %{}, repo_id, path),
+        expanded_files: expanded,
+        file_context_levels: levels
+      )
+      |> project_active_repo()
+    end
+  end
+
+  # Projects the ACTIVE repo's per-repo data onto the flat assigns the template
+  # and action components read (repo_path/branch_name/commit_sha/base_sha/
+  # branch_exists/review_data/commits/merge_targets/default_merge_target/
+  # merge_status). The :commit route is a NO-OP — it keeps today's legacy flat
+  # path-keyed state (single repo, no review_repos). The diff-state maps
+  # (selected_file / expanded_files / file_context_levels) are NOT re-projected
+  # here: they hold the canonical repo-keyed per-repo state, and the template
+  # reads the ACTIVE repo's submap via inline Map.get (see the :files_changed
+  # tab in render/1). Falls back to the primary entry when the active id is not
+  # found (defensive — switch_repo whitelists, so this only guards reloads).
+  defp project_active_repo(socket) do
+    if socket.assigns.live_action == :commit do
+      socket
+    else
+      active_repo_id = socket.assigns.active_repo_id
+
+      repo =
+        Enum.find(socket.assigns.review_repos, &(&1.repo_id == active_repo_id)) ||
+          Enum.find(socket.assigns.review_repos, &(&1.repo_id == "primary"))
+
+      assign(socket,
+        repo_path: repo && repo.repo_path,
+        branch_name: repo && repo.branch_name,
+        commit_sha: repo && repo.commit_sha,
+        base_sha: repo && repo.base_sha,
+        branch_exists: (repo && repo.branch_exists) || false,
+        review_data: repo && repo.review_data,
+        commits: (repo && repo.commits) || [],
+        merge_targets: (repo && repo.merge_targets) || [],
+        default_merge_target: repo && repo.default_merge_target,
+        merge_status: repo && repo.merge_status
+      )
+    end
   end
 
   defp file_path_to_id(path) do
