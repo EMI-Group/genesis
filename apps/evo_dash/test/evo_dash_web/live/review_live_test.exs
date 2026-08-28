@@ -724,18 +724,53 @@ defmodule EvoDashWeb.ReviewLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      # The task does not exist on the (unreachable) remote node — the page
-      # renders the graceful error state, but merge_check_result injection and
-      # the auto_resolve event still operate on the assigns.
+      # The task does not exist on the (unreachable) remote node — the real
+      # async load fails fast with :nodedown and the page renders the graceful
+      # error state (review_repos stays []). The merge-check result handler
+      # drops results for repo ids absent from @review_repos (per-repo
+      # stale-guard), so to reach the auto-resolve RPC-failure path we first
+      # inject a VALID load result carrying a primary review-repo entry (with
+      # branch_exists: false and merge_targets: [] so MergeCheck.maybe_start
+      # does NOT spawn an async check — fully deterministic), then inject the
+      # conflict result for "primary".
       {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
 
-      # Flush the async load (it fails fast with :nodedown → error state) so
-      # the injected merge result cannot be clobbered by the load's assigns
-      # map (which resets merge_status to nil).
+      # Flush the real async load (nodedown → error state) so the injected
+      # load result cannot be clobbered by a racing message.
       flush_review_load(view)
 
       remote_node = assigns(view)[:current_node]
       assert remote_node != node()
+
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, "some-remote-task-id", remote_node, gen,
+         {:ok,
+          %{
+            review_repos: [
+              %{
+                repo_id: "primary",
+                repo_path: "/nonexistent/repo/path",
+                branch_name: "evogit/test-branch",
+                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                base_sha: nil,
+                branch_exists: false,
+                review_data: nil,
+                commits: [],
+                merge_targets: [],
+                default_merge_target: nil,
+                merge_status: nil
+              }
+            ],
+            active_repo_id: "primary",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
 
       send(
         view.pid,
@@ -1092,6 +1127,21 @@ defmodule EvoDashWeb.ReviewLiveTest do
         "evogit_review_merge_test_" <> to_string(System.unique_integer([:positive]))
       )
 
+    {change_sha, _primary} = build_repo_with_task_branch!(tmp_dir, primary, secondary)
+    task_id = seed_review_task!(tmp_dir, change_sha)
+
+    on_exit(fn ->
+      rm_rf_retry(tmp_dir)
+    end)
+
+    {tmp_dir, task_id, change_sha}
+  end
+
+  # Builds a temp git repo at `tmp_dir` with the given primary branch (plus an
+  # optional secondary branch at the base commit), an agent `task-branch` with
+  # a change commit on top of the primary branch, checked back out to the
+  # primary branch. Returns {change_sha, primary_branch}.
+  defp build_repo_with_task_branch!(tmp_dir, primary, secondary) do
     File.mkdir_p!(tmp_dir)
     git!(tmp_dir, ["init"])
     git!(tmp_dir, ["config", "user.email", "test@example.com"])
@@ -1120,13 +1170,85 @@ defmodule EvoDashWeb.ReviewLiveTest do
     {change_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: tmp_dir)
     git!(tmp_dir, ["checkout", primary])
 
-    task_id = seed_review_task!(tmp_dir, String.trim(change_sha))
+    {String.trim(change_sha), primary}
+  end
+
+  # Multi-repo variant of create_review_task_with_repo!: builds a PRIMARY temp
+  # repo AND a writable FOREIGN temp repo ("original"), each with its own
+  # task-branch + change commit, and seeds a completed review task whose opts
+  # carry the foreign_repos and whose result carries the per-repo `repos` map.
+  # Returns {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha}.
+  defp create_multi_repo_review_task!(primary, secondary) do
+    primary_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_review_multi_primary_" <> to_string(System.unique_integer([:positive]))
+      )
+
+    {primary_sha, _} = build_repo_with_task_branch!(primary_dir, primary, secondary)
+
+    foreign_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_review_multi_foreign_" <> to_string(System.unique_integer([:positive]))
+      )
+
+    {foreign_sha, _} = build_repo_with_task_branch!(foreign_dir, primary, secondary)
+
+    task_id =
+      seed_multi_repo_task!(primary_dir, primary_sha, [
+        %{"id" => "original", "root" => foreign_dir, "writable" => true}
+      ], %{
+        "primary" => %{"commit_sha" => primary_sha, "branch_name" => "task-branch"},
+        "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"}
+      })
 
     on_exit(fn ->
-      rm_rf_retry(tmp_dir)
+      rm_rf_retry(foreign_dir)
     end)
 
-    {tmp_dir, task_id, String.trim(change_sha)}
+    {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha}
+  end
+
+  # Seeds a completed review task with per-repo result data: `foreign_repos`
+  # (string-keyed maps — the Store-codec round-trip shape the review page
+  # reads) in opts and a top-level `repos` map (string keys) in the result.
+  # The `repos` key is NOT in the Store codec's known result fields, so it
+  # round-trips as a STRING key — matching what the page actually reads.
+  defp seed_multi_repo_task!(repo_path, change_sha, foreign_repos, repos_map) do
+    task_id = "review_test_multi_#{System.unique_integer([:positive])}"
+
+    task = %TaskInfo{
+      id: task_id,
+      type: :evolve,
+      status: :completed,
+      opts: [path: repo_path, objective: "Test objective", foreign_repos: foreign_repos],
+      ref: nil,
+      started_at: DateTime.utc_now(),
+      finished_at: DateTime.utc_now(),
+      logs: [],
+      review_status: nil,
+      result:
+        {:ok,
+         %{
+           commit_sha: change_sha,
+           branch_name: "task-branch",
+           result: "Agent summary",
+           pr_url: nil,
+           pr_title: nil,
+           repos: repos_map
+         }}
+    }
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      TaskRegistry.delete_task(task_id)
+      # Synchronize the deletion cast.
+      TaskRegistry.list_tasks()
+    end)
+
+    task_id
   end
 
   # Removes a temp repo dir with retries (defense in depth): a spawned merge
