@@ -183,6 +183,13 @@ defmodule EvoGit.Agent.Runner do
     Process.put(:genesis_repo_root, repo_root)
     Process.put(:evogit_repo_id, repo_id)
 
+    # Expose the agent's foreign repos to the tool layer: the dispatch-level
+    # write gate (`EvoGit.Agent.Tools.maybe_block_read_only_foreign_repo/5`)
+    # and the path-level scope check
+    # (`EvoGit.Agent.Tools.Shared.validate_file_scope/3`) read this key to
+    # determine whether the agent operates inside a read-only foreign repo.
+    Process.put(:foreign_repos, spec.foreign_repos || [])
+
     # Custom agents (EvoGit.Agents.Custom) resolve their definition at runtime
     # from this process-dict key, set from the spec before the agent loop starts
     # (their callbacks are zero-arity, so the spec cannot be passed directly).

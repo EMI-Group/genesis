@@ -40,8 +40,9 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.ListRecentProjects
   alias EvoGit.Agent.Tools.SystemInfo
 
-  # Tools that mutate the system (files, git, skills). Repo-less agents
-  # (chatbot-style, no worktree) must never touch git or write files —
+  # Tools that mutate the system (files, git, shell, skills). Repo-less agents
+  # (chatbot-style, no worktree) must never touch git or write files, and
+  # agents operating inside a READ-ONLY foreign repo must not modify anything —
   # `execute/5` blocks these for such agents as defense-in-depth.
   @write_tools [
     "create_files",
@@ -52,6 +53,8 @@ defmodule EvoGit.Agent.Tools do
     "edit_context",
     "run_bash",
     "run_powershell",
+    "run_git",
+    "curl",
     "skill_add",
     "skill_edit",
     "skill_remove",
@@ -116,6 +119,19 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   Returns the list of read-only tool schemas shared by read-only agents
   (Investigator, ContextExtractor).
+
+  ## Reconciliation with the foreign-repo role gate
+
+  `Curl.schema()` was REMOVED — `curl` has no legitimate read-only role (it is
+  not part of the default `schemas/0` set either) and it is a write-capable
+  tool. `Context.write_schema()`/`Context.edit_schema()` and
+  `ShellTool.schema()` are KEPT by design: read-only agents (Investigator,
+  ContextExtractor) must still (a) update CONTEXT.md in their OWN repo — the
+  documented investigator contract — and (b) run tests/diagnostics
+  (`mix test`) in their own repo via ShellTool. Their WRITE usage inside
+  READ-ONLY foreign repos is now blocked by the dispatch-level foreign-repo
+  role gate (`maybe_block_read_only_foreign_repo/5`), which treats
+  `run_git`/`curl` as write tools alongside the file/shell/skill writers.
   """
   def read_only_schemas do
     schemas =
@@ -127,7 +143,6 @@ defmodule EvoGit.Agent.Tools do
         Context.read_schema(),
         Context.write_schema(),
         Context.edit_schema(),
-        Curl.schema(),
         ShellTool.schema(),
         SearchContext.schema(),
         SearchHistory.schema()
@@ -183,10 +198,51 @@ defmodule EvoGit.Agent.Tools do
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
   # must never touch git or write files. Block write tools for them before
   # dispatching; every execution path in `execute/5` routes through here so
-  # there is no bypass.
+  # there is no bypass. The repo-less guard runs FIRST (ordered before the
+  # foreign-repo gate), then the foreign-repo gate, then `execute_tool`.
   defp maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path) do
     if Process.get(:repo_less) && tool_name in @write_tools do
       "Error: this agent has read-only access to the system — the #{tool_name} tool is disabled."
+    else
+      maybe_block_read_only_foreign_repo(tool_name, args, repo_path, repo_root, node_path)
+    end
+  end
+
+  # Defense-in-depth write gate for agents operating inside a READ-ONLY
+  # foreign repo. The agent's current repo role is resolved from the process
+  # dict: `:evogit_repo_id` is matched against the `:foreign_repos` entries by
+  # id (primary lookup); when that finds nothing (nil/"primary" id, or an id
+  # not in the list) the agent's repo path is resolved against the foreign
+  # repos via `EvoGit.Core.ForeignRepo.resolve_path/2` (root-path fallback —
+  # agent worktree paths live under `<root>/.genesis/workers/...`, which the
+  # prefix logic handles robustly). When the agent runs inside a foreign repo
+  # whose `writable` is not literally `true`, every write tool is blocked
+  # before dispatch. Only `true` is writable — `ForeignRepo.new/3` coerces.
+  defp maybe_block_read_only_foreign_repo(tool_name, args, repo_path, repo_root, node_path) do
+    foreign_repos =
+      Process.get(:foreign_repos, [])
+      |> Enum.map(&EvoGit.Core.ForeignRepo.normalize/1)
+      |> Enum.reject(&is_nil/1)
+
+    repo_id = Process.get(:evogit_repo_id)
+
+    resolved_repo =
+      Enum.find(foreign_repos, fn repo -> repo.id == repo_id end) ||
+        case EvoGit.Core.ForeignRepo.resolve_path(
+               foreign_repos,
+               Process.get(:repo_path) || repo_path
+             ) do
+          {:ok, resolved_id, _rel} ->
+            Enum.find(foreign_repos, fn repo -> repo.id == resolved_id end)
+
+          {:error, :not_in_any_repo} ->
+            nil
+        end
+
+    if resolved_repo && resolved_repo.writable != true && tool_name in @write_tools do
+      "Error: this agent operates in a read-only foreign repository (#{resolved_repo.root}) — " <>
+        "the #{tool_name} tool is disabled. Writable foreign repos are the only foreign repos " <>
+        "that accept modifications; read-only foreign repos are for investigation only."
     else
       execute_tool(tool_name, args, repo_path, repo_root, node_path)
     end

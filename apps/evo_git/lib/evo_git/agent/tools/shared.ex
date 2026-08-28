@@ -300,34 +300,44 @@ defmodule EvoGit.Agent.Tools.Shared do
   Validates that a file path is within the agent's assigned node scope.
   Returns :ok if valid, {:error, message} if the path is outside the scope
   or is an absolute path outside the repository root.
+
+  Also rejects (defense-in-depth, behind the dispatch-level gate in
+  `EvoGit.Agent.Tools`) any path that resolves to a READ-ONLY foreign repo —
+  read-only foreign repos are for investigation only.
   """
   def validate_file_scope(expanded_path, node_path, repo_path) when is_binary(node_path) do
-    # Get the relative path from repo_path.
-    # If expanded_path is outside repo_path, Path.relative_to/2 returns it
-    # unchanged (still absolute) — detect that and return a clear error.
-    relative_path = Path.relative_to(expanded_path, repo_path)
+    case read_only_foreign_repo_error(expanded_path) do
+      nil ->
+        # Get the relative path from repo_path.
+        # If expanded_path is outside repo_path, Path.relative_to/2 returns it
+        # unchanged (still absolute) — detect that and return a clear error.
+        relative_path = Path.relative_to(expanded_path, repo_path)
 
-    cond do
-      # Path is outside the repository root (Path.relative_to returned it
-      # unchanged and it's still absolute).
-      EvoGit.Platform.absolute_path?(relative_path) ->
-        {:error, format_outside_repo_error(expanded_path)}
+        cond do
+          # Path is outside the repository root (Path.relative_to returned it
+          # unchanged and it's still absolute).
+          EvoGit.Platform.absolute_path?(relative_path) ->
+            {:error, format_outside_repo_error(expanded_path)}
 
-      true ->
-        # Normalize for comparison. normalize_relpath may return {:error, _}
-        # for any remaining absolute path edge cases — propagate it.
-        with normalized_target when is_binary(normalized_target) <-
-               normalize_relpath(relative_path),
-             normalized_node when is_binary(normalized_node) <-
-               normalize_relpath(node_path) do
-          if is_child_or_same_node?(normalized_node, normalized_target) do
-            :ok
-          else
-            {:error, format_scope_error(relative_path, node_path)}
-          end
-        else
-          {:error, _message} = error -> error
+          true ->
+            # Normalize for comparison. normalize_relpath may return {:error, _}
+            # for any remaining absolute path edge cases — propagate it.
+            with normalized_target when is_binary(normalized_target) <-
+                   normalize_relpath(relative_path),
+                 normalized_node when is_binary(normalized_node) <-
+                   normalize_relpath(node_path) do
+              if is_child_or_same_node?(normalized_node, normalized_target) do
+                :ok
+              else
+                {:error, format_scope_error(relative_path, node_path)}
+              end
+            else
+              {:error, _message} = error -> error
+            end
         end
+
+      message ->
+        {:error, message}
     end
   end
 
@@ -335,6 +345,37 @@ defmodule EvoGit.Agent.Tools.Shared do
     # If no node_path assigned, allow all (backward compatibility)
     :ok
   end
+
+  # Returns an error message string when `path` resolves to a READ-ONLY foreign
+  # repo, or nil otherwise (primary repo, writable foreign repo, or no repo
+  # match). Defense-in-depth behind the dispatch-level write gate in
+  # `EvoGit.Agent.Tools` — the target of a file write must never live inside a
+  # read-only foreign repo (investigation only). Foreign repos take precedence
+  # over the primary repo in `resolve_path/2` (paths overlap is unlikely but
+  # possible), matching the resolve order used everywhere else.
+  defp read_only_foreign_repo_error(path) when is_binary(path) do
+    foreign_repos =
+      Process.get(:foreign_repos, [])
+      |> Enum.map(&EvoGit.Core.ForeignRepo.normalize/1)
+      |> Enum.reject(&is_nil/1)
+
+    case EvoGit.Core.ForeignRepo.resolve_path(foreign_repos, path) do
+      {:ok, repo_id, _rel} ->
+        case Enum.find(foreign_repos, fn repo -> repo.id == repo_id end) do
+          %EvoGit.Core.ForeignRepo{writable: false, root: root} ->
+            "Path '#{path}' is inside a read-only foreign repository ('#{root}'). " <>
+              "Read-only foreign repos are for investigation only — modifications are not permitted."
+
+          _ ->
+            nil
+        end
+
+      {:error, :not_in_any_repo} ->
+        nil
+    end
+  end
+
+  defp read_only_foreign_repo_error(_path), do: nil
 
   defp format_outside_repo_error(path) do
     display = if is_binary(path), do: path, else: inspect(path)
