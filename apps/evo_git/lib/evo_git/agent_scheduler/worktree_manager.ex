@@ -31,6 +31,12 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       preserving live agents' worktrees; it dies with the app, so a genuine
       BEAM restart (no live agents) re-runs the full wipe. Reading/writing is
       defensive via `:ets.whereis` (a missing table means "uninitialized").
+    * The destructive steps (rm_rf workers base + orphaned `evogit-agent-*`
+      branch cleanup) run for the PRIMARY repo only (`primary?` flag, derived
+      at the call sites from `spec.repo_id` via `ForeignRepo.primary?/1`).
+      Foreign repos — which may be writable per-task and hold real
+      `evogit-agent-*` task branches — get only the non-destructive prune +
+      workers-dir ensure + init marker.
     * On restart, live agents are re-monitored from their scheduler ETS rows
       (`:evogit_sched_meta` worktree + task_ref, `:evogit_agent_state`
       repo_root + task_local_id), so `:DOWN`-driven cleanup keeps working for
