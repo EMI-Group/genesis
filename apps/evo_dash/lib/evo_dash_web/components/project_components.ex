@@ -417,6 +417,9 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
   attr(:remote, :boolean, default: false)
+  attr(:new_repo_base_sha, :string, default: "")
+  attr(:editing_foreign_repo_id, :string, default: nil)
+  attr(:foreign_repo_edit_form, :map, default: nil)
 
   def project_settings_panel(assigns) do
     ~H"""
@@ -469,6 +472,9 @@ defmodule EvoDashWeb.ProjectComponents do
   attr(:tauri_detected, :boolean, default: false)
   attr(:platform, :string, default: "linux")
   attr(:remote, :boolean, default: false)
+  attr(:new_repo_base_sha, :string, default: "")
+  attr(:editing_foreign_repo_id, :string, default: nil)
+  attr(:foreign_repo_edit_form, :map, default: nil)
 
   def project_settings_tab(assigns) do
     ~H"""
@@ -565,28 +571,133 @@ defmodule EvoDashWeb.ProjectComponents do
               if ForeignRepo.primary?(repo.id), do: "bg-primary", else: "bg-secondary/60" %>
             <% badge_class =
               if ForeignRepo.primary?(repo.id), do: "badge-primary", else: "badge-ghost" %>
+            <% edit_form = Map.get(assigns, :foreign_repo_edit_form) || %{} %>
             <div class="bg-base-100 rounded-lg p-2.5 border border-base-200 relative group flex flex-col gap-1 hover:border-secondary/30 transition-colors">
               <div class={"absolute left-0 top-0 bottom-0 w-1 rounded-l-lg #{accent_class}"}></div>
-              <div class="flex items-center justify-between ml-2">
-                <span class={"badge #{badge_class} badge-sm font-mono"}>
-                  {repo.id}
+              <div class="flex items-center justify-between ml-2 gap-2">
+                <span class="flex items-center gap-1.5 min-w-0">
+                  <span class={"badge #{badge_class} badge-sm font-mono shrink-0"}>
+                    {repo.id}
+                  </span>
+                  <%= if repo.writable do %>
+                    <span class="badge badge-warning badge-sm shrink-0"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                      "Writable"
+                    )}</span>
+                  <% end %>
+                  <%= if repo.base_sha do %>
+                    <code
+                      class="text-xs font-mono text-base-content/70 truncate"
+                      title={repo.base_sha}
+                    >
+                      {repo.base_sha}
+                    </code>
+                  <% end %>
                 </span>
                 <%= unless ForeignRepo.primary?(repo.id) do %>
-                  <button
-                    class="btn btn-ghost btn-xs text-error opacity-0 group-hover:opacity-100 transition-opacity"
-                    phx-click="remove_foreign_repo"
-                    phx-value-repo_id={repo.id}
-                  >
-                    <.icon name="hero-trash" class="size-3" />
-                  </button>
+                  <span class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      phx-click="edit_foreign_repo"
+                      phx-value-repo_id={repo.id}
+                    >
+                      <.icon name="hero-pencil" class="size-3" />
+                    </button>
+                    <button
+                      class="btn btn-ghost btn-xs text-error"
+                      phx-click="remove_foreign_repo"
+                      phx-value-repo_id={repo.id}
+                    >
+                      <.icon name="hero-trash" class="size-3" />
+                    </button>
+                  </span>
                 <% end %>
               </div>
-              <div class="ml-2 mt-1">
-                <span class="text-xs font-mono block truncate" title={repo.root}>{repo.root}</span>
-                <%= if repo.description do %>
-                  <span class="text-xs text-base-content/50 block mt-0.5">{repo.description}</span>
-                <% end %>
-              </div>
+              <%= if Map.get(assigns, :editing_foreign_repo_id) == repo.id do %>
+                <div class="ml-2 mt-1 border-t border-base-200 pt-2">
+                  <.form for={%{}} phx-submit="save_foreign_repo" class="space-y-2">
+                    <div>
+                      <label class="label py-1">
+                        <span class="label-text text-xs font-medium">{gettext("Repo ID")}</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="repo_id"
+                        value={Map.get(edit_form, :repo_id, repo.id)}
+                        readonly
+                        class="input input-bordered input-sm w-full font-mono opacity-60"
+                      />
+                    </div>
+                    <div>
+                      <label class="label py-1">
+                        <span class="label-text text-xs font-medium">{gettext("Path")}</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="path"
+                        value={Map.get(edit_form, :path, repo.root)}
+                        class="input input-bordered input-sm w-full font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label class="label py-1">
+                        <span class="label-text text-xs font-medium">{gettext(
+                          "Description (optional)"
+                        )}</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="description"
+                        value={Map.get(edit_form, :description, repo.description)}
+                        placeholder={gettext("Short description of what this repo does")}
+                        class="input input-bordered input-sm w-full"
+                      />
+                    </div>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        name="writable"
+                        value="true"
+                        class="checkbox checkbox-sm checkbox-warning"
+                        checked={Map.get(edit_form, :writable, repo.writable) in [true, "true"]}
+                      />
+                      <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                        "Writable"
+                      )}</span>
+                    </label>
+                    <div>
+                      <label class="label py-1">
+                        <span class="label-text text-xs font-medium">{gettext("Starting Commit")}</span>
+                      </label>
+                      <input
+                        type="text"
+                        name="base_sha"
+                        value={Map.get(edit_form, :base_sha, repo.base_sha)}
+                        placeholder={gettext("branch or SHA, blank = HEAD")}
+                        class="input input-bordered input-sm w-full font-mono"
+                      />
+                    </div>
+                    <div class="flex gap-2">
+                      <button type="submit" class="btn btn-primary btn-xs flex-1 gap-1">
+                        <.icon name="hero-check" class="size-3" /> {gettext("Save")}
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-xs"
+                        phx-click="cancel_edit_foreign_repo"
+                      >
+                        {gettext("Cancel")}
+                      </button>
+                    </div>
+                  </.form>
+                </div>
+              <% else %>
+                <div class="ml-2 mt-1">
+                  <span class="text-xs font-mono block truncate" title={repo.root}>{repo.root}</span>
+                  <%= if repo.description do %>
+                    <span class="text-xs text-base-content/50 block mt-0.5">{repo.description}</span>
+                  <% end %>
+                </div>
+              <% end %>
             </div>
           <% end %>
         </div>
@@ -661,6 +772,36 @@ defmodule EvoDashWeb.ProjectComponents do
                 value={@new_repo_description}
                 placeholder={gettext("Short description of what this repo does")}
                 class="input input-bordered input-sm w-full"
+              />
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                name="writable"
+                value="true"
+                class="checkbox checkbox-sm checkbox-warning"
+              />
+              <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                "Writable"
+              )}
+              <.tip text={
+                gettext(
+                  "Writable foreign repos get their own worktree and evogit-agent-* branch, are tracked in the task report, but are never merged by the task."
+                )
+              } /></span>
+            </label>
+            <div>
+              <label class="label py-1">
+                <span class="label-text text-xs font-medium">{gettext("Starting Commit")}
+                <%!-- zh_CN: 起始提交：分支名或提交哈希，留空表示 HEAD --%>
+                <.tip text={gettext("Branch name or commit SHA, blank = HEAD")} /></span>
+              </label>
+              <input
+                type="text"
+                name="base_sha"
+                value={Map.get(assigns, :new_repo_base_sha, "")}
+                placeholder={gettext("branch or SHA, blank = HEAD")}
+                class="input input-bordered input-sm w-full font-mono"
               />
             </div>
             <div class="flex gap-2">
