@@ -175,6 +175,35 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     id
   end
 
+  # Waits (bounded) for a launched task to reach a terminal status so its
+  # wrapper process has stopped writing under the project's `.genesis/`
+  # directory — otherwise the setup's on_exit File.rm_rf!(tmp_dir) can
+  # race a still-running wrapper and raise EEXIST. Best-effort: on timeout
+  # the test proceeds (the on_exit cleanups are rescued).
+  defp wait_for_task_terminal(id, timeout_ms \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    loop = fn loop ->
+      case EvoGit.TaskRegistry.get_task(id) do
+        nil ->
+          :ok
+
+        %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
+          :ok
+
+        _ ->
+          if System.monotonic_time(:millisecond) < deadline do
+            Process.sleep(50)
+            loop.(loop)
+          else
+            :ok
+          end
+      end
+    end
+
+    loop.(loop)
+  end
+
   # Decoded task opts are a list of mixed atom/string-key tuples (the Store
   # codec atomizes only its whitelist), so string keys must be looked up via
   # Map.new — Access.get/3 and Keyword.has_key?/2 reject non-atom keys on
@@ -2552,6 +2581,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
+
+      # cancel_task/1 is graceful+async: the wrapper runs its grace turns and
+      # only then persists the terminal status. Wait for the terminal status so
+      # the wrapper has stopped writing under tmp_dir/.genesis/ before the
+      # setup's on_exit File.rm_rf!(tmp_dir) runs.
+      wait_for_task_terminal(task_id)
+
+      # Re-fetch AFTER the wait — the wrapper's final-status persistence may
+      # rewrite the row (the codec round-trip of :foreign_repos is unchanged).
       task = EvoGit.TaskRegistry.get_task(task_id)
 
       # :foreign_repos is in the codec's known-opt-key whitelist, so the key
