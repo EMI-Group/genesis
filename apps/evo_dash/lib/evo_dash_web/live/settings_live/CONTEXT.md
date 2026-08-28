@@ -139,6 +139,7 @@ Each `[[llm.models]]` profile supports two OPTIONAL fields for time-based concur
 - `start != end` → error `"peak_hours_start_equals_end"`.
 - Windows pairwise non-overlapping (strict overlap `startA < endB && startB < endA`; touching boundaries e.g. `[09:00,12:00]`+`[12:00,15:00]` allowed) → error `"peak_hours_overlap"`.
 - All rows fully blank → `peak_hours` omitted.
+- **Known gap — overnight-window overlap misses**: the minutes-since-midnight strict-interval check treats overnight windows (`start > end`) as single segments, so two overnight windows that genuinely overlap (e.g. `[22:00,06:00]` + `[23:00,07:00]`) pass dashboard validation but are rejected by the evo_git schema (`EvoGit.PeakHours.validate_windows`, overnight-vs-same-day + identical-window overlaps) → the save fails LOUDLY via `Schema.validate` ("Failed to save configuration"), never silently corrupts. Single overnight windows are legal end-to-end.
 
 `save_model_profile/2` maps the four error strings to user-facing gettext error flashes.
 
