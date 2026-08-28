@@ -170,15 +170,18 @@ defmodule EvoGit.Agent.SubagentProcessing do
               ContextNode.load(path, target_repo_root, target_repo_id)
             end
 
-          # For foreign repo subagents, we need the foreign repo's HEAD commit (the primary
-          # repo's commit SHA doesn't exist in the foreign repo's git database).
+          # For foreign repo subagents, we need the foreign repo's starting commit (the
+          # primary repo's commit SHA doesn't exist in the foreign repo's git database).
+          # The foreign repos list is threaded through so the per-repo `base_sha`
+          # starting commit can be honored (see build_subagent_phylo_node/7).
           case build_subagent_phylo_node(
                  target_repo_id,
                  commit_id,
                  repo_path,
                  target_repo_root,
                  foreign_repo_commits,
-                 parent_state
+                 parent_state,
+                 foreign_repos
                ) do
             {:ok, sub_phylo_node} ->
               AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
@@ -578,7 +581,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
          repo_path,
          _target_repo_root,
          _foreign_repo_commits,
-         parent_state
+         parent_state,
+         _foreign_repos
        ) do
     if commit_id do
       case Git.rev_parse(repo_path, commit_id) do
@@ -612,27 +616,98 @@ defmodule EvoGit.Agent.SubagentProcessing do
          _repo_path,
          target_repo_root,
          foreign_repo_commits,
-         _parent_state
+         _parent_state,
+         foreign_repos
        ) do
-    # Foreign repo subagent: use tracked commit from previous subagent completions,
-    # falling back to the foreign repo's HEAD if no tracked commit exists.
-    tracked_commit = Map.get(foreign_repo_commits, target_repo_id)
+    # Foreign repo subagent: resolve the phylo node's starting commit with this
+    # precedence:
+    #   1. The foreign repo entry's per-repo `base_sha` (the task-level starting
+    #      commit for this repo, when non-nil) — resolved in the foreign repo.
+    #   2. The tracked commit from previous subagent completions in this repo
+    #      (the `foreign_repo_commits` map — the previous subagent's latest
+    #      commit in this foreign repo).
+    #   3. The foreign repo's HEAD (existing behavior).
+    #
+    # A missing/invalid foreign repo path (a git error or `{:error, {:enoent, _}}`
+    # from `Git.run/2`'s pre-check) surfaces as a descriptive `{:error, msg}` so
+    # the caller feeds it back to the LLM — never a bare MatchError crash.
+    repo_entry =
+      foreign_repos
+      |> Enum.map(&ForeignRepo.normalize/1)
+      |> Enum.find(&(&1 && &1.id == target_repo_id))
 
-    {base, current} =
-      if tracked_commit do
-        {tracked_commit, tracked_commit}
-      else
-        {:ok, foreign_head} = Git.rev_parse(target_repo_root)
-        {foreign_head, foreign_head}
-      end
+    case resolve_foreign_phylo_commit(
+           target_repo_id,
+           target_repo_root,
+           repo_entry,
+           foreign_repo_commits
+         ) do
+      {:ok, commit} ->
+        {:ok,
+         %PhyloGraphNode{
+           repo: target_repo_root,
+           base_commit: commit,
+           current_commit: commit
+         }}
 
-    {:ok,
-     %PhyloGraphNode{
-       repo: target_repo_root,
-       base_commit: base,
-       current_commit: current
-     }}
+      {:error, msg} ->
+        {:error, msg}
+    end
   end
+
+  # Resolves the starting commit for a foreign-repo subagent phylo node.
+  #
+  # Precedence:
+  #   1. The foreign repo entry's per-repo `base_sha` (when non-nil) — the
+  #      task-level starting commit for this repo, resolved in the foreign repo.
+  #   2. The tracked commit from previous subagent completions in this repo.
+  #   3. The foreign repo's HEAD.
+  #
+  # Returns `{:ok, sha}` or `{:error, msg}` — never raises.
+  defp resolve_foreign_phylo_commit(
+         target_repo_id,
+         target_repo_root,
+         repo_entry,
+         foreign_repo_commits
+       ) do
+    base_sha = if repo_entry, do: repo_entry.base_sha, else: nil
+
+    if is_binary(base_sha) and base_sha != "" do
+      case Git.rev_parse(target_repo_root, base_sha) do
+        {:ok, sha} ->
+          {:ok, sha}
+
+        {:error, error} ->
+          {:error,
+           "Error: base commit '#{base_sha}' for foreign repository '#{target_repo_id}' does not exist in that repository's history." <>
+             git_error_detail(error)}
+      end
+    else
+      case Map.get(foreign_repo_commits, target_repo_id) do
+        nil ->
+          case Git.rev_parse(target_repo_root) do
+            {:ok, foreign_head} ->
+              {:ok, foreign_head}
+
+            {:error, error} ->
+              {:error,
+               "Error: foreign repository path does not exist or is not a git repository: #{target_repo_root}" <>
+                 git_error_detail(error)}
+          end
+
+        tracked_commit ->
+          {:ok, tracked_commit}
+      end
+    end
+  end
+
+  # Appends git's error detail (the `{code, msg}` / `{:enoent, msg}` shapes from
+  # `Git.run/2`) when available; empty string otherwise.
+  defp git_error_detail({code, msg}) when is_integer(code) and is_binary(msg),
+    do: " Git error: #{code}: #{msg}"
+
+  defp git_error_detail({:enoent, msg}) when is_binary(msg), do: " Git error: #{msg}"
+  defp git_error_detail(_other), do: ""
 
   # Looks up the agent module for a given subagent tool name.
   # Accesses the agent's `subagent_modules/0` via state.

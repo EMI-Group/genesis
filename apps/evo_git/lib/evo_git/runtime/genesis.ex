@@ -62,7 +62,7 @@ defmodule EvoGit.Runtime.Genesis do
          |> AgentScheduler.run_agent() do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(Keyword.get(opts, :task_id))
-        Helpers.merge_and_report(repo_path, agent_output, "genesis")
+        Helpers.merge_and_report(repo_path, agent_output, "genesis", foreign_repos)
 
       error ->
         Logger.error("Genesis Mode A failed: #{inspect(error)}")
@@ -223,17 +223,25 @@ defmodule EvoGit.Runtime.Genesis do
         combined_archive_records =
           (architect_output.archive_records || []) ++ (manager_output.archive_records || [])
 
-        merged_result = %Result{
-          result:
-            "## Architecture Phase\n#{architect_report}\n\n## Implementation Phase\n#{manager_output.result || "(No report)"}",
-          commit_sha: manager_output.commit_sha,
-          tag: manager_output.tag || architect_output.tag,
-          usage: combined_usage,
-          agent_count: combined_agent_count,
-          archive_records: combined_archive_records
-        }
+        merged_result =
+          %Result{
+            result:
+              "## Architecture Phase\n#{architect_report}\n\n## Implementation Phase\n#{manager_output.result || "(No report)"}",
+            commit_sha: manager_output.commit_sha,
+            tag: manager_output.tag || architect_output.tag,
+            usage: combined_usage,
+            agent_count: combined_agent_count,
+            archive_records: combined_archive_records
+          }
+          |> Map.put(
+            :foreign_repo_commits,
+            Map.merge(
+              Map.get(architect_output, :foreign_repo_commits, %{}),
+              Map.get(manager_output, :foreign_repo_commits, %{})
+            )
+          )
 
-        Helpers.merge_and_report(repo_path, merged_result, "genesis")
+        Helpers.merge_and_report(repo_path, merged_result, "genesis", foreign_repos)
 
       error ->
         Logger.warning(
@@ -242,7 +250,7 @@ defmodule EvoGit.Runtime.Genesis do
         )
 
         Helpers.notify_finalizing(task_id)
-        Helpers.merge_and_report(repo_path, architect_output, "genesis")
+        Helpers.merge_and_report(repo_path, architect_output, "genesis", foreign_repos)
     end
   end
 

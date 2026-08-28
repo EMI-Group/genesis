@@ -31,6 +31,12 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       preserving live agents' worktrees; it dies with the app, so a genuine
       BEAM restart (no live agents) re-runs the full wipe. Reading/writing is
       defensive via `:ets.whereis` (a missing table means "uninitialized").
+    * The destructive steps (rm_rf workers base + orphaned `evogit-agent-*`
+      branch cleanup) run for the PRIMARY repo only (`primary?` flag, derived
+      at the call sites from `spec.repo_id` via `ForeignRepo.primary?/1`).
+      Foreign repos — which may be writable per-task and hold real
+      `evogit-agent-*` task branches — get only the non-destructive prune +
+      workers-dir ensure + init marker.
     * On restart, live agents are re-monitored from their scheduler ETS rows
       (`:evogit_sched_meta` worktree + task_ref, `:evogit_agent_state`
       repo_root + task_local_id), so `:DOWN`-driven cleanup keeps working for
@@ -141,7 +147,9 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         # task's destroy-before-create handles the old worktree.
         Process.demonitor(old_ref, [:flush])
         state = %{state | monitors: Map.delete(state.monitors, old_ref)}
-        state = maybe_init_repo(state, repo_root)
+
+        state =
+          maybe_init_repo(state, repo_root, EvoGit.Core.ForeignRepo.primary?(spec.repo_id))
 
         state =
           start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
@@ -149,7 +157,8 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         {:noreply, state}
 
       nil ->
-        state = maybe_init_repo(state, repo_root)
+        state =
+          maybe_init_repo(state, repo_root, EvoGit.Core.ForeignRepo.primary?(spec.repo_id))
 
         state =
           start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
@@ -265,7 +274,15 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # - Table missing entirely (`:ets.whereis` → `:undefined`, e.g. tests that
   #   do not start the app) → treated as marker absent → full wipe, mirroring
   #   the `:evogit_cancelling_tasks` defensive pattern.
-  defp maybe_init_repo(state, repo_root) do
+  #
+  # `primary?` scopes the DESTRUCTIVE steps to the primary repo: writable
+  # foreign repos may hold REAL task work (`evogit-agent-*` branches + live
+  # worktrees from previous runs), so their lazy init must never rm_rf the
+  # workers base nor delete orphaned agent branches. The non-destructive
+  # `Git.prune_worktrees` (admin metadata only), the loud workers-dir ensure,
+  # and the per-repo init marker run for BOTH primary and foreign repos —
+  # lazy init + the marker-gated skip path are still needed for foreign repos.
+  defp maybe_init_repo(state, repo_root, primary?) do
     worker_base = workers_dir(repo_root)
 
     if worktree_repo_initialized?(repo_root) do
@@ -278,27 +295,30 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     else
       Logger.info("WorktreeManager: Initializing worktree directory at #{worker_base}")
 
-      # Use non-bang variant — when the scheduler crashes and restarts while
-      # agents from the previous instance are still running, the workers
-      # directory may be in use and rm_rf can fail with :eexist (or other
-      # errors). Log a warning and continue — mkdir_p on the next line is a
-      # no-op since the directory already exists. Transient failures
-      # (Windows file locking, anti-virus scans) are retried first.
-      case WorktreeRetry.rm_rf_retry(worker_base) do
-        {:ok, _} ->
-          :ok
+      if primary? do
+        # Use non-bang variant — when the scheduler crashes and restarts while
+        # agents from the previous instance are still running, the workers
+        # directory may be in use and rm_rf can fail with :eexist (or other
+        # errors). Log a warning and continue — mkdir_p on the next line is a
+        # no-op since the directory already exists. Transient failures
+        # (Windows file locking, anti-virus scans) are retried first.
+        case WorktreeRetry.rm_rf_retry(worker_base) do
+          {:ok, _} ->
+            :ok
 
-        {:error, reason, path} ->
-          Logger.warning(
-            "WorktreeManager: Could not remove worker directory #{worker_base}: " <>
-              "#{inspect(reason)} at #{path} — continuing with existing directory"
-          )
+          {:error, reason, path} ->
+            Logger.warning(
+              "WorktreeManager: Could not remove worker directory #{worker_base}: " <>
+                "#{inspect(reason)} at #{path} — continuing with existing directory"
+            )
+        end
+
+        # Clean up orphaned evogit-agent branches from previous runs — PRIMARY
+        # repos only: foreign repos may carry real task branches.
+        clean_orphaned_branches(repo_root)
       end
 
       WorktreeRetry.retry_on_transient(fn -> Git.prune_worktrees(repo_root) end)
-
-      # Clean up orphaned evogit-agent branches from previous runs
-      clean_orphaned_branches(repo_root)
 
       # Loud on exhaustion: raise exactly like File.mkdir_p!/1 does —
       # same File.Error struct and fields (reason, action, path). Note

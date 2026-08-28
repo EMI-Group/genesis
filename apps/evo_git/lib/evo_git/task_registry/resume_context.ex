@@ -3,19 +3,27 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
   Resume context builder for `EvoGit.TaskRegistry`.
 
   When an evolve task resumes from a previous task, this module builds the
-  context block (commits, objective, result) that gets prepended to the new
-  task's objective.
+  context block (commits, objective, result, writable foreign repos) that gets
+  prepended to the new task's objective. Caller-supplied `:foreign_repos` are
+  normalized back into `%ForeignRepo{}` structs (persisted/CLI entries may be
+  string-keyed maps from a Codec JSON round trip) and each repo's `base_sha`
+  is overridden with the previous task's result `repos` commit when present —
+  per-repo starting commits, same as the merge-conflict flow.
   """
 
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
+  alias EvoGit.TaskRegistry.PrevTaskRepos
   alias EvoGit.TaskRegistry.RuntimeOpts
 
   @doc """
   Builds the objective and `runtime_opts` for an evolve task that resumes from
   a previous task. Injects the previous task's context (commits, objective,
   result) into the new objective and sets `:starting_commit` to the previous
-  task's end commit. Falls back gracefully if the previous task can't be
-  found or has no useful data.
+  task's end commit. Caller-supplied `:foreign_repos` flow through normalized
+  to `%ForeignRepo{}` structs, with per-repo `base_sha` overridden from the
+  previous task's result `repos` when present. Falls back gracefully if the
+  previous task can't be found or has no useful data.
   """
   def apply_resume_context(opts, task_id, resume_from_id) do
     # Strip :resume_from so it never leaks into the runtime opts.
@@ -23,19 +31,42 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
 
     prev_task = EvoGit.TaskRegistry.get_task(resume_from_id)
 
+    # Normalize the caller-supplied :foreign_repos (entries may be string-keyed
+    # maps from a Codec JSON round trip) and override each repo's base_sha with
+    # the previous task's result repos commit when present. The key is only
+    # (re)added when the normalized list is non-empty — a caller with no repos
+    # keeps no :foreign_repos key.
+    opts_with_repos =
+      case Keyword.get(opts_without_resume, :foreign_repos) do
+        foreign_repos when is_list(foreign_repos) ->
+          repos =
+            foreign_repos
+            |> Enum.map(&ForeignRepo.normalize/1)
+            |> Enum.reject(&is_nil/1)
+            |> PrevTaskRepos.apply_starting_commits(prev_task)
+
+          case repos do
+            [] -> opts_without_resume
+            repos -> Keyword.put(opts_without_resume, :foreign_repos, repos)
+          end
+
+        _ ->
+          opts_without_resume
+      end
+
     {objective, runtime_opts} =
       if is_nil(prev_task) do
         # Previous task not found — run with the original objective.
-        objective = Keyword.get(opts_without_resume, :objective, "")
+        objective = Keyword.get(opts_with_repos, :objective, "")
 
         {_input_arg, runtime_opts} =
-          RuntimeOpts.build_common_runtime_opts(opts_without_resume, task_id, :evolve)
+          RuntimeOpts.build_common_runtime_opts(opts_with_repos, task_id, :evolve)
 
         {objective, runtime_opts}
       else
         context_block = build_resume_context_block(prev_task)
 
-        objective = Keyword.get(opts_without_resume, :objective, "")
+        objective = Keyword.get(opts_with_repos, :objective, "")
 
         objective =
           if context_block != "", do: context_block <> "\n\n" <> objective, else: objective
@@ -45,9 +76,9 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
 
         opts_with_commit =
           if is_binary(prev_commit_sha) and prev_commit_sha != "" do
-            Keyword.put(opts_without_resume, :starting_commit, prev_commit_sha)
+            Keyword.put(opts_with_repos, :starting_commit, prev_commit_sha)
           else
-            opts_without_resume
+            opts_with_repos
           end
 
         {_input_arg, runtime_opts} =
@@ -61,7 +92,8 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
 
   @doc """
   Builds a "Previous Task Context" block string from a completed task's
-  `%TaskInfo{}` struct. Includes commits, objective, and result summary.
+  `%TaskInfo{}` struct. Includes commits, writable foreign repos, objective,
+  and result summary.
 
   The block is fenced by `--- Previous Task Context ---` /
   `--- End Previous Task Context ---`. Sections are separated by blank
@@ -97,6 +129,24 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
 
     commits_part = commits_line && "Previous task commits: #{commits_line}"
 
+    writable_repos_part =
+      case prev_task.opts do
+        opts when is_list(opts) ->
+          case Keyword.get(opts, :foreign_repos) do
+            repos when is_list(repos) ->
+              repos
+              |> Enum.map(&ForeignRepo.normalize/1)
+              |> Enum.reject(&is_nil/1)
+              |> PrevTaskRepos.writable_repos_line()
+
+            _ ->
+              nil
+          end
+
+        _ ->
+          nil
+      end
+
     objective_part =
       if is_binary(old_objective) and old_objective != "" do
         delimited_section("Previous task objective:", old_objective, "OBJECTIVE")
@@ -107,7 +157,8 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
         delimited_section("Previous task result:", agent_response, "RESULT")
       end
 
-    parts = Enum.reject([commits_part, objective_part, result_part], &is_nil/1)
+    parts =
+      Enum.reject([commits_part, writable_repos_part, objective_part, result_part], &is_nil/1)
 
     if parts == [] do
       ""

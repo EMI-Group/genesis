@@ -8,8 +8,34 @@ defmodule EvoGit.Runtime.Helpers do
   @doc """
   Merges agent output and reports results. Creates a branch if changes were made.
   The `phase` argument should be "genesis" or "evolve" for logging and branch naming.
+
+  The 3-arity variant is a delegating clause: it reports the primary repo only
+  (equivalent to `merge_and_report/4` with an empty `foreign_repos` list).
   """
   def merge_and_report(repo_path, %Result{} = agent_output, phase) when is_binary(phase) do
+    merge_and_report(repo_path, agent_output, phase, [])
+  end
+
+  @doc """
+  Merges agent output and reports results, including per-repo branches for
+  WRITABLE foreign repos.
+
+  `agent_output` is a `%EvoGit.Agent.Result{}` (or a map-shaped result — Genesis
+  Mode B merges two results and augments the struct with `foreign_repo_commits`
+  via `Map.put`, which yields a plain map). `foreign_repos` is a list of
+  `%EvoGit.Core.ForeignRepo{}` structs. ONE branch name is generated per task
+  (via `generate_branch_name/1`) and REUSED for the primary repo AND every
+  writable foreign repo that produced commits (per-repo data source:
+  `result.foreign_repo_commits`, a map `repo_id => latest commit SHA in that
+  repo` — read defensively with `Map.get/3`, the field may be absent). Branches
+  are created with `Git.create_branch/3` — NEVER merged into a foreign repo's
+  default branch. Read-only/unknown repo ids produce no entries. Branch-creation
+  failure is tolerated (logged, `branch_name: nil`, entry kept) — same tolerance
+  as the primary path. The returned report map carries a `repos` key (see
+  `report_map/5`).
+  """
+  def merge_and_report(repo_path, agent_output, phase, foreign_repos)
+      when is_binary(phase) and is_list(foreign_repos) and is_map(agent_output) do
     final_sha = agent_output.commit_sha
 
     with {:ok, base_sha} <- Git.rev_parse(repo_path) do
@@ -19,6 +45,7 @@ defmodule EvoGit.Runtime.Helpers do
         )
 
         branch_name = generate_branch_name(phase)
+        foreign_entries = build_foreign_branch_entries(agent_output, foreign_repos, branch_name)
 
         case Git.create_branch(repo_path, branch_name, final_sha) do
           {:ok, _} ->
@@ -26,7 +53,7 @@ defmodule EvoGit.Runtime.Helpers do
               "#{String.capitalize(phase)}: Created branch '#{branch_name}' at #{binary_part(final_sha, 0, 7)}"
             )
 
-            {:ok, report_map(agent_output, final_sha, branch_name)}
+            {:ok, report_map(agent_output, final_sha, branch_name, false, foreign_entries)}
 
           error ->
             Logger.error(
@@ -35,25 +62,44 @@ defmodule EvoGit.Runtime.Helpers do
 
             # Still return success — the agent's work is committed, we just couldn't
             # create a named branch. The commit_sha is still valid.
-            {:ok, report_map(agent_output, final_sha, nil)}
+            {:ok, report_map(agent_output, final_sha, nil, false, foreign_entries)}
         end
       else
         Logger.info(
           "#{String.capitalize(phase)}: No changes detected (base and final commit are the same)"
         )
 
-        {:ok, report_map(agent_output, final_sha || base_sha, nil, true)}
+        # The primary produced no changes (no primary branch), but writable
+        # foreign repos may still have commits — process them under a freshly
+        # generated branch name when any foreign commits exist.
+        foreign_entries =
+          foreign_entries_for_unchanged_primary(agent_output, foreign_repos, phase)
+
+        {:ok, report_map(agent_output, final_sha || base_sha, nil, true, foreign_entries)}
       end
     else
       error ->
         Logger.error("#{String.capitalize(phase)}: Failed to resolve base SHA: #{inspect(error)}")
         # Return the agent's result anyway — the work IS done, we just couldn't
         # do post-processing. Mark commit_sha as the agent's final_sha.
-        {:ok, report_map(agent_output, final_sha, nil)}
+        foreign_entries =
+          foreign_entries_for_unchanged_primary(agent_output, foreign_repos, phase)
+
+        {:ok, report_map(agent_output, final_sha, nil, false, foreign_entries)}
     end
   end
 
-  defp report_map(agent_output, commit_sha, branch_name, no_changes \\ false) do
+  # Builds the `repos` report map. The primary entry is ALWAYS present (even in
+  # the no-changes path — branch_name nil); `foreign_entries` are merged in
+  # under their string repo ids. All keys are strings so the in-memory and
+  # post-Codec (JSON) shapes match — plain maps only, no structs inside.
+  defp report_map(
+         agent_output,
+         commit_sha,
+         branch_name,
+         no_changes,
+         foreign_entries
+       ) do
     base = %{
       commit_sha: commit_sha,
       result: agent_output.result,
@@ -63,10 +109,62 @@ defmodule EvoGit.Runtime.Helpers do
       pr_title: nil,
       usage: agent_output.usage,
       agent_count: agent_output.agent_count,
-      archive_records: agent_output.archive_records
+      archive_records: agent_output.archive_records,
+      repos:
+        Map.put(
+          foreign_entries,
+          ForeignRepo.primary_id(),
+          %{commit_sha: commit_sha, branch_name: branch_name}
+        )
     }
 
     if no_changes, do: Map.put(base, :no_changes, true), else: base
+  end
+
+  # Foreign-repo branch entries for the no-changes / rev_parse-error paths: a
+  # branch name is generated ONLY when at least one foreign repo has a tracked
+  # commit (the primary keeps branch_name nil / no primary branch). No foreign
+  # commits → no entries.
+  defp foreign_entries_for_unchanged_primary(agent_output, foreign_repos, phase) do
+    if map_size(Map.get(agent_output, :foreign_repo_commits, %{})) > 0 do
+      build_foreign_branch_entries(agent_output, foreign_repos, generate_branch_name(phase))
+    else
+      %{}
+    end
+  end
+
+  # Creates branches for every WRITABLE foreign repo that has a tracked commit
+  # in `result.foreign_repo_commits` (map repo_id => latest commit SHA in that
+  # repo). One branch name is REUSED across all repos (uniform dashboard
+  # merge/reject broadcast). Read-only or unknown repo ids produce no entries;
+  # branch-creation failure keeps the entry with `branch_name: nil` (logged).
+  defp build_foreign_branch_entries(agent_output, foreign_repos, branch_name) do
+    commits = Map.get(agent_output, :foreign_repo_commits, %{})
+
+    Enum.reduce(foreign_repos, %{}, fn %ForeignRepo{} = repo, acc ->
+      case {repo.writable, Map.get(commits, repo.id)} do
+        {true, sha} when is_binary(sha) ->
+          Map.put(acc, repo.id, create_foreign_branch(repo, branch_name, sha))
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp create_foreign_branch(%ForeignRepo{} = repo, branch_name, sha) do
+    case Git.create_branch(repo.root, branch_name, sha) do
+      {:ok, _} ->
+        %{commit_sha: sha, branch_name: branch_name}
+
+      error ->
+        Logger.error(
+          "Failed to create branch '#{branch_name}' in foreign repo '#{repo.id}' " <>
+            "at '#{repo.root}': #{inspect(error)}"
+        )
+
+        %{commit_sha: sha, branch_name: nil}
+    end
   end
 
   def notify_finalizing(nil), do: :ok
@@ -148,11 +246,50 @@ defmodule EvoGit.Runtime.Helpers do
   @doc """
   Loads foreign repos for a runtime phase: `genesis.toml` defaults merged with
   CLI-provided repos (CLI takes precedence).
+
+  Every merged entry is validated UP FRONT (spec-error style, no `try/rescue` —
+  this runs in the task process before any agent spawns, mirroring
+  `resolve_root_agent/2`'s raise): the path must exist AND be a git repository,
+  and a non-nil `base_sha` must resolve in that repository. On failure an
+  `ArgumentError` is raised naming the repo id, the path, and the problem.
+  Returns the validated (normalized) list of `%EvoGit.Core.ForeignRepo{}`.
   """
   def load_foreign_repos(repo_path, opts) do
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
     cli_repos = Keyword.get(opts, :foreign_repos, [])
-    merge_foreign_repos(toml_repos, cli_repos)
+    repos = merge_foreign_repos(toml_repos, cli_repos)
+    validate_foreign_repos!(repos)
+  end
+
+  defp validate_foreign_repos!(repos) do
+    Enum.each(repos, &validate_foreign_repo!/1)
+    repos
+  end
+
+  defp validate_foreign_repo!(%ForeignRepo{} = repo) do
+    case Git.rev_parse(repo.root) do
+      {:ok, _} ->
+        validate_foreign_repo_base_sha!(repo)
+
+      error ->
+        raise ArgumentError,
+              "Foreign repo '#{repo.id}' at '#{repo.root}' is not a valid git repository: " <>
+                inspect(error)
+    end
+  end
+
+  defp validate_foreign_repo_base_sha!(%ForeignRepo{base_sha: nil}), do: :ok
+
+  defp validate_foreign_repo_base_sha!(%ForeignRepo{} = repo) do
+    case Git.rev_parse(repo.root, repo.base_sha) do
+      {:ok, _} ->
+        :ok
+
+      error ->
+        raise ArgumentError,
+              "Foreign repo '#{repo.id}' at '#{repo.root}': base_sha '#{repo.base_sha}' " <>
+                "does not resolve in the repository (#{inspect(error)})"
+    end
   end
 
   @doc """
@@ -222,6 +359,24 @@ defmodule EvoGit.Runtime.Helpers do
         Logger.error("Invalid starting commit '#{ref}': #{inspect(error)}")
         error
     end
+  end
+
+  @doc """
+  Resolves the per-repo starting commit for a foreign repo entry.
+
+  Returns `{:ok, sha}` where `sha` is:
+  - the commit `entry.base_sha` resolves to (`Git.rev_parse`) when `base_sha` is
+    set — up-front validation in `load_foreign_repos/2` guarantees it exists; or
+  - the repo's HEAD (`EvoGit.Core.PhyloGraphNode.current_head/1`) when
+    `base_sha` is `nil` (default — start from the foreign repo's current tip).
+
+  Mirrors `resolve_starting_commit/2`: errors pass through unchanged (with a
+  `Logger.error` for the ref-resolve path) instead of raising.
+  """
+  @spec resolve_foreign_repo_starting_commit(EvoGit.Core.ForeignRepo.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def resolve_foreign_repo_starting_commit(%ForeignRepo{} = entry, repo_root) do
+    resolve_starting_commit(repo_root, entry.base_sha)
   end
 
   @doc """
