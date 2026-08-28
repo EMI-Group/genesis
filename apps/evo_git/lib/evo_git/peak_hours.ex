@@ -35,6 +35,11 @@ defmodule EvoGit.PeakHours do
   atom keys; `start > end` ⇒ overnight). `in_peak?/2` and
   `next_transition/2` operate on this canonical form.
 
+  Raw `start`/`end` values may be written either as strict `"HH:MM"`
+  strings (e.g. `"09:00"`) or directly as integer minutes of day
+  (e.g. `540`), in atom-keyed or string-keyed maps — both forms parse to
+  the same canonical integer minutes.
+
   This module is pure — no GenServer, no state, no I/O. It is the single
   source of truth for peak-window parsing/validation: the config schema
   reuses `validate_windows/1` for TOML validation errors, and the peak-hour
@@ -155,20 +160,24 @@ defmodule EvoGit.PeakHours do
   Parses a single peak-hour window map into canonical form.
 
   Accepts atom-keyed (`%{start: "09:00", end: "12:00"}`) and string-keyed
-  (`%{"start" => "09:00", "end" => "12:00"}`) maps. Returns `{:error, reason}`
-  with a descriptive reason:
+  (`%{"start" => "09:00", "end" => "12:00"}`) maps. `start`/`end` values may
+  be either strict `"HH:MM"` strings or integer minutes of day (`0..1439`) —
+  both values of one window must use the same representation. Returns
+  `{:error, reason}` with a descriptive reason:
 
     * `{:invalid_window, value}` — entry is not a map
-    * `{:invalid_format, window}` — missing `start`/`end` key, non-string
-      value, or a malformed `"HH:MM"` string
+    * `{:invalid_format, window}` — missing `start`/`end` key, or a value
+      that is neither a valid `"HH:MM"` string nor an integer minute of day
+      in `0..1439`
     * `{:zero_length, window}` — `start == end` (zero-length window)
   """
   @spec parse_window(term()) :: {:ok, window()} | {:error, term()}
   def parse_window(w) when is_map(w) do
     with {:ok, s_raw} <- fetch_window_key(w, :start),
          {:ok, e_raw} <- fetch_window_key(w, :end),
-         {:ok, s} <- parse_time(s_raw),
-         {:ok, e} <- parse_time(e_raw) do
+         true <- same_time_kind?(s_raw, e_raw),
+         {:ok, s} <- parse_window_time(s_raw),
+         {:ok, e} <- parse_window_time(e_raw) do
       if s == e do
         {:error, {:zero_length, w}}
       else
@@ -176,6 +185,7 @@ defmodule EvoGit.PeakHours do
       end
     else
       :error -> {:error, {:invalid_format, w}}
+      false -> {:error, {:invalid_format, w}}
     end
   end
 
@@ -389,28 +399,30 @@ defmodule EvoGit.PeakHours do
 
   defp minute_of_day(%NaiveDateTime{hour: h, minute: m}), do: h * 60 + m
 
-  # Accepts raw "HH:MM" windows (validated) OR already-canonical integer
-  # windows; anything else → {:error, _} so callers fall back to normal
-  # concurrency.
+  # Accepts raw "HH:MM" / integer-minute windows (validated) OR nil/[]; any
+  # non-list → {:error, _} so callers fall back to normal concurrency.
+  # `validate_windows/1` is the single parse/validate path — it handles
+  # string-keyed, atom-keyed, "HH:MM", and canonical integer-minute windows
+  # uniformly, so no separate canonical fast path is needed here.
   defp normalize_peak_hours(nil), do: {:ok, []}
 
-  defp normalize_peak_hours(hours) when is_list(hours) do
-    if canonical_windows?(hours) do
-      {:ok, hours}
-    else
-      validate_windows(hours)
-    end
-  end
+  defp normalize_peak_hours(hours) when is_list(hours), do: validate_windows(hours)
 
   defp normalize_peak_hours(_), do: {:error, :invalid_windows}
 
-  defp canonical_windows?(hours) do
-    Enum.all?(hours, fn
-      %{start: s, end: e} when is_integer(s) and is_integer(e) ->
-        s in 0..1439 and e in 0..1439 and s != e
+  # Parses a single window time value: a strict "HH:MM" binary (delegated to
+  # parse_time/1) or an integer minute-of-day in 0..1439 (canonical form);
+  # anything else → :error.
+  defp parse_window_time(t) when is_binary(t), do: parse_time(t)
 
-      _ ->
-        false
-    end)
+  defp parse_window_time(m) when is_integer(m) do
+    if m in 0..1439, do: {:ok, m}, else: :error
   end
+
+  defp parse_window_time(_), do: :error
+
+  # `start`/`end` of one window must use the same representation — both
+  # "HH:MM" strings or both integer minutes of day; mixing the two is
+  # rejected as invalid.
+  defp same_time_kind?(a, b), do: is_binary(a) == is_binary(b)
 end
