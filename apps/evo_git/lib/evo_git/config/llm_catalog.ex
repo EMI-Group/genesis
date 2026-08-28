@@ -67,6 +67,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "google_api_key",
       variants: nil,
       models: [
+        %{id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash"},
         %{id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash"},
         %{id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash"},
         %{id: "gemini-3.5-flash-lite", display_name: "Gemini 3.5 Flash Lite"},
@@ -80,6 +81,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "deepseek_api_key",
       variants: nil,
       models: [
+        %{id: "deepseek-v4-flash-vision-exp", display_name: "DeepSeek V4 Flash Vision (Exp)"},
         %{id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro"},
         %{id: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash"}
       ]
@@ -104,6 +106,7 @@ defmodule EvoGit.Config.LLMCatalog do
         }
       ],
       models: [
+        %{id: "qwen-3.8-max", display_name: "Qwen 3.8 Max"},
         %{id: "qwen-3.7-max", display_name: "Qwen 3.7 Max"},
         %{id: "qwen-3.6-plus", display_name: "Qwen 3.6 Plus"}
       ]
@@ -128,6 +131,8 @@ defmodule EvoGit.Config.LLMCatalog do
         }
       ],
       models: [
+        %{id: "glm-5.3", display_name: "GLM-5.3"},
+        %{id: "glm-5.3-flash", display_name: "GLM-5.3 Flash"},
         %{id: "glm-5", display_name: "GLM-5"},
         %{id: "glm-5.1", display_name: "GLM-5.1"},
         %{id: "glm-5.2", display_name: "GLM-5.2"}
@@ -164,6 +169,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "xai_api_key",
       variants: nil,
       models: [
+        %{id: "grok-4.6", display_name: "Grok 4.6"},
         %{id: "grok-4.3", display_name: "Grok 4.3"},
         %{id: "grok-4.5", display_name: "Grok 4.5"}
       ]
