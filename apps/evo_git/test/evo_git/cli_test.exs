@@ -68,6 +68,38 @@ defmodule EvoGit.CLITest do
       basename = Enum.find(repos, &(&1.id == "b-project"))
       assert basename.root == Path.expand("/Source/b-project")
     end
+
+    test "Windows drive-letter path is not split into id:path (-R C:\\...)" do
+      opts = [foreign_repo: "C:\\path\\to\\repo"]
+      repos = EvoGit.CLI.do_parse_foreign_repos(opts)
+
+      assert length(repos) == 1
+      repo = hd(repos)
+      refute repo.id == "C"
+      refute repo.root == "\\path\\to\\repo"
+      assert repo.root == Path.expand("C:\\path\\to\\repo")
+      assert repo.id == Path.basename("C:\\path\\to\\repo")
+    end
+
+    test "Windows drive-letter path with forward slashes is not split (-R D:/...)" do
+      opts = [foreign_repo: "D:/Source/proj"]
+      repos = EvoGit.CLI.do_parse_foreign_repos(opts)
+
+      assert length(repos) == 1
+      repo = hd(repos)
+      refute repo.id == "D"
+      assert repo.id == "proj"
+      assert repo.root == Path.expand("D:/Source/proj")
+    end
+
+    test "-R repos are read-only by default (writable false, base_sha nil)" do
+      opts = [foreign_repo: "original:/Source/original-proj"]
+      repos = EvoGit.CLI.do_parse_foreign_repos(opts)
+
+      repo = hd(repos)
+      assert repo.writable == false
+      assert repo.base_sha == nil
+    end
   end
 
   describe "agent flag parsing (--agent)" do

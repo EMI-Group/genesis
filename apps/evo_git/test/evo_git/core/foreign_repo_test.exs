@@ -20,6 +20,30 @@ defmodule EvoGit.Core.ForeignRepoTest do
       assert repo.description == nil
     end
 
+    test "defaults writable to false and base_sha to nil" do
+      repo = ForeignRepo.new("orig", "/tmp/orig")
+      assert repo.writable == false
+      assert repo.base_sha == nil
+    end
+
+    test "accepts writable: true and base_sha opts" do
+      repo = ForeignRepo.new("orig", "/tmp/orig", writable: true, base_sha: "abc123")
+      assert repo.writable == true
+      assert repo.base_sha == "abc123"
+    end
+
+    test "coerces non-boolean writable to false" do
+      assert ForeignRepo.new("a", "/tmp/a", writable: "yes").writable == false
+      assert ForeignRepo.new("a", "/tmp/a", writable: 1).writable == false
+      assert ForeignRepo.new("a", "/tmp/a", writable: nil).writable == false
+    end
+
+    test "coerces blank base_sha to nil" do
+      assert ForeignRepo.new("a", "/tmp/a", base_sha: "").base_sha == nil
+      assert ForeignRepo.new("a", "/tmp/a", base_sha: "   ").base_sha == nil
+      assert ForeignRepo.new("a", "/tmp/a", base_sha: nil).base_sha == nil
+    end
+
     test "expands relative paths via Path.expand" do
       repo = ForeignRepo.new("test", "/tmp/evo_git_test")
       assert repo.root == Path.expand("/tmp/evo_git_test")
@@ -40,6 +64,41 @@ defmodule EvoGit.Core.ForeignRepoTest do
     test "converts string-keyed maps" do
       assert %ForeignRepo{id: "a", root: "/abs/a", description: "desc"} =
                ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a", "description" => "desc"})
+    end
+
+    test "preserves writable and base_sha from string-keyed maps" do
+      assert %ForeignRepo{
+               id: "a",
+               root: "/abs/a",
+               description: "desc",
+               writable: true,
+               base_sha: "abc123"
+             } =
+               ForeignRepo.normalize(%{
+                 "id" => "a",
+                 "root" => "/abs/a",
+                 "description" => "desc",
+                 "writable" => true,
+                 "base_sha" => "abc123"
+               })
+    end
+
+    test "preserves writable and base_sha from atom-keyed maps" do
+      assert %ForeignRepo{id: "a", root: "/abs/a", writable: true, base_sha: "abc123"} =
+               ForeignRepo.normalize(%{
+                 id: "a",
+                 root: "/abs/a",
+                 writable: true,
+                 base_sha: "abc123"
+               })
+    end
+
+    test "defaults writable to false and base_sha to nil when keys are missing" do
+      assert %ForeignRepo{id: "a", root: "/abs/a", writable: false, base_sha: nil} =
+               ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a"})
+
+      assert %ForeignRepo{id: "a", root: "/abs/a", writable: false, base_sha: nil} =
+               ForeignRepo.normalize(%{id: "a", root: "/abs/a"})
     end
 
     test "uses the \"path\" key as a root fallback" do
@@ -269,6 +328,18 @@ defmodule EvoGit.Core.ForeignRepoTest do
 
       assert {:ok, "tertiary", "./README.md"} =
                ForeignRepo.resolve_path(repos, "/Source/proj-c/README.md")
+    end
+  end
+
+  describe "Jason encode/decode round trip (Store codec path)" do
+    test "preserves writable and base_sha" do
+      repo = ForeignRepo.new("orig", "/tmp/orig", writable: true, base_sha: "abc123")
+      assert repo |> Jason.encode!() |> Jason.decode!() |> ForeignRepo.normalize() == repo
+    end
+
+    test "round trips defaults (writable false, base_sha nil)" do
+      repo = ForeignRepo.new("orig", "/tmp/orig")
+      assert repo |> Jason.encode!() |> Jason.decode!() |> ForeignRepo.normalize() == repo
     end
   end
 end
