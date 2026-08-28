@@ -542,8 +542,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # Result for the OLD target arrives afterwards — ignored.
       send(
         view.pid,
-        {:merge_check_result, task_id, node(), "primary", "main",
-         {:ok, {:conflict, ["old.txt"]}}}
+        {:merge_check_result, task_id, node(), "primary", "main", {:ok, {:conflict, ["old.txt"]}}}
       )
 
       html = render(view)
@@ -921,6 +920,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       assert html =~ "Copied to clipboard"
     end
+
     test "drops stale async load results", %{conn: conn} do
       task_id = seed_orphaned_review_task!()
 
@@ -1087,6 +1087,605 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "multi-repo review — repo list construction" do
+    # The review page turns a task's writable-foreign-repo results (the
+    # top-level `repos` map, STRING keys after the Store/Codec round trip)
+    # into one review entry per repo, primary FIRST. Only writable foreign
+    # repos that actually produced commits (a non-nil branch_name in `repos`)
+    # get an entry — read-only repos are absent from `repos`, and
+    # writable-with-no-commits repos carry a nil branch_name. NONEXISTENT
+    # paths keep the fixtures deterministic (branch_exists degrades to false,
+    # no async merge check starts).
+    test "builds primary-first review repos; drops read-only and no-commits foreign repos", %{
+      conn: conn
+    } do
+      primary_dir = "/nonexistent/primary/path"
+      foreign_dir = "/nonexistent/foreign/path"
+      primary_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      foreign_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+      task_id =
+        seed_multi_repo_task!(
+          primary_dir,
+          primary_sha,
+          [
+            %{"id" => "original", "root" => foreign_dir, "writable" => true},
+            %{"id" => "readonly", "root" => "/nonexistent/readonly/path", "writable" => false},
+            %{"id" => "no_commits", "root" => "/nonexistent/no_commits/path", "writable" => true}
+          ],
+          %{
+            "primary" => %{"commit_sha" => primary_sha, "branch_name" => "task-branch"},
+            "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"},
+            "no_commits" => %{"commit_sha" => nil, "branch_name" => nil}
+          }
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      repos = assigns(view)[:review_repos]
+
+      # Exactly the primary + the writable foreign repo with commits.
+      assert length(repos) == 2
+
+      [primary, foreign] = repos
+
+      assert primary.repo_id == "primary"
+      assert primary.repo_path == primary_dir
+      assert primary.branch_name == "task-branch"
+      assert primary.commit_sha == primary_sha
+
+      assert foreign.repo_id == "original"
+      assert foreign.repo_path == foreign_dir
+      assert foreign.branch_name == "task-branch"
+      assert foreign.commit_sha == foreign_sha
+
+      # Read-only repos (absent from `repos`) and writable-with-no-commits
+      # repos (nil branch_name) get NO review entry.
+      refute Enum.any?(repos, &(&1.repo_id == "readonly"))
+      refute Enum.any?(repos, &(&1.repo_id == "no_commits"))
+
+      # With more than one review repo, the per-repo tab bar renders.
+      html = render(view)
+      assert html =~ ~s(phx-click="switch_repo")
+      assert html =~ "original"
+    end
+
+    test "legacy tasks without a repos key yield exactly one primary entry", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      repos = assigns(view)[:review_repos]
+
+      assert length(repos) == 1
+      assert hd(repos).repo_id == "primary"
+
+      # Single-repo pages render NO repo tab bar (pixel-identical to before).
+      refute render(view) =~ ~s(phx-click="switch_repo")
+    end
+  end
+
+  describe "multi-repo review — merge broadcast" do
+    setup do
+      {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      # The committed fixture only cleans up the foreign dir; tidy the primary
+      # temp repo here too.
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok,
+       primary_dir: primary_dir,
+       foreign_dir: foreign_dir,
+       task_id: task_id,
+       primary_sha: primary_sha,
+       foreign_sha: foreign_sha}
+    end
+
+    test "merges every review repo into its own target and marks the task merged", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      foreign_dir: foreign_dir
+    } do
+      test_pid = self()
+
+      # The runner executes synchronously inside handle_event("merge") — a
+      # collecting fun captures the test pid and reports each call.
+      Application.put_env(:evo_dash, :review_merge_runner, fn node, repo_path, branch, target ->
+        send(test_pid, {:merged_call, node, repo_path, branch, target})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # No repo_id param → the submitting repo defaults to the active repo
+      # ("primary"); the foreign repo merges into its OWN default target.
+      render_click(view, "merge", %{"target_branch" => "dev"})
+
+      calls = for _ <- 1..2, do: assert_receive({:merged_call, _node, _path, _branch, _target})
+
+      assert Enum.member?(calls, {:merged_call, node(), primary_dir, "task-branch", "dev"})
+      assert Enum.member?(calls, {:merged_call, node(), foreign_dir, "task-branch", "main"})
+
+      flash = assert_redirect(view, "/projects")
+      assert flash["success"] =~ "dev"
+
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+    end
+
+    test "merging from the foreign tab targets the foreign repo's chosen branch", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      foreign_dir: foreign_dir
+    } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn node, repo_path, branch, target ->
+        send(test_pid, {:merged_call, node, repo_path, branch, target})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # Explicit repo_id: the foreign repo submits with the form target "dev"
+      # (validated against ITS merge_targets); the primary merges into its own
+      # default "main".
+      render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
+
+      calls = for _ <- 1..2, do: assert_receive({:merged_call, _node, _path, _branch, _target})
+
+      assert Enum.member?(calls, {:merged_call, node(), primary_dir, "task-branch", "main"})
+      assert Enum.member?(calls, {:merged_call, node(), foreign_dir, "task-branch", "dev"})
+
+      assert_redirect(view, "/projects")
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+    end
+  end
+
+  describe "multi-repo review — merge partial failure" do
+    setup do
+      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
+    end
+
+    test "reports per-repo outcomes and stays when one repo conflicts", %{
+      conn: conn,
+      task_id: task_id,
+      foreign_dir: foreign_dir
+    } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn node, repo_path, branch, target ->
+        send(test_pid, {:merged_call, node, repo_path, branch, target})
+
+        if repo_path == foreign_dir do
+          {:conflict, ["foreign_conflict.txt"]}
+        else
+          {:ok, "deadbeef"}
+        end
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      html = render_click(view, "merge", %{"target_branch" => "dev"})
+
+      # The per-repo outcome panel renders a merged row for the primary and a
+      # conflict row for the foreign repo — partial-success visibility.
+      assert html =~ "Merge results"
+      assert html =~ "Merged into dev"
+      assert html =~ "Merge conflict"
+      assert html =~ "foreign_conflict.txt"
+      assert html =~ "Merge failed in 1 of 2 repositories. See the merge results below."
+      refute_redirected(view)
+
+      outcomes = assigns(view)[:merge_outcomes]
+      assert length(outcomes) == 2
+
+      primary_outcome = Enum.find(outcomes, &(&1.repo_id == "primary"))
+      assert primary_outcome.status == :merged
+      assert primary_outcome.target == "dev"
+
+      foreign_outcome = Enum.find(outcomes, &(&1.repo_id == "original"))
+      assert foreign_outcome.status == :conflict
+      assert foreign_outcome.target == "main"
+      assert foreign_outcome.detail == ["foreign_conflict.txt"]
+    end
+  end
+
+  describe "multi-repo review — reject broadcast" do
+    setup do
+      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
+    end
+
+    test "rejects (deletes) the agent branch in every review repo on full success", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      foreign_dir: foreign_dir
+    } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn node, repo_path, branch ->
+        send(test_pid, {:reject_call, node, repo_path, branch})
+        :ok
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      render_click(view, "reject")
+
+      calls = for _ <- 1..2, do: assert_receive({:reject_call, _node, _path, _branch})
+
+      assert Enum.member?(calls, {:reject_call, node(), primary_dir, "task-branch"})
+      assert Enum.member?(calls, {:reject_call, node(), foreign_dir, "task-branch"})
+
+      flash = assert_redirect(view, "/projects")
+
+      assert flash["info"] =~
+               "Changes rejected. Branch task-branch, task-branch has been deleted."
+
+      assert TaskRegistry.get_task(task_id).review_status == :rejected
+    end
+
+    test "reports per-repo outcomes and stays when one repo fails to reject", %{
+      conn: conn,
+      task_id: task_id,
+      foreign_dir: foreign_dir
+    } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn node, repo_path, branch ->
+        send(test_pid, {:reject_call, node, repo_path, branch})
+
+        if repo_path == foreign_dir do
+          {:error, "reject failed"}
+        else
+          :ok
+        end
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      html = render_click(view, "reject")
+
+      # Any :rejected outcome switches the panel title to "Reject results".
+      assert html =~ "Reject results"
+      assert html =~ "Rejected — branch deleted"
+
+      assert html =~
+               "Failed to reject changes in 1 of 2 repositories. See the merge results below."
+
+      refute_redirected(view)
+
+      outcomes = assigns(view)[:merge_outcomes]
+      assert length(outcomes) == 2
+      assert Enum.find(outcomes, &(&1.repo_id == "primary")).status == :rejected
+      assert Enum.find(outcomes, &(&1.repo_id == "original")).status == :error
+
+      # Reject outcomes carry NO target key (only merge outcomes do).
+      refute Enum.any?(outcomes, &Map.has_key?(&1, :target))
+    end
+  end
+
+  describe "multi-repo review — per-repo merge check" do
+    # Same deterministic pattern as the single-repo "async merge check" describe:
+    # a BLOCKING :merge_check_runner keeps every repo's status at :checking until
+    # the LiveView dies at test end, so injected 6-tuple results cannot race an
+    # auto-generated message.
+    setup do
+      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      Application.put_env(:evo_dash, :merge_check_runner, fn _node, _repo, _branch, _target ->
+        receive do
+          :release_merge_check -> {:ok, :clean}
+        end
+      end)
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
+    end
+
+    test "applies per-repo results and drops unknown-repo / wrong-task / wrong-node results", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # One async check per review repo, each against its own default target
+      # ("main" — the first default-candidate branch in both repos).
+      repos = assigns(view)[:review_repos]
+      assert Enum.all?(repos, &(&1.merge_status.state == :checking))
+      assert Enum.all?(repos, &(&1.merge_status.target == "main"))
+
+      # Clean result for the primary, conflict for the foreign repo.
+      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
+
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "original", "main",
+         {:ok, {:conflict, ["foreign.txt"]}}}
+      )
+
+      # Results for a repo id absent from @review_repos ("ghost"), a wrong
+      # task id, and a wrong node are all DROPPED by the stale-guards.
+      send(view.pid, {:merge_check_result, task_id, node(), "ghost", "main", {:ok, :clean}})
+
+      send(
+        view.pid,
+        {:merge_check_result, "other-task-id", node(), "primary", "main", {:ok, :clean}}
+      )
+
+      send(
+        view.pid,
+        {:merge_check_result, task_id, :some_other_node, "primary", "main", {:ok, :clean}}
+      )
+
+      render(view)
+
+      repos = assigns(view)[:review_repos]
+
+      primary = Enum.find(repos, &(&1.repo_id == "primary"))
+      assert primary.merge_status == %{state: :clean, target: "main", files: []}
+
+      foreign = Enum.find(repos, &(&1.repo_id == "original"))
+      assert foreign.merge_status == %{state: :conflict, target: "main", files: ["foreign.txt"]}
+
+      # While the primary tab is active, the foreign conflict files are not
+      # rendered (the flat merge status is projected from the ACTIVE repo).
+      refute render(view) =~ "foreign.txt"
+    end
+
+    test "switching repos shows the foreign repo's merge status and conflict files", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # The per-repo tab bar renders with a switch_repo button per repo.
+      assert render(view) =~ ~s(phx-click="switch_repo")
+
+      # Inject a conflict for the foreign repo only.
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "original", "main",
+         {:ok, {:conflict, ["foreign.txt"]}}}
+      )
+
+      render(view)
+
+      refute render(view) =~ "foreign.txt"
+
+      # Switch to the foreign repo tab.
+      html = render_click(view, "switch_repo", %{"repo_id" => "original"})
+
+      assert assigns(view)[:active_repo_id] == "original"
+
+      # The flat merge_status is now projected from the foreign repo: its
+      # conflict state and the conflicting file names render.
+      assert assigns(view)[:merge_status].state == :conflict
+      assert html =~ "foreign.txt"
+      assert html =~ "Merge conflict"
+    end
+  end
+
+  describe "auto merge conflict resolution — foreign repos carried from the previous task" do
+    # Same NONEXISTENT-path pattern as the "auto merge conflict resolution"
+    # describe: no async check starts on mount (branch_exists false), so the
+    # injected conflict result is fully deterministic. The previous task is
+    # seeded WITH :foreign_repos + a per-repo `repos` map to prove the review
+    # page builds a multi-repo entry list even for auto-resolve.
+    setup do
+      task_id = "review_test_auto_resolve_multi_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :completed,
+        opts: [
+          path: "/nonexistent/repo/path",
+          objective: "Test objective",
+          foreign_repos: [
+            %{"id" => "original", "root" => "/nonexistent/foreign/path", "writable" => true}
+          ]
+        ],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        review_status: nil,
+        result:
+          {:ok,
+           %{
+             commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+             branch_name: "task-branch",
+             result: "Agent summary",
+             pr_url: nil,
+             pr_title: nil,
+             repos: %{
+               "primary" => %{
+                 "commit_sha" => "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                 "branch_name" => "task-branch"
+               },
+               "original" => %{
+                 "commit_sha" => "cafebabecafebabecafebabecafebabecafebabe",
+                 "branch_name" => "task-branch"
+               }
+             }
+           }}
+      }
+
+      EvoGit.Store.put_task(EvoGit.Store, task)
+
+      on_exit(fn ->
+        TaskRegistry.delete_task(task_id)
+        TaskRegistry.list_tasks()
+      end)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "auto-resolve carries merge opts but NOT foreign_repos (runtime-only carry)", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "primary", "main",
+         {:ok, {:conflict, ["file_a.txt"]}}}
+      )
+
+      html = render(view)
+      assert html =~ "Auto-resolve conflict"
+      assert html =~ "file_a.txt"
+
+      render_click(view, "auto_resolve")
+
+      assert_redirect(view, "/projects")
+
+      assert TaskRegistry.get_task(task_id).review_status == :continued
+
+      new_task =
+        Enum.find(TaskRegistry.list_tasks(), &(merge_opt(&1.opts, :merge_from) == task_id))
+
+      assert new_task, "expected a merge-resolution task to be started"
+
+      on_exit(fn ->
+        if new_task, do: TaskRegistry.delete_task(new_task.id)
+        TaskRegistry.list_tasks()
+      end)
+
+      assert new_task.type == :evolve
+      assert merge_opt(new_task.opts, :merge_from) == task_id
+      assert merge_opt(new_task.opts, :merge_target) == "main"
+      assert new_task.opts[:mode] == "simple"
+      assert new_task.opts[:path] == "/nonexistent/repo/path"
+      assert new_task.opts[:starting_commit] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+      # NOTE: the foreign-repo carry through auto-resolve is RUNTIME-only —
+      # TaskRegistry persists the original submission opts, and the core
+      # `EvoGit.TaskRegistry.MergeContext.apply_merge_context/4` threads
+      # :foreign_repos into the spawned executor's RUNTIME opts (not the
+      # persisted ones). Covered by core merge_context_test.exs — do NOT
+      # assert foreign_repos in the new task's persisted opts (it is not
+      # there by design).
+      refute Enum.any?(new_task.opts, fn
+               {:foreign_repos, _} -> true
+               {"foreign_repos", _} -> true
+               _ -> false
+             end)
+    end
+  end
+
+  describe "multi-repo review — resume is primary-scoped" do
+    setup do
+      {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok,
+       primary_dir: primary_dir,
+       foreign_dir: foreign_dir,
+       task_id: task_id,
+       primary_sha: primary_sha,
+       foreign_sha: foreign_sha}
+    end
+
+    test "resume redirects with the primary repo's params", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      primary_sha: primary_sha
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      render_click(view, "resume")
+
+      # The resume URL carries resume_from/starting_commit/project for the
+      # PRIMARY repo. The handler builds the query with Keyword.put/3, which
+      # PREPENDS keys — so the actual order is
+      # [project:, starting_commit:, resume_from:] (project FIRST). The ~p
+      # sigil encodes the query with Plug.Conn.Query, so build the expected
+      # URL with the same call and the same key order.
+      expected =
+        "/projects?" <>
+          Plug.Conn.Query.encode(
+            project: primary_dir,
+            starting_commit: primary_sha,
+            resume_from: task_id
+          )
+
+      assert_redirect(view, expected)
+
+      assert TaskRegistry.get_task(task_id).review_status == :continued
+    end
+
+    test "resume stays primary-scoped even with the foreign tab active", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      primary_sha: primary_sha
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # Switch to the foreign repo tab — resume must NOT pick up the foreign
+      # repo's path/commit (PRIMARY-scoped by design).
+      render_click(view, "switch_repo", %{"repo_id" => "original"})
+      assert assigns(view)[:active_repo_id] == "original"
+
+      render_click(view, "resume")
+
+      # Same key order as the handler's Keyword.put/3-built query (project
+      # FIRST — see the sibling test above).
+      expected =
+        "/projects?" <>
+          Plug.Conn.Query.encode(
+            project: primary_dir,
+            starting_commit: primary_sha,
+            resume_from: task_id
+          )
+
+      assert_redirect(view, expected)
+    end
+  end
+
   # --- Helpers for the merge-target selector tests ---
 
   # Reads the LiveView's socket assigns (same pattern as projects_live_test).
@@ -1196,12 +1795,17 @@ defmodule EvoDashWeb.ReviewLiveTest do
     {foreign_sha, _} = build_repo_with_task_branch!(foreign_dir, primary, secondary)
 
     task_id =
-      seed_multi_repo_task!(primary_dir, primary_sha, [
-        %{"id" => "original", "root" => foreign_dir, "writable" => true}
-      ], %{
-        "primary" => %{"commit_sha" => primary_sha, "branch_name" => "task-branch"},
-        "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"}
-      })
+      seed_multi_repo_task!(
+        primary_dir,
+        primary_sha,
+        [
+          %{"id" => "original", "root" => foreign_dir, "writable" => true}
+        ],
+        %{
+          "primary" => %{"commit_sha" => primary_sha, "branch_name" => "task-branch"},
+          "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"}
+        }
+      )
 
     on_exit(fn ->
       rm_rf_retry(foreign_dir)
