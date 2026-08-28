@@ -5,6 +5,7 @@ defmodule EvoGit.Runtime.HelpersTest do
   alias EvoGit.Agent.Result
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Runtime.Helpers
+  alias EvoGit.Store.Codec
 
   # --------------------------------------------------------------------------
   # Shared temp git-repo setup (mirrors test/evo_git/adapters/git_test.exs)
@@ -21,6 +22,49 @@ defmodule EvoGit.Runtime.HelpersTest do
     end)
 
     {:ok, %{tmp_dir: tmp_dir}}
+  end
+
+  # Creates a fresh temp git repo with one commit and returns its absolute
+  # path. `Path.expand/1` mirrors `ForeignRepo.new/3` normalization so equality
+  # assertions against parsed TOML entries hold on all platforms (e.g. macOS
+  # /var -> /private/var symlink). Cleaned up via on_exit.
+  defp make_git_repo!(label) do
+    dir =
+      Path.expand(
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_helpers_fr_#{label}_#{System.unique_integer()}"
+        )
+      )
+
+    File.mkdir_p!(dir)
+    Git.init(dir)
+    File.write!(Path.join(dir, "file.txt"), "content")
+    {:ok, _} = Git.add(dir, "file.txt")
+    {:ok, _} = Git.commit(dir, "Initial commit")
+
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
+  end
+
+  # Sets up the standard "primary repo with agent changes" shape used by the
+  # merge_and_report tests: two commits, HEAD reset back to the first so the
+  # repo's base differs from the agent's final_sha. Returns {final_sha, base_sha}.
+  defp setup_primary_with_changes!(tmp_dir) do
+    File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+    {:ok, _} = Git.add(tmp_dir, "test.txt")
+    {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+
+    File.write!(Path.join(tmp_dir, "test.txt"), "updated")
+    {:ok, _} = Git.add(tmp_dir, "test.txt")
+    {:ok, _} = Git.commit(tmp_dir, "Second commit")
+    {:ok, final_sha} = Git.rev_parse(tmp_dir)
+
+    assert match?({:ok, _}, Git.reset_hard(tmp_dir, "HEAD~1"))
+    {:ok, base_sha} = Git.rev_parse(tmp_dir)
+    refute base_sha == final_sha
+
+    {final_sha, base_sha}
   end
 
   # ==========================================================================
@@ -272,13 +316,186 @@ defmodule EvoGit.Runtime.HelpersTest do
   end
 
   # ==========================================================================
+  # merge_and_report/4
+  # ==========================================================================
+  describe "merge_and_report/4" do
+    test "creates one shared branch in the primary and writable foreign repos", %{
+      tmp_dir: tmp_dir
+    } do
+      {final_sha, _base_sha} = setup_primary_with_changes!(tmp_dir)
+
+      fid_root = make_git_repo!("fid")
+      {:ok, foreign_sha} = Git.rev_parse(fid_root)
+
+      agent_output = %Result{
+        commit_sha: final_sha,
+        result: "test",
+        tag: nil,
+        usage: nil,
+        agent_count: 1,
+        foreign_repo_commits: %{"fid" => foreign_sha}
+      }
+
+      foreign_repos = [%ForeignRepo{id: "fid", root: fid_root, writable: true}]
+
+      assert {:ok, report} =
+               Helpers.merge_and_report(tmp_dir, agent_output, "genesis", foreign_repos)
+
+      branch = report.branch_name
+      assert branch != nil
+      assert String.starts_with?(branch, "genesis/agent_")
+
+      # ONE branch name reused across BOTH repos
+      assert Git.branch_exists?(tmp_dir, branch)
+      assert Git.branch_exists?(fid_root, branch)
+
+      # Top-level commit_sha/branch_name remain the PRIMARY's values
+      assert report.commit_sha == final_sha
+      assert report.branch_name == branch
+
+      assert report.repos == %{
+               "primary" => %{commit_sha: final_sha, branch_name: branch},
+               "fid" => %{commit_sha: foreign_sha, branch_name: branch}
+             }
+    end
+
+    test "read-only foreign repos produce no entry and no branch", %{tmp_dir: tmp_dir} do
+      {final_sha, _base_sha} = setup_primary_with_changes!(tmp_dir)
+
+      ro_root = make_git_repo!("ro")
+      {:ok, ro_sha} = Git.rev_parse(ro_root)
+
+      agent_output = %Result{
+        commit_sha: final_sha,
+        result: "test",
+        tag: nil,
+        usage: nil,
+        agent_count: 1,
+        foreign_repo_commits: %{"ro" => ro_sha}
+      }
+
+      foreign_repos = [%ForeignRepo{id: "ro", root: ro_root, writable: false}]
+
+      assert {:ok, report} =
+               Helpers.merge_and_report(tmp_dir, agent_output, "genesis", foreign_repos)
+
+      branch = report.branch_name
+      assert branch != nil
+
+      refute Map.has_key?(report.repos, "ro")
+      assert report.repos == %{"primary" => %{commit_sha: final_sha, branch_name: branch}}
+      refute Git.branch_exists?(ro_root, branch)
+    end
+
+    test "creates foreign branches when the primary produced no changes", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+      {:ok, base_sha} = Git.rev_parse(tmp_dir)
+
+      fid_root = make_git_repo!("fid")
+      {:ok, foreign_sha} = Git.rev_parse(fid_root)
+
+      agent_output = %Result{
+        commit_sha: base_sha,
+        result: "test",
+        tag: nil,
+        usage: nil,
+        agent_count: 1,
+        foreign_repo_commits: %{"fid" => foreign_sha}
+      }
+
+      foreign_repos = [%ForeignRepo{id: "fid", root: fid_root, writable: true}]
+
+      assert {:ok, report} =
+               Helpers.merge_and_report(tmp_dir, agent_output, "genesis", foreign_repos)
+
+      assert report.no_changes == true
+      assert report.branch_name == nil
+      assert report.commit_sha == base_sha
+
+      # The primary produced no branch; the writable foreign repo got one under
+      # a freshly generated name.
+      {:ok, branches} = Git.list_branches(fid_root)
+      assert [branch] = Enum.filter(branches, &String.starts_with?(&1, "genesis/agent_"))
+
+      assert report.repos == %{
+               "primary" => %{commit_sha: base_sha, branch_name: nil},
+               "fid" => %{commit_sha: foreign_sha, branch_name: branch}
+             }
+    end
+
+    test "3-arity reports only the primary repo", %{tmp_dir: tmp_dir} do
+      {final_sha, _base_sha} = setup_primary_with_changes!(tmp_dir)
+
+      agent_output = %Result{
+        commit_sha: final_sha,
+        result: "test",
+        tag: nil,
+        usage: nil,
+        agent_count: 1
+      }
+
+      assert {:ok, report} = Helpers.merge_and_report(tmp_dir, agent_output, "genesis")
+      branch = report.branch_name
+      assert branch != nil
+
+      assert report.repos == %{"primary" => %{commit_sha: final_sha, branch_name: branch}}
+      assert report.commit_sha == final_sha
+    end
+
+    test "report.repos survives the Store.Codec round-trip with string keys", %{
+      tmp_dir: tmp_dir
+    } do
+      {final_sha, _base_sha} = setup_primary_with_changes!(tmp_dir)
+
+      fid_root = make_git_repo!("fid")
+      {:ok, foreign_sha} = Git.rev_parse(fid_root)
+
+      agent_output = %Result{
+        commit_sha: final_sha,
+        result: "test",
+        tag: nil,
+        usage: nil,
+        agent_count: 1,
+        foreign_repo_commits: %{"fid" => foreign_sha}
+      }
+
+      foreign_repos = [%ForeignRepo{id: "fid", root: fid_root, writable: true}]
+
+      assert {:ok, report} =
+               Helpers.merge_and_report(tmp_dir, agent_output, "genesis", foreign_repos)
+
+      branch = report.branch_name
+
+      encoded = Codec.encode_result({:ok, report})
+      {:ok, decoded} = Codec.decode_result(encoded)
+
+      # "repos" is not a known atomized field, so it stays a STRING key; the
+      # per-repo inner maps round-trip with string keys too (JSON-safe).
+      assert Map.get(decoded, "repos") == %{
+               "primary" => %{"commit_sha" => final_sha, "branch_name" => branch},
+               "fid" => %{"commit_sha" => foreign_sha, "branch_name" => branch}
+             }
+    end
+  end
+
+  # ==========================================================================
   # load_foreign_repos/2
+  #
+  # Every entry is validated UP FRONT: the root must exist AND be a git repo,
+  # and a non-nil base_sha must resolve — otherwise an ArgumentError is raised
+  # naming the id/path/problem (spec-error style, never a mid-run crash). All
+  # tests therefore use REAL temp git repos (see make_git_repo!/1).
   # ==========================================================================
   describe "load_foreign_repos/2" do
     test "returns only the CLI-provided repo when no genesis.toml exists", %{
       tmp_dir: tmp_dir
     } do
-      cli_repo = %ForeignRepo{id: "cli1", root: "/cli/path"}
+      cli_root = make_git_repo!("cli1")
+      cli_repo = %ForeignRepo{id: "cli1", root: cli_root}
 
       assert Helpers.load_foreign_repos(tmp_dir, foreign_repos: [cli_repo]) == [cli_repo]
     end
@@ -286,11 +503,13 @@ defmodule EvoGit.Runtime.HelpersTest do
     test "returns the TOML-declared repo when opts has no :foreign_repos", %{
       tmp_dir: tmp_dir
     } do
+      toml_root = make_git_repo!("toml1")
+
       File.write!(
         Path.join(tmp_dir, "genesis.toml"),
         """
         [foreign_repos.toml1]
-        path = "/abs/path/toml1"
+        path = "#{toml_root}"
         description = "toml1 description"
         """
       )
@@ -298,21 +517,25 @@ defmodule EvoGit.Runtime.HelpersTest do
       assert Helpers.load_foreign_repos(tmp_dir, []) == [
                %ForeignRepo{
                  id: "toml1",
-                 root: "/abs/path/toml1",
+                 root: toml_root,
                  description: "toml1 description"
                }
              ]
     end
 
     test "merges TOML and CLI repos when there is no id conflict", %{tmp_dir: tmp_dir} do
+      toml1 = make_git_repo!("toml1")
+      toml2 = make_git_repo!("toml2")
+      cli1 = make_git_repo!("cli1")
+
       File.write!(
         Path.join(tmp_dir, "genesis.toml"),
         """
         [foreign_repos.toml1]
-        path = "/abs/path/toml1"
+        path = "#{toml1}"
 
         [foreign_repos.toml2]
-        path = "/abs/path/toml2"
+        path = "#{toml2}"
         description = "second toml repo"
         """
       )
@@ -320,7 +543,7 @@ defmodule EvoGit.Runtime.HelpersTest do
       result =
         Helpers.load_foreign_repos(
           tmp_dir,
-          foreign_repos: [%ForeignRepo{id: "cli1", root: "/cli/path"}]
+          foreign_repos: [%ForeignRepo{id: "cli1", root: cli1}]
         )
 
       assert length(result) == 3
@@ -328,11 +551,14 @@ defmodule EvoGit.Runtime.HelpersTest do
     end
 
     test "CLI repo takes precedence over TOML repo on id conflict", %{tmp_dir: tmp_dir} do
+      toml_shared = make_git_repo!("tomlshared")
+      cli_shared = make_git_repo!("clishared")
+
       File.write!(
         Path.join(tmp_dir, "genesis.toml"),
         """
         [foreign_repos.shared]
-        path = "/toml/path"
+        path = "#{toml_shared}"
         description = "toml shared repo"
         """
       )
@@ -340,34 +566,170 @@ defmodule EvoGit.Runtime.HelpersTest do
       result =
         Helpers.load_foreign_repos(
           tmp_dir,
-          foreign_repos: [%ForeignRepo{id: "shared", root: "/cli/path"}]
+          foreign_repos: [%ForeignRepo{id: "shared", root: cli_shared}]
         )
 
       assert length(result) == 1
       shared = Enum.find(result, &(&1.id == "shared"))
-      assert shared.root == "/cli/path"
+      assert shared.root == cli_shared
+      assert shared.description == nil
     end
 
     test "normalizes string-keyed maps from persisted-shape opts", %{tmp_dir: tmp_dir} do
+      toml_root = make_git_repo!("toml1")
+      cli_root = make_git_repo!("cli1")
+
       File.write!(
         Path.join(tmp_dir, "genesis.toml"),
         """
         [foreign_repos.toml1]
-        path = "/abs/path/toml1"
+        path = "#{toml_root}"
         """
       )
 
       result =
         Helpers.load_foreign_repos(
           tmp_dir,
-          foreign_repos: [%{"id" => "cli1", "root" => "/cli/path", "description" => nil}]
+          foreign_repos: [%{"id" => "cli1", "root" => cli_root, "description" => nil}]
         )
 
       assert length(result) == 2
       assert Enum.all?(result, &match?(%ForeignRepo{}, &1))
 
-      assert %ForeignRepo{id: "cli1", root: "/cli/path", description: nil} =
+      assert %ForeignRepo{id: "cli1", root: ^cli_root, description: nil} =
                Enum.find(result, &(&1.id == "cli1"))
+    end
+
+    test "raises ArgumentError naming the id and path when the path does not exist", %{
+      tmp_dir: tmp_dir
+    } do
+      missing =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_helpers_fr_missing_#{System.unique_integer()}"
+        )
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Helpers.load_foreign_repos(
+            tmp_dir,
+            foreign_repos: [%ForeignRepo{id: "gone", root: missing}]
+          )
+        end
+
+      assert String.contains?(err.message, "gone")
+      assert String.contains?(err.message, missing)
+      assert String.contains?(err.message, "not a valid git repository")
+    end
+
+    test "raises ArgumentError when the path is a directory but not a git repo", %{
+      tmp_dir: tmp_dir
+    } do
+      not_git =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_helpers_fr_notgit_#{System.unique_integer()}"
+        )
+
+      File.mkdir_p!(not_git)
+      on_exit(fn -> File.rm_rf!(not_git) end)
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Helpers.load_foreign_repos(
+            tmp_dir,
+            foreign_repos: [%ForeignRepo{id: "plain", root: not_git}]
+          )
+        end
+
+      assert String.contains?(err.message, "plain")
+      assert String.contains?(err.message, not_git)
+      assert String.contains?(err.message, "not a valid git repository")
+    end
+
+    test "raises ArgumentError when base_sha does not resolve in the repo", %{
+      tmp_dir: tmp_dir
+    } do
+      root = make_git_repo!("badsha")
+
+      # NOTE: a FULL 40-hex string is accepted by `git rev-parse` without
+      # existence verification (git returns it as-is), so an abbreviated
+      # nonexistent sha is the minimal value that actually fails to resolve.
+      err =
+        assert_raise ArgumentError, fn ->
+          Helpers.load_foreign_repos(
+            tmp_dir,
+            foreign_repos: [
+              %ForeignRepo{
+                id: "f",
+                root: root,
+                base_sha: "deadbee"
+              }
+            ]
+          )
+        end
+
+      assert String.contains?(err.message, "f")
+      assert String.contains?(err.message, "base_sha")
+      assert String.contains?(err.message, "does not resolve")
+    end
+
+    test "validates and returns structs with writable and base_sha set", %{
+      tmp_dir: tmp_dir
+    } do
+      root = make_git_repo!("valid")
+      {:ok, sha} = Git.rev_parse(root)
+
+      assert [
+               %ForeignRepo{id: "f", root: ^root, writable: true, base_sha: ^sha}
+             ] =
+               Helpers.load_foreign_repos(
+                 tmp_dir,
+                 foreign_repos: [
+                   %ForeignRepo{id: "f", root: root, writable: true, base_sha: sha}
+                 ]
+               )
+    end
+
+    test "parses writable and base_sha from genesis.toml", %{tmp_dir: tmp_dir} do
+      toml_root = make_git_repo!("tomlvalid")
+      {:ok, sha} = Git.rev_parse(toml_root)
+
+      File.write!(
+        Path.join(tmp_dir, "genesis.toml"),
+        """
+        [foreign_repos.toml1]
+        path = "#{toml_root}"
+        writable = true
+        base_sha = "#{sha}"
+        """
+      )
+
+      assert [%ForeignRepo{id: "toml1", root: ^toml_root, writable: true, base_sha: ^sha}] =
+               Helpers.load_foreign_repos(tmp_dir, [])
+    end
+  end
+
+  # ==========================================================================
+  # resolve_foreign_repo_starting_commit/2
+  # ==========================================================================
+  describe "resolve_foreign_repo_starting_commit/2" do
+    test "returns base_sha when set", %{tmp_dir: _tmp_dir} do
+      root = make_git_repo!("resolve_base")
+      {:ok, sha} = Git.rev_parse(root)
+
+      entry = %ForeignRepo{id: "f", root: root, base_sha: sha}
+
+      assert {:ok, ^sha} = Helpers.resolve_foreign_repo_starting_commit(entry, root)
+    end
+
+    test "returns the foreign repo HEAD when base_sha is nil", %{tmp_dir: _tmp_dir} do
+      root = make_git_repo!("resolve_head")
+      {:ok, head} = Git.rev_parse(root, "HEAD")
+
+      entry = %ForeignRepo{id: "f", root: root}
+
+      assert {:ok, ^head} = Helpers.resolve_foreign_repo_starting_commit(entry, root)
     end
   end
 
