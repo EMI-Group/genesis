@@ -131,13 +131,21 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:outcomes, :list, default: [])
 
   def merge_outcomes_panel(assigns) do
+    # zh_CN: 合并结果/拒绝结果汇总面板标题 — any :rejected outcome switches the panel title
+    any_rejected = Enum.any?(assigns.outcomes, &(&1[:status] == :rejected))
+
     ~H"""
     <%= if @outcomes != [] do %>
       <div class="bg-base-100 border rounded-lg p-4">
         <div class="flex items-center gap-3 mb-4">
           <.icon name="hero-arrow-path" class="size-5 text-base-content/60" />
-          <%!-- zh_CN: "Merge results" → 合并结果 --%>
-          <h3 class="font-semibold text-base">{gettext("Merge results")}</h3>
+          <%= if any_rejected do %>
+            <%!-- zh_CN: "Reject results" → 拒绝结果（合并结果/拒绝结果汇总面板标题） --%>
+            <h3 class="font-semibold text-base">{gettext("Reject results")}</h3>
+          <% else %>
+            <%!-- zh_CN: "Merge results" → 合并结果 --%>
+            <h3 class="font-semibold text-base">{gettext("Merge results")}</h3>
+          <% end %>
         </div>
         <div class="space-y-3">
           <%= for outcome <- @outcomes do %>
@@ -157,6 +165,19 @@ defmodule EvoDashWeb.ReviewComponents do
                           {gettext("Merged")}
                         <% end %>
                       </span>
+                      <%= if is_binary(outcome[:detail]) do %>
+                        <span class="font-mono text-xs text-base-content/60 ml-2">
+                          {String.slice(outcome[:detail], 0..7)}
+                        </span>
+                      <% end %>
+                    </div>
+                  </div>
+                <% :rejected -> %>
+                  <div class="flex items-start gap-2 min-w-0 text-sm">
+                    <.icon name="hero-check-circle" class="size-5 text-success shrink-0 mt-0.5" />
+                    <div class="min-w-0">
+                      <%!-- zh_CN: "Rejected — branch deleted" → 已拒绝——分支已删除 --%>
+                      <span class="font-medium text-success">{gettext("Rejected — branch deleted")}</span>
                       <%= if is_binary(outcome[:detail]) do %>
                         <span class="font-mono text-xs text-base-content/60 ml-2">
                           {String.slice(outcome[:detail], 0..7)}
