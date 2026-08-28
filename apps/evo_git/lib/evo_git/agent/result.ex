@@ -27,7 +27,8 @@ defmodule EvoGit.Agent.Result do
     repo_id: nil,
     usage: nil,
     agent_count: nil,
-    archive_records: nil
+    archive_records: nil,
+    foreign_repo_commits: %{}
   ]
 
   @type t :: %__MODULE__{
