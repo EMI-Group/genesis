@@ -130,5 +130,188 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistenceTest do
                %{"id" => "x", "path" => ""}
              ]) == socket
     end
+
+    test "local socket round-trips writable and base_sha (ForeignRepo.new/3 equality)" do
+      socket = socket(%{remote?: false, current_node: node()})
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos([
+          %{
+            "id" => "local",
+            "path" => "/abs/repo",
+            "description" => "d",
+            "writable" => true,
+            "base_sha" => "abc123"
+          }
+        ])
+        |> Map.fetch!(:assigns)
+
+      assert [repo] = restored.foreign_repos
+
+      assert repo ==
+               ForeignRepo.new("local", "/abs/repo",
+                 writable: true,
+                 base_sha: "abc123",
+                 description: "d"
+               )
+    end
+
+    test "remote socket round-trips writable and base_sha with the raw root" do
+      socket = socket(%{remote?: true, current_node: @remote_node})
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos([
+          %{
+            "id" => "remote",
+            "path" => "/home/u/r",
+            "description" => "d",
+            "writable" => true,
+            "base_sha" => "abc123"
+          }
+        ])
+        |> Map.fetch!(:assigns)
+
+      assert [
+               %{
+                 id: "remote",
+                 root: "/home/u/r",
+                 description: "d",
+                 writable: true,
+                 base_sha: "abc123"
+               }
+             ] = restored.foreign_repos
+    end
+
+    test "writable accepts boolean and string true/false forms (local socket)" do
+      socket = socket(%{remote?: false, current_node: node()})
+
+      for {writable, expected} <- [{"true", true}, {true, true}, {"false", false}, {false, false}] do
+        restored =
+          socket
+          |> StatePersistence.maybe_restore_foreign_repos([
+            %{"id" => "w", "path" => "/abs/r", "writable" => writable}
+          ])
+          |> Map.fetch!(:assigns)
+
+        assert [%{writable: ^expected}] = restored.foreign_repos
+      end
+    end
+
+    test "missing writable key restores as false (local socket)" do
+      socket = socket(%{remote?: false, current_node: node()})
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos([%{"id" => "w", "path" => "/abs/r"}])
+        |> Map.fetch!(:assigns)
+
+      assert [%{writable: false}] = restored.foreign_repos
+    end
+
+    test "remote socket restores a string true writable" do
+      socket = socket(%{remote?: true, current_node: @remote_node})
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos([
+          %{"id" => "w", "path" => "/home/u/r", "writable" => "true"}
+        ])
+        |> Map.fetch!(:assigns)
+
+      assert [%{writable: true}] = restored.foreign_repos
+    end
+
+    test "base_sha empty string or missing key restores as nil" do
+      socket = socket(%{remote?: false, current_node: node()})
+
+      for input <- [
+            %{"id" => "e", "path" => "/abs/r", "base_sha" => ""},
+            %{"id" => "m", "path" => "/abs/r"}
+          ] do
+        restored =
+          socket
+          |> StatePersistence.maybe_restore_foreign_repos([input])
+          |> Map.fetch!(:assigns)
+
+        assert [%{base_sha: nil}] = restored.foreign_repos
+      end
+    end
+
+    test "non-empty base_sha is carried through (local socket)" do
+      socket = socket(%{remote?: false, current_node: node()})
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos([
+          %{"id" => "b", "path" => "/abs/r", "base_sha" => "abc123"}
+        ])
+        |> Map.fetch!(:assigns)
+
+      assert [%{base_sha: "abc123"}] = restored.foreign_repos
+    end
+
+    test "remote base_sha is stored verbatim, never locally rewritten" do
+      socket = socket(%{remote?: true, current_node: @remote_node})
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos([
+          %{"id" => "r", "path" => "/home/u/r", "base_sha" => "abc123"}
+        ])
+        |> Map.fetch!(:assigns)
+
+      assert [%{base_sha: "abc123"}] = restored.foreign_repos
+    end
+  end
+
+  describe "serialize_foreign_repos/1" do
+    test "emits exactly the five persisted keys per repo with correct values" do
+      path_a = Path.join(System.tmp_dir!(), "repo-a")
+      path_b = Path.join(System.tmp_dir!(), "repo-b")
+
+      repos = [
+        ForeignRepo.new("a", path_a, writable: true, base_sha: "abc123"),
+        ForeignRepo.new("b", path_b)
+      ]
+
+      assert StatePersistence.serialize_foreign_repos(repos) == [
+               %{
+                 "id" => "a",
+                 "path" => Path.expand(path_a),
+                 "description" => nil,
+                 "writable" => true,
+                 "base_sha" => "abc123"
+               },
+               %{
+                 "id" => "b",
+                 "path" => Path.expand(path_b),
+                 "description" => nil,
+                 "writable" => false,
+                 "base_sha" => nil
+               }
+             ]
+    end
+
+    test "nil input serializes to an empty list" do
+      assert StatePersistence.serialize_foreign_repos(nil) == []
+    end
+
+    test "serialize then restore round-trips writable and base_sha (local socket)" do
+      socket = socket(%{remote?: false, current_node: node()})
+      path = Path.join(System.tmp_dir!(), "repo")
+
+      repos = [ForeignRepo.new("primary", path, writable: true, base_sha: "abc123")]
+
+      serialized = StatePersistence.serialize_foreign_repos(repos)
+
+      restored =
+        socket
+        |> StatePersistence.maybe_restore_foreign_repos(serialized)
+        |> Map.fetch!(:assigns)
+
+      assert restored.foreign_repos == repos
+    end
   end
 end
