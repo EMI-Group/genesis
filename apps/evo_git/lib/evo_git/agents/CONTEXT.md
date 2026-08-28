@@ -33,7 +33,7 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 - Fragments carry **NO trailing newline**; callers add `"\n"` explicitly (or mid-line `" "` joiners) so mid-line composition stays exact.
 - Near-duplicates are **deliberate separate functions** (or stay inline in the owning module) — never normalized/merged.
 
-**Function inventory (28 functions, grouped by theme; verbatim first lines live in `prompt_fragments.ex`):**
+**Function inventory (29 functions, grouped by theme; verbatim first lines live in `prompt_fragments.ex`):**
 
 | Theme | Functions (users) |
 |---|---|
