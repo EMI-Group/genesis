@@ -969,8 +969,13 @@ defmodule EvoDashWeb.ReviewLive do
 
           # The merge check MUST be sequenced here, after the loaded assigns
           # (merge_targets/branch_name/branch_exists/...) are in place. load_data
-          # already projects the primary flat assigns, so no re-projection here.
-          {:noreply, EvoDashWeb.ReviewLive.MergeCheck.maybe_start(socket)}
+          # projects the primary flat assigns from the loaded data, but maybe_start
+          # then marks the repos :checking — re-project so the flat @merge_status
+          # reflects that immediately.
+          {:noreply,
+           socket
+           |> EvoDashWeb.ReviewLive.MergeCheck.maybe_start()
+           |> project_active_repo()}
 
         {:error, reason} ->
           socket =
