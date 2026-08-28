@@ -45,7 +45,7 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | **Context Tree definition** | `context_tree_definition_clause/0`, `routing_table_markdown_list_clause/0`, `delegate_without_investigating_clause/0` (all Architect, ContextExtractor) |
 | **CONTEXT.md = current state, not history** | `context_current_state_clause/0` (Manager, Architect, Investigator, ContextExtractor) — the shared "current state, not history" paragraph + active-maintenance guidance (keep CONTEXT.md concise by pruning when adding; write findings at the best-fit child/descendant node with a routing-table entry at the current level; extract oversized sections into skills; the `... [Content Truncated] ...` marker in a read CONTEXT.md signals the file exceeded the per-file ~64 KB truncation limit — prune it) |
 | **Shared canonical phrases** | `standard_sections_enum/0` (Architect, Investigator); `context_chain_example/0` (Manager, Architect); `genesis_context_header/0` (TaskScheduler, GenesisPlanner) |
-| **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0` (Architect, ContextExtractor) |
+| **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0`, `writable_foreign_repo_clause/0` (Architect, ContextExtractor) |
 | **Objective scope** | `objective_not_in_node_prefix/0` (Executor, ContextExtractor) |
 
 ## Notes for Agents (prompt composition)
