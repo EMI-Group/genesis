@@ -455,7 +455,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       flush_review_load(view)
 
-      send(view.pid, {:merge_check_result, task_id, node(), "main", {:ok, :clean}})
+      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
       html = render(view)
 
       assert html =~ "Merge check passed"
@@ -476,7 +476,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       send(
         view.pid,
-        {:merge_check_result, task_id, node(), "main",
+        {:merge_check_result, task_id, node(), "primary", "main",
          {:ok, {:conflict, ["src/app.ex", "lib/util.ex"]}}}
       )
 
@@ -497,14 +497,22 @@ defmodule EvoDashWeb.ReviewLiveTest do
       flush_review_load(view)
 
       # Wrong target — the running check targets "main".
-      send(view.pid, {:merge_check_result, task_id, node(), "other-target", {:ok, :clean}})
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "primary", "other-target", {:ok, :clean}}
+      )
+
       html = render(view)
 
       assert assigns(view)[:merge_status].state == :checking
       refute html =~ "Merge check passed"
 
       # Wrong task id.
-      send(view.pid, {:merge_check_result, "other-task-id", node(), "main", {:ok, :clean}})
+      send(
+        view.pid,
+        {:merge_check_result, "other-task-id", node(), "primary", "main", {:ok, :clean}}
+      )
+
       html = render(view)
 
       assert assigns(view)[:merge_status].state == :checking
@@ -525,7 +533,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert %{state: :checking, target: "dev"} = assigns(view)[:merge_status]
 
       # Result for the NEW target is applied.
-      send(view.pid, {:merge_check_result, task_id, node(), "dev", {:ok, :clean}})
+      send(view.pid, {:merge_check_result, task_id, node(), "primary", "dev", {:ok, :clean}})
       html = render(view)
 
       assert assigns(view)[:merge_status].state == :clean
@@ -534,7 +542,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # Result for the OLD target arrives afterwards — ignored.
       send(
         view.pid,
-        {:merge_check_result, task_id, node(), "main", {:ok, {:conflict, ["old.txt"]}}}
+        {:merge_check_result, task_id, node(), "primary", "main",
+         {:ok, {:conflict, ["old.txt"]}}}
       )
 
       html = render(view)
@@ -597,7 +606,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       send(
         view.pid,
-        {:merge_check_result, task_id, node(), "main",
+        {:merge_check_result, task_id, node(), "primary", "main",
          {:ok, {:conflict, ["file_a.txt", "file_b.txt"]}}}
       )
 
@@ -642,7 +651,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       flush_review_load(view)
 
-      send(view.pid, {:merge_check_result, task_id, node(), "main", {:ok, :clean}})
+      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
       html = render(view)
       assert html =~ "Merge check passed"
 
@@ -730,7 +739,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       send(
         view.pid,
-        {:merge_check_result, "some-remote-task-id", remote_node, "main",
+        {:merge_check_result, "some-remote-task-id", remote_node, "primary", "main",
          {:ok, {:conflict, ["file_a.txt"]}}}
       )
 
