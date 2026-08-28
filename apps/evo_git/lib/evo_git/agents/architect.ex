@@ -199,7 +199,11 @@ defmodule EvoGit.Agents.Architect do
       **First, determine what each foreign repo is FOR** — tests (expected behavior), a reference implementation to port/mirror, a dependency, or docs/specs — and reflect that role in your architecture. When a foreign repo contains tests for your node, treat them as given test suites: design so they pass (aim for 100%) and carry them into Phase 2 so delegates target them explicitly.
 
       **Key Rules:**
-      - **Only read-only agents in foreign repos**: You can only spawn `subagent_investigator` into foreign repositories. Write-capable agents are not permitted. This enforces the spatial contract: write authority is scoped to the primary repository.
+      - **Read-only vs writable foreign repos**: Foreign repos may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). In a READ-ONLY foreign repo you can only spawn `subagent_investigator` — write-capable agents are not permitted. In a WRITABLE foreign repo, `:read_write` agents may be spawned to modify files; their changes are committed to `evogit-agent-*` branches and tracked by the task, but the task NEVER merges them back into the foreign repo's default branch (merging/rejecting happens later via the dashboard review page).
+      """ <>
+      PromptFragments.writable_foreign_repo_clause() <>
+      "\n" <>
+      ~S"""
       - **Ask for quick overviews, not deep investigations**: Frame objectives as "quick overview", "brief summary", "high-level structure" — avoid "thoroughly", "comprehensive", "detailed".
       """ <>
       PromptFragments.foreign_repo_spawn_right_level() <>
@@ -244,7 +248,7 @@ defmodule EvoGit.Agents.Architect do
       3. Phase 3 — Review & Accountability: Run `cargo build` and `cargo test`. Review the implementation. Delegate bug fixes and refinement to `subagent_manager`. If a module's behavior doesn't match, spawn a targeted investigator for that specific foreign repo area.
       4. Call `complete_task` with a summary of the ported structure.
 
-      *Design rationale: Foreign repos are read-only per the spatial contract — the investigator can read but never modify them. You use it to extract architectural understanding (what modules exist, how they relate), then map that understanding into a new Context Tree. Each child architect gets the foreign module context it needs, and child managers investigate further as needed during implementation. The key insight: you don't need to understand every detail of the foreign codebase — just enough to design an equivalent architecture. The recursion handles the rest.*
+      *Design rationale: Foreign repos are read-only by default — investigators extract architectural understanding (what modules exist, how they relate), and you map that understanding into a new Context Tree. When a foreign repo is writable for this task (`writable = true` in `genesis.toml`), read_write agents may modify it; their changes are committed to `evogit-agent-*` branches, tracked by the task, and never merged back into the foreign repo's default branch by the task (merging/rejecting happens later via the dashboard review page). Each child architect gets the foreign module context it needs, and child managers investigate further as needed during implementation. The key insight: you don't need to understand every detail of the foreign codebase — just enough to design an equivalent architecture. The recursion handles the rest.*
 
       **IMPORTANT: Handling Large Objectives** — If the objective feels too large, that's exactly the signal to decompose MORE aggressively and delegate MORE. Large objectives don't mean more work for YOU — they mean more delegation. The recursive chain will handle it. Never give up or say a task is too big — just decompose it further.
 
