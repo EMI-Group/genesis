@@ -1,0 +1,22 @@
+# EvoDash Domain-Layer Tests
+
+## Intent
+
+Unit/integration tests for the `:evo_dash` domain modules (`./apps/evo_dash/lib/evo_dash/`): `EvoDash.DirectoryPicker`, `EvoDash.NodeContext`, `EvoDash.AttachedFile`, `EvoDash.SettingsUtils`, `EvoDash.DesktopLifetime`, `EvoDash.MarkdownRender`, `EvoDash.UpdateStatus`. (Store/TaskRegistry domain tests live in `:evo_git`, not here.)
+
+## Routing Table
+
+- `directory_picker_test.exs` → `EvoDash.DirectoryPickerTest` (async: false) — pick protocol via `EvoDash.DirectoryPicker.Wx.Fake` injected through `:directory_picker_wx` env (`enabled: true` override in setup; test_helper.exs defaults to disabled). Tests: `pick/2` first/subsequent picks, wx-server-killed-between-picks recovery, mid-pick server-death → `:unavailable` + busy cleared, wx `init_fails` → async `:unavailable` + recovery, busy serialization via `FakeWx.set_gate/1` (second pick → sync `{:error, :unavailable}`, no result msg), disabled-config rejection. `pick/3 :file` mirrors: file dialog result `{:ok, "/fake/picked/file.txt"}`, `pick/2` ≡ `pick/3 :directory` (`{:ok, "/fake/picked/dir"}`), kind-agnostic busy, init-fail + disabled-config. Helper `wait_until_pick_ok/2` polls because result msg and `:pick_done` are sent in that order (busy can briefly linger). NO test covers the `:cancelled` result kind (user dismisses dialog); no path validation/normalization is tested — the picker only relays the path (source `normalize_path/1` = chardata→binary passthrough; no expand/exists check).
+- `node_context_test.exs` → `EvoDash.NodeContextTest` (async: false, `EvoDashWeb.ConnCase`) — all delegates are thin node-first passthroughs to `EvoGit.RemoteNode.*` (local direct vs `:erpc` routing happens in RemoteNode); only the LOCAL path (`node()`) is exercised here. Covers: cancel_task/force_kill_task (`:not_found`, `:pending`→`:cancelled` store-verified via `insert_fixture!/1`), get_task (nil / `%TaskInfo{}`), set_review_status/set_review_metadata casts, review git wrappers shape-only (`{:error, _}` against `/nonexistent` — real git calls fail, never raise), GitHub delegates (verbatim `{:error, {:enoent, "/nonexistent"}}`, `state:` opt accepted), get_resolved_config (scheduler/llm/tools/sandbox maps), get_recent_system_samples (`{:ok, list}`), custom-agents RPC (isolated `XDG_CONFIG_HOME`; list/save/duplicate_id/missing_name/delete/script round-trip + compile_error/empty clears/reload).
+- `attached_file_test.exs` → `EvoDash.AttachedFileTest` — attached-file reading/trimming (plain text; `.docx`/`.pdf` extraction)
+- `settings_utils_test.exs` → `EvoDash.SettingsUtilsTest`
+- `desktop_lifetime_test.exs` → `EvoDash.DesktopLifetimeTest`
+- `markdown_render_test.exs` → `EvoDash.MarkdownRenderTest` — markdown edge cases (nil, empty, headings, code blocks, tables, bold)
+- `update_status_test.exs` → `EvoDash.UpdateStatusTest`
+
+## Known Issues / Test Gaps (multi-repo relevant)
+
+- **No `NodeContext.start_task/3` test in this suite** (only a comment at node_context_test.exs:33 mentions `start_task/2`). `start_task/3` (node_context.ex:605) passes `opts` verbatim to `EvoGit.RemoteNode.start_task/3` — `:path`, `:foreign_repos`, `:mode`, `:agent`, `:model_id` threading has NO domain-layer regression coverage here (only LiveView-level coverage in projects_live_test/home_live_test).
+- **`foreign_repos` appears NOWHERE** in node_context.ex or this test dir (rg: zero matches). Multi-repo opt threading is untested at the NodeContext layer.
+- **Remote `:erpc` delegation path untested here** — every test calls with `node()` (local direct); the remote envelope (`{:error, {kind, reason}}` on transport failure) is never exercised in this suite.
+- **Picker: no `:cancelled` result-kind test, no path normalization/existence assertions** — the fake always delivers literal `/fake/picked/dir` | `/fake/picked/file.txt` binaries; downstream path normalization is covered in `evo_dash_web/live/projects_live/project_flow_test.exs`, not here.
