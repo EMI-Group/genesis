@@ -7,6 +7,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   alias EvoGit.Agent.Result
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
 
   # Dummy agent modules for testing agent_type dispatch
@@ -31,12 +32,29 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   end
 
   defp spec(path: path, repo: repo, repo_id: repo_id, agent_module: agent_module) do
+    spec(
+      path: path,
+      repo: repo,
+      repo_id: repo_id,
+      agent_module: agent_module,
+      foreign_repos: []
+    )
+  end
+
+  defp spec(
+         path: path,
+         repo: repo,
+         repo_id: repo_id,
+         agent_module: agent_module,
+         foreign_repos: foreign_repos
+       ) do
     %AgentSpec{
       context_node: %ContextNode{path: path, repo: repo},
       phylo_node: %PhyloGraphNode{repo: repo, base_commit: "abc123", current_commit: "abc123"},
       agent_module: agent_module,
       objective: "test objective",
-      repo_id: repo_id
+      repo_id: repo_id,
+      foreign_repos: foreign_repos
     }
   end
 
@@ -71,7 +89,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert {:error, {:foreign_repo_read_only, msg}} =
                Subagents.validate_spatial_contract_for_spec(1, parent, spec)
 
-      assert msg =~ "Read-write agents cannot be spawned in foreign repositories"
+      assert msg =~ "This foreign repository is read-only for this task"
     end
 
     test "error message mentions read-only alternatives" do
@@ -116,6 +134,94 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       assert {:error, {:foreign_repo_read_only, _}} =
                Subagents.validate_spatial_contract_for_spec(1, parent, read_write_spec)
+    end
+
+    test "allows read-write agent when the foreign repo is marked writable at task level" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: [
+            %ForeignRepo{id: "original", root: "/home/user/original", writable: true}
+          ]
+        )
+
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, spec) == :ok
+    end
+
+    test "rejects read-write agent when the foreign repo is marked read-only at task level" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: [
+            %ForeignRepo{id: "original", root: "/home/user/original", writable: false}
+          ]
+        )
+
+      assert {:error, {:foreign_repo_read_only, msg}} =
+               Subagents.validate_spatial_contract_for_spec(1, parent, spec)
+
+      assert msg =~ "read-only for this task"
+    end
+
+    test "rejects read-write agent when foreign_repos is empty or the repo id is unknown" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      empty_spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: []
+        )
+
+      assert {:error, {:foreign_repo_read_only, _}} =
+               Subagents.validate_spatial_contract_for_spec(1, parent, empty_spec)
+
+      # A writable entry for a DIFFERENT repo does not help — the target repo id
+      # must itself be listed as writable.
+      other_repo_spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: [
+            %ForeignRepo{
+              id: "some_other_repo",
+              root: "/home/user/some_other_repo",
+              writable: true
+            }
+          ]
+        )
+
+      assert {:error, {:foreign_repo_read_only, _}} =
+               Subagents.validate_spatial_contract_for_spec(1, parent, other_repo_spec)
+    end
+
+    test "allows read-only agent into a foreign repo regardless of foreign_repos" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadOnlyAgent,
+          foreign_repos: []
+        )
+
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, spec) == :ok
     end
   end
 
