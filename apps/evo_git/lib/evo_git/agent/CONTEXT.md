@@ -27,7 +27,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 | Module | Purpose |
 |---|---|
 | `EvoGit.Agent.ContextCompression` | Compresses chat history when `total_tokens` exceeds threshold |
-| `EvoGit.Agent.SubagentProcessing` | Spawns subagents, resolves cross-repo paths, merges results via octopus merge, formats results for LLM context |
+| `EvoGit.Agent.SubagentProcessing` | Spawns subagents, resolves cross-repo paths, merges results via octopus merge, formats results for LLM context. Foreign-repo subagent phylo nodes (`build_subagent_phylo_node/7`): starting-commit precedence = per-repo `base_sha` (task-level starting commit, non-nil wins) → tracked commit from the `foreign_repo_commits` map (previous subagent's latest commit in that foreign repo) → foreign repo HEAD; an unresolvable `base_sha` or a missing/non-git foreign repo root returns a descriptive `{:error, msg}` (surfaced as `{:error, {call, index, msg}}`) — never a MatchError crash |
 | `EvoGit.Agent.TurnWarning` | Adaptive turn-budget warnings — 3 positional categories (beginning/end/critical) scaling with max_turns, plus a periodic middle reminder based on turns since last subagent delegation. `:beginning` delegation-strategy warning fires at ~25% of budget (min turn 6); `:middle` reminder fires every 15 turns (`:high`) / 45 turns (`:low`). Low-level agents (Executor, TaskScheduler, etc.) skip `:beginning` and have a 3x longer middle reminder interval |
 
 ### Tool Library (`EvoGit.Agent.Tools`)
