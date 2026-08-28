@@ -46,7 +46,7 @@ ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle 
 
 ## Constraints
 
-- `async: false` via `EvoGit.TaskRegistryCase` for the Store/registry-touching files; `async: true` for the pure modules (diagnostics, resume_context, runtime_opts).
+- `async: false` via `EvoGit.TaskRegistryCase` for the Store/registry-touching files; `async: true` for the pure modules (diagnostics, runtime_opts).
 - No mocking — real SQLite via xqlite, real `EvoGit.Store`/`TaskRegistry` GenServers; corrupt rows injected via raw `XqliteNIF.execute`.
 - Sync idiom: `update_task_status` is a cast → always `TaskRegistry.list_tasks()` (a call) afterwards to flush the mailbox before asserting.
 - Restart pattern: `stop_supervised(EvoGit.TaskRegistry)` then `start_supervised({TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry})` — keep the SAME Store running (it is durable on disk) so data survives the registry restart.
