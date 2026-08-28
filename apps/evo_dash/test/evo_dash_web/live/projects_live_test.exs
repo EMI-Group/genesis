@@ -8,6 +8,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   use EvoDashWeb.ConnCase
   import Phoenix.LiveViewTest
 
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
 
   setup [:setup_temp_dir, :set_onboarding_completed]
@@ -174,6 +175,35 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     id
   end
 
+  # Waits (bounded) for a launched task to reach a terminal status so its
+  # wrapper process has stopped writing under the project's `.genesis/`
+  # directory — otherwise the setup's on_exit File.rm_rf!(tmp_dir) can
+  # race a still-running wrapper and raise EEXIST. Best-effort: on timeout
+  # the test proceeds (the on_exit cleanups are rescued).
+  defp wait_for_task_terminal(id, timeout_ms \\ 10_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    loop = fn loop ->
+      case EvoGit.TaskRegistry.get_task(id) do
+        nil ->
+          :ok
+
+        %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
+          :ok
+
+        _ ->
+          if System.monotonic_time(:millisecond) < deadline do
+            Process.sleep(50)
+            loop.(loop)
+          else
+            :ok
+          end
+      end
+    end
+
+    loop.(loop)
+  end
+
   # Decoded task opts are a list of mixed atom/string-key tuples (the Store
   # codec atomizes only its whitelist), so string keys must be looked up via
   # Map.new — Access.get/3 and Keyword.has_key?/2 reject non-atom keys on
@@ -202,6 +232,48 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end)
 
     id
+  end
+
+  # Creates a REAL git repo fixture at `Path.join(tmp_dir, name)` with an
+  # initial commit, returning `{path, head_sha}`. The new foreign-repo
+  # validation checks git-ness via `EvoGit.Adapters.Git.rev_parse/1` (runs
+  # `git rev-parse HEAD`, which FAILS on an empty repo), so fixture repos MUST
+  # contain at least one commit — hence the `--allow-empty` initial commit.
+  # Registers on_exit cleanup.
+  defp git_repo_fixture!(tmp_dir, name) do
+    path = Path.join(tmp_dir, name)
+
+    {_, 0} = System.cmd("git", ["init", path], stderr_to_stdout: true)
+
+    {_, 0} =
+      System.cmd(
+        "git",
+        [
+          "-c",
+          "user.email=t@example.com",
+          "-c",
+          "user.name=t",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "init"
+        ],
+        cd: path,
+        stderr_to_stdout: true
+      )
+
+    {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+
+    on_exit(fn ->
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+      try do
+        File.rm_rf!(path)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    {path, String.trim(sha)}
   end
 
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
@@ -2092,9 +2164,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:active_project_path] == nil
     end
 
-    test "add_foreign_repo accepts POSIX/Windows paths on a remote node, raw-preserved", %{
-      conn: conn
-    } do
+    test "add_foreign_repo on a remote node rejects unverifiable paths (POSIX/Windows absolute still pass the absolute check)",
+         %{conn: conn} do
       id = save_target!()
 
       start_supervised!(
@@ -2105,8 +2176,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, "/projects?node=" <> id)
       assert assigns(view)[:remote?] == true
 
-      # POSIX absolute — the node-aware validator accepts it even though a
-      # Windows dashboard's local `Platform.absolute_path?/1` would reject it.
+      # POSIX absolute — the node-aware validator passes the absolute check
+      # (a Windows dashboard's local `Platform.absolute_path?/1` would reject
+      # it), but the fake node's :erpc fails fast → NodeContext.dir?/2 returns
+      # false → the existence check rejects with the does-not-exist flash.
       html =
         render_click(view, "add_foreign_repo", %{
           "repo_id" => "remote-posix",
@@ -2115,20 +2188,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         })
 
       refute html =~ "Path must be absolute."
+      assert html =~ "Foreign repo path does not exist: /home/user/repo"
+      refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "remote-posix"))
 
-      repos = assigns(view)[:foreign_repos]
-      assert Enum.any?(repos, &(&1.id == "remote-posix"))
-
-      posix_repo = Enum.find(repos, &(&1.id == "remote-posix"))
-      # Raw-preservation contract: remote contexts build the struct via
-      # node-aware ProjectFlow.build_foreign_repo/4, which stores the root
-      # VERBATIM — never Path.expand-ed against the LOCAL OS (a Windows
-      # dashboard would rewrite it to a drive-letter path).
-      assert posix_repo.root == "/home/user/repo"
-
-      # Windows-style absolute — the node-aware validator also ACCEPTS it
-      # (a POSIX dashboard's local check would cwd-join it), so no rejection
-      # flash may appear.
+      # Windows-style absolute — same story: passes the absolute check (a
+      # POSIX dashboard's local check would cwd-join it), rejected for
+      # existence on the unverifiable fake node.
       html =
         render_click(view, "add_foreign_repo", %{
           "repo_id" => "remote-win",
@@ -2137,15 +2202,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         })
 
       refute html =~ "Path must be absolute."
+      assert html =~ "Foreign repo path does not exist: D:\\stuff\\repo"
+      refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "remote-win"))
 
-      # Raw-preservation contract: remote contexts store the root verbatim via
-      # node-aware ProjectFlow.build_foreign_repo/4 — a Windows-style path is
-      # never cwd-joined by the LOCAL OS (which `ForeignRepo.new/3` would do).
-      repos = assigns(view)[:foreign_repos]
-      win_repo = Enum.find(repos, &(&1.id == "remote-win"))
-      assert win_repo.root == "D:\\stuff\\repo"
-
-      # Relative input is still rejected on a remote node
+      # Relative input is still rejected on a remote node (absolute check)
       html =
         render_click(view, "add_foreign_repo", %{
           "repo_id" => "remote-bad",
@@ -2161,6 +2221,386 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, _view, html} = live(conn, ~p"/projects")
 
       assert html =~ ~s(data-node-id="local")
+    end
+  end
+
+  describe "foreign repos — read-write validation and threading" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "add_foreign_repo accepts a real git repo with writable + base_sha", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "the repo",
+        "writable" => "true",
+        "base_sha" => head_sha
+      })
+
+      assert assigns(view)[:flash]["info"] == "Foreign repo 'repo1' registered successfully."
+
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "repo1"))
+      assert %ForeignRepo{writable: true, base_sha: ^head_sha} = repo
+      assert repo.description == "the repo"
+    end
+
+    test "add_foreign_repo without writable/base_sha defaults to read-only HEAD", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => ""
+      })
+
+      assert assigns(view)[:flash]["info"] == "Foreign repo 'repo1' registered successfully."
+
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "repo1"))
+      assert %ForeignRepo{writable: false, base_sha: nil} = repo
+    end
+
+    test "add_foreign_repo rejects a missing directory", %{conn: conn, tmp_dir: tmp_dir} do
+      missing = Path.join(tmp_dir, "nonexistent")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "missing",
+          "path" => missing,
+          "description" => ""
+        })
+
+      assert html =~ "Foreign repo path does not exist: #{missing}"
+      assert assigns(view)[:foreign_repos] == []
+    end
+
+    test "add_foreign_repo rejects a non-git directory", %{conn: conn, tmp_dir: tmp_dir} do
+      plain = Path.join(tmp_dir, "plain")
+      File.mkdir_p!(plain)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          File.rm_rf!(plain)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "plain",
+          "path" => plain,
+          "description" => ""
+        })
+
+      assert html =~ "Path is not a git repository: #{plain}"
+      assert assigns(view)[:foreign_repos] == []
+    end
+
+    test "add_foreign_repo rejects a bogus base_sha on a real git repo", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "repo1",
+          "path" => repo_path,
+          "description" => "",
+          "base_sha" => "deadbeef"
+        })
+
+      assert html =~ "Base commit deadbeef not found in repository: #{repo_path}"
+      assert assigns(view)[:foreign_repos] == []
+    end
+
+    test "edit_foreign_repo populates the edit form for an existing repo", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "the repo",
+        "writable" => "true",
+        "base_sha" => head_sha
+      })
+
+      render_click(view, "edit_foreign_repo", %{"repo_id" => "repo1"})
+
+      assert assigns(view)[:editing_foreign_repo_id] == "repo1"
+
+      assert assigns(view)[:foreign_repo_edit_form] == %{
+               description: "the repo",
+               writable: true,
+               base_sha: head_sha
+             }
+    end
+
+    test "edit_foreign_repo with an unknown id flashes not found", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "edit_foreign_repo", %{"repo_id" => "x"})
+
+      # Exact flash contract (asserted on the flash assign — the rendered HTML
+      # escapes the apostrophes to &#39;).
+      assert assigns(view)[:flash]["error"] == "Repo 'x' not found."
+    end
+
+    test "save_foreign_repo updates writable/base_sha/description in place", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      # A second commit to use as the updated base_sha
+      {_, 0} =
+        System.cmd(
+          "git",
+          [
+            "-c",
+            "user.email=t@example.com",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "second"
+          ],
+          cd: repo_path,
+          stderr_to_stdout: true
+        )
+
+      {new_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: repo_path)
+      new_sha = String.trim(new_sha)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Add as read-only at HEAD, then save with writable + a new base_sha
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "the repo"
+      })
+
+      render_click(view, "save_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "updated desc",
+        "writable" => "true",
+        "base_sha" => new_sha
+      })
+
+      assert assigns(view)[:flash]["info"] == "Foreign repo 'repo1' updated successfully."
+
+      repos = assigns(view)[:foreign_repos]
+      assert length(repos) == 1
+      repo = Enum.find(repos, &(&1.id == "repo1"))
+      assert %ForeignRepo{writable: true, base_sha: ^new_sha, description: "updated desc"} = repo
+      assert assigns(view)[:editing_foreign_repo_id] == nil
+      assert assigns(view)[:foreign_repo_edit_form] == nil
+    end
+
+    test "save_foreign_repo keeps edit assigns on validation failure", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+      plain = Path.join(tmp_dir, "plain")
+      File.mkdir_p!(plain)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          File.rm_rf!(plain)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "the repo",
+        "base_sha" => head_sha
+      })
+
+      render_click(view, "edit_foreign_repo", %{"repo_id" => "repo1"})
+      assert assigns(view)[:editing_foreign_repo_id] == "repo1"
+
+      # Point the path at a non-git dir — validation fails, but the edit
+      # assigns stay set so the user can fix the value without re-opening.
+      html =
+        render_click(view, "save_foreign_repo", %{
+          "repo_id" => "repo1",
+          "path" => plain,
+          "description" => "the repo",
+          "writable" => "true",
+          "base_sha" => head_sha
+        })
+
+      assert html =~ "Path is not a git repository: #{plain}"
+      assert assigns(view)[:editing_foreign_repo_id] == "repo1"
+
+      assert assigns(view)[:foreign_repo_edit_form] == %{
+               description: "the repo",
+               writable: false,
+               base_sha: head_sha
+             }
+
+      # The repo itself is unchanged
+      repos = assigns(view)[:foreign_repos]
+      assert length(repos) == 1
+      assert Enum.any?(repos, &(&1.id == "repo1"))
+    end
+
+    test "cancel_edit_foreign_repo clears the edit assigns", %{conn: conn, tmp_dir: tmp_dir} do
+      {repo_path, _head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => ""
+      })
+
+      render_click(view, "edit_foreign_repo", %{"repo_id" => "repo1"})
+      assert assigns(view)[:editing_foreign_repo_id] == "repo1"
+
+      render_click(view, "cancel_edit_foreign_repo", %{})
+
+      assert assigns(view)[:editing_foreign_repo_id] == nil
+      assert assigns(view)[:foreign_repo_edit_form] == nil
+    end
+
+    test "resume_from restores foreign repos from the previous task (writable + base_sha)", %{
+      conn: conn
+    } do
+      task =
+        insert_task_fixture!(
+          opts: [
+            foreign_repos: [
+              %{
+                "id" => "orig",
+                "root" => "/Source/original-proj",
+                "description" => "d",
+                "writable" => true,
+                "base_sha" => "abc123"
+              }
+            ]
+          ]
+        )
+
+      {:ok, view, _html} = live(conn, "/projects?resume_from=" <> task.id)
+
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
+      assert %ForeignRepo{writable: true, base_sha: "abc123"} = repo
+    end
+
+    test "resume_from restores a string 'true' writable foreign repo", %{conn: conn} do
+      task =
+        insert_task_fixture!(
+          opts: [
+            foreign_repos: [
+              %{
+                "id" => "orig",
+                "root" => "/Source/original-proj",
+                "description" => "d",
+                "writable" => "true",
+                "base_sha" => "abc123"
+              }
+            ]
+          ]
+        )
+
+      {:ok, view, _html} = live(conn, "/projects?resume_from=" <> task.id)
+
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
+      assert %ForeignRepo{writable: true, base_sha: "abc123"} = repo
+    end
+
+    test "task_submit threads foreign_repos (writable + base_sha) into the task opts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "the repo",
+        "writable" => "true",
+        "base_sha" => head_sha
+      })
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+
+      # cancel_task/1 is graceful+async: the wrapper runs its grace turns and
+      # only then persists the terminal status. Wait for the terminal status so
+      # the wrapper has stopped writing under tmp_dir/.genesis/ before the
+      # setup's on_exit File.rm_rf!(tmp_dir) runs.
+      wait_for_task_terminal(task_id)
+
+      # Re-fetch AFTER the wait — the wrapper's final-status persistence may
+      # rewrite the row (the codec round-trip of :foreign_repos is unchanged).
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # :foreign_repos is in the codec's known-opt-key whitelist, so the key
+      # round-trips as an atom; the VALUE is Jason-decoded into string-keyed
+      # maps (id/root/description/writable/base_sha).
+      foreign_repos = opt(task, :foreign_repos)
+      assert is_list(foreign_repos)
+
+      repo = Enum.find(foreign_repos, &(Map.get(&1, "id") == "repo1"))
+      assert Map.get(repo, "writable") == true
+      assert Map.get(repo, "base_sha") == head_sha
     end
   end
 

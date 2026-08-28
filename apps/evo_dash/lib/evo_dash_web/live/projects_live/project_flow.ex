@@ -191,13 +191,17 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   On the LOCAL node (`node == nil or node == node()`) delegates to
   `EvoGit.Core.ForeignRepo.new/3` — EXACT local behavior, including its
-  internal `Path.expand/1` tilde/relative expansion semantics.
+  internal `Path.expand/1` tilde/relative expansion semantics and its
+  `writable:`/`base_sha:` opt coercion.
 
   On a REMOTE node constructs the struct DIRECTLY with the raw `root` and NO
   `Path.expand/1`: `ForeignRepo.new/3`'s expansion runs against the
   DASHBOARD's OS, not the remote node's, so it mangles remote paths (a
   Windows dashboard rewrites `/home/...` to a drive-letter path; a POSIX
-  dashboard cwd-joins `D:\\stuff\\repo`). The remote path is stored verbatim.
+  dashboard cwd-joins `D:\\stuff\\repo`). The remote path is stored verbatim,
+  and `base_sha` is likewise kept RAW (never locally rewritten — only
+  `ForeignRepo.new/3` coerces/expands it, and it is never used for remote
+  roots). `writable` defaults to `false`, `base_sha` to `nil`.
   """
   @spec build_foreign_repo(node() | nil, String.t(), String.t(), keyword()) ::
           EvoGit.Core.ForeignRepo.t()
@@ -208,7 +212,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       %ForeignRepo{
         id: id,
         root: path,
-        description: Keyword.get(opts, :description)
+        description: Keyword.get(opts, :description),
+        writable: Keyword.get(opts, :writable, false),
+        base_sha: Keyword.get(opts, :base_sha)
       }
     end
   end

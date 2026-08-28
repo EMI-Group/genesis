@@ -66,6 +66,9 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       new_repo_id: "",
       new_repo_path: "",
       new_repo_description: "",
+      new_repo_base_sha: "",
+      editing_foreign_repo_id: nil,
+      foreign_repo_edit_form: nil,
       show_project_settings: false,
       show_configure_dropdown: false,
       project_palette_open: false,
@@ -83,7 +86,13 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
 
   def serialize_foreign_repos(repos) do
     Enum.map(repos, fn repo ->
-      %{"id" => repo.id, "path" => repo.root, "description" => repo.description}
+      %{
+        "id" => repo.id,
+        "path" => repo.root,
+        "description" => repo.description,
+        "writable" => repo.writable,
+        "base_sha" => repo.base_sha
+      }
     end)
   end
 
@@ -151,22 +160,38 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       |> Enum.map(fn r ->
         id = if is_binary(r["id"]) and r["id"] != "", do: r["id"], else: "primary"
 
+        # Read-write foreign repos: restore `writable` (tolerant
+        # `true`/`"true"` — sessionStorage JSON yields booleans, defensive
+        # against strings) and `base_sha` (only when a non-empty binary; blank
+        # → nil = HEAD) exactly like `description` is handled.
+        writable = r["writable"] == true or r["writable"] == "true"
+
         opts =
-          if is_binary(r["description"]) and r["description"] != "",
+          if(is_binary(r["description"]) and r["description"] != "",
             do: [description: r["description"]],
             else: []
+          )
+          |> Keyword.put(:writable, writable)
+          |> then(fn o ->
+            if is_binary(r["base_sha"]) and r["base_sha"] != "",
+              do: Keyword.put(o, :base_sha, r["base_sha"]),
+              else: o
+          end)
 
         # Node-aware construction: in a remote context the persisted root is a
         # REMOTE node path (a remote-added POSIX/Windows repo must survive the
         # persist/restore round-trip unmangled). `ForeignRepo.new/3` would
         # `Path.expand/1` it against the DASHBOARD's OS; remote contexts
         # rebuild raw structs via ProjectFlow.build_foreign_repo/4. Local
-        # contexts keep `ForeignRepo.new/3` exactly as before.
-        if socket.assigns[:remote?] or socket.assigns[:current_node] != node() do
-          ProjectFlow.build_foreign_repo(socket.assigns[:current_node], id, r["path"], opts)
-        else
-          ForeignRepo.new(id, r["path"], opts)
-        end
+        # contexts keep `ForeignRepo.new/3` exactly as before — unified
+        # through build_foreign_repo/4 (which delegates to ForeignRepo.new/3
+        # for local nodes, so local semantics are byte-identical).
+        node =
+          if socket.assigns[:remote?] or socket.assigns[:current_node] != node(),
+            do: socket.assigns[:current_node],
+            else: node()
+
+        ProjectFlow.build_foreign_repo(node, id, r["path"], opts)
       end)
 
     if restored != [] do

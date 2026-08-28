@@ -22,6 +22,7 @@ defmodule EvoDashWeb.ReviewComponents do
   defdelegate split_diff_layout(assigns), to: EvoDashWeb.ReviewComponents.DiffViewer
   defdelegate commit_detail_header(assigns), to: EvoDashWeb.ReviewComponents.DiffViewer
   defdelegate commit_diff_layout(assigns), to: EvoDashWeb.ReviewComponents.DiffViewer
+  defdelegate conflict_files_summary(files), to: EvoDashWeb.ReviewComponents.Actions
 
   # ---------------------------------------------------------------------------
   # review_tabs/1 — Tab bar for switching between Conversation and Files Changed
@@ -84,6 +85,154 @@ defmodule EvoDashWeb.ReviewComponents do
     </div>
     """
   end
+
+  # ---------------------------------------------------------------------------
+  # repo_tabs/1 — Per-repo tab switcher for multi-repo review
+  # ---------------------------------------------------------------------------
+
+  attr(:repos, :list, required: true)
+  attr(:active_repo_id, :string, default: "primary")
+
+  def repo_tabs(assigns) do
+    ~H"""
+    <div class="review-tab-bar flex gap-1 sm:gap-2 py-2 sm:py-3 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
+      <button
+        :for={repo <- @repos}
+        phx-click="switch_repo"
+        phx-value-repo_id={repo[:repo_id]}
+        class={[
+          "review-tab px-3 py-2 sm:px-5 sm:py-2.5 text-sm font-medium transition-all duration-200 whitespace-nowrap flex items-center gap-2",
+          @active_repo_id == repo[:repo_id] && "bg-base-200 text-base-content" ||
+            "text-base-content/60 hover:bg-base-200/50 hover:text-base-content"
+        ]}
+      >
+        <span class="badge badge-sm badge-ghost font-mono">{repo[:repo_id]}</span>
+        <span class="font-mono text-xs truncate max-w-40">{truncate_path(repo[:repo_path])}</span>
+        <%= case repo[:merge_status] do %>
+          <% %{state: :clean} -> %>
+            <%!-- zh_CN: "Clean merge" → 合并无冲突 --%>
+            <span class="size-2 rounded-full bg-success shrink-0" title={gettext("Clean merge")}></span>
+          <% %{state: :conflict} -> %>
+            <%!-- zh_CN: "Merge conflict" → 合并冲突 --%>
+            <span class="size-2 rounded-full bg-warning shrink-0" title={gettext("Merge conflict")}></span>
+          <% %{state: :checking} -> %>
+            <span class="loading loading-spinner loading-xs shrink-0"></span>
+          <% _ -> %>
+        <% end %>
+      </button>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # merge_outcomes_panel/1 — Per-repo broadcast merge outcome report
+  # ---------------------------------------------------------------------------
+
+  attr(:outcomes, :list, default: [])
+
+  def merge_outcomes_panel(assigns) do
+    # zh_CN: 合并结果/拒绝结果汇总面板标题 — any :rejected outcome switches the panel title
+    assigns =
+      assign(assigns, :any_rejected, Enum.any?(assigns.outcomes, &(&1[:status] == :rejected)))
+
+    ~H"""
+    <%= if @outcomes != [] do %>
+      <div class="bg-base-100 border rounded-lg p-4">
+        <div class="flex items-center gap-3 mb-4">
+          <.icon name="hero-arrow-path" class="size-5 text-base-content/60" />
+          <%= if @any_rejected do %>
+            <%!-- zh_CN: "Reject results" → 拒绝结果（合并结果/拒绝结果汇总面板标题） --%>
+            <h3 class="font-semibold text-base">{gettext("Reject results")}</h3>
+          <% else %>
+            <%!-- zh_CN: "Merge results" → 合并结果 --%>
+            <h3 class="font-semibold text-base">{gettext("Merge results")}</h3>
+          <% end %>
+        </div>
+        <div class="space-y-3">
+          <%= for outcome <- @outcomes do %>
+            <div class="flex items-start gap-3 rounded-lg border border-base-200 bg-base-200/30 p-3">
+              <span class="badge badge-sm badge-ghost font-mono shrink-0 mt-0.5">{outcome[:repo_id]}</span>
+              <%= case outcome[:status] do %>
+                <% :merged -> %>
+                  <div class="flex items-start gap-2 min-w-0 text-sm">
+                    <.icon name="hero-check-circle" class="size-5 text-success shrink-0 mt-0.5" />
+                    <div class="min-w-0">
+                      <span class="font-medium text-success">
+                        <%= if outcome[:target] do %>
+                          <%!-- zh_CN: "Merged into %{target}" → 已合并到 %{target} --%>
+                          {gettext("Merged into %{target}", target: outcome[:target])}
+                        <% else %>
+                          <%!-- zh_CN: "Merged" → 已合并 --%>
+                          {gettext("Merged")}
+                        <% end %>
+                      </span>
+                      <%= if is_binary(outcome[:detail]) do %>
+                        <span class="font-mono text-xs text-base-content/60 ml-2">
+                          {String.slice(outcome[:detail], 0..7)}
+                        </span>
+                      <% end %>
+                    </div>
+                  </div>
+                <% :rejected -> %>
+                  <div class="flex items-start gap-2 min-w-0 text-sm">
+                    <.icon name="hero-check-circle" class="size-5 text-success shrink-0 mt-0.5" />
+                    <div class="min-w-0">
+                      <%!-- zh_CN: "Rejected — branch deleted" → 已拒绝——分支已删除 --%>
+                      <span class="font-medium text-success">{gettext("Rejected — branch deleted")}</span>
+                      <%= if is_binary(outcome[:detail]) do %>
+                        <span class="font-mono text-xs text-base-content/60 ml-2">
+                          {String.slice(outcome[:detail], 0..7)}
+                        </span>
+                      <% end %>
+                    </div>
+                  </div>
+                <% :conflict -> %>
+                  <div class="flex items-start gap-2 min-w-0 text-sm">
+                    <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
+                    <div class="min-w-0">
+                      <%!-- zh_CN: "Merge conflict" → 合并冲突 --%>
+                      <span class="font-medium text-warning">{gettext("Merge conflict")}</span>
+                      <%= if is_list(outcome[:detail]) and outcome[:detail] != [] do %>
+                        <span class="text-base-content/70 block mt-1 break-words">
+                          {conflict_files_summary(outcome[:detail])}
+                        </span>
+                      <% end %>
+                    </div>
+                  </div>
+                <% :error -> %>
+                  <div class="flex items-start gap-2 min-w-0 text-sm">
+                    <.icon name="hero-x-circle" class="size-5 text-error shrink-0 mt-0.5" />
+                    <div class="min-w-0">
+                      <%!-- zh_CN: "Failed: %{detail}" → 失败：%{detail} --%>
+                      <span class="font-medium text-error">
+                        {gettext("Failed: %{detail}", detail: format_outcome_detail(outcome[:detail]))}
+                      </span>
+                    </div>
+                  </div>
+              <% end %>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    <% end %>
+    """
+  end
+
+  # Truncate a repo root path to the last ~40 chars with a leading "…".
+  defp truncate_path(path) when is_binary(path) do
+    if String.length(path) > 40 do
+      "…" <> String.slice(path, -39, 39)
+    else
+      path
+    end
+  end
+
+  defp truncate_path(_), do: ""
+
+  # Error outcome details may be any inspected reason term — render binaries
+  # as-is, everything else via inspect.
+  defp format_outcome_detail(detail) when is_binary(detail), do: detail
+  defp format_outcome_detail(detail), do: inspect(detail)
 
   # ---------------------------------------------------------------------------
   # archive_review_section/1 — Archived agent details with recursive tree
