@@ -41,17 +41,20 @@ Struct: `repo`, `base_commit`, `current_commit`.
 
 ### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
 
-Struct: `id` (string), `root` (absolute path), `name` (optional string).
+Struct: `id` (string), `root` (absolute path), `description` (string | nil),
+`writable` (boolean, default `false`), `base_sha` (string | nil, default `nil` = HEAD).
 
 | Function | Description |
 |---|---|
-| `new/3` | Creates a ForeignRepo struct with expanded root path |
-| `normalize/1` | Coerces any persisted/CLI shape into a `%ForeignRepo{}` struct (`%ForeignRepo{}` passthrough; atom-keyed or string-keyed maps; `"path"`/`:path` accepted as a root fallback); returns `nil` for unparseable input (callers map lists through it and drop `nil`s). Needed because `TaskInfo.opts` persist to SQLite via `Store.Codec` JSON and come back with `:foreign_repos` as STRING-keyed maps — raw dot-access crashes with `KeyError`. Used centrally by `TaskRegistry.MergeContext` and `Runtime.Helpers.merge_foreign_repos/2` |
+| `new/3` | Creates a ForeignRepo struct with expanded root path; opts `:description`, `:writable` (non-`true` coerced to `false`), `:base_sha` (blank → `nil`) |
+| `normalize/1` | Coerces any persisted/CLI shape into a `%ForeignRepo{}` struct (`%ForeignRepo{}` passthrough; atom-keyed or string-keyed maps; `"path"`/`:path` accepted as a root fallback; `"writable"`/`"base_sha"` read with defaults `false`/`nil` when missing — legacy persisted rows round-trip safely); returns `nil` for unparseable input (callers map lists through it and drop `nil`s). Needed because `TaskInfo.opts` persist to SQLite via `Store.Codec` JSON and come back with `:foreign_repos` as STRING-keyed maps — raw dot-access crashes with `KeyError`. Used centrally by `TaskRegistry.MergeContext` and `Runtime.Helpers.merge_foreign_repos/2` |
 | `primary_id/0` | Returns the primary repo identifier (`"primary"`) |
 | `primary?/1` | Checks if a repo id is the primary repo |
 | `normalize_path/2` | Normalizes an absolute path to a relative path within this repo |
 | `resolve_path/2` | Determines which repo a path belongs to; returns repo id and relative path |
 | `absolute_path?/1` | Checks if a path string is absolute |
+
+`@derive {Jason.Encoder, only: [:id, :root, :description, :writable, :base_sha]}` — the Store/Codec JSON round trip preserves all five fields (encoded `null` for `nil` base_sha). TOML keys in `genesis.toml` `[foreign_repos.<id>]`: `path` (required), `description`, `writable` (default `false`), `base_sha` (default `nil`). CLI `-R` repos are always read-only (`writable: false`, `base_sha: nil`) — marking writable / pinning the starting commit is a `genesis.toml`-only mechanism.
 
 ## Constraints
 
