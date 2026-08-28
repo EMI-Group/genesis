@@ -174,6 +174,46 @@ defmodule EvoGit.Config.LLMCatalogTest do
                %{provider: :anthropic, id: "claude-opus-5"}
     end
 
+    test "resolves Aug 2026 catalog additions to their ids" do
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.7-flash") ==
+               %{provider: :google, id: "gemini-3.7-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:zai, "glm-5.3") ==
+               %{provider: :zai, id: "glm-5.3"}
+
+      assert LLMCatalog.resolve_model_spec(:zai, "glm-5.3-flash") ==
+               %{provider: :zai, id: "glm-5.3-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:xai, "grok-4.6") ==
+               %{provider: :xai, id: "grok-4.6"}
+
+      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen-3.8-max") ==
+               %{provider: :alibaba, id: "qwen-3.8-max"}
+
+      assert LLMCatalog.resolve_model_spec(:deepseek, "deepseek-v4-flash-vision-exp") ==
+               %{provider: :deepseek, id: "deepseek-v4-flash-vision-exp"}
+    end
+
+    test "resolves Aug 2026 display names to canonical catalog ids" do
+      assert LLMCatalog.resolve_model_spec(:google, "Gemini 3.7 Flash") ==
+               %{provider: :google, id: "gemini-3.7-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:zai, "GLM-5.3") ==
+               %{provider: :zai, id: "glm-5.3"}
+
+      assert LLMCatalog.resolve_model_spec(:zai, "GLM-5.3 Flash") ==
+               %{provider: :zai, id: "glm-5.3-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:xai, "Grok 4.6") ==
+               %{provider: :xai, id: "grok-4.6"}
+
+      assert LLMCatalog.resolve_model_spec(:alibaba, "Qwen 3.8 Max") ==
+               %{provider: :alibaba, id: "qwen-3.8-max"}
+
+      assert LLMCatalog.resolve_model_spec(:deepseek, "DeepSeek V4 Flash Vision (Exp)") ==
+               %{provider: :deepseek, id: "deepseek-v4-flash-vision-exp"}
+    end
+
     test "includes base_url when a non-empty value is provided" do
       assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "https://my.proxy/v1") ==
                %{provider: :openai, id: "gpt-5.5", base_url: "https://my.proxy/v1"}
