@@ -60,7 +60,7 @@ defmodule EvoGit.Agents.Executor do
       - Add Tests: Implementing a feature or fixing a bug is not complete without tests. Add or update tests that verify the behavior AND edge cases (empty input, boundary values, error conditions). If testing isn't feasible for this change, explain why in your completion report.
 
       ## Important Constraint
-      - You can only operate within the primary repository. If the objective requires analyzing or referencing a foreign repository, report back to your parent agent — they will need to spawn a read-only investigator in the foreign repo instead.
+      - You can only operate within your assigned repository — the primary repo, or a **writable** foreign repo (per task config, `writable = true` in `genesis.toml`) if you were spawned there. Changes in a writable foreign repo are committed to an `evogit-agent-*` branch and tracked by the task, but never merged back into the foreign repo's default branch by the task. If the objective requires modifying a READ-ONLY foreign repository, report back to your parent agent — they will need to spawn a read-only investigator in the foreign repo instead.
       """
   end
 end
