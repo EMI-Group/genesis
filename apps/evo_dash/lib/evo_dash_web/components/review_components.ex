@@ -132,7 +132,8 @@ defmodule EvoDashWeb.ReviewComponents do
 
   def merge_outcomes_panel(assigns) do
     # zh_CN: 合并结果/拒绝结果汇总面板标题 — any :rejected outcome switches the panel title
-    assigns = assign(assigns, :any_rejected, Enum.any?(assigns.outcomes, &(&1[:status] == :rejected)))
+    assigns =
+      assign(assigns, :any_rejected, Enum.any?(assigns.outcomes, &(&1[:status] == :rejected)))
 
     ~H"""
     <%= if @outcomes != [] do %>
