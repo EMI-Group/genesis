@@ -16,7 +16,8 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `edit_file` | Exact string replacement in files | Write | No |
 | `make_dir` | Create directories with placeholder files, auto-commit | Write | No |
 | `read_context` / `write_context` / `edit_context` | Read/write/edit CONTEXT.md files | Read/Write | Write only |
-| `run_bash` (Linux/macOS) / `run_powershell` (Windows) | Execute shell commands via `systemd-run` sandbox — effective shell configurable via `[tools] shell` (defaults bash/powershell per platform; posix-shell overrides on Windows supported) | Read/Write | Yes || `rg` | Search files with ripgrep patterns | Read | Yes |
+| `run_bash` (Linux/macOS) / `run_powershell` (Windows) | Execute shell commands via `systemd-run` sandbox — effective shell configurable via `[tools] shell` (defaults bash/powershell per platform; posix-shell overrides on Windows supported) | Read/Write | Yes |
+| `rg` | Search files with ripgrep patterns | Read | Yes |
 | `run_git` | Execute git commands (disabled in schemas) | Read/Write | Yes |
 | `glob` | File pattern matching | Read | No |
 | `list_dir` | List directory contents | Read | No |
