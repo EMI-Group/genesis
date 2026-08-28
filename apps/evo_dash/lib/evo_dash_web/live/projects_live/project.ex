@@ -191,13 +191,18 @@ defmodule EvoDashWeb.ProjectsLive.Project do
   given node's filesystem. On a remote node (`node != node()`) suggestions come
   from `EvoDash.NodeContext.list_path_suggestions/2` (the remote daemon
   resolves paths against its own filesystem; `[]` on RPC failure). On the local
-  node the existing filesystem-suggestion implementation is used unchanged.
+  node suggestions come from the shared `EvoGit.PathSuggestions.suggest/1` —
+  the same module the remote daemon runs — so local and remote autocomplete
+  behave identically.
 
   The recents filter is also node-aware: recents must pass
   `ProjectFlow.absolute_path_for_node?/2`, which keeps the local
   `EvoGit.Platform.absolute_path?/1` semantics for the local node and accepts
   POSIX- or Windows-absolute paths for remote nodes (so remote recents are not
-  dropped when the dashboard runs on a different OS).
+  dropped when the dashboard runs on a different OS). Recents additionally
+  match the typed value as a case-insensitive SUBSTRING of the full path
+  (covers the basename and multi-segment queries like `src/proj`) — filesystem
+  entries keep prefix-match semantics.
   """
   def path_suggestions(node, value, recent_projects) do
     recents =
@@ -206,7 +211,7 @@ defmodule EvoDashWeb.ProjectsLive.Project do
       |> Enum.filter(
         &(is_binary(&1) and
             EvoDashWeb.ProjectsLive.ProjectFlow.absolute_path_for_node?(node, &1) and
-            matches_prefix?(&1, value))
+            matches_substring?(&1, value))
       )
       |> Enum.take(8)
 
@@ -220,52 +225,32 @@ defmodule EvoDashWeb.ProjectsLive.Project do
     Enum.uniq(recents ++ suggestions)
   end
 
-  defp matches_prefix?(_path, value) when value == "" or is_nil(value), do: true
+  # Recents match the typed value as a case-insensitive SUBSTRING of the full
+  # path — a recent "/home/test/sources/project" surfaces when the user types
+  # "proj" (an infix) or "test/sources" (a multi-segment query), not just when
+  # the whole path happens to start with the query. Empty/nil values match all
+  # recents. (Filesystem suggestions keep prefix semantics — see
+  # `EvoGit.PathSuggestions.suggest/1`.)
+  defp matches_substring?(_path, value) when value == "" or is_nil(value), do: true
 
-  defp matches_prefix?(path, value) do
-    String.starts_with?(String.downcase(path), String.downcase(value))
+  defp matches_substring?(path, value) do
+    String.contains?(String.downcase(path), String.downcase(value))
   end
 
-  defp filesystem_suggestions(value) when value == "" or is_nil(value), do: []
-
-  # Suggestions are produced only for absolute or genuinely tilde-expandable
-  # input (guaranteed by ProjectFlow.normalize_project_path/1); relative input
-  # (bare names, ~foo, off-Windows ~\x) yields []. The old bare-name branch
-  # that anchored suggestions at File.cwd!() is gone — File.cwd!()-anchored
-  # suggestions for relative input can never be produced.
+  # Local filesystem suggestions delegate to the shared
+  # `EvoGit.PathSuggestions.suggest/1` — the single source of truth the remote
+  # daemon branch (`EvoDash.NodeContext.list_path_suggestions/2`) already uses,
+  # so local and remote autocomplete behave identically. It preserves the old
+  # normalize_project_path-gated semantics (absolute or genuinely
+  # tilde-expandable input only; relative input like bare names, `~foo`,
+  # off-Windows `~\x` → `[]`; no `File.cwd!()`-anchored fallback) and fixes two
+  # divergences of the old local port: the trailing-separator check runs on the
+  # RAW value because `Path.expand/1` strips trailing separators
+  # (`Path.expand("/tmp/foo/") == "/tmp/foo"`), so typing `<dir>/` lists the
+  # directory's contents immediately; and bare `~` / `~/` list the home
+  # directory's own entries.
   defp filesystem_suggestions(value) do
-    case EvoDashWeb.ProjectsLive.ProjectFlow.normalize_project_path(value) do
-      {:error, _} ->
-        []
-
-      {:ok, expanded} ->
-        {dir, prefix} =
-          cond do
-            String.ends_with?(expanded, "/") or String.ends_with?(expanded, "\\") ->
-              {expanded, ""}
-
-            true ->
-              dir = Path.dirname(expanded)
-              base = Path.basename(expanded)
-              {dir, base}
-          end
-
-        case File.ls(dir) do
-          {:ok, entries} ->
-            entries
-            |> Enum.filter(fn entry ->
-              String.starts_with?(String.downcase(entry), String.downcase(prefix))
-            end)
-            |> Enum.sort_by(fn entry ->
-              {not File.dir?(Path.join(dir, entry)), String.downcase(entry)}
-            end)
-            |> Enum.take(15)
-            |> Enum.map(fn entry -> Path.join(dir, entry) end)
-
-          {:error, _} ->
-            []
-        end
-    end
+    EvoGit.PathSuggestions.suggest(value)
   end
 
   @doc """
