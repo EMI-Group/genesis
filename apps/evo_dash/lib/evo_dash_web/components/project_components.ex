@@ -580,10 +580,15 @@ defmodule EvoDashWeb.ProjectComponents do
                     {repo.id}
                   </span>
                   <%= if repo.writable do %>
-                    <span class="badge badge-warning badge-sm shrink-0"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext("Writable")}</span>
+                    <span class="badge badge-warning badge-sm shrink-0"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                      "Writable"
+                    )}</span>
                   <% end %>
                   <%= if repo.base_sha do %>
-                    <code class="text-xs font-mono text-base-content/70 truncate" title={repo.base_sha}>
+                    <code
+                      class="text-xs font-mono text-base-content/70 truncate"
+                      title={repo.base_sha}
+                    >
                       {repo.base_sha}
                     </code>
                   <% end %>
@@ -635,7 +640,9 @@ defmodule EvoDashWeb.ProjectComponents do
                     </div>
                     <div>
                       <label class="label py-1">
-                        <span class="label-text text-xs font-medium">{gettext("Description (optional)")}</span>
+                        <span class="label-text text-xs font-medium">{gettext(
+                          "Description (optional)"
+                        )}</span>
                       </label>
                       <input
                         type="text"
@@ -653,7 +660,9 @@ defmodule EvoDashWeb.ProjectComponents do
                         class="checkbox checkbox-sm checkbox-warning"
                         checked={Map.get(edit_form, :writable, repo.writable) in [true, "true"]}
                       />
-                      <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext("Writable")}</span>
+                      <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                        "Writable"
+                      )}</span>
                     </label>
                     <div>
                       <label class="label py-1">
@@ -772,7 +781,9 @@ defmodule EvoDashWeb.ProjectComponents do
                 value="true"
                 class="checkbox checkbox-sm checkbox-warning"
               />
-              <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext("Writable")}
+              <span class="label-text text-xs font-medium"><%!-- zh_CN: Writable → 可写：可写的外来仓库会获得独立工作树和 evogit-agent-* 分支，参与任务但不会被任务合并 --%>{gettext(
+                "Writable"
+              )}
               <.tip text={
                 gettext(
                   "Writable foreign repos get their own worktree and evogit-agent-* branch, are tracked in the task report, but are never merged by the task."
