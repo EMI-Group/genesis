@@ -2,48 +2,56 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @moduledoc """
   Tool for executing shell commands.
 
-  Adapts automatically to the current platform at compile time:
-  - Linux/macOS: uses bash
-  - Windows: uses PowerShell
+  Resolves the effective shell at runtime (configurable via the `[tools] shell`
+  config key, defaulting to bash on Linux/macOS and PowerShell on Windows):
+  - POSIX shells (bash, sh, zsh, ...): invoked with `-c`
+  - PowerShell (powershell, pwsh, ...): invoked with `-EncodedCommand`
   """
 
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Platform
 
-  # Compile-time platform detection
+  # Compile-time platform detection — used for the tool NAME only (dispatch
+  # clauses and the @write_tools block pin the name per platform).
   @os Platform.os()
   @on_windows @os == :windows
 
-  # Compile-time tool name and shell identity
+  # Compile-time tool name — pinned per platform (run_powershell on Windows,
+  # run_bash otherwise).
   @tool_name if(@on_windows, do: "run_powershell", else: "run_bash")
-  @shell_name if(@on_windows, do: "PowerShell", else: "bash")
-  @shell_flag if(@on_windows, do: "-Command", else: "-c")
-  @tmp_var if(@on_windows, do: "$env:TEMP", else: "$TMPDIR")
-
-  # Compile-time descriptions that differ by platform
-  @command_description "The #{@shell_name} command to execute"
-
-  # Compile-time prompt sections that differ by platform
-  @shell_intro "Executes a command via #{@shell_name} #{@shell_flag}."
-
-  @file_search_alt if(@on_windows, do: "Get-ChildItem", else: "find")
-  @read_file_alt if(@on_windows, do: "Get-Content", else: "cat/head/tail")
-  @edit_file_alt if(@on_windows, do: "string replacement", else: "sed/awk")
-  @write_file_alt if(@on_windows, do: "Set-Content/Out-File", else: "echo/cat EOF")
-  @output_alt if(@on_windows, do: "Write-Host/Write-Output", else: "echo/printf")
-  @ls_command if(@on_windows, do: "Get-ChildItem -Force", else: "ls -la")
-
-  @no_shell_for_reads if(
-                        @on_windows,
-                        do:
-                          "Do NOT use PowerShell for file operations unless dedicated tools fail.",
-                        else: "Do NOT use bash for file operations unless dedicated tools fail."
-                      )
 
   # 3 minutes timeout for running complex commands
   @default_timeout 180_000
 
   @cd_regex ~r/\bcd\s+["']?(\/[^\s"'&;|]+)/
+
+  # Effective shell predicate/identity — runtime-aware, honoring the
+  # `[tools] shell` config override via EvoGit.Platform.shell/0.
+  defp powershell?, do: EvoGit.Powershell.powershell_executable?(Platform.shell())
+  defp shell_name, do: if(powershell?(), do: "PowerShell", else: Platform.shell())
+  defp shell_flag, do: if(powershell?(), do: "-Command", else: "-c")
+  defp tmp_var, do: if(powershell?(), do: "$env:TEMP", else: "$TMPDIR")
+
+  # Runtime descriptions that differ by shell
+  defp command_description, do: "The #{shell_name()} command to execute"
+
+  # Runtime prompt sections that differ by shell
+  defp shell_intro, do: "Executes a command via #{shell_name()} #{shell_flag()}."
+
+  defp file_search_alt, do: if(powershell?(), do: "Get-ChildItem", else: "find")
+  defp read_file_alt, do: if(powershell?(), do: "Get-Content", else: "cat/head/tail")
+  defp edit_file_alt, do: if(powershell?(), do: "string replacement", else: "sed/awk")
+  defp write_file_alt, do: if(powershell?(), do: "Set-Content/Out-File", else: "echo/cat EOF")
+  defp output_alt, do: if(powershell?(), do: "Write-Host/Write-Output", else: "echo/printf")
+  defp ls_command, do: if(powershell?(), do: "Get-ChildItem -Force", else: "ls -la")
+
+  defp no_shell_for_reads do
+    if powershell?() do
+      "Do NOT use PowerShell for file operations unless dedicated tools fail."
+    else
+      "Do NOT use bash for file operations unless dedicated tools fail."
+    end
+  end
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -55,7 +63,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "command" => %{"type" => "string", "description" => @command_description},
+          "command" => %{"type" => "string", "description" => command_description()},
           "timeout" => %{
             "type" => "integer",
             "description" =>
@@ -78,59 +86,59 @@ defmodule EvoGit.Agent.Tools.ShellTool do
 
   defp generate_description do
     find_line =
-      if @on_windows do
+      if powershell?() do
         ""
       else
         "- Use find for complex file searching with regex\n      "
       end
 
     tmp_suffix =
-      if @on_windows do
+      if powershell?() do
         "."
       else
         ", never /tmp."
       end
 
     find_regex_line =
-      if @on_windows do
+      if powershell?() do
         ""
       else
         "\n      - In `find -regex` alternations, place the longest alternative first (e.g., `'.*\\.(tsx|ts)'`)."
       end
 
     ls_with_args =
-      if @on_windows do
+      if powershell?() do
         "Get-ChildItem with args"
       else
         "ls with args"
       end
 
     """
-    #{@shell_intro}
+    #{shell_intro()}
     Useful for running scripts, building, testing, git or executing common command-line tools.
     The current working directory is automatically set to the repo path (the current git worktree path). Avoid using `cd` — the cwd is already correct.
 
     ## General Guidelines
     STRICT CONSTRAINTS:
-    - #{@no_shell_for_reads}
-    - File search: Use glob (not #{@file_search_alt})
+    - #{no_shell_for_reads()}
+    - File search: Use glob (not #{file_search_alt()})
     - Directory creation: Use make_dir (not mkdir)
-    - Read files: Use file_read (not #{@read_file_alt})
-    - Edit files: Use edit_file (not #{@edit_file_alt})
-    - Write files: Use write_file (not #{@write_file_alt})
-    - Communication: Output directly (not #{@output_alt})
-    Aside from these exceptions, you can use #{@shell_name} to run tools for file operations:
-    - Use #{ls_with_args} for listing files with specific needs (e.g., `#{@ls_command}` for detailed listing).
+    - Read files: Use file_read (not #{read_file_alt()})
+    - Edit files: Use edit_file (not #{edit_file_alt()})
+    - Write files: Use write_file (not #{write_file_alt()})
+    - Communication: Output directly (not #{output_alt()})
+    Aside from these exceptions, you can use #{shell_name()} to run tools for file operations:
+    - Use #{ls_with_args} for listing files with specific needs (e.g., `#{ls_command()}` for detailed listing).
     #{find_line}- Use project level package managers (e.g., uv, npm, mix, cargo) for managing dependencies.
 
     EXECUTION RULES:
     - Prefer relative paths for in-repo operations and absolute paths for external operations.
     - Double-quote all paths containing spaces.
     - Verify parent directories exist before creating files/folders.
-    - Always use #{@tmp_var} for temporary files#{tmp_suffix}#{find_regex_line}
+    - Always use #{tmp_var()} for temporary files#{tmp_suffix}#{find_regex_line}
 
     ## Git Specific Guidelines
-    Use #{@shell_name} for all git operations
+    Use #{shell_name()} for all git operations
     - NEVER update the git config
     - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly
     requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these
@@ -254,10 +262,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
               "[Took: #{timing}] [Exit Code: #{exit_code}] Command failed. Output:\n#{output}"
           end
 
-        case detect_cd_warnings(command, repo_path, repo_root) do
-          nil -> base
-          warning -> base <> "\n\n" <> warning
-        end
+        append_hints(base, command, repo_path, repo_root)
 
       {:timeout, partial_output} ->
         elapsed = System.monotonic_time(:millisecond) - start
@@ -266,10 +271,21 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         base =
           "Command timed out after #{timeout}ms (actual: #{timing}). Partial output:\n#{partial_output}"
 
-        case detect_cd_warnings(command, repo_path, repo_root) do
-          nil -> base
-          warning -> base <> "\n\n" <> warning
-        end
+        append_hints(base, command, repo_path, repo_root)
+    end
+  end
+
+  # Appends non-fatal guidance hints about the command (cd warnings + redundant
+  # nested-shell detection) to the tool output, regardless of exit code.
+  defp append_hints(base, command, repo_path, repo_root) do
+    [
+      detect_cd_warnings(command, repo_path, repo_root),
+      detect_redundant_shell(command)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> base
+      hints -> base <> "\n\n" <> Enum.join(hints, "\n")
     end
   end
 
@@ -395,6 +411,86 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   def redundant_cd_warning(repo_path) do
     "⚠️ You don't need to `cd` into your worktree — your working directory is already set to it (`#{repo_path}`). Just run commands directly without changing directory."
   end
+
+  # Absolute shell path prefixes, e.g. `/bin/sh`, `/usr/bin/bash`.
+  @absolute_shell_path_regex ~r{^/(usr/)?bin/(sh|bash|zsh|dash|ksh|fish)$}
+
+  # Bare shell names, e.g. `sh`, `bash`.
+  @bare_shell_name_regex ~r/^(sh|bash|zsh|dash|ksh|fish)$/
+
+  # `-c`-style invocation flags: `-c`, `-ec`, `-lc`, `-ic`, `--command`.
+  @shell_flag_regex ~r/^-(?:c|ec|lc|ic)(?:\s|$)|^--command(?:\s|$)/
+
+  @doc """
+  Detects when a command redundantly invokes a nested shell (e.g. `/bin/sh -c 'ls'`).
+
+  The shell tool already runs the command inside the effective shell, so
+  spawning another shell is unnecessary. Returns a short hint string when the
+  command (trimmed of leading whitespace) starts with an absolute shell path
+  (e.g. `/bin/sh`, `/usr/bin/bash`) optionally followed by a `-c`-style flag
+  (`-c`, `-ec`, `-lc`, `-ic`, `--command`) or nothing at all, or with a bare
+  shell name (`sh`, `bash`, ...) followed by a `-c`-style flag. Returns `nil`
+  otherwise.
+
+  Legitimate cases are NOT flagged: absolute shell paths or bare shell names
+  followed by a non-flag argument (e.g. `/bin/bash script.sh`, `sh script.sh`),
+  and normal commands (`ls -la`, `mix test`).
+
+  `shell_name` defaults to the effective shell from `EvoGit.Platform.shell/0`
+  and is used in the hint's parenthetical.
+  """
+  @spec detect_redundant_shell(String.t(), String.t() | nil) :: String.t() | nil
+  def detect_redundant_shell(command, shell_name \\ nil) when is_binary(command) do
+    shell_name = shell_name || Platform.shell()
+
+    case redundant_shell_prefix(String.trim_leading(command)) do
+      nil ->
+        nil
+
+      prefix ->
+        "💡 You don't need to invoke `#{prefix}` — this tool already runs your command in a shell (`#{shell_name}`). Just run the command directly."
+    end
+  end
+
+  # Extracts the detected redundant shell prefix (e.g. "/bin/sh -c", "sh -c",
+  # or just "/bin/sh" for a bare absolute path). Returns nil when the command
+  # does not redundantly invoke a nested shell.
+  defp redundant_shell_prefix(command) do
+    {shell, rest} = split_first_token(command)
+
+    cond do
+      # Absolute shell path: flagged with a -c-style flag OR with nothing
+      # after it (e.g. bare `/bin/sh`).
+      absolute_shell_path?(shell) and
+          (rest == "" or String.match?(rest, @shell_flag_regex)) ->
+        redundant_shell_prefix_for(shell, rest)
+
+      # Bare shell name: flagged ONLY when followed by a -c-style flag
+      # (e.g. `sh -c 'ls'`); `sh script.sh` and bare `sh` are not flagged.
+      bare_shell_name?(shell) and String.match?(rest, @shell_flag_regex) ->
+        redundant_shell_prefix_for(shell, rest)
+
+      true ->
+        nil
+    end
+  end
+
+  defp redundant_shell_prefix_for(shell, rest) do
+    case split_first_token(rest) do
+      {"", ""} -> shell
+      {flag, _} -> shell <> " " <> flag
+    end
+  end
+
+  defp split_first_token(command) do
+    case String.split(command, ~r/\s+/, parts: 2) do
+      [token] -> {token, ""}
+      [token, rest] -> {token, rest}
+    end
+  end
+
+  defp absolute_shell_path?(token), do: String.match?(token, @absolute_shell_path_regex)
+  defp bare_shell_name?(token), do: String.match?(token, @bare_shell_name_regex)
 
   defp cd_targets(command) do
     @cd_regex

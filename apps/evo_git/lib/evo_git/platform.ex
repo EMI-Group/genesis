@@ -45,13 +45,24 @@ defmodule EvoGit.Platform do
   def windows?, do: os() == :windows
 
   @doc """
-  Returns the default shell executable for the current platform.
+  Returns the shell executable used by the shell tools.
+
+  Resolves the `[:tools, :shell]` config key first (see `EvoGit.Config`); when
+  it is set to a non-empty string, that shell is used. Otherwise falls back to
+  the platform default:
 
   - Linux/macOS: `"bash"`
   - Windows: `"powershell"`
   """
   @spec shell() :: String.t()
   def shell do
+    case EvoGit.Config.resolve([:tools, :shell]) do
+      shell when is_binary(shell) and shell != "" -> shell
+      _ -> default_shell()
+    end
+  end
+
+  defp default_shell do
     case os() do
       :windows -> "powershell"
       _ -> "bash"
@@ -61,21 +72,25 @@ defmodule EvoGit.Platform do
   @doc """
   Returns the shell arguments to execute a command string.
 
-  - Linux/macOS: `["-c", command]`
-  - Windows: PowerShell `-EncodedCommand` arguments via
-    `EvoGit.Powershell.invoke_args/1`.
+  The invocation shape is chosen from the EFFECTIVE shell — what `shell/0`
+  returns, which honors the `[:tools, :shell]` config override:
 
-  On Windows the script is base64-encoded as UTF-16LE and passed via
-  `-EncodedCommand`, which eliminates PowerShell's `-Command` command-line
+  - PowerShell executables (`powershell`, `pwsh`, ...): `-EncodedCommand`
+    arguments via `EvoGit.Powershell.invoke_args/1`.
+  - POSIX shells (`bash`, `sh`, `zsh`, ...): `["-c", command]`.
+
+  On Windows with PowerShell the script is base64-encoded as UTF-16LE and passed
+  via `-EncodedCommand`, which eliminates PowerShell's `-Command` command-line
   re-parsing (broken by construction when spawned from Erlang) and its
   interactive-mode fallback on lost arguments, and forces UTF-8 output.
   See `EvoGit.Powershell` for details.
   """
   @spec shell_args(String.t()) :: [String.t()]
   def shell_args(command) do
-    case os() do
-      :windows -> EvoGit.Powershell.invoke_args(command)
-      _ -> ["-c", command]
+    if EvoGit.Powershell.powershell_executable?(shell()) do
+      EvoGit.Powershell.invoke_args(command)
+    else
+      ["-c", command]
     end
   end
 

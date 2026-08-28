@@ -70,6 +70,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:nix, :flake_output] in paths
 
       # Tools
+      assert [:tools, :shell] in paths
       assert [:tools, :search, :enabled] in paths
       assert [:tools, :search, :provider] in paths
       assert [:tools, :search, :tavily, :api_key_credential_key] in paths
@@ -144,8 +145,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 92 schemas" do
-      assert length(Schema.all_schemas()) == 92
+    test "has exactly 93 schemas" do
+      assert length(Schema.all_schemas()) == 93
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -222,6 +223,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.git.co_authored_by_enabled == false
 
       # Tools
+      assert defaults.tools.shell == nil
       assert defaults.tools.search.enabled == false
       assert defaults.tools.search.provider == :tavily
       assert defaults.tools.search.tavily.api_key_credential_key == "TAVILY_API_KEY"
@@ -321,7 +323,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:nix]) == 2
       assert length(grouped[:git]) == 2
       assert length(grouped[:server]) == 2
-      assert length(grouped[:tools]) == 33
+      assert length(grouped[:tools]) == 34
       assert length(grouped[:node]) == 6
     end
 

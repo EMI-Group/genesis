@@ -51,8 +51,8 @@ Tracks last-seen Genesis version in `version_state.toml` (config dir); defaults 
 | `os/0` | `:linux`, `:macos`, `:windows`, or `:unknown` |
 | `config_dir/1` | Config dir (XDG/Linux, Application Support/macOS, APPDATA/Windows) |
 | `data_dir/1` | Platform data dir |
-| `shell/0` | `"bash"` or `"powershell"` |
-| `shell_args/1` | `["-c", cmd]` (Unix) or PowerShell `-EncodedCommand` args (Windows, via `EvoGit.Powershell`) |
+| `shell/0` | Effective shell executable — honors the `[tools] shell` config override; defaults `"bash"` (Linux/macOS) / `"powershell"` (Windows) |
+| `shell_args/1` | `["-c", cmd]` (POSIX shells) or PowerShell `-EncodedCommand` args (PowerShell executables, via `EvoGit.Powershell`) — chosen from the effective shell |
 | `systemd_available?/0` | Linux + systemd |
 | `nix_available?/0` | `nix` binary in PATH (Linux and macOS) |
 

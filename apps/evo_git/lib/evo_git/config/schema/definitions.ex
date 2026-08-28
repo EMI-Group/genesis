@@ -555,6 +555,16 @@ defmodule EvoGit.Config.Schema.Definitions do
       },
       # ── Tools ────────────────────────────────────────────────────────────
       %{
+        key_path: [:tools, :shell],
+        type: :string,
+        default: nil,
+        validation: [],
+        category: :tools,
+        sub_category: nil,
+        description:
+          "Shell executable used by the run_bash/run_powershell tools. Defaults to \"bash\" on Linux/macOS and \"powershell\" on Windows. Can be overridden, e.g. \"sh\", \"zsh\", \"pwsh\" (executable name only, no args)."
+      },
+      %{
         key_path: [:tools, :search, :enabled],
         type: :boolean,
         default: false,

@@ -142,6 +142,55 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
     end
   end
 
+  describe "detect_redundant_shell/2" do
+    # shell_name is passed explicitly so the tests are config-independent.
+    test "flags absolute shell paths with a -c flag" do
+      assert ShellTool.detect_redundant_shell("/bin/sh -c 'ls'", "bash") =~
+               "You don't need to invoke `/bin/sh -c`"
+
+      assert ShellTool.detect_redundant_shell("/bin/bash -c 'ls'", "bash") =~
+               "You don't need to invoke `/bin/bash -c`"
+
+      assert ShellTool.detect_redundant_shell("/usr/bin/sh -c 'ls'", "bash") =~
+               "You don't need to invoke `/usr/bin/sh -c`"
+    end
+
+    test "flags bare shell names with a -c flag" do
+      assert ShellTool.detect_redundant_shell("sh -c 'ls'", "bash") =~
+               "You don't need to invoke `sh -c`"
+
+      assert ShellTool.detect_redundant_shell("bash -c 'ls'", "bash") =~
+               "You don't need to invoke `bash -c`"
+    end
+
+    test "flags a bare absolute shell path" do
+      result = ShellTool.detect_redundant_shell("/bin/sh", "bash")
+      assert result =~ "You don't need to invoke `/bin/sh`"
+      assert result =~ "(`bash`)"
+    end
+
+    test "hint references the effective shell name argument" do
+      result = ShellTool.detect_redundant_shell("/bin/sh -c 'ls'", "zsh")
+      assert result =~ "(`zsh`)"
+    end
+
+    test "ignores leading whitespace before the shell invocation" do
+      assert ShellTool.detect_redundant_shell("  /bin/sh -c 'ls'", "bash") =~
+               "You don't need to invoke `/bin/sh -c`"
+    end
+
+    test "returns nil for normal commands" do
+      assert ShellTool.detect_redundant_shell("ls -la", "bash") == nil
+      assert ShellTool.detect_redundant_shell("mix test", "bash") == nil
+      assert ShellTool.detect_redundant_shell("git status", "bash") == nil
+    end
+
+    test "returns nil when a shell path/name is followed by a non-flag argument" do
+      assert ShellTool.detect_redundant_shell("/bin/bash script.sh", "bash") == nil
+      assert ShellTool.detect_redundant_shell("sh script.sh", "bash") == nil
+    end
+  end
+
   describe "describe_exit_code/1" do
     test "returns nil for exit code 0" do
       assert ShellTool.describe_exit_code(0) == nil
@@ -286,6 +335,16 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
 
       refute result =~ ~S"[Exit Code:"
       assert result =~ "Command timed out"
+    end
+
+    test "redundant nested shell invocation appends a hint to the output", %{tmp_dir: tmp_dir} do
+      # Sandbox is disabled in test env (plain bash path). The command may fail
+      # on systems without /bin/sh (e.g. NixOS, exit 127) — assert on the hint
+      # text, not the exit code.
+      result = ShellTool.execute(%{"command" => "/bin/sh -c 'echo hi'"}, tmp_dir, tmp_dir)
+
+      assert result =~ "You don't need to invoke `/bin/sh -c`"
+      assert result =~ "this tool already runs your command in a shell"
     end
   end
 end

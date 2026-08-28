@@ -27,7 +27,7 @@ defmodule EvoGitTest do
     Application.put_env(:evo_git, :nix_enabled, false)
     on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
 
-    :ok
+    {:ok, tmp_xdg: tmp_xdg}
   end
 
   describe "sandbox_args/4" do
@@ -142,5 +142,47 @@ defmodule EvoGitTest do
     test "sandbox_exec_available?/0 returns a boolean" do
       assert is_boolean(EvoGit.Platform.sandbox_exec_available?())
     end
+
+    test "shell/0 honors the [tools] shell config override", %{tmp_xdg: tmp_xdg} do
+      # Each test gets a fresh tmp_xdg (unique path), so the config.toml path
+      # differs per test — EvoGit.Config's mtime+size file cache can never
+      # collide across tests. The file is removed by the shared on_exit.
+      write_config_toml(tmp_xdg, "shell = \"sh\"")
+
+      assert EvoGit.Platform.shell() == "sh"
+      assert EvoGit.Platform.shell_args("echo hi") == ["-c", "echo hi"]
+    end
+
+    test "shell_args/1 uses PowerShell invocation args when the configured shell is pwsh",
+         %{tmp_xdg: tmp_xdg} do
+      write_config_toml(tmp_xdg, "shell = \"pwsh\"")
+
+      assert EvoGit.Platform.shell() == "pwsh"
+      assert EvoGit.Platform.shell_args("echo hi") == EvoGit.Powershell.invoke_args("echo hi")
+    end
+
+    test "shell/0 falls back to the platform default for an empty config value",
+         %{tmp_xdg: tmp_xdg} do
+      write_config_toml(tmp_xdg, "shell = \"\"")
+
+      expected = if EvoGit.Platform.os() == :windows, do: "powershell", else: "bash"
+
+      args =
+        if EvoGit.Platform.os() == :windows do
+          EvoGit.Powershell.invoke_args("echo hi")
+        else
+          ["-c", "echo hi"]
+        end
+
+      assert EvoGit.Platform.shell() == expected
+      assert EvoGit.Platform.shell_args("echo hi") == args
+    end
+  end
+
+  # Writes a config.toml into the isolated XDG config dir used by this test.
+  defp write_config_toml(tmp_xdg, tools_body) do
+    config_dir = Path.join(tmp_xdg, "genesis")
+    File.mkdir_p!(config_dir)
+    File.write!(Path.join(config_dir, "config.toml"), "[tools]\n#{tools_body}\n")
   end
 end
