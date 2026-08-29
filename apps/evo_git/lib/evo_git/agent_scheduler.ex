@@ -251,8 +251,10 @@ defmodule EvoGit.AgentScheduler do
   """
   @spec get_foreign_repo_commits(pos_integer()) :: %{atom() => String.t()}
   def get_foreign_repo_commits(agent_id) do
-    {:ok, meta} = Store.get_sched_meta(agent_id)
-    meta.foreign_repo_commits
+    case Store.get_sched_meta(agent_id) do
+      {:ok, meta} -> meta.foreign_repo_commits
+      :error -> %{}
+    end
   end
 
   @doc """

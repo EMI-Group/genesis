@@ -154,6 +154,31 @@ defmodule EvoGit.ProjectConfigTest do
       assert reference.description == nil
     end
 
+    test "parses writable and base_sha keys", %{tmp_dir: tmp_dir} do
+      toml_content = """
+      [foreign_repos.original]
+      path = "/Source/original-proj"
+      writable = true
+      base_sha = "abc123"
+
+      [foreign_repos.reference]
+      path = "/Source/rust-rewrite-proj"
+      """
+
+      File.write!(Path.join(tmp_dir, "genesis.toml"), toml_content)
+
+      repos = ProjectConfig.foreign_repos(tmp_dir)
+
+      original = Enum.find(repos, &(&1.id == "original"))
+      reference = Enum.find(repos, &(&1.id == "reference"))
+
+      assert original.writable == true
+      assert original.base_sha == "abc123"
+      # Defaults when keys are absent
+      assert reference.writable == false
+      assert reference.base_sha == nil
+    end
+
     test "returns empty list and logs warning for invalid foreign_repos config", %{
       tmp_dir: tmp_dir
     } do

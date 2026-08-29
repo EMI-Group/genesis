@@ -25,7 +25,9 @@ defmodule EvoGit.ProjectConfig do
     Resolution order: `script.<current_os>` → `script` (fallback). If neither exists, returns nil.
 
   - `foreign_repos` — A map of foreign repository references. Each entry is a
-    TOML table with `path` (required) and `name` (optional) keys.
+    TOML table with `path` (required), `description` (optional),
+    `writable` (optional boolean, default `false`), and `base_sha` (optional
+    string, default `nil` = HEAD) keys.
 
   - `commands` — User-defined command shortcuts for the dashboard. Each entry
     is a name-command pair:
@@ -161,11 +163,14 @@ defmodule EvoGit.ProjectConfig do
     # 2. Modify: set worktree.script to the OS-variant map, preserving any
     #    non-script keys that were already under [worktree].
     existing_worktree = Map.get(existing, "worktree", %{}) |> Map.delete("script")
-    updated_worktree = Map.put(existing_worktree, "script", %{
-      "linux" => linux_script,
-      "macos" => macos_script,
-      "windows" => windows_script
-    })
+
+    updated_worktree =
+      Map.put(existing_worktree, "script", %{
+        "linux" => linux_script,
+        "macos" => macos_script,
+        "windows" => windows_script
+      })
+
     updated_config = Map.put(existing, "worktree", updated_worktree)
 
     # 3. Serialize with custom formatting and write.
@@ -277,6 +282,8 @@ defmodule EvoGit.ProjectConfig do
 
   - `path` (required) - absolute path to the foreign repo
   - `description` (optional) - human-readable description of the repo
+  - `writable` (optional) - boolean, whether the repo is writable (default `false`)
+  - `base_sha` (optional) - per-repo starting commit string, `nil` (= HEAD) by default
   """
   @spec foreign_repos(String.t()) :: [EvoGit.Core.ForeignRepo.t()]
   def foreign_repos(repo_root) when is_binary(repo_root) do
@@ -303,7 +310,15 @@ defmodule EvoGit.ProjectConfig do
     case Map.fetch(config, "path") do
       {:ok, path} ->
         description = Map.get(config, "description")
-        {:ok, ForeignRepo.new(id_str, path, description: description)}
+        writable = Map.get(config, "writable", false)
+        base_sha = Map.get(config, "base_sha")
+
+        {:ok,
+         ForeignRepo.new(id_str, path,
+           description: description,
+           writable: writable,
+           base_sha: base_sha
+         )}
 
       :error ->
         {:error, "missing required 'path' key"}

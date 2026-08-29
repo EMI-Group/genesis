@@ -109,6 +109,19 @@ defmodule EvoDashWeb.TaskCardComponents do
           <% end %>
         </div>
 
+        <!-- Multi-repo indicator — compact per-repo badges on the COLLAPSED
+             card only (the expanded detail view shows the full per-repo
+             section). Guarded by result_repos/1: legacy results / summary
+             maps without a `repos` key render nothing. -->
+        <%= if !@show_details do %>
+          <% repos = result_repos(Map.get(@task, :result)) %>
+          <%= if repos do %>
+            <div class="-mt-3">
+              <EvoDashWeb.TaskCardComponents.result_repos_badges repos={repos} />
+            </div>
+          <% end %>
+        <% end %>
+
         <!-- Bottom row: Time, Actions, Menu -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-base-200/60">
           <div class="flex items-center gap-4 text-xs font-medium text-base-content/50">
@@ -570,6 +583,109 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   # ---------------------------------------------------------------------------
+  # Public helpers — result_repos/1 (multi-repo "repos" result key)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Normalizes the `repos` result key into a deterministic list of per-repo
+  entries `%{id:, commit_sha:, branch_name:}` — the `"primary"` repo first,
+  then writable foreign repos sorted by id. Returns `nil` when the result
+  carries no usable `repos` map (legacy results, error/crash results, summary
+  maps) so callers can guard with `if repos = result_repos(...) do` and render
+  nothing — legacy behavior stays byte-identical.
+
+  Shape notes (see `EvoGit.Runtime.Helpers.report_map/5` + the Store Codec):
+  the `repos` value is `%{repo_id => %{"commit_sha" => sha, "branch_name" =>
+  branch | nil}}` with STRING keys — after the `EvoGit.Store.Codec` round trip
+  the top-level `"repos"` key is NOT in `@result_data_fields`, so it stays a
+  string key with string-keyed inner maps (unknown keys are never atomized).
+  Both atom and string keys are read defensively so in-memory (pre-encode)
+  results work identically. Non-map entries are dropped; `branch_name` nil
+  means "no changes" for the primary repo (or a failed branch creation for a
+  foreign repo).
+  """
+  def result_repos({:ok, data}) when is_map(data), do: result_repos(data)
+
+  def result_repos(data) when is_map(data) do
+    case Map.get(data, :repos) || Map.get(data, "repos") do
+      repos when is_map(repos) and map_size(repos) > 0 ->
+        entries =
+          Enum.flat_map(repos, fn
+            {id, entry} when is_map(entry) ->
+              [
+                %{
+                  id: to_string(id),
+                  commit_sha: Map.get(entry, :commit_sha) || Map.get(entry, "commit_sha"),
+                  branch_name: Map.get(entry, :branch_name) || Map.get(entry, "branch_name")
+                }
+              ]
+
+            _ ->
+              []
+          end)
+
+        case entries do
+          [] -> nil
+          entries -> primary_first(entries)
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  def result_repos(_), do: nil
+
+  # `"primary"` first (contract: always present), then foreign repos sorted by
+  # id for deterministic rendering.
+  defp primary_first(entries) do
+    {primary, foreign} = Enum.split_with(entries, &(&1.id == "primary"))
+    primary ++ Enum.sort_by(foreign, & &1.id)
+  end
+
+  attr(:repos, :list, required: true)
+  attr(:size_class, :string, default: "text-xs")
+
+  @doc """
+  Renders the per-repo commit/branch badges for a task result carrying the
+  `repos` key (see `result_repos/1`): one compact row per repo —
+  `id: <short_sha> (<branch>)` — primary first, foreign repos sorted by id.
+  A nil branch renders just the short sha, plus a muted "no changes" hint for
+  the primary repo (its nil branch means the primary produced no commits).
+  """
+  def result_repos_badges(assigns) do
+    ~H"""
+    <div class={["flex flex-wrap items-center gap-x-3 gap-y-1.5", @size_class]}>
+      <%= for repo <- @repos do %>
+        <span class="inline-flex items-center gap-1.5">
+          <span class="badge badge-ghost font-mono font-medium">
+            {repo.id}:
+          </span>
+          <%= if repo.commit_sha do %>
+            <span class="badge badge-ghost font-mono">
+              <.icon name="hero-code-bracket" class="size-3 mr-1 opacity-60" />
+              {String.slice(repo.commit_sha, 0..6)}
+            </span>
+          <% end %>
+          <%= if repo.branch_name do %>
+            <span class="badge badge-primary font-mono">
+              <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
+              {repo.branch_name}
+            </span>
+          <% else %>
+            <%= if repo.id == "primary" do %>
+              <span class="badge badge-ghost font-mono opacity-60">
+                <%!-- zh_CN: 主仓库本次无改动 --%>{gettext("no changes")}
+              </span>
+            <% end %>
+          <% end %>
+        </span>
+      <% end %>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
   # Public helpers — render_result/2
   # ---------------------------------------------------------------------------
 
@@ -639,11 +755,12 @@ defmodule EvoDashWeb.TaskCardComponents do
     """
   end
 
-  def render_result(%{result: result, no_changes: true} = _data, opts) when is_binary(result) do
+  def render_result(%{result: result, no_changes: true} = data, opts) when is_binary(result) do
     truncate = Keyword.get(opts, :truncate, true)
 
     assigns = %{
       result: result,
+      repos: result_repos(data),
       truncate: truncate
     }
 
@@ -684,6 +801,20 @@ defmodule EvoDashWeb.TaskCardComponents do
           <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
         </div>
       <% end %>
+      <%= if @repos do %>
+        <div>
+          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+            <.icon name="hero-server-stack" class="size-3" />
+            <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
+              "Repositories"
+            )}
+          </h5>
+          <EvoDashWeb.TaskCardComponents.result_repos_badges
+            repos={@repos}
+            size_class={if @truncate, do: "text-xs", else: "text-sm"}
+          />
+        </div>
+      <% end %>
     </div>
     """
   end
@@ -698,6 +829,7 @@ defmodule EvoDashWeb.TaskCardComponents do
       tag: Map.get(data, :tag),
       branch_name: Map.get(data, :branch_name),
       pr_url: Map.get(data, :pr_url),
+      repos: result_repos(data),
       truncate: truncate
     }
 
@@ -734,6 +866,17 @@ defmodule EvoDashWeb.TaskCardComponents do
             </a>
           <% end %>
         </div>
+        <%= if @repos do %>
+          <div class="mb-4">
+            <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+              <.icon name="hero-server-stack" class="size-3" />
+              <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
+                "Repositories"
+              )}
+            </h5>
+            <EvoDashWeb.TaskCardComponents.result_repos_badges repos={@repos} size_class="text-sm" />
+          </div>
+        <% end %>
       <% end %>
       <div class={
         if @truncate,
@@ -784,6 +927,17 @@ defmodule EvoDashWeb.TaskCardComponents do
             </a>
           <% end %>
         </div>
+        <%= if @repos do %>
+          <div>
+            <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+              <.icon name="hero-server-stack" class="size-3" />
+              <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
+                "Repositories"
+              )}
+            </h5>
+            <EvoDashWeb.TaskCardComponents.result_repos_badges repos={@repos} />
+          </div>
+        <% end %>
       <% end %>
     </div>
     """

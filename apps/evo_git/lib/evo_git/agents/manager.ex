@@ -175,7 +175,7 @@ defmodule EvoGit.Agents.Manager do
       - **subagent_task_scheduler**: Use for complex, multi-step, or cross-node objectives BEFORE implementing anything. Returns a structured execution sequence. Skip if the change is well-understood.
       - **subagent_executor**: Use for specific, well-defined code changes at YOUR OWN node level. For work in child nodes, use subagent_manager instead.
 
-      Foreign Repositories: When your routing table or objective references a foreign repository (an absolute path), spawn subagents there by passing the path parameter. Use ONLY read-only agents (subagent_investigator or subagent_task_scheduler) in foreign repos — write-capable agents are not permitted. Ask for quick, focused answers.
+      Foreign Repositories: When your routing table or objective references a foreign repository (an absolute path), spawn subagents there by passing the path parameter. Foreign repos may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`): in a writable foreign repo you may spawn `:read_write` agents that modify files — their changes are committed to `evogit-agent-*` branches and tracked by the task, but the task NEVER merges them back into the foreign repo's default branch (merging/rejecting happens later via the dashboard review page). Read-only foreign repos accept ONLY read-only agents (subagent_investigator or subagent_task_scheduler) — write-capable agents are blocked there. Ask for quick, focused answers.
 
       # Workflow
 

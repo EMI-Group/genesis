@@ -24,6 +24,16 @@ defmodule EvoGit.Agent.ResultTest do
       assert result.archive_records == nil
     end
 
+    test "foreign_repo_commits defaults to %{}" do
+      result = Result.new("Fixed", "sha")
+      assert result.foreign_repo_commits == %{}
+    end
+
+    test "accepts foreign_repo_commits option" do
+      result = Result.new("Fixed", "sha", foreign_repo_commits: %{"orig" => "abc123"})
+      assert result.foreign_repo_commits == %{"orig" => "abc123"}
+    end
+
     test "accepts tag option" do
       result = Result.new("Fixed", "sha", tag: "fix")
       assert result.tag == "fix"
@@ -66,15 +76,16 @@ defmodule EvoGit.Agent.ResultTest do
       records = [%{path: "a", summary: "b"}]
 
       result =
-        Result.new("Result text", "commit_sha", [
+        Result.new("Result text", "commit_sha",
           tag: "feature",
           branch: "genesis/agent_xyz",
           base_commit: "base",
           repo_id: "primary",
           usage: usage,
           agent_count: 3,
-          archive_records: records
-        ])
+          archive_records: records,
+          foreign_repo_commits: %{"orig" => "abc"}
+        )
 
       assert result.result == "Result text"
       assert result.commit_sha == "commit_sha"
@@ -85,6 +96,7 @@ defmodule EvoGit.Agent.ResultTest do
       assert result.usage == usage
       assert result.agent_count == 3
       assert result.archive_records == records
+      assert result.foreign_repo_commits == %{"orig" => "abc"}
     end
 
     test "ignores unknown options" do
@@ -106,8 +118,9 @@ defmodule EvoGit.Agent.ResultTest do
     end
 
     test "enforce_keys requires result and commit_sha" do
-      assert_raise ArgumentError, ~r/the following keys must also be given when building struct/,
-        fn -> struct!(Result, []) end
+      assert_raise ArgumentError,
+                   ~r/the following keys must also be given when building struct/,
+                   fn -> struct!(Result, []) end
     end
   end
 

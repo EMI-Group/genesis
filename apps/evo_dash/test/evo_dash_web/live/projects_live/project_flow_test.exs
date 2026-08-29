@@ -357,6 +357,79 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
 
       assert repo.root == "\\\\server\\share"
     end
+
+    test "local node threads writable/base_sha through ForeignRepo.new/3 coercion" do
+      # Literal `true` / non-blank sha survive the coercion untouched — the
+      # local branch must remain byte-for-byte identical to ForeignRepo.new/3.
+      opts = [writable: true, base_sha: "abc123"]
+
+      assert ProjectFlow.build_foreign_repo(node(), "x", "/abs/repo", opts) ==
+               ForeignRepo.new("x", "/abs/repo", opts)
+
+      assert %ForeignRepo{writable: true, base_sha: "abc123"} =
+               ProjectFlow.build_foreign_repo(node(), "x", "/abs/repo", opts)
+    end
+
+    test "local node coerces non-boolean writable and blank base_sha" do
+      # ForeignRepo.new/3 coercion rules: only the literal `true` is writable,
+      # blank shas become nil — the local branch must inherit exactly that.
+      assert %ForeignRepo{writable: false} =
+               ProjectFlow.build_foreign_repo(node(), "x", "/abs/repo", writable: "true")
+
+      assert %ForeignRepo{base_sha: nil} =
+               ProjectFlow.build_foreign_repo(node(), "x", "/abs/repo", base_sha: "")
+
+      assert %ForeignRepo{writable: false, base_sha: nil} =
+               ProjectFlow.build_foreign_repo(node(), "x", "/abs/repo")
+    end
+
+    test "remote node carries writable/base_sha raw in the struct" do
+      repo =
+        ProjectFlow.build_foreign_repo(@remote_node, "r", "/home/user/repo",
+          writable: true,
+          base_sha: "abc123"
+        )
+
+      assert repo.writable == true
+      assert repo.base_sha == "abc123"
+      # Verbatim — no local Path.expand/rewrite of the root either.
+      assert repo.root == "/home/user/repo"
+    end
+
+    test "remote node does not coerce writable/base_sha (no-coercion contract)" do
+      # The remote branch uses Keyword.get/3 directly — a string `"true"` is
+      # kept verbatim, never run through ForeignRepo.new/3's writable?/1.
+      repo =
+        ProjectFlow.build_foreign_repo(@remote_node, "r", "/home/user/repo",
+          writable: "true",
+          base_sha: "abc123"
+        )
+
+      assert repo.writable == "true"
+      assert repo.base_sha == "abc123"
+    end
+
+    test "remote node defaults writable to false and base_sha to nil" do
+      repo = ProjectFlow.build_foreign_repo(@remote_node, "r", "/home/user/repo", [])
+
+      assert repo.writable == false
+      assert repo.base_sha == nil
+      assert repo.root == "/home/user/repo"
+    end
+
+    test "remote node never locally rewrites base_sha or Windows roots" do
+      repo =
+        ProjectFlow.build_foreign_repo(@remote_node, "r", "D:\\stuff\\repo",
+          writable: true,
+          base_sha: "abc123"
+        )
+
+      assert repo.writable == true
+      assert repo.base_sha == "abc123"
+      # The Windows root survives verbatim even with writable/base_sha set —
+      # no local Path.expand, no drive-letter rewrite.
+      assert repo.root == "D:\\stuff\\repo"
+    end
   end
 
   describe "Project.load_foreign_repos/3 — node-aware genesis.toml loading" do

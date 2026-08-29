@@ -156,7 +156,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
       - For leaf nodes (no children), say so — the architect should delegate implementation to `subagent_manager` at its own level.
       - Keep objectives **self-contained** (each child architect starts with fresh context) and include: "You are in genesis — your sibling modules are being built in parallel and may not exist yet. Implement against the shared interfaces/contracts defined above. Focus on YOUR assigned directory only."
       - When children interact, define the shared interfaces/types at the PARENT level first so all can run in parallel against the contract — reserve serialization for HARD dependencies only.
-      - For foreign repo porting: note which child architect maps to which foreign repo module, and include the foreign repo path in each child's objective.
+      - For foreign repo porting: note which child architect maps to which foreign repo module, and include the foreign repo path in each child's objective. Foreign repos are read-only by default; when one is writable for the task (`writable = true` in `genesis.toml`), `:read_write` agents may modify it — changes go to `evogit-agent-*` branches, are tracked by the task, and are never merged back into the foreign repo's default branch by the task.
 
       # Process
 

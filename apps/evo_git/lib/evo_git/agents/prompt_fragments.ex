@@ -358,6 +358,26 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
     "- **Spawn at the right level**: When you know the foreign repo's structure"
   end
 
+  @doc """
+  "- **Writable vs read-only foreign repos**: Foreign repositories may be
+  **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`)."
+
+  Complete bullet teaching the writable-vs-read-only foreign repo semantics:
+  writable foreign repos allow `:read_write` spawns whose changes are tracked
+  by the task (per-repo commit + branch in the final report) but never merged
+  back into the foreign repo's default branch by the task; read-only foreign
+  repos keep the current behavior (only read-only agents spawnable).
+
+  Used by: Architect (weaved into the "Key Rules" list right after the
+  "Read-only vs writable foreign repos" bullet), ContextExtractor (weaved into
+  the "Key rules for foreign repo delegation" list right after the
+  "Read-only vs writable foreign repos" bullet). Near-duplicate of those
+  bullets by design — this is the shared canonical sentence.
+  """
+  def writable_foreign_repo_clause do
+    "- **Writable vs read-only foreign repos**: Foreign repositories may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). In a writable foreign repo, a `:read_write` agent may be spawned and may modify files — its changes are committed to `evogit-agent-*` branches and **tracked by the task** (per-repo commit + branch appear in the final report). The task NEVER merges foreign-repo branches back into the foreign repo's default branch — no merge-back by the task (merging/rejecting across repos happens later via the dashboard review page). Read-only foreign repos keep the current behavior: ONLY read-only agents (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) may be spawned there; write-capable agents are blocked."
+  end
+
   # ── Objective scope (Executor + ContextExtractor) ───────────────────────────
 
   @doc """

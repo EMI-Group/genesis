@@ -1,6 +1,8 @@
 defmodule EvoDashWeb.TaskCardComponentsTest do
   use ExUnit.Case, async: true
 
+  import Phoenix.LiveViewTest
+
   alias EvoDashWeb.TaskCardComponents
 
   # Unit tests for the pure copy-text helpers behind the expanded task-card
@@ -73,6 +75,103 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
 
     test "anything else falls back to a pretty-inspected representation" do
       assert TaskCardComponents.result_copy_text(%{other: "thing"}) =~ "%{other:"
+    end
+  end
+
+  describe "result_repos/1" do
+    test "normalizes a string-keyed repos map — primary first, foreign sorted by id" do
+      assert TaskCardComponents.result_repos(
+               {:ok,
+                %{
+                  result: "done",
+                  repos: %{
+                    "zeta-repo" => %{
+                      "commit_sha" => "ccccccc3",
+                      "branch_name" => "genesis/agent_1"
+                    },
+                    "primary" => %{"commit_sha" => "aaaaaaa1", "branch_name" => "genesis/agent_1"},
+                    "alpha-repo" => %{"commit_sha" => "bbbbbbb2", "branch_name" => nil}
+                  }
+                }}
+             ) == [
+               %{id: "primary", commit_sha: "aaaaaaa1", branch_name: "genesis/agent_1"},
+               %{id: "alpha-repo", commit_sha: "bbbbbbb2", branch_name: nil},
+               %{id: "zeta-repo", commit_sha: "ccccccc3", branch_name: "genesis/agent_1"}
+             ]
+    end
+
+    test "accepts atom-keyed in-memory repos maps too (pre-Codec shape)" do
+      assert TaskCardComponents.result_repos(%{
+               repos: %{
+                 "primary" => %{commit_sha: "aaaaaaa1", branch_name: nil}
+               }
+             }) == [%{id: "primary", commit_sha: "aaaaaaa1", branch_name: nil}]
+    end
+
+    test "returns nil for legacy results, errors, exits, and non-map input" do
+      assert TaskCardComponents.result_repos({:ok, %{result: "legacy"}}) == nil
+      assert TaskCardComponents.result_repos({:error, "boom"}) == nil
+      assert TaskCardComponents.result_repos({:exit, :killed}) == nil
+      assert TaskCardComponents.result_repos("raw string") == nil
+      assert TaskCardComponents.result_repos(nil) == nil
+      assert TaskCardComponents.result_repos(%{}) == nil
+      assert TaskCardComponents.result_repos(%{result: "no repos key"}) == nil
+      assert TaskCardComponents.result_repos(%{repos: %{}}) == nil
+      assert TaskCardComponents.result_repos(%{repos: "not a map"}) == nil
+      assert TaskCardComponents.result_repos(%{repos: %{"primary" => "not a map"}}) == nil
+    end
+  end
+
+  describe "task_card/1 summary-map safety" do
+    # Summary maps (the sidebar Active Tasks contract) have NO `result` key.
+    # The card must render without crashing and without any per-repo markup.
+    test "renders a summary map without a result key" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: %{
+            id: "t1",
+            type: :genesis,
+            status: :completed,
+            started_at: DateTime.utc_now(),
+            finished_at: DateTime.utc_now(),
+            agent_count: 1,
+            opts: [prompt: "summary task", mode: "simple"]
+          }
+        )
+
+      assert html =~ "summary task"
+      refute html =~ "Repositories"
+      refute html =~ "legacy-api"
+    end
+
+    test "collapsed card shows the multi-repo indicator only when repos is present" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: %{
+            id: "t1",
+            type: :genesis,
+            status: :completed,
+            started_at: DateTime.utc_now(),
+            finished_at: DateTime.utc_now(),
+            agent_count: 1,
+            opts: [prompt: "multi repo task", mode: "simple"],
+            result:
+              {:ok,
+               %{
+                 result: "done",
+                 commit_sha: "aaaaaaa1",
+                 branch_name: "genesis/agent_1",
+                 repos: %{
+                   "primary" => %{commit_sha: "aaaaaaa1", branch_name: "genesis/agent_1"},
+                   "legacy-api" => %{commit_sha: "bbbbbbb2", branch_name: "genesis/agent_1"}
+                 }
+               }}
+          }
+        )
+
+      assert html =~ "legacy-api:"
+      assert html =~ "aaaaaaa"
+      assert html =~ "bbbbbbb"
     end
   end
 end

@@ -7,11 +7,14 @@ defmodule EvoGit.TaskRegistry.MergeContext do
   context block (task id, shas, branch name, merge target, goal, hints) that
   gets prepended to the new task's objective. It also threads the previous
   task's end commit (`:starting_commit`) and foreign repos into the new
-  task's opts.
+  task's opts, including per-repo starting commits: each carried foreign
+  repo's `base_sha` is overridden with the commit the previous task produced
+  in that repo (from its result `repos` map) when present.
   """
 
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
+  alias EvoGit.TaskRegistry.PrevTaskRepos
 
   @doc """
   Builds the opts for an evolve task that resolves a merge conflict for the
@@ -20,9 +23,11 @@ defmodule EvoGit.TaskRegistry.MergeContext do
   Strips the `:merge_from`/`:merge_target` keys (they must never leak into the
   runtime opts), then — when the previous task is found — sets
   `:starting_commit` to the previous task's end commit, carries over the
-  previous task's `:foreign_repos`, and prepends the merge context block to the
-  `:objective`. Returns the original opts (minus the merge keys) when the
-  previous task can't be found.
+  previous task's `:foreign_repos` (normalizing each entry and overriding each
+  repo's `base_sha` with the previous task's result `repos` commit when
+  present), and prepends the merge context block to the `:objective`. Returns
+  the original opts (minus the merge keys) when the previous task can't be
+  found.
   """
   def apply_merge_context(opts, _task_id, merge_from, merge_target) do
     # Strip :merge_from/:merge_target first so they never leak into runtime opts.
@@ -60,6 +65,7 @@ defmodule EvoGit.TaskRegistry.MergeContext do
                   foreign_repos
                   |> Enum.map(&ForeignRepo.normalize/1)
                   |> Enum.reject(&is_nil/1)
+                  |> PrevTaskRepos.apply_starting_commits(prev_task)
 
                 Keyword.put(opts, :foreign_repos, repos)
 
@@ -71,7 +77,9 @@ defmodule EvoGit.TaskRegistry.MergeContext do
             opts
         end
 
-      block = build_merge_context_block(prev_task, merge_target)
+      block =
+        build_merge_context_block(prev_task, merge_target, Keyword.get(opts, :foreign_repos, []))
+
       objective = Keyword.get(opts, :objective, "")
       Keyword.put(opts, :objective, block <> "\n\n" <> objective)
     end
@@ -79,9 +87,36 @@ defmodule EvoGit.TaskRegistry.MergeContext do
 
   @doc """
   Builds a "Merge Conflict Resolution Context" block string from a completed
-  task's `%TaskInfo{}` struct and the merge target branch.
+  task's `%TaskInfo{}` struct and the merge target branch. The 2-arity derives
+  the foreign-repos list from the previous task's opts; the 3-arity accepts an
+  explicit list of normalized `%ForeignRepo{}` structs (e.g. the carried repos
+  with per-repo starting commits applied) so the block can show the ACTUAL
+  starting commits.
   """
   def build_merge_context_block(%TaskInfo{} = prev_task, merge_target) do
+    foreign_repos =
+      case prev_task.opts do
+        opts when is_list(opts) ->
+          case Keyword.get(opts, :foreign_repos) do
+            repos when is_list(repos) ->
+              repos
+              |> Enum.map(&ForeignRepo.normalize/1)
+              |> Enum.reject(&is_nil/1)
+
+            _ ->
+              []
+          end
+
+        _ ->
+          []
+      end
+
+    build_merge_context_block(prev_task, merge_target, foreign_repos)
+  end
+
+  def build_merge_context_block(_, _), do: ""
+
+  def build_merge_context_block(%TaskInfo{} = prev_task, merge_target, foreign_repos) do
     base_sha = prev_task.base_sha
     commit_sha = prev_task.commit_sha
     branch_name = prev_task.branch_name || "unknown"
@@ -142,6 +177,8 @@ defmodule EvoGit.TaskRegistry.MergeContext do
         "the rough state is committed)."
     ]
 
+    writable_repos_line = PrevTaskRepos.writable_repos_line(foreign_repos)
+
     lines =
       [
         "--- Merge Conflict Resolution Context ---",
@@ -150,11 +187,12 @@ defmodule EvoGit.TaskRegistry.MergeContext do
         base_line ++
         commit_line ++
         ["Task branch name: #{branch_name}", "Merge target branch: #{target}", goal] ++
+        if(is_nil(writable_repos_line), do: [], else: [writable_repos_line]) ++
         hints ++
         ["--- End Merge Conflict Resolution Context ---"]
 
     Enum.join(lines, "\n")
   end
 
-  def build_merge_context_block(_, _), do: ""
+  def build_merge_context_block(_, _, _), do: ""
 end

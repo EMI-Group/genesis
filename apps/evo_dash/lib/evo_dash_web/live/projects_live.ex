@@ -575,6 +575,9 @@ defmodule EvoDashWeb.ProjectsLive do
           new_repo_id: "",
           new_repo_path: "",
           new_repo_description: "",
+          new_repo_base_sha: "",
+          editing_foreign_repo_id: nil,
+          foreign_repo_edit_form: nil,
           show_configure_dropdown: false,
           model_profiles: model_profiles,
           selected_model_id: selected_model_id,
@@ -1219,7 +1222,10 @@ defmodule EvoDashWeb.ProjectsLive do
      |> assign(:show_add_foreign_repo_form, !socket.assigns.show_add_foreign_repo_form)
      |> assign(:new_repo_id, "")
      |> assign(:new_repo_path, "")
-     |> assign(:new_repo_description, "")}
+     |> assign(:new_repo_description, "")
+     |> assign(:new_repo_base_sha, "")
+     |> assign(:editing_foreign_repo_id, nil)
+     |> assign(:foreign_repo_edit_form, nil)}
   end
 
   @impl true
@@ -1244,63 +1250,84 @@ defmodule EvoDashWeb.ProjectsLive do
     path = String.trim(params["path"] || "")
     description = String.trim(params["description"] || "")
 
+    # Read-write foreign repos: `writable` is the checkbox presence ("true" =
+    # checked → writable), `base_sha` is a trimmed optional per-repo starting
+    # commit (blank → nil = HEAD). Both are threaded through
+    # ProjectFlow.build_foreign_repo/4 → ForeignRepo.new/3 (which coerces
+    # them) for local nodes; remote nodes get the raw values in the struct.
+    writable = params["writable"] == "true"
+    base_sha = String.trim(params["base_sha"] || "")
+    base_sha = if base_sha == "", do: nil, else: base_sha
+
     cond do
       repo_id_str == "" ->
         {:noreply, put_flash(socket, :error, gettext("Repo ID cannot be empty."))}
 
-      path == "" ->
-        {:noreply, put_flash(socket, :error, gettext("Path cannot be empty."))}
-
-      not foreign_repo_path_absolute?(socket, path) ->
-        {:noreply, put_flash(socket, :error, gettext("Path must be absolute."))}
-
       true ->
-        repo_id = repo_id_str
+        case validate_foreign_repo_input(socket, path, base_sha) do
+          {:error, message} ->
+            {:noreply, put_flash(socket, :error, message)}
 
-        # Check if already exists in the current list
-        current_repos = socket.assigns.foreign_repos
+          :ok ->
+            repo_id = repo_id_str
 
-        if Enum.any?(current_repos, &(&1.id == repo_id)) do
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Repo '%{id}' is already registered.", id: repo_id)
-           )}
-        else
-          # Node-aware construction: in a remote context the accepted path is
-          # a REMOTE node path — `ForeignRepo.new/3` would `Path.expand/1` it
-          # against the DASHBOARD's OS and mangle it (`/home/...` on a Windows
-          # dashboard, `D:\stuff` cwd-joined on POSIX). Remote contexts store
-          # the raw trimmed path via ProjectFlow.build_foreign_repo/4; local
-          # contexts keep `ForeignRepo.new/3`'s exact expansion semantics.
-          remote_context? =
-            socket.assigns[:remote?] or socket.assigns[:current_node] != node()
+            # Check if already exists in the current list
+            current_repos = socket.assigns.foreign_repos
 
-          node = if remote_context?, do: socket.assigns[:current_node], else: node()
-          opts = if description != "", do: [description: description], else: []
+            if Enum.any?(current_repos, &(&1.id == repo_id)) do
+              {:noreply,
+               put_flash(
+                 socket,
+                 :error,
+                 gettext("Repo '%{id}' is already registered.", id: repo_id)
+               )}
+            else
+              # Node-aware construction: in a remote context the accepted path is
+              # a REMOTE node path — `ForeignRepo.new/3` would `Path.expand/1` it
+              # against the DASHBOARD's OS and mangle it (`/home/...` on a Windows
+              # dashboard, `D:\stuff` cwd-joined on POSIX). Remote contexts store
+              # the raw trimmed path via ProjectFlow.build_foreign_repo/4; local
+              # contexts keep `ForeignRepo.new/3`'s exact expansion semantics.
+              remote_context? =
+                socket.assigns[:remote?] or socket.assigns[:current_node] != node()
 
-          repo = ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
+              node = if remote_context?, do: socket.assigns[:current_node], else: node()
 
-          updated_repos =
-            Enum.sort_by([repo | current_repos], fn r ->
-              {if(ForeignRepo.primary?(r.id), do: 0, else: 1), r.id}
-            end)
+              opts =
+                []
+                |> then(fn o ->
+                  if description != "", do: Keyword.put(o, :description, description), else: o
+                end)
+                |> Keyword.put(:writable, writable)
+                |> then(fn o ->
+                  if is_binary(base_sha), do: Keyword.put(o, :base_sha, base_sha), else: o
+                end)
 
-          {:noreply,
-           socket
-           |> assign(:foreign_repos, updated_repos)
-           |> assign(:show_add_foreign_repo_form, false)
-           |> assign(:new_repo_id, "")
-           |> assign(:new_repo_path, "")
-           |> assign(:new_repo_description, "")
-           |> StatePersistence.maybe_persist_state()
-           |> put_flash(
-             :info,
-             gettext("Foreign repo '%{repo_id}' registered successfully.",
-               repo_id: repo_id_str
-             )
-           )}
+              repo = ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
+
+              updated_repos =
+                Enum.sort_by([repo | current_repos], fn r ->
+                  {if(ForeignRepo.primary?(r.id), do: 0, else: 1), r.id}
+                end)
+
+              {:noreply,
+               socket
+               |> assign(:foreign_repos, updated_repos)
+               |> assign(:show_add_foreign_repo_form, false)
+               |> assign(:new_repo_id, "")
+               |> assign(:new_repo_path, "")
+               |> assign(:new_repo_description, "")
+               |> assign(:new_repo_base_sha, "")
+               |> assign(:editing_foreign_repo_id, nil)
+               |> assign(:foreign_repo_edit_form, nil)
+               |> StatePersistence.maybe_persist_state()
+               |> put_flash(
+                 :info,
+                 gettext("Foreign repo '%{repo_id}' registered successfully.",
+                   repo_id: repo_id_str
+                 )
+               )}
+            end
         end
     end
   end
@@ -1328,6 +1355,100 @@ defmodule EvoDashWeb.ProjectsLive do
          )}
       end
     end
+  end
+
+  @impl true
+  def handle_event("edit_foreign_repo", %{"repo_id" => repo_id}, socket) do
+    case Enum.find(socket.assigns.foreign_repos, &(&1.id == repo_id)) do
+      nil ->
+        # Unknown id → error flash (mirrors remove_foreign_repo's choice): a
+        # stale repo_id from an outdated render surfaces as a user-visible
+        # error instead of a crash.
+        {:noreply, put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: repo_id))}
+
+      repo ->
+        {:noreply,
+         socket
+         |> assign(:editing_foreign_repo_id, repo_id)
+         |> assign(:foreign_repo_edit_form, %{
+           description: repo.description,
+           writable: repo.writable,
+           base_sha: repo.base_sha
+         })}
+    end
+  end
+
+  @impl true
+  def handle_event("save_foreign_repo", params, socket) do
+    repo_id = params["repo_id"]
+    path = String.trim(params["path"] || "")
+    description = String.trim(params["description"] || "")
+    # `writable` is the checkbox presence ("true" = checked → writable).
+    writable = params["writable"] == "true"
+    # `base_sha` is a trimmed optional per-repo starting commit (blank → nil).
+    base_sha = String.trim(params["base_sha"] || "")
+    base_sha = if base_sha == "", do: nil, else: base_sha
+
+    current_repos = socket.assigns.foreign_repos
+
+    if Enum.any?(current_repos, &(&1.id == repo_id)) do
+      case validate_foreign_repo_input(socket, path, base_sha) do
+        {:error, message} ->
+          # Stay in edit mode on validation failure — keep the form + assigns
+          # so the user can fix the value without re-opening the editor.
+          {:noreply, put_flash(socket, :error, message)}
+
+        :ok ->
+          # Node-aware construction — same node resolution as add_foreign_repo:
+          # remote contexts rebuild the raw struct (root + base_sha stored
+          # verbatim, never Path.expand-ed against the dashboard's OS), local
+          # contexts keep ForeignRepo.new/3's exact expansion semantics.
+          remote_context? =
+            socket.assigns[:remote?] or socket.assigns[:current_node] != node()
+
+          node = if remote_context?, do: socket.assigns[:current_node], else: node()
+
+          opts =
+            []
+            |> then(fn o ->
+              if description != "", do: Keyword.put(o, :description, description), else: o
+            end)
+            |> Keyword.put(:writable, writable)
+            |> then(fn o ->
+              if is_binary(base_sha), do: Keyword.put(o, :base_sha, base_sha), else: o
+            end)
+
+          repo = ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
+
+          updated_repos =
+            current_repos
+            |> Enum.map(fn r -> if r.id == repo_id, do: repo, else: r end)
+            |> Enum.sort_by(fn r ->
+              {if(ForeignRepo.primary?(r.id), do: 0, else: 1), r.id}
+            end)
+
+          {:noreply,
+           socket
+           |> assign(:foreign_repos, updated_repos)
+           |> assign(:editing_foreign_repo_id, nil)
+           |> assign(:foreign_repo_edit_form, nil)
+           |> StatePersistence.maybe_persist_state()
+           |> put_flash(
+             :info,
+             gettext("Foreign repo '%{repo_id}' updated successfully.", repo_id: repo_id)
+           )}
+      end
+    else
+      {:noreply, put_flash(socket, :error, gettext("Repo '%{id}' not found.", id: repo_id))}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_edit_foreign_repo", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:editing_foreign_repo_id, nil)
+     |> assign(:foreign_repo_edit_form, nil)}
   end
 
   # --- Path / Directory Picker Events ---
@@ -1832,7 +1953,27 @@ defmodule EvoDashWeb.ProjectsLive do
                   root = Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root)
                   desc = Map.get(repo, "description") || Map.get(repo, :description)
 
-                  opts = if is_binary(desc) and desc != "", do: [description: desc], else: []
+                  # Read-write foreign repos: thread `writable` and `base_sha`
+                  # through ForeignRepo.new/3 (which coerces/validates them —
+                  # only literal true is writable, blank base_sha → nil).
+                  # Tolerant writable check for string-keyed persisted shapes.
+                  writable =
+                    Map.get(repo, "writable", Map.get(repo, :writable, false))
+
+                  base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
+
+                  opts =
+                    if(is_binary(desc) and desc != "",
+                      do: [description: desc],
+                      else: []
+                    )
+                    |> Keyword.put(:writable, writable == true or writable == "true")
+                    |> then(fn o ->
+                      if is_binary(base_sha) and base_sha != "",
+                        do: Keyword.put(o, :base_sha, base_sha),
+                        else: o
+                    end)
+
                   ForeignRepo.new(id, root, opts)
 
                 _ ->
@@ -2042,6 +2183,78 @@ defmodule EvoDashWeb.ProjectsLive do
     else
       Platform.absolute_path?(path)
     end
+  end
+
+  # Validates a foreign-repo path + optional base_sha for the node being
+  # viewed. Returns `:ok` or `{:error, flash_message}`. Shared by the
+  # `add_foreign_repo` and `save_foreign_repo` handlers so both entry points
+  # enforce IDENTICAL rules (real checks, never crashes — cond/case only, no
+  # try/rescue):
+  #
+  #   - path non-blank + absolute (the existing checks)
+  #   - existence: local → `File.dir?/1`; remote → `NodeContext.dir?/2`
+  #   - git-ness:  local → core `EvoGit.Adapters.Git.rev_parse/1` (NEVER shell
+  #     out); remote → `NodeContext.list_branches/2`
+  #   - base_sha resolvability (when non-nil): local → `rev_parse(path, sha)`;
+  #     REMOTE base_sha check deliberately SKIPPED — NodeContext exposes no
+  #     ref-resolution wrapper (verified), and the core's up-front
+  #     task-start validation (`Runtime.Helpers.load_foreign_repos/2`) still
+  #     raises ArgumentError for a bad remote base_sha, failing the task
+  #     before any agent spawns (see projects_live/CONTEXT.md).
+  defp validate_foreign_repo_input(socket, path, base_sha) do
+    remote_context? =
+      socket.assigns[:remote?] or socket.assigns[:current_node] != node()
+
+    node = if remote_context?, do: socket.assigns[:current_node], else: node()
+
+    cond do
+      path == "" ->
+        {:error, gettext("Path cannot be empty.")}
+
+      not foreign_repo_path_absolute?(socket, path) ->
+        {:error, gettext("Path must be absolute.")}
+
+      not foreign_repo_path_exists?(node, remote_context?, path) ->
+        {:error, gettext("Foreign repo path does not exist: %{path}", path: path)}
+
+      not foreign_repo_is_git_repo?(node, remote_context?, path) ->
+        {:error, gettext("Path is not a git repository: %{path}", path: path)}
+
+      is_binary(base_sha) and base_sha != "" and remote_context? ->
+        # Remote base_sha check skipped by design (see function doc). The
+        # core's task-start ArgumentError still catches bad values.
+        :ok
+
+      is_binary(base_sha) and base_sha != "" ->
+        case EvoGit.Adapters.Git.rev_parse(path, base_sha) do
+          {:ok, _} ->
+            :ok
+
+          _ ->
+            {:error,
+             gettext("Base commit %{base_sha} not found in repository: %{path}",
+               base_sha: base_sha,
+               path: path
+             )}
+        end
+
+      true ->
+        :ok
+    end
+  end
+
+  defp foreign_repo_path_exists?(node, true, path), do: NodeContext.dir?(node, path)
+  defp foreign_repo_path_exists?(_node, false, path), do: File.dir?(path)
+
+  defp foreign_repo_is_git_repo?(node, true, path) do
+    case NodeContext.list_branches(node, path) do
+      {:ok, _} -> true
+      _ -> false
+    end
+  end
+
+  defp foreign_repo_is_git_repo?(_node, false, path) do
+    match?({:ok, _}, EvoGit.Adapters.Git.rev_parse(path))
   end
 
   # Builds the dashboard URL for a project path. In a remote context the

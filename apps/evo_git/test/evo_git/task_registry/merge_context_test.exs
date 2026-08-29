@@ -130,6 +130,182 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
       refute Keyword.has_key?(result, :foreign_repos)
     end
 
+    test "preserves writable and base_sha through the string-keyed Codec round trip" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "b1"}
+            ]
+          ]
+        )
+
+      # The Codec round trip keeps the repo as a string-keyed map with all five
+      # fields (the derived Jason encoder serializes writable/base_sha too).
+      fetched = TaskRegistry.get_task(prev.id)
+
+      assert [
+               %{
+                 "id" => "orig",
+                 "root" => "/tmp/orig",
+                 "writable" => true,
+                 "base_sha" => "b1"
+               }
+             ] = Keyword.get(fetched.opts, :foreign_repos)
+
+      # apply_merge_context normalizes the string-keyed maps back into
+      # %ForeignRepo{} structs with writable/base_sha intact.
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "next_task_id", prev.id, "main")
+
+      assert Keyword.get(result, :foreign_repos) == [
+               %ForeignRepo{
+                 id: "orig",
+                 root: "/tmp/orig",
+                 description: nil,
+                 writable: true,
+                 base_sha: "b1"
+               }
+             ]
+    end
+
+    test "overrides a carried repo's base_sha from the previous task's result repos map" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "old_sha"}
+            ]
+          ],
+          result: {:ok, %{"repos" => %{"orig" => %{"commit_sha" => "new_sha"}}}}
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      assert [%ForeignRepo{id: "orig", writable: true, base_sha: "new_sha"}] =
+               Keyword.get(result, :foreign_repos)
+    end
+
+    test "keeps a repo's own base_sha when it is absent from the previous task's result repos" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "own_sha"}
+            ]
+          ],
+          result: {:ok, %{"repos" => %{"other" => %{"commit_sha" => "irrelevant"}}}}
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      assert [%ForeignRepo{id: "orig", writable: true, base_sha: "own_sha"}] =
+               Keyword.get(result, :foreign_repos)
+    end
+
+    test "does not crash for a legacy previous task without a repos key and preserves base_sha" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "legacy_sha"}
+            ]
+          ],
+          result: {:ok, %{result: "Done.", commit_sha: "abc", branch_name: "genesis/agent_prev"}}
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      assert [%ForeignRepo{id: "orig", writable: true, base_sha: "legacy_sha"}] =
+               Keyword.get(result, :foreign_repos)
+    end
+
+    test "renders a Writable foreign repos line with id@base_sha in the block" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "abc123"}
+            ]
+          ]
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      assert Keyword.get(result, :objective) =~ "Writable foreign repos: orig@abc123"
+    end
+
+    test "renders id@HEAD for a writable repo whose starting commit is nil" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: nil}
+            ]
+          ]
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      assert Keyword.get(result, :objective) =~ "Writable foreign repos: orig@HEAD"
+    end
+
+    test "excludes non-writable repos from the Writable foreign repos line" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "abc123"},
+              %ForeignRepo{id: "ro", root: "/tmp/ro", writable: false, base_sha: "sha2"}
+            ]
+          ]
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      objective = Keyword.get(result, :objective)
+      assert objective =~ "Writable foreign repos: orig@abc123"
+      refute objective =~ "ro@"
+    end
+
+    test "omits the Writable foreign repos line when no carried repo is writable" do
+      prev =
+        insert_prev_task!(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "ro", root: "/tmp/ro", writable: false, base_sha: "sha2"}
+            ]
+          ]
+        )
+
+      result =
+        MergeContext.apply_merge_context(caller_opts(prev.id), "task_1", prev.id, "main")
+
+      refute Keyword.get(result, :objective) =~ "Writable foreign repos:"
+    end
+
     test "returns the stripped opts unchanged when the previous task is not found" do
       merge_from = "missing_task_#{System.unique_integer([:positive])}"
       opts = caller_opts(merge_from)

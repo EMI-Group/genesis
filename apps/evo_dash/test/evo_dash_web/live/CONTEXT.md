@@ -13,7 +13,7 @@ ExUnit test files for the EvoDash LiveView pages and their support modules. Mirr
 - `./settings_live_agents_test.exs` → Settings **Agents** category (custom agents + model-selection script editors)
 - `./settings_live/` → Pure unit tests for SettingsLive support modules (`model_profile_helpers_test.exs`, `config_io_test.exs`)
 - `./tasks_live_test.exs` → Cross-project task list (search/filter, cancellation modals, `:cancelling` display, event-driven debounced reloads)
-- `./review_live_test.exs` → Review page (missing-task error, ignore action)
+- `./review_live_test.exs` → Review page (~2050 lines, 41 tests): missing-task error, ignore action, cancelled tasks, nil branch, archive tab, merge-target selector, async merge check (6-tuple `:merge_check_result` injection), auto-resolve (incl. unreachable-remote), async review-data load + stale guards, and the multi-repo suite (repo-list construction primary-first / read-only + no-commits absent / legacy single-primary, merge broadcast via the `:review_merge_runner` seam, partial-failure `@merge_outcomes` panel, per-repo reject via `:review_reject_runner`, per-repo merge-check results + `switch_repo` tabs, auto-resolve/resume primary-scoped foreign-repo carry — runtime-only, core-tested in evo_git `merge_context_test.exs`)
 - `./welcome_live_test.exs`, `./welcome_complete_live_test.exs` → Onboarding pages
 - `./system_live_test.exs` → System page (scheduler controls, system check, Status sandbox helpers)
 - `./system_live/` → `charts_test.exs` — SystemLive chart/ring-buffer tests

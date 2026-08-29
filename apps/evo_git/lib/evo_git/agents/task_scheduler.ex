@@ -127,7 +127,7 @@ defmodule EvoGit.Agents.TaskScheduler do
 
       # Foreign Repository Notes
 
-      When operating in a foreign repository (your context node's repo_id is not "primary"), you are read-only. Read the root CONTEXT.md to understand the project structure before planning tasks. When you already know the foreign repo's structure from the objective, plan subagent paths at the appropriate level — don't default to the root when a more specific path is known.
+      When operating in a foreign repository (your context node's repo_id is not "primary"), you are read-only **unless the foreign repo is writable for this task** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). In a writable foreign repo, `:read_write` agents may be spawned to modify files — their changes are committed to `evogit-agent-*` branches and tracked by the task, but never merged back into the foreign repo's default branch by the task. Read the root CONTEXT.md to understand the project structure before planning tasks. When you already know the foreign repo's structure from the objective, plan subagent paths at the appropriate level — don't default to the root when a more specific path is known.
 
       # Process
 

@@ -1058,6 +1058,167 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  describe "task result repos dimension" do
+    # Multi-repo results carry a top-level `repos` map (STRING keys):
+    # `%{repo_id => %{"commit_sha" => sha, "branch_name" => branch | nil}}` —
+    # `"primary"` ALWAYS present (branch_name nil when the primary produced no
+    # changes), writable foreign repos with commits present, read-only repos
+    # absent. Legacy results have NO `repos` key and must render unchanged.
+    # The Store Codec keeps the top-level `repos` key STRING-keyed after the
+    # round trip (unknown result keys are never atomized), so fixtures pass
+    # through the same shape the core produces.
+    test "collapsed card shows the compact per-repo indicator", %{conn: conn} do
+      insert_fixture!(
+        result:
+          {:ok,
+           %{
+             result: "multi-repo work done",
+             commit_sha: "aaaaaaa1111111",
+             branch_name: "genesis/agent_1",
+             repos: %{
+               "primary" => %{commit_sha: "aaaaaaa1111111", branch_name: "genesis/agent_1"},
+               "legacy-api" => %{commit_sha: "bbbbbbb2222222", branch_name: "genesis/agent_1"},
+               "readme-tools" => %{commit_sha: "ccccccc3333333", branch_name: "genesis/agent_1"}
+             }
+           }}
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # Collapsed indicator: repo ids + short SHAs (first 7 chars) visible
+      # without expanding.
+      assert html =~ "legacy-api:"
+      assert html =~ "readme-tools:"
+      assert html =~ "aaaaaaa"
+      assert html =~ "bbbbbbb"
+      assert html =~ "ccccccc"
+    end
+
+    test "expanded card renders the per-repo Repositories section", %{conn: conn} do
+      id =
+        insert_fixture!(
+          result:
+            {:ok,
+             %{
+               result: "multi-repo work done",
+               commit_sha: "aaaaaaa1111111",
+               branch_name: "genesis/agent_1",
+               repos: %{
+                 "primary" => %{commit_sha: "aaaaaaa1111111", branch_name: "genesis/agent_1"},
+                 "legacy-api" => %{commit_sha: "bbbbbbb2222222", branch_name: "genesis/agent_1"},
+                 "readme-tools" => %{commit_sha: "ccccccc3333333", branch_name: "genesis/agent_1"}
+               }
+             }}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      assert html =~ "Repositories"
+      assert html =~ "legacy-api:"
+      assert html =~ "readme-tools:"
+      assert html =~ "aaaaaaa"
+      assert html =~ "bbbbbbb"
+      assert html =~ "ccccccc"
+      assert html =~ "genesis/agent_1"
+    end
+
+    test "full-result modal renders the per-repo Repositories section", %{conn: conn} do
+      id =
+        insert_fixture!(
+          result:
+            {:ok,
+             %{
+               result: "multi-repo work done",
+               commit_sha: "aaaaaaa1111111",
+               branch_name: "genesis/agent_1",
+               repos: %{
+                 "primary" => %{commit_sha: "aaaaaaa1111111", branch_name: "genesis/agent_1"},
+                 "legacy-api" => %{commit_sha: "bbbbbbb2222222", branch_name: "genesis/agent_1"}
+               }
+             }}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "view_full_result", %{"task_id" => id})
+
+      assert html =~ "Task Result"
+      assert html =~ "Repositories"
+      assert html =~ "legacy-api:"
+      assert html =~ "aaaaaaa"
+      assert html =~ "bbbbbbb"
+    end
+
+    test "legacy task without repos renders exactly as before", %{conn: conn} do
+      id =
+        insert_fixture!(
+          result:
+            {:ok,
+             %{
+               result: "legacy summary",
+               commit_sha: "abc1234",
+               branch_name: "genesis/agent_old"
+             }}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # No per-repo indicator on the collapsed card.
+      refute html =~ "Repositories"
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      # Existing badges/behavior unchanged.
+      assert html =~ "Agent Message"
+      assert html =~ "legacy summary"
+      assert html =~ "abc1234"
+      assert html =~ "genesis/agent_old"
+      refute html =~ "Repositories"
+    end
+
+    test "repos with a nil primary branch (no changes) renders gracefully", %{conn: conn} do
+      id =
+        insert_fixture!(
+          result:
+            {:ok,
+             %{
+               result: "nothing to do",
+               no_changes: true,
+               commit_sha: "aaaaaaa1111111",
+               branch_name: nil,
+               repos: %{
+                 "primary" => %{commit_sha: "aaaaaaa1111111", branch_name: nil},
+                 "legacy-api" => %{commit_sha: "bbbbbbb2222222", branch_name: "genesis/agent_1"}
+               }
+             }}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      # The No Changes notice still renders (primary had no commits)…
+      assert html =~ "No Changes"
+      assert html =~ "nothing to do"
+
+      # …and the Repositories section shows the primary short sha with a muted
+      # "no changes" hint plus the foreign repo's branch.
+      assert html =~ "Repositories"
+      assert html =~ "aaaaaaa"
+      assert html =~ "no changes"
+      assert html =~ "legacy-api:"
+      assert html =~ "bbbbbbb"
+      assert html =~ "genesis/agent_1"
+    end
+  end
+
   # --- task detail view helpers ---
 
   # Extracts the first matching element's attribute (Floki), mirroring the

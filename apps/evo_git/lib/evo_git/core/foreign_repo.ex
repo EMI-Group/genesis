@@ -2,7 +2,10 @@ defmodule EvoGit.Core.ForeignRepo do
   @moduledoc """
   Represents a reference to a Git repository in the multi-repo system.
 
-  Each repo has a unique `id` (string), an absolute `root` path, and an optional `description`.
+  Each repo has a unique `id` (string), an absolute `root` path, an optional
+  `description`, a `writable` flag (default `false` — foreign repos are
+  read-only unless explicitly marked writable), and an optional `base_sha`
+  (per-repo starting commit, `nil` = HEAD).
   The primary repo always has id `"primary"`. Foreign repos have user-defined ids.
 
   ## Usage
@@ -12,21 +15,25 @@ defmodule EvoGit.Core.ForeignRepo do
       [foreign_repos.original]
       path = "/Source/original-proj"
       description = "The original monorepo"
+      writable = true
+      base_sha = "abc123"
 
       [foreign_repos.reference]
       path = "/Source/rust-rewrite-proj"
   """
 
   @enforce_keys [:id, :root]
-  @derive {Jason.Encoder, only: [:id, :root, :description]}
-  defstruct [:id, :root, :description]
+  @derive {Jason.Encoder, only: [:id, :root, :description, :writable, :base_sha]}
+  defstruct [:id, :root, :description, writable: false, base_sha: nil]
 
   alias EvoGit.Platform
 
   @type t :: %__MODULE__{
           id: String.t(),
           root: String.t(),
-          description: String.t() | nil
+          description: String.t() | nil,
+          writable: boolean(),
+          base_sha: String.t() | nil
         }
 
   @doc """
@@ -37,14 +44,21 @@ defmodule EvoGit.Core.ForeignRepo do
   - `root` - absolute path to the repository root
   - `opts` - keyword options:
     - `:description` - human-readable description of the repo (optional, defaults to nil)
+    - `:writable` - whether the repo is writable (optional, defaults to `false`;
+      any non-`true` value is coerced to `false`)
+    - `:base_sha` - per-repo starting commit (optional, defaults to `nil` = HEAD;
+      blank/empty strings are treated as `nil`)
 
   ## Examples
 
       iex> ForeignRepo.new("primary", "/Source/my-project")
-      %ForeignRepo{id: "primary", root: "/Source/my-project", description: nil}
+      %ForeignRepo{id: "primary", root: "/Source/my-project", description: nil, writable: false, base_sha: nil}
 
       iex> ForeignRepo.new("original", "/Source/legacy-proj", description: "The legacy codebase")
       %ForeignRepo{id: "original", root: "/Source/legacy-proj", description: "The legacy codebase"}
+
+      iex> ForeignRepo.new("original", "/Source/legacy-proj", writable: true, base_sha: "abc123")
+      %ForeignRepo{id: "original", root: "/Source/legacy-proj", description: nil, writable: true, base_sha: "abc123"}
   """
   @spec new(String.t(), String.t(), keyword()) :: t()
   def new(id, root, opts \\ []) when is_binary(id) and is_binary(root) do
@@ -53,7 +67,9 @@ defmodule EvoGit.Core.ForeignRepo do
     %__MODULE__{
       id: id,
       root: root,
-      description: Keyword.get(opts, :description)
+      description: Keyword.get(opts, :description),
+      writable: writable?(Keyword.get(opts, :writable)),
+      base_sha: coerce_base_sha(Keyword.get(opts, :base_sha))
     }
   end
 
@@ -69,22 +85,29 @@ defmodule EvoGit.Core.ForeignRepo do
   `TaskInfo.opts` are persisted to SQLite via `EvoGit.Store.Codec.encode_opts/1`.
   Because `%ForeignRepo{}` derives `Jason.Encoder`, the JSON round-trip returns
   `:foreign_repos` entries as STRING-keyed maps
-  (`%{"id" => ..., "root" => ..., "description" => ...}`). Code that dot-accesses
-  `.id`/`.root` on those raw maps (e.g. `EvoGit.Runtime.Helpers.merge_foreign_repos/2`)
+  (`%{"id" => ..., "root" => ..., "description" => ..., "writable" => ...,
+  "base_sha" => ...}`). Code that dot-accesses `.id`/`.root` on those raw maps
+  (e.g. `EvoGit.Runtime.Helpers.merge_foreign_repos/2`)
   crashes with a `KeyError`. This function coerces every persisted/CLI shape back
   into a struct before use. `EvoGit.TaskRegistry.MergeContext` and
   `EvoGit.Runtime.Helpers` apply it centrally.
 
+  Missing `"writable"`/`"base_sha"` keys (legacy persisted rows) default to
+  `false`/`nil`.
+
   ## Examples
 
       iex> ForeignRepo.normalize(%ForeignRepo{id: "a", root: "/abs/a"})
-      %ForeignRepo{id: "a", root: "/abs/a", description: nil}
+      %ForeignRepo{id: "a", root: "/abs/a", description: nil, writable: false, base_sha: nil}
 
       iex> ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a", "description" => "desc"})
-      %ForeignRepo{id: "a", root: "/abs/a", description: "desc"}
+      %ForeignRepo{id: "a", root: "/abs/a", description: "desc", writable: false, base_sha: nil}
+
+      iex> ForeignRepo.normalize(%{"id" => "a", "root" => "/abs/a", "writable" => true, "base_sha" => "abc123"})
+      %ForeignRepo{id: "a", root: "/abs/a", description: nil, writable: true, base_sha: "abc123"}
 
       iex> ForeignRepo.normalize(%{id: "a", path: "/abs/a"})
-      %ForeignRepo{id: "a", root: "/abs/a", description: nil}
+      %ForeignRepo{id: "a", root: "/abs/a", description: nil, writable: false, base_sha: nil}
 
       iex> ForeignRepo.normalize(%{"id" => "a"})
       nil
@@ -106,13 +129,32 @@ defmodule EvoGit.Core.ForeignRepo do
       opts =
         if is_binary(description) and description != "", do: [description: description], else: []
 
-      new(id, root, opts)
+      writable = Map.get(repo, "writable", Map.get(repo, :writable, false))
+      base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
+
+      new(id, root, Keyword.merge(opts, writable: writable, base_sha: base_sha))
     else
       _ -> nil
     end
   end
 
   def normalize(_other), do: nil
+
+  # Coerces a `writable` opt to a boolean: only the literal `true` is writable;
+  # anything else (nil, non-boolean values) is coerced to `false` rather than
+  # crashing on an invalid persisted/CLI value.
+  defp writable?(value), do: value == true
+
+  # Coerces a `base_sha` opt to a non-blank string or nil. Blank/whitespace-only
+  # strings and non-string values are treated as nil (= HEAD).
+  defp coerce_base_sha(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp coerce_base_sha(_other), do: nil
 
   @doc """
   Returns the primary repo identifier.
