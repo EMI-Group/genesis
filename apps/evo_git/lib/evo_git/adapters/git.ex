@@ -174,21 +174,26 @@ defmodule EvoGit.Adapters.Git do
   @doc false
   # Removes a leftover plain directory (or file) at `worktree_path` so a
   # subsequent `git worktree add` can succeed. A REGISTERED linked worktree is
-  # detected by its `.git` FILE containing `gitdir: ...` and is kept; everything
-  # else blocks the add and is removed (a plain leftover dir has no `.git` file,
-  # a repo root has a `.git` DIRECTORY, and a stray file/`.git` file is not a
-  # registered worktree either). Best-effort: removal failure is ignored — the
-  # add then fails loudly and the caller's error path performs the same cleanup.
-  # Returns `:ok`.
+  # detected by its `.git` FILE containing `gitdir: ...` and is kept; a path
+  # whose `.git` is a DIRECTORY (a git working tree — main copy or nested repo)
+  # is NEVER removed — a working tree is never a leftover. Everything else
+  # blocks the add and is removed (a plain leftover dir has no `.git` file, and
+  # a stray file/`.git` file is not a registered worktree either). Best-effort:
+  # removal failure is ignored — the add then fails loudly and the caller's
+  # error path performs the same cleanup. Returns `:ok`.
   def remove_leftover_worktree_dir(worktree_path) when is_binary(worktree_path) do
-    case File.read(Path.join(worktree_path, ".git")) do
-      {:ok, content} ->
-        unless String.starts_with?(content, "gitdir:") do
-          File.rm_rf(worktree_path)
-        end
+    git_path = Path.join(worktree_path, ".git")
 
-      _ ->
-        File.rm_rf(worktree_path)
+    unless File.dir?(git_path) do
+      case File.read(git_path) do
+        {:ok, content} ->
+          unless String.starts_with?(content, "gitdir:") do
+            File.rm_rf(worktree_path)
+          end
+
+        _ ->
+          File.rm_rf(worktree_path)
+      end
     end
 
     :ok
