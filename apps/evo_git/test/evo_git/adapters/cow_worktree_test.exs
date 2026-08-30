@@ -530,6 +530,74 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   end
 
   # -------------------------------------------------------------------------
+  # create_worktree/5 — failed-add leftover cleanup (plain dirs, free branches)
+  # -------------------------------------------------------------------------
+
+  describe "create_worktree/5 failed-add leftover cleanup" do
+    test "non-empty plain dir at target: falls back, deletes the free branch, removes the dir" do
+      repo = make_repo("leftover_plain")
+      worktree_path = make_worktree_path("leftover_plain")
+      branch = "evogit-agent-T9-A9"
+
+      write_file(repo, "file.txt", "content")
+      target = commit_all(repo, "Initial")
+
+      # A leftover plain dir (e.g. from a previously failed add) — non-empty so
+      # git cannot use it. Before the fix this left a FREE branch behind and
+      # blocked every retry.
+      File.mkdir_p!(worktree_path)
+      File.write!(Path.join(worktree_path, "junk.txt"), "junk")
+      on_exit(fn -> File.rm_rf!(worktree_path) end)
+
+      result = CowWorktree.create_worktree(repo, worktree_path, target, branch, repo)
+
+      assert result == {:fallback, :worktree_add_failed}
+
+      # git creates the branch before path validation; the error arm deletes it.
+      refute Git.branch_exists?(repo, branch)
+
+      # The leftover dir is removed so the Git.add_worktree fallback can succeed.
+      refute File.dir?(worktree_path)
+    end
+
+    test "live registered worktree at target is kept when the add fails" do
+      repo = make_repo("leftover_live")
+      worktree_path = make_worktree_path("leftover_live")
+      branch = "evogit-agent-T9-A9"
+      live_branch = "live-branch"
+
+      write_file(repo, "file.txt", "content")
+      target = commit_all(repo, "Initial")
+      {:ok, main_branch} = Git.current_branch(repo)
+
+      # Register a LIVE worktree at the target path.
+      assert {:ok, _} = Git.add_worktree(repo, worktree_path, target, live_branch)
+      on_exit(fn -> cleanup_worktree(repo, worktree_path) end)
+
+      result = CowWorktree.create_worktree(repo, worktree_path, target, branch, repo)
+
+      assert result == {:fallback, :worktree_add_failed}
+
+      # The git-created free branch is deleted; the live worktree + its branch
+      # are KEPT (the error arm's remove_leftover_worktree_dir/1 preserves a
+      # registered linked worktree).
+      refute Git.branch_exists?(repo, branch)
+      assert Git.branch_exists?(repo, live_branch)
+      assert File.dir?(worktree_path)
+
+      {:ok, worktree_list} = Git.run(["worktree", "list"], repo)
+      assert String.contains?(worktree_list, worktree_path)
+      assert String.contains?(worktree_list, live_branch)
+
+      # Main copy untouched.
+      {:ok, main_sha} = Git.rev_parse(repo, "HEAD")
+      assert main_sha == target
+      assert {:ok, ^main_branch} = Git.current_branch(repo)
+      assert {:ok, ""} = Git.status(repo)
+    end
+  end
+
+  # -------------------------------------------------------------------------
   # create_worktree/5 — worktree is a valid git repository
   # -------------------------------------------------------------------------
 
