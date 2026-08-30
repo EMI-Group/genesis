@@ -94,15 +94,20 @@ The **task system** (`EvoGit.TaskRegistry`), transient **user guides** (PubSub t
 
 **Command catalog** — the declarative compile-time registry lives in `EvoGit.CommandShell` (`apps/evo_git/lib/evo_git/command_shell.ex`):
 
-| Module | Tool | Purpose |
-|---|---|---|
-| `ListTasks` (`list_tasks.ex`) | `list_tasks` | Optional `statuses` (validated against `pending/running/finalizing/completed/failed/cancelled/cancelling` via a lookup map — never `String.to_atom` on LLM input); calls `TaskRegistry.list_tasks_summary/1`; one line per task (id, status, type, `project_path \|\| "<system>"`, objective snippet, started_at). `opts` comes from the store as a STRING-keyed map — small `objective_from_opts/1` helper checks `"objective"`/`:objective`/keyword forms. |
-| `GetTask` (`get_task.ex`) | `get_task` | `TaskRegistry.get_task/1` → `%TaskInfo{} \| nil`; formats id/status/type/objective/times/result. Result formatted defensively (nil / plain string / map with `"result"`/`:result` key), truncated to 2000 chars. |
-| `StartTask` (`start_task.ex`) | `start_task` | Validates `task_type` ∈ `genesis/evolve/reflect/extract_skills` (map conversion), builds opts kw list (nil/empty skipped: `objective`, `path`, `mode`, `resume_from`, `starting_commit`, `model_id`), calls `TaskRegistry.start_task/2`. **Return shape (verified)**: `{:ok, %TaskInfo{}}` (NOT a bare id string) \| `{:error, :cancelled}` — success extracts `task.id`. |
-| `CancelTask` (`cancel_task.ex`) | `cancel_task` | Graceful `TaskRegistry.cancel_task/1` (`:cancelling` → `:cancelled`, results preserved). |
-| `ForceKillTask` (`force_kill_task.ex`) | `force_kill_task` | Brutal `TaskRegistry.force_kill_task/1` (persists `:failed`, progress lost). |
-| `DeleteTask` (`delete_task.ex`) | `delete_task` | `TaskRegistry.delete_task/1` (cast — always `:ok`; single-clause error describer). |
-| `GuideUser` (`guide_user.ex`) | `guide_user` | Broadcasts `{:guide_updated, id, %{message, page, selector, dismissible}, node()}` on `EvoGit.PubSub` topic `"guides"` via `Phoenix.PubSub.broadcast/3` (repo-wide idiom, cf. system_sampler.ex). Best-effort: broadcast failure (PubSub down) is swallowed with a comment and the confirmation is still returned. |
-| `SpawnInvestigator` (`spawn_investigator.ex`) | `subagent_investigator` | **v1 placeholder**: schema copied IDENTICALLY from `EvoGit.Agent.SubagentSchemas` (name/description/parameter_schema with `path`, `objective`, optional `commit_id`) so a real implementation slots in later without schema changes; `execute/3` does NOT spawn — returns a message telling the agent to use its own read-only tools (read_file/read_context/rg/glob/search_context/search_history). Exposed ONLY via the SelfReflective agent's tool list — never via `Tools.schemas/0` (name collision with the real `subagent_investigator` subagent tool). |
-| `ListRecentProjects` (`list_recent_projects.ex`) | `list_recent_projects` | Calls `TaskRegistry.list_recent_projects/0` (GenServer.call, live store read); one line per project (`- <name> \| path: <path> \| last opened: <iso>`; nil `name` → path, nil `last_opened_at` → "unknown"); registry-down → `"task system unavailable: ..."` style string; empty → `"No recent projects found."`; no params. |
-| `SystemInfo` (`system_info.ex`) | `system_info` | Pure local system facts — OS (`EvoGit.Platform.os/0` + `:os.type()`), architecture (`:erlang.system_info(:system_architecture)`), hostname (best-effort `:inet.gethostname()` → `HOSTNAME` env → `"unknown"`), local wall-clock time + best-effort TZ (`TZ` env, else "server local (TZ unset)"), UTC time, Elixir/OTP versions, data dir (`EvoGit.Platform.data_dir/0`); no params, no side effects; whole body under a tool-boundary `rescue`/`catch` (data_dir can call `System.user_home!()`). |
+| Command | Args |
+|---|---|
+| `task.list` | optional `statuses=` (comma-separated enum_list: `pending/running/finalizing/completed/failed/cancelled/cancelling`) |
+| `task.get <task_id>` | required positional task_id |
+| `task.start <task_type> [objective] [path= mode= resume_from= starting_commit= model_id=]` | task_type positional enum `genesis/evolve/reflect/extract_skills`; objective positional optional (default `""`); rest optional kv strings |
+| `task.cancel <task_id>` | required positional |
+| `task.force_kill <task_id>` | required positional |
+| `task.delete <task_id>` | required positional |
+| `task.investigate <path> <objective>` | both required positionals — **v1 placeholder, does NOT spawn** |
+| `guide.show <message> [page= selector= dismissible=true\|false]` | message required positional; page/selector optional kv; dismissible optional bool (default `true`) |
+| `project.list` | none |
+| `system.info` | none |
+| `help [command]` | built-in — handled by the shell itself |
+
+**Security constraints**: the registry is a compile-time literal — no `Code.eval_string`, no dynamic apply/eval with input-derived names (module/function atoms come only from the literal registry); **no `String.to_atom` on input** — enum/bool/statuses are validated against fixed literal lists and passed through as strings (handlers do their own validated atom conversion); whitelist-only dispatch (unknown command paths rejected); length guardrails `@max_command_length` 4000, `@max_tokens` 40, `@max_token_length` 2000.
+
+**HOW TO ADD A NEW COMMAND**: write/point a handler `execute/3` + add ONE registry entry in `EvoGit.CommandShell` — no tool schema, no dispatch clause.
