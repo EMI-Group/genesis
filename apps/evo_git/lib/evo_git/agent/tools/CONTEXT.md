@@ -26,6 +26,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `search_history` | Search git commit history | Read | Yes |
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |
 | `complete_task` | Agent completion (injected separately, not in standard schemas) | Special | No |
+| `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent) | Special | No |
 | *(utility)* `Shared` | Argument parsing, path validation, scope checking | — | — |
 
 ## Constraints
