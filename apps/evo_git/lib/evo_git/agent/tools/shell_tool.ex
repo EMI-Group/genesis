@@ -23,7 +23,15 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   # 3 minutes timeout for running complex commands
   @default_timeout 180_000
 
-  @cd_regex ~r/\bcd\s+["']?(\/[^\s"'&;|]+)/
+  # Matches `cd` targets: absolute paths (`/foo`), dot-relative escapes
+  # (`.`, `..`, `./foo`, `../foo`, `../../../`) and plain relative paths
+  # (`foo`, `foo/bar`). Conservative: stops at whitespace/quotes/`&;|` and
+  # never matches a bare `cd` (requires a target).
+  @cd_regex ~r/\bcd\s+["']?((?:\/|\.\.?(?:\/|$)|[^\/\s"'&;|])[^\s"'&;|]*)/
+
+  # Mutating git subcommands that must never run against the repository's MAIN
+  # working copy (the repo root, as opposed to the agent's worktree).
+  @mutating_git_regex ~r/\bgit\s+(checkout|switch|reset|merge|pull)\b/
 
   # Effective shell predicate/identity — runtime-aware, honoring the
   # `[tools] shell` config override via EvoGit.Platform.shell/0.
@@ -233,6 +241,30 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   end
 
   defp do_execute(command, repo_path, repo_root, timeout, max_bytes) do
+    case main_copy_mutation_error(command, repo_path, repo_root) do
+      nil -> do_execute_allowed(command, repo_path, repo_root, timeout, max_bytes)
+      error -> error
+    end
+  end
+
+  # Hard-block: a command that `cd`s into the repository's MAIN working copy
+  # (`repo_root`) AND runs a mutating git command could move the main copy's
+  # HEAD onto an agent branch (e.g. `cd <foreign_root> && git checkout
+  # evogit-agent-T<task>-A<agent>` from inside a writable-foreign-repo worktree
+  # switches the MAIN copy — `git checkout` with cwd outside a registered
+  # linked worktree targets the main tree). Such mutations are blocked before
+  # anything executes; agents must work inside their own worktree. Returns an
+  # error string, or nil when the command is allowed.
+  defp main_copy_mutation_error(command, repo_path, repo_root) do
+    root = Path.expand(repo_root)
+
+    if cd_targets(command, repo_path) |> Enum.any?(&(&1 == root)) and
+         String.match?(command, @mutating_git_regex) do
+      "Error: This command changes directory into the repository's MAIN working copy (`#{repo_root}`) and runs a mutating git command (checkout/switch/reset/merge/pull). Mutating the main working copy is blocked — your worktree is at `#{repo_path}`. Run git commands from inside your worktree instead."
+    end
+  end
+
+  defp do_execute_allowed(command, repo_path, repo_root, timeout, max_bytes) do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
 
@@ -367,18 +399,20 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @doc false
   def detect_cd_warnings(command, repo_path, repo_root) do
     worktree_base = EvoGit.AgentScheduler.Worktrees.workers_dir(repo_root)
+    root = Path.expand(repo_root)
 
     command
-    |> cd_targets()
+    |> cd_targets(repo_path)
     |> Enum.reduce([], fn target, acc ->
       cond do
-        target != repo_path and EvoGit.Platform.path_under?(target, worktree_base) ->
+        not EvoGit.Platform.path_under?(target, repo_path) and
+            EvoGit.Platform.path_under?(target, worktree_base) ->
           [
             "⚠️ You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc
           ]
 
-        target == repo_root ->
+        target == root ->
           [
             "⚠️ You are trying to `cd` into the repository root, which is NOT your worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc
@@ -401,8 +435,10 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   (`repo_path`), which is redundant since the working directory is already set.
   """
   def redundant_cd?(command, repo_path, _repo_root) do
-    cd_targets(command)
-    |> Enum.any?(&(&1 == repo_path))
+    worktree = Path.expand(repo_path)
+
+    cd_targets(command, repo_path)
+    |> Enum.any?(&(&1 == worktree))
   end
 
   @doc """
@@ -492,10 +528,14 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   defp absolute_shell_path?(token), do: String.match?(token, @absolute_shell_path_regex)
   defp bare_shell_name?(token), do: String.match?(token, @bare_shell_name_regex)
 
-  defp cd_targets(command) do
+  # Extracts the `cd` targets from a command, resolving relative targets
+  # against the worktree cwd (`repo_path`) so consumers can compare them with
+  # absolute paths (`repo_path`, `repo_root`, the worktree base).
+  defp cd_targets(command, repo_path) do
     @cd_regex
     |> Regex.scan(command, capture: :all_but_first)
     |> List.flatten()
     |> Enum.uniq()
+    |> Enum.map(&Path.expand(&1, repo_path))
   end
 end
