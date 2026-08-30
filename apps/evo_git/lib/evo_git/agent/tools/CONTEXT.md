@@ -37,7 +37,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 - `callback` in `ReqLLM.tool()` is always a no-op; real execution goes through `execute`.
 - Write tools receive 4 args (including `node_path` for scope); read tools receive 3.
 - `Git` and `Curl` schemas are commented out in `schemas/0`; agents use `run_bash` for git operations.
-- New tools must: follow module pattern (schema + execute), be aliased in `tools.ex`, have a dispatch clause, and be added to `schemas/0`. **Exception**: the self-reflective/task-control tools (`list_tasks`, `get_task`, `start_task`, `cancel_task`, `force_kill_task`, `delete_task`, `guide_user`, `subagent_investigator`, `list_recent_projects`, `system_info`) are dispatch-registered ONLY — never added to `schemas/0` (see "Task Management & Guide Tools" below).
+- New tools must: follow module pattern (schema + execute), be aliased in `tools.ex`, have a dispatch clause, and be added to `schemas/0`. **Exception**: `run_command` — the single task-control shell tool — is dispatch-registered ONLY, never added to `schemas/0` or `read_only_schemas/0` (scope/security: giving every coding agent task-control access would be a violation; see "Task Management & Guide Tools" below).
 
 ## Execution Flow
 1. **Registration**: `Tools.schemas/0` aggregates schemas → injected into agent's `available_tools/0`
