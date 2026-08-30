@@ -1,6 +1,8 @@
 defmodule EvoGit.Agent.Tools.GuideUser do
   @moduledoc """
-  Tool for showing transient user-facing guides in the dashboard UI.
+  Command handler for the `guide.show` command, invoked by
+  `EvoGit.CommandShell` via the `run_command` tool. Shows transient
+  user-facing guides in the dashboard UI.
 
   Broadcasts a `{:guide_updated, id, payload, node()}` message on the
   `"guides"` PubSub topic so the dashboard can render a guide card (e.g. a
@@ -9,44 +11,6 @@ defmodule EvoGit.Agent.Tools.GuideUser do
   """
 
   alias EvoGit.Agent.Tools.Shared
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "guide_user",
-      description:
-        "Shows a short user-facing guide in the dashboard UI. " <>
-          "Use this to explain to the user what you are doing, surface a question, " <>
-          "or point them at a specific page or element. The guide is transient " <>
-          "and dismissible by default.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "message" => %{
-            "type" => "string",
-            "description" => "The guide text to show to the user (required)."
-          },
-          "page" => %{
-            "type" => "string",
-            "description" => "Optional URL path to point the guide at (e.g., '/settings')."
-          },
-          "selector" => %{
-            "type" => "string",
-            "description" => "Optional CSS selector to highlight/attach the guide to in the page."
-          },
-          "dismissible" => %{
-            "type" => "boolean",
-            "description" => "Whether the user can dismiss the guide. Defaults to true.",
-            "default" => true
-          }
-        },
-        "required" => ["message"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the guide_user tool.

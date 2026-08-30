@@ -8,29 +8,6 @@ defmodule EvoGit.Agent.Tools.GetTask do
   @truncate_length 2000
 
   @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "get_task",
-      description:
-        "Fetches the details of a single task from the task registry by id: " <>
-          "id, status, type, objective, start/finish times, and a result summary.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "task_id" => %{
-            "type" => "string",
-            "description" => "The id of the task to fetch."
-          }
-        },
-        "required" => ["task_id"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
-
-  @doc """
   Executes the get_task tool.
   """
   def execute(args, _repo_path, _repo_root) do

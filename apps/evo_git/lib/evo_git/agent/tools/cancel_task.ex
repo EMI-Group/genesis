@@ -1,6 +1,8 @@
 defmodule EvoGit.Agent.Tools.CancelTask do
   @moduledoc """
-  Tool for gracefully cancelling a task by id.
+  Command handler for the `task.cancel` command, invoked by
+  `EvoGit.CommandShell` via the `run_command` tool. Gracefully cancels a task
+  by id.
 
   Delegates to `EvoGit.TaskRegistry.cancel_task/1` — sets the task status to
   `:cancelling` and informs all running agents to save their work and exit
@@ -10,33 +12,6 @@ defmodule EvoGit.Agent.Tools.CancelTask do
   """
 
   alias EvoGit.Agent.Tools.Shared
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "cancel_task",
-      description: """
-      Gracefully cancels a task by id. The task is set to the :cancelling status and all
-      running agents are informed to save their changes and exit cleanly (up to 3 grace
-      turns); intermediate results are preserved and the task becomes reviewable as
-      :cancelled. Use force_kill_task instead when a task is hung and must be stopped
-      immediately (all progress lost).
-      """,
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "task_id" => %{
-            "type" => "string",
-            "description" => "The id of the task to cancel"
-          }
-        },
-        "required" => ["task_id"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the cancel_task tool.

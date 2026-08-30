@@ -1,6 +1,8 @@
 defmodule EvoGit.Agent.Tools.ListTasks do
   @moduledoc """
-  Tool for listing tasks from the task registry, optionally filtered by status.
+  Command handler for the `task.list` command, invoked by `EvoGit.CommandShell`
+  via the `run_command` tool. Lists tasks from the task registry, optionally
+  filtered by status.
   """
 
   alias EvoGit.Agent.Tools.Shared
@@ -18,33 +20,6 @@ defmodule EvoGit.Agent.Tools.ListTasks do
   }
 
   @objective_snippet_length 120
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "list_tasks",
-      description:
-        "Lists tasks from the task registry, optionally filtered by status. " <>
-          "Each task is shown on one line: id, status, type, project path " <>
-          "(or \"<system>\" when the task has no project), objective snippet, and start time.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "statuses" => %{
-            "type" => "array",
-            "items" => %{"type" => "string"},
-            "description" =>
-              "Optional list of task statuses to filter by. Valid statuses: " <>
-                Enum.join(@valid_statuses, ", ") <> ". Omit to list all tasks."
-          }
-        },
-        "required" => []
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the list_tasks tool.

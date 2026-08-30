@@ -1,25 +1,9 @@
 defmodule EvoGit.Agent.Tools.ListRecentProjects do
   @moduledoc """
-  Tool for listing the user's recently opened projects from the task registry.
+  Command handler for the `project.list` command, invoked by
+  `EvoGit.CommandShell` via the `run_command` tool. Lists the user's recently
+  opened projects from the task registry.
   """
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "list_recent_projects",
-      description:
-        "Lists the user's recently opened projects (name, path, last opened time), " <>
-          "most recent first. Use this to see which project the user is referring to.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{},
-        "required" => []
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the list_recent_projects tool.

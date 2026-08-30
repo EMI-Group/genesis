@@ -1,6 +1,7 @@
 defmodule EvoGit.Agent.Tools.DeleteTask do
   @moduledoc """
-  Tool for deleting a task by id.
+  Command handler for the `task.delete` command, invoked by
+  `EvoGit.CommandShell` via the `run_command` tool. Deletes a task by id.
 
   Delegates to `EvoGit.TaskRegistry.delete_task/1` — removes the task row
   (and its persisted history) from the task store. The deletion is a
@@ -9,32 +10,6 @@ defmodule EvoGit.Agent.Tools.DeleteTask do
   """
 
   alias EvoGit.Agent.Tools.Shared
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "delete_task",
-      description: """
-      Permanently deletes a task by id. Removes the task row and its persisted history
-      from the task store — the task disappears from the dashboard and is no longer
-      reviewable. Use cancel_task or force_kill_task first to stop a running task before
-      deleting it.
-      """,
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "task_id" => %{
-            "type" => "string",
-            "description" => "The id of the task to delete"
-          }
-        },
-        "required" => ["task_id"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the delete_task tool.
