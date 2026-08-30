@@ -697,18 +697,28 @@ defmodule EvoGit.Adapters.GitTest do
       assert String.contains?(worktree_list, wt)
     end
 
-    test "treats a repo root (`.git` DIRECTORY) as removable, not a registered worktree", %{
+    test "preserves a repo root (`.git` DIRECTORY) — a git working tree is never a leftover", %{
       tmp_dir: tmp_dir
     } do
-      # A repo root has a `.git` DIRECTORY (not a `.git` FILE with "gitdir:"),
-      # so it is NOT a registered linked worktree and is removed — this pins the
-      # documented contract in `remove_leftover_worktree_dir/1`. In production
-      # the function is only ever called on worktree TARGET paths, never a repo
-      # root, so no real repo can be deleted by it.
+      # A repo root has a `.git` DIRECTORY (not a `.git` FILE with "gitdir:").
+      # Hardened contract: a path whose `.git` is a DIRECTORY is NEVER removed —
+      # a git working tree is never a leftover, so calling this on a repo root
+      # must not `rm_rf` the entire repository. Only registered linked worktrees
+      # (`.git` FILE with "gitdir:") and plain leftovers are handled.
       assert File.dir?(Path.join(tmp_dir, ".git"))
 
       assert :ok = Git.remove_leftover_worktree_dir(tmp_dir)
-      refute File.dir?(tmp_dir)
+      assert File.dir?(tmp_dir)
+      assert {:ok, _} = Git.rev_parse(tmp_dir)
+    end
+
+    test "removes a dir whose `.git` FILE does not start with gitdir:", %{tmp_dir: tmp_dir} do
+      leftover = Path.join(tmp_dir, "leftover-bad-git-file")
+      File.mkdir_p!(leftover)
+      File.write!(Path.join(leftover, ".git"), "not a gitdir pointer\n")
+
+      assert :ok = Git.remove_leftover_worktree_dir(leftover)
+      refute File.dir?(leftover)
     end
   end
 end
