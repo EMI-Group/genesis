@@ -543,6 +543,88 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   end
 
   # ==========================================================================
+  # Worktrees.assign_and_prepare_worktree/3 — linked-worktree guard
+  # (foreign-repo main-HEAD-leak hardening)
+  # ==========================================================================
+  #
+  # `Git.clean`/`Git.checkout` against a PLAIN unregistered dir act on the
+  # repo's MAIN working copy — moving its HEAD onto the agent branch (the
+  # foreign-repo main-HEAD leak). The guard (`ensure_linked_worktree/2`)
+  # asserts `wt` is a REGISTERED linked worktree (a `.git` FILE whose
+  # `gitdir:` content points under `<repo_root>/.git/worktrees/`) BEFORE any
+  # git runs.
+  describe "assign_and_prepare_worktree/3" do
+    test "refuses a plain unregistered dir at the wt path", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {_spec, _meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      # A PLAIN dir at the worktree path (no `.git` file, not registered) —
+      # the dangerous broken-registration state. The guard must refuse
+      # WITHOUT running any git against it. (Actual lib return shape is the
+      # unwrapped `{:worktree_prepare_failed, :not_a_linked_worktree}` — the
+      # `with` else clause passes the guard error through without the outer
+      # `:error` wrapper.)
+      File.mkdir_p!(wt_path)
+      File.write!(Path.join(wt_path, "junk.txt"), "junk")
+
+      assert {:worktree_prepare_failed, :not_a_linked_worktree} =
+               Worktrees.assign_and_prepare_worktree(agent_id, wt_path, tmp_dir)
+
+      # Main HEAD untouched; the plain dir survives (not deleted, not
+      # git-touched); the agent branch was never created; the agent state's
+      # phylo_node stays nil (never worktree-bound).
+      assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir)
+      assert File.dir?(wt_path)
+      refute Git.branch_exists?(tmp_dir, branch)
+      {:ok, agent_state} = Store.get_agent_state(agent_id)
+      assert agent_state.phylo_node == nil
+    end
+
+    test "refuses the repo ROOT itself as the wt path", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {_spec, _meta} = register_agent(agent_id, tmp_dir, base_sha)
+
+      # The repo root has a `.git` DIRECTORY — not a linked-worktree `.git`
+      # FILE — so the guard refuses without running any git against the main
+      # copy. HEAD stays put. (Return shape as in the plain-dir test above:
+      # unwrapped `{:worktree_prepare_failed, :not_a_linked_worktree}`.)
+      assert {:worktree_prepare_failed, :not_a_linked_worktree} =
+               Worktrees.assign_and_prepare_worktree(agent_id, tmp_dir, tmp_dir)
+
+      assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir)
+    end
+
+    test "accepts a real registered linked worktree and binds phylo_node to it", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {_spec, _meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      branch = "evogit-agent-T1-A1"
+
+      File.mkdir_p!(Path.dirname(wt_path))
+      {:ok, _} = Git.add_worktree(tmp_dir, wt_path, base_sha, branch)
+
+      assert {:ok, ^base_sha} =
+               Worktrees.assign_and_prepare_worktree(agent_id, wt_path, tmp_dir)
+
+      # The worktree-bound phylo_node (repo points at the WORKTREE, not the
+      # main copy).
+      {:ok, agent_state} = Store.get_agent_state(agent_id)
+      assert agent_state.phylo_node.repo == wt_path
+    end
+  end
+
+  # ==========================================================================
   # per-repo init scoping — foreign repos preserve real task branches
   # ==========================================================================
   #
@@ -850,6 +932,31 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       assert output =~ "branch"
       refute output =~ "not found"
     end
+
+    test "recovers from a STALE worktree registration (dir removed without prune)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      File.mkdir_p!(Path.dirname(wt_path))
+      branch = "evogit-agent-T1-A1"
+
+      {:ok, _} = Git.add_worktree(tmp_dir, wt_path, base_sha, branch)
+
+      # Remove the worktree DIR without pruning — the registration stays
+      # stale, so `git branch -D` refuses ("cannot delete branch 'X' used by
+      # worktree at '<path>'") even though no LIVE worktree holds the branch.
+      # delete_branch_tolerant/2 must prune stale registrations + retry and
+      # succeed. (The live-checkout test above keeps pinning the other side:
+      # a branch genuinely checked out in a LIVE worktree still returns
+      # {:error, output}.)
+      File.rm_rf!(wt_path)
+      refute File.dir?(wt_path)
+      assert Git.branch_exists?(tmp_dir, branch)
+
+      assert :ok = Worktrees.delete_branch_tolerant(tmp_dir, branch)
+      refute Git.branch_exists?(tmp_dir, branch)
+    end
   end
 
   # ==========================================================================
@@ -882,6 +989,74 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         end)
 
       assert log =~ "Could not remove leftover branch"
+    end
+
+    test "escalates when a leftover dir cannot be removed (rm_rf failure)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+
+      # A leftover dir that cannot be removed: non-empty + read-only (tests
+      # run as non-root, so rm_rf fails). Creating on top of a
+      # partially-removed dir is the main-HEAD-leak precondition, so the
+      # pipeline must ESCALATE (`{:error, {:worktree_create_failed, msg}}`)
+      # instead of silently proceeding with the plain dir in place.
+      File.mkdir_p!(wt_path)
+      File.write!(Path.join(wt_path, "leftover.txt"), "leftover")
+      File.chmod!(wt_path, 0o555)
+
+      # LIFO: restore the chmod BEFORE the shared setup's on_exit rm_rf runs,
+      # so teardown can delete the dir.
+      on_exit(fn -> File.chmod!(wt_path, 0o755) end)
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:worktree_create_failed, msg}} =
+                   Worktrees.prepare_new_worktree(agent_id, tmp_dir, wt_path, spec, meta)
+
+          assert msg =~ "could not remove leftover worktree"
+        end)
+
+      assert log =~ "refusing to create"
+    end
+
+    test "re-preparing over a leftover registered worktree destroys it (main copy untouched)", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # Ignore the workers dir so the main-copy status assertion below is
+      # genuinely empty (`git status --porcelain` would otherwise report the
+      # untracked `?? .genesis/` directory).
+      File.write!(Path.join(tmp_dir, ".gitignore"), ".genesis/\n")
+      {:ok, _} = Git.add(tmp_dir, ".gitignore")
+      {:ok, _} = Git.commit(tmp_dir, "ignore genesis dir")
+      {:ok, new_base} = Git.rev_parse(tmp_dir)
+
+      wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
+      File.mkdir_p!(Path.dirname(wt_path))
+      branch = "evogit-agent-T1-A1"
+
+      # A leftover REGISTERED worktree from a previous run (crash-retry race).
+      {:ok, _} = Git.add_worktree(tmp_dir, wt_path, new_base, branch)
+      assert File.dir?(wt_path)
+
+      # A fresh agent re-prepares at the SAME path — destroy_leftovers/3
+      # cleans the leftover (rm_rf + prune + tolerant branch delete), then
+      # the create pipeline rebuilds a fresh worktree.
+      agent_id = unique_agent_id()
+      {spec, meta} = register_agent(agent_id, tmp_dir, base_sha)
+
+      assert {:ok, ^wt_path} =
+               Worktrees.prepare_new_worktree(agent_id, tmp_dir, wt_path, spec, meta)
+
+      assert File.read!(Path.join(wt_path, "README.md")) == "# test"
+
+      # The MAIN copy is untouched: HEAD unmoved and the working tree clean.
+      assert {:ok, ^new_base} = Git.rev_parse(tmp_dir)
+      assert {:ok, ""} = Git.status(tmp_dir)
     end
   end
 
