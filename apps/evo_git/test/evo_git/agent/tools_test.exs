@@ -65,6 +65,48 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
+  describe "run_command shell tool containment" do
+    test "run_command is NOT in Tools.schemas/0" do
+      names = Enum.map(Tools.schemas(), & &1.name)
+      refute "run_command" in names
+    end
+
+    test "run_command is NOT in Tools.read_only_schemas/0" do
+      names = Enum.map(Tools.read_only_schemas(), & &1.name)
+      refute "run_command" in names
+    end
+
+    test "SelfReflective.available_tools() exposes run_command and none of the 10 old task-control tools" do
+      names =
+        EvoGit.Agents.SelfReflective.available_tools()
+        |> Enum.map(&EvoGit.Agent.tool_name/1)
+
+      assert "run_command" in names
+      assert "complete_task" in names
+
+      # The 10 former per-function task-control tools are gone — their commands
+      # are reachable only through the single run_command shell tool.
+      for old <- [
+            "list_tasks",
+            "get_task",
+            "start_task",
+            "cancel_task",
+            "force_kill_task",
+            "delete_task",
+            "guide_user",
+            "subagent_investigator",
+            "list_recent_projects",
+            "system_info"
+          ] do
+        refute old in names,
+               "expected #{inspect(old)} to NOT be in SelfReflective.available_tools()"
+      end
+
+      # Unique names — no "Tool names must be unique" provider-400 regressions.
+      assert length(names) == length(Enum.uniq(names))
+    end
+  end
+
   describe "execute/4 - read_file" do
     test "reads an existing file", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
