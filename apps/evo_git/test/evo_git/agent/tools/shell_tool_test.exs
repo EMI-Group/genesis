@@ -2,6 +2,7 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.ShellTool
+  alias EvoGit.Adapters.Git
 
   @repo_root "/home/user/my-project"
   @repo_path "/home/user/my-project/.genesis/workers/worker_T1_A1"
@@ -119,6 +120,30 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       occurrences = :binary.matches(result, "repository root")
       assert length(occurrences) == 1
     end
+
+    test "detects relative cd reaching the repository root" do
+      result =
+        ShellTool.detect_cd_warnings("cd ../../../ && mix test", @repo_path, @repo_root)
+
+      assert result =~ "repository root"
+      assert result =~ @repo_root
+    end
+
+    test "detects relative cd into another agent's worktree" do
+      result =
+        ShellTool.detect_cd_warnings("cd ../worker_T2_A3", @repo_path, @repo_root)
+
+      assert result =~ "another agent's worktree"
+      assert result =~ @repo_path
+    end
+
+    test "returns nil for relative cd staying inside own worktree" do
+      assert ShellTool.detect_cd_warnings("cd src && mix test", @repo_path, @repo_root) ==
+               nil
+
+      assert ShellTool.detect_cd_warnings("cd ./src && mix test", @repo_path, @repo_root) ==
+               nil
+    end
   end
 
   describe "redundant_cd?/3" do
@@ -127,10 +152,16 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
                true
     end
 
+    test "returns true for a redundant `cd .`" do
+      assert ShellTool.redundant_cd?("cd . && mix test", @repo_path, @repo_root) == true
+    end
+
     test "returns false for other commands" do
       assert ShellTool.redundant_cd?("ls -la", @repo_path, @repo_root) == false
       assert ShellTool.redundant_cd?("cd #{@repo_root}", @repo_path, @repo_root) == false
       assert ShellTool.redundant_cd?("cd /tmp", @repo_path, @repo_root) == false
+      assert ShellTool.redundant_cd?("cd ../../../", @repo_path, @repo_root) == false
+      assert ShellTool.redundant_cd?("cd src && mix test", @repo_path, @repo_root) == false
     end
   end
 
@@ -345,6 +376,98 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
 
       assert result =~ "You don't need to invoke `/bin/sh -c`"
       assert result =~ "this tool already runs your command in a shell"
+    end
+  end
+
+  describe "main-copy mutation hard block (cd into repo root + mutating git)" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: tmp_dir} do
+      # A real git repo with at least one commit so NOT-blocked git commands
+      # behave deterministically (they run and fail on the missing branch).
+      Git.init(tmp_dir)
+      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
+      System.cmd("git", ["config", "user.name", "Test"], cd: tmp_dir)
+      File.write!(Path.join(tmp_dir, "README.md"), "test repo\n")
+      Git.add(tmp_dir, "README.md")
+      Git.commit(tmp_dir, "initial commit")
+
+      # A FAKE worktree path inside the repo — a plain directory, not a real
+      # linked worktree.
+      wt = Path.join([tmp_dir, ".genesis", "workers", "worker_T1_A1"])
+      File.mkdir_p!(wt)
+
+      {:ok, wt: wt, repo_root: tmp_dir}
+    end
+
+    test "cd into repo root + git checkout is hard-blocked", %{wt: wt, repo_root: repo_root} do
+      result =
+        ShellTool.execute(
+          %{"command" => "cd ../../../ && git checkout evogit-agent-T1-A1"},
+          wt,
+          repo_root
+        )
+
+      assert result =~ "MAIN working copy"
+      assert result =~ "blocked"
+      assert String.contains?(result, repo_root)
+    end
+
+    test "cd into repo root + any mutating git subcommand is hard-blocked", %{
+      wt: wt,
+      repo_root: repo_root
+    } do
+      for sub <- ["switch", "reset", "merge", "pull"] do
+        result =
+          ShellTool.execute(
+            %{"command" => "cd ../../../ && git #{sub} evogit-agent-T1-A1"},
+            wt,
+            repo_root
+          )
+
+        assert result =~ "MAIN working copy", "expected git #{sub} to be blocked"
+        assert result =~ "blocked", "expected git #{sub} to be blocked"
+      end
+    end
+
+    test "cd to own worktree + git checkout is NOT hard-blocked", %{
+      wt: wt,
+      repo_root: repo_root
+    } do
+      # The command runs and git fails on its own (branch does not exist) —
+      # the point is that the hard block is NOT triggered.
+      result =
+        ShellTool.execute(
+          %{"command" => "cd . && git checkout evogit-agent-T1-A1"},
+          wt,
+          repo_root
+        )
+
+      refute result =~ "MAIN working copy"
+    end
+
+    test "cd partway into .genesis + git checkout is NOT hard-blocked", %{
+      wt: wt,
+      repo_root: repo_root
+    } do
+      # `cd ../..` lands in `.genesis`, NOT the repo root — not blocked.
+      result =
+        ShellTool.execute(
+          %{"command" => "cd ../.. && git checkout evogit-agent-T1-A1"},
+          wt,
+          repo_root
+        )
+
+      refute result =~ "MAIN working copy"
+    end
+
+    test "cd into repo root without a mutating git command is NOT hard-blocked", %{
+      wt: wt,
+      repo_root: repo_root
+    } do
+      result = ShellTool.execute(%{"command" => "cd ../../../ && ls"}, wt, repo_root)
+
+      refute result =~ "MAIN working copy"
     end
   end
 end

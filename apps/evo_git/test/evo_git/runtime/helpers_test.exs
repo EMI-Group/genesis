@@ -359,6 +359,73 @@ defmodule EvoGit.Runtime.HelpersTest do
              }
     end
 
+    test "writable foreign branch creation does not move the foreign main working-copy HEAD", %{
+      tmp_dir: tmp_dir
+    } do
+      {final_sha, _base_sha} = setup_primary_with_changes!(tmp_dir)
+
+      # Foreign repo with TWO commits on its default branch (requirement d
+      # scenario), then main reset back to the first commit so the second commit
+      # is a "new" foreign commit NOT on main — the branch must point at it
+      # WITHOUT checking it out or moving the main working copy.
+      foreign_dir =
+        Path.expand(
+          Path.join(System.tmp_dir!(), "evogit_helpers_fr_main_#{System.unique_integer()}")
+        )
+
+      File.mkdir_p!(foreign_dir)
+      Git.init(foreign_dir)
+      File.write!(Path.join(foreign_dir, "file.txt"), "v1")
+      {:ok, _} = Git.add(foreign_dir, "file.txt")
+      {:ok, _} = Git.commit(foreign_dir, "First commit")
+      File.write!(Path.join(foreign_dir, "file.txt"), "v2")
+      {:ok, _} = Git.add(foreign_dir, "file.txt")
+      {:ok, _} = Git.commit(foreign_dir, "Second commit")
+      {:ok, foreign_new_sha} = Git.rev_parse(foreign_dir)
+
+      assert match?({:ok, _}, Git.reset_hard(foreign_dir, "HEAD~1"))
+      {:ok, main_head} = Git.rev_parse(foreign_dir)
+      {:ok, original_branch} = Git.current_branch(foreign_dir)
+      refute main_head == foreign_new_sha
+
+      on_exit(fn -> File.rm_rf!(foreign_dir) end)
+
+      agent_output = %Result{
+        commit_sha: final_sha,
+        result: "test",
+        tag: nil,
+        usage: nil,
+        agent_count: 1,
+        foreign_repo_commits: %{"foreign" => foreign_new_sha}
+      }
+
+      foreign_repos = [%ForeignRepo{id: "foreign", root: foreign_dir, writable: true}]
+
+      assert {:ok, report} =
+               Helpers.merge_and_report(tmp_dir, agent_output, "evolve", foreign_repos)
+
+      branch = report.branch_name
+      assert branch != nil
+      assert String.starts_with?(branch, "genesis/agent_")
+
+      # The report carries the foreign entry under its string repo id
+      assert report.repos["foreign"] == %{commit_sha: foreign_new_sha, branch_name: branch}
+
+      # Requirement d — the branch create (git branch <name> <sha>) did NOT move
+      # the foreign main working copy:
+      # - HEAD is unchanged (still the original main HEAD)
+      assert {:ok, ^main_head} = Git.rev_parse(foreign_dir)
+      # - still on the original branch, not the new one
+      assert {:ok, ^original_branch} = Git.current_branch(foreign_dir)
+      refute original_branch == branch
+      # - working tree is clean
+      assert {:ok, ""} = Git.status(foreign_dir)
+      # - the genesis/agent_* branch EXISTS and points at the foreign commit sha,
+      #   but the main copy is NOT on it
+      assert Git.branch_exists?(foreign_dir, branch)
+      assert {:ok, ^foreign_new_sha} = Git.rev_parse(foreign_dir, branch)
+    end
+
     test "read-only foreign repos produce no entry and no branch", %{tmp_dir: tmp_dir} do
       {final_sha, _base_sha} = setup_primary_with_changes!(tmp_dir)
 
