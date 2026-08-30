@@ -539,4 +539,176 @@ defmodule EvoGit.Adapters.GitTest do
       assert {:ok, ""} = Git.status(wt)
     end
   end
+
+  describe "add_worktree/4 leftover-dir removal" do
+    test "removes a leftover plain dir at the target path before adding (no main-HEAD leak)", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+      {:ok, main_branch} = Git.current_branch(tmp_dir)
+
+      wt =
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_test_wt_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      on_exit(fn -> File.rm_rf!(wt) end)
+
+      # Simulate a previously failed add: a NON-EMPTY plain dir (with a junk
+      # file) at the target path. Before the fix every retry failed with
+      # "fatal: '<path>' already exists" — the dir is now removed first.
+      File.mkdir_p!(wt)
+      File.write!(Path.join(wt, "junk.txt"), "junk")
+
+      branch = "evogit-agent-T1-A1"
+      assert {:ok, _} = Git.add_worktree(tmp_dir, wt, base_sha, branch)
+
+      # The junk file is gone — the dir was removed, then re-created as a worktree.
+      refute File.exists?(Path.join(wt, "junk.txt"))
+      assert File.dir?(wt)
+      assert {:ok, ""} = Git.status(wt)
+
+      # The worktree is registered.
+      {:ok, worktree_list} = Git.run(["worktree", "list"], tmp_dir)
+      assert String.contains?(worktree_list, wt)
+
+      # The MAIN copy is untouched (the writable-foreign-repo main-HEAD leak
+      # regression: a stray free branch was previously left behind and a later
+      # checkout from the repo root moved the main copy's HEAD).
+      assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+      assert {:ok, ^main_branch} = Git.current_branch(tmp_dir)
+      assert {:ok, ""} = Git.status(tmp_dir)
+    end
+  end
+
+  describe "add_worktree/4 failed-add cleanup" do
+    test "deletes the free branch git created before a failed add", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+      {:ok, main_branch} = Git.current_branch(tmp_dir)
+
+      # A registered live worktree occupies the target path. `git worktree add`
+      # prints "Preparing worktree (new branch ...)" — creating the branch — and
+      # THEN fails on the already-existing path. (An invalid base_sha fails
+      # without creating a branch, so it would NOT exercise the cleanup.)
+      wt =
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_test_wt_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      on_exit(fn -> File.rm_rf!(wt) end)
+      assert {:ok, _} = Git.add_worktree(tmp_dir, wt, base_sha, "live-branch")
+
+      free_branch = "evogit-agent-T1-A1"
+      assert {:error, _} = Git.add_worktree(tmp_dir, wt, base_sha, free_branch)
+
+      # No stray free branch is left behind.
+      refute Git.branch_exists?(tmp_dir, free_branch)
+
+      # Main copy untouched.
+      assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+      assert {:ok, ^main_branch} = Git.current_branch(tmp_dir)
+      assert {:ok, ""} = Git.status(tmp_dir)
+    end
+
+    test "adding onto a registered linked worktree fails but keeps the live worktree", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+      {:ok, main_branch} = Git.current_branch(tmp_dir)
+
+      wt =
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_test_wt_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      on_exit(fn -> File.rm_rf!(wt) end)
+      assert {:ok, _} = Git.add_worktree(tmp_dir, wt, base_sha, "live-branch")
+
+      assert {:error, _} = Git.add_worktree(tmp_dir, wt, base_sha, "other-branch")
+
+      # The live worktree + its branch are KEPT.
+      assert Git.branch_exists?(tmp_dir, "live-branch")
+      refute Git.branch_exists?(tmp_dir, "other-branch")
+      assert File.dir?(wt)
+      {:ok, worktree_list} = Git.run(["worktree", "list"], tmp_dir)
+      assert String.contains?(worktree_list, wt)
+      assert String.contains?(worktree_list, "live-branch")
+
+      # Main copy untouched.
+      assert {:ok, ^base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+      assert {:ok, ^main_branch} = Git.current_branch(tmp_dir)
+      assert {:ok, ""} = Git.status(tmp_dir)
+    end
+  end
+
+  describe "remove_leftover_worktree_dir/1" do
+    test "removes a leftover plain dir", %{tmp_dir: tmp_dir} do
+      leftover = Path.join(tmp_dir, "leftover-plain")
+      File.mkdir_p!(leftover)
+      File.write!(Path.join(leftover, "junk.txt"), "junk")
+
+      assert :ok = Git.remove_leftover_worktree_dir(leftover)
+      refute File.dir?(leftover)
+    end
+
+    test "removes a plain file", %{tmp_dir: tmp_dir} do
+      leftover = Path.join(tmp_dir, "leftover-file")
+      File.write!(leftover, "stray")
+
+      assert :ok = Git.remove_leftover_worktree_dir(leftover)
+      refute File.exists?(leftover)
+    end
+
+    test "preserves a registered linked worktree (`.git` FILE with gitdir: content)", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "file.txt"), "content")
+      Git.add(tmp_dir, "file.txt")
+      Git.commit(tmp_dir, "Initial commit")
+      {:ok, base_sha} = Git.rev_parse(tmp_dir, "HEAD")
+
+      wt =
+        Path.join(
+          System.tmp_dir!(),
+          "evo_git_test_wt_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      on_exit(fn -> File.rm_rf!(wt) end)
+      assert {:ok, _} = Git.add_worktree(tmp_dir, wt, base_sha, "live-branch")
+
+      assert :ok = Git.remove_leftover_worktree_dir(wt)
+
+      # The registered worktree is preserved.
+      assert File.dir?(wt)
+      assert Git.branch_exists?(tmp_dir, "live-branch")
+      {:ok, worktree_list} = Git.run(["worktree", "list"], tmp_dir)
+      assert String.contains?(worktree_list, wt)
+    end
+
+    test "treats a repo root (`.git` DIRECTORY) as removable, not a registered worktree", %{
+      tmp_dir: tmp_dir
+    } do
+      # A repo root has a `.git` DIRECTORY (not a `.git` FILE with "gitdir:"),
+      # so it is NOT a registered linked worktree and is removed — this pins the
+      # documented contract in `remove_leftover_worktree_dir/1`. In production
+      # the function is only ever called on worktree TARGET paths, never a repo
+      # root, so no real repo can be deleted by it.
+      assert File.dir?(Path.join(tmp_dir, ".git"))
+
+      assert :ok = Git.remove_leftover_worktree_dir(tmp_dir)
+      refute File.dir?(tmp_dir)
+    end
+  end
 end

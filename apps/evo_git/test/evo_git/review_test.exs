@@ -527,6 +527,51 @@ defmodule EvoGit.ReviewTest do
     end
   end
 
+  test "review pre-merge reads show a non-empty diff and stay non-mutating while HEAD is on the original branch",
+       %{tmp_dir: tmp_dir} do
+    {:ok, base_sha} = commit_file(tmp_dir, "shared.txt", "base\n", "Initial commit")
+    rename_current_branch(tmp_dir, "main")
+
+    # Agent branch adds a new file and modifies an existing one from the base.
+    Git.create_branch(tmp_dir, "agent_branch", base_sha)
+    Git.checkout(tmp_dir, "agent_branch")
+    commit_file(tmp_dir, "shared.txt", "agent change\n", "Agent modifies shared.txt")
+    commit_file(tmp_dir, "new_file.ex", "defmodule New do\nend\n", "Agent adds new_file.ex")
+
+    # Pre-merge state: HEAD is back on the ORIGINAL branch; the agent branch
+    # exists but is not checked out. This is the state the review page reads
+    # the diff in, before the user merges.
+    Git.checkout(tmp_dir, "main")
+    assert {:ok, "main"} = Git.current_branch(tmp_dir)
+    {:ok, main_sha} = Git.rev_parse(tmp_dir, "HEAD")
+    assert main_sha == base_sha
+
+    # The whole review-read pipeline must yield a NON-EMPTY diff from this state
+    # (the leak regression made the files list empty because main HEAD had been
+    # moved onto the agent branch).
+    assert {:ok, metadata} = Review.load_review_data(tmp_dir, "agent_branch")
+    assert metadata.changed_files_count >= 1
+    assert metadata.files != []
+
+    # Lazy per-file diff for a changed file is non-empty too.
+    [changed | _] = metadata.files
+
+    assert {:ok, diff} =
+             Review.load_file_diff(tmp_dir, metadata.base_sha, metadata.commit_sha, changed.path)
+
+    assert is_binary(diff) and diff != ""
+
+    # The non-mutating dry-run merge check reports clean from this exact state.
+    assert {:ok, :clean} = Review.check_merge(tmp_dir, "agent_branch", "main")
+
+    # None of the reads mutated the main copy.
+    {:ok, head_after} = Git.rev_parse(tmp_dir, "HEAD")
+    assert head_after == main_sha
+    assert {:ok, "main"} = Git.current_branch(tmp_dir)
+    assert {:ok, ""} = Git.status(tmp_dir)
+    assert_no_merge_check_artifacts(tmp_dir)
+  end
+
   test "default_merge_target/1 prefers dev over prod when main and master are absent",
        %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
