@@ -1,30 +1,14 @@
 defmodule EvoGit.Agent.Tools.SystemInfo do
   @moduledoc """
-  Tool for reporting local platform and system information.
+  Command handler for the `system.info` command, invoked by
+  `EvoGit.CommandShell` via the `run_command` tool. Reports local platform and
+  system information.
 
   Pure computation with no side effects: no shell, no git, no repository
   path usage — safe for repo-less agents. Reports OS, architecture,
   hostname, local/UTC time, language runtime versions, and the data
   directory.
   """
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "system_info",
-      description:
-        "Reports local platform and system information (OS, architecture, hostname, " <>
-          "current time, language runtime versions, data directory).",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{},
-        "required" => []
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the system_info tool.

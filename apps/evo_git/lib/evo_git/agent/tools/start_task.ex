@@ -1,7 +1,8 @@
 defmodule EvoGit.Agent.Tools.StartTask do
   @moduledoc """
-  Tool for starting a new background task (genesis / evolve / reflect /
-  extract_skills) in the task registry.
+  Command handler for the `task.start` command, invoked by
+  `EvoGit.CommandShell` via the `run_command` tool. Starts a new background
+  task (genesis / evolve / reflect / extract_skills) in the task registry.
   """
 
   alias EvoGit.Agent.Tools.Shared
@@ -18,59 +19,6 @@ defmodule EvoGit.Agent.Tools.StartTask do
   }
 
   @truncate_length 2000
-
-  @doc """
-  Returns the tool schema for ReqLLM.
-  """
-  def schema do
-    ReqLLM.tool(
-      name: "start_task",
-      description:
-        "Starts a new background task in the task registry and returns the " <>
-          "new task id. Supported task types: " <>
-          Enum.join(@supported_types, ", ") <>
-          ". " <>
-          "The task runs asynchronously; poll it later with get_task or list_tasks.",
-      parameter_schema: %{
-        "type" => "object",
-        "properties" => %{
-          "task_type" => %{
-            "type" => "string",
-            "description" =>
-              "Type of task to start. One of: " <> Enum.join(@supported_types, ", ") <> "."
-          },
-          "objective" => %{
-            "type" => "string",
-            "description" => "The objective/prompt for the task."
-          },
-          "path" => %{
-            "type" => "string",
-            "description" =>
-              "Repository path to run the task on (optional; defaults to the current repo)."
-          },
-          "mode" => %{
-            "type" => "string",
-            "description" =>
-              "Task mode, e.g. \"simple\" or \"custom\" for evolve tasks (optional)."
-          },
-          "resume_from" => %{
-            "type" => "string",
-            "description" => "Task id to resume/continue from (optional)."
-          },
-          "starting_commit" => %{
-            "type" => "string",
-            "description" => "Starting commit SHA for the task (optional)."
-          },
-          "model_id" => %{
-            "type" => "string",
-            "description" => "Model profile id to use for the task (optional)."
-          }
-        },
-        "required" => ["task_type"]
-      },
-      callback: fn _ -> {:ok, nil} end
-    )
-  end
 
   @doc """
   Executes the start_task tool.
