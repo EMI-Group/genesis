@@ -140,6 +140,10 @@ defmodule EvoGit.Adapters.Git do
       delete_branch(repo_path, branch_name)
     end
 
+    # A leftover plain dir (e.g. from a previously failed add) makes every retry
+    # fail with "fatal: '<path>' already exists" — remove it before the add.
+    remove_leftover_worktree_dir(worktree_path)
+
     args =
       if branch_name do
         ["worktree", "add", "-b", branch_name, worktree_path, base_sha]
@@ -147,7 +151,47 @@ defmodule EvoGit.Adapters.Git do
         ["worktree", "add", "--detach", worktree_path, base_sha]
       end
 
-    run(args, repo_path)
+    case run(args, repo_path) do
+      {:ok, _output} = ok ->
+        ok
+
+      {:error, _reason} = error ->
+        # git creates the branch BEFORE validating the worktree path, so a failed
+        # add (e.g. the path already exists) can leave a FREE branch behind — it
+        # was never checked out anywhere, and `git branch -D` itself refuses to
+        # delete a branch checked out in a live worktree (defense in depth).
+        # Also remove any partial/plain dir left at `worktree_path` so a retry
+        # succeeds.
+        if branch_name && branch_exists?(repo_path, branch_name) do
+          delete_branch(repo_path, branch_name)
+        end
+
+        remove_leftover_worktree_dir(worktree_path)
+        error
+    end
+  end
+
+  @doc false
+  # Removes a leftover plain directory (or file) at `worktree_path` so a
+  # subsequent `git worktree add` can succeed. A REGISTERED linked worktree is
+  # detected by its `.git` FILE containing `gitdir: ...` and is kept; everything
+  # else blocks the add and is removed (a plain leftover dir has no `.git` file,
+  # a repo root has a `.git` DIRECTORY, and a stray file/`.git` file is not a
+  # registered worktree either). Best-effort: removal failure is ignored — the
+  # add then fails loudly and the caller's error path performs the same cleanup.
+  # Returns `:ok`.
+  def remove_leftover_worktree_dir(worktree_path) when is_binary(worktree_path) do
+    case File.read(Path.join(worktree_path, ".git")) do
+      {:ok, content} ->
+        unless String.starts_with?(content, "gitdir:") do
+          File.rm_rf(worktree_path)
+        end
+
+      _ ->
+        File.rm_rf(worktree_path)
+    end
+
+    :ok
   end
 
   def prune_worktrees(repo_path) when is_binary(repo_path) do
