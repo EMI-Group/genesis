@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.11.3-8b5cf6" alt="Version"></a>
+  <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.11.4-8b5cf6" alt="Version"></a>
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
   <a href="https://genesis.evox.group/getting-started/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
   <a href="https://arxiv.org/abs/2608.10450"><img src="https://img.shields.io/badge/arXiv-2608.10450-b31b1b" alt="arXiv"></a>
