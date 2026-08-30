@@ -707,6 +707,12 @@ defmodule EvoGit.Adapters.GitTest do
       # (`.git` FILE with "gitdir:") and plain leftovers are handled.
       assert File.dir?(Path.join(tmp_dir, ".git"))
 
+      # A freshly `git init`-ed repo has an unborn HEAD — make an initial
+      # commit so `Git.rev_parse(tmp_dir)` below can resolve HEAD.
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial content")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+
       assert :ok = Git.remove_leftover_worktree_dir(tmp_dir)
       assert File.dir?(tmp_dir)
       assert {:ok, _} = Git.rev_parse(tmp_dir)
