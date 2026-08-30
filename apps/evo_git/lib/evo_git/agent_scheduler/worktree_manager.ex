@@ -435,35 +435,42 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   # Destroys a worktree: rm_rf the directory, prune the worktree registry,
   # then delete the branch. Order matters — git refuses to delete a branch
-  # that is checked out in another worktree. Idempotent and tolerant: all
-  # failure modes log and continue. Transient failures (Windows file
-  # locking, anti-virus scans) are retried via WorktreeRetry; this runs in
-  # the WorktreeManager GenServer process, so the retry budget is kept small
-  # (4 attempts, at most 350ms of sleeping). A leftover dir is harmless —
-  # the next init/create destroys leftovers.
+  # that is checked out in another worktree. Idempotent and non-crashing
+  # (runs in the WorktreeManager GenServer process). Transient failures
+  # (Windows file locking, anti-virus scans) are retried via WorktreeRetry;
+  # the retry budget is kept small (4 attempts, at most 350ms of sleeping).
+  #
+  # Main-HEAD-leak safety: `Git.prune_worktrees` runs ONLY after the dir is
+  # actually gone. A dir that survives rm_rf WITH its `.git` file +
+  # registration is a SAFE registered worktree; pruning it away would turn it
+  # into a PLAIN unregistered dir — the foreign-repo main-HEAD leak
+  # precondition. So on rm_rf failure we log at ERROR level and skip BOTH the
+  # prune and the branch delete, keeping the dir+registration pair consistent
+  # for a later create/cleanup to rm_rf properly.
   defp destroy_worktree(worktree_path, repo_root, branch_name) do
     case WorktreeRetry.rm_rf_retry(worktree_path) do
       {:ok, _} ->
-        :ok
+        # Dir is gone — safe to prune stale registrations and delete the
+        # branch.
+        WorktreeRetry.retry_on_transient(fn -> Git.prune_worktrees(repo_root) end)
+
+        case WorktreeRetry.retry_on_transient(fn ->
+               Worktrees.delete_branch_tolerant(repo_root, branch_name)
+             end) do
+          :ok ->
+            :ok
+
+          {:error, output} ->
+            Logger.warning(
+              "WorktreeManager: Failed to delete branch #{branch_name}: #{inspect(output)}"
+            )
+        end
 
       {:error, reason, path} ->
-        Logger.warning(
+        Logger.error(
           "WorktreeManager: Failed to remove worktree #{worktree_path}: " <>
-            "#{inspect(reason)} at #{path}"
-        )
-    end
-
-    WorktreeRetry.retry_on_transient(fn -> Git.prune_worktrees(repo_root) end)
-
-    case WorktreeRetry.retry_on_transient(fn ->
-           Worktrees.delete_branch_tolerant(repo_root, branch_name)
-         end) do
-      :ok ->
-        :ok
-
-      {:error, output} ->
-        Logger.warning(
-          "WorktreeManager: Failed to delete branch #{branch_name}: #{inspect(output)}"
+            "#{inspect(reason)} at #{path} — not pruning (dir still present; " <>
+            "keeping dir+registration consistent)"
         )
     end
 
