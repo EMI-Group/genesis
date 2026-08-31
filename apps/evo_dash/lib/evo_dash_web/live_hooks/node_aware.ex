@@ -172,7 +172,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   Running = status in `[:running, :pending, :finalizing, :cancelling]`. Pending
   (review candidates) = status `:completed`, `review_status` nil, and
   `show_review_button?/1` true, sorted `{:desc, DateTime}` by
-  `finished_at || started_at`.
+  `finished_at || started_at` (nil-safe: both-nil timestamps fall back to the
+  Unix epoch so the DateTime module sorter never compares nil).
   """
   def partition_active_tasks(summaries) do
     running_tasks =
@@ -183,7 +184,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> Enum.filter(fn task ->
         task.status == :completed and is_nil(task.review_status) and show_review_button?(task)
       end)
-      |> Enum.sort_by(&(&1.finished_at || &1.started_at), {:desc, DateTime})
+      |> Enum.sort_by(
+        &(&1.finished_at || &1.started_at || ~U[1970-01-01 00:00:00Z]),
+        {:desc, DateTime}
+      )
 
     {running_tasks, pending_tasks}
   end
