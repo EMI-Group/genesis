@@ -97,57 +97,33 @@ defmodule EvoDashWeb.HomeLive do
               </p>
               <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
                 <%!-- zh_CN: "解释 Genesis 的架构" --%>
-                <button
-                  type="button"
-                  phx-click="send_message"
-                  phx-value-message={gettext("Explain the Genesis architecture")}
-                  class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
-                >
+                <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
                   <.icon
                     name="hero-light-bulb"
                     class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
                   />
-                  {gettext("Explain the Genesis architecture")}
-                </button>
+                </.suggestion_chip>
                 <%!-- zh_CN: "任务取消是如何工作的？" --%>
-                <button
-                  type="button"
-                  phx-click="send_message"
-                  phx-value-message={gettext("How does task cancellation work?")}
-                  class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
-                >
+                <.suggestion_chip message={gettext("How does task cancellation work?")}>
                   <.icon
                     name="hero-magnifying-glass"
                     class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
                   />
-                  {gettext("How does task cancellation work?")}
-                </button>
+                </.suggestion_chip>
                 <%!-- zh_CN: "你能帮我做什么？" --%>
-                <button
-                  type="button"
-                  phx-click="send_message"
-                  phx-value-message={gettext("What can you help me with?")}
-                  class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
-                >
+                <.suggestion_chip message={gettext("What can you help me with?")}>
                   <.icon
                     name="hero-puzzle-piece"
                     class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
                   />
-                  {gettext("What can you help me with?")}
-                </button>
+                </.suggestion_chip>
                 <%!-- zh_CN: "引导我使用仪表盘" --%>
-                <button
-                  type="button"
-                  phx-click="send_message"
-                  phx-value-message={gettext("Guide me through the dashboard")}
-                  class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
-                >
+                <.suggestion_chip message={gettext("Guide me through the dashboard")}>
                   <.icon
                     name="hero-map"
                     class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
                   />
-                  {gettext("Guide me through the dashboard")}
-                </button>
+                </.suggestion_chip>
               </div>
             </div>
           <% else %>
@@ -796,5 +772,29 @@ defmodule EvoDashWeb.HomeLive do
       :user -> "flex justify-end"
       _ -> "flex justify-start"
     end
+  end
+
+  attr(:message, :string,
+    required: true,
+    doc: "Translated suggestion text — used as both the visible label and phx-value-message"
+  )
+
+  slot(:inner_block, required: true, doc: "The suggestion chip's icon")
+
+  # Empty-state suggestion chip: a button that sends the message as a chat
+  # prompt. The root button keeps the `group` class so the slot icon's
+  # `group-hover:` styles keep working.
+  defp suggestion_chip(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="send_message"
+      phx-value-message={@message}
+      class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
+    >
+      {render_slot(@inner_block)}
+      {@message}
+    </button>
+    """
   end
 end
