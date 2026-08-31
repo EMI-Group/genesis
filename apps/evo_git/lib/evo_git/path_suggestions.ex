@@ -117,7 +117,7 @@ defmodule EvoGit.PathSuggestions do
   # so the `File.ls/1` base is clean.
   defp expand_absolute(trimmed) do
     if Path.type(trimmed) == :absolute do
-      Path.expand(trimmed)
+      EvoGit.Platform.safe_expand(trimmed)
     else
       # Windows-style path on a non-Windows host: use as-is, only stripping
       # trailing separators so the `File.ls/1` base is clean.

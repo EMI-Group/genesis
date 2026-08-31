@@ -28,7 +28,7 @@ defmodule EvoGit.Runtime.Evolution do
       "Evolution: Starting for objective: #{objective} (node: #{node_path}, commit: #{starting_commit || "HEAD"})"
     )
 
-    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
+    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> EvoGit.Platform.safe_expand()
 
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, current_sha} <- Helpers.resolve_starting_commit(repo_path, starting_commit),

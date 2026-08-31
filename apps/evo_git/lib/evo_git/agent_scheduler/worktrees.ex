@@ -332,8 +332,9 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   # the worktree rather than the repo's MAIN working copy.
   #
   # A registered linked worktree ALWAYS has a `.git` FILE whose content is
-  # "gitdir: <path>", where <path> (after `Path.expand/1` relative to the
-  # worktree, per git's own rule) lies under `<repo_root>/.git/worktrees/`.
+  # "gitdir: <path>", where <path> (after `EvoGit.Platform.safe_expand/2` — a
+  # UNC-preserving `Path.expand` — relative to the worktree, per git's own
+  # rule) lies under `<repo_root>/.git/worktrees/`.
   #
   # Why the `.git`-file check and NOT `git -C wt rev-parse --git-common-dir`:
   # from a PLAIN dir inside the repo tree (the dangerous broken-registration
@@ -345,13 +346,13 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   # Never runs git — plain `File.read`/`Path` only, so a failure can never
   # touch the main copy.
   defp ensure_linked_worktree(wt, repo_root) do
-    expected_prefix = Path.expand(Path.join(repo_root, ".git/worktrees"))
+    expected_prefix = Platform.safe_expand(Path.join(repo_root, ".git/worktrees"))
 
     case File.read(Path.join(wt, ".git")) do
       {:ok, content} ->
         case gitdir_from_content(content) do
           {:ok, gitdir} ->
-            expanded = Path.expand(gitdir, wt)
+            expanded = Platform.safe_expand(gitdir, wt)
 
             if String.starts_with?(expanded, expected_prefix <> "/") and File.dir?(expanded) do
               :ok

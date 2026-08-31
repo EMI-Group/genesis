@@ -267,7 +267,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
   # Returns {:ok, relative_path} or :not_in_repo.
   defp foreign_repo_match_root(root, abs_path) when is_binary(root) and is_binary(abs_path) do
     root = Platform.trim_trailing_separators(root)
-    expanded = Path.expand(abs_path)
+    expanded = Platform.safe_expand(abs_path)
 
     if EvoGit.Platform.path_under?(expanded, root) do
       relative =

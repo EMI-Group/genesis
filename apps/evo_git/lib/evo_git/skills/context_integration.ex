@@ -8,6 +8,7 @@ defmodule EvoGit.Skills.ContextIntegration do
   inherited downward from root to leaf.
   """
 
+  alias EvoGit.Platform
   alias EvoGit.Skills
   alias EvoGit.Skills.Skill
 
@@ -75,11 +76,11 @@ defmodule EvoGit.Skills.ContextIntegration do
       {:ok, nodes} ->
         nodes
         |> Enum.filter(fn node ->
-          abs_path = Path.expand(node.path, node.repo)
+          abs_path = Platform.safe_expand(node.path, node.repo)
           File.dir?(abs_path)
         end)
         |> Enum.flat_map(fn node ->
-          abs_path = Path.expand(node.path, node.repo)
+          abs_path = Platform.safe_expand(node.path, node.repo)
           skill_names_at_dir(abs_path)
         end)
         |> Enum.uniq()
@@ -149,7 +150,7 @@ defmodule EvoGit.Skills.ContextIntegration do
           | {:error, String.t()}
   def enable_skill(skill_name, node_path, repo_path)
       when is_binary(skill_name) and is_binary(node_path) and is_binary(repo_path) do
-    abs_dir = Path.expand(node_path, repo_path)
+    abs_dir = Platform.safe_expand(node_path, repo_path)
 
     unless File.dir?(abs_dir) do
       {:error, "Directory '#{node_path}' does not exist"}
@@ -193,7 +194,7 @@ defmodule EvoGit.Skills.ContextIntegration do
           {:ok, :disabled, String.t()} | {:ok, :not_enabled} | {:error, String.t()}
   def disable_skill(skill_name, node_path, repo_path)
       when is_binary(skill_name) and is_binary(node_path) and is_binary(repo_path) do
-    abs_dir = Path.expand(node_path, repo_path)
+    abs_dir = Platform.safe_expand(node_path, repo_path)
 
     unless File.dir?(abs_dir) do
       {:error, "Directory '#{node_path}' does not exist"}
@@ -282,12 +283,12 @@ defmodule EvoGit.Skills.ContextIntegration do
         # Walk up from root to (but not including) node_path
         nodes
         |> Enum.filter(fn node ->
-          abs_path = Path.expand(node.path, node.repo)
+          abs_path = Platform.safe_expand(node.path, node.repo)
           File.dir?(abs_path)
         end)
         |> Enum.reject(fn node -> node.path == node_path end)
         |> Enum.find_value(fn node ->
-          abs_path = Path.expand(node.path, node.repo)
+          abs_path = Platform.safe_expand(node.path, node.repo)
           skills = skill_names_at_dir(abs_path)
           if skill_name in skills, do: node.path
         end)
