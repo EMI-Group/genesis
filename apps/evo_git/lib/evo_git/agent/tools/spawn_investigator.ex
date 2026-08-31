@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.SpawnInvestigator do
   @moduledoc """
-  Command handler for the `task.investigate` command, invoked by
+  Command handler for the `SpawnInvestigator.spawn_investigator` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Placeholder for spawning an
   investigator subagent.
 

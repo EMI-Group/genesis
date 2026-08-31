@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.SystemInfo do
   @moduledoc """
-  Command handler for the `system.info` command, invoked by
+  Command handler for the `SystemInfo.system_info` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Reports local platform and
   system information.
 

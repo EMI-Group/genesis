@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.GuideUser do
   @moduledoc """
-  Command handler for the `guide.show` command, invoked by
+  Command handler for the `GuideUser.guide_user` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Shows transient
   user-facing guides in the dashboard UI.
 
