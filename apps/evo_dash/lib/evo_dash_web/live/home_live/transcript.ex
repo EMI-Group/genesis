@@ -5,6 +5,10 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   A transcript is a list of entries (oldest first), where each entry is a plain
   map `%{id: String.t(), role: :user | :assistant | :error, text: String.t(),
   streaming: boolean()}`.
+
+  All functions are total: `normalize/1` coerces arbitrary (persisted) entry
+  data into the current entry shape before it is consumed, so malformed
+  entries degrade instead of crashing.
   """
 
   @type role :: :user | :assistant | :error
@@ -14,6 +18,46 @@ defmodule EvoDashWeb.HomeLive.Transcript do
   @doc "Returns a new, empty transcript."
   @spec new() :: t
   def new, do: []
+
+  @doc """
+  Normalizes arbitrary transcript data into the current entry shape
+  `%{id, role, text, streaming}`. Used to restore persisted chat state
+  (`EvoDashWeb.HomeLive.ChatState.restore/1`): stored entries may carry
+  non-binary ids, missing keys, or unknown roles.
+
+  Total: non-lists → `[]`; non-map entries are dropped; ids are coerced to
+  binaries (`nil`/malformed ids get a fresh unique id); roles are whitelisted
+  to `:user | :assistant | :error` (unknown → `:assistant`, keeping the entry
+  visible left-aligned); text is coerced to a binary; `streaming` is
+  boolean-ized (`true` only for exactly `true`).
+  """
+  @spec normalize(term()) :: t
+  def normalize(entries) when is_list(entries) do
+    entries
+    |> Enum.filter(&is_map/1)
+    |> Enum.map(fn entry ->
+      %{
+        id: normalize_id(Map.get(entry, :id)),
+        role: normalize_role(Map.get(entry, :role)),
+        text: normalize_text(Map.get(entry, :text)),
+        streaming: Map.get(entry, :streaming) == true
+      }
+    end)
+  end
+
+  def normalize(_entries), do: []
+
+  defp normalize_role(:user), do: :user
+  defp normalize_role(:assistant), do: :assistant
+  defp normalize_role(:error), do: :error
+  defp normalize_role("user"), do: :user
+  defp normalize_role("assistant"), do: :assistant
+  defp normalize_role("error"), do: :error
+  defp normalize_role(_role), do: :assistant
+
+  defp normalize_id(id) when is_binary(id) and id != "", do: id
+  defp normalize_id(id) when is_integer(id), do: Integer.to_string(id)
+  defp normalize_id(_id), do: System.unique_integer([:positive]) |> Integer.to_string()
 
   @doc "Appends an entry to the end of the transcript."
   @spec append(t, entry) :: t
@@ -88,8 +132,8 @@ defmodule EvoDashWeb.HomeLive.Transcript do
     max_chars = Keyword.get(opts, :max_chars, 4000)
 
     blocks =
-      (transcript || [])
-      |> Enum.filter(&is_map/1)
+      transcript
+      |> normalize()
       |> Enum.reject(&(Map.get(&1, :role) == :error))
       |> build_blocks([])
 
