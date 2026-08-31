@@ -59,7 +59,8 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
         truncated_size: 50_000
       }
 
-      result = TruncationFeedback.append_truncation_feedback("output text", truncation_info, "run_bash")
+      result =
+        TruncationFeedback.append_truncation_feedback("output text", truncation_info, "run_bash")
 
       assert result =~ "output text"
       assert result =~ "Output Truncated"
@@ -96,7 +97,8 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
     test "includes tool-specific suggestion" do
       truncation_info = %{reason: :size_exceeded, original_size: 1000, truncated_size: 500}
 
-      result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "search_history")
+      result =
+        TruncationFeedback.append_truncation_feedback("o", truncation_info, "search_history")
 
       assert result =~ "max_count"
     end
@@ -104,10 +106,28 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
     test "separates original output from feedback with newlines" do
       truncation_info = %{reason: :size_exceeded, original_size: 1000, truncated_size: 500}
 
-      result = TruncationFeedback.append_truncation_feedback("my output", truncation_info, "run_bash")
+      result =
+        TruncationFeedback.append_truncation_feedback("my output", truncation_info, "run_bash")
 
       # The original output should be followed by \n\n then the feedback marker
       assert result =~ "my output\n\n---"
+    end
+
+    test "appended feedback contains the partial-output instruction and accurate sizes" do
+      truncation_info = %{
+        reason: :size_exceeded,
+        original_size: 72_154,
+        truncated_size: 8_192
+      }
+
+      result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "rg")
+
+      assert result =~ "PARTIAL OUTPUT"
+      assert result =~ "do not conclude"
+      assert result =~ "131072"
+      # Accurate sizes: format_bytes(72154) = 70.5 KB, format_bytes(8192) = 8.0 KB
+      assert result =~ "70.5 KB"
+      assert result =~ "8.0 KB"
     end
   end
 
@@ -169,15 +189,34 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
     end
 
     test "every tool suggestion mentions max_bytes" do
-      for tool <- ["run_bash", "run_powershell", "read_file", "rg", "curl", "run_git",
-                   "search_history", "search_web", "search_context", "unknown"] do
+      for tool <- [
+            "run_bash",
+            "run_powershell",
+            "read_file",
+            "rg",
+            "curl",
+            "run_git",
+            "search_history",
+            "search_web",
+            "search_context",
+            "unknown"
+          ] do
         assert TruncationFeedback.tool_truncation_suggestion(tool) =~ "max_bytes"
       end
     end
 
     test "all suggestions return strings" do
-      for tool <- ["run_bash", "read_file", "rg", "curl", "run_git", "search_history",
-                   "search_web", "search_context", "unknown_tool"] do
+      for tool <- [
+            "run_bash",
+            "read_file",
+            "rg",
+            "curl",
+            "run_git",
+            "search_history",
+            "search_web",
+            "search_context",
+            "unknown_tool"
+          ] do
         assert is_binary(TruncationFeedback.tool_truncation_suggestion(tool))
       end
     end
@@ -195,7 +234,10 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
     end
 
     test "ignores extra keys in the map" do
-      assert TruncationFeedback.format_truncation_reason(%{reason: :size_exceeded, original_size: 100}) ==
+      assert TruncationFeedback.format_truncation_reason(%{
+               reason: :size_exceeded,
+               original_size: 100
+             }) ==
                "output exceeded size limit"
     end
   end
