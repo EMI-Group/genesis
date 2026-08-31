@@ -17,7 +17,7 @@ defmodule EvoGit.Runtime.Genesis do
 
   def run(objective, opts \\ []) when is_list(opts) do
     Logger.info("Genesis: Starting with objective: #{objective}")
-    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
+    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> EvoGit.Platform.safe_expand()
 
     with :ok <- Runtime.ensure_repo(repo_path),
          {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do

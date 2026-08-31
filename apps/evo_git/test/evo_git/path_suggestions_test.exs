@@ -99,6 +99,34 @@ defmodule EvoGit.PathSuggestionsTest do
       end
     end
 
+    test "UNC input never collapses the double-separator prefix" do
+      # WSL-shared-folder UNC roots do not exist on CI hosts (listing → []),
+      # but on a WSL/Windows host where they resolve, every suggestion must
+      # keep the `//wsl.localhost` prefix — never collapse to `/wsl...`.
+      for input <- [
+            "//wsl.localhost/Ubuntu-22.04/home/user/proj",
+            "//wsl.localhost/Ubuntu-22.04/home/user/proj/"
+          ] do
+        results = PathSuggestions.suggest(input)
+        assert is_list(results)
+        assert Enum.all?(results, &String.starts_with?(&1, "//wsl.localhost"))
+      end
+
+      # On POSIX hosts `//tmp` resolves to `/tmp`, so this genuinely lists
+      # with the `//` prefix intact; on Windows the share is missing → [].
+      # Either way the marker must survive expansion — a plain `Path.expand`
+      # would collapse it to `/tmp/...` and fail the prefix assertion.
+      results = PathSuggestions.suggest("//tmp/")
+      assert is_list(results)
+      assert Enum.all?(results, &String.starts_with?(&1, "//tmp/"))
+
+      # Backslash-form UNC input is used as-is on non-Windows hosts (never
+      # cwd-anchored); if it resolves, the `\\` prefix must survive too.
+      results = PathSuggestions.suggest("\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj")
+      assert is_list(results)
+      assert Enum.all?(results, &String.starts_with?(&1, "\\\\wsl.localhost"))
+    end
+
     test "tilde input is home-anchored" do
       home = System.user_home!()
 

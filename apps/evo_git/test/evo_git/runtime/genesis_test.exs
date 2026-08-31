@@ -4,6 +4,7 @@ defmodule EvoGit.Runtime.GenesisTest do
   alias EvoGit.AgentSpec
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.Runtime.Genesis
   alias EvoGit.Runtime.Helpers
 
   describe "new_codebase?/1 auto-detection" do
@@ -62,15 +63,31 @@ defmodule EvoGit.Runtime.GenesisTest do
     end
   end
 
+  describe "UNC repo path guard" do
+    test "raises ArgumentError for a UNC repo_path before any repo I/O" do
+      repo_path =
+        "//wsl.localhost/Ubuntu-22.04/evogit-genesis-unc-#{System.unique_integer([:positive])}"
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Genesis.run("prompt", repo_path: repo_path)
+        end
+
+      assert String.contains?(err.message, repo_path)
+      assert String.contains?(err.message, "worktree")
+
+      # The raise happens before ensure_repo, so the path is never created.
+      refute File.exists?(repo_path)
+    end
+  end
+
   describe "model_id threading through AgentSpec" do
     test "AgentSpec.new/5 stores model_id in opts when provided" do
       context_node = %ContextNode{path: "./", repo: "/tmp/fake"}
       phylo_node = %PhyloGraphNode{repo: "/tmp/fake", base_commit: "abc", current_commit: "abc"}
 
       spec =
-        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing",
-          model_id: "fast"
-        )
+        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing", model_id: "fast")
 
       assert spec.opts[:model_id] == "fast"
     end
@@ -80,9 +97,7 @@ defmodule EvoGit.Runtime.GenesisTest do
       phylo_node = %PhyloGraphNode{repo: "/tmp/fake", base_commit: "abc", current_commit: "abc"}
 
       spec =
-        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing",
-          foreign_repos: []
-        )
+        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing", foreign_repos: [])
 
       assert spec.opts[:model_id] == nil
     end

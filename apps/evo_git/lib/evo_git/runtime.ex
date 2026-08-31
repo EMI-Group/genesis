@@ -4,6 +4,7 @@ defmodule EvoGit.Runtime do
   """
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Runtime.Helpers
   require Logger
 
   @doc """
@@ -12,6 +13,12 @@ defmodule EvoGit.Runtime do
   A `.gitignore` is written to exclude `/.genesis` worktrees.
   """
   def ensure_repo(repo_path) do
+    # UNC / network-share roots are unsupported for worktree-based tasks —
+    # raise the actionable diagnostic BEFORE any mkdir/git-init (covers
+    # genesis/evolution/skill_extraction, which all call this with the
+    # safe_expand'd :repo_path).
+    Helpers.validate_repo_path!(repo_path)
+
     if File.dir?(Path.join(repo_path, ".git")) do
       :ok
     else

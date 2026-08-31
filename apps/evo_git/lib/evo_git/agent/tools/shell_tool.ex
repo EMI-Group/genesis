@@ -256,7 +256,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   # anything executes; agents must work inside their own worktree. Returns an
   # error string, or nil when the command is allowed.
   defp main_copy_mutation_error(command, repo_path, repo_root) do
-    root = Path.expand(repo_root)
+    root = Platform.safe_expand(repo_root)
 
     if cd_targets(command, repo_path) |> Enum.any?(&(&1 == root)) and
          String.match?(command, @mutating_git_regex) do
@@ -399,7 +399,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @doc false
   def detect_cd_warnings(command, repo_path, repo_root) do
     worktree_base = EvoGit.AgentScheduler.Worktrees.workers_dir(repo_root)
-    root = Path.expand(repo_root)
+    root = Platform.safe_expand(repo_root)
 
     command
     |> cd_targets(repo_path)
@@ -435,7 +435,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   (`repo_path`), which is redundant since the working directory is already set.
   """
   def redundant_cd?(command, repo_path, _repo_root) do
-    worktree = Path.expand(repo_path)
+    worktree = Platform.safe_expand(repo_path)
 
     cd_targets(command, repo_path)
     |> Enum.any?(&(&1 == worktree))
@@ -536,6 +536,6 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     |> Regex.scan(command, capture: :all_but_first)
     |> List.flatten()
     |> Enum.uniq()
-    |> Enum.map(&Path.expand(&1, repo_path))
+    |> Enum.map(&Platform.safe_expand(&1, repo_path))
   end
 end

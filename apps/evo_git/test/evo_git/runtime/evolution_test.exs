@@ -111,6 +111,24 @@ defmodule EvoGit.Runtime.EvolutionTest do
     end
   end
 
+  describe "UNC repo path guard" do
+    test "raises ArgumentError for a UNC repo_path before any repo I/O" do
+      repo_path =
+        "//wsl.localhost/Ubuntu-22.04/evogit-unc-#{System.unique_integer([:positive])}"
+
+      err =
+        assert_raise ArgumentError, fn ->
+          Evolution.run("obj", repo_path: repo_path)
+        end
+
+      assert String.contains?(err.message, repo_path)
+      assert String.contains?(err.message, "worktree")
+
+      # The raise happens before ensure_repo, so the path is never created.
+      refute File.exists?(repo_path)
+    end
+  end
+
   describe "genesis custom-mode rejection" do
     test "raises the evolve-only error for mode: :custom" do
       repo = create_git_repo!()

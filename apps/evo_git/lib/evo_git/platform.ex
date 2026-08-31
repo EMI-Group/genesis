@@ -211,7 +211,8 @@ defmodule EvoGit.Platform do
   @doc """
   Returns true if the given path is an absolute path on any platform.
   Handles Unix paths (/foo), Windows drive-letter paths (C:\\foo, D:/bar),
-  and UNC paths (\\\\server\\share).
+  and UNC paths (\\\\server\\share and //server/share, e.g. WSL paths like
+  //wsl.localhost/Ubuntu-22.04/...).
   """
   @spec absolute_path?(String.t()) :: boolean()
   def absolute_path?(path) when is_binary(path) do
@@ -221,11 +222,115 @@ defmodule EvoGit.Platform do
   def absolute_path?(_other), do: false
 
   # Detects Windows-style absolute paths: drive letters (C:\\..., D:/...)
-  # and UNC paths (\\\\server\\share\\...)
-  @windows_absolute_regex ~r/^[A-Za-z]:[\/\\]|^\\\\/
+  # and UNC paths (\\\\server\\share\\... and //server/share/...).
+  @windows_absolute_regex ~r/^[A-Za-z]:[\/\\]|^\\\\|^\/\//
 
   defp windows_absolute_path?(path) do
     String.match?(path, @windows_absolute_regex)
+  end
+
+  @doc """
+  Returns true if the path starts with a double-separator UNC marker.
+
+  UNC paths begin with `\\\\server\\share\\...` (Windows style) or
+  `//server/share/...` (forward-slash style, e.g. WSL paths like
+  `//wsl.localhost/Ubuntu-22.04/...`). Separators are normalized first, so
+  mixed `\\/`-style prefixes are recognized too.
+
+  Returns false for `nil` and non-binary values.
+  """
+  @spec unc?(String.t() | nil) :: boolean()
+  def unc?(nil), do: false
+
+  def unc?(path) when is_binary(path) do
+    path |> normalize_separators() |> String.starts_with?("//")
+  end
+
+  def unc?(_other), do: false
+
+  @doc """
+  Returns true if the path has a UNC **share shape** — at least a server
+  component and a share component after the double-separator marker, both
+  non-empty.
+
+  Distinct from `unc?/1`: `unc?/1` flags ANY double-separator prefix
+  (`unc?("//foo")` → true), while `unc_path?/1` requires the
+  `//server/share/...` shape (`unc_path?("//foo")` → false). Separators are
+  normalized first, so both the Windows `\\\\server\\share\\...` and
+  forward-slash `//server/share/...` (WSL) forms are recognized.
+
+  This is the predicate used by the worktree-unsupported diagnostic
+  (`EvoGit.Runtime.Helpers.validate_repo_path!/1`): a bare `//foo` with no
+  share component is NOT flagged.
+
+  Returns false for `nil` and non-binary values.
+  """
+  @spec unc_path?(String.t() | nil) :: boolean()
+  def unc_path?(nil), do: false
+
+  def unc_path?(path) when is_binary(path) do
+    path |> normalize_separators() |> String.match?(~r{^//[^/]+/[^/]+})
+  end
+
+  def unc_path?(_other), do: false
+
+  @doc """
+  Like `Path.expand/1`, but preserves UNC path prefixes on non-Windows hosts.
+
+  On Windows `Path.expand/1` keeps the `//` root of a UNC path, so this
+  function delegates to it directly. On non-Windows hosts (where EvoGit
+  commonly runs while operating on repos mounted at WSL/network UNC paths like
+  `//wsl.localhost/Ubuntu-22.04/...`) `Path.expand/1` collapses the `//`
+  prefix to a single `/`, corrupting the path. This function captures the
+  original double-separator marker (`//` or `\\\\`), strips it, expands the
+  remainder with `Path.expand/1`, and re-attaches the marker — so `.`/`..`
+  components and trailing separators are still resolved while the UNC root
+  survives.
+
+  Non-UNC paths behave exactly like `Path.expand/1`.
+  """
+  @spec safe_expand(String.t()) :: String.t()
+  def safe_expand(path) when is_binary(path) do
+    if unc?(path) and not windows?() do
+      marker = String.slice(path, 0, 2)
+      rest = String.slice(path, 2..-1//1)
+
+      # `Path.expand("/" <> rest)` resolves `..`/`.` and strips trailing
+      # separators but keeps its own leading `/` — strip that before
+      # re-attaching the marker so `//wsl...` never becomes `///wsl...`.
+      marker <> (Path.expand("/" <> rest) |> trim_leading_separators())
+    else
+      Path.expand(path)
+    end
+  end
+
+  @doc """
+  Like `Path.expand/2`, but preserves a UNC `base` prefix on non-Windows hosts.
+
+  When `base` is a UNC path and the host is not Windows, the (relative)
+  `path` is resolved against the base with the double-separator marker
+  preserved: `base_marker <> Path.expand(path, "/" <> base_rest)`. If `path`
+  itself is absolute (per `absolute_path?/1`) it is expanded on its own,
+  mirroring `Path.expand/2` semantics. On Windows or with a non-UNC base,
+  delegates to `Path.expand/2`.
+  """
+  @spec safe_expand(String.t(), String.t()) :: String.t()
+  def safe_expand(path, base) when is_binary(path) and is_binary(base) do
+    cond do
+      absolute_path?(path) ->
+        safe_expand(path)
+
+      unc?(base) and not windows?() ->
+        marker = String.slice(base, 0, 2)
+        base_rest = String.slice(base, 2..-1//1)
+
+        # Same leading-separator strip as `safe_expand/1` so the re-attached
+        # marker never produces a `///` root.
+        marker <> (Path.expand(path, "/" <> base_rest) |> trim_leading_separators())
+
+      true ->
+        Path.expand(path, base)
+    end
   end
 
   @doc """
@@ -305,13 +410,25 @@ defmodule EvoGit.Platform do
   @doc """
   Strips leading `/` and `\\` characters from a path.
 
+  UNC-aware: when the path begins with a double-separator UNC marker (`//` or
+  `\\\\`, detected via `unc?/1`), the marker survives — only leading
+  separators beyond the first two are trimmed (e.g.
+  `trim_leading_separators("///x")` → `"//x"`,
+  `trim_leading_separators("\\\\server\\share\\x")` → `"\\\\server\\share\\x"`).
+  A single leading separator is still fully stripped (`"/foo"` → `"foo"`).
+
   Returns `nil` if given `nil`.
   """
   @spec trim_leading_separators(String.t() | nil) :: String.t() | nil
   def trim_leading_separators(nil), do: nil
 
   def trim_leading_separators(path) when is_binary(path) do
-    String.replace(path, ~r/^[\/\\]+/, "")
+    if unc?(path) do
+      <<marker::binary-size(2), rest::binary>> = path
+      marker <> String.replace(rest, ~r/^[\/\\]+/, "")
+    else
+      String.replace(path, ~r/^[\/\\]+/, "")
+    end
   end
 
   @doc """
@@ -346,6 +463,13 @@ defmodule EvoGit.Platform do
   delegates to `String.split/3` with `"/"` as the pattern. Accepts the same
   options as `String.split/3` (e.g., `parts: 2`).
 
+  UNC-aware: when the path starts with the `//` UNC marker (after
+  normalization), the marker is dropped before splitting so the first path
+  element is the share host rather than a bogus empty segment
+  (`split_path("//wsl.localhost/Ubuntu-22.04/x")` →
+  `["wsl.localhost", "Ubuntu-22.04", "x"]`). Non-UNC behavior is unchanged
+  (`split_path("/foo")` → `["", "foo"]`).
+
   Returns `nil` if given `nil`. Returns `[]` if given an empty string.
   """
   @spec split_path(String.t() | nil, keyword()) :: [String.t()] | nil
@@ -353,7 +477,21 @@ defmodule EvoGit.Platform do
   def split_path("", _opts), do: []
 
   def split_path(path, opts) when is_binary(path) and is_list(opts) do
-    path |> normalize_separators() |> String.split("/", opts)
+    path
+    |> normalize_separators()
+    |> drop_unc_root()
+    |> String.split("/", opts)
+  end
+
+  # Drops the leading `//` UNC root marker (already normalized) so no bogus
+  # empty leading segment is produced — a UNC path's first element is the
+  # share host.
+  defp drop_unc_root(normalized) do
+    if String.starts_with?(normalized, "//") do
+      String.slice(normalized, 2..-1//1)
+    else
+      normalized
+    end
   end
 
   @doc """

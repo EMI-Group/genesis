@@ -160,7 +160,7 @@ defmodule EvoGit.Sandbox do
         default
 
       raw ->
-        expanded = Path.expand(raw)
+        expanded = Platform.safe_expand(raw)
 
         if File.exists?(expanded) and under_any?(expanded, tmp_paths) do
           expanded

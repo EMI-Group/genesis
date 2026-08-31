@@ -48,6 +48,23 @@ defmodule EvoGit.Core.ForeignRepoTest do
       repo = ForeignRepo.new("test", "/tmp/evo_git_test")
       assert repo.root == Path.expand("/tmp/evo_git_test")
     end
+
+    test "preserves a forward-slash UNC root (WSL-shared-folder style)" do
+      repo = ForeignRepo.new("primary", "//wsl.localhost/Ubuntu-22.04/home/user/proj")
+      assert repo.root == "//wsl.localhost/Ubuntu-22.04/home/user/proj"
+    end
+
+    test "preserves a backslash UNC root" do
+      repo = ForeignRepo.new("primary", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj")
+
+      # The double-separator marker must never collapse to a single one.
+      assert String.starts_with?(repo.root, "\\\\")
+      refute String.starts_with?(repo.root, "\\wsl")
+      refute String.starts_with?(repo.root, "/wsl")
+      assert repo.root =~ "wsl.localhost"
+      assert repo.root =~ "Ubuntu-22.04"
+      assert repo.root =~ "home"
+    end
   end
 
   describe "normalize/1" do
@@ -304,6 +321,25 @@ defmodule EvoGit.Core.ForeignRepoTest do
     test "resolves repo root to ./" do
       repos = [ForeignRepo.new("primary", "/Source/proj")]
       assert {:ok, "primary", "./"} = ForeignRepo.resolve_path(repos, "/Source/proj")
+    end
+
+    test "resolves UNC-rooted repos by id" do
+      repos = [
+        ForeignRepo.new("primary", "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo"),
+        ForeignRepo.new("original", "//wsl.localhost/Ubuntu-22.04/home/user/original-proj")
+      ]
+
+      assert {:ok, "original", "./src/main.py"} =
+               ForeignRepo.resolve_path(
+                 repos,
+                 "//wsl.localhost/Ubuntu-22.04/home/user/original-proj/src/main.py"
+               )
+
+      assert {:ok, "primary", "./lib/app.ex"} =
+               ForeignRepo.resolve_path(
+                 repos,
+                 "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo/lib/app.ex"
+               )
     end
 
     test "resolves deeply nested path" do

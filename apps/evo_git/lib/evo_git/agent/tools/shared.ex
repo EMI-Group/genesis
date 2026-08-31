@@ -185,13 +185,13 @@ defmodule EvoGit.Agent.Tools.Shared do
   Expands a file path relative to a repository path.
   """
   def expand_path(file_path, repo_path) when is_binary(file_path) do
-    Path.expand(file_path, repo_path)
+    Platform.safe_expand(file_path, repo_path)
   end
 
   def expand_path(file_path, repo_path) do
     file_path
     |> to_string()
-    |> then(&Path.expand(&1, repo_path))
+    |> then(&Platform.safe_expand(&1, repo_path))
   end
 
   @doc """

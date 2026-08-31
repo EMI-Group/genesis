@@ -102,6 +102,16 @@ defmodule EvoGit.Core.ContextNodeTest do
       node = ContextNode.load("./foo", "/repo")
       assert node.path == "./foo"
     end
+
+    test "keeps a UNC repo root intact" do
+      node = ContextNode.load("src/foo", "//wsl.localhost/Ubuntu-22.04/home/user/proj")
+      assert node.repo == "//wsl.localhost/Ubuntu-22.04/home/user/proj"
+      assert node.path == "./src/foo"
+
+      bs_node = ContextNode.load("src/foo", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj")
+      assert bs_node.repo == "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj"
+      assert bs_node.path == "./src/foo"
+    end
   end
 
   test "hierarchy_nodes/2 with bare path input", %{tmp_dir: tmp_dir} do
@@ -114,5 +124,16 @@ defmodule EvoGit.Core.ContextNodeTest do
     assert Enum.at(hierarchy, 0).path == "./"
     assert Enum.at(hierarchy, 1).path == "./nested"
     assert Enum.at(hierarchy, 2).path == "./nested/deep"
+  end
+
+  test "hierarchy_nodes/3 keeps a UNC repo root on every node" do
+    unc_root = "//wsl.localhost/Ubuntu-22.04/home/user/proj"
+
+    {:ok, nodes} = ContextNode.hierarchy_nodes("./src/a.ex", unc_root, "primary")
+
+    assert length(nodes) == 3
+    assert Enum.map(nodes, & &1.path) == ["./", "./src", "./src/a.ex"]
+    assert Enum.all?(nodes, &(&1.repo == unc_root))
+    assert Enum.all?(nodes, &(&1.repo_id == "primary"))
   end
 end

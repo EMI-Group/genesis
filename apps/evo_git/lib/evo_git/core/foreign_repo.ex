@@ -62,7 +62,7 @@ defmodule EvoGit.Core.ForeignRepo do
   """
   @spec new(String.t(), String.t(), keyword()) :: t()
   def new(id, root, opts \\ []) when is_binary(id) and is_binary(root) do
-    root = Path.expand(root)
+    root = Platform.safe_expand(root)
 
     %__MODULE__{
       id: id,
@@ -186,9 +186,13 @@ defmodule EvoGit.Core.ForeignRepo do
   """
   @spec normalize_path(t(), String.t()) :: {:ok, String.t()} | {:error, :not_in_repo}
   def normalize_path(%__MODULE__{root: root}, abs_path) when is_binary(abs_path) do
-    # Normalize both paths for safe comparison (strip trailing separators)
-    root = root |> Platform.trim_trailing_separators()
-    abs_path = Path.expand(abs_path)
+    # Normalize both paths for safe comparison: expand (UNC-preserving) then
+    # normalize separators to `/` so backslash-form UNC roots (the Windows
+    # representation of WSL-shared-folder paths) compare and relativize
+    # identically on every host (`Path.relative_to/2` treats `\` as a literal
+    # character on non-Windows hosts).
+    root = root |> Platform.normalize_separators() |> Platform.trim_trailing_separators()
+    abs_path = abs_path |> Platform.safe_expand() |> Platform.normalize_separators()
 
     if String.starts_with?(abs_path, root) and
          (abs_path == root or EvoGit.Platform.path_next_is_separator?(abs_path, byte_size(root))) do
@@ -211,7 +215,7 @@ defmodule EvoGit.Core.ForeignRepo do
   @spec resolve_path([t()], String.t()) ::
           {:ok, String.t(), String.t()} | {:error, :not_in_any_repo}
   def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
-    abs_path = Path.expand(abs_path)
+    abs_path = Platform.safe_expand(abs_path)
 
     # Check foreign repos first, then primary (split_with avoids O(n log n) sort)
     {foreign, primary} = Enum.split_with(repos, fn %__MODULE__{id: id} -> not primary?(id) end)
