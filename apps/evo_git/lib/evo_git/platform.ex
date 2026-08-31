@@ -249,6 +249,32 @@ defmodule EvoGit.Platform do
   def unc?(_other), do: false
 
   @doc """
+  Returns true if the path has a UNC **share shape** — at least a server
+  component and a share component after the double-separator marker, both
+  non-empty.
+
+  Distinct from `unc?/1`: `unc?/1` flags ANY double-separator prefix
+  (`unc?("//foo")` → true), while `unc_path?/1` requires the
+  `//server/share/...` shape (`unc_path?("//foo")` → false). Separators are
+  normalized first, so both the Windows `\\\\server\\share\\...` and
+  forward-slash `//server/share/...` (WSL) forms are recognized.
+
+  This is the predicate used by the worktree-unsupported diagnostic
+  (`EvoGit.Runtime.Helpers.validate_repo_path!/1`): a bare `//foo` with no
+  share component is NOT flagged.
+
+  Returns false for `nil` and non-binary values.
+  """
+  @spec unc_path?(String.t() | nil) :: boolean()
+  def unc_path?(nil), do: false
+
+  def unc_path?(path) when is_binary(path) do
+    path |> normalize_separators() |> String.match?(~r{^//[^/]+/[^/]+})
+  end
+
+  def unc_path?(_other), do: false
+
+  @doc """
   Like `Path.expand/1`, but preserves UNC path prefixes on non-Windows hosts.
 
   On Windows `Path.expand/1` keeps the `//` root of a UNC path, so this

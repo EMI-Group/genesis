@@ -244,15 +244,51 @@ defmodule EvoGit.Runtime.Helpers do
   defp normalize_foreign_repos(_other), do: []
 
   @doc """
+  Raises `ArgumentError` when `repo_path` is a UNC / network-share root.
+
+  Git worktrees — and therefore all worktree-based EvoGit tasks — are
+  unsupported on UNC roots: git-for-Windows normalizes `\\\\server\\share` ↔
+  `//server/share` inconsistently across the worktree metadata files (`.git`
+  pointer + `.git/worktrees/<n>/gitdir`), so path-form comparison fails →
+  cryptic "outside repository" errors deep in a run. Detecting the UNC share
+  shape EARLY (via `EvoGit.Platform.unc_path?/1`) and raising here surfaces a
+  clear, actionable error BEFORE any git/worktree I/O. The message names the
+  offending path, the limitation, and concrete workarounds (clone/move the
+  repo to a local drive, `subst X: \\\\server\\share\\proj` on Windows, or run
+  inside WSL at the native Linux path).
+
+  Spec-error style (raise, no `try/rescue`) — mirrors `validate_foreign_repo!/1`
+  and `resolve_root_agent/2`. Returns `:ok` for non-UNC paths.
+  """
+  @spec validate_repo_path!(String.t()) :: :ok
+  def validate_repo_path!(repo_path) when is_binary(repo_path) do
+    if EvoGit.Platform.unc_path?(repo_path) do
+      raise ArgumentError,
+            "Repository root '#{repo_path}' is a UNC / network-share path. " <>
+              "Git worktrees on UNC/network-share roots are unsupported: " <>
+              "git-for-Windows normalizes \\\\server\\share and //server/share " <>
+              "inconsistently across worktree metadata files, causing " <>
+              "\"outside repository\" errors. Move or clone the repository to " <>
+              "a local drive, map the share with " <>
+              "`subst X: \\\\server\\share\\proj` on Windows, or run inside " <>
+              "WSL at the native Linux path."
+    else
+      :ok
+    end
+  end
+
+  @doc """
   Loads foreign repos for a runtime phase: `genesis.toml` defaults merged with
   CLI-provided repos (CLI takes precedence).
 
   Every merged entry is validated UP FRONT (spec-error style, no `try/rescue` —
   this runs in the task process before any agent spawns, mirroring
   `resolve_root_agent/2`'s raise): the path must exist AND be a git repository,
-  and a non-nil `base_sha` must resolve in that repository. On failure an
-  `ArgumentError` is raised naming the repo id, the path, and the problem.
-  Returns the validated (normalized) list of `%EvoGit.Core.ForeignRepo{}`.
+  and a non-nil `base_sha` must resolve in that repository. A UNC / network-share
+  root is rejected early via `validate_repo_path!/1` (worktree-unsupported
+  diagnostic). On failure an `ArgumentError` is raised naming the repo id, the
+  path, and the problem. Returns the validated (normalized) list of
+  `%EvoGit.Core.ForeignRepo{}`.
   """
   def load_foreign_repos(repo_path, opts) do
     toml_repos = EvoGit.ProjectConfig.foreign_repos(repo_path)
@@ -267,6 +303,10 @@ defmodule EvoGit.Runtime.Helpers do
   end
 
   defp validate_foreign_repo!(%ForeignRepo{} = repo) do
+    # UNC / network-share roots are unsupported for worktree-based tasks —
+    # reject early with the actionable diagnostic instead of a rev-parse failure.
+    validate_repo_path!(repo.root)
+
     case Git.rev_parse(repo.root) do
       {:ok, _} ->
         validate_foreign_repo_base_sha!(repo)

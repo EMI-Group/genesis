@@ -113,6 +113,35 @@ defmodule EvoGit.PlatformTest do
     end
   end
 
+  describe "unc_path?/1" do
+    test "returns true for forward-slash UNC share paths" do
+      assert Platform.unc_path?("//wsl.localhost/Ubuntu-22.04/home/user/proj")
+      assert Platform.unc_path?("//server/share")
+      assert Platform.unc_path?("//server/share/x")
+    end
+
+    test "returns true for backslash UNC share paths" do
+      assert Platform.unc_path?("\\\\server\\share\\x")
+      assert Platform.unc_path?("\\\\server\\share")
+    end
+
+    test "returns false for bare UNC markers without a share component" do
+      refute Platform.unc_path?("//foo")
+      refute Platform.unc_path?("\\\\server")
+    end
+
+    test "returns false for non-UNC and relative paths" do
+      refute Platform.unc_path?("/foo/bar")
+      refute Platform.unc_path?("foo/bar")
+      refute Platform.unc_path?("C:\\x")
+    end
+
+    test "returns false for nil and non-binary values" do
+      refute Platform.unc_path?(nil)
+      refute Platform.unc_path?(123)
+    end
+  end
+
   describe "safe_expand/1" do
     test "preserves the UNC marker on non-UNC-collapsing inputs" do
       # Holds on every host: Windows `Path.expand` keeps the `//` root,

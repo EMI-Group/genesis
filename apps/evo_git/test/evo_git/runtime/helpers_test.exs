@@ -550,6 +550,44 @@ defmodule EvoGit.Runtime.HelpersTest do
   end
 
   # ==========================================================================
+  # validate_repo_path!/1
+  # ==========================================================================
+  describe "validate_repo_path!/1" do
+    test "returns :ok for non-UNC paths" do
+      assert Helpers.validate_repo_path!("/home/user/proj") == :ok
+      assert Helpers.validate_repo_path!(Path.join(System.tmp_dir!(), "proj")) == :ok
+    end
+
+    test "raises ArgumentError for a forward-slash UNC share path naming the workarounds" do
+      err =
+        assert_raise ArgumentError, fn ->
+          Helpers.validate_repo_path!("//wsl.localhost/Ubuntu-22.04/home/user/proj")
+        end
+
+      assert String.contains?(err.message, "//wsl.localhost/Ubuntu-22.04/home/user/proj")
+      assert String.contains?(err.message, "worktree")
+      assert String.contains?(err.message, "local drive")
+      assert String.contains?(err.message, "subst")
+      assert String.contains?(err.message, "WSL")
+    end
+
+    test "raises ArgumentError for a backslash UNC share path" do
+      err =
+        assert_raise ArgumentError, fn ->
+          Helpers.validate_repo_path!("\\\\server\\share\\proj")
+        end
+
+      assert String.contains?(err.message, "\\\\server\\share\\proj")
+      assert String.contains?(err.message, "worktree")
+      assert String.contains?(err.message, "subst")
+    end
+
+    test "does not raise for a bare UNC marker without a share component" do
+      assert Helpers.validate_repo_path!("//foo") == :ok
+    end
+  end
+
+  # ==========================================================================
   # load_foreign_repos/2
   #
   # Every entry is validated UP FRONT: the root must exist AND be a git repo,
@@ -712,6 +750,22 @@ defmodule EvoGit.Runtime.HelpersTest do
       assert String.contains?(err.message, "plain")
       assert String.contains?(err.message, not_git)
       assert String.contains?(err.message, "not a valid git repository")
+    end
+
+    test "raises ArgumentError for a foreign repo whose root is a UNC share path", %{
+      tmp_dir: tmp_dir
+    } do
+      err =
+        assert_raise ArgumentError, fn ->
+          Helpers.load_foreign_repos(
+            tmp_dir,
+            foreign_repos: [%ForeignRepo{id: "unc", root: "//server/share/proj"}]
+          )
+        end
+
+      assert String.contains?(err.message, "//server/share/proj")
+      assert String.contains?(err.message, "worktree")
+      assert String.contains?(err.message, "subst")
     end
 
     test "raises ArgumentError when base_sha does not resolve in the repo", %{
