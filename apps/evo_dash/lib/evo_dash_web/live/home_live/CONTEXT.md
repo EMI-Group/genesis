@@ -62,7 +62,7 @@ Pure helpers for the agent stream + final result. Never raises.
 - `find_root_agent(agents, task_id)` → `map | nil` — first summary with `:task_id == task_id`, preferring `agent_module == EvoGit.Agents.SelfReflective` when several match
 - `message_count(agent)` → `non_neg_integer()` (0 when absent)
 - `changed?(prev_count, agent)` → boolean — HistoryGate-style: `message_count(agent) != (prev_count || 0)`
-- `task_id_from_start({:ok, map})` → `{:ok, id} | {:error, :no_task_id}` — accepts both `:id` and `"id"` keys; nil map → error
+- `task_id_from_start({:ok, map} | map)` → `{:ok, id} | {:error, :no_task_id}` — accepts the full `{:ok, map}` tuple OR a bare task map (a struct is a map, so call sites that destructure the tuple and pass the struct also work); accepts both `:id` and `"id"` keys; nil map → error
 - `extract_final_text(task_result)` → `{:ok, String.t()} | :empty | :error` — decodes the tagged-tuple result (`{:ok, %{result: text, ...}}`, atom OR string keys); `:empty` = succeeded with no text; `:error` = `{:error, _}` / `{:exit, _}` / anything else
 
 ### `EvoDashWeb.HomeLive.ChatState` (`chat_state.ex`)
