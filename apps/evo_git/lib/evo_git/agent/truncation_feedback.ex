@@ -39,6 +39,8 @@ defmodule EvoGit.Agent.TruncationFeedback do
       ⚠️ **Output Truncated** (#{format_truncation_reason(truncation_info)})
       Original size: #{EvoGit.Agent.OutputSanitizer.format_bytes(truncation_info.original_size)} → Truncated to: #{EvoGit.Agent.OutputSanitizer.format_bytes(truncation_info.truncated_size)}
 
+      **PARTIAL OUTPUT** — the middle portion was omitted; do not conclude the search returned nothing, the file is missing, or the result is empty. Re-run with a narrower pattern/path (or `-l`/`-n`-style limiting) or pass a larger `max_bytes` (up to 131072).
+
       **Suggestion:** #{suggestion}
       """
       |> String.trim()
@@ -49,7 +51,7 @@ defmodule EvoGit.Agent.TruncationFeedback do
   # --- Tool-Specific Truncation Suggestions ---
 
   def tool_truncation_suggestion(tool_name)
-       when tool_name in ["run_bash", "run_powershell"] do
+      when tool_name in ["run_bash", "run_powershell"] do
     "Consider using `head`, `tail`, `grep`, or piping output to a file. You can also pass `max_bytes` to increase the output limit."
   end
 
