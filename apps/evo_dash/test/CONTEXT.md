@@ -104,6 +104,8 @@ The dashboard attach-file flow (`file_pick` event → `EvoDash.DirectoryPicker.p
 
 ## Known Issues
 
+- **Rare intermittent full-suite failures (~1-in-7 runs, e.g. 8/1320 failed, next runs all green)** — mechanism: the `async: false` suites (home_live_test, tasks_live_test, node_aware_test) terminate/restart the GLOBAL `EvoGit.Store`/`EvoGit.TaskRegistry` children of `EvoGit.Supervisor` in setup/on_exit, while `async: true` LiveView suites (tasks/projects/agents/settings...) keep querying the store concurrently; queries landing in the restart window see transient failures. This is a PRE-EXISTING pattern (identical setup code in tasks_live_test) — not specific to HomeLive. To diagnose a flake: loop `mix test apps/evo_dash/test --seed 0` saving output per run and capture the `  N) test ...` failure block; failures scattered across async modules confirm the mechanism. A real fix would remove global-process juggling from suites (out of scope for feature work).
+
 - **`File.mkdir_p/1` returns `:ok | {:error, reason}` — never `{:ok, _}`**: `EvoDashWeb.ProjectsLive.ProjectFlow.create_project/2` must match the plain `:ok` returned by `File.mkdir_p/1`. The projects_live_test cases "creates and activates a new project" and "creates a fully non-existent nested path recursively" pin this behavior.
 
 ## Constraints
