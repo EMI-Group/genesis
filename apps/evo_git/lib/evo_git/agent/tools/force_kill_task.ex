@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.ForceKillTask do
   @moduledoc """
-  Command handler for the `task.force_kill` command, invoked by
+  Command handler for the `ForceKillTask.force_kill_task` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Force-kills a task by id.
 
   Delegates to `EvoGit.TaskRegistry.force_kill_task/1` — brutally kills every

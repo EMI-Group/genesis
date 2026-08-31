@@ -27,7 +27,7 @@ defmodule EvoGit.Agent.Tools.RunCommand do
           "command" => %{
             "type" => "string",
             "description" =>
-              "A shell command string, e.g. \"task.list\" or \"task.start evolve \\\"Write a parser\\\"\". Run 'help' to list available commands."
+              "A shell command string, e.g. \"ListTasks.list_tasks\" or \"StartTask.start_task evolve \\\"Write a parser\\\"\". Run 'help' to list available commands."
           }
         },
         "required" => ["command"]

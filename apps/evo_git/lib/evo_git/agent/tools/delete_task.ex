@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.DeleteTask do
   @moduledoc """
-  Command handler for the `task.delete` command, invoked by
+  Command handler for the `DeleteTask.delete_task` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Deletes a task by id.
 
   Delegates to `EvoGit.TaskRegistry.delete_task/1` — removes the task row

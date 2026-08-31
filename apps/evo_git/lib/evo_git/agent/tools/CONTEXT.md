@@ -96,16 +96,16 @@ The **task system** (`EvoGit.TaskRegistry`), transient **user guides** (PubSub t
 
 | Command | Args |
 |---|---|
-| `task.list` | optional `statuses=` (comma-separated enum_list: `pending/running/finalizing/completed/failed/cancelled/cancelling`) |
-| `task.get <task_id>` | required positional task_id |
-| `task.start <task_type> [objective] [path= mode= resume_from= starting_commit= model_id=]` | task_type positional enum `genesis/evolve/reflect/extract_skills`; objective positional optional (default `""`); rest optional kv strings |
-| `task.cancel <task_id>` | required positional |
-| `task.force_kill <task_id>` | required positional |
-| `task.delete <task_id>` | required positional |
-| `task.investigate <path> <objective>` | both required positionals — **v1 placeholder, does NOT spawn** |
-| `guide.show <message> [page= selector= dismissible=true\|false]` | message required positional; page/selector optional kv; dismissible optional bool (default `true`) |
-| `project.list` | none |
-| `system.info` | none |
+| `ListTasks.list_tasks` | optional `statuses=` (comma-separated enum_list: `pending/running/finalizing/completed/failed/cancelled/cancelling`) |
+| `GetTask.get_task <task_id>` | required positional task_id |
+| `StartTask.start_task <task_type> [objective] [path= mode= resume_from= starting_commit= model_id=]` | task_type positional enum `genesis/evolve/reflect/extract_skills`; objective positional optional (default `""`); rest optional kv strings |
+| `CancelTask.cancel_task <task_id>` | required positional |
+| `ForceKillTask.force_kill_task <task_id>` | required positional |
+| `DeleteTask.delete_task <task_id>` | required positional |
+| `SpawnInvestigator.spawn_investigator <path> <objective>` | both required positionals — **v1 placeholder, does NOT spawn** |
+| `GuideUser.guide_user <message> [page= selector= dismissible=true\|false]` | message required positional; page/selector optional kv; dismissible optional bool (default `true`) |
+| `ListRecentProjects.list_recent_projects` | none |
+| `SystemInfo.system_info` | none |
 | `help [command]` | built-in — handled by the shell itself |
 
 **Security constraints**: the registry is a compile-time literal — no `Code.eval_string`, no dynamic apply/eval with input-derived names (module/function atoms come only from the literal registry); **no `String.to_atom` on input** — enum/bool/statuses are validated against fixed literal lists and passed through as strings (handlers do their own validated atom conversion); whitelist-only dispatch (unknown command paths rejected); length guardrails `@max_command_length` 4000, `@max_tokens` 40, `@max_token_length` 2000.
