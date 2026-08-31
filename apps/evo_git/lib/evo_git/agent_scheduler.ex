@@ -805,7 +805,9 @@ defmodule EvoGit.AgentScheduler do
     if Keyword.has_key?(opts, :llm_model) and Keyword.get(opts, :llm_model) == nil do
       {:reply, {:error, "llm_model cannot be nil"}, state}
     else
-      reconcile_pool_after_update(State.do_update_config(opts, state))
+      reply = State.do_update_config(opts, state)
+      log_model_concurrency_update(opts, state, reply)
+      reconcile_pool_after_update(reply)
     end
   end
 
@@ -963,6 +965,22 @@ defmodule EvoGit.AgentScheduler do
 
     EvoGit.ReqLLMPool.reconcile(total)
     reply
+  end
+
+  # Diagnostic log for `:model_concurrency` updates (PeakHourEngine applies,
+  # CLI -c floor, dashboard saves): old vs POST-APPLICATION map (post-floor,
+  # verbatim for skip_floor) + the skip-floor flag. A "0 capacity stayed 0
+  # after peak exit" case shows up here as an old==new no-op, and the full map
+  # (model ids are the map keys) makes per-model capacity transitions visible.
+  defp log_model_concurrency_update(opts, state, {:reply, :ok, new_state}) do
+    if Keyword.has_key?(opts, :model_concurrency) do
+      Logger.info(
+        "AgentScheduler: model_concurrency updated — old=#{inspect(state.model_concurrency)} " <>
+          "new=#{inspect(new_state.model_concurrency)} " <>
+          "skip_floor=#{Keyword.get(opts, :model_concurrency_skip_floor, false)} " <>
+          "default_llm_max_concurrency=#{new_state.default_llm_max_concurrency}"
+      )
+    end
   end
 
   @impl true

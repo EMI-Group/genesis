@@ -121,6 +121,16 @@ defmodule EvoGit.AgentScheduler.Slots do
 
         {:reply, :ok, state, []}
       else
+        # 0-capacity (peak pause) requests enqueue exactly like the paused
+        # case and are granted when capacity returns — log the enqueue so a
+        # blocked-after-peak task shows the moment it queued (debug: per-agent).
+        if concurrency == 0 do
+          Logger.debug(
+            "AgentScheduler: LLM slot request ENQUEUED — agent=#{agent_id} " <>
+              "model=#{inspect(model_id)} capacity=0 (peak pause)"
+          )
+        end
+
         waiting = State.waiting_for(state, model_id)
         waiting = :queue.in({agent_id, from, nil}, waiting)
         state = State.update_waiting(state, model_id, waiting)
@@ -150,7 +160,8 @@ defmodule EvoGit.AgentScheduler.Slots do
   def handle_release_llm_slot(agent_id, %State{} = state) do
     state = remove_agent_from_llm_holders(state, agent_id)
 
-    grant_pending_llm_slots(state)
+    {state, unblocked, _sweep} = grant_pending_llm_slots(state)
+    {state, unblocked}
   end
 
   @doc """
@@ -199,7 +210,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   """
   @spec handle_retry_llm_waiting(State.t()) :: {:noreply, State.t(), [{pos_integer(), atom()}]}
   def handle_retry_llm_waiting(%State{} = state) do
-    {state, unblocked} = grant_pending_llm_slots(state)
+    {state, unblocked, _sweep} = grant_pending_llm_slots(state)
     {:noreply, state, unblocked}
   end
 
@@ -290,7 +301,7 @@ defmodule EvoGit.AgentScheduler.Slots do
     {state, _} = purge_agents_from_queues(state, MapSet.new([agent_id]))
 
     # Grant any newly-available slots to pending waiters
-    {state, llm_unblocked} = grant_pending_llm_slots(state)
+    {state, llm_unblocked, _sweep} = grant_pending_llm_slots(state)
     {state, tool_unblocked} = grant_pending_tool_slots(state)
 
     {state, llm_unblocked ++ tool_unblocked}
@@ -305,8 +316,30 @@ defmodule EvoGit.AgentScheduler.Slots do
   """
   @spec grant_pending_on_resume(State.t()) :: {State.t(), [{pos_integer(), atom()}]}
   def grant_pending_on_resume(%State{} = state) do
-    {state, llm_unblocked} = grant_pending_llm_slots(state)
+    {state, llm_unblocked, sweep} = grant_pending_llm_slots(state)
     {state, tool_unblocked} = grant_pending_tool_slots(state)
+
+    # Per-model sweep summary — the peak-exit diagnostic: capacity vs the
+    # number of queued waiters granted / still remaining. A "capacity
+    # restored but granted=0, waiting_after>0" line is exactly the "applied
+    # but queued waiter never granted" symptom (info for meaningful events,
+    # debug for empty no-op sweeps).
+    Enum.each(sweep, fn {model_id, capacity, waiting_before, granted, waiting_after} ->
+      if granted > 0 or (capacity == 0 and waiting_before > 0) do
+        Logger.info(
+          "AgentScheduler: LLM slot grant sweep (resume) — model=#{inspect(model_id)} " <>
+            "capacity=#{capacity} waiting_before=#{waiting_before} granted=#{granted} " <>
+            "waiting_after=#{waiting_after}"
+        )
+      else
+        Logger.debug(
+          "AgentScheduler: LLM slot grant sweep (resume) — model=#{inspect(model_id)} " <>
+            "capacity=#{capacity} waiting_before=#{waiting_before} granted=#{granted} " <>
+            "waiting_after=#{waiting_after}"
+        )
+      end
+    end)
+
     {state, llm_unblocked ++ tool_unblocked}
   end
 
@@ -348,6 +381,16 @@ defmodule EvoGit.AgentScheduler.Slots do
           {agent_id, _from}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
           {agent_id, _from, _backoff}, agent_ids -> not MapSet.member?(agent_ids, agent_id)
         end)
+
+      # Debug: "rejected" waiters — queued LLM requests answered
+      # {:error, :cancelled} (force-kill / graceful-cancel purge), the
+      # counterpart of the grant sweep's granted/remaining counts.
+      if removed != [] do
+        Logger.debug(
+          "AgentScheduler: purged #{length(removed)} LLM waiter(s) for model " <>
+            "#{inspect(model_id)} — agent(s) #{inspect(Enum.map(removed, &entry_agent_id/1))}"
+        )
+      end
 
       Enum.each(removed, fn
         {_agent_id, from} -> GenServer.reply(from, {:error, :cancelled})
@@ -398,7 +441,9 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   # Grants pending LLM slots across all model pools, clearing expired backoffs.
-  # Returns {state, unblocked} where unblocked is a list of {agent_id, :running}.
+  # Returns {state, unblocked, sweep} where unblocked is a list of
+  # {agent_id, :running} and sweep is a list of
+  # {model_id, capacity, waiting_before, granted, waiting_after} tuples.
   defp grant_pending_llm_slots(%State{} = state) do
     now = System.monotonic_time(:millisecond)
 
@@ -409,9 +454,16 @@ defmodule EvoGit.AgentScheduler.Slots do
       end)
 
     # Then grant from each model pool
-    Enum.reduce(State.all_model_ids(state), {state, []}, fn model_id, {acc_state, acc_updates} ->
+    Enum.reduce(State.all_model_ids(state), {state, [], []}, fn model_id,
+                                                                {acc_state, acc_updates,
+                                                                 acc_sweep} ->
+      capacity = State.concurrency_for(acc_state, model_id)
+      waiting_before = :queue.len(State.waiting_for(acc_state, model_id))
       {new_state, updates} = grant_llm_from_queue(acc_state, model_id)
-      {new_state, acc_updates ++ updates}
+      granted = length(updates)
+      waiting_after = :queue.len(State.waiting_for(new_state, model_id))
+      sweep = [{model_id, capacity, waiting_before, granted, waiting_after} | acc_sweep]
+      {new_state, acc_updates ++ updates, sweep}
     end)
   end
 
@@ -469,6 +521,13 @@ defmodule EvoGit.AgentScheduler.Slots do
           {agent_id, from, _backoff} = best
 
           GenServer.reply(from, :ok)
+
+          # Debug: per-request grant — a queued waiter finally got its slot
+          # (e.g. after peak exit). The aggregate sweep counts live in
+          # grant_pending_on_resume/1 at info; this is the per-agent event.
+          Logger.debug(
+            "AgentScheduler: granted LLM slot — agent=#{agent_id} model=#{inspect(model_id)}"
+          )
 
           # Rebuild queue: reverse eligible to forward order, prepend (skipping best) to in_backoff_rev, reverse once
           queue_rev =

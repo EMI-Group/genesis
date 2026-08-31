@@ -248,6 +248,12 @@ defmodule EvoGit.PeakHourEngine do
 
     state = %{timer_ref: nil}
 
+    # Diagnostic boot summary — makes a misconfigured profile (bad timezone,
+    # missing/odd peak_hours, unexpected peak_concurrency) visible in the very
+    # first log lines instead of surfacing only through confusing runtime
+    # behavior (e.g. a task that stays blocked after peak exit).
+    log_boot_profiles()
+
     # Kick off an immediate check. The engine is supervised AFTER the
     # scheduler (application.ex), so the scheduler is up at boot.
     Process.send(self(), :check, [])
@@ -257,16 +263,16 @@ defmodule EvoGit.PeakHourEngine do
 
   @impl true
   def handle_call(:check, _from, state) do
-    {:reply, :ok, run_check(state)}
+    {:reply, :ok, run_check(state, :manual)}
   end
 
   @impl true
   def handle_info(:check, state) do
-    {:noreply, run_check(state)}
+    {:noreply, run_check(state, :timer)}
   end
 
   def handle_info({:scheduler_config_updated, node}, state) when node == node() do
-    {:noreply, run_check(state)}
+    {:noreply, run_check(state, :broadcast)}
   end
 
   def handle_info({:scheduler_config_updated, _foreign_node}, state) do
@@ -281,7 +287,11 @@ defmodule EvoGit.PeakHourEngine do
   # map, apply it when it differs, and schedule the next wakeup. Never raises
   # and never crashes the GenServer — scheduler failures degrade to a
   # safety-net wakeup.
-  defp run_check(state) do
+  #
+  # `wake_reason` is the wakeup source (one of :boot, :timer, :broadcast,
+  # :manual) and is used for diagnostic logging ONLY — it never influences
+  # timing, the floor logic, or the applied map.
+  defp run_check(state, wake_reason) do
     # Cancel any pending timer before scheduling a fresh one — repeated
     # wakeups (e.g. broadcasts while a timer is pending) must not stack timers.
     if state.timer_ref, do: Process.cancel_timer(state.timer_ref)
@@ -289,8 +299,17 @@ defmodule EvoGit.PeakHourEngine do
 
     now = now_fun()
     utc_now = utc_now_fun()
+    scheduler_up = scheduler_up?()
 
-    if scheduler_up?() do
+    # Every wakeup logs WHY we woke and the clocks the engine saw — the
+    # first thing to check when a task stays blocked after a peak should have
+    # ended (distinguishes "engine never woke" from "woke but didn't apply").
+    Logger.info(
+      "PeakHourEngine: wakeup reason=#{wake_reason} now=#{inspect(now)} " <>
+        "utc_now=#{inspect(utc_now)} scheduler_up=#{scheduler_up}"
+    )
+
+    if scheduler_up do
       profiles = safe_get_config(:model_profiles, [])
 
       if is_list(profiles) and profiles != [] do
@@ -299,6 +318,11 @@ defmodule EvoGit.PeakHourEngine do
         current = safe_get_config(:model_concurrency, %{})
 
         if effective != current do
+          Logger.info(
+            "PeakHourEngine: decision=applying effective=#{inspect(effective)} " <>
+              "current=#{inspect(current)}"
+          )
+
           case safe_update_config(
                  model_concurrency: effective,
                  model_concurrency_skip_floor: true
@@ -314,6 +338,13 @@ defmodule EvoGit.PeakHourEngine do
             :scheduler_down ->
               Logger.warning("PeakHourEngine: scheduler unavailable, skipping concurrency apply")
           end
+        else
+          # The no-op branch previously logged NOTHING — this is what makes a
+          # "woke but decided not to apply" distinguishable from "never woke".
+          Logger.info(
+            "PeakHourEngine: decision=unchanged effective=#{inspect(effective)} " <>
+              "current=#{inspect(current)} (no apply)"
+          )
         end
 
         windows_tz_pairs =
@@ -325,6 +356,7 @@ defmodule EvoGit.PeakHourEngine do
           end)
 
         ms = next_wakeup_ms_for(windows_tz_pairs, now, utc_now)
+        log_next_wakeup(profiles, ms, now, utc_now)
         %{state | timer_ref: Process.send_after(self(), :check, ms)}
       else
         schedule_safety_net(state)
@@ -334,7 +366,40 @@ defmodule EvoGit.PeakHourEngine do
     end
   end
 
+  # Logs the computed next-wakeup delay and — for each profile with validated
+  # peak windows — its next in-peak transition wall-clock time (nil when the
+  # pure module computed none). A "next_transition returned 09:00 tomorrow
+  # instead of 18:00 today" bug is visible here at a glance, and the 6h
+  # safety-net fallback is explicitly flagged.
+  defp log_next_wakeup(profiles, ms, now, utc_now) do
+    transitions =
+      Enum.flat_map(profiles, fn p ->
+        case PeakHours.validate_windows(Map.get(p, :peak_hours)) do
+          {:ok, ws} when ws != [] ->
+            id = Map.get(p, :id, "default")
+            tz = profile_timezone(p)
+            [{id, tz, PeakHours.next_transition(ws, peak_wall_clock(p, now, utc_now))}]
+
+          _ ->
+            []
+        end
+      end)
+
+    Logger.info(
+      "PeakHourEngine: next wakeup in #{ms}ms" <>
+        if(ms >= @max_sleep_ms,
+          do: " (6h safety-net fallback — no transition computed)",
+          else: ""
+        ) <>
+        " transitions=#{inspect(transitions)}"
+    )
+  end
+
   defp schedule_safety_net(state) do
+    Logger.info(
+      "PeakHourEngine: scheduling 6h safety-net wakeup (#{@max_sleep_ms}ms) — no profiles / scheduler down"
+    )
+
     %{state | timer_ref: Process.send_after(self(), :check, @max_sleep_ms)}
   end
 
@@ -346,6 +411,27 @@ defmodule EvoGit.PeakHourEngine do
   defp utc_now_fun do
     fun = Application.get_env(:evo_git, :peak_hours_utc_now_fun, &DateTime.utc_now/0)
     fun.()
+  end
+
+  # One-shot boot diagnostic: summarizes every watched model profile (id,
+  # concurrency, peak_concurrency, peak_hours windows, timezone) so a
+  # misconfigured profile is visible immediately. Runs in init via the safe
+  # config read (scheduler is up at boot; a missing scheduler degrades to []).
+  defp log_boot_profiles do
+    profiles = safe_get_config(:model_profiles, [])
+
+    summary =
+      Enum.map(profiles, fn p ->
+        %{
+          id: Map.get(p, :id, "default"),
+          concurrency: Map.get(p, :concurrency) || Map.get(p, "concurrency"),
+          peak_concurrency: Map.get(p, :peak_concurrency) || Map.get(p, "peak_concurrency"),
+          peak_hours: Map.get(p, :peak_hours) || Map.get(p, "peak_hours"),
+          timezone: profile_timezone(p)
+        }
+      end)
+
+    Logger.info("PeakHourEngine: starting — watched profiles: #{inspect(summary)}")
   end
 
   # Resolves a profile's effective concurrency at its own wall clock: tz
