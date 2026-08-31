@@ -38,82 +38,136 @@ defmodule EvoDashWeb.HomeLive do
       guide={@guide}
     >
       <div class="flex flex-col h-full min-h-0 max-w-3xl mx-auto w-full">
-        <!-- Header row: title + subtitle left; New chat / Stop right -->
+        <!-- Header: slim top bar with title/subtitle left, one ghost New chat button right -->
         <div class="shrink-0 flex items-center justify-between gap-3 px-4 pt-4 pb-2">
           <div class="min-w-0">
-            <h1 class="text-lg font-bold truncate">
+            <h1 class="text-base font-semibold truncate">
               <%!-- zh_CN: "与 Genesis 对话" --%>{gettext("Chat with Genesis")}
             </h1>
-            <p class="text-sm text-base-content/50 truncate">
-              <%!-- zh_CN: "向 Genesis 提问、阅读源码、控制任务或获得仪表盘引导" --%>{gettext("Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard.")}
+            <p class="text-xs text-base-content/50 truncate hidden sm:block">
+              <%!-- zh_CN: "向 Genesis 提问、阅读源码、控制任务或获得仪表盘引导" --%>{gettext(
+                "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
+              )}
             </p>
           </div>
-          <div class="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              phx-click="new_chat"
-              disabled={@chat_status != :idle}
-              class="btn btn-sm btn-ghost gap-1 disabled:opacity-50"
-            >
-              <.icon name="hero-plus" class="size-4" />
-              <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
-            </button>
-            <button
-              type="button"
-              phx-click="stop"
-              disabled={@chat_status != :running}
-              class="btn btn-sm btn-ghost gap-1 text-error disabled:opacity-50"
-            >
-              <.icon name="hero-stop" class="size-4" />
-              <%!-- zh_CN: "停止" --%>{gettext("Stop")}
-            </button>
-          </div>
+          <button
+            type="button"
+            phx-click="new_chat"
+            disabled={@chat_status != :idle}
+            class="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0"
+          >
+            <.icon name="hero-plus" class="size-4" />
+            <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
+          </button>
         </div>
 
-        <!-- Messages container -->
+        <!-- Messages container (the AgentHistoryAutoScroll hook scrolls this element) -->
         <div
           id="chat-messages"
           phx-hook="AgentHistoryAutoScroll"
-          class="flex-1 min-h-0 overflow-y-auto px-4 py-4"
+          class="flex-1 min-h-0 overflow-y-auto scrollbar-thin"
         >
           <%= if @transcript == [] do %>
-            <!-- Empty state -->
-            <div class="h-full flex flex-col items-center justify-center gap-2 text-center px-6">
-              <.icon name="hero-chat-bubble-left-right" class="size-10 text-base-content/30" />
-              <h2 class="text-base font-semibold text-base-content/70">
+            <!-- Empty state: logo mark, greeting, and suggestion chips -->
+            <div class="h-full min-h-0 flex flex-col items-center justify-center gap-3 text-center px-6 pb-10">
+              <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
+              <img
+                src={~p"/images/logo.svg"}
+                class="h-14 w-auto dark:hidden"
+                alt={gettext("EvoX Genesis")}
+              />
+              <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
+              <img
+                src={~p"/images/logo-alt.svg"}
+                class="h-14 w-auto hidden dark:block"
+                alt={gettext("EvoX Genesis")}
+              />
+              <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/40">
                 <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
-              </h2>
-              <p class="text-sm text-base-content/50 max-w-md">
-                <%!-- zh_CN: "与 Genesis 助手聊天：询问代码库、探索源码、控制任务，或获得仪表盘引导" --%>{gettext("Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard.")}
               </p>
+              <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-base-content">
+                <%!-- zh_CN: "今天有什么可以帮你的？" --%>{gettext(
+                  "How can I help you today?"
+                )}
+              </h2>
+              <p class="max-w-md text-sm text-base-content/50">
+                <%!-- zh_CN: "与 Genesis 助手聊天：询问代码库、探索源码、控制任务，或获得仪表盘引导" --%>{gettext(
+                  "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
+                )}
+              </p>
+              <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
+                <%!-- zh_CN: "解释 Genesis 的架构" --%>
+                <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
+                  <.icon
+                    name="hero-light-bulb"
+                    class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+                  />
+                </.suggestion_chip>
+                <%!-- zh_CN: "任务取消是如何工作的？" --%>
+                <.suggestion_chip message={gettext("How does task cancellation work?")}>
+                  <.icon
+                    name="hero-magnifying-glass"
+                    class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+                  />
+                </.suggestion_chip>
+                <%!-- zh_CN: "你能帮我做什么？" --%>
+                <.suggestion_chip message={gettext("What can you help me with?")}>
+                  <.icon
+                    name="hero-puzzle-piece"
+                    class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+                  />
+                </.suggestion_chip>
+                <%!-- zh_CN: "引导我使用仪表盘" --%>
+                <.suggestion_chip message={gettext("Guide me through the dashboard")}>
+                  <.icon
+                    name="hero-map"
+                    class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+                  />
+                </.suggestion_chip>
+              </div>
             </div>
           <% else %>
-            <div class="space-y-4">
+            <div class="px-4 py-6 pb-8 space-y-6">
               <%= for entry <- @transcript do %>
                 <div id={"chat-entry-" <> entry.id} class={bubble_wrapper_class(entry)}>
                   <%= case entry.role do %>
                     <% :user -> %>
-                      <div class="max-w-[80%] rounded-lg rounded-br-sm bg-primary text-primary-content px-3 py-2 text-sm whitespace-pre-wrap">
-                        <%= entry.text %>
+                      <div class="max-w-[80%] sm:max-w-[75%] rounded-3xl rounded-br-md bg-primary text-primary-content px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words shadow-sm">
+                        {entry.text}
                       </div>
                     <% :assistant -> %>
-                      <div class="max-w-[80%] rounded-lg rounded-bl-sm bg-base-200 px-3 py-2 text-sm whitespace-pre-wrap">
-                        <%= if entry.streaming and entry.text == "" do %>
-                          <span class="inline-flex gap-1 py-1">
-                            <span class="size-1.5 rounded-full bg-base-content/50 animate-bounce" style="animation-delay:0ms"></span>
-                            <span class="size-1.5 rounded-full bg-base-content/50 animate-bounce" style="animation-delay:150ms"></span>
-                            <span class="size-1.5 rounded-full bg-base-content/50 animate-bounce" style="animation-delay:300ms"></span>
-                          </span>
-                        <% else %>
-                          <%= entry.text %>
-                          <%= if entry.streaming do %>
-                            <span class="inline-block size-1.5 rounded-full bg-base-content/50 animate-pulse ml-1 align-middle"></span>
+                      <div class="flex justify-start gap-3 w-full">
+                        <div class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-base-200 ring-1 ring-base-300/60">
+                          <.icon name="hero-sparkles" class="size-3.5 text-primary" />
+                        </div>
+                        <div class="min-w-0 flex-1 pt-0.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
+                          <%= if entry.streaming and entry.text == "" do %>
+                            <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2.5">
+                              <span
+                                class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
+                                style="animation-delay:0ms"
+                              ></span>
+                              <span
+                                class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
+                                style="animation-delay:150ms"
+                              ></span>
+                              <span
+                                class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
+                                style="animation-delay:300ms"
+                              ></span>
+                            </span>
+                          <% else %>
+                            {entry.text}
+                            <%= if entry.streaming do %>
+                              <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
+                            <% end %>
                           <% end %>
-                        <% end %>
+                        </div>
                       </div>
                     <% :error -> %>
-                      <div class="max-w-[80%] rounded-lg border border-error/30 bg-error/10 text-error px-3 py-2 text-sm whitespace-pre-wrap">
-                        <%= entry.text %>
+                      <div class="flex items-start gap-2 rounded-xl border border-error/25 bg-error/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-error whitespace-pre-wrap break-words">
+                        <.icon name="hero-exclamation-circle" class="mt-0.5 size-4 shrink-0" />
+                        {entry.text}
                       </div>
                   <% end %>
                 </div>
@@ -122,14 +176,14 @@ defmodule EvoDashWeb.HomeLive do
           <% end %>
         </div>
 
-        <!-- Input -->
-        <form
-          id="chat-form"
-          phx-submit="send_message"
-          phx-change="chat_input"
-          class="shrink-0 border-t border-base-200 p-4"
-        >
-          <div class="flex items-end gap-2">
+        <!-- Composer: pinned bottom, outside the messages scroller -->
+        <div class="shrink-0 px-4 pt-2 pb-3 bg-gradient-to-t from-base-100 from-60% to-transparent">
+          <form
+            id="chat-form"
+            phx-submit="send_message"
+            phx-change="chat_input"
+            class="help-composer flex items-end gap-2"
+          >
             <textarea
               name="message"
               value={@chat_draft}
@@ -138,18 +192,41 @@ defmodule EvoDashWeb.HomeLive do
               disabled={@chat_status != :idle}
               placeholder={gettext("Message Genesis…")}
               rows="1"
-              class="textarea textarea-bordered textarea-sm w-full min-h-[44px] max-h-40 resize-y rounded-lg bg-base-100 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary disabled:opacity-60"
+              class="w-full min-h-[46px] max-h-40 resize-y bg-transparent px-4 py-3 text-[15px] leading-relaxed placeholder:text-base-content/40 focus:outline-none disabled:opacity-50"
             ></textarea>
+            <!-- Send → Stop morph: exactly one button is visible at a time; both
+                 stay in the DOM (the hidden one disabled) so the Stop button's
+                 presence/disabled state remains assertable on idle. -->
             <button
               type="submit"
               disabled={@chat_status != :idle}
-              class="btn btn-primary btn-sm shrink-0 gap-1 disabled:opacity-60"
+              class={"help-send-btn flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status == :running, do: "hidden", else: "")}
             >
               <.icon name="hero-paper-airplane" class="size-4" />
-              <%!-- zh_CN: "发送" --%>{gettext("Send")}
+              <span class="sr-only"><%!-- zh_CN: "发送" --%>{gettext("Send")}</span>
             </button>
+            <button
+              type="button"
+              phx-click="stop"
+              disabled={@chat_status != :running}
+              class={"flex size-9 shrink-0 items-center justify-center rounded-full bg-base-content text-base-100 transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status != :running, do: "hidden", else: "")}
+            >
+              <.icon name="hero-stop" class="size-4" />
+              <span class="sr-only"><%!-- zh_CN: "停止" --%>{gettext("Stop")}</span>
+            </button>
+          </form>
+          <div class="mt-1.5 text-center text-[11px] text-base-content/40">
+            <%!-- zh_CN: "回车发送 · Shift+回车换行" --%>{gettext(
+              "Enter to send · Shift+Enter for a new line"
+            )}
+            <%= if @chat_status == :idle and @transcript == [] do %>
+              <br />
+              <%!-- zh_CN: "Genesis 可能会出错，请核实重要信息。" --%>{gettext(
+                "Genesis can make mistakes. Verify important information."
+              )}
+            <% end %>
           </div>
-        </form>
+        </div>
       </div>
     </EvoDashWeb.Layouts.app>
     """
@@ -695,5 +772,29 @@ defmodule EvoDashWeb.HomeLive do
       :user -> "flex justify-end"
       _ -> "flex justify-start"
     end
+  end
+
+  attr(:message, :string,
+    required: true,
+    doc: "Translated suggestion text — used as both the visible label and phx-value-message"
+  )
+
+  slot(:inner_block, required: true, doc: "The suggestion chip's icon")
+
+  # Empty-state suggestion chip: a button that sends the message as a chat
+  # prompt. The root button keeps the `group` class so the slot icon's
+  # `group-hover:` styles keep working.
+  defp suggestion_chip(assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="send_message"
+      phx-value-message={@message}
+      class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
+    >
+      {render_slot(@inner_block)}
+      {@message}
+    </button>
+    """
   end
 end

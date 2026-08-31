@@ -2045,3 +2045,28 @@ button, a, input, textarea, select, summary,
   color: color-mix(in oklab, var(--color-warning) 80%, var(--color-base-100));
   pointer-events: none;
 }
+
+/* === Help Chat Page (GET /help) === */
+/* Hand-crafted ChatGPT-style composer (no DaisyUI): rounded-3xl input
+   container with a subtle border + soft shadow that gains a gentle primary
+   focus ring. Colors come exclusively from theme tokens via color-mix. */
+.help-composer {
+  padding: 0 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  border-radius: 1.5rem;
+  background-color: color-mix(in oklab, var(--color-base-100) 92%, var(--color-base-200));
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 6%, transparent),
+    0 8px 24px -12px color-mix(in oklab, var(--color-base-content) 12%, transparent);
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+.help-composer:focus-within {
+  border-color: color-mix(in oklch, var(--color-primary) 55%, transparent);
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 6%, transparent),
+    0 8px 24px -12px color-mix(in oklab, var(--color-base-content) 12%, transparent),
+    0 0 0 3px color-mix(in oklch, var(--color-primary) 12%, transparent);
+}
+@keyframes help-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.help-caret { animation: help-blink 1.1s ease-in-out infinite; }
