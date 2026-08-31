@@ -2216,7 +2216,10 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   defp normalize_unc_root(path) do
-    normalized = String.replace(path, "\\", "/") |> String.trim_trailing("/")
+    normalized =
+      path
+      |> EvoGit.Platform.normalize_separators()
+      |> EvoGit.Platform.trim_trailing_separators()
 
     if normalized == "", do: "//", else: normalized
   end
