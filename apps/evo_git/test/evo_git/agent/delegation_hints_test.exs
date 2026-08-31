@@ -39,7 +39,10 @@ defmodule EvoGit.Agent.DelegationHintsTest do
 
     test "has correct type and validation" do
       schema =
-        Enum.find(Schema.all_schemas(), &(&1.key_path == [:scheduler, :delegation_hint_threshold]))
+        Enum.find(
+          Schema.all_schemas(),
+          &(&1.key_path == [:scheduler, :delegation_hint_threshold])
+        )
 
       assert schema.type == :pos_integer
       assert schema.validation == [min: 1]
@@ -47,7 +50,10 @@ defmodule EvoGit.Agent.DelegationHintsTest do
 
     test "is in scheduler category" do
       schema =
-        Enum.find(Schema.all_schemas(), &(&1.key_path == [:scheduler, :delegation_hint_threshold]))
+        Enum.find(
+          Schema.all_schemas(),
+          &(&1.key_path == [:scheduler, :delegation_hint_threshold])
+        )
 
       assert schema.category == :scheduler
     end
@@ -178,12 +184,77 @@ defmodule EvoGit.Agent.DelegationHintsTest do
 
     test "valid relative file path still produces a hint target (regression)" do
       assert ["./src"] =
-               HintAgent.test_file_path_to_child_dir("./src/components/button.tsx", "./", @repo_path)
+               HintAgent.test_file_path_to_child_dir(
+                 "./src/components/button.tsx",
+                 "./",
+                 @repo_path
+               )
     end
 
     test "valid relative path under non-root node still produces a hint target" do
       assert ["./src/components"] =
-               HintAgent.test_path_to_child_dir("./src/components/widget.tsx", "./src", @repo_path)
+               HintAgent.test_path_to_child_dir(
+                 "./src/components/widget.tsx",
+                 "./src",
+                 @repo_path
+               )
+    end
+  end
+
+  # ── Own-node files must NOT produce delegation hints ──────────────────────
+  #
+  # path_to_child_dir/3 (and file_path_to_child_dir/3, which delegates to it)
+  # must track only STRICT children of the agent's assigned node. Editing a
+  # file that lives directly inside the agent's own node directory is normal
+  # work, not delegation-worthy — and it must never render a malformed child
+  # path like "./tests/backends/." (trailing "/.").
+
+  describe "own-node files produce no delegation hint" do
+    test "dir equal to own node returns [] (non-root)" do
+      assert [] =
+               HintAgent.test_path_to_child_dir(
+                 "./tests/backends",
+                 "./tests/backends",
+                 @repo_path
+               )
+    end
+
+    test "file directly inside own node returns [] (reported scenario)" do
+      assert [] =
+               HintAgent.test_file_path_to_child_dir(
+                 "./tests/backends/test_iree_random_algorithms_parity.py",
+                 "./tests/backends",
+                 @repo_path
+               )
+    end
+
+    test "extract_child_paths with write_file inside own node returns []" do
+      args = %{"file_path" => "./tests/backends/foo.py"}
+
+      assert [] =
+               DelegationHints.extract_child_paths(
+                 "write_file",
+                 args,
+                 "./tests/backends",
+                 @repo_path
+               )
+    end
+
+    test "extract_first_segment('./.') returns [] (no malformed root child)" do
+      assert [] = DelegationHints.extract_first_segment("./.")
+    end
+
+    test "extract_first_segment_from_remainder('.', node) returns []" do
+      assert [] = DelegationHints.extract_first_segment_from_remainder(".", "./tests/backends")
+    end
+
+    test "nested child under own node still produces a hint (regression)" do
+      assert ["./tests/backends/sub"] =
+               HintAgent.test_file_path_to_child_dir(
+                 "./tests/backends/sub/foo.py",
+                 "./tests/backends",
+                 @repo_path
+               )
     end
   end
 
