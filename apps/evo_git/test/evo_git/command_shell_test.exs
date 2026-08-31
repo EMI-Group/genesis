@@ -18,23 +18,23 @@ defmodule EvoGit.CommandShellTest do
 
   # The full registered command catalog (sorted, as returned by list_commands/0).
   @all_commands ~w(
-    guide.show
-    project.list
-    system.info
-    task.cancel
-    task.delete
-    task.force_kill
-    task.get
-    task.investigate
-    task.list
-    task.start
+    CancelTask.cancel_task
+    DeleteTask.delete_task
+    ForceKillTask.force_kill_task
+    GetTask.get_task
+    GuideUser.guide_user
+    ListRecentProjects.list_recent_projects
+    ListTasks.list_tasks
+    SpawnInvestigator.spawn_investigator
+    StartTask.start_task
+    SystemInfo.system_info
   )
 
   describe "execute/1 - parsing" do
     test "positional tokens bind to declared positional args" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("task.get #{task.id}")
+      assert {:ok, output} = CommandShell.execute("GetTask.get_task #{task.id}")
       assert output =~ task.id
       assert output =~ "status: pending"
       assert output =~ "objective: hello"
@@ -43,42 +43,45 @@ defmodule EvoGit.CommandShellTest do
     test "key=value tokens bind to declared kv args" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("task.get task_id=#{task.id}")
+      assert {:ok, output} = CommandShell.execute("GetTask.get_task task_id=#{task.id}")
       assert output =~ task.id
       assert output =~ "status: pending"
     end
 
     test "double-quoted tokens preserve spaces" do
       # Quoted tokens with spaces (and an escaped quote) parse as one argument.
-      assert {:ok, output} = CommandShell.execute(~s(task.get "some id"))
+      assert {:ok, output} = CommandShell.execute(~s(GetTask.get_task "some id"))
       assert output == "Task some id not found."
 
       assert {:ok, output} =
-               CommandShell.execute(~s(task.investigate "./path with spaces" "objective here"))
+               CommandShell.execute(
+                 ~s(SpawnInvestigator.spawn_investigator "./path with spaces" "objective here")
+               )
 
       assert output =~ "not available in this release"
     end
 
     test "unknown keys are treated as positional tokens, not kv pairs" do
-      # `hello` is not a declared arg key for task.get, so `hello=world` stays a
-      # positional token and binds to task_id verbatim.
-      assert {:ok, output} = CommandShell.execute("task.get hello=world")
+      # `hello` is not a declared arg key for GetTask.get_task, so `hello=world`
+      # stays a positional token and binds to task_id verbatim.
+      assert {:ok, output} = CommandShell.execute("GetTask.get_task hello=world")
       assert output == "Task hello=world not found."
     end
 
     test "duplicate key=value arguments are rejected" do
-      assert CommandShell.execute("task.get task_id=a task_id=b") ==
-               {:error, "Duplicate argument 'task_id' for 'task.get'."}
+      assert CommandShell.execute("GetTask.get_task task_id=a task_id=b") ==
+               {:error, "Duplicate argument 'task_id' for 'GetTask.get_task'."}
     end
 
     test "extra positional arguments are rejected" do
-      assert CommandShell.execute("task.get a b") ==
-               {:error, "Too many positional arguments for 'task.get': expected at most 1."}
+      assert CommandShell.execute("GetTask.get_task a b") ==
+               {:error,
+                "Too many positional arguments for 'GetTask.get_task': expected at most 1."}
     end
 
     test "missing required arguments are rejected" do
-      assert CommandShell.execute("task.get") ==
-               {:error, "Missing required argument 'task_id' for 'task.get'."}
+      assert CommandShell.execute("GetTask.get_task") ==
+               {:error, "Missing required argument 'task_id' for 'GetTask.get_task'."}
     end
 
     test "unknown commands are rejected with a help hint" do
@@ -96,7 +99,7 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "unterminated double quotes are rejected" do
-      assert CommandShell.execute(~s(task.get "abc)) ==
+      assert CommandShell.execute(~s(GetTask.get_task "abc)) ==
                {:error, "Unterminated double quote in command."}
     end
 
@@ -141,7 +144,7 @@ defmodule EvoGit.CommandShellTest do
       # Exactly 40 tokens: at the exact token-count cap the check passes and
       # dispatch runs — the command's own argument validation rejects the extra
       # positionals.
-      command = Enum.join(["task.get" | List.duplicate("a", 39)], " ")
+      command = Enum.join(["GetTask.get_task" | List.duplicate("a", 39)], " ")
 
       assert {:error, message} = CommandShell.execute(command)
       assert message =~ "Too many positional arguments"
@@ -161,12 +164,12 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "help <command> returns the per-command detail" do
-      assert {:ok, output} = CommandShell.execute("help task.get")
-      assert output =~ "task.get"
-      assert output =~ "Usage: task.get <task_id>"
+      assert {:ok, output} = CommandShell.execute("help GetTask.get_task")
+      assert output =~ "GetTask.get_task"
+      assert output =~ "Usage: GetTask.get_task <task_id>"
 
-      assert {:ok, output} = CommandShell.execute("help task.start")
-      assert output =~ "Usage: task.start <task_type>"
+      assert {:ok, output} = CommandShell.execute("help StartTask.start_task")
+      assert output =~ "Usage: StartTask.start_task <task_type>"
     end
 
     test "help with an unknown command path returns an error" do
@@ -176,7 +179,7 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "help accepts at most one command path" do
-      assert CommandShell.execute("help task.get task.list") ==
+      assert CommandShell.execute("help GetTask.get_task ListTasks.list_tasks") ==
                {:error, "help accepts at most one command path argument."}
     end
   end
@@ -188,7 +191,7 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "help/1 returns a detail tuple or an error tuple" do
-      assert {:ok, detail} = CommandShell.help("task.list")
+      assert {:ok, detail} = CommandShell.help("ListTasks.list_tasks")
       assert detail =~ "statuses"
 
       assert CommandShell.help("nope") ==
@@ -213,27 +216,27 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "enum arguments reject invalid values listing the valid ones" do
-      assert CommandShell.execute("task.start bogus") ==
+      assert CommandShell.execute("StartTask.start_task bogus") ==
                {:error,
-                "Invalid value 'bogus' for argument 'task_type' of 'task.start'; valid values: genesis, evolve, reflect, extract_skills."}
+                "Invalid value 'bogus' for argument 'task_type' of 'StartTask.start_task'; valid values: genesis, evolve, reflect, extract_skills."}
 
-      assert CommandShell.execute("task.list statuses=bogus") ==
+      assert CommandShell.execute("ListTasks.list_tasks statuses=bogus") ==
                {:error,
-                "Invalid value 'bogus' for argument 'statuses' of 'task.list'; valid values: pending, running, finalizing, completed, failed, cancelled, cancelling."}
+                "Invalid value 'bogus' for argument 'statuses' of 'ListTasks.list_tasks'; valid values: pending, running, finalizing, completed, failed, cancelled, cancelling."}
     end
 
     test "bool arguments reject invalid values" do
-      assert CommandShell.execute("guide.show m dismissible=maybe") ==
+      assert CommandShell.execute("GuideUser.guide_user m dismissible=maybe") ==
                {:error,
-                "Invalid boolean value 'maybe' for argument 'dismissible' of 'guide.show'; use 'true' or 'false'."}
+                "Invalid boolean value 'maybe' for argument 'dismissible' of 'GuideUser.guide_user'; use 'true' or 'false'."}
     end
   end
 
-  describe "execute/1 - task.list" do
+  describe "execute/1 - ListTasks.list_tasks" do
     test "lists seeded tasks with id, status, type, project path, and objective" do
       task = seed_task!(opts: [path: "/tmp/test", objective: "hello"], project_path: "/tmp/test")
 
-      assert {:ok, output} = CommandShell.execute("task.list")
+      assert {:ok, output} = CommandShell.execute("ListTasks.list_tasks")
       assert output =~ task.id
       assert output =~ "status: pending"
       assert output =~ "type: genesis"
@@ -244,24 +247,26 @@ defmodule EvoGit.CommandShellTest do
     test "filters by statuses= key=value argument" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("task.list statuses=pending")
+      assert {:ok, output} = CommandShell.execute("ListTasks.list_tasks statuses=pending")
       assert output =~ task.id
 
-      assert {:ok, output} = CommandShell.execute("task.list statuses=completed,failed")
+      assert {:ok, output} =
+               CommandShell.execute("ListTasks.list_tasks statuses=completed,failed")
+
       assert output == "No tasks found."
     end
 
     test "returns No tasks found for an empty registry" do
-      assert {:ok, output} = CommandShell.execute("task.list")
+      assert {:ok, output} = CommandShell.execute("ListTasks.list_tasks")
       assert output == "No tasks found."
     end
   end
 
-  describe "execute/1 - task.get" do
+  describe "execute/1 - GetTask.get_task" do
     test "returns formatted task details" do
       task = seed_task!(opts: [path: "/tmp/test", objective: "hello"])
 
-      assert {:ok, output} = CommandShell.execute("task.get #{task.id}")
+      assert {:ok, output} = CommandShell.execute("GetTask.get_task #{task.id}")
       assert output =~ task.id
       assert output =~ "status: pending"
       assert output =~ "type: genesis"
@@ -269,15 +274,15 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "returns not found for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("task.get ghost")
+      assert {:ok, output} = CommandShell.execute("GetTask.get_task ghost")
       assert output == "Task ghost not found."
     end
   end
 
-  describe "execute/1 - task.start" do
+  describe "execute/1 - StartTask.start_task" do
     test "starts a reflect task and returns the new task id" do
       without_model_profiles(fn ->
-        assert {:ok, output} = CommandShell.execute(~s(task.start reflect "hi"))
+        assert {:ok, output} = CommandShell.execute(~s(StartTask.start_task reflect "hi"))
 
         assert output =~ "started (type: reflect)"
         assert output =~ "Objective: hi"
@@ -293,46 +298,46 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "rejects an unknown task type before calling the registry" do
-      assert {:error, message} = CommandShell.execute("task.start bogus")
+      assert {:error, message} = CommandShell.execute("StartTask.start_task bogus")
       assert message =~ "valid values: genesis, evolve, reflect, extract_skills"
     end
   end
 
-  describe "execute/1 - task.cancel" do
+  describe "execute/1 - CancelTask.cancel_task" do
     test "gracefully cancels a pending task and returns the confirmation" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("task.cancel #{task.id}")
+      assert {:ok, output} = CommandShell.execute("CancelTask.cancel_task #{task.id}")
       assert output == "Task #{task.id} cancellation requested (graceful)."
       assert TaskRegistry.get_task(task.id).status == :cancelled
     end
 
     test "returns an error for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("task.cancel ghost")
+      assert {:ok, output} = CommandShell.execute("CancelTask.cancel_task ghost")
       assert output == "Error cancelling task ghost: task not found"
     end
   end
 
-  describe "execute/1 - task.force_kill" do
+  describe "execute/1 - ForceKillTask.force_kill_task" do
     test "force-kills a running task and returns the confirmation" do
       {task_id, _wrapper} = seed_running_task_with_wrapper!()
 
-      assert {:ok, output} = CommandShell.execute("task.force_kill #{task_id}")
+      assert {:ok, output} = CommandShell.execute("ForceKillTask.force_kill_task #{task_id}")
       assert output == "Task #{task_id} force-killed."
       assert TaskRegistry.get_task(task_id).status == :failed
     end
 
     test "returns an error for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("task.force_kill ghost")
+      assert {:ok, output} = CommandShell.execute("ForceKillTask.force_kill_task ghost")
       assert output == "Error force-killing task ghost: task not found"
     end
   end
 
-  describe "execute/1 - task.delete" do
+  describe "execute/1 - DeleteTask.delete_task" do
     test "deletes a task and returns the confirmation" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("task.delete #{task.id}")
+      assert {:ok, output} = CommandShell.execute("DeleteTask.delete_task #{task.id}")
       assert output == "Task #{task.id} deleted."
 
       # delete_task/1 is a fire-and-forget cast; a call syncs the mailbox so the
@@ -342,17 +347,19 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "delete_task is a cast, so it reports deleted even for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("task.delete ghost")
+      assert {:ok, output} = CommandShell.execute("DeleteTask.delete_task ghost")
       assert output == "Task ghost deleted."
     end
   end
 
-  describe "execute/1 - guide.show" do
+  describe "execute/1 - GuideUser.guide_user" do
     test "broadcasts a guide on the guides topic and returns a confirmation" do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "guides")
 
       assert {:ok, output} =
-               CommandShell.execute("guide.show \"m\" page=/tasks selector=#x dismissible=true")
+               CommandShell.execute(
+                 "GuideUser.guide_user \"m\" page=/tasks selector=#x dismissible=true"
+               )
 
       assert output == "Guide shown to user: m"
 
@@ -369,16 +376,18 @@ defmodule EvoGit.CommandShellTest do
     test "dismissible defaults to true when absent" do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "guides")
 
-      assert {:ok, _output} = CommandShell.execute("guide.show hello")
+      assert {:ok, _output} = CommandShell.execute("GuideUser.guide_user hello")
 
       assert_receive {:guide_updated, _guide_id, guide_map, _node}
       assert guide_map.dismissible == true
     end
   end
 
-  describe "execute/1 - task.investigate" do
+  describe "execute/1 - SpawnInvestigator.spawn_investigator" do
     test "returns the v1 placeholder message (does NOT spawn)" do
-      assert {:ok, output} = CommandShell.execute("task.investigate ./ investigate")
+      assert {:ok, output} =
+               CommandShell.execute("SpawnInvestigator.spawn_investigator ./ investigate")
+
       assert output =~ "not available in this release"
       assert output =~ "future release"
       assert output =~ "read-only"
@@ -386,9 +395,9 @@ defmodule EvoGit.CommandShellTest do
     end
   end
 
-  describe "execute/1 - project.list" do
+  describe "execute/1 - ListRecentProjects.list_recent_projects" do
     test "returns No recent projects found for an empty registry" do
-      assert {:ok, output} = CommandShell.execute("project.list")
+      assert {:ok, output} = CommandShell.execute("ListRecentProjects.list_recent_projects")
       assert output == "No recent projects found."
     end
 
@@ -406,16 +415,16 @@ defmodule EvoGit.CommandShellTest do
 
       # list_recent_projects/0 reads LIVE from the Store, so direct Store
       # seeding is visible — same idiom as seed_task!.
-      assert {:ok, output} = CommandShell.execute("project.list")
+      assert {:ok, output} = CommandShell.execute("ListRecentProjects.list_recent_projects")
       assert output =~ "Project A"
       assert output =~ "/proj/a"
       assert output =~ DateTime.to_iso8601(last_opened)
     end
   end
 
-  describe "execute/1 - system.info" do
+  describe "execute/1 - SystemInfo.system_info" do
     test "returns a multi-line key: value report with all expected fields" do
-      assert {:ok, output} = CommandShell.execute("system.info")
+      assert {:ok, output} = CommandShell.execute("SystemInfo.system_info")
 
       assert output =~ "os:"
       assert output =~ "architecture:"

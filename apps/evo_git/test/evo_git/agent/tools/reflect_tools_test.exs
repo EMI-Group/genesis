@@ -277,12 +277,15 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       Process.put(:repo_less, true)
 
       try do
-        # project.list (the old list_recent_projects tool) is a read/control
-        # tool — it must not be blocked by the repo-less write guard. It is
-        # routed through the single run_command shell tool, which is
-        # deliberately NOT in @write_tools.
-        assert EvoGit.Agent.Tools.execute("run_command", %{"command" => "project.list"}, tmp_dir) ==
-                 "No recent projects found."
+        # ListRecentProjects.list_recent_projects (the old list_recent_projects
+        # tool) is a read/control tool — it must not be blocked by the repo-less
+        # write guard. It is routed through the single run_command shell tool,
+        # which is deliberately NOT in @write_tools.
+        assert EvoGit.Agent.Tools.execute(
+                 "run_command",
+                 %{"command" => "ListRecentProjects.list_recent_projects"},
+                 tmp_dir
+               ) == "No recent projects found."
       after
         Process.delete(:repo_less)
       end
@@ -310,10 +313,16 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       Process.put(:repo_less, true)
 
       try do
-        # system.info (the old system_info tool) is a read-only,
+        # SystemInfo.system_info (the old system_info tool) is a read-only,
         # dependency-free command — it must not be blocked by the repo-less
         # write guard. Routed through the run_command shell tool.
-        output = EvoGit.Agent.Tools.execute("run_command", %{"command" => "system.info"}, tmp_dir)
+        output =
+          EvoGit.Agent.Tools.execute(
+            "run_command",
+            %{"command" => "SystemInfo.system_info"},
+            tmp_dir
+          )
+
         assert output =~ "os:"
         assert output =~ System.version()
       after
@@ -360,10 +369,13 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
         result = EvoGit.Agent.Tools.execute("read_file", %{"file_path" => "test.txt"}, tmp_dir)
         assert result =~ "hello reflect"
 
-        # task.list (the old list_tasks tool) is read-only and must not be
-        # blocked — routed through the run_command shell tool.
-        assert EvoGit.Agent.Tools.execute("run_command", %{"command" => "task.list"}, tmp_dir) ==
-                 "No tasks found."
+        # ListTasks.list_tasks (the old list_tasks tool) is read-only and must
+        # not be blocked — routed through the run_command shell tool.
+        assert EvoGit.Agent.Tools.execute(
+                 "run_command",
+                 %{"command" => "ListTasks.list_tasks"},
+                 tmp_dir
+               ) == "No tasks found."
       after
         Process.delete(:repo_less)
       end
