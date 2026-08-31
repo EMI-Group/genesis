@@ -225,6 +225,27 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert present?(html, ~s(button[phx-click="stop"]))
       assert disabled?(html, ~s(button[phx-click="stop"]))
     end
+
+    test "empty state renders the greeting and four suggestion chips", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/help")
+
+      # ChatGPT-style empty state: greeting + 4 suggestion chips, each wired to
+      # the send_message event with its message text as the phx-value (so
+      # clicking a chip submits it through the existing handle_event clause).
+      assert html =~ "How can I help you today?"
+
+      chips =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find(~s(button[phx-click="send_message"][phx-value-message]))
+
+      assert length(chips) == 4
+
+      assert html =~ ~s(phx-value-message="Explain the Genesis architecture")
+      assert html =~ ~s(phx-value-message="How does task cancellation work?")
+      assert html =~ ~s(phx-value-message="What can you help me with?")
+      assert html =~ ~s(phx-value-message="Guide me through the dashboard")
+    end
   end
 
   describe "send message" do
