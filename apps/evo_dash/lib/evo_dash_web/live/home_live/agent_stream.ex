@@ -37,19 +37,24 @@ defmodule EvoDashWeb.HomeLive.AgentStream do
   def changed?(prev_count, agent), do: message_count(agent) != (prev_count || 0)
 
   @doc """
-  Extracts the task id from the `{:ok, map}` returned by
-  `EvoDash.NodeContext.start_task/3`. Accepts both `:id` and `"id"` key shapes;
-  the map may also be nil. Never raises.
+  Extracts the task id from the value returned by
+  `EvoDash.NodeContext.start_task/3`. Accepts both the full `{:ok, map}` tuple
+  and a bare task map (a struct is a map, so a call site that destructures the
+  `{:ok, task}` tuple and passes the struct still works). Accepts both `:id`
+  and `"id"` key shapes; the map may also be nil. Never raises.
   """
-  @spec task_id_from_start({:ok, map()} | any()) :: {:ok, String.t()} | {:error, :no_task_id}
-  def task_id_from_start({:ok, map}) when is_map(map) do
+  @spec task_id_from_start({:ok, map()} | map() | any()) ::
+          {:ok, String.t()} | {:error, :no_task_id}
+  def task_id_from_start({:ok, map}) when is_map(map), do: task_id_from_map(map)
+  def task_id_from_start(map) when is_map(map), do: task_id_from_map(map)
+  def task_id_from_start(_result), do: {:error, :no_task_id}
+
+  defp task_id_from_map(map) do
     case Map.get(map, :id) || Map.get(map, "id") do
       id when is_binary(id) and id != "" -> {:ok, id}
       _ -> {:error, :no_task_id}
     end
   end
-
-  def task_id_from_start(_result), do: {:error, :no_task_id}
 
   @doc """
   Extracts the final assistant text from a decoded `%EvoGit.TaskInfo{}` result

@@ -581,12 +581,15 @@ defmodule EvoDashWeb.HomeLive do
 
         # Synchronous per-click mutation (dashboard convention): starts the
         # repo-less reflect task on the viewed node. NO :path key.
-        case EvoDash.NodeContext.start_task(socket.assigns[:current_node] || node(), :reflect,
-               mode: "reflect",
-               objective: objective
-             ) do
-          {:ok, task} ->
-            case AgentStream.task_id_from_start(task) do
+        result =
+          EvoDash.NodeContext.start_task(socket.assigns[:current_node] || node(), :reflect,
+            mode: "reflect",
+            objective: objective
+          )
+
+        case result do
+          {:ok, _task} ->
+            case AgentStream.task_id_from_start(result) do
               {:ok, id} ->
                 socket =
                   socket
