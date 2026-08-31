@@ -331,6 +331,12 @@ defmodule EvoGit.PlatformTest do
                ["wsl.localhost", "Ubuntu-22.04", "x"]
     end
 
+    test "parts: 2 on a backslash UNC form keeps the share host as the first element" do
+      # The first element is the share host — never a bogus "" segment.
+      assert Platform.split_path("\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj", parts: 2) ==
+               ["wsl.localhost", "Ubuntu-22.04/home/user/proj"]
+    end
+
     test "leaves non-UNC absolute paths unchanged" do
       assert Platform.split_path("/foo", []) == ["", "foo"]
     end

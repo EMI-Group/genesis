@@ -125,6 +125,64 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
                  foreign_repos
                )
     end
+
+    test "UNC-rooted foreign repo + UNC absolute path resolves the relative path" do
+      foreign_repos = [
+        ForeignRepo.new("primary", "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo"),
+        ForeignRepo.new("original", "//wsl.localhost/Ubuntu-22.04/home/user/original-proj")
+      ]
+
+      repo_path = "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo"
+
+      assert {:ok, "original", "//wsl.localhost/Ubuntu-22.04/home/user/original-proj",
+              "./src/main.py"} =
+               SubagentProcessing.resolve_subagent_path(
+                 "//wsl.localhost/Ubuntu-22.04/home/user/original-proj/src/main.py",
+                 repo_path,
+                 foreign_repos
+               )
+    end
+
+    test "backslash UNC-rooted foreign repo resolves the relative path" do
+      foreign_repos = [
+        ForeignRepo.new("primary", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\primary-repo"),
+        ForeignRepo.new("original", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\original-proj")
+      ]
+
+      repo_path = "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\primary-repo"
+
+      assert {:ok, "original", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\original-proj",
+              "./src/main.py"} =
+               SubagentProcessing.resolve_subagent_path(
+                 "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\original-proj\\src\\main.py",
+                 repo_path,
+                 foreign_repos
+               )
+    end
+
+    test "UNC absolute path in the primary repo resolves via the primary-root fallback" do
+      repo_path = "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo"
+
+      assert {:ok, "primary", "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo",
+              "./lib/app.ex"} =
+               SubagentProcessing.resolve_subagent_path(
+                 "//wsl.localhost/Ubuntu-22.04/home/user/primary-repo/lib/app.ex",
+                 repo_path,
+                 []
+               )
+    end
+
+    test "backslash UNC primary-root fallback keeps the marker" do
+      repo_path = "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\primary-repo"
+
+      assert {:ok, "primary", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\primary-repo",
+              "./lib/app.ex"} =
+               SubagentProcessing.resolve_subagent_path(
+                 "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\primary-repo\\lib\\app.ex",
+                 repo_path,
+                 []
+               )
+    end
   end
 
   describe "format_subagent_result/1" do
