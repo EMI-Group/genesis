@@ -23,6 +23,11 @@ defmodule EvoGit.PlatformTest do
       assert Platform.absolute_path?("\\\\server\\share")
     end
 
+    test "returns true for forward-slash UNC paths" do
+      assert Platform.absolute_path?("//wsl.localhost/Ubuntu-22.04/x")
+      assert Platform.absolute_path?("//server/share")
+    end
+
     test "returns false for relative paths" do
       refute Platform.absolute_path?("./src/main.ex")
       refute Platform.absolute_path?("src/main.ex")
@@ -81,6 +86,81 @@ defmodule EvoGit.PlatformTest do
     end
   end
 
+  describe "unc?/1" do
+    test "returns true for forward-slash UNC paths" do
+      assert Platform.unc?("//wsl.localhost/Ubuntu-22.04/x")
+      assert Platform.unc?("//server/share")
+    end
+
+    test "returns true for backslash UNC paths" do
+      assert Platform.unc?("\\\\server\\share\\x")
+    end
+
+    test "returns true for mixed double-separator prefixes" do
+      assert Platform.unc?("/\\/foo")
+      assert Platform.unc?("\\//x")
+    end
+
+    test "returns false for non-UNC paths" do
+      refute Platform.unc?("/foo")
+      refute Platform.unc?("foo/bar")
+      refute Platform.unc?("C:\\x")
+    end
+
+    test "returns false for nil and non-binary values" do
+      refute Platform.unc?(nil)
+      refute Platform.unc?(123)
+    end
+  end
+
+  describe "safe_expand/1" do
+    test "preserves the UNC marker on non-UNC-collapsing inputs" do
+      # Holds on every host: Windows `Path.expand` keeps the `//` root,
+      # non-Windows `safe_expand` re-attaches it.
+      assert Platform.safe_expand("//wsl.localhost/Ubuntu-22.04/x") ==
+               "//wsl.localhost/Ubuntu-22.04/x"
+
+      assert Platform.safe_expand("\\\\server\\share\\x") == "\\\\server\\share\\x"
+    end
+
+    test "resolves dot segments while preserving the UNC marker" do
+      assert Platform.safe_expand("//wsl.localhost/Ubuntu-22.04/home/../proj") ==
+               "//wsl.localhost/Ubuntu-22.04/proj"
+
+      assert Platform.safe_expand("//wsl.localhost/Ubuntu-22.04/proj/./src") ==
+               "//wsl.localhost/Ubuntu-22.04/proj/src"
+    end
+
+    test "strips trailing separators while preserving the UNC marker" do
+      assert Platform.safe_expand("//wsl.localhost/Ubuntu-22.04/proj/") ==
+               "//wsl.localhost/Ubuntu-22.04/proj"
+    end
+
+    test "behaves like Path.expand/1 for non-UNC paths" do
+      assert Platform.safe_expand("/tmp/foo/") == "/tmp/foo"
+      assert Platform.safe_expand("/a/../b") == "/b"
+    end
+  end
+
+  describe "safe_expand/2" do
+    test "resolves a relative path against a UNC base preserving the marker" do
+      assert Platform.safe_expand("x", "//wsl.localhost/Ubuntu-22.04/home") ==
+               "//wsl.localhost/Ubuntu-22.04/home/x"
+
+      assert Platform.safe_expand("../x", "//wsl.localhost/Ubuntu-22.04/home") ==
+               "//wsl.localhost/Ubuntu-22.04/x"
+    end
+
+    test "expands an absolute path on its own, ignoring the base" do
+      assert Platform.safe_expand("//wsl.localhost/other", "/base") == "//wsl.localhost/other"
+      assert Platform.safe_expand("/abs/x", "/base") == "/abs/x"
+    end
+
+    test "behaves like Path.expand/2 for non-UNC bases" do
+      assert Platform.safe_expand("x", "/tmp/base") == "/tmp/base/x"
+    end
+  end
+
   describe "normalize_separators/1" do
     test "converts Windows backslash to forward slash" do
       assert Platform.normalize_separators("src\\lib\\app.ex") == "src/lib/app.ex"
@@ -108,8 +188,22 @@ defmodule EvoGit.PlatformTest do
       assert Platform.trim_leading_separators("\\foo\\bar") == "foo\\bar"
     end
 
-    test "strips multiple mixed leading separators" do
-      assert Platform.trim_leading_separators("/\\/foo") == "foo"
+    test "preserves the double-separator marker for mixed leading separators" do
+      # `/\/foo` normalizes to `///foo` — a double-separator UNC marker — so
+      # the first two separators survive and only the rest are trimmed.
+      assert Platform.trim_leading_separators("/\\/foo") == "/\\foo"
+    end
+
+    test "preserves a forward-slash UNC marker" do
+      assert Platform.trim_leading_separators("//wsl.localhost/x") == "//wsl.localhost/x"
+    end
+
+    test "trims separators beyond the preserved UNC marker" do
+      assert Platform.trim_leading_separators("///x") == "//x"
+    end
+
+    test "preserves a backslash UNC marker" do
+      assert Platform.trim_leading_separators("\\\\server\\share\\x") == "\\\\server\\share\\x"
     end
 
     test "returns unchanged when no leading separator" do
@@ -152,8 +246,13 @@ defmodule EvoGit.PlatformTest do
       assert Platform.trim_separators("\\foo\\bar\\") == "foo\\bar"
     end
 
-    test "strips mixed separators on both ends" do
-      assert Platform.trim_separators("/\\foo/bar\\/") == "foo/bar"
+    test "preserves the double-separator marker with mixed separators on both ends" do
+      assert Platform.trim_separators("/\\foo/bar\\/") == "/\\foo/bar"
+    end
+
+    test "preserves a UNC marker while trimming trailing separators" do
+      assert Platform.trim_separators("//wsl/x/") == "//wsl/x"
+      assert Platform.trim_separators("\\\\server\\share\\x\\") == "\\\\server\\share\\x"
     end
 
     test "returns unchanged when no separators on either end" do
@@ -188,6 +287,23 @@ defmodule EvoGit.PlatformTest do
 
     test "returns empty list for empty string" do
       assert Platform.split_path("", []) == []
+    end
+
+    test "drops the UNC marker so the share host is the first element" do
+      assert Platform.split_path("//wsl.localhost/Ubuntu-22.04/x", []) ==
+               ["wsl.localhost", "Ubuntu-22.04", "x"]
+
+      assert Platform.split_path("//wsl.localhost/Ubuntu-22.04/x", parts: 2) ==
+               ["wsl.localhost", "Ubuntu-22.04/x"]
+    end
+
+    test "splits backslash UNC paths like their forward-slash form" do
+      assert Platform.split_path("\\\\wsl.localhost\\Ubuntu-22.04\\x", []) ==
+               ["wsl.localhost", "Ubuntu-22.04", "x"]
+    end
+
+    test "leaves non-UNC absolute paths unchanged" do
+      assert Platform.split_path("/foo", []) == ["", "foo"]
     end
   end
 

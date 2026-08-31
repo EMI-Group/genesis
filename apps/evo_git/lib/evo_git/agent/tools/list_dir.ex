@@ -18,7 +18,8 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
-            "description" => "The path to the directory to list, relative to git repo path (e.g., './', './lib', './test')"
+            "description" =>
+              "The path to the directory to list, relative to git repo path (e.g., './', './lib', './test')"
           }
         },
         "required" => ["dir_path"]
@@ -33,7 +34,7 @@ defmodule EvoGit.Agent.Tools.ListDirectory do
   def execute(args, repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "dir_path") do
       {:ok, dir_path} ->
-        full_path = Path.expand(dir_path, repo_path)
+        full_path = EvoGit.Platform.safe_expand(dir_path, repo_path)
 
         case File.ls(full_path) do
           {:ok, files} -> Enum.join(files, "\n")

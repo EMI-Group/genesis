@@ -35,7 +35,7 @@ defmodule EvoGit.Core.ContextNode do
 
   # Check if a path (and all its parent components) is ignored by git
   defp check_path_ignored(path, repo_path) when is_binary(path) and path not in [".", "./"] do
-    abs_path = Path.expand(path, repo_path)
+    abs_path = Platform.safe_expand(path, repo_path)
 
     # First, check the current path
     case Git.check_ignore(repo_path, [abs_path]) do
@@ -167,7 +167,7 @@ defmodule EvoGit.Core.ContextNode do
           # Only include directories in the explicit context hierarchy.
           # Compute abs_path once per node and thread it through.
           |> Enum.flat_map(fn %__MODULE__{} = node ->
-            abs_path = Path.expand(node.path, node.repo)
+            abs_path = Platform.safe_expand(node.path, node.repo)
 
             if File.dir?(abs_path) do
               content =

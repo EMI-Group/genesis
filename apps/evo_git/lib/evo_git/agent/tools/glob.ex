@@ -29,7 +29,8 @@ defmodule EvoGit.Agent.Tools.Glob do
           },
           "path" => %{
             "type" => "string",
-            "description" => "Directory to search in, relative to repository root (default: git repo path, e.g., './', './src')"
+            "description" =>
+              "Directory to search in, relative to repository root (default: git repo path, e.g., './', './src')"
           },
           "max_files" => %{
             "type" => "integer",
@@ -51,7 +52,10 @@ defmodule EvoGit.Agent.Tools.Glob do
          {:ok, max_files} <- validate_max_files(Map.get(args, "max_files", 100)),
          path_value = Map.get(args, "path"),
          search_path =
-           if(is_binary(path_value), do: Path.expand(path_value, repo_path), else: repo_path) do
+           if(is_binary(path_value),
+             do: EvoGit.Platform.safe_expand(path_value, repo_path),
+             else: repo_path
+           ) do
       do_glob(pattern, search_path, max_files)
     end
   end

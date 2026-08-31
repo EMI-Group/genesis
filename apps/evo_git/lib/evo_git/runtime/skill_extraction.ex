@@ -10,7 +10,7 @@ defmodule EvoGit.Runtime.SkillExtraction do
   require Logger
 
   def run(opts \\ []) do
-    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> Path.expand()
+    repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> EvoGit.Platform.safe_expand()
 
     Logger.info("SkillExtraction: Starting skill extraction from completed PR")
 
