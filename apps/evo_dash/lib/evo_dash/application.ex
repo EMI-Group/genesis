@@ -11,6 +11,9 @@ defmodule EvoDash.Application do
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
       {Task.Supervisor, name: EvoDash.TaskSupervisor},
+      # In-memory (ETS-backed) chat-history store for the Home chat page —
+      # transcripts survive LiveView remounts, not BEAM restarts.
+      EvoDash.ChatHistory,
       # Serializes native :wx directory-dialog usage (Browse buttons). Starts no
       # wx server at boot — wx is initialized lazily on the first pick.
       EvoDash.DirectoryPicker,
