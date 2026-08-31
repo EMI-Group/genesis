@@ -1287,7 +1287,9 @@ defmodule EvoDashWeb.ProjectsLive do
               # against the DASHBOARD's OS and mangle it (`/home/...` on a Windows
               # dashboard, `D:\stuff` cwd-joined on POSIX). Remote contexts store
               # the raw trimmed path via ProjectFlow.build_foreign_repo/4; local
-              # contexts keep `ForeignRepo.new/3`'s exact expansion semantics.
+              # contexts keep `ForeignRepo.new/3`'s exact expansion semantics —
+              # except UNC/WSL roots on a non-Windows node, which bypass the
+              # expansion and are stored verbatim (build_foreign_repo_for_node/4).
               remote_context? =
                 socket.assigns[:remote?] or socket.assigns[:current_node] != node()
 
@@ -1303,7 +1305,7 @@ defmodule EvoDashWeb.ProjectsLive do
                   if is_binary(base_sha), do: Keyword.put(o, :base_sha, base_sha), else: o
                 end)
 
-              repo = ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
+              repo = build_foreign_repo_for_node(node, repo_id, path, opts)
 
               updated_repos =
                 Enum.sort_by([repo | current_repos], fn r ->
@@ -1402,7 +1404,9 @@ defmodule EvoDashWeb.ProjectsLive do
           # Node-aware construction — same node resolution as add_foreign_repo:
           # remote contexts rebuild the raw struct (root + base_sha stored
           # verbatim, never Path.expand-ed against the dashboard's OS), local
-          # contexts keep ForeignRepo.new/3's exact expansion semantics.
+          # contexts keep ForeignRepo.new/3's exact expansion semantics —
+          # except UNC/WSL roots on a non-Windows node, which bypass the
+          # expansion and are stored verbatim (build_foreign_repo_for_node/4).
           remote_context? =
             socket.assigns[:remote?] or socket.assigns[:current_node] != node()
 
@@ -1418,7 +1422,7 @@ defmodule EvoDashWeb.ProjectsLive do
               if is_binary(base_sha), do: Keyword.put(o, :base_sha, base_sha), else: o
             end)
 
-          repo = ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
+          repo = build_foreign_repo_for_node(node, repo_id, path, opts)
 
           updated_repos =
             current_repos
@@ -1954,8 +1958,13 @@ defmodule EvoDashWeb.ProjectsLive do
                   desc = Map.get(repo, "description") || Map.get(repo, :description)
 
                   # Read-write foreign repos: thread `writable` and `base_sha`
-                  # through ForeignRepo.new/3 (which coerces/validates them —
-                  # only literal true is writable, blank base_sha → nil).
+                  # through the guarded constructor (which for non-UNC inputs
+                  # is `ForeignRepo.new/3` — it coerces/validates them: only
+                  # literal true is writable, blank base_sha → nil). The UNC
+                  # guard keeps `//wsl.localhost/...` / `\\server\share\...`
+                  # roots verbatim on non-Windows nodes — `ForeignRepo.new/3`'s
+                  # `Path.expand` would collapse/cwd-join them (see
+                  # `foreign_repo_new_guarded/3`).
                   # Tolerant writable check for string-keyed persisted shapes.
                   writable =
                     Map.get(repo, "writable", Map.get(repo, :writable, false))
@@ -1974,7 +1983,7 @@ defmodule EvoDashWeb.ProjectsLive do
                         else: o
                     end)
 
-                  ForeignRepo.new(id, root, opts)
+                  foreign_repo_new_guarded(id, root, opts)
 
                 _ ->
                   nil
@@ -2171,17 +2180,75 @@ defmodule EvoDashWeb.ProjectsLive do
   # rejected by the local-only `Platform.absolute_path?/1` on a Windows
   # dashboard (`Path.type/1` → `:volumerelative`), and vice versa. In a
   # remote context the shared node-aware predicate is used; local contexts
-  # keep the local semantics. STORAGE follows the same node split (see the
-  # `add_foreign_repo` handler): remote contexts build RAW structs via
+  # keep the local semantics. Both branches ACCEPT Windows UNC / WSL roots —
+  # `//wsl.localhost/Ubuntu-22.04/...`, `\\server\share\...` and drive
+  # letters — via `EvoGit.Platform.absolute_path?/1` (UNC `//`-forms match
+  # `Path.type/1` → `:absolute`; `\\`-forms match its Windows-absolute
+  # regex). STORAGE follows the same node split (see the `add_foreign_repo`
+  # handler): remote contexts build RAW structs via
   # `ProjectFlow.build_foreign_repo/4` — the root is stored verbatim with NO
   # local `Path.expand` (`ForeignRepo.new/3` would mangle remote
   # POSIX/Windows paths against the dashboard's OS); local contexts keep
-  # `ForeignRepo.new/3`'s `Path.expand` semantics unchanged.
+  # `ForeignRepo.new/3`'s `Path.expand` semantics unchanged — EXCEPT UNC/WSL
+  # roots on a non-Windows node, which bypass the expansion and are stored
+  # verbatim (see `build_foreign_repo_for_node/4` below).
   defp foreign_repo_path_absolute?(socket, path) do
     if socket.assigns[:remote?] or socket.assigns[:current_node] != node() do
       ProjectFlow.absolute_path_for_node?(socket.assigns[:current_node], path)
     else
       Platform.absolute_path?(path)
+    end
+  end
+
+  # ── UNC/WSL foreign-repo storage guard ─────────────────────────────────
+  # `EvoGit.Core.ForeignRepo.new/3` `Path.expand`s its root internally. On a
+  # WINDOWS node that is safe for UNC roots — Elixir's `Path.expand` preserves
+  # a `//`-prefixed UNC root and normalizes the `\\server\share` form to
+  # `//server/share`. On a NON-Windows node it corrupts them:
+  # `Path.expand("//wsl.localhost/x")` collapses the prefix to
+  # `/wsl.localhost/x`, and `Path.expand("\\server\share\x")` is cwd-joined
+  # against the dashboard's working directory. UNC/WSL roots must therefore
+  # NEVER pass through `ForeignRepo.new/3` on a non-Windows node — they are
+  # stored verbatim (forward-slash-normalized, trailing separators trimmed)
+  # with the same returned struct shape.
+  defp unc_prefixed?(path) when is_binary(path) do
+    String.starts_with?(path, "//") or String.starts_with?(path, "\\\\")
+  end
+
+  defp normalize_unc_root(path) do
+    normalized = String.replace(path, "\\", "/") |> String.trim_trailing("/")
+
+    if normalized == "", do: "//", else: normalized
+  end
+
+  # `ForeignRepo.new/3` with the UNC-expansion guard: UNC/WSL roots on a
+  # non-Windows node bypass the internal `Path.expand/1` (which would mangle
+  # the `//`/`\\` prefix against the local OS) and build the same struct shape
+  # with the verbatim root; every other input keeps `ForeignRepo.new/3`'s
+  # exact expansion and `writable`/`base_sha` coercion semantics.
+  defp foreign_repo_new_guarded(id, root, opts) do
+    if unc_prefixed?(root) and not Platform.windows?() do
+      %ForeignRepo{
+        id: id,
+        root: normalize_unc_root(root),
+        description: Keyword.get(opts, :description),
+        writable: Keyword.get(opts, :writable, false),
+        base_sha: Keyword.get(opts, :base_sha)
+      }
+    else
+      ForeignRepo.new(id, root, opts)
+    end
+  end
+
+  # Node-aware `%ForeignRepo{}` construction with the UNC guard: local nodes
+  # go through `foreign_repo_new_guarded/3` (== `ForeignRepo.new/3` except UNC
+  # roots are never `Path.expand`ed against the local OS); remote nodes keep
+  # `ProjectFlow.build_foreign_repo/4`'s verbatim raw-struct behavior.
+  defp build_foreign_repo_for_node(node, repo_id, path, opts) do
+    if node == nil or node == node() do
+      foreign_repo_new_guarded(repo_id, path, opts)
+    else
+      ProjectFlow.build_foreign_repo(node, repo_id, path, opts)
     end
   end
 
