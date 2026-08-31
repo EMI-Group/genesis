@@ -101,7 +101,10 @@ defmodule EvoGit.Agent.DelegationHints do
         # Root node: extract first path segment as child
         extract_first_segment(normalized_target)
       else
-        if EvoGit.Platform.path_under?(normalized_target, normalized_node) do
+        # Only track STRICT children — editing files directly inside the
+        # agent's own node is normal work, never delegation-worthy.
+        if normalized_target != normalized_node and
+             EvoGit.Platform.path_under?(normalized_target, normalized_node) do
           # Extract the first segment under node_path
           node_clean = Platform.trim_trailing_separators(normalized_node)
           remainder = String.replace_prefix(normalized_target, node_clean <> "/", "")
@@ -130,7 +133,8 @@ defmodule EvoGit.Agent.DelegationHints do
     stripped = String.replace_prefix(path, "./", "")
 
     case Platform.split_path(stripped, parts: 2) do
-      [first | _] when first != "" ->
+      # A "." first segment (e.g. "./." — the node itself) is not a child
+      [first | _] when first != "" and first != "." ->
         normalized = "./" <> first
         [normalized]
 
@@ -141,7 +145,10 @@ defmodule EvoGit.Agent.DelegationHints do
 
   def extract_first_segment_from_remainder(remainder, node_path) do
     case Platform.split_path(remainder, parts: 2) do
-      [first | _] when first != "" ->
+      # A "." first segment means the remainder is the node itself — not a
+      # child directory (defense-in-depth; the strict-child check in
+      # path_to_child_dir/3 already excludes this case).
+      [first | _] when first != "" and first != "." ->
         [node_path <> "/" <> first]
 
       _ ->
