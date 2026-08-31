@@ -71,6 +71,27 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
       end
     end
 
+    test "accepts UNC/WSL paths without corrupting the double-separator prefix" do
+      # `//wsl.localhost/...` (WSL share) and `\\server\share\proj` (UNC) are
+      # absolute; the double-separator prefix must survive normalization
+      # untouched. Shape-only assertions — never touch the filesystem with
+      # these paths (they don't exist on the test host). On non-Windows
+      # `Path.expand("//wsl...")` collapses `//` → `/` and cwd-joins
+      # `\\server\...`, so the fix under test must NOT apply `Path.expand` to
+      # UNC-prefixed paths.
+      for unc_path <- [
+            "//wsl.localhost/Ubuntu-22.04/home/user/proj",
+            "\\\\server\\share\\proj"
+          ] do
+        assert {:ok, expanded} = ProjectFlow.normalize_project_path(unc_path)
+
+        # The implementation may normalize `\\` → `//` and trim trailing
+        # separators, but the double-separator UNC prefix must survive.
+        assert String.starts_with?(expanded, "//") or String.starts_with?(expanded, "\\\\"),
+               "UNC prefix corrupted for #{inspect(unc_path)}: got #{inspect(expanded)}"
+      end
+    end
+
     test "accepts an absolute Unix path idempotently" do
       assert {:ok, expanded} = ProjectFlow.normalize_project_path("/tmp/foo")
       assert expanded == "/tmp/foo"
@@ -185,6 +206,27 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
                  ProjectFlow.normalize_remote_project_path(@remote_node, windows_path)
 
         assert expanded == windows_path
+      end
+    end
+
+    test "accepts UNC/WSL paths verbatim without corrupting the prefix" do
+      # `//wsl.localhost/...` (WSL share) and `\\server\share\proj` (UNC with a
+      # subdirectory — the bare `\\server\share` root is covered above) are
+      # absolute remote paths and must round-trip with NO local Path.expand
+      # (on non-Windows it collapses `//` → `/` / cwd-joins `\\...`) and no
+      # cwd-join. Shape-only assertions — the paths never touch the
+      # filesystem.
+      for unc_path <- [
+            "//wsl.localhost/Ubuntu-22.04/home/user/proj",
+            "\\\\server\\share\\proj"
+          ] do
+        assert {:ok, expanded} =
+                 ProjectFlow.normalize_remote_project_path(@remote_node, unc_path)
+
+        # The UNC prefix survives — either separator style (`\\` may be
+        # normalized to `//`, but never collapsed to a single separator).
+        assert String.starts_with?(expanded, "//") or String.starts_with?(expanded, "\\\\"),
+               "UNC prefix corrupted for #{inspect(unc_path)}: got #{inspect(expanded)}"
       end
     end
 

@@ -763,6 +763,27 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert datalist =~ ~s(<option value="#{recent_b}"></option>)
     end
 
+    test "open_path mode keeps UNC/WSL recent project paths in the datalist", %{conn: conn} do
+      # UNC/WSL paths are absolute and must survive the recents absolute-path
+      # filter (never dropped as relative). They do NOT exist on the test host
+      # — seed them via the public TaskRegistry API and assert the filtered
+      # palette datalist renders them (the same surface the POSIX/Windows
+      # recents use; the mount's auto-load silently skips non-existent paths).
+      wsl_path = "//wsl.localhost/Ubuntu-22.04/home/user/proj"
+      unc_path = "\\\\server\\share\\proj"
+      seed_recent_project(wsl_path, "wsl-proj")
+      seed_recent_project(unc_path, "unc-proj")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      html = render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      datalist = path_suggestions_datalist(html)
+      assert datalist =~ ~s(<option value="#{wsl_path}"></option>)
+      assert datalist =~ ~s(<option value="#{unc_path}"></option>)
+    end
+
     test "palette_menu shows recent projects as clickable items", %{conn: conn, tmp_dir: tmp_dir} do
       project_a = Path.join(tmp_dir, "my-alpha")
       File.mkdir_p!(project_a)
@@ -2215,6 +2236,51 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert html =~ "Path must be absolute."
       refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "remote-bad"))
+    end
+
+    test "add_foreign_repo on a remote node accepts UNC/WSL paths as absolute (existence still fails against the fake node)",
+         %{conn: conn} do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
+      assert assigns(view)[:remote?] == true
+
+      # WSL share (`//wsl.localhost/...`) — the node-aware validator must pass
+      # the absolute check (the double-slash prefix is absolute in both POSIX
+      # and UNC semantics), then reject for existence against the fake node
+      # (whose :erpc fails fast), exactly like the POSIX/Windows cases above.
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "remote-wsl",
+          "path" => "//wsl.localhost/Ubuntu-22.04/home/user/proj",
+          "description" => ""
+        })
+
+      refute html =~ "Path must be absolute."
+
+      assert html =~
+               "Foreign repo path does not exist: //wsl.localhost/Ubuntu-22.04/home/user/proj"
+
+      refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "remote-wsl"))
+
+      # Backslash UNC (`\\server\share\proj`) — same story: passes the
+      # absolute check (never rejected as relative), rejected for existence on
+      # the unverifiable fake node.
+      html =
+        render_click(view, "add_foreign_repo", %{
+          "repo_id" => "remote-unc",
+          "path" => "\\\\server\\share\\proj",
+          "description" => ""
+        })
+
+      refute html =~ "Path must be absolute."
+      assert html =~ "Foreign repo path does not exist: \\\\server\\share\\proj"
+      refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "remote-unc"))
     end
 
     test "local render carries data-node-id=local on the dashboard root", %{conn: conn} do
