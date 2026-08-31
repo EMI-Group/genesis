@@ -31,6 +31,22 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert message =~ "relative to the repository root"
     end
 
+    test "returns error tuple on forward-slash UNC absolute paths" do
+      assert {:error, message} = Shared.normalize_relpath("//wsl.localhost/Ubuntu-22.04/x")
+      assert message =~ "absolute"
+      assert message =~ "//wsl.localhost/Ubuntu-22.04/x"
+      assert message =~ "relative to the repository root"
+    end
+
+    test "returns error tuple on backslash UNC absolute paths" do
+      path = "\\\\wsl.localhost\\Ubuntu-22.04\\x"
+      assert {:error, message} = Shared.normalize_relpath(path)
+      assert message =~ "absolute"
+      # The message embeds the inspect-ed path (backslashes doubled).
+      assert message =~ inspect(path)
+      assert message =~ "relative to the repository root"
+    end
+
     test "strips trailing slashes" do
       assert Shared.normalize_relpath("foo/") == "./foo"
     end

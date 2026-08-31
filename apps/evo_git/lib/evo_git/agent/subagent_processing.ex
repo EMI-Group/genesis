@@ -266,8 +266,12 @@ defmodule EvoGit.Agent.SubagentProcessing do
   # Checks if an absolute path is under a given repo root.
   # Returns {:ok, relative_path} or :not_in_repo.
   defp foreign_repo_match_root(root, abs_path) when is_binary(root) and is_binary(abs_path) do
-    root = Platform.trim_trailing_separators(root)
-    expanded = Platform.safe_expand(abs_path)
+    # Normalize separators to `/` so backslash-form UNC roots (the Windows
+    # representation of WSL-shared-folder paths) relativize identically on
+    # every host (`Path.relative_to/2` treats `\` as a literal character on
+    # non-Windows hosts).
+    root = root |> Platform.normalize_separators() |> Platform.trim_trailing_separators()
+    expanded = abs_path |> Platform.safe_expand() |> Platform.normalize_separators()
 
     if EvoGit.Platform.path_under?(expanded, root) do
       relative =
