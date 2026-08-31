@@ -40,8 +40,16 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   Returns `{:ok, expanded}` when the trimmed input is genuinely
   tilde-expandable (`~`, `~/...`, and — on Windows only — `~\\...`) or an
-  absolute path (Unix `/foo`, Windows `C:\\foo`/`D:/bar`, UNC
-  `\\\\server\\share`), with `Path.expand/1` applied to the result.
+  absolute path (Unix `/foo`, Windows `C:\\foo`/`D:/bar`), with
+  `Path.expand/1` applied to the result.
+
+  UNC paths (`//wsl.localhost/...`, `\\\\server\\share\\...`) are normalized
+  WITHOUT `Path.expand/1`: `Path.expand` preserves a `//`-prefixed UNC root
+  only on Windows — on any other OS it collapses the `//` to `/` (POSIX) or
+  cwd-joins the `\\\\`-prefixed path, corrupting the path. They are instead
+  converted to forward-slash form with trailing separators stripped (via
+  `EvoGit.Platform.normalize_separators/1` and
+  `EvoGit.Platform.trim_trailing_separators/1`) and passed through intact.
 
   Returns `{:error, :blank}` for empty/whitespace input and
   `{:error, :relative}` for anything else: bare names, volume-relative
@@ -65,6 +73,17 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
         # Tilde expansion is cwd-independent — safe to expand on any platform.
         {:ok, Path.expand(trimmed)}
 
+      String.starts_with?(trimmed, "//") or String.starts_with?(trimmed, "\\\\") ->
+        # UNC path (`//wsl.localhost/...`, `\\server\share\...`) — NEVER
+        # Path.expand against a non-matching OS: `Path.expand` collapses a
+        # `//`-prefixed root to `/` on POSIX and cwd-joins a `\\`-prefixed
+        # path. Normalize separators to forward slashes + strip trailing
+        # separators instead, so the path round-trips intact.
+        {:ok,
+         trimmed
+         |> EvoGit.Platform.normalize_separators()
+         |> EvoGit.Platform.trim_trailing_separators()}
+
       EvoGit.Platform.absolute_path?(trimmed) ->
         {:ok, Path.expand(trimmed)}
 
@@ -85,10 +104,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   function therefore performs NO local `Path.expand` on absolute input:
 
   - blank → `{:error, :blank}`
-  - POSIX absolute (leading `/`) → `{:ok, trimmed}` passed through verbatim
-  - Windows-style absolute (drive letter `C:\\`/`D:/` or UNC
-    `\\\\server\\share`, via `EvoGit.Platform.absolute_path?/1`) →
-    `{:ok, trimmed}` passed through verbatim
+  - absolute (POSIX leading `/` — incl. `//`-prefixed forward-slash UNC — or
+    Windows-style drive letter/backslash UNC, via the node-agnostic
+    `remote_absolute_path?/1` predicate) → `{:ok, trimmed}` passed through
+    VERBATIM — no `Path.expand`, no separator normalization (the remote
+    node's own OS understands its separators)
   - genuinely tilde-expandable (`~`, `~/...`, `~\\...` — same
     `expandable_tilde?/1` predicate as the local path) → expanded on the
     REMOTE node via the node-aware RPC so the remote user's home is used, not
@@ -121,14 +141,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
           _ -> {:ok, trimmed}
         end
 
-      String.starts_with?(trimmed, "/") ->
-        # POSIX absolute — pass through verbatim. NO local Path.expand: on a
-        # Windows dashboard it would rewrite `/home/...` to `<drive>:\home\...`.
-        {:ok, trimmed}
-
-      EvoGit.Platform.absolute_path?(trimmed) ->
-        # Windows-style absolute (drive letter or UNC) — pass through verbatim.
-        # NO local Path.expand: a POSIX dashboard would cwd-join `C:\work\...`.
+      remote_absolute_path?(trimmed) ->
+        # Absolute (POSIX or Windows-style, incl. UNC) — pass through verbatim.
+        # NO local Path.expand and NO separator normalization: the remote
+        # node's own OS understands its separators, and a dashboard on a
+        # different OS would rewrite the path.
         {:ok, trimmed}
 
       true ->
@@ -162,25 +179,35 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   Returns true when `path` is an absolute path for the given node.
 
   On the LOCAL node the existing local-semantics check
-  (`EvoGit.Platform.absolute_path?/1`) is used unchanged. On a REMOTE node a
-  path is accepted when it is POSIX-absolute (leading `/`) OR Windows-style
-  absolute (drive letter / UNC, via `EvoGit.Platform.absolute_path?/1`): the
-  remote node's paths must not be judged by the dashboard's host OS — on a
-  Windows dashboard `Path.type("/home/user/repo")` is `:volumerelative`,
-  which would wrongly drop remote POSIX recents from the palette (and a POSIX
-  dashboard would drop remote Windows recents). Non-binary paths are always
-  false.
+  (`EvoGit.Platform.absolute_path?/1`) is used unchanged. On a REMOTE node the
+  node-agnostic `remote_absolute_path?/1` predicate is used: a path is
+  accepted when it is POSIX-absolute (leading `/`, incl. `//`-prefixed
+  forward-slash UNC) OR Windows-style absolute (drive letter / backslash UNC,
+  via `EvoGit.Platform.absolute_path?/1`) — the remote node's paths must not
+  be judged by the dashboard's host OS: on a Windows dashboard
+  `Path.type("/home/user/repo")` is `:volumerelative`, which would wrongly
+  drop remote POSIX recents from the palette (and a POSIX dashboard would
+  drop remote Windows recents). Non-binary paths are always false.
   """
   @spec absolute_path_for_node?(node(), term()) :: boolean()
   def absolute_path_for_node?(node, path) when is_binary(path) do
     if node == node() do
       EvoGit.Platform.absolute_path?(path)
     else
-      String.starts_with?(path, "/") or EvoGit.Platform.absolute_path?(path)
+      remote_absolute_path?(path)
     end
   end
 
   def absolute_path_for_node?(_node, _path), do: false
+
+  # Node-agnostic absolute-path check — never judged by the dashboard's host
+  # OS. Accepts POSIX-absolute (leading `/`, which also covers `//`-prefixed
+  # forward-slash UNC like `//wsl.localhost/...` on any dashboard OS) OR
+  # anything `EvoGit.Platform.absolute_path?/1` accepts (drive letters +
+  # backslash UNC — the core predicate is host-OS independent).
+  defp remote_absolute_path?(path) when is_binary(path) do
+    String.starts_with?(path, "/") or EvoGit.Platform.absolute_path?(path)
+  end
 
   # ───────────────────────────────────────────────────────────────────────────
   # Foreign repo construction
