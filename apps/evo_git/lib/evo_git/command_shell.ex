@@ -2,7 +2,8 @@ defmodule EvoGit.CommandShell do
   @moduledoc """
   A simple, secure command-shell dispatcher for the self-reflective agent.
 
-  Parses a command STRING (e.g. `task.list` or `task.start evolve "Write a parser"`)
+  Parses a command STRING (e.g. `ListTasks.list_tasks` or
+  `StartTask.start_task evolve "Write a parser"`)
   and dispatches it through a declarative, compile-time registry of the existing
   task-control tool modules (`EvoGit.Agent.Tools.*`). Each registered handler is
   invoked as `apply(module, :execute, [parsed_args, nil, nil])`; the handlers
@@ -59,7 +60,7 @@ defmodule EvoGit.CommandShell do
   # shell parses and validates the command's tokens into the handler's
   # STRING-keyed argument map (e.g. `%{"task_type" => "evolve"}`).
   @registry %{
-    "task.list" => %{
+    "ListTasks.list_tasks" => %{
       module: ListTasks,
       summary: "Lists tasks from the task registry, optionally filtered by status.",
       args: [
@@ -73,14 +74,14 @@ defmodule EvoGit.CommandShell do
         }
       ]
     },
-    "task.get" => %{
+    "GetTask.get_task" => %{
       module: GetTask,
       summary: "Fetches the details of a single task by id.",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
       ]
     },
-    "task.start" => %{
+    "StartTask.start_task" => %{
       module: StartTask,
       summary: "Starts a new background task (genesis / evolve / reflect / extract_skills).",
       args: [
@@ -100,28 +101,28 @@ defmodule EvoGit.CommandShell do
         %{key: "model_id", type: :string, required: false, positional: nil, default: nil}
       ]
     },
-    "task.cancel" => %{
+    "CancelTask.cancel_task" => %{
       module: CancelTask,
       summary: "Gracefully cancels a task by id (intermediate results preserved).",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
       ]
     },
-    "task.force_kill" => %{
+    "ForceKillTask.force_kill_task" => %{
       module: ForceKillTask,
       summary: "Force-kills a task by id (all progress lost).",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
       ]
     },
-    "task.delete" => %{
+    "DeleteTask.delete_task" => %{
       module: DeleteTask,
       summary: "Permanently deletes a task by id (history removed).",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
       ]
     },
-    "task.investigate" => %{
+    "SpawnInvestigator.spawn_investigator" => %{
       module: SpawnInvestigator,
       summary: "Investigates a codebase path (v1 placeholder — does NOT spawn a subagent).",
       args: [
@@ -129,7 +130,7 @@ defmodule EvoGit.CommandShell do
         %{key: "objective", type: :string, required: true, positional: 2, default: nil}
       ]
     },
-    "guide.show" => %{
+    "GuideUser.guide_user" => %{
       module: GuideUser,
       summary: "Shows a transient user-facing guide in the dashboard UI.",
       args: [
@@ -139,12 +140,12 @@ defmodule EvoGit.CommandShell do
         %{key: "dismissible", type: :bool, required: false, positional: nil, default: true}
       ]
     },
-    "project.list" => %{
+    "ListRecentProjects.list_recent_projects" => %{
       module: ListRecentProjects,
       summary: "Lists the user's recently opened projects, most recent first.",
       args: []
     },
-    "system.info" => %{
+    "SystemInfo.system_info" => %{
       module: SystemInfo,
       summary: "Reports local platform and system information.",
       args: []
