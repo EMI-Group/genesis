@@ -362,6 +362,32 @@ defmodule EvoDashWeb.HomeLiveTest do
       cleanup_task_on_exit(task.id)
     end
 
+    test "real send sets chat_task_id and renders no task-start error (regression)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+
+      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
+
+      # The real send flow sets chat_task_id synchronously in send_chat/2, so it
+      # is readable immediately after render_submit returns. Regression: passing
+      # the bare %EvoGit.TaskInfo{} struct (instead of {:ok, task}) to
+      # AgentStream.task_id_from_start/1 fell through to {:error, :no_task_id},
+      # leaving chat_task_id nil and rendering the error bubble even though the
+      # reflect task DID start.
+      task_id = chat_task_id(view)
+      assert is_binary(task_id)
+
+      # The reflect task started — the error bubble must NOT appear.
+      refute html =~ "Failed to start the task"
+
+      # The tracked id must be the persisted reflect task's id.
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      reflect = Enum.filter(tasks, &(&1.type == :reflect))
+      assert length(reflect) == 1
+      assert hd(reflect).id == task_id
+
+      cleanup_task_on_exit(task_id)
+    end
+
     test "second message carries the transcript preamble", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
