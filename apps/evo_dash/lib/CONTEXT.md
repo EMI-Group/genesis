@@ -10,7 +10,7 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `NodeContext` (SSH remote-development thin client), `DirectoryPicker` (+ `Wx` seam), `UpdateStatus` (auto-update hub), `DesktopLifetime` (desktop shell watcher), `AttachedFile`, `MarkdownRender`, `SettingsUtils`
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `NodeContext` (SSH remote-development thin client), `DirectoryPicker` (+ `Wx` seam), `UpdateStatus` (auto-update hub), `DesktopLifetime` (desktop shell watcher), `ChatHistory` (in-memory ETS-backed chat store), `AttachedFile`, `MarkdownRender`, `SettingsUtils`
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
@@ -20,7 +20,7 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 
 | Module | Purpose |
 |--------|---------|
-| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → DirectoryPicker → UpdateStatus → Endpoint; `DesktopLifetime` appended when `EVOGIT_DESKTOP=1` + `EVOGIT_LIFETIME_PORT`). Store/Registry/TaskRegistry live in `EvoGit.Application`. |
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → ChatHistory → DirectoryPicker → UpdateStatus → Endpoint; `DesktopLifetime` appended when `EVOGIT_DESKTOP=1` + `EVOGIT_LIFETIME_PORT`). Store/Registry/TaskRegistry live in `EvoGit.Application`. |
 | `EvoDash.NodeContext` | Thin client for SSH remote development — wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (connection lifecycle GenServer, graceful degradation), and `EvoGit.RemoteNode` (cross-node RPC helpers — agents, config, paused?, task history, cancellation). Public API is stable so web files need no changes. **Task cancellation model**: `cancel_task/2` = GRACEFUL (`:pending` → immediate `:cancelled`; `:running` → `:cancelling`, agents informed to save + exit, then `:cancelled` with result/archive preserved); `force_kill_task/2` = BRUTAL force kill (kills all agents + wrapper → `:failed`, result nil'd; escalation from `:cancelling`). Both delegate to `EvoGit.RemoteNode`. |
 | `EvoDash.DirectoryPicker` | GenServer serializing native directory/file-dialog usage (Browse buttons + objective attach-file). Native-first (osascript/zenity/PowerShell), wx fallback (`EvoDash.DirectoryPicker.Wx`). Never raises. |
 | `EvoDash.UpdateStatus` | Auto-update state hub for the Tauri updater UI; broadcasts transitions on `EvoGit.PubSub` `"updates"` topic. |
