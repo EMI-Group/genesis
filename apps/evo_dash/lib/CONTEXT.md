@@ -10,7 +10,7 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `NodeContext` (SSH remote-development thin client), `DirectoryPicker` (+ `Wx` seam), `UpdateStatus` (auto-update hub), `DesktopLifetime` (desktop shell watcher), `AttachedFile`, `MarkdownRender`, `SettingsUtils`
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `NodeContext` (SSH remote-development thin client), `DirectoryPicker` (+ `Wx` seam), `UpdateStatus` (auto-update hub), `DesktopLifetime` (desktop shell watcher), `ChatHistory` (in-memory ETS-backed chat store), `AttachedFile`, `MarkdownRender`, `SettingsUtils`
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
@@ -20,11 +20,12 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 
 | Module | Purpose |
 |--------|---------|
-| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → DirectoryPicker → UpdateStatus → Endpoint; `DesktopLifetime` appended when `EVOGIT_DESKTOP=1` + `EVOGIT_LIFETIME_PORT`). Store/Registry/TaskRegistry live in `EvoGit.Application`. |
+| `EvoDash.Application` | OTP supervisor tree (Telemetry → PubSub → TaskSupervisor → ChatHistory → DirectoryPicker → UpdateStatus → Endpoint; `DesktopLifetime` appended when `EVOGIT_DESKTOP=1` + `EVOGIT_LIFETIME_PORT`). Store/Registry/TaskRegistry live in `EvoGit.Application`. |
 | `EvoDash.NodeContext` | Thin client for SSH remote development — wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (connection lifecycle GenServer, graceful degradation), and `EvoGit.RemoteNode` (cross-node RPC helpers — agents, config, paused?, task history, cancellation). Public API is stable so web files need no changes. **Task cancellation model**: `cancel_task/2` = GRACEFUL (`:pending` → immediate `:cancelled`; `:running` → `:cancelling`, agents informed to save + exit, then `:cancelled` with result/archive preserved); `force_kill_task/2` = BRUTAL force kill (kills all agents + wrapper → `:failed`, result nil'd; escalation from `:cancelling`). Both delegate to `EvoGit.RemoteNode`. |
 | `EvoDash.DirectoryPicker` | GenServer serializing native directory/file-dialog usage (Browse buttons + objective attach-file). Native-first (osascript/zenity/PowerShell), wx fallback (`EvoDash.DirectoryPicker.Wx`). Never raises. |
 | `EvoDash.UpdateStatus` | Auto-update state hub for the Tauri updater UI; broadcasts transitions on `EvoGit.PubSub` `"updates"` topic. |
 | `EvoDash.DesktopLifetime` | Desktop Tauri-shell lifetime watcher (TCP pipe) — stops the VM when the shell dies. Desktop-only. |
+| `EvoDash.ChatHistory` | In-memory chat-history store for the Home chat page (issue: transcripts survive LiveView remounts, NOT BEAM restarts — no disk persistence). GenServer owning a named public ETS table; shape-agnostic per-chat state (`put_state/2`/`get_state/1`, opaque `term()` — `HomeLive.ChatState` owns the shape); chat lifecycle: `new_chat/0`, `current_chat_id/0`, `set_current_chat/1`, `list_chats/0` (newest-first), `delete_chat/1`, `prune/1` (caller-driven cap), `reset/0` (test helper). |
 | `EvoDash.AttachedFile` / `EvoDash.MarkdownRender` / `EvoDash.SettingsUtils` | Pure helpers — attached-file reading (.txt/.md/.docx/.pdf), MDEx safe HTML rendering, config-form value utilities. |
 
 Full per-module detail: `./evo_dash/CONTEXT.md`.

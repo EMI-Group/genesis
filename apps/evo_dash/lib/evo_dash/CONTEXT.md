@@ -2,11 +2,12 @@
 
 ## Intent
 
-Domain layer for the EvoDash Phoenix application. Contains the OTP `Application` supervisor, the `NodeContext` SSH remote-development thin client, the `DirectoryPicker` native dialog picker (with its `Wx` seam), the `UpdateStatus` auto-update state hub, the desktop-only `DesktopLifetime` Tauri-shell watcher, and small pure helpers (`AttachedFile`, `MarkdownRender`, `SettingsUtils`). The persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo`, `RecentProject`, `TaskRegistry` and the `task_registry/` helper submodules) live in `:evo_git` as `EvoGit.Store`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`, `EvoGit.TaskRegistry` (and friends). EvoDash owns no persistence or registry code.
+Domain layer for the EvoDash Phoenix application. Contains the OTP `Application` supervisor, the in-memory `ChatHistory` chat-history store, the `NodeContext` SSH remote-development thin client, the `DirectoryPicker` native dialog picker (with its `Wx` seam), the `UpdateStatus` auto-update state hub, the desktop-only `DesktopLifetime` Tauri-shell watcher, and small pure helpers (`AttachedFile`, `MarkdownRender`, `SettingsUtils`). The persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo`, `RecentProject`, `TaskRegistry` and the `task_registry/` helper submodules) live in `:evo_git` as `EvoGit.Store`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`, `EvoGit.TaskRegistry` (and friends). EvoDash owns no persistence or registry code.
 
 ## Routing Table
 
 - `./application.ex` → `EvoDash.Application` — OTP supervisor
+- `./chat_history.ex` → `EvoDash.ChatHistory` — in-memory (ETS-backed) chat-history store for the Home chat page
 - `./node_context.ex` → `EvoDash.NodeContext` — SSH remote-development thin client
 - `./directory_picker.ex` + `./directory_picker/wx.ex` → `EvoDash.DirectoryPicker` (+ `EvoDash.DirectoryPicker.Wx` seam)
 - `./update_status.ex` → `EvoDash.UpdateStatus` — Tauri auto-update state hub
@@ -24,12 +25,17 @@ OTP Application callback module. Supervision tree (`:one_for_one`, `max_restarts
 1. `EvoDashWeb.Telemetry`
 2. `Phoenix.PubSub` (registered as `EvoDash.PubSub`)
 3. `Task.Supervisor` (registered as `EvoDash.TaskSupervisor` — the generic async-runner for dashboard LiveViews: all node-aware data loads and per-click RPCs run as `Task.Supervisor.start_child(EvoDash.TaskSupervisor, ...)` outside the LiveView process)
-4. `EvoDash.DirectoryPicker`
-5. `EvoDash.UpdateStatus`
-6. `EvoDashWeb.Endpoint`
-7. `{EvoDash.DesktopLifetime, []}` — appended only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (only the Tauri sidecar sets both); the module's `init/1` self-disable is belt-and-suspenders.
+4. `EvoDash.ChatHistory` (in-memory chat-history store; LiveViews mount after app boot so it is always available)
+5. `EvoDash.DirectoryPicker`
+6. `EvoDash.UpdateStatus`
+7. `EvoDashWeb.Endpoint`
+8. `{EvoDash.DesktopLifetime, []}` — appended only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (only the Tauri sidecar sets both); the module's `init/1` self-disable is belt-and-suspenders.
 
 `EvoGit.Store`, the task-registry `Registry`, and `EvoGit.TaskRegistry` are children of `EvoGit.Application`'s supervision tree, not of this supervisor.
+
+### `EvoDash.ChatHistory` (`chat_history.ex`)
+
+In-memory (ETS-backed, NO disk persistence) chat-history store for the Home chat page (`EvoDashWeb.HomeLive`) — keeps per-chat transcripts alive across LiveView remounts. A GenServer (supervised child of `EvoDash.Application`, after `EvoDash.TaskSupervisor` and before the Endpoint) owns a named public ETS table (`:evo_dash_chat_history`, `:public`, `read_concurrency: true`); the table dies with the GenServer (no heir) — chats are volatile by design (they survive LiveView remounts, not BEAM restarts or a store crash). **ALL operations go through synchronous GenServer calls**: compound ops (`new_chat/0` inserts the chat AND makes it current, `delete_chat/1` removes AND may clear the current pointer, `prune/1` scans and deletes, `reset/0` clears everything) are serialized race-free by construction; single-key ops (`put_state/2`, `get_state/1`) would be safe directly on ETS (writes are atomic per call) but go through the GenServer too for one trivially-reasoned concurrency model (chat ops are low-frequency, so serialization cost is negligible). External DIRECT READS of the public table are safe (atomic) but mutations must go through the API. Shape-agnostic: per-chat state is an opaque `term()` — the LiveView owns the transcript/message shape. API: `new_chat/0` (id from `System.unique_integer([:positive])` — unique but NOT guaranteed ordered; creation order is a separate internal monotonic seq that drives `list_chats/0`'s newest-first order), `current_chat_id/0`, `set_current_chat/1` (no existence validation — a dangling current id renders as an empty chat), `list_chats/0` (newest-first), `delete_chat/1` (clears current if it was current; no-op for unknown ids), `prune/1` (keeps only the newest N; caller-driven, NEVER automatic; non-integer/negative bounds ignored, `0` clears all), `put_state/2` (upserts; an unknown id registers a new newest chat), `get_state/1` (`nil` for unknown/unset), `reset/0` (clears all — test helper). All callbacks are total — no raising on bad input. Table entries: `{:current}` → `chat_id | :none` (the current pointer), `{:chat, chat_id}` → `{seq, state}` (monotonic creation seq driving newest-first order + opaque per-chat state). Enumeration uses `:ets.match_object/2` with a plain match pattern — NOT `:ets.select` match specs, whose match heads on this OTP cannot contain nested tuples and therefore cannot match tuple keys.
 
 ### `EvoDash.NodeContext` (`node_context.ex`)
 
@@ -81,6 +87,7 @@ Pure config-form helpers used by the settings LiveView: `deep_put/3`, `deep_merg
 ## Constraints
 
 - `EvoDash.Application` starts NO persistence/registry children — those belong to `EvoGit.Application`.
+- `EvoDash.ChatHistory` is in-memory only: a public ETS table owned by its GenServer, no disk persistence, no heir, no automatic pruning (`prune/1` is caller-driven). Mutations MUST go through the API (GenServer-serialized); direct table reads are safe but read-only by convention.
 - `EvoDash.TaskSupervisor` IS started and IS used (async loads across all LiveViews). Do NOT remove it.
 - `NodeContext` keeps its public API stable; web-layer callers should never touch `EvoGit.RemoteNode`/`EvoGit.RemoteConnection`/`EvoGit.RemoteConnections` directly.
 - `DesktopLifetime` is desktop-only: gated on `EVOGIT_DESKTOP=1` + `EVOGIT_LIFETIME_PORT` so `genesis_remote` never ships it.

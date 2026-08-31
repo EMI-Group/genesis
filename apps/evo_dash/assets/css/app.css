@@ -2051,6 +2051,11 @@ button, a, input, textarea, select, summary,
    container with a subtle border + soft shadow that gains a gentle primary
    focus ring. Colors come exclusively from theme tokens via color-mix. */
 .help-composer {
+  /* Vertically center the round Send/Stop buttons within the input row -
+     overrides the form's Tailwind `items-end` (unlayered CSS beats @layer
+     utilities), fixing the button sitting low against the min-h-[46px]
+     textarea in both the 1-row and grown states. */
+  align-items: center;
   padding: 0 0.5rem;
   border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
   border-radius: 1.5rem;
