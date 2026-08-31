@@ -87,9 +87,7 @@ defmodule EvoGit.Runtime.GenesisTest do
       phylo_node = %PhyloGraphNode{repo: "/tmp/fake", base_commit: "abc", current_commit: "abc"}
 
       spec =
-        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing",
-          model_id: "fast"
-        )
+        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing", model_id: "fast")
 
       assert spec.opts[:model_id] == "fast"
     end
@@ -99,9 +97,7 @@ defmodule EvoGit.Runtime.GenesisTest do
       phylo_node = %PhyloGraphNode{repo: "/tmp/fake", base_commit: "abc", current_commit: "abc"}
 
       spec =
-        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing",
-          foreign_repos: []
-        )
+        AgentSpec.new(context_node, phylo_node, SomeAgent, "do thing", foreign_repos: [])
 
       assert spec.opts[:model_id] == nil
     end
