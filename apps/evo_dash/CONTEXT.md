@@ -11,7 +11,7 @@ Users open a Project (a Git repository path), and the dashboard auto-detects the
 - `./assets/` → Frontend source assets (JavaScript, CSS, vendor libraries; `assets/CONTEXT.md`)
 - `./assets/js/hooks/` → Standalone JS hook files (`adaptive_input.js`, `sidebar_collapse.js`, `node_switch_fade.js`, `legend_tooltip.js`, `diff_viewer.js`); all other hooks are inline in `./assets/js/app.js`
 - `./lib/` → Application source code: `./lib/evo_dash/` domain logic + `./lib/evo_dash_web/` web interface
-- `./lib/evo_dash/` → Domain modules: `EvoDash.Application`, `NodeContext`, `DirectoryPicker` (+ `Wx` seam), `UpdateStatus`, `DesktopLifetime`, `AttachedFile`, `MarkdownRender`, `SettingsUtils` — `lib/evo_dash/CONTEXT.md`
+- `./lib/evo_dash/` → Domain modules: `EvoDash.Application`, `ChatHistory` (in-memory chat store), `NodeContext`, `DirectoryPicker` (+ `Wx` seam), `UpdateStatus`, `DesktopLifetime`, `AttachedFile`, `MarkdownRender`, `SettingsUtils` — `lib/evo_dash/CONTEXT.md`
 - `./lib/evo_dash_web/` → Web interface: endpoint, router, `evo_dash_web.ex` `live_view/0` macro (registers 5 on-mount hooks), Gettext, Helpers, Telemetry — `lib/evo_dash_web/CONTEXT.md`
 - `./lib/evo_dash_web/live/` → LiveView pages (`projects_live.ex` + `projects_live/`, `home_live.ex` + `home_live/`, `review_live.ex` + `review_live/`, `agents_live.ex` + `agents_live/`, `tasks_live.ex`, `settings_live.ex` + `settings_live/`, `system_live.ex` + `system_live/`, `welcome_live.ex`, `welcome_complete_live.ex`, `components/` LiveComponents) — `live/CONTEXT.md`
 - `./lib/evo_dash_web/live/projects_live/` → ProjectsLive support modules (`Project`, `ProjectFlow`, `Assigns`, `StatePersistence`, `AttachFile`, `GitHub`, `RemoteView`) — `live/projects_live/CONTEXT.md`
