@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.ListTasks do
   @moduledoc """
-  Command handler for the `task.list` command, invoked by `EvoGit.CommandShell`
+  Command handler for the `ListTasks.list_tasks` command, invoked by `EvoGit.CommandShell`
   via the `run_command` tool. Lists tasks from the task registry, optionally
   filtered by status.
   """

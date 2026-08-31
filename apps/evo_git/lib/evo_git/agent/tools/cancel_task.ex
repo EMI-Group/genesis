@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.CancelTask do
   @moduledoc """
-  Command handler for the `task.cancel` command, invoked by
+  Command handler for the `CancelTask.cancel_task` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Gracefully cancels a task
   by id.
 

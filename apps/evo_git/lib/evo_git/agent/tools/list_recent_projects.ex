@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.ListRecentProjects do
   @moduledoc """
-  Command handler for the `project.list` command, invoked by
+  Command handler for the `ListRecentProjects.list_recent_projects` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Lists the user's recently
   opened projects from the task registry.
   """

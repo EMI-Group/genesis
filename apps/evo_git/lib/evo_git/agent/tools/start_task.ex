@@ -1,6 +1,6 @@
 defmodule EvoGit.Agent.Tools.StartTask do
   @moduledoc """
-  Command handler for the `task.start` command, invoked by
+  Command handler for the `StartTask.start_task` command, invoked by
   `EvoGit.CommandShell` via the `run_command` tool. Starts a new background
   task (genesis / evolve / reflect / extract_skills) in the task registry.
   """
