@@ -79,11 +79,18 @@ Owns the PERSISTED chat-state shape (one plain map, stored per-chat via `EvoDash
   agent_message_count: non_neg_integer() | nil,
   chat_task_status: nil | :pending | :running | :finalizing | :cancelling | :completed | :failed | :cancelled,
   chat_node: node() | nil,
+  selected_model_id: String.t() | nil,   # pinned model profile id (nil = Auto)
   thought_process: [to_entries entry]
 }
 ```
 
 `build/1` derives the map from LiveView assigns (persist direction); `restore/1` normalizes a stored map back into assign values (mount direction; the transcript goes through `Transcript.normalize/1`; statuses are whitelisted; malformed fields degrade per key). Both total. The seq counters (`chat_fetch_seq`/`chat_task_fetch_seq`) are runtime-only, never persisted.
+
+`selected_model_id` is the chat's pinned model profile id, `nil` = Auto (the runtime's model-selection script or default decides). It is NOT validated against the configured profiles on restore — a stored id that no longer exists just threads an unknown id on the next send (the core falls back gracefully). Restore semantics: non-empty binary → itself; anything else → `nil`.
+
+### `EvoDashWeb.HomeLive.ModelSelect` (`model_select.ex`)
+
+Model-profile loading for the chat header's model selector. `load(node)` → `{model_profiles, model_selection_enabled}` — node-aware, mirroring the ProjectsLive task-form loading (`EvoDashWeb.ProjectsLive.Project.load_model_profiles/1` + `AsyncLoad.load_custom_agents/1`): local node → `Config.resolve()` + `EvoGit.CustomAgents.ModelSelector.enabled?/0`; remote node → `EvoDash.NodeContext.get_resolved_config/1` + `list_custom_agents/1` (configured-but-broken scripts still count as enabled, matching `ModelSelector.enabled?/0`). RPC failure → `{[], false}` — never crashes. The Auto option label convention lives in the LiveView template: "Auto (by rules)" when `model_selection_enabled`, else plain "Auto".
 
 ### `EvoDashWeb.HomeLive.AssistantMessage` (`assistant_message.ex`)
 
@@ -139,3 +146,14 @@ The task-card helpers from `TaskCardComponents` (`objective_text/1`, `render_res
 - **New chat**: disabled while `chat_status != :idle` (Stop is the in-flight control — the cleanest semantics: New chat never races a running task); `start_new_chat/1` creates a NEW persisted chat + `prune(10)` + resets transcript/all chat refs/badge/thought process + both seq counters.
 - **Auto-scroll**: `id="chat-messages"` carries `phx-hook="AgentHistoryAutoScroll"` (the generic hook in `assets/js/app.js` — tracks isAtBottom on its element, smooth-scrolls on every `updated()`); NO asset changes needed (Tailwind 4 scans `../../lib/evo_dash_web`).
 - **Styling (hand-crafted Tailwind — zero DaisyUI component classes on this page)**: the empty state (`@transcript == []`) shows the brand logo mark (light/dark variants via `dark:hidden` / `hidden dark:block`), a "Start a conversation" kicker + "How can I help you today?" greeting, and 4 suggestion chips wired to the existing `send_message` event via `phx-value-message`; user entries are right-aligned `bg-primary text-primary-content` bubbles with a flattened bottom-right corner (`rounded-br-md`); assistant entries are the `AssistantMessage` mini task-card (avatar + bordered card + optional badge/details — see API Surface); error entries use a soft red tint (`border-error/25 bg-error/10 text-error`) with an exclamation icon. The composer is a rounded-3xl `.help-composer` container (styles in the "Help Chat Page (GET /help)" section at the end of `assets/css/app.css`, theme-token color-mix only) with the circular Send button morphing into the Stop button while running — both buttons stay in the DOM (the inactive one `hidden` + disabled) so `button[phx-click="stop"]` remains assertable on idle; the header has only the ghost "New chat" button. All colors come from theme tokens (no hardcoded hex).
+
+## Notes for Agents — Model selector (support modules done, LiveView wiring PENDING)
+
+The per-chat LLM model selector feature is **partially implemented**: the support modules in THIS directory are done and committed (`ChatState.selected_model_id` field + `ModelSelect.load/1` above), but the `home_live.ex` wiring is **NOT yet implemented** (it lives one level up and is out of this node's scope). Remaining work for a higher-level agent:
+
+- `mount/3`: assign `model_profiles` / `model_selection_enabled` via `ModelSelect.load(socket.assigns[:current_node] || node())`; re-assign on node switch in `handle_params/3`.
+- `base_assigns`/`reset_chat`: seed/reset `selected_model_id: nil` (per-chat default Auto).
+- Header UI: a `<select name="model_id" phx-change="select_chat_model">` in the header (OUTSIDE `#chat-form` — a form-less phx-change may send the value under `"model_id"` OR `"value"`, so the handler needs both clauses) listing Auto (label "Auto (by rules)" when `model_selection_enabled`, else "Auto") + each profile id; hidden when `@model_profiles == []`.
+- Event `select_chat_model` → `assign(selected_model_id: normalized_id) |> persist_state()` ("" → nil).
+- `send_chat/2`: when `selected_model_id` is a non-empty binary, thread `model_id: <id>, model_id_locked: true` into the `start_task(:reflect, ...)` opts; Auto → NEITHER key (mirror `projects_live.ex:2477-2486`).
+- Tests (`apps/evo_dash/test/...` — also outside this node): `chat_state_test.exs` exact-map assertions need the new `selected_model_id` key; `home_live_test.exs` needs selector-render + threading + remount tests (write a `[[llm.models]]` config to `EvoGit.Config.config_path()` before mounting, like `projects_live_test.exs` `write_model_profile_config/0`).
