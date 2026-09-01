@@ -248,7 +248,7 @@ defmodule EvoGit.PeakHours do
   def validate_days(days) when is_list(days) do
     case Enum.reduce_while(days, {:ok, []}, fn d, {:ok, acc} ->
            case normalize_day(d) do
-             {:ok, atoms} -> {:cont, {:ok, [atoms | acc]}}
+             {:ok, atoms} -> {:cont, {:ok, acc ++ atoms}}
              :error -> {:halt, {:error, {:invalid_days, d}}}
            end
          end) do
@@ -428,9 +428,14 @@ defmodule EvoGit.PeakHours do
         window_candidates ++ midnight_candidates
       end)
 
-    case Enum.min(candidates, fn -> nil end) do
-      nil -> nil
-      transition -> transition
+    case candidates do
+      [] ->
+        nil
+
+      _ ->
+        Enum.reduce(candidates, fn c, acc ->
+          if NaiveDateTime.compare(c, acc) == :lt, do: c, else: acc
+        end)
     end
   end
 

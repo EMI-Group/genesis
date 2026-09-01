@@ -193,12 +193,17 @@ defmodule EvoGit.PeakHourEngine do
           end
       end)
 
-    case Enum.min(transitions, fn -> nil end) do
-      nil ->
+    case transitions do
+      [] ->
         @max_sleep_ms
 
-      transition ->
-        ms = max(NaiveDateTime.diff(transition, now, :millisecond), 0)
+      _ ->
+        earliest =
+          Enum.reduce(transitions, fn t, acc ->
+            if NaiveDateTime.compare(t, acc) == :lt, do: t, else: acc
+          end)
+
+        ms = max(NaiveDateTime.diff(earliest, now, :millisecond), 0)
         min(ms + @wakeup_epsilon_ms, @max_sleep_ms)
     end
   end
