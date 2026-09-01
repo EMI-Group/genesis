@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.5] - 2026-09-01
+
+### Added
+
+- Added UNC/network-drive and WSL-shared path support with UNC-aware helpers and early repo-root diagnostics so repos on network-shared or WSL-shared paths work on non-Windows hosts.
+- Added diagnostic logging to peak/off-peak concurrency scheduling for improved observability when troubleshooting blocked tasks.
+- Added a secure command-string dispatcher (EvoGit.CommandShell) with a run_command tool that consolidates ten task-control tools into a single command-shell registry.
+
+### Changed
+
+- Restricted writable cross-repo subagent spawns to the root agent only and serialized them per batch, with clear rejection hints surfaced to the LLM, while keeping read-only foreign-repo spawns unrestricted for all agents.
+- Redesigned the Home chat page with a ChatGPT-style layout, robust ChatHistory persistence, nil-safe message handling, improved task-card assistant bubbles, and crash/regression fixes.
+- Shortened and clarified tool-output truncation messages and fixed UTF-8 safety and overlap edge cases in truncation.
+- Renamed CommandShell command paths to the Module.function naming form throughout the agent and updated documentation accordingly.
+- Consolidated the ten task-control tools into a single generic run_command tool that dispatches via a command-shell registry, simplifying the agent's tool surface.
+- Updated translations and documentation to reflect the self-reflective run_command shell tool and its command registry.
+
+### Fixed
+
+- Fixed malformed delegation-hint path rendering when editing files directly in the agent's own node directory and added regression tests for suppressing delegation hints for own nodes.
+- Fixed UNC/WSL path handling in project-flow path normalization, remote acceptance, and foreign-repo storage so UNC-prefixed roots round-trip intact on non-Windows nodes.
+- Fixed HomeLive send_chat regression where a bare task struct was passed to task_id_from_start instead of the correct chat_task_id.
+
 ## [0.11.4] - 2026-08-30
 
 ### Added
