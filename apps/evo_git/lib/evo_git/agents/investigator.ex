@@ -21,7 +21,9 @@ defmodule EvoGit.Agents.Investigator do
       "to let it investigate the codebase and return a report. " <>
       "The investigator has read-only access and can also update directory CONTEXT.md files. " <>
       "Use this to understand code structure, find patterns, trace dependencies, or investigate test results — " <>
-      "especially when you need information from a child directory before deciding how to proceed."
+      "especially when you need information from a child directory before deciding how to proceed. " <>
+      "It is read-only — spawnable freely in any repo, including foreign repositories (read-only foreign-repo access is " <>
+      "unrestricted; it may update CONTEXT.md but never modifies source files)."
   end
 
   def available_tools do
