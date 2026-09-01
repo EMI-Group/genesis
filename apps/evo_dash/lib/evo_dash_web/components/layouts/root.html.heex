@@ -1,8 +1,14 @@
 <!DOCTYPE html>
-<html lang={Gettext.get_locale(EvoDashWeb.Gettext)} dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}>
+<html
+  lang={Gettext.get_locale(EvoDashWeb.Gettext)}
+  dir={if Gettext.get_locale(EvoDashWeb.Gettext) in ~w(ar he fa ur), do: "rtl", else: "ltr"}
+>
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <meta name="csrf-token" content={get_csrf_token()} />
     <meta name="locale" content={Gettext.get_locale(EvoDashWeb.Gettext)} />
     <meta name="theme-color" content="#f8fafc" />
@@ -119,7 +125,7 @@
       })();
     </script>
   </head>
-  <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased h-screen overflow-hidden selection:bg-indigo-500/30">
+  <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased h-dvh overflow-hidden selection:bg-indigo-500/30">
     {@inner_content}
   </body>
 </html>

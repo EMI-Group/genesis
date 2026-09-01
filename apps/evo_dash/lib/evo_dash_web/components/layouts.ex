@@ -64,7 +64,10 @@ defmodule EvoDashWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <div class="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300" id="app-layout">
+    <div
+      class="flex h-dvh overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300"
+      id="app-layout"
+    >
       <!-- Mobile hamburger button (visible on < lg screens) -->
       <div class="lg:hidden fixed top-0 left-0 z-50 p-2">
         <button
@@ -77,7 +80,10 @@ defmodule EvoDashWeb.Layouts do
       </div>
 
       <!-- Mobile overlay (hidden by default, JS-controlled) -->
-      <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden">
+      <div
+        id="sidebar-overlay"
+        class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
+      >
       </div>
 
       <!-- Sidebar
@@ -98,7 +104,7 @@ defmodule EvoDashWeb.Layouts do
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 h-screen flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
+        class="fixed lg:relative z-50 h-dvh flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 shrink-0">
@@ -127,110 +133,121 @@ defmodule EvoDashWeb.Layouts do
 
         <!-- Navigation Links -->
         <%= if !@simple_nav do %>
-        <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/projects", @current_node_id)}
-            current={@current_page == :dashboard}
-            icon="hero-squares-2x2"
-          >{gettext("Projects")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/agents", @current_node_id)}
-            current={@current_page == :agents}
-            icon="hero-server"
-          >{gettext("Agents")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/tasks", @current_node_id)}
-            current={@current_page == :tasks}
-            icon="hero-clipboard-document-list"
-          >{gettext("Tasks")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/settings", @current_node_id)}
-            current={@current_page == :settings}
-            icon="hero-cog-6-tooth"
-          >{gettext("Settings")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/system", @current_node_id)}
-            current={@current_page == :system}
-            icon="hero-server-stack"
-            notification={update_status_notification(@update_status)}
-          >{gettext("System")}</.sidebar_nav_link>
-          <.sidebar_nav_link
-            navigate={with_node_param(~p"/help", @current_node_id)}
-            current={@current_page == :help}
-            icon="hero-question-mark-circle"
-          ><%!-- 帮助 — 指向自省代理聊天页面的侧边栏入口 --%>{gettext("Help")}</.sidebar_nav_link>
+          <nav class="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/projects", @current_node_id)}
+              current={@current_page == :dashboard}
+              icon="hero-squares-2x2"
+            >{gettext("Projects")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/agents", @current_node_id)}
+              current={@current_page == :agents}
+              icon="hero-server"
+            >{gettext("Agents")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/tasks", @current_node_id)}
+              current={@current_page == :tasks}
+              icon="hero-clipboard-document-list"
+            >{gettext("Tasks")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/settings", @current_node_id)}
+              current={@current_page == :settings}
+              icon="hero-cog-6-tooth"
+            >{gettext("Settings")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/system", @current_node_id)}
+              current={@current_page == :system}
+              icon="hero-server-stack"
+              notification={update_status_notification(@update_status)}
+            >{gettext("System")}</.sidebar_nav_link>
+            <.sidebar_nav_link
+              navigate={with_node_param(~p"/help", @current_node_id)}
+              current={@current_page == :help}
+              icon="hero-question-mark-circle"
+            ><%!-- 帮助 — 指向自省代理聊天页面的侧边栏入口 --%>{gettext("Help")}</.sidebar_nav_link>
 
-          <!-- Task Indicators Section -->
-          <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
-            <div class="px-3 mb-3 mt-1">
-              <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
-                {gettext("Active Tasks")}
-              </span>
-            </div>
-            <div class="space-y-1">
-              <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
-                <!-- Project group header -->
-                <div class="px-3 pt-2 pb-1 first:pt-0">
-                  <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
-                    <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
-                    {project_name}
-                  </span>
-                </div>
-                <!-- Tasks in this group -->
-                <%= for task <- tasks do %>
-                  <% is_running = task.status in [:running, :pending, :finalizing, :cancelling] %>
-                  <.link
-                    navigate={if is_running, do: with_node_param(~p"/agents", @current_node_id), else: with_node_param(~p"/review/#{task.id}", @current_node_id)}
-                    data-sidebar-task-link
-                    title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
-                    class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
-                  >
-                    <span class={["w-2.5 h-2.5 rounded-full shrink-0", task_status_dot_color(task), is_running && "animate-pulse"]} title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}></span>
-                    <div class="min-w-0 flex-1 sidebar-label">
-                      <span class="block truncate group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
-                        {task_label(task)}
-                      </span>
-                      <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                        <%= if is_running do %>
-                          {format_elapsed(task.started_at)}
-                        <% else %>
-                          {gettext("completed")} {format_elapsed(task.finished_at)}
-                        <% end %>
-                      </span>
-                    </div>
-                  </.link>
+            <!-- Task Indicators Section -->
+            <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
+              <div class="px-3 mb-3 mt-1">
+                <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                  {gettext("Active Tasks")}
+                </span>
+              </div>
+              <div class="space-y-1">
+                <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
+                  <!-- Project group header -->
+                  <div class="px-3 pt-2 pb-1 first:pt-0">
+                    <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                      <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
+                      {project_name}
+                    </span>
+                  </div>
+                  <!-- Tasks in this group -->
+                  <%= for task <- tasks do %>
+                    <% is_running = task.status in [:running, :pending, :finalizing, :cancelling] %>
+                    <.link
+                      navigate={
+                        if is_running,
+                          do: with_node_param(~p"/agents", @current_node_id),
+                          else: with_node_param(~p"/review/#{task.id}", @current_node_id)
+                      }
+                      data-sidebar-task-link
+                      title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
+                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                    >
+                      <span
+                        class={[
+                          "w-2.5 h-2.5 rounded-full shrink-0",
+                          task_status_dot_color(task),
+                          is_running && "animate-pulse"
+                        ]}
+                        title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}
+                      ></span>
+                      <div class="min-w-0 flex-1 sidebar-label">
+                        <span class="block truncate group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                          {task_label(task)}
+                        </span>
+                        <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          <%= if is_running do %>
+                            {format_elapsed(task.started_at)}
+                          <% else %>
+                            {gettext("completed")} {format_elapsed(task.finished_at)}
+                          <% end %>
+                        </span>
+                      </div>
+                    </.link>
+                  <% end %>
                 <% end %>
-              <% end %>
+              </div>
             </div>
-          </div>
-        </nav>
+          </nav>
 
-        <!-- Bottom section: Node selector + Language + Theme + Collapse -->
-        <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
-          <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
-            <div data-sidebar-bottom-group class="flex items-center gap-1">
-              <!-- Node Selector (remote server switch — dropdown opens upward) -->
-              <.live_component
-                module={EvoDashWeb.NodeSelectorComponent}
-                id="node-selector"
-                current_node_id={@current_node_id}
-                current_node_name={@current_node_name}
-                drop_up={true}
-              />
-            </div>
-            <div data-sidebar-bottom-group class="flex items-center gap-1">
-              <.language_selector drop_up={true} />
-              <.theme_toggle_compact drop_up={true} />
-              <button
-                id="sidebar-collapse-toggle"
-                class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
-                title={gettext("Collapse sidebar")}
-              >
-                <.icon name="hero-chevron-double-left" class="w-4 h-4" />
-              </button>
+          <!-- Bottom section: Node selector + Language + Theme + Collapse -->
+          <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+            <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
+              <div data-sidebar-bottom-group class="flex items-center gap-1">
+                <!-- Node Selector (remote server switch — dropdown opens upward) -->
+                <.live_component
+                  module={EvoDashWeb.NodeSelectorComponent}
+                  id="node-selector"
+                  current_node_id={@current_node_id}
+                  current_node_name={@current_node_name}
+                  drop_up={true}
+                />
+              </div>
+              <div data-sidebar-bottom-group class="flex items-center gap-1">
+                <.language_selector drop_up={true} />
+                <.theme_toggle_compact drop_up={true} />
+                <button
+                  id="sidebar-collapse-toggle"
+                  class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
+                  title={gettext("Collapse sidebar")}
+                >
+                  <.icon name="hero-chevron-double-left" class="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
-        </div>
         <% end %>
       </aside>
 
@@ -240,8 +257,17 @@ defmodule EvoDashWeb.Layouts do
              "quit-requested" tray event on every page: hooks only mount on
              elements inside the LiveView root DOM, and this wrapper is part of
              the shared app layout, so it is re-established on every navigation. --%>
-        <div id="desktop-quit-hook" phx-hook="DesktopQuit" class="flex-1 flex flex-col min-w-0 min-h-0">
-          <main id="main-content" class="flex-1 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900" phx-hook="NodeSwitchFade" data-node-id={@current_node_id || "local"}>
+        <div
+          id="desktop-quit-hook"
+          phx-hook="DesktopQuit"
+          class="flex-1 flex flex-col min-w-0 min-h-0"
+        >
+          <main
+            id="main-content"
+            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900"
+            phx-hook="NodeSwitchFade"
+            data-node-id={@current_node_id || "local"}
+          >
             {render_slot(@inner_block)}
           </main>
         </div>
@@ -298,7 +324,8 @@ defmodule EvoDashWeb.Layouts do
            can appear on ANY page (including Welcome/WelcomeComplete). -->
       <%= if @desktop_quit_confirm do %>
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="desktop_quit_cancelled"></div>
+          <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="desktop_quit_cancelled">
+          </div>
           <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
             <div class="flex items-center gap-3 mb-4">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
@@ -317,7 +344,11 @@ defmodule EvoDashWeb.Layouts do
             </p>
 
             <div class="flex justify-end gap-3 pt-2">
-              <button type="button" class="btn btn-ghost rounded-md px-6" phx-click="desktop_quit_cancelled">
+              <button
+                type="button"
+                class="btn btn-ghost rounded-md px-6"
+                phx-click="desktop_quit_cancelled"
+              >
                 {gettext("Cancel")}
               </button>
               <button
@@ -377,7 +408,6 @@ defmodule EvoDashWeb.Layouts do
 
       <.flash_group flash={@flash} />
     </div>
-
     """
   end
 
@@ -492,7 +522,11 @@ defmodule EvoDashWeb.Layouts do
       <%= if @notification do %>
         <span
           class={["ml-auto w-2.5 h-2.5 rounded-full shrink-0", update_notification_dot(@notification)]}
-          title={if @notification == :ready, do: gettext("Update ready to install"), else: gettext("Update available")}
+          title={
+            if @notification == :ready,
+              do: gettext("Update ready to install"),
+              else: gettext("Update available")
+          }
         ></span>
       <% end %>
     </.link>
@@ -581,7 +615,11 @@ defmodule EvoDashWeb.Layouts do
 
   def flash_group(assigns) do
     ~H"""
-    <div id={@id} aria-live="polite" class="fixed top-4 right-4 z-[60] flex flex-col gap-2 w-80 sm:w-96 pointer-events-none">
+    <div
+      id={@id}
+      aria-live="polite"
+      class="fixed top-4 right-4 z-[60] flex flex-col gap-2 w-80 sm:w-96 pointer-events-none"
+    >
       <.flash kind={:info} flash={@flash} />
       <.flash kind={:success} flash={@flash} />
       <.flash kind={:error} flash={@flash} />

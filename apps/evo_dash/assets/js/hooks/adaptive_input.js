@@ -73,6 +73,24 @@ const AdaptiveInput = {
     // before any user input.
     requestAnimationFrame(() => this._apply());
 
+    // Keyboard-aware visible height (mobile): sync --app-vh from
+    // window.visualViewport so the @media (max-width: 640px) overrides in
+    // css/app.css track the area ABOVE the virtual keyboard even in browsers
+    // whose layout viewport does not resize (Firefox Android, Chrome < 108,
+    // where interactive-widget=resizes-content is unsupported). Guarded:
+    // when visualViewport is absent the var stays unset and the CSS falls
+    // back to 100dvh. The value is set on documentElement so it also drives
+    // any future page-level dvh-derived budgets.
+    if ('visualViewport' in window && window.visualViewport) {
+      this._syncAppVh = () => {
+        const vh = window.visualViewport.height;
+        if (vh) document.documentElement.style.setProperty('--app-vh', vh + 'px');
+      };
+      window.visualViewport.addEventListener('resize', this._syncAppVh);
+      window.visualViewport.addEventListener('scroll', this._syncAppVh);
+      this._syncAppVh();
+    }
+
     // Server-triggered clear after a successful task launch: the textarea sits
     // inside phx-update="ignore", so morphdom never empties it — the server
     // only resets @task_prompt (which re-seeds data-layout="compact"). This
@@ -96,6 +114,10 @@ const AdaptiveInput = {
   destroyed() {
     this.el.removeEventListener("input", this._inputHandler);
     if (this._layoutObserver) this._layoutObserver.disconnect();
+    if (this._syncAppVh && window.visualViewport) {
+      window.visualViewport.removeEventListener('resize', this._syncAppVh);
+      window.visualViewport.removeEventListener('scroll', this._syncAppVh);
+    }
   },
 
   _apply() {

@@ -1907,6 +1907,29 @@ button, a, input, textarea, select, summary,
     0 0 20px -4px color-mix(in oklch, oklch(0.78 0.16 290) 50%, transparent);
 }
 
+/* --- Mobile keyboard-aware overrides (narrow touch viewports) ---
+   The expanded task-form card pins .input-controls to the bottom of the app
+   shell's height chain. On phones the VISIBLE viewport is smaller than the
+   layout viewport while the virtual keyboard is open or the URL bar is
+   visible, so the chain must bound to the area above the keyboard instead of
+   the full layout viewport. --app-vh is synced from window.visualViewport by
+   the AdaptiveInput hook (mobile; falls back to 100dvh when visualViewport is
+   absent or the var is unset); the #app-layout id selector beats the h-dvh
+   utility class, shrinking the whole chain to the keyboard-visible area. The
+   expanded textarea's min-height floor drops to 6 lines (and stays within the
+   keyboard-aware budget) so textarea + controls always fit the card's flex
+   allocation — no overflow:hidden clip. Desktop is untouched (this media
+   query does not match normal desktop windows). */
+@media (max-width: 640px) {
+  #app-layout {
+    height: var(--app-vh, 100dvh);
+  }
+
+  .input-layout[data-layout="expanded"] .input-prompt {
+    min-height: min(calc(1.6em * 6), calc(var(--app-vh, 100dvh) - 12rem));
+  }
+}
+
 /* --- DirectoryPicker manual-entry fallback hint ---
    When neither the Tauri native dialog nor the File System Access API can
    pick a directory (known macOS case: tauri-plugin-dialog 2.7.1 → rfd 0.16.0
