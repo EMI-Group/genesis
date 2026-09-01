@@ -146,7 +146,7 @@ defmodule EvoGit.Agents.ContextExtractor do
       ~S"""
 
       **Key rules for foreign repo delegation:**
-      - **Read-only vs writable foreign repos**: When delegating to a foreign repo, use `subagent_context_extractor` (read-only) — unless the foreign repo is writable for this task (`writable = true` in `genesis.toml`), in which case `:read_write` agents may be spawned to modify files; their changes are committed to `evogit-agent-*` branches and tracked by the task, but never merged back into the foreign repo's default branch by the task.
+      - **Read-only vs writable foreign repos**: Read-only delegation is UNRESTRICTED — you may spawn `subagent_context_extractor` (read-only) into any foreign repo at any time. Write-capable foreign-repo spawns (foreign repo `writable = true` in `genesis.toml`) are ROOT-AGENT-ONLY and ONE-AT-A-TIME (serialized): spawn one writable foreign-repo subagent, wait for it to complete, then spawn the next — parallel writes would create merge conflicts the spawning agent cannot control. As a read-only extractor you cannot perform writable foreign-repo spawns; if the extraction needs changes to a writable foreign repo, report back up to the root agent, which will spawn the writable subagent (one at a time). Writable changes are committed to `evogit-agent-*` branches and tracked by the task, but never merged back into the foreign repo's default branch by the task.
       """ <>
       PromptFragments.writable_foreign_repo_clause() <>
       "\n" <>
