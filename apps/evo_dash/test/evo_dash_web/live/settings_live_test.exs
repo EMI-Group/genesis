@@ -1238,6 +1238,36 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert draft["peak_hours"] == [%{start: "09:00", end: "12:00"}]
     end
 
+    test "model_profile_form_change stores off_peak_days and per-window days in the draft", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        # Multi-checkbox list as the browser submits it: the hidden-seed ""
+        # entry rides along with the checked day chips.
+        "off_peak_days" => ["", "mon", "fri"],
+        "peak_hours" => %{
+          "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon", "tue"]}
+        }
+      })
+
+      draft = assigns(view).profile_form_draft
+      # off_peak_days is preserved verbatim (the raw checkbox list, seed entry
+      # included) — the save flow normalizes it later via parse_peak_fields.
+      assert draft["off_peak_days"] == ["", "mon", "fri"]
+      # peak_hours is normalized to atom-keyed windows; the per-window days
+      # list is kept because it is non-empty (a no-days window would stay
+      # exactly %{start:, end:}).
+      assert draft["peak_hours"] == [%{start: "09:00", end: "12:00", days: ["mon", "tue"]}]
+    end
+
     test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
@@ -1281,6 +1311,50 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert Floki.attribute(doc, ~s(input[name="concurrency"]), "value") == ["5"]
     end
 
+    test "add_peak_hours_row preserves off-peak days and per-window days from the draft", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "off_peak_days" => ["", "mon", "fri"],
+        "peak_hours" => %{
+          "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon", "tue"]}
+        }
+      })
+
+      html = render_hook(view, "add_peak_hours_row", %{})
+      doc = Floki.parse_document!(html)
+
+      # The profile-level off-peak day chips survive the re-render...
+      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="fri"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="off_peak_days"][value="tue"][checked])) != []
+      # ...and the existing window keeps its per-window days checked.
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="tue"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="wed"][checked])) != []
+
+      # The appended blank row (index 1) has no days checked.
+      refute Floki.find(doc, ~s(input[name="peak_hours[1][days]"][value="mon"][checked])) != []
+
+      # The draft still carries both the off_peak_days and the (now two-row)
+      # peak_hours with days intact.
+      draft = assigns(view).profile_form_draft
+      assert draft["off_peak_days"] == ["", "mon", "fri"]
+
+      assert draft["peak_hours"] == [
+               %{start: "09:00", end: "12:00", days: ["mon", "tue"]},
+               %{start: "", end: ""}
+             ]
+    end
+
     test "remove_peak_hours_row preserves the remaining typed values", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
@@ -1304,6 +1378,44 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert Floki.attribute(doc, ~s(input[name="peak_hours[0][start]"]), "value") == ["14:00"]
       assert Floki.attribute(doc, ~s(input[name="peak_hours[0][end]"]), "value") == ["18:00"]
       refute Floki.find(doc, ~s(input[name="peak_hours[1][start]"])) != []
+    end
+
+    test "remove_peak_hours_row preserves the remaining windows' days and off-peak days", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "model_profile_form_change", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "off_peak_days" => ["", "weekends"],
+        "peak_hours" => %{
+          "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon", "tue"]},
+          "1" => %{"start" => "14:00", "end" => "18:00", "days" => ["wed"]}
+        }
+      })
+
+      html = render_hook(view, "remove_peak_hours_row", %{"index" => "0"})
+      doc = Floki.parse_document!(html)
+
+      # The remaining window (14:00–18:00) moves to index 0 with its days intact.
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[0][start]"]), "value") == ["14:00"]
+      assert Floki.attribute(doc, ~s(input[name="peak_hours[0][end]"]), "value") == ["18:00"]
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="wed"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="mon"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[1][start]"])) != []
+
+      # Off-peak day chips survive the removal too.
+      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="weekends"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
+
+      draft = assigns(view).profile_form_draft
+      assert draft["off_peak_days"] == ["", "weekends"]
+      assert draft["peak_hours"] == [%{start: "14:00", end: "18:00", days: ["wed"]}]
     end
 
     test "profile_form_draft is cleared on cancel and on save", %{conn: conn} do
@@ -1428,6 +1540,72 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       [profile] = current_models(view)
       refute Map.has_key?(profile, :timezone) or Map.has_key?(profile, "timezone")
+    end
+
+    test "save_model_profile persists off_peak_days and per-window days", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          # Normalization is defensive: trim + downcase + vocab whitelist +
+          # order-preserving uniq. " MON " → "mon", "funday" (not in the 9-value
+          # vocabulary) and the "" hidden-seed entry are dropped.
+          "off_peak_days" => ["", " MON ", "fri", "mon", "funday"],
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["", "mon", "Tue", "mon"]}
+          }
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert profile.off_peak_days == ["mon", "fri"]
+
+      # The window keeps exactly start/end plus the normalized days list.
+      [window] = profile.peak_hours
+      assert (Map.get(window, "days") || Map.get(window, :days)) == ["mon", "tue"]
+
+      # File-level check on the raw user config TOML (string-keyed decode).
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      assert file_profile["off_peak_days"] == ["mon", "fri"]
+      assert hd(file_profile["peak_hours"])["days"] == ["mon", "tue"]
+    end
+
+    test "save_model_profile omits off_peak_days and per-window days when empty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          # All chips off → only the hidden-seed "" entry is submitted.
+          "off_peak_days" => [""],
+          "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      refute Map.has_key?(profile, :off_peak_days) or Map.has_key?(profile, "off_peak_days")
+
+      # A no-days window stays EXACTLY %{start:, end:} (backward compatible).
+      [window] = profile.peak_hours
+      refute Map.has_key?(window, "days") or Map.has_key?(window, :days)
+      assert Map.get(window, "start") == "09:00"
+      assert Map.get(window, "end") == "12:00"
+
+      # File-level check: the raw TOML omits both keys too.
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      refute Map.has_key?(file_profile, "off_peak_days")
+      assert hd(file_profile["peak_hours"]) == %{"start" => "09:00", "end" => "12:00"}
     end
   end
 
