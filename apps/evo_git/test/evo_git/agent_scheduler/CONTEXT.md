@@ -8,7 +8,7 @@ ExUnit tests for the `EvoGit.AgentScheduler` subsystem — scheduling (no worktr
 
 - `agent_scheduler_test.exs` → scheduling contract + `get_foreign_repo_commits/1`
 - `lifecycle_test.exs` → crash/lifecycle handling, sub-result roll-up, archive records
-- `subagents_test.exs` → spatial contract (cross-repo gate, same-repo hierarchy), `store_sub_result/3`
+- `subagents_test.exs` → spatial contract (cross-repo gate, same-repo hierarchy), writable-foreign-repo delegation gates (root-only via `:foreign_repo_write_not_root`, one-at-a-time via `:foreign_repo_write_serialized` in `spawn_validated_subagents/5`, same-repo-within-foreign unrestricted), `store_sub_result/3`
 - `worktrees_test.exs` → WorktreeManager create/reclaim, crash-restart, per-repo init scoping
 - `slots_test.exs` → LLM/tool slot pools, hard-pause 0-capacity
 - `store_test.exs` / `state_test.exs` / `remote_api_test.exs` / `dispatch_test.exs` / `dispatch_custom_agents_test.exs` / `pubsub_test.exs` / `worktree_retry_test.exs` → ETS store, state/pool config, RPC surface, dispatch, PubSub throttle, retry helpers
