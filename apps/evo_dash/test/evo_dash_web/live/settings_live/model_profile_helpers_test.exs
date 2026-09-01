@@ -549,6 +549,229 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
       assert {:error, "invalid_provider_options_json"} =
                ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
     end
+
+    test "off_peak_days multi-checkbox list (incl. the \"\" hidden-seed entry) round-trips" do
+      params =
+        Map.merge(@peak_params, %{
+          "off_peak_days" => ["mon", "", "fri", "weekends"]
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.off_peak_days == ["mon", "fri", "weekends"],
+             "the \"\" hidden-seed entry must be filtered out"
+
+      # parse_peak_fields/1 exposes the same normalization directly.
+      assert {:ok, %{off_peak_days: ["mon", "fri", "weekends"]}} =
+               ModelProfileHelpers.parse_peak_fields(%{
+                 "off_peak_days" => ["mon", "", "fri", "weekends"]
+               })
+    end
+
+    test "a single off_peak_days value round-trips" do
+      params = Map.merge(@peak_params, %{"off_peak_days" => ["sat"]})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.off_peak_days == ["sat"]
+    end
+
+    test "off_peak_days entries are trimmed and downcased" do
+      params = Map.merge(@peak_params, %{"off_peak_days" => [" Mon ", "TUE", "  wed  "]})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.off_peak_days == ["mon", "tue", "wed"]
+    end
+
+    test "invalid off_peak_days vocabulary entries are silently dropped" do
+      params =
+        Map.merge(@peak_params, %{
+          "off_peak_days" => ["tues", "monday", "garbage", "fri"]
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.off_peak_days == ["fri"]
+    end
+
+    test "duplicate off_peak_days entries are de-duplicated (order preserved)" do
+      params = Map.merge(@peak_params, %{"off_peak_days" => ["mon", "mon", "wed", "mon"]})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.off_peak_days == ["mon", "wed"]
+    end
+
+    test "empty/absent off_peak_days omits the key (no nil/[] leakage)" do
+      for days <- [nil, [], [""], ["   "]] do
+        params =
+          case days do
+            nil -> @peak_params
+            _ -> Map.merge(@peak_params, %{"off_peak_days" => days})
+          end
+
+        assert {:ok, profile} =
+                 ModelProfileHelpers.parse_model_profile_params(params, "profile-1"),
+               "expected off_peak_days #{inspect(days)} to be accepted"
+
+        refute Map.has_key?(profile, :off_peak_days),
+               "off_peak_days key must stay absent for #{inspect(days)}"
+      end
+    end
+
+    test "per-window days round-trip inside peak_hours" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon", "fri"]}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00", days: ["mon", "fri"]}]
+    end
+
+    test "a window without days stays EXACTLY %{start:, end:} (backward compatible)" do
+      # Absent days key — the window map must not carry a :days entry.
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00"}}
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00"}]
+
+      # Empty and invalid-only days lists also omit :days.
+      for days <- [[], [""], ["garbage"]] do
+        params =
+          Map.merge(@peak_params, %{
+            "peak_hours" => %{
+              "0" => %{"start" => "09:00", "end" => "12:00", "days" => days}
+            }
+          })
+
+        assert {:ok, profile} =
+                 ModelProfileHelpers.parse_model_profile_params(params, "profile-1"),
+               "expected days #{inspect(days)} to be accepted"
+
+        assert profile.peak_hours == [%{start: "09:00", end: "12:00"}],
+               "a window with no valid days must not carry a :days key"
+      end
+    end
+
+    test "per-window days accept atom-keyed rows (atom-or-string key safe)" do
+      # List-form peak_hours with atom-keyed rows (round-trip from a draft).
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => [%{start: "09:00", end: "12:00", days: ["mon", "fri"]}]
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00", days: ["mon", "fri"]}]
+    end
+
+    test "a days-only row (no start/end) is dropped as blank in the parse path" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00"},
+            "1" => %{"days" => ["mon", "fri"]}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00"}],
+             "a days-only row with blank start/end must be dropped as blank"
+
+      # A wholly days-only input → peak_hours key absent.
+      params = Map.merge(@peak_params, %{"peak_hours" => %{"0" => %{"days" => ["mon"]}}})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      refute Map.has_key?(profile, :peak_hours)
+    end
+
+    test "normalize_peak_hours_draft/1 keeps :days on a row only when non-empty" do
+      # Non-empty days are preserved on the draft row.
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{
+               "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon"]}
+             }) == [%{start: "09:00", end: "12:00", days: ["mon"]}]
+
+      # Atom-keyed draft rows keep :days too.
+      assert ModelProfileHelpers.normalize_peak_hours_draft([
+               %{start: "09:00", end: "12:00", days: ["fri"]}
+             ]) == [%{start: "09:00", end: "12:00", days: ["fri"]}]
+
+      # Empty/absent days stay WITHOUT a :days key (backward compatible).
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{
+               "0" => %{"start" => "09:00", "end" => "12:00"}
+             }) == [%{start: "09:00", end: "12:00"}]
+
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{
+               "0" => %{"start" => "09:00", "end" => "12:00", "days" => []}
+             }) == [%{start: "09:00", end: "12:00"}]
+
+      # A days-only draft row still gets start/end as "" (draft rows always get
+      # both keys) — with days kept when non-empty.
+      assert ModelProfileHelpers.normalize_peak_hours_draft(%{
+               "0" => %{"days" => ["mon"]}
+             }) == [%{start: "", end: "", days: ["mon"]}]
+    end
+
+    test "off_peak_days + per-window days + peak_concurrency merge into one profile" do
+      params =
+        Map.merge(@peak_params, %{
+          "off_peak_days" => ["sat", "sun"],
+          "peak_concurrency" => "2",
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon"]}
+          }
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_concurrency == 2
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00", days: ["mon"]}]
+      assert profile.off_peak_days == ["sat", "sun"]
+    end
+
+    test "day values never produce dashboard-side errors" do
+      # Invalid vocabulary entries are silently dropped — no error, no key.
+      assert {:ok, %{peak_concurrency: 4}} =
+               ModelProfileHelpers.parse_peak_fields(%{
+                 "off_peak_days" => ["garbage"],
+                 "peak_concurrency" => "4"
+               })
+
+      # A valid-days + valid-window combo round-trips cleanly.
+      assert {:ok,
+              %{
+                off_peak_days: ["fri"],
+                peak_hours: [%{start: "09:00", end: "12:00", days: ["mon"]}]
+              }} =
+               ModelProfileHelpers.parse_peak_fields(%{
+                 "off_peak_days" => ["fri"],
+                 "peak_hours" => %{
+                   "0" => %{"start" => "09:00", "end" => "12:00", "days" => ["mon"]}
+                 }
+               })
+    end
   end
 
   describe "profile id naming from model value" do
