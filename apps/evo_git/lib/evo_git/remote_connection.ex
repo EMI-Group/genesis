@@ -4,11 +4,13 @@ defmodule EvoGit.RemoteConnection do
 
   There are two distinct operations, kept deliberately separate:
 
-    * **Bootstrap** (`bootstrap/1`) — "first time setup": gets a
+    * **Bootstrap** (`bootstrap/1`, `bootstrap/2`) — "first time setup": gets a
       `genesis_remote` release tarball onto the remote host and launches it as
       a daemon (`systemd-run --user` on Linux, `launchctl` on macOS). The
       daemon then runs independently and stays up even after the local side
-      disconnects. Bootstrap does NOT connect.
+      disconnects. Bootstrap does NOT connect. Bootstrap NEVER stops an
+      already-running daemon without explicit user permission — see the
+      `:on_running` option of `bootstrap/2`.
 
       The tarball comes from one of two sources:
 
@@ -33,16 +35,30 @@ defmodule EvoGit.RemoteConnection do
   Progress is broadcast via `Phoenix.PubSub` on `"remote_connections"` as
   `{:remote_connection_status, target_id, %{bootstrap_stage: stage, ...}}`:
 
-  Local-tarball path: `:uploading` → `:extracting` → `:setting_permissions` →
-  `:detecting_os` → `:copying_config` → `:generating_cookie` →
-  `:patching_binaries` → `:starting_daemon`.
+  Local-tarball path: `:probing_platform` → `:uploading` → `:extracting` →
+  `:setting_permissions` → `:copying_config` → `:generating_cookie` →
+  (`:patching_binaries` only on NixOS) → `:starting_daemon`.
 
   Auto-download path: `:probing_platform` → `:downloading` (→
   `:downloading_locally` when both the remote curl and wget attempts fail and
   the local fallback kicks in) → `:extracting` → `:setting_permissions` →
-  `:copying_config` →
-  `:generating_cookie` → `:patching_binaries` → `:starting_daemon`. The
-  probe/override supplies the OS, so `:detecting_os` is skipped.
+  `:copying_config` → `:generating_cookie` → (`:patching_binaries` only on
+  NixOS) → `:starting_daemon`.
+
+  Before any staging, bootstrap performs a silent pre-flight: it resolves the
+  remote OS (the target's optional `platform` field, else one
+  `uname -s && uname -m` probe) and checks whether the daemon is already
+  running. When it is:
+
+    * with `on_running: :refuse` (the default), bootstrap refuses without
+      touching anything — no staging, no kill, no broadcast — and returns
+      `{:error, {:daemon_running, details}}`; re-bootstrapping would stop the
+      running daemon and any tasks running on it. The caller should show a
+      permission dialog from this tuple;
+    * with `on_running: :restart`, the `:stopping_daemon` stage is broadcast
+      and the running daemon is stopped (`systemctl --user stop` on Linux,
+      `launchctl unload` on macOS) before the normal staging flow starts a
+      fresh daemon with the current contract.
 
   `:patching_binaries` is broadcast only when the remote is NixOS (Linux +
   daemon not already running + NixOS detected) and is skipped otherwise: on
@@ -142,10 +158,10 @@ defmodule EvoGit.RemoteConnection do
           | :downloading_locally
           | :extracting
           | :setting_permissions
+          | :stopping_daemon
           | :copying_config
           | :generating_cookie
           | :patching_binaries
-          | :detecting_os
           | :starting_daemon
           | nil
 
@@ -280,14 +296,45 @@ defmodule EvoGit.RemoteConnection do
   performs the first-time setup using CLI `scp`/`ssh` and — when no usable
   `local_binary_path` is set — automatic platform probing + release download.
 
+  Delegates to `bootstrap/2` with the default `on_running: :refuse`: a daemon
+  that is already running is never stopped without explicit permission.
+
   Returns `{:ok, :daemon_started}` on success or `{:error, reason}`.
   """
   @spec bootstrap(String.t()) :: {:ok, :daemon_started} | {:error, term()}
   def bootstrap(target_id) do
+    bootstrap(target_id, [])
+  end
+
+  @doc """
+  Executes the bootstrap process ONLY (stage the `genesis_remote` release +
+  launch daemon), with options.
+
+  Same as `bootstrap/1` plus the `:on_running` option. Before any staging a
+  silent pre-flight resolves the remote OS and checks whether the daemon is
+  already running:
+
+    * `:on_running: :refuse` (default) — when the remote daemon is already
+      running, refuse without touching anything: no staging, no kill, no
+      broadcast. Returns `{:error, {:daemon_running, details}}` where
+      `details` is a human-readable explanation. The caller should ask the
+      user for permission and, if granted, re-invoke with
+      `on_running: :restart`.
+    * `:on_running: :restart` — stop the running daemon first (broadcasting
+      the `:stopping_daemon` stage via `systemctl --user stop` on Linux /
+      `launchctl unload` on macOS), then proceed with the normal staging +
+      fresh-daemon flow.
+    * Any other value behaves as `:refuse` (a warning is logged for unknown
+      values).
+
+  Returns `{:ok, :daemon_started}` on success or `{:error, reason}`.
+  """
+  @spec bootstrap(String.t(), keyword()) :: {:ok, :daemon_started} | {:error, term()}
+  def bootstrap(target_id, opts) do
     with {:ok, target} <- fetch_target(target_id),
          {:ok, pid} <- ensure_started(target) do
       # 900s timeout — staging the release (upload or download) can be slow.
-      GenServer.call(pid, :bootstrap, @bootstrap_call_timeout_ms)
+      GenServer.call(pid, {:bootstrap, opts}, @bootstrap_call_timeout_ms)
     end
   end
 
@@ -310,8 +357,8 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  def handle_call(:bootstrap, _from, %__MODULE__{} = state) do
-    case do_bootstrap(state) do
+  def handle_call({:bootstrap, opts}, _from, %__MODULE__{} = state) do
+    case do_bootstrap(state, opts) do
       {:ok, new_state} ->
         {:reply, {:ok, :daemon_started}, new_state}
 
@@ -496,13 +543,56 @@ defmodule EvoGit.RemoteConnection do
 
   # ── Bootstrap ──────────────────────────────────────────────────────
 
-  defp do_bootstrap(%__MODULE__{} = state) do
+  # Entry point for the bootstrap GenServer call. Silent pre-flight BEFORE any
+  # staging: resolve the daemon OS (target `platform` override, else one
+  # `uname -s && uname -m` probe — no broadcast yet), then check whether the
+  # daemon is already running. When it is: `on_running: :refuse` (default)
+  # refuses without touching anything (no staging, no kill, no broadcast —
+  # the caller shows a permission dialog from the {:daemon_running, details}
+  # tuple); `on_running: :restart` broadcasts the :stopping_daemon stage,
+  # stops the daemon, then proceeds with the normal staging flow (which
+  # starts a fresh daemon with the current contract).
+  defp do_bootstrap(%__MODULE__{} = state, opts) do
+    on_running = normalize_on_running(Keyword.get(opts, :on_running, :refuse))
     target = state.target
+    ssh_target = target.ssh_target
+
+    case resolve_platform(target, ssh_target) do
+      {:ok, daemon_os, platform} ->
+        if daemon_running?(ssh_target, daemon_os, target) do
+          case on_running do
+            :refuse ->
+              # State returned EXACTLY as received — no mutation, no broadcast.
+              {:error, {:daemon_running, daemon_running_details(target)}, state}
+
+            :restart ->
+              # :stopping_daemon stage, then stop the daemon, then stage a
+              # fresh one with the current contract. A failed stop is
+              # non-fatal — the start below surfaces any real failure.
+              state = %{state | phase: :bootstrapping, bootstrap_stage: :stopping_daemon}
+              broadcast_status(target, state)
+              stop_daemon(ssh_target, daemon_os, target)
+              do_bootstrap_staging(state, target, daemon_os, platform)
+          end
+        else
+          do_bootstrap_staging(state, target, daemon_os, platform)
+        end
+
+      {:error, reason} ->
+        error_state = error_state(state, target, reason)
+        {:error, reason, error_state}
+    end
+  end
+
+  # Picks the staging path based on local_binary_path, threaded with the
+  # pre-flight-resolved daemon_os (and platform for the auto-download path,
+  # which needs it for the asset URL).
+  defp do_bootstrap_staging(%__MODULE__{} = state, target, daemon_os, platform) do
     local_path = Map.get(target, :local_binary_path)
 
     cond do
       is_binary(local_path) and local_path != "" and File.exists?(local_path) ->
-        do_bootstrap_with_tarball(state, target, local_path)
+        do_bootstrap_with_tarball(state, target, local_path, daemon_os)
 
       is_binary(local_path) and local_path != "" ->
         # Set-but-missing: warn and fall back to auto-download (VS Code
@@ -512,14 +602,29 @@ defmodule EvoGit.RemoteConnection do
             "falling back to automatic download of the genesis_remote release."
         )
 
-        do_bootstrap_auto(state, target)
+        do_bootstrap_auto(state, target, daemon_os, platform)
 
       true ->
-        do_bootstrap_auto(state, target)
+        do_bootstrap_auto(state, target, daemon_os, platform)
     end
   end
 
-  defp do_bootstrap_with_tarball(%__MODULE__{} = state, target, local_path) do
+  # Normalizes the :on_running option. Only :restart is special; every other
+  # value (including unknown atoms/strings) behaves as :refuse, with a warning
+  # logged for unknown values.
+  defp normalize_on_running(:restart), do: :restart
+  defp normalize_on_running(:refuse), do: :refuse
+  defp normalize_on_running(nil), do: :refuse
+
+  defp normalize_on_running(other) do
+    Logger.warning(
+      "RemoteConnection: unknown on_running value #{inspect(other)}; treating as :refuse"
+    )
+
+    :refuse
+  end
+
+  defp do_bootstrap_with_tarball(%__MODULE__{} = state, target, local_path, daemon_os) do
     ssh_target = target.ssh_target
     remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
 
@@ -529,20 +634,23 @@ defmodule EvoGit.RemoteConnection do
     remote_dir = Path.dirname(remote_path)
     launcher_path = Path.join(remote_path, "bin/genesis_remote")
 
+    # :probing_platform stage — the pre-flight probe already resolved the OS,
+    # but the stage is the visible "we probed" marker and keeps the two paths'
+    # stage sequences aligned.
+    state = %{state | phase: :bootstrapping, bootstrap_stage: :probing_platform}
+    broadcast_status(target, state)
+
     # :uploading stage
-    state = %{state | phase: :bootstrapping, bootstrap_stage: :uploading}
+    state = %{state | bootstrap_stage: :uploading}
     broadcast_status(target, state)
 
     case scp_tarball(ssh_target, local_path, remote_tarball) do
       :ok ->
-        # OS detection happens inside launch_after_staging (os_or_nil = nil) so
-        # the existing stage order for this path is preserved: extracting →
-        # setting_permissions → detecting_os → copying_config → ...
         launch_after_staging(
           state,
           target,
           ssh_target,
-          nil,
+          daemon_os,
           launcher_path,
           remote_dir,
           remote_tarball
@@ -554,12 +662,10 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Auto-download bootstrap path (no usable local_binary_path): probe the
-  # remote platform → resolve the GitHub release URL → download the tarball to
-  # the remote temp path (curl then wget on the remote, local curl + scp
-  # fallback) →
-  # launch via the shared post-staging sequence.
-  defp do_bootstrap_auto(%__MODULE__{} = state, target) do
+  # Auto-download bootstrap path (no usable local_binary_path): download the
+  # tarball for the pre-flight-resolved platform (curl then wget on the remote,
+  # local curl + scp fallback) → launch via the shared post-staging sequence.
+  defp do_bootstrap_auto(%__MODULE__{} = state, target, daemon_os, platform) do
     ssh_target = target.ssh_target
     remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
     remote_tarball = remote_tarball_path(remote_path)
@@ -570,31 +676,24 @@ defmodule EvoGit.RemoteConnection do
     state = %{state | phase: :bootstrapping, bootstrap_stage: :probing_platform}
     broadcast_status(target, state)
 
-    case resolve_platform(target, ssh_target) do
-      {:ok, daemon_os, platform} ->
-        # :downloading stage
-        state = %{state | bootstrap_stage: :downloading}
-        broadcast_status(target, state)
+    # :downloading stage
+    state = %{state | bootstrap_stage: :downloading}
+    broadcast_status(target, state)
 
-        case download_tarball(state, target, ssh_target, platform, remote_tarball) do
-          {:ok, state} ->
-            launch_after_staging(
-              state,
-              target,
-              ssh_target,
-              daemon_os,
-              launcher_path,
-              remote_dir,
-              remote_tarball
-            )
+    case download_tarball(state, target, ssh_target, platform, remote_tarball) do
+      {:ok, state} ->
+        launch_after_staging(
+          state,
+          target,
+          ssh_target,
+          daemon_os,
+          launcher_path,
+          remote_dir,
+          remote_tarball
+        )
 
-          {:error, reason, state} ->
-            {:error, reason, state}
-        end
-
-      {:error, reason} ->
-        error_state = error_state(state, target, reason)
-        {:error, reason, error_state}
+      {:error, reason, state} ->
+        {:error, reason, state}
     end
   end
 
@@ -751,15 +850,14 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Runs the post-staging launch sequence shared by both bootstrap paths:
-  # extract → chmod → (resolve OS) → config copy → cookie → (NixOS patch) →
-  # daemon start → health verify. `os_or_nil` is the already-known daemon OS
-  # string when the platform was probed/overridden, or nil to detect it via SSH
-  # (local-tarball path, which broadcasts the :detecting_os stage).
+  # extract → chmod → config copy → cookie → (NixOS patch) → daemon start →
+  # health verify. `os` is the daemon OS resolved during pre-flight (probed or
+  # platform override) — `:detecting_os` no longer exists as a stage.
   defp launch_after_staging(
          %__MODULE__{} = state,
          target,
          ssh_target,
-         os_or_nil,
+         os,
          launcher_path,
          remote_dir,
          remote_tarball
@@ -776,42 +874,36 @@ defmodule EvoGit.RemoteConnection do
 
         case chmod_executable(ssh_target, launcher_path) do
           :ok ->
-            with {:ok, os} <- resolve_daemon_os(state, target, ssh_target, os_or_nil) do
-              # :copying_config stage (uses the resolved OS to compute the
-              # platform-specific remote config directory)
-              state = %{state | bootstrap_stage: :copying_config}
-              broadcast_status(target, state)
+            # :copying_config stage (uses the resolved OS to compute the
+            # platform-specific remote config directory)
+            state = %{state | bootstrap_stage: :copying_config}
+            broadcast_status(target, state)
 
-              copy_config_to_remote(ssh_target, os)
+            copy_config_to_remote(ssh_target, os)
 
-              # :generating_cookie stage
-              state = %{state | bootstrap_stage: :generating_cookie}
-              broadcast_status(target, state)
+            # :generating_cookie stage
+            state = %{state | bootstrap_stage: :generating_cookie}
+            broadcast_status(target, state)
 
-              cookie = ensure_cookie!()
+            cookie = ensure_cookie!()
 
-              # NixOS on-the-fly patching (Linux only; skipped when the daemon
-              # is already running or the remote is not NixOS). Broadcasts
-              # :patching_binaries only when the patch actually runs.
-              case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
-                {:ok, state} ->
-                  case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie, state) do
-                    :ok ->
-                      EvoGit.RemoteConnections.touch(target.id)
-                      completed = %{state | phase: :disconnected, bootstrap_stage: nil}
-                      broadcast_status(target, completed)
-                      {:ok, completed}
+            # NixOS on-the-fly patching (Linux only; skipped when the daemon
+            # is already running or the remote is not NixOS). Broadcasts
+            # :patching_binaries only when the patch actually runs.
+            case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
+              {:ok, state} ->
+                case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie, state) do
+                  :ok ->
+                    EvoGit.RemoteConnections.touch(target.id)
+                    completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+                    broadcast_status(target, completed)
+                    {:ok, completed}
 
-                    {:error, reason} ->
-                      error_state = error_state(state, target, reason)
-                      {:error, reason, error_state}
-                  end
+                  {:error, reason} ->
+                    error_state = error_state(state, target, reason)
+                    {:error, reason, error_state}
+                end
 
-                {:error, reason} ->
-                  error_state = error_state(state, target, reason)
-                  {:error, reason, error_state}
-              end
-            else
               {:error, reason} ->
                 error_state = error_state(state, target, reason)
                 {:error, reason, error_state}
@@ -827,18 +919,6 @@ defmodule EvoGit.RemoteConnection do
         {:error, reason, error_state}
     end
   end
-
-  # Resolves the canonical daemon OS string. When `os_or_nil` is nil, probes
-  # via `detect_os/1` (broadcasting the :detecting_os stage first — the
-  # local-tarball path); otherwise returns it unchanged (probed/overridden
-  # path).
-  defp resolve_daemon_os(state, target, ssh_target, nil) do
-    state = %{state | bootstrap_stage: :detecting_os}
-    broadcast_status(target, state)
-    detect_os(ssh_target)
-  end
-
-  defp resolve_daemon_os(_state, _target, _ssh_target, os), do: {:ok, os}
 
   # Constructs the error state, broadcasts it, and returns it.
   defp error_state(state, target, reason) do
@@ -938,29 +1018,12 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Detects the remote OS via `ssh <target> 'uname -s'`.
-  # Returns {:ok, "Linux"} or {:ok, "Darwin"} or {:error, :unsupported_os, os}.
-  defp detect_os(ssh_target) do
-    case run_ssh_command(ssh_target, "uname -s", @cmd_timeout_ms) do
-      {:ok, output, 0} ->
-        os = String.trim(output)
-
-        cond do
-          os == "Linux" -> {:ok, "Linux"}
-          os == "Darwin" -> {:ok, "Darwin"}
-          true -> {:error, {:unsupported_os, os}}
-        end
-
-      {:ok, _output, status} ->
-        {:error, {:unsupported_os, {:exit_status, status}}}
-
-      :timeout ->
-        {:error, {:unsupported_os, :timeout}}
-    end
-  end
-
-  # Checks if the daemon is already running; starts it only if not. When the
-  # daemon IS already running, its launch identity (RELEASE_NODE/RELEASE_COOKIE
+  # Race safety net after the pre-flight gate: checks if the daemon is running
+  # and starts it only if not. A daemon may legitimately start between the
+  # pre-flight check in do_bootstrap/2 and this launch point (another
+  # bootstrap, a manual start), so the running-daemon decision is re-checked
+  # here — this function is no longer the primary running-daemon decision.
+  # When the daemon IS running, its launch identity (RELEASE_NODE/RELEASE_COOKIE
   # — fixed at launch time) is verified against the current contract before
   # declaring success: a daemon launched by an older bootstrap (stale cookie)
   # or started manually would otherwise silently "succeed" and then fail every
@@ -1085,6 +1148,73 @@ defmodule EvoGit.RemoteConnection do
       {:ok, output, _status} -> String.trim(output) != ""
       :timeout -> false
     end
+  end
+
+  # Human-readable details for the {:daemon_running, details} refusal returned
+  # when bootstrap is called with on_running: :refuse while the daemon is
+  # already running. The caller (dashboard) shows a permission dialog from
+  # this tuple.
+  defp daemon_running_details(target) do
+    "the remote daemon genesis-remote-#{target.id} is already running; " <>
+      "re-bootstrapping would stop it and any tasks running on it — " <>
+      "call bootstrap with on_running: :restart to proceed"
+  end
+
+  # Stops a running daemon on the remote. Only reached when bootstrap was
+  # called with on_running: :restart — the user explicitly permitted stopping
+  # it. Best-effort: a failed stop is logged as a warning and bootstrap
+  # continues (the subsequent start surfaces any real failure); the
+  # :stopping_daemon stage broadcast is kept regardless.
+  defp stop_daemon(ssh_target, "Linux", target) do
+    unit = "genesis-remote-#{target.id}"
+
+    case run_ssh_command(ssh_target, "systemctl --user stop #{unit}", @cmd_timeout_ms) do
+      {:ok, _output, 0} ->
+        :ok
+
+      {:ok, output, status} ->
+        Logger.warning(
+          "RemoteConnection: failed to stop daemon unit #{unit} (exit #{status}): " <>
+            tail_of(output, 500)
+        )
+
+        :ok
+
+      :timeout ->
+        Logger.warning("RemoteConnection: timed out stopping daemon unit #{unit}")
+        :ok
+    end
+  end
+
+  defp stop_daemon(ssh_target, "Darwin", target) do
+    label = "com.genesis.remote.#{target.id}"
+    remote_plist = "~/Library/LaunchAgents/#{label}.plist"
+
+    case run_ssh_command(ssh_target, "launchctl unload #{remote_plist}", @cmd_timeout_ms) do
+      {:ok, _output, 0} ->
+        :ok
+
+      {:ok, output, status} ->
+        Logger.warning(
+          "RemoteConnection: failed to unload launchd plist #{label} (exit #{status}): " <>
+            tail_of(output, 500)
+        )
+
+        :ok
+
+      :timeout ->
+        Logger.warning("RemoteConnection: timed out unloading launchd plist #{label}")
+        :ok
+    end
+  end
+
+  defp stop_daemon(_ssh_target, os, target) do
+    Logger.warning(
+      "RemoteConnection: cannot stop daemon for unsupported OS #{inspect(os)} " <>
+        "(target #{target.id}); continuing bootstrap"
+    )
+
+    :ok
   end
 
   # Verifies a RUNNING daemon's launch identity matches the current contract:
