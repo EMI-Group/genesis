@@ -1577,15 +1577,20 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       html = render(view)
       assert html =~ "deadbeef"
-      assert html =~ "feature/source"
+      refute html =~ "feature/source"
       assert html =~ "9.9.9"
-      assert html =~ "https://example.com/genesis.git"
+      refute html =~ "https://example.com/genesis.git"
+      refute html =~ "Remote URL"
+      refute html =~ ">Branch</span>"
       assert html =~ "The self-reflective agent reads: /tmp/genesis-source"
       assert html =~ ~s(id="update-source")
       assert html =~ "Update"
       refute html =~ ~s(id="clone-source")
       refute html =~ "in use"
       refute html =~ "An explicit override is in effect"
+      assert html =~ ~s(id="system-self-check")
+      assert html =~ ~s(id="runtime-controls")
+      assert html =~ "System Control"
     end
 
     test "an explicit reference override shows the muted note and the in-use badge", %{
