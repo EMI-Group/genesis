@@ -158,6 +158,15 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   Returns `{:ok, profile_map}` on success, or `{:error, reason_string}` when
   validation fails (model_id required, invalid extra/provider_options JSON).
+
+  Also parses the optional peak/off-peak day fields (see `parse_peak_fields/1`):
+  the profile-level `off_peak_days` form key (multi-checkbox list, possibly
+  containing a `""` hidden-seed entry) → optional `:off_peak_days` profile key,
+  and the per-window `days` form key → optional `:days` window key inside each
+  `peak_hours` entry. Both keys are present ONLY when the normalized day list
+  is non-empty (absent/`[]` → key omitted); day values are trim + downcase +
+  vocabulary-whitelist normalized with NO dashboard-side validation errors —
+  the evo_git core owns authoritative validation.
   """
   def parse_model_profile_params(params, id) do
     provider_str = String.trim(params["provider"] || "")
@@ -281,13 +290,20 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   Reads `params["peak_concurrency"]` (plain number string),
   `params["peak_hours"]` (Phoenix-nested map keyed by string index, a list, or
-  absent), and `params["timezone"]` (IANA string, optional). Returns
+  absent), `params["timezone"]` (IANA string, optional), and
+  `params["off_peak_days"]` (multi-checkbox list of day strings — may contain a
+  `""` hidden-seed entry). Each `peak_hours` row may also carry a `"days"` key
+  (list of day strings; absent = every day). Day values are trim + downcase +
+  vocabulary-whitelist normalized (`normalize_days/1`); no day validation
+  errors are raised — the evo_git core owns authoritative validation. Returns
   `{:ok, %{}}` when all fields are disabled/absent (keys must stay ABSENT from
   the profile so TOML omits them), `{:ok, %{peak_concurrency: int, peak_hours:
-  [%{start: "HH:MM", end: "HH:MM"}], timezone: "IANA"}}` on success (absent
-  keys omitted), or `{:error, reason}` with one of the four peak error strings:
-  `"peak_concurrency_invalid"`, `"peak_hours_invalid_time"`,
-  `"peak_hours_start_equals_end"`, `"peak_hours_overlap"`.
+  [%{start: "HH:MM", end: "HH:MM", days: [...]}], timezone: "IANA",
+  off_peak_days: [...]}}` on success (absent keys omitted — `:off_peak_days`
+  and per-window `:days` appear ONLY when non-empty), or `{:error, reason}`
+  with one of the four peak error strings: `"peak_concurrency_invalid"`,
+  `"peak_hours_invalid_time"`, `"peak_hours_start_equals_end"`,
+  `"peak_hours_overlap"`.
   """
   def parse_peak_fields(params) do
     with {:ok, concurrency} <- parse_peak_concurrency(params["peak_concurrency"]),
@@ -300,6 +316,14 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
       fields = parse_timezone(fields, params["timezone"])
 
+      # Days-of-week for off-peak windows — present ONLY when a non-empty
+      # normalized list remains after the vocab whitelist (absent/[] → omitted).
+      fields =
+        case normalize_days(params["off_peak_days"]) do
+          [] -> fields
+          days -> Map.put(fields, :off_peak_days, days)
+        end
+
       {:ok, fields}
     end
   end
@@ -309,13 +333,22 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   string index, a list, or absent) into a numerically-sorted list of windows
   `[%{start: "HH:MM", end: "HH:MM"}]` for draft-tracking re-renders. Values are
   stringified with `""` for nil/absent, so blank/partially-filled rows
-  round-trip losslessly. Total — never raises; unknown/absent input → `[]`.
+  round-trip losslessly. Rows carrying a `"days"`/`:days` list keep a `:days`
+  key ONLY when the normalized day list is non-empty — a no-days window stays
+  EXACTLY `%{start: ..., end: ...}` (backward compatible). Total — never
+  raises; unknown/absent input → `[]`.
   """
   def normalize_peak_hours_draft(input) do
     {:ok, rows} = normalize_peak_hours_input(input)
 
     Enum.map(rows, fn row ->
-      %{start: peak_draft_value(row, :start), end: peak_draft_value(row, :end)}
+      window = %{start: peak_draft_value(row, :start), end: peak_draft_value(row, :end)}
+
+      # Atom-or-string key safe (draft rows round-trip with atom keys).
+      case normalize_days(Map.get(row, "days") || Map.get(row, :days)) do
+        [] -> window
+        days -> Map.put(window, :days, days)
+      end
     end)
   end
 
@@ -496,11 +529,14 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   # ── peak/off-peak concurrency parsing helpers ─────────────────────────────
   #
-  # Serialization contract: `peak_concurrency` (non_neg_integer) and
-  # `peak_hours` ([%{start: "HH:MM", end: "HH:MM"}]) are OPTIONAL profile
-  # fields; when disabled/empty the keys are ABSENT from the profile map so
-  # TOML omits them. Validation here is UI-side UX validation only — the
-  # evo_git schema owns the authoritative validation.
+  # Serialization contract: `peak_concurrency` (non_neg_integer), `peak_hours`
+  # ([%{start: "HH:MM", end: "HH:MM"}]), `timezone` (IANA string), and
+  # `off_peak_days` ([day strings]) are OPTIONAL profile fields; when
+  # disabled/empty the keys are ABSENT from the profile map so TOML omits them.
+  # Per-window `days` ([day strings]) is likewise optional — a no-days window
+  # stays exactly %{start:, end:}. Validation here is UI-side UX validation
+  # only — the evo_git schema owns the authoritative validation (including day
+  # values, which produce NO dashboard-side errors).
 
   # Blank/absent → {:ok, nil} (key omitted). A non-blank value must parse as a
   # NON-NEGATIVE integer ("0" is valid — a zero peak concurrency HARD-PAUSES the
@@ -527,6 +563,39 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   defp parse_timezone(fields, _), do: fields
+
+  # 9-value day vocabulary for the peak/off-peak days fields (lowercase
+  # canonical strings).
+  @day_vocabulary MapSet.new([
+                    "mon",
+                    "tue",
+                    "wed",
+                    "thu",
+                    "fri",
+                    "sat",
+                    "sun",
+                    "weekdays",
+                    "weekends"
+                  ])
+
+  # Normalizes a days-of-week list (multi-checkbox form values or atom-keyed
+  # draft rows) into the canonical vocabulary: trim + downcase per entry, drop
+  # blanks, drop entries NOT in the whitelist via MapSet membership lookup (NO
+  # String.to_atom/to_existing_atom on user input), then order-preserving
+  # uniq. Total — never raises; absent/empty/odd input → [] (callers omit the
+  # key). No dashboard-side validation ERRORS for day values (the evo_git core
+  # owns authoritative validation).
+  defp normalize_days(days) when is_list(days) do
+    days
+    |> Enum.map(fn
+      day when is_binary(day) -> day |> String.trim() |> String.downcase()
+      _ -> ""
+    end)
+    |> Enum.filter(&MapSet.member?(@day_vocabulary, &1))
+    |> Enum.uniq()
+  end
+
+  defp normalize_days(_), do: []
 
   # Reads a single start/end value from a peak-hours draft row (atom-or-string
   # key safe), stringified with "" for nil/absent.
@@ -595,15 +664,29 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   end
 
   # Reads start/end from a row with atom-or-string key safety. A row with
-  # exactly one of start/end filled is invalid (must be both or neither).
+  # exactly one of start/end filled is invalid (must be both or neither). The
+  # blank-row logic stays driven by start/end ONLY — a row with days but blank
+  # start/end is dropped as blank, exactly as before.
   defp normalize_peak_hours_row(row) when is_map(row) do
     start_time = Map.get(row, "start") || Map.get(row, :start) || ""
     end_time = Map.get(row, "end") || Map.get(row, :end) || ""
 
     cond do
-      start_time == "" and end_time == "" -> {:ok, nil}
-      start_time == "" or end_time == "" -> {:error, "peak_hours_invalid_time"}
-      true -> {:ok, %{start: start_time, end: end_time}}
+      start_time == "" and end_time == "" ->
+        {:ok, nil}
+
+      start_time == "" or end_time == "" ->
+        {:error, "peak_hours_invalid_time"}
+
+      true ->
+        window = %{start: start_time, end: end_time}
+
+        # :days only when the normalized list is non-empty — a no-days window
+        # stays EXACTLY %{start:, end:} (backward compatible).
+        case normalize_days(Map.get(row, "days") || Map.get(row, :days)) do
+          [] -> {:ok, window}
+          days -> {:ok, Map.put(window, :days, days)}
+        end
     end
   end
 
