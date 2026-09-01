@@ -881,6 +881,11 @@ jobs:
       actions: read
       contents: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 1
+
       - name: Download build artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
@@ -888,19 +893,66 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          # Best-effort: pull the `## [<version>] - <date>` section for this
+          # release out of CHANGELOG.md (maintained by `mix changelog`). A
+          # missing file or missing section must never fail the release —
+          # write an empty release_body.md and warn instead.
+          python3 - <<'PY'
+          import os, re, sys
+
+          version = os.environ.get("RELEASE_VERSION", "").strip()
+          out_path = "release_body.md"
+
+          def warn(msg):
+              print(f"warning: {msg}", file=sys.stderr)
+
+          text = ""
+          if os.path.exists("CHANGELOG.md"):
+              with open("CHANGELOG.md", encoding="utf-8") as f:
+                  text = f.read()
+          else:
+              warn("CHANGELOG.md not found — release will publish without a body (did the maintainer run `mix changelog`?)")
+
+          section = ""
+          if version and text:
+              heading = re.compile(rf"^## \[{re.escape(version)}\][ \t]*", re.MULTILINE)
+              m = heading.search(text)
+              if m:
+                  nxt = re.compile(r"^## ", re.MULTILINE).search(text, m.end())
+                  end = nxt.start() if nxt else len(text)
+                  section = text[m.start():end].strip()
+              else:
+                  warn(f"no CHANGELOG.md section for version {version} — release will publish without a body (did the maintainer run `mix changelog`?)")
+          elif not version:
+              warn("empty release version — release will publish without a body")
+
+          with open(out_path, "w", encoding="utf-8") as f:
+              if section:
+                  f.write(section + "\n")
+          if section:
+              print(f"extracted CHANGELOG.md section for {version} ({len(section)} chars) -> {out_path}")
+          else:
+              print(f"wrote empty {out_path}")
+          PY
+
       - name: Generate updater manifest (latest.json)
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           REPO: ${{ github.repository }}
-          RELEASE_NOTES: ${{ github.event.release.body || '' }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # On the tag-push trigger there is no release event, and the draft
-          # release is only created by the upload step AFTER this one — so on
-          # first publish there are no notes yet; on re-runs the release (and
-          # its body) already exists and is reused below.
-          if [[ -z "${RELEASE_NOTES:-}" ]]; then
+          # Notes come from the CHANGELOG.md section extracted above
+          # (release_body.md — the primary source). The gh api lookup is only
+          # a last-resort fallback: when the changelog had no section for
+          # this version but a previous run already published a release body.
+          RELEASE_NOTES="$(cat release_body.md 2>/dev/null || true)"
+          if [[ -z "${RELEASE_NOTES}" ]]; then
             RELEASE_NOTES="$(gh api "repos/${REPO}/releases/tags/${RELEASE_TAG}" -q .body 2>/dev/null || true)"
           fi
           export RELEASE_NOTES
@@ -969,6 +1021,7 @@ jobs:
         with:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
           name: Genesis ${{ needs.prepare.outputs.release_version }}
+          body_path: release_body.md
           prerelease: ${{ needs.prepare.outputs.is_prerelease }}
           files: dist/*
           draft: true
