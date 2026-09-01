@@ -188,6 +188,119 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
       assert attr(buttons, 1, "type") == ["button"]
       assert attr(buttons, 1, "phx-value-index") == ["1"]
     end
+
+    test "profile edit form renders the off_peak_days hidden seed and 9 day chips" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+
+      assert [seed] = find(html, ~s(input[type="hidden"][name="off_peak_days"][value=""]))
+      assert attribute(seed, "type") == ["hidden"]
+      assert attribute(seed, "value") == [""]
+
+      chips = find(html, ~s(input[type="checkbox"][name="off_peak_days"]))
+      assert length(chips) == 9
+      values = Enum.map(chips, fn chip -> attribute(chip, "value") |> hd() end)
+      assert values == ~w(mon tue wed thu fri sat sun weekdays weekends)
+    end
+
+    test "off_peak_days chips reflect the profile's saved off_peak_days" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        off_peak_days: ["mon", "weekends"]
+      }
+
+      html = render_edit_form(profile)
+
+      assert_day_chips(html, ~s(input[type="checkbox"][name="off_peak_days"]), ["mon", "weekends"])
+    end
+
+    test "a form draft's off_peak_days wins over the profile's saved value" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        off_peak_days: ["mon"]
+      }
+
+      html = render_edit_form(profile, draft: %{"off_peak_days" => ["fri", "weekends"]})
+
+      assert_day_chips(html, ~s(input[type="checkbox"][name="off_peak_days"]), ["fri", "weekends"])
+    end
+
+    test "per-window days chips render checked for a window's saved days" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        peak_hours: [%{start: "09:00", end: "12:00", days: ["tue", "thu"]}]
+      }
+
+      html = render_edit_form(profile)
+
+      assert_day_chips(
+        html,
+        ~s(input[type="checkbox"][name="peak_hours[0][days]"]),
+        ["tue", "thu"]
+      )
+
+      # No hidden seed for window days — absent = every day.
+      refute find(html, ~s(input[type="hidden"][name="peak_hours[0][days]"])) != []
+    end
+
+    test "a window without days renders all day chips unchecked" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        peak_hours: [%{start: "09:00", end: "12:00"}]
+      }
+
+      html = render_edit_form(profile)
+
+      chips = find(html, ~s(input[type="checkbox"][name="peak_hours[0][days]"]))
+      assert length(chips) == 9
+      assert Enum.all?(chips, fn chip -> Floki.attribute(chip, "checked") == [] end)
+
+      refute find(html, ~s(input[type="hidden"][name="peak_hours[0][days]"])) != []
+    end
+
+    test "multiple windows thread the days index per window" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        peak_hours: [
+          %{start: "09:00", end: "12:00", days: ["mon"]},
+          %{start: "14:00", end: "18:00", days: ["fri"]}
+        ]
+      }
+
+      html = render_edit_form(profile)
+
+      assert_day_chips(html, ~s(input[type="checkbox"][name="peak_hours[0][days]"]), ["mon"])
+      assert_day_chips(html, ~s(input[type="checkbox"][name="peak_hours[1][days]"]), ["fri"])
+    end
+
+    test "peak-hours row keeps start/end inputs and remove button alongside the days chips" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        peak_hours: [%{start: "09:00", end: "12:00", days: ["mon"]}]
+      }
+
+      html = render_edit_form(profile)
+
+      start_inputs = find(html, ~s(input[name="peak_hours[0][start]"]))
+      end_inputs = find(html, ~s(input[name="peak_hours[0][end]"]))
+      assert length(start_inputs) == 1 and length(end_inputs) == 1
+      assert attr(start_inputs, 0, "type") == ["time"]
+      assert attr(end_inputs, 0, "type") == ["time"]
+      assert attr(start_inputs, 0, "value") == ["09:00"]
+      assert attr(end_inputs, 0, "value") == ["12:00"]
+
+      assert [remove] = find(html, ~s(button[phx-click="remove_peak_hours_row"]))
+      assert attribute(remove, "type") == ["button"]
+      assert attribute(remove, "phx-value-index") == ["0"]
+
+      # The days chips coexist in the same row.
+      assert length(find(html, ~s(input[type="checkbox"][name="peak_hours[0][days]"]))) == 9
+    end
   end
 
   # --- helpers ---
@@ -206,6 +319,29 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
 
   defp find(html, selector) do
     Floki.find(parse(html), selector)
+  end
+
+  # Asserts a day-chip group (profile-level off_peak_days or per-window days):
+  # exactly 9 checkboxes carrying the full day vocabulary, where exactly the
+  # values in `checked` carry the checked attribute and all others do not.
+  # `selector` selects the chip inputs, e.g.
+  # ~s(input[type="checkbox"][name="off_peak_days"]).
+  defp assert_day_chips(html, selector, checked) do
+    chips = find(html, selector)
+    assert length(chips) == 9
+
+    values = Enum.map(chips, fn chip -> attribute(chip, "value") |> hd() end)
+    assert Enum.sort(values) == Enum.sort(~w(mon tue wed thu fri sat sun weekdays weekends))
+
+    for value <- ~w(mon tue wed thu fri sat sun weekdays weekends) do
+      [chip] = find(html, ~s(#{selector}[value="#{value}"]))
+
+      if value in checked do
+        assert Floki.attribute(chip, "checked") != []
+      else
+        assert Floki.attribute(chip, "checked") == []
+      end
+    end
   end
 
   defp attr(els, index, name) do
