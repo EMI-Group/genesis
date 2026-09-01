@@ -314,6 +314,36 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </p>
       </div>
 
+      <%!-- Off-peak days (optional) ── --%>
+      <% off_peak_days = draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile)) %>
+      <div class="form-control">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">
+            <%!-- zh_CN: Off-peak days → "完全离峰的整天" --%>{gettext("Off-peak days (optional)")}
+          </span>
+        </label>
+        <input type="hidden" name="off_peak_days" value="" />
+        <div class="flex flex-wrap gap-2">
+          <%= for {value, label} <- day_options() do %>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                class="checkbox checkbox-xs"
+                name="off_peak_days"
+                value={value}
+                checked={Enum.member?(off_peak_days, value)}
+              />
+              <span class="text-xs text-base-content/80">{label}</span>
+            </label>
+          <% end %>
+        </div>
+        <p class="text-[11px] text-base-content/60 mt-1">
+          <%!-- zh_CN: 这些天整天完全离峰——正常并发全天生效，peak 时段与峰值并发均被抑制 --%>{gettext(
+            "On these days the profile is off-peak all day — normal concurrency applies, peak windows and peak concurrency are suppressed."
+          )}
+        </p>
+      </div>
+
       <div class="form-control">
         <label class="label pb-1">
           <span class="label-text font-semibold text-xs">
@@ -322,30 +352,54 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </label>
         <div class="space-y-2">
           <%= for {window, index} <- Enum.with_index(edit_peak_hours(@draft, @profile)) do %>
-            <div class="flex items-center gap-2">
-              <input
-                type="time"
-                name={"peak_hours[#{index}][start]"}
-                value={peak_window_value(window, :start)}
-                class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
-              />
-              <span class="text-xs text-base-content/50">–</span>
-              <input
-                type="time"
-                name={"peak_hours[#{index}][end]"}
-                value={peak_window_value(window, :end)}
-                class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
-              />
-              <button
-                type="button"
-                phx-click="remove_peak_hours_row"
-                phx-value-index={index}
-                class="btn btn-ghost btn-sm gap-1 text-error"
-                title={gettext("Remove time window")}
-                aria-label={gettext("Remove time window")}
-              >
-                <.icon name="hero-x-mark" class="size-4" />
-              </button>
+            <div class="border border-base-200 rounded-md p-2 space-y-2">
+              <div class="flex items-center gap-2">
+                <input
+                  type="time"
+                  name={"peak_hours[#{index}][start]"}
+                  value={peak_window_value(window, :start)}
+                  class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
+                />
+                <span class="text-xs text-base-content/50">–</span>
+                <input
+                  type="time"
+                  name={"peak_hours[#{index}][end]"}
+                  value={peak_window_value(window, :end)}
+                  class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
+                />
+                <button
+                  type="button"
+                  phx-click="remove_peak_hours_row"
+                  phx-value-index={index}
+                  class="btn btn-ghost btn-sm gap-1 text-error"
+                  title={gettext("Remove time window")}
+                  aria-label={gettext("Remove time window")}
+                >
+                  <.icon name="hero-x-mark" class="size-4" />
+                </button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[11px] text-base-content/60 shrink-0">
+                  <%!-- zh_CN: 适用日期 --%>{gettext("Days:")}
+                </span>
+                <div class="flex flex-wrap gap-2">
+                  <%= for {value, label} <- day_options() do %>
+                    <label class="flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        class="checkbox checkbox-xs"
+                        name={"peak_hours[#{index}][days]"}
+                        value={value}
+                        checked={Enum.member?(peak_window_days(window), value)}
+                      />
+                      <span class="text-xs text-base-content/80">{label}</span>
+                    </label>
+                  <% end %>
+                </div>
+                <span class="text-[11px] text-base-content/50">
+                  <%!-- zh_CN: 不选择 = 每天 --%>{gettext("No selection = every day")}
+                </span>
+              </div>
             </div>
           <% end %>
         </div>
@@ -642,11 +696,64 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   defp edit_peak_hours(_, profile), do: profile_peak_hours(profile)
 
+  # Normalizes a saved/draft window map into atom-keyed string values so the
+  # template can always read `:start` / `:end`. The optional `:days` key is
+  # preserved ONLY when non-empty — an empty/absent days list keeps the row as
+  # plain `%{start:, end:}` (backward compatible with pre-days rows).
   defp normalize_peak_window(window) when is_map(window) do
-    %{start: peak_window_value(window, :start), end: peak_window_value(window, :end)}
+    base = %{start: peak_window_value(window, :start), end: peak_window_value(window, :end)}
+
+    case peak_window_days(window) do
+      [] -> base
+      days -> Map.put(base, :days, days)
+    end
   end
 
   defp normalize_peak_window(_), do: %{start: "", end: ""}
+
+  # Per-window days pre-fill: reads `:days`/`"days"` from a window map → list
+  # of lowercase day-vocab strings, `[]` when absent/not-a-list. Used by the
+  # template AND by normalize_peak_window/1, so pre-existing rows without a
+  # days key render fine (all days unchecked = every day).
+  defp peak_window_days(window) when is_map(window) do
+    case Map.get(window, :days) || Map.get(window, "days") do
+      days when is_list(days) -> Enum.filter(days, &is_binary/1)
+      _ -> []
+    end
+  end
+
+  defp peak_window_days(_), do: []
+
+  # Profile-level off-peak days pre-fill: reads `:off_peak_days`/`"off_peak_days"`
+  # from the profile map → list of lowercase day-vocab strings. Only binary
+  # entries are kept; non-list/absent → `[]`.
+  defp profile_off_peak_days(profile) when is_map(profile) do
+    case profile_param(profile, :off_peak_days) do
+      days when is_list(days) -> Enum.filter(days, &is_binary/1)
+      _ -> []
+    end
+  end
+
+  defp profile_off_peak_days(_), do: []
+
+  # Shared day vocabulary for the profile-level off-peak days control AND the
+  # per-window days selector: the 7 weekdays plus the weekdays/weekends
+  # shortcuts. Label strings are gettext-wrapped at runtime.
+  defp day_options do
+    [
+      {"mon", gettext("Mon")},
+      {"tue", gettext("Tue")},
+      {"wed", gettext("Wed")},
+      {"thu", gettext("Thu")},
+      {"fri", gettext("Fri")},
+      {"sat", gettext("Sat")},
+      {"sun", gettext("Sun")},
+      # zh_CN: Weekdays → "工作日"
+      {"weekdays", gettext("Weekdays")},
+      # zh_CN: Weekends → "周末"
+      {"weekends", gettext("Weekends")}
+    ]
+  end
 
   defp peak_window_value(window, key) when is_map(window) do
     case Map.get(window, key) || Map.get(window, Atom.to_string(key)) do
