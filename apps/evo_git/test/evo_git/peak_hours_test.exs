@@ -52,13 +52,10 @@ defmodule EvoGit.PeakHoursTest do
       assert PeakHours.validate_days(["mon"]) == {:ok, [:mon]}
       assert PeakHours.validate_days(["Mon"]) == {:ok, [:mon]}
       assert PeakHours.validate_days(["MON"]) == {:ok, [:mon]}
-      # NOTE: the implementation PREPENDS each normalized element while
-      # reducing, so multi-element inputs come back in REVERSED input order
-      # (the moduledoc claims first-appearance order, but the code reverses —
-      # tests encode actual behavior; the order is semantically irrelevant
-      # downstream, which only does set-membership checks).
-      assert PeakHours.validate_days(["Tue", "WED", "thu"]) == {:ok, [:thu, :wed, :tue]}
-      assert PeakHours.validate_days(["SAT", "Sun"]) == {:ok, [:sun, :sat]}
+      # Multi-element inputs canonicalize in first-appearance input order
+      # (keywords expanded, duplicates removed).
+      assert PeakHours.validate_days(["Tue", "WED", "thu"]) == {:ok, [:tue, :wed, :thu]}
+      assert PeakHours.validate_days(["SAT", "Sun"]) == {:ok, [:sat, :sun]}
     end
 
     test "expands keywords weekdays and weekends" do
@@ -70,10 +67,10 @@ defmodule EvoGit.PeakHoursTest do
       assert PeakHours.validate_days(["mon", "mon", "weekdays"]) ==
                {:ok, [:mon, :tue, :wed, :thu, :fri]}
 
-      # "sat" then "weekdays" → the prepending reduction puts the expanded
-      # weekdays FIRST and the later "sat" LAST (reversed input order).
+      # "sat" then "weekdays" → first-appearance order: the standalone "sat"
+      # first, then the expanded weekdays (mon-fri).
       assert PeakHours.validate_days(["sat", "weekdays"]) ==
-               {:ok, [:mon, :tue, :wed, :thu, :fri, :sat]}
+               {:ok, [:sat, :mon, :tue, :wed, :thu, :fri]}
     end
 
     test "reports the first invalid element" do
@@ -108,10 +105,10 @@ defmodule EvoGit.PeakHoursTest do
     end
 
     test "parses windows with a days key (canonical day atoms)" do
-      # Multi-element day lists canonicalize REVERSED relative to input
-      # (see validate_days/1); a single keyword expands to its atoms as-is.
+      # Day lists canonicalize in first-appearance input order (see
+      # validate_days/1); a single keyword expands to its atoms as-is.
       assert PeakHours.parse_window(%{start: "09:00", end: "12:00", days: ["mon", "wed"]}) ==
-               {:ok, %{start: 540, end: 720, days: [:wed, :mon]}}
+               {:ok, %{start: 540, end: 720, days: [:mon, :wed]}}
 
       assert PeakHours.parse_window(%{start: "22:00", end: "06:00", days: ["weekends"]}) ==
                {:ok, %{start: 1320, end: 360, days: [:sat, :sun]}}
@@ -558,11 +555,8 @@ defmodule EvoGit.PeakHoursTest do
 
     test "day-scoped overnight window: start on the applicable day, tail end next day" do
       # Mon-only window: Mon 22:00 start + wrapped tail Tue 00:00-06:00.
-      # NOTE: February dates chosen so every candidate's day-of-month orders
-      # chronologically — the lib picks its candidate via Enum.min/2, whose
-      # TERM ordering compares the map :day field before :month/:year, so a
-      # later date with a smaller day-of-month (e.g. Feb 3 vs Jan 27) would
-      # win over the chronologically-earlier transition.
+      # NOTE: February dates: the next applicable start after the tail is a
+      # full week out, keeping the earliest-candidate selection unambiguous.
       windows = [%{start: 1320, end: 360, days: [:mon]}]
 
       # From before the start on the applicable day → the start itself.
@@ -583,7 +577,8 @@ defmodule EvoGit.PeakHoursTest do
     end
 
     test "weekend off-peak days with a weekday overnight window" do
-      # February dates — see the term-ordering note in the previous test.
+      # February dates — same unambiguous-candidate rationale as the
+      # previous test.
       windows = [%{start: 1320, end: 360, days: [:mon, :tue, :wed, :thu, :fri]}]
       off = [:sat, :sun]
 
