@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.6] - 2026-09-01
+
+### Added
+
+- Wire the LLM model selector into the Home Live chat page, including a chat model selector in the home chat interface via a new ChatState model selection helper.
+- Add public helpers for normalizing chat model IDs and model selector task options.
+- Add automatic commit fallback for the agent workflow.
+- Publish changelog sections as GitHub release bodies and populate latest.json notes from the changelog on releases.
+
+### Changed
+
+- Improve changelog generation so related pull requests and merges addressing the same feature or bug are collapsed into a single changelog entry.
+- Switch dependency to a personal fork of req_llm.
+
+### Fixed
+
+- Fix mobile task-form controls being pinned off-screen when the keyboard opens by making layout heights aware of the dynamic viewport.
+
 ## [0.11.5] - 2026-09-01
 
 ### Added
