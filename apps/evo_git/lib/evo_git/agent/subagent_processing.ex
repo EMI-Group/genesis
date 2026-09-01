@@ -320,6 +320,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: #{msg}"
   end
 
+  def format_subagent_result({:error, {:foreign_repo_write_not_root, msg}}) do
+    "Error: #{msg}"
+  end
+
+  def format_subagent_result({:error, {:foreign_repo_write_serialized, msg}}) do
+    "Error: #{msg}"
+  end
+
   def format_subagent_result({:error, {:spatial_contract_violation, msg}}) do
     "Error: #{msg}"
   end
