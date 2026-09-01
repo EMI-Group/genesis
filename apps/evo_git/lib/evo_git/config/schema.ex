@@ -528,12 +528,31 @@ defmodule EvoGit.Config.Schema do
         validate_timezone_field(path, timezone)
       end
 
+    # Optional list of days on which the profile is entirely off-peak (normal
+    # concurrency 24/7, every peak_hours window suppressed). Atom- and
+    # string-keyed maps are both possible (TOML decoding may leave string
+    # keys). A `case Map.get` (not `||`) distinguishes "absent" from
+    # "present but nil".
+    off_peak_days =
+      case Map.get(profile, :off_peak_days) do
+        nil -> Map.get(profile, "off_peak_days")
+        value -> value
+      end
+
+    off_peak_days_errors =
+      if is_nil(off_peak_days) do
+        []
+      else
+        validate_off_peak_days(path, off_peak_days)
+      end
+
     id_errors ++
       model_errors ++
       provider_options_errors ++
       peak_concurrency_errors ++
       peak_hours_errors ++
-      timezone_errors
+      timezone_errors ++
+      off_peak_days_errors
   end
 
   defp validate_model_profile(path, profile) do
@@ -582,6 +601,28 @@ defmodule EvoGit.Config.Schema do
             "invalid timezone: #{inspect(reason)} (got #{inspect(value)})",
             value,
             :timezone
+          )
+        ]
+    end
+  end
+
+  # Validates the optional off_peak_days profile field by delegating day-name
+  # parsing to EvoGit.PeakHours.validate_days/1 (single source of truth — do
+  # NOT re-implement the day vocabulary here). {:ok, _days} (including
+  # {:ok, []} = disabled) is valid; {:error, {:invalid_days, v}} maps to a
+  # ValidationError via the error/4 helper.
+  defp validate_off_peak_days(path, value) do
+    case EvoGit.PeakHours.validate_days(value) do
+      {:ok, _days} ->
+        []
+
+      {:error, {:invalid_days, v}} ->
+        [
+          error(
+            path ++ [:off_peak_days],
+            "off_peak_days must be a list of day names (mon|tue|wed|thu|fri|sat|sun) and/or keywords (weekdays|weekends), got #{inspect(v)}",
+            v,
+            :off_peak_days
           )
         ]
     end
@@ -653,6 +694,16 @@ defmodule EvoGit.Config.Schema do
             "peak_hours windows overlap: #{inspect(w1)} and #{inspect(w2)}",
             {w1, w2},
             :peak_hours
+          )
+        ]
+
+      {:invalid_days, w} ->
+        [
+          error(
+            indexed_path(base_path, value, w) ++ [:days],
+            "peak_hours window has invalid days: expected a list of day names (mon|tue|wed|thu|fri|sat|sun) and/or keywords (weekdays|weekends), got #{inspect(Map.get(w, :days, Map.get(w, "days")))}",
+            Map.get(w, :days, Map.get(w, "days")),
+            :days
           )
         ]
     end
