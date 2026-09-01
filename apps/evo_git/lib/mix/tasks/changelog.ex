@@ -42,8 +42,11 @@ defmodule Mix.Tasks.Changelog do
   Summarization is **two-stage (map-reduce)**: stage 1 produces one concise
   user-facing summary line per change (one LLM call per change, taking that
   change's commits); stage 2 aggregates the per-change summaries into the
-  final Keep-a-Changelog entries in a single LLM call. After writing the file
-  the task interactively asks whether to commit it; if confirmed only the
+  final Keep-a-Changelog entries in a single LLM call. Stage 2 also merges
+  **related changes across PRs/merges**: separate merges that add, fix, and
+  improve the same feature collapse into ONE entry describing the end / net
+  user-visible state (e.g. "Add feature xyz"). After writing the file the
+  task interactively asks whether to commit it; if confirmed only the
   changelog file is staged and committed (never `git add -A`).
 
   ## Examples
@@ -394,7 +397,8 @@ defmodule Mix.Tasks.Changelog do
   end
 
   # Stage 2 (reduce) seam: one LLM call over the per-PR summaries, producing
-  # the final entries in the existing {category, text} shape.
+  # the final entries in the existing {category, text} shape — related
+  # PRs/merges are merged into single entries.
   defp aggregate(model, version, summaries) do
     aggregator =
       Application.get_env(:evo_git, :changelog_aggregator, &__MODULE__.aggregate_with_llm/3)
@@ -469,8 +473,13 @@ defmodule Mix.Tasks.Changelog do
     """
   end
 
+  @doc false
   # Stage-2 prompt: per-PR summaries -> categorized Keep-a-Changelog entries.
-  defp build_aggregate_prompt(version, summaries) do
+  # Multiple PRs/merges in the release may concern the same feature or bug
+  # (e.g. one adds it, a later one fixes it, another improves it) — the
+  # prompt instructs the LLM to collapse all such related changes into a
+  # single entry describing the net user-visible state.
+  def build_aggregate_prompt(version, summaries) do
     summary_lines = Enum.map_join(summaries, "\n", &"- #{&1}")
 
     """
@@ -484,10 +493,18 @@ defmodule Mix.Tasks.Changelog do
     Categories (use exactly these names):
     Added, Changed, Fixed, Removed, Security, Deprecated
 
+    IMPORTANT — merge related changes across PRs:
+    Multiple PRs/merges in this release may concern the same feature or bug.
+    For example, one merge ADDS feature xyz, a later one FIXES a bug in
+    feature xyz, and another IMPROVES feature xyz. All such related changes
+    MUST be merged into a SINGLE changelog entry that describes the end / net
+    user-visible state (e.g. "Add feature xyz" for the add -> fix -> improve
+    sequence) — NOT one entry per PR. Choose the most representative category,
+    usually the one of the primary / introducing change.
+
     Rules:
     - Each entry is a short user-facing sentence fragment (no commit hashes,
       author names, or file paths).
-    - Merge related changes into single entries.
     - Ignore mechanical/trivial changes (chore, formatting, dependency churn,
       pure refactors with no user impact) unless they are meaningful.
 

@@ -358,13 +358,16 @@ defmodule Mix.Tasks.ChangelogTest do
 
     # Every hash is clean — no leading newline leaked from the record separator.
     refute Enum.any?(prs, &String.starts_with?(&1.head_sha, "\n"))
+
     refute Enum.any?(prs, fn pr ->
              Enum.any?(pr.commits, &String.starts_with?(&1.hash, "\n"))
            end)
 
     # The merge PR carries exactly the branch commit it brought in, and its
     # head_sha is the merge commit (clean, so the ^1.. range resolved).
-    merge_pr = Enum.find(prs, fn pr -> Enum.map(pr.commits, & &1.subject) == ["add feature merged"] end)
+    merge_pr =
+      Enum.find(prs, fn pr -> Enum.map(pr.commits, & &1.subject) == ["add feature merged"] end)
+
     assert merge_pr != nil
     assert String.starts_with?(merge_pr.head_sha, "\n") == false
   end
@@ -419,6 +422,35 @@ defmodule Mix.Tasks.ChangelogTest do
 
     assert_received {:aggregated_summaries, summaries}
     assert length(summaries) == 2
+  end
+
+  test "aggregate prompt explicitly instructs merging related PRs/merges into single entries" do
+    prompt =
+      Changelog.build_aggregate_prompt("0.2.0", [
+        "Add feature xyz",
+        "Fix a bug in feature xyz",
+        "Improve feature xyz"
+      ])
+
+    # The cross-PR merging instruction is present and prominent.
+    assert prompt =~ "IMPORTANT — merge related changes across PRs"
+    assert prompt =~ "Multiple PRs/merges in this release may concern the same feature or bug"
+
+    # The add -> fix -> improve collapse semantics are spelled out: separate
+    # merges that add, fix, and improve the same feature become ONE entry
+    # describing the net user-visible state, not one entry per PR.
+    assert prompt =~ "one merge ADDS feature xyz"
+    assert prompt =~ "a later one FIXES a bug in"
+    assert prompt =~ "another IMPROVES feature xyz"
+    assert prompt =~ "MUST be merged into a SINGLE changelog entry"
+    assert prompt =~ ~r/end \/ net\s+user-visible state/
+    assert prompt =~ ~s("Add feature xyz")
+    assert prompt =~ "NOT one entry per PR"
+    assert prompt =~ "most representative category"
+
+    # The example input summaries still appear verbatim.
+    assert prompt =~ "- Add feature xyz"
+    assert prompt =~ "- Improve feature xyz"
   end
 
   # Runs git in the given directory, raising on failure (test setup only).
