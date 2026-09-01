@@ -63,9 +63,10 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
         TruncationFeedback.append_truncation_feedback("output text", truncation_info, "run_bash")
 
       assert result =~ "output text"
-      assert result =~ "Output Truncated"
-      assert result =~ "output exceeded size limit"
-      assert result =~ "head"
+      assert result =~ "⚠️ Output truncated"
+      assert result =~ "original 200000 bytes"
+      assert result =~ "kept 50000 bytes"
+      assert result =~ "max_bytes (up to 131072)"
     end
 
     test "appends feedback for invalid_utf8 reason" do
@@ -77,11 +78,11 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
 
       result = TruncationFeedback.append_truncation_feedback("text", truncation_info, "read_file")
 
-      assert result =~ "Output Truncated"
-      assert result =~ "invalid UTF-8 data was repaired/truncated"
+      assert result =~ "⚠️ Output truncated"
+      assert result =~ "original 100 bytes"
     end
 
-    test "includes original and truncated sizes in human-readable format" do
+    test "includes original and truncated sizes as raw byte counts" do
       truncation_info = %{
         reason: :size_exceeded,
         original_size: 1_048_576,
@@ -90,17 +91,17 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
 
       result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "rg")
 
-      assert result =~ "1.0 MB"
-      assert result =~ "64.0 KB"
+      assert result =~ "original 1048576 bytes"
+      assert result =~ "kept 65536 bytes"
     end
 
-    test "includes tool-specific suggestion" do
+    test "includes the generic max_bytes remediation hint" do
       truncation_info = %{reason: :size_exceeded, original_size: 1000, truncated_size: 500}
 
       result =
         TruncationFeedback.append_truncation_feedback("o", truncation_info, "search_history")
 
-      assert result =~ "max_count"
+      assert result =~ "max_bytes (up to 131072)"
     end
 
     test "separates original output from feedback with newlines" do
@@ -110,10 +111,10 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
         TruncationFeedback.append_truncation_feedback("my output", truncation_info, "run_bash")
 
       # The original output should be followed by \n\n then the feedback marker
-      assert result =~ "my output\n\n---"
+      assert result =~ "my output\n\n⚠️"
     end
 
-    test "appended feedback contains the partial-output instruction and accurate sizes" do
+    test "appended feedback states accurate sizes and the single remediation" do
       truncation_info = %{
         reason: :size_exceeded,
         original_size: 72_154,
@@ -122,123 +123,12 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
 
       result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "rg")
 
-      assert result =~ "PARTIAL OUTPUT"
-      assert result =~ "do not conclude"
-      assert result =~ "131072"
-      # Accurate sizes: format_bytes(72154) = 70.5 KB, format_bytes(8192) = 8.0 KB
-      assert result =~ "70.5 KB"
-      assert result =~ "8.0 KB"
-    end
-  end
-
-  describe "tool_truncation_suggestion/1" do
-    test "run_bash suggests head/tail/grep/file and max_bytes" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("run_bash")
-      assert suggestion =~ "head"
-      assert suggestion =~ "tail"
-      assert suggestion =~ "grep"
-      assert suggestion =~ "max_bytes"
-    end
-
-    test "run_powershell shares the same suggestion as run_bash" do
-      assert TruncationFeedback.tool_truncation_suggestion("run_powershell") ==
-               TruncationFeedback.tool_truncation_suggestion("run_bash")
-    end
-
-    test "read_file suggests offset and limit" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("read_file")
-      assert suggestion =~ "offset"
-      assert suggestion =~ "limit"
-    end
-
-    test "rg suggests narrowing search pattern" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("rg")
-      assert suggestion =~ "narrowing"
-    end
-
-    test "curl mentions large HTTP response" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("curl")
-      assert suggestion =~ "HTTP response"
-    end
-
-    test "run_git suggests flags like --stat and --oneline" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("run_git")
-      assert suggestion =~ "--stat"
-      assert suggestion =~ "--oneline"
-    end
-
-    test "search_history suggests reducing max_count" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("search_history")
-      assert suggestion =~ "max_count"
-    end
-
-    test "search_web suggests reducing max_results" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("search_web")
-      assert suggestion =~ "max_results"
-    end
-
-    test "search_context suggests narrowing the pattern" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("search_context")
-      assert suggestion =~ "narrowing"
-    end
-
-    test "unknown tool name falls back to generic suggestion" do
-      suggestion = TruncationFeedback.tool_truncation_suggestion("some_random_tool")
-      assert suggestion =~ "more specific arguments"
-      assert suggestion =~ "max_bytes"
-    end
-
-    test "every tool suggestion mentions max_bytes" do
-      for tool <- [
-            "run_bash",
-            "run_powershell",
-            "read_file",
-            "rg",
-            "curl",
-            "run_git",
-            "search_history",
-            "search_web",
-            "search_context",
-            "unknown"
-          ] do
-        assert TruncationFeedback.tool_truncation_suggestion(tool) =~ "max_bytes"
-      end
-    end
-
-    test "all suggestions return strings" do
-      for tool <- [
-            "run_bash",
-            "read_file",
-            "rg",
-            "curl",
-            "run_git",
-            "search_history",
-            "search_web",
-            "search_context",
-            "unknown_tool"
-          ] do
-        assert is_binary(TruncationFeedback.tool_truncation_suggestion(tool))
-      end
-    end
-  end
-
-  describe "format_truncation_reason/1" do
-    test "formats size_exceeded reason" do
-      assert TruncationFeedback.format_truncation_reason(%{reason: :size_exceeded}) ==
-               "output exceeded size limit"
-    end
-
-    test "formats invalid_utf8 reason" do
-      assert TruncationFeedback.format_truncation_reason(%{reason: :invalid_utf8}) ==
-               "invalid UTF-8 data was repaired/truncated"
-    end
-
-    test "ignores extra keys in the map" do
-      assert TruncationFeedback.format_truncation_reason(%{
-               reason: :size_exceeded,
-               original_size: 100
-             }) ==
-               "output exceeded size limit"
+      assert result =~ "⚠️ Output truncated"
+      assert result =~ "original 72154 bytes"
+      assert result =~ "kept 8192 bytes"
+      assert result =~ "max_bytes (up to 131072)"
+      # No old `---` separator line before the feedback
+      refute result =~ "\n\n---"
     end
   end
 end

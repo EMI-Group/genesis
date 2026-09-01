@@ -265,17 +265,16 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
       # truncated_size is the retained CONTENT size — NOT byte_size of the whole
       # truncated string (which also includes the header and omitted marker)
       assert truncation_info.truncated_size < byte_size(truncated)
-      assert truncated =~ "11808 bytes in the middle omitted"
+      assert truncated =~ "11808 bytes omitted"
     end
 
-    test "inline header contains the partial-output warning and omitted-byte count" do
+    test "inline header contains the truncation warning and omitted-byte count" do
       result = String.duplicate("x", 20_000)
       {truncated, truncation_info} = OutputSanitizer.truncate(result, "rg", %{})
 
-      assert truncated =~ "PARTIAL OUTPUT"
-      assert truncated =~ "do not conclude the result is empty/missing"
-      assert truncated =~ "bytes in the middle omitted"
-      assert truncated =~ "max_bytes up to 131072"
+      assert truncated =~ "Output truncated"
+      assert truncated =~ "11808 bytes omitted"
+      assert truncated =~ "max_bytes (up to 131072)"
       # Header is short/factual and reports the original size plus the kept
       # head/tail byte counts
       assert truncated =~ "original 20000 bytes"
