@@ -16,6 +16,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
         chat_task_status: nil | :pending | :running | :finalizing | :cancelling
                           | :completed | :failed | :cancelled,
         chat_node: node() | nil,
+        selected_model_id: String.t() | nil,
         thought_process: [Messages.to_entries/1 entry]
       }
 
@@ -42,6 +43,11 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       agent_message_count: assigns[:agent_message_count],
       chat_task_status: assigns[:chat_task_status],
       chat_node: assigns[:chat_node],
+      # The chat's pinned model profile id (nil = Auto — the runtime's
+      # model-selection script or default decides). NOT validated against the
+      # configured profiles: a stored id that no longer exists just threads an
+      # unknown id on the next send (the core falls back gracefully).
+      selected_model_id: assigns[:selected_model_id],
       thought_process: assigns[:thought_process] || []
     }
   end
@@ -61,6 +67,7 @@ defmodule EvoDashWeb.HomeLive.ChatState do
       agent_message_count: normalize_message_count(Map.get(state, :agent_message_count)),
       chat_task_status: normalize_task_status(Map.get(state, :chat_task_status)),
       chat_node: normalize_chat_node(Map.get(state, :chat_node)),
+      selected_model_id: normalize_model_id(Map.get(state, :selected_model_id)),
       thought_process: normalize_thought_process(Map.get(state, :thought_process))
     }
   end
@@ -84,6 +91,9 @@ defmodule EvoDashWeb.HomeLive.ChatState do
 
   defp normalize_chat_node(node) when is_atom(node), do: node
   defp normalize_chat_node(_node), do: nil
+
+  defp normalize_model_id(id) when is_binary(id) and id != "", do: id
+  defp normalize_model_id(_id), do: nil
 
   defp normalize_thought_process(entries) when is_list(entries) do
     entries
