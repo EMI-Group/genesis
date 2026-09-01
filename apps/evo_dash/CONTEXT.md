@@ -18,7 +18,7 @@ Users open a Project (a Git repository path), and the dashboard auto-detects the
 - `./lib/evo_dash_web/live/settings_live/` → SettingsLive support modules (`NodeData`, `ModelProfileHelpers`, `ModelProfileEvents`, `ConfigIO`, `SearchEvents`, `CustomAgentEvents`) — `live/settings_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/home_live/` → HomeLive support modules (`Transcript`, `Messages`, `AgentStream`, `AssistantMessage`, `ChatState`) — `live/home_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/review_live/` → ReviewLive support modules (`LoadData`, `MergeCheck`) — `live/review_live/CONTEXT.md`
-- `./lib/evo_dash_web/live/system_live/` → SystemLive support modules (`Status`, `Charts`, `UpdateCard`, `SourceCard`) — `live/system_live/CONTEXT.md`
+- `./lib/evo_dash_web/live/system_live/` → SystemLive support modules (`Status`, `Charts`, `UpdateCard`, `SourceCard`, `RuntimeControls`) — `live/system_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/tasks_live/` → TasksLive (leaf, no support modules) — `live/tasks_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/agents_live/` → AgentsLive support modules (`LoadData`, `HistoryGate`, `ThresholdCache`, `ToolCallDisplay`) — `live/agents_live/CONTEXT.md`
 - `./lib/evo_dash_web/live_hooks/` → Five on-mount hooks: `set_locale.ex`, `node_aware.ex`, `desktop_quit.ex`, `update_status.ex`, `guide.ex` (registered in that order, Guide LAST) — `live_hooks/CONTEXT.md`
