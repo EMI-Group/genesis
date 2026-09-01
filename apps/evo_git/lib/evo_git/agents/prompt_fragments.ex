@@ -363,10 +363,19 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`)."
 
   Complete bullet teaching the writable-vs-read-only foreign repo semantics:
-  writable foreign repos allow `:read_write` spawns whose changes are tracked
-  by the task (per-repo commit + branch in the final report) but never merged
-  back into the foreign repo's default branch by the task; read-only foreign
-  repos keep the current behavior (only read-only agents spawnable).
+  read-only foreign-repo access is unrestricted (any agent may spawn a
+  read-only agent into any foreign repo at any time); write-capable
+  (`:read_write`) spawns into a writable foreign repo are restricted to
+  ROOT-AGENT-ONLY (depth 0) and ONE-AT-A-TIME (serialized — spawn one, wait
+  for it to complete, then spawn the next; no parallel writable foreign-repo
+  subagents), because parallel writes to a foreign repo create merge conflicts
+  the spawning agent cannot control (the sandbox restricts write access to the
+  agent's LOCAL path, not the foreign repo path) — parallelism inside a
+  writable foreign repo is the job of the Manager running inside that repo,
+  and nested agents needing foreign-repo changes report back to the root
+  agent. Writable changes are tracked by the task (per-repo commit + branch
+  in the final report) but never merged back into the foreign repo's default
+  branch by the task.
 
   Used by: Architect (weaved into the "Key Rules" list right after the
   "Read-only vs writable foreign repos" bullet), ContextExtractor (weaved into
@@ -375,7 +384,7 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   bullets by design — this is the shared canonical sentence.
   """
   def writable_foreign_repo_clause do
-    "- **Writable vs read-only foreign repos**: Foreign repositories may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). In a writable foreign repo, a `:read_write` agent may be spawned and may modify files — its changes are committed to `evogit-agent-*` branches and **tracked by the task** (per-repo commit + branch appear in the final report). The task NEVER merges foreign-repo branches back into the foreign repo's default branch — no merge-back by the task (merging/rejecting across repos happens later via the dashboard review page). Read-only foreign repos keep the current behavior: ONLY read-only agents (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) may be spawned there; write-capable agents are blocked."
+    "- **Writable vs read-only foreign repos**: Foreign repositories may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). Read-only foreign-repo access is **unrestricted** — any agent may spawn a read-only agent (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) into any foreign repo at any time. Write-capable (`:read_write`) spawns into a writable foreign repo are restricted: **root-agent-only** (only the root agent at depth 0 may spawn write-capable subagents into a foreign repo — nested/child agents may NOT) and **one at a time** (serialized: spawn one writable foreign-repo subagent, wait for it to complete, then spawn the next — no parallel writable foreign-repo subagents). This matches the spatial contract: every agent edits only files under its own path, and parallel writes to a foreign repo create merge conflicts the spawning agent cannot control (the sandbox restricts write access to the agent's LOCAL path, not the foreign repo path) — parallelism inside a writable foreign repo is the job of the Manager running inside that repo. A writable subagent's changes are committed to `evogit-agent-*` branches and **tracked by the task** (per-repo commit + branch appear in the final report); the task NEVER merges foreign-repo branches back into the foreign repo's default branch (merging/rejecting across repos happens later via the dashboard review page). Nested agents needing foreign-repo changes must report back up to the root agent, which will spawn the writable subagent (one at a time)."
   end
 
   # ── Objective scope (Executor + ContextExtractor) ───────────────────────────
