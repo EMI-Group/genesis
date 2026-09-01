@@ -1251,6 +1251,150 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  describe "model selector" do
+    # Writes a config.toml with a single model profile into the test's isolated
+    # XDG_CONFIG_HOME (set per test by the file-level setup) so
+    # ModelSelect.load/1 — called from mount's assign_model_select — sees a
+    # profile to render and pin. Pattern copied from projects_live_test.exs
+    # ("model selection auto/lock semantics" describe): EvoGit.Config caches by
+    # config_path, and the per-test fresh XDG_CONFIG_HOME makes the path unique
+    # so the new file is re-read.
+    defp write_model_profile_config do
+      config_path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(config_path))
+
+      File.write!(config_path, """
+      [[llm.models]]
+      id = "profile-a"
+      model = {provider = "anthropic", id = "claude-sonnet-5"}
+      concurrency = 3
+      """)
+    end
+
+    test "selector renders in the header with a profile and an Auto option", %{conn: conn} do
+      write_model_profile_config()
+
+      {:ok, view, html} = live(conn, "/help")
+
+      # The header select is form-less (OUTSIDE #chat-form), so its id travels
+      # via a bare phx-change — asserted through the select's own attributes.
+      assert present?(html, ~s(select[name="model_id"][phx-change="select_chat_model"]))
+
+      options =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find(~s(select[name="model_id"] option))
+
+      # Auto option: value="" + selected while nothing is pinned (nil → Auto).
+      # No [model_selection] script is configured in this config, so
+      # model_selection_enabled is false and the label is the plain "Auto" —
+      # "Auto (by rules)" is script-only.
+      auto = Enum.find(options, fn {_, attrs, _} -> {"value", ""} in attrs end)
+      assert auto != nil
+      {_tag, auto_attrs, _children} = auto
+      assert {"selected", ""} in auto_attrs
+      assert Floki.text(auto) |> String.trim() == "Auto"
+      refute html =~ "Auto (by rules)"
+
+      # One option per configured profile (value = the profile id).
+      assert Enum.any?(options, fn {_, attrs, _} -> {"value", "profile-a"} in attrs end)
+
+      # The loaded assigns back the UI (no script → model_selection_enabled
+      # false, exactly like ProjectsLive without a script).
+      assert assigns(view)[:model_profiles] != []
+      assert assigns(view)[:model_selection_enabled] == false
+    end
+
+    test "selector is absent when no model profiles are configured", %{conn: conn} do
+      # NO config written — the fresh empty XDG_CONFIG_HOME dir means
+      # ModelSelect.load/1 sees zero profiles. The contract renders the select
+      # hidden/absent when @model_profiles == [] (there is nothing to choose).
+      {:ok, _view, html} = live(conn, "/help")
+
+      refute present?(html, ~s(select[name="model_id"]))
+    end
+
+    test "pinned model threads :model_id + :model_id_locked into the reflect task", %{
+      conn: conn
+    } do
+      write_model_profile_config()
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      # Pick a profile via the header select's phx-change. The contract
+      # normalizes the id (non-empty binary → itself) and persists it into
+      # ChatHistory so it survives remounts.
+      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      html = render_submit(view, "send_message", %{"message" => "hello"})
+      assert html =~ "hello"
+
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      reflect = Enum.filter(tasks, &(&1.type == :reflect))
+      assert length(reflect) == 1
+      task = hd(reflect)
+
+      # The pinned id threads BOTH keys. String-key checks: :model_id /
+      # :model_id_locked are NOT in the codec's @known_opt_keys whitelist, so
+      # the round-tripped opts decode them as STRING keys (same as
+      # projects_live_test.exs "model selection auto/lock semantics"). mode /
+      # objective ARE whitelisted → atom keys.
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "hello"
+      refute has_opt?(task, :path)
+      refute has_opt?(task, "path")
+
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "Auto (no pinned model) threads neither model key", %{conn: conn} do
+      # No model selected — this test mounts with NO config written, so there
+      # is nothing to select and the send must thread only the plain reflect
+      # opts (mode + objective).
+      {:ok, view, _html} = live(conn, "/help")
+
+      html = render_submit(view, "send_message", %{"message" => "auto please"})
+      assert html =~ "auto please"
+
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      reflect = Enum.filter(tasks, &(&1.type == :reflect))
+      assert length(reflect) == 1
+      task = hd(reflect)
+
+      # Auto (nil/absent) → NEITHER :model_id NOR :model_id_locked is threaded
+      # (string or atom key) — the runtime's model-selection script (or the
+      # default model) decides. Refute the atom forms too so a future codec
+      # whitelist addition can't silently break the contract. mode / objective
+      # ARE whitelisted codec atoms → atom keys here.
+      refute has_opt?(task, "model_id")
+      refute has_opt?(task, "model_id_locked")
+      refute has_opt?(task, :model_id)
+      refute has_opt?(task, :model_id_locked)
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "auto please"
+
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "pinned model survives a remount via ChatHistory", %{conn: conn} do
+      write_model_profile_config()
+
+      {:ok, view, _html} = live(conn, "/help")
+      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      # "Close the page" (stop the view process) and remount: attach_chat
+      # restores the CURRENT chat — including the pinned model (the
+      # select_chat_model handler persisted it via ChatHistory).
+      GenServer.stop(view.pid)
+      {:ok, view2, _html} = live(conn, "/help")
+      assert assigns(view2)[:selected_model_id] == "profile-a"
+    end
+  end
+
   describe "production-mimicking crash repro" do
     test "real reflect task + real agent ETS rows + real broadcasts end-to-end", %{conn: conn} do
       # A REAL agent id in the scheduler's id space (integer, like production).
