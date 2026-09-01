@@ -239,80 +239,79 @@ defmodule EvoDashWeb.SettingsLive do
                               {gettext("Disconnect")}
                             </button>
                           <% else %>
-                            <%= if get_in(@bootstrap_progress, [target.id, :active]) do %>
-                              <% stage_idx =
-                                case get_in(@bootstrap_progress, [target.id, :stage]) do
-                                  :probing_platform -> 0
-                                  :downloading -> 1
-                                  :downloading_locally -> 2
-                                  :uploading -> 3
-                                  :extracting -> 4
-                                  :setting_permissions -> 5
-                                  :detecting_os -> 6
-                                  :copying_config -> 7
-                                  :generating_cookie -> 8
-                                  :patching_binaries -> 9
-                                  :starting_daemon -> 10
-                                  _ -> -1
-                                end %>
-                              <ul class="steps steps-horizontal text-xs w-full">
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 0, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Probing platform")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 1, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Downloading")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 2, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Downloading locally")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 3, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Uploading binary")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 4, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Extracting")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 5, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Setting permissions")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 6, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Detecting OS")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 7, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Copying config")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 8, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Generating cookie")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 9, do: ["step-primary"], else: [])
-                                }>
-                                  <%!-- 在NixOS远程主机上用patchelf修补genesis_remote的ELF二进制 --%>
-                                  {gettext("Patching binaries")}
-                                </li>
-                                <li class={
-                                  ["step"] ++ if(stage_idx >= 10, do: ["step-primary"], else: [])
-                                }>
-                                  {gettext("Starting daemon")}
-                                </li>
-                              </ul>
+                            <%= if bootstrap_entry = @bootstrap_progress[target.id] do %>
+                              <% stage_idx = bootstrap_entry.stage %>
+                              <% bootstrap_status = bootstrap_entry.status %>
+                              <div class="w-full space-y-2">
+                                <ul class="steps steps-horizontal text-xs w-full">
+                                  <li class={bootstrap_step_class(stage_idx, 0, bootstrap_status)}>
+                                    <%!-- 探测远程平台/OS、上传本地发布包 --%>
+                                    {gettext("Probing / preparing")}
+                                  </li>
+                                  <li class={bootstrap_step_class(stage_idx, 1, bootstrap_status)}>
+                                    {gettext("Downloading")}
+                                  </li>
+                                  <li class={bootstrap_step_class(stage_idx, 2, bootstrap_status)}>
+                                    {gettext("Extracting")}
+                                  </li>
+                                  <li class={bootstrap_step_class(stage_idx, 3, bootstrap_status)}>
+                                    <%!-- 设置权限、复制配置、生成cookie、修补二进制、停止已运行的守护进程 --%>
+                                    {gettext("Configuring")}
+                                  </li>
+                                  <li class={bootstrap_step_class(stage_idx, 4, bootstrap_status)}>
+                                    {gettext("Starting daemon")}
+                                  </li>
+                                </ul>
+
+                                <%!-- Error-final: partial bar + error text + Bootstrap (retry) --%>
+                                <%= if bootstrap_status == :error do %>
+                                  <p
+                                    :if={bootstrap_entry.error}
+                                    class="text-xs text-error flex items-start gap-1.5"
+                                  >
+                                    <.icon
+                                      name="hero-exclamation-triangle"
+                                      class="size-3.5 mt-0.5 shrink-0"
+                                    />
+                                    <span class="break-all">{bootstrap_entry.error}</span>
+                                  </p>
+                                  <div class="flex items-center gap-1 flex-wrap">
+                                    <button
+                                      class="btn btn-xs btn-ghost gap-1"
+                                      phx-click="bootstrap_remote_target"
+                                      phx-value-id={target.id}
+                                    >
+                                      <.icon name="hero-rocket-launch" class="size-3.5" />
+                                      {gettext("Bootstrap")}
+                                    </button>
+                                  </div>
+                                <% end %>
+
+                                <%!-- Success-final: all-green bar + Bootstrap/Connect still visible --%>
+                                <%= if bootstrap_status == :success do %>
+                                  <div class="flex items-center gap-1 flex-wrap">
+                                    <button
+                                      class="btn btn-xs btn-ghost gap-1"
+                                      phx-click="bootstrap_remote_target"
+                                      phx-value-id={target.id}
+                                    >
+                                      <.icon name="hero-rocket-launch" class="size-3.5" />
+                                      {gettext("Bootstrap")}
+                                    </button>
+                                    <button
+                                      class="btn btn-xs btn-primary gap-1"
+                                      phx-click="connect_remote_target"
+                                      phx-value-id={target.id}
+                                    >
+                                      <.icon
+                                        name="hero-arrow-right-end-on-rectangle"
+                                        class="size-3.5"
+                                      />
+                                      {gettext("Connect")}
+                                    </button>
+                                  </div>
+                                <% end %>
+                              </div>
                             <% else %>
                               <button
                                 class="btn btn-xs btn-ghost gap-1"
@@ -513,6 +512,64 @@ defmodule EvoDashWeb.SettingsLive do
                     </div>
                   </div>
                 </div>
+
+                <%!-- Daemon-already-running permission dialog — opened when a
+                   bootstrap attempt is refused because the remote daemon is
+                   already running ({:error, {:daemon_running, details}}).
+                   Confirming stops the daemon and re-bootstraps via
+                   EvoGit.RemoteConnection.bootstrap/2 with on_running: :restart
+                   (core broadcasts :stopping_daemon → step 3 "Configuring",
+                   then the normal stages). Driven by the @bootstrap_restart_confirm
+                   assign (nil = closed, %{id:, details:} = open). --%>
+                <%= if @bootstrap_restart_confirm do %>
+                  <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                      class="fixed inset-0 bg-black/50 backdrop-blur-sm"
+                      phx-click="cancel_bootstrap_restart"
+                      phx-value-target_id={@bootstrap_restart_confirm.id}
+                    >
+                    </div>
+                    <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+                      <div class="flex items-center gap-3 mb-4">
+                        <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
+                        <h3 class="text-lg font-bold">
+                          <%!-- 远程守护进程已经在运行；重新引导会先停止它 --%>
+                          {gettext("Remote daemon already running")}
+                        </h3>
+                      </div>
+
+                      <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
+                        {gettext(
+                          "The remote daemon is already running. Re-bootstrapping will stop it and any tasks running on the remote."
+                        )}
+                      </p>
+                      <p class="text-xs text-base-content/50 mb-5 leading-relaxed font-mono break-all">
+                        {@bootstrap_restart_confirm.details}
+                      </p>
+
+                      <div class="flex justify-end gap-3 pt-2">
+                        <button
+                          type="button"
+                          class="btn btn-ghost rounded-md px-6"
+                          phx-click="cancel_bootstrap_restart"
+                          phx-value-target_id={@bootstrap_restart_confirm.id}
+                        >
+                          {gettext("Cancel")}
+                        </button>
+                        <button
+                          type="button"
+                          class="btn btn-warning rounded-md px-6 gap-2"
+                          phx-click="confirm_bootstrap_restart"
+                          phx-value-target_id={@bootstrap_restart_confirm.id}
+                        >
+                          <.icon name="hero-arrow-path" class="size-4.5" />
+                          <%!-- 停止守护进程并重新执行引导 --%>
+                          {gettext("Stop & re-bootstrap")}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                <% end %>
               <% else %>
                 <%!-- Custom Agents UI — same design as category_section but for
                    the special :agents pseudo-category. Both editors contain
@@ -675,6 +732,7 @@ defmodule EvoDashWeb.SettingsLive do
         remote_config: false,
         remote_config_error: nil,
         bootstrap_progress: %{},
+        bootstrap_restart_confirm: nil,
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
         remote_form_target: nil,
@@ -800,23 +858,44 @@ defmodule EvoDashWeb.SettingsLive do
       end
 
     bootstrap_progress =
-      case status do
-        %{phase: :bootstrapping, bootstrap_stage: stage} when not is_nil(stage) ->
-          Map.put(socket.assigns.bootstrap_progress, target_id, %{stage: stage, active: true})
-
-        _ ->
-          Map.put(socket.assigns.bootstrap_progress, target_id, %{stage: nil, active: false})
-      end
+      update_bootstrap_progress(socket.assigns.bootstrap_progress, target_id, status)
 
     {:noreply, assign(socket, :bootstrap_progress, bootstrap_progress)}
   end
 
   @impl true
-  def handle_info({:bootstrap_complete, _id, result}, socket) do
+  def handle_info({:bootstrap_complete, id, result}, socket) do
     socket =
-      socket
-      |> reload_remote_statuses()
-      |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+      case result do
+        {:error, {:daemon_running, details}} ->
+          # Daemon already running (refused bootstrap) — no staging happened.
+          # Drop the transient active entry (the bar would otherwise sit on a
+          # stage-less "active" state forever) and ask the user for permission
+          # to stop it and re-bootstrap (see confirm_bootstrap_restart). No
+          # generic error flash — the dialog IS the feedback.
+          socket
+          |> reload_remote_statuses()
+          |> clear_bootstrap_progress(id)
+          |> assign(:bootstrap_restart_confirm, %{id: id, details: details})
+
+        {:ok, _} ->
+          socket
+          |> reload_remote_statuses()
+          |> freeze_bootstrap_progress(id, :success)
+          |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+
+        :ok ->
+          socket
+          |> reload_remote_statuses()
+          |> freeze_bootstrap_progress(id, :success)
+          |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+
+        {:error, reason} ->
+          socket
+          |> reload_remote_statuses()
+          |> freeze_bootstrap_progress(id, :error, bootstrap_error_text(reason))
+          |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+      end
 
     {:noreply, socket}
   end
@@ -1541,7 +1620,11 @@ defmodule EvoDashWeb.SettingsLive do
     else
       # Immediately show the progress bar so the user sees feedback right away
       bootstrap_progress =
-        Map.put(socket.assigns.bootstrap_progress, id, %{stage: nil, active: true})
+        Map.put(socket.assigns.bootstrap_progress, id, %{
+          stage: nil,
+          active: true,
+          status: :active
+        })
 
       socket = assign(socket, :bootstrap_progress, bootstrap_progress)
 
@@ -1554,6 +1637,33 @@ defmodule EvoDashWeb.SettingsLive do
 
       {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("confirm_bootstrap_restart", %{"target_id" => id}, socket) do
+    # Permission granted — close the dialog and re-bootstrap with
+    # on_running: :restart (the core stops the running daemon — broadcasting
+    # :stopping_daemon, mapped to step 3 "Configuring" — then bootstraps fresh).
+    socket = assign(socket, :bootstrap_restart_confirm, nil)
+
+    bootstrap_progress =
+      Map.put(socket.assigns.bootstrap_progress, id, %{stage: nil, active: true, status: :active})
+
+    socket = assign(socket, :bootstrap_progress, bootstrap_progress)
+
+    lv_pid = self()
+
+    Task.start(fn ->
+      result = EvoDash.NodeContext.bootstrap(id, on_running: :restart)
+      send(lv_pid, {:bootstrap_complete, id, result})
+    end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("cancel_bootstrap_restart", %{"target_id" => _id}, socket) do
+    {:noreply, assign(socket, :bootstrap_restart_confirm, nil)}
   end
 
   @impl true
@@ -1841,6 +1951,161 @@ defmodule EvoDashWeb.SettingsLive do
 
   defp reload_remote_statuses(socket) do
     assign(socket, :remote_statuses, EvoDash.NodeContext.connection_status())
+  end
+
+  # ── Bootstrap progress helpers ───────────────────────────────────────────────
+  #
+  # `@bootstrap_progress[target_id]` entry shape:
+  #   %{stage: nil | 0..4, active: boolean, status: :active | :success | :error,
+  #     error: String.t() | nil}
+  # `:stage` is the MAPPED 0-4 step index (see bootstrap_stage_idx/1), NOT the
+  # raw core atom — the template uses it directly (do not re-map). `:active`
+  # mirrors `status == :active` and keeps the double-click guard + template
+  # condition working. `:error` is set only when status == :error.
+  #
+  # 5-step mapping (daisyUI steps in the Settings target card):
+  #   step 0 "Probing / preparing" ← :probing_platform, :uploading, :detecting_os
+  #   step 1 "Downloading"         ← :downloading, :downloading_locally
+  #   step 2 "Extracting"          ← :extracting
+  #   step 3 "Configuring"         ← :setting_permissions, :copying_config,
+  #                                   :generating_cookie, :patching_binaries,
+  #                                   :stopping_daemon
+  #   step 4 "Starting daemon"     ← :starting_daemon
+  # Unknown atoms → -1 (no step highlighted).
+
+  defp bootstrap_stage_idx(stage) do
+    case stage do
+      :probing_platform -> 0
+      :uploading -> 0
+      :detecting_os -> 0
+      :downloading -> 1
+      :downloading_locally -> 1
+      :extracting -> 2
+      :setting_permissions -> 3
+      :copying_config -> 3
+      :generating_cookie -> 3
+      :patching_binaries -> 3
+      :stopping_daemon -> 3
+      :starting_daemon -> 4
+      _ -> -1
+    end
+  end
+
+  # Step <li> classes: completed steps are primary-highlighted; in the error
+  # final state the step where the failure occurred is shown as step-error;
+  # the success final state colors all five steps green. A nil stage (freshly
+  # started bootstrap, or an error before any stage was broadcast) leaves all
+  # steps unhighlighted.
+  defp bootstrap_step_class(stage_idx, step_index, status) do
+    cond do
+      status == :success -> ["step", "step-primary"]
+      status == :error and stage_idx == step_index -> ["step", "step-error"]
+      is_integer(stage_idx) and stage_idx >= step_index -> ["step", "step-primary"]
+      true -> ["step"]
+    end
+  end
+
+  # Progress entry transitions driven by {:remote_connection_status, ...}
+  # broadcasts. A :bootstrapping stage broadcast always advances the entry to
+  # :active. While the entry is :active, a phase that ended the bootstrap is
+  # FROZEN (:error keeps the last-known stage + message; any other end phase —
+  # :connected/:disconnected/... — freezes :success). Every other broadcast
+  # (different target, plain connect/disconnect, or a target with a frozen
+  # :success/:error entry) PRESERVES the entry — the frozen bar must survive
+  # unrelated traffic. The definitive terminal signals still come from
+  # {:bootstrap_complete, id, result} (the Task result), which re-freezes.
+  defp update_bootstrap_progress(progress, target_id, status) do
+    case status do
+      %{phase: :bootstrapping, bootstrap_stage: stage} when not is_nil(stage) ->
+        Map.put(progress, target_id, %{
+          stage: bootstrap_stage_idx(stage),
+          active: true,
+          status: :active
+        })
+
+      status when is_map(status) ->
+        case Map.get(progress, target_id) do
+          %{status: :active} = entry ->
+            cond do
+              bootstrap_error?(status) ->
+                Map.put(progress, target_id, %{
+                  stage: entry.stage,
+                  active: false,
+                  status: :error,
+                  error: bootstrap_error_message(status)
+                })
+
+              bootstrap_ended?(status) ->
+                Map.put(progress, target_id, %{stage: 4, active: false, status: :success})
+
+              true ->
+                progress
+            end
+
+          _frozen_or_absent ->
+            progress
+        end
+
+      _non_map ->
+        progress
+    end
+  end
+
+  # An error phase, or any map carrying a non-nil last_error, ends the
+  # bootstrap in failure.
+  defp bootstrap_error?(%{phase: :error}), do: true
+
+  defp bootstrap_error?(status) when is_map(status) do
+    case Map.get(status, :last_error) do
+      nil -> false
+      _ -> true
+    end
+  end
+
+  defp bootstrap_error_message(status) do
+    case Map.get(status, :last_error) do
+      nil -> nil
+      msg when is_binary(msg) -> msg
+      msg -> inspect(msg)
+    end
+  end
+
+  # Any phase other than :bootstrapping/:error while the entry is active means
+  # the bootstrap ended. The core sets phase: :disconnected with
+  # bootstrap_stage: nil right after a successful bootstrap, so :disconnected
+  # MUST count as ended here.
+  defp bootstrap_ended?(%{phase: phase}) when phase not in [:bootstrapping, :error],
+    do: true
+
+  defp bootstrap_ended?(_), do: false
+
+  # Human-readable error text for a frozen :error bar, derived from a
+  # {:bootstrap_complete, id, {:error, reason}} result.
+  defp bootstrap_error_text(reason) do
+    cond do
+      is_binary(reason) -> reason
+      is_map(reason) and Map.has_key?(reason, :last_error) -> bootstrap_error_message(reason)
+      true -> inspect(reason)
+    end
+  end
+
+  # Freeze the target's progress entry in a terminal state (keeps the last
+  # known stage; success always freezes at step 4).
+  defp freeze_bootstrap_progress(socket, id, status, error \\ nil) do
+    progress = socket.assigns.bootstrap_progress
+    last_stage = Map.get(Map.get(progress, id, %{}), :stage)
+
+    frozen =
+      case status do
+        :success -> %{stage: 4, active: false, status: :success}
+        :error -> %{stage: last_stage, active: false, status: :error, error: error}
+      end
+
+    assign(socket, :bootstrap_progress, Map.put(progress, id, frozen))
+  end
+
+  defp clear_bootstrap_progress(socket, id) do
+    assign(socket, :bootstrap_progress, Map.delete(socket.assigns.bootstrap_progress, id))
   end
 
   defp build_remote_target_from_params(params) do
