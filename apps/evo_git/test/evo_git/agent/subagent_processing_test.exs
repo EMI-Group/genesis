@@ -202,6 +202,26 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert result =~ "Read-write agents cannot be spawned"
     end
 
+    test "foreign_repo_write_not_root error returns the custom message" do
+      msg = "Only the ROOT agent can spawn write-capable subagents in a foreign repository"
+
+      result =
+        SubagentProcessing.format_subagent_result({:error, {:foreign_repo_write_not_root, msg}})
+
+      assert result ==
+               "Error: Only the ROOT agent can spawn write-capable subagents in a foreign repository"
+    end
+
+    test "foreign_repo_write_serialized error returns the custom message" do
+      msg = "Only ONE write-capable foreign-repo subagent may be spawned at a time"
+
+      result =
+        SubagentProcessing.format_subagent_result({:error, {:foreign_repo_write_serialized, msg}})
+
+      assert result ==
+               "Error: Only ONE write-capable foreign-repo subagent may be spawned at a time"
+    end
+
     test "path_ignored error mentions ignored folder and gitignore hint" do
       result = SubagentProcessing.format_subagent_result({:error, :path_ignored})
 
