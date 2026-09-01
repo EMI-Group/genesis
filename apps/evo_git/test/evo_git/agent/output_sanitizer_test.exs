@@ -183,7 +183,10 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
   describe "truncate/3" do
     test "output under threshold passes through unchanged with nil truncation_info" do
       small_output = "Hello, this is a small output"
-      {result, truncation_info} = OutputSanitizer.truncate(small_output, "read_file", %{"path" => "test.txt"})
+
+      {result, truncation_info} =
+        OutputSanitizer.truncate(small_output, "read_file", %{"path" => "test.txt"})
+
       assert result == small_output
       assert truncation_info == nil
     end
@@ -202,6 +205,81 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
       {result, truncation_info} = OutputSanitizer.truncate(output, "read_file", %{})
       assert result == output
       assert truncation_info == nil
+    end
+
+    test "truncation never emits invalid UTF-8 when the cut falls mid-codepoint" do
+      # '€' is 3 bytes in UTF-8; 20000 chars = 60000 bytes, and the default
+      # truncate_size 8192 (half 4096) cuts mid-codepoint (4096 mod 3 == 1).
+      result = String.duplicate("€", 20_000)
+      {truncated, truncation_info} = OutputSanitizer.truncate(result, "rg", %{})
+
+      assert String.valid?(truncated)
+      # Head and tail content are both present (first and last € runs)
+      assert truncated =~ String.duplicate("€", 100)
+      assert String.ends_with?(truncated, String.duplicate("€", 100))
+      assert truncation_info.reason == :size_exceeded
+      assert truncation_info.truncated_size <= 8_192
+    end
+
+    test "truncation stays valid UTF-8 for two-byte characters" do
+      # 'é' is 2 bytes; the default half 4096 lands on a boundary but the
+      # assembled output (header + slices) must still be valid UTF-8.
+      result = String.duplicate("é", 20_000)
+      {truncated, truncation_info} = OutputSanitizer.truncate(result, "rg", %{})
+
+      assert String.valid?(truncated)
+      assert truncated =~ String.duplicate("é", 100)
+      assert String.ends_with?(truncated, String.duplicate("é", 100))
+      assert truncation_info.truncated_size <= 8_192
+    end
+
+    test "small max_bytes with output smaller than keep size retains full content (no overlap, no negative omitted)" do
+      # effective_max = min(100, 131072) = 100 < original 6000 < truncate_size 8192
+      result = String.duplicate("a", 6_000)
+
+      {truncated, truncation_info} =
+        OutputSanitizer.truncate(result, "tool", %{"max_bytes" => 100})
+
+      # No negative or misleading omitted marker anywhere
+      refute truncated =~ "bytes omitted"
+      refute truncated =~ ~r/\[-\d+ bytes omitted\]/
+      # The full original content appears intact (no duplication, no slicing)
+      assert String.contains?(truncated, result)
+      # Header states the truth: nothing omitted / full output retained
+      assert truncated =~ "nothing omitted"
+      refute truncated =~ "in the middle omitted"
+      # truncation_info.truncated_size is the retained CONTENT size == original
+      assert truncation_info.reason == :size_exceeded
+      assert truncation_info.original_size == 6_000
+      assert truncation_info.truncated_size == 6_000
+    end
+
+    test "normal head+tail truncation reports retained content size, not whole-string size" do
+      result = String.duplicate("a", 20_000)
+      {truncated, truncation_info} = OutputSanitizer.truncate(result, "rg", %{})
+
+      # kept_budget 8192 < 20000 -> half 4096, retained = 4096 + 4096 = 8192
+      assert truncation_info.reason == :size_exceeded
+      assert truncation_info.original_size == 20_000
+      assert truncation_info.truncated_size == 8_192
+      # truncated_size is the retained CONTENT size — NOT byte_size of the whole
+      # truncated string (which also includes the header and omitted marker)
+      assert truncation_info.truncated_size < byte_size(truncated)
+      assert truncated =~ "11808 bytes omitted"
+    end
+
+    test "inline header contains the truncation warning and omitted-byte count" do
+      result = String.duplicate("x", 20_000)
+      {truncated, truncation_info} = OutputSanitizer.truncate(result, "rg", %{})
+
+      assert truncated =~ "Output truncated"
+      assert truncated =~ "11808 bytes omitted"
+      assert truncated =~ "max_bytes (up to 131072)"
+      # Header is short/factual and reports the original size plus the kept
+      # head/tail byte counts
+      assert truncated =~ "original 20000 bytes"
+      assert truncated =~ "kept first 4096 + last 4096 bytes"
+      assert truncation_info.truncated_size == 8_192
     end
   end
 
@@ -240,7 +318,8 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
           "[========>     ] 50%\n" <>
           "\e[32mDownload complete\e[0m"
 
-      {result, truncation_info} = OutputSanitizer.sanitize_and_truncate(input, "curl", %{"url" => "http://example.com"})
+      {result, truncation_info} =
+        OutputSanitizer.sanitize_and_truncate(input, "curl", %{"url" => "http://example.com"})
 
       # Should have ANSI codes removed
       refute result =~ "\e["

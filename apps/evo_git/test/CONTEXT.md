@@ -43,7 +43,7 @@ ExUnit test suite for the `:evo_git` OTP application. Validates core domain logi
 - **`subagent_processing_test.exs`** — `EvoGit.Agent.SubagentProcessingTest` (`DummyAgentModule`): `resolve_subagent_path/3`, `build_subagent_specs/3` model_id inheritance, `format_subagent_result/1`, `accumulate_subagent_usages/1`.
 - **`tool_dispatch_test.exs`** — `EvoGit.Agent.ToolDispatchTest`: `ensure_tool_calls/2`, `process_tool_calls/3`, dedupe, `batch_execute_tools/4` parallel, repo-less `sync_current_commit_after_tools/1`.
 - **`tool_dispatch_retry_slot_test.exs`** — `EvoGit.Agent.ToolDispatchRetrySlotTest`: per-attempt LLM slot acquisition in `call_llm_with_retry/5` — slot released between retries (during backoff), `AgentScheduler.pause/0` takes effect at next re-acquisition. (Known flaky under full-suite parallel load — see Known Issues.)
-- **`truncation_feedback_test.exs`** — `EvoGit.Agent.TruncationFeedbackTest`: `is_rate_limit_error?/1`, `append_truncation_feedback/3`, `tool_truncation_suggestion/1`, `format_truncation_reason/1`.
+- **`truncation_feedback_test.exs`** — `EvoGit.Agent.TruncationFeedbackTest`: `is_rate_limit_error?/1`, `append_truncation_feedback/3`.
 - **`turn_limit_test.exs`** / **`turn_warning_test.exs`** — `EvoGit.Agent.TurnLimitTest` / `TurnWarningTest`: turn-limit recovery triggers + grace budget; positional/middle turn warnings + adaptive countdown.
 - **`usage_test.exs`** — `EvoGit.Agent.UsageTest`: `Usage.zero/0`, `from_response_usage/1`, `add/2`, `cache_hit_rate/1`.
 - **`cancel_grace_test.exs`** — `EvoGit.Agent.CancelGraceTest`: graceful-cancel machinery — 3-turn grace budget, `cancel_requested` flag → cancel-grace entry, recovery auto-commit on cancel-grace entry.

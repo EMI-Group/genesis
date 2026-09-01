@@ -123,35 +123,53 @@ defmodule EvoGit.Agent.OutputSanitizer do
 
     effective_max = determine_effective_max(tool_name, tool_args, global_max, default_max)
 
-    if byte_size(result) <= effective_max do
+    original_size = byte_size(result)
+
+    if original_size <= effective_max do
       {result, nil}
     else
       Logger.warning(
-        "Output truncated for tool: #{tool_name}, arguments: #{inspect(tool_args)}, result byte_size: #{byte_size(result)}, effective max: #{effective_max}"
+        "Tool output truncated for '#{tool_name}' (arguments: #{inspect(tool_args)}): " <>
+          "original #{original_size} bytes exceeded effective max #{effective_max} bytes. " <>
+          "Raise the limit via the `[truncation] tool_output_default_max_bytes` / " <>
+          "`[truncation] tool_output_max_bytes` config keys or a per-call `max_bytes` " <>
+          "argument (capped by the global ceiling)."
       )
 
-      original_size = byte_size(result)
-      half_size = div(truncate_size, 2)
-      first_part = String.byte_slice(result, 0, half_size)
-      last_part = String.byte_slice(result, -half_size, half_size)
-      omitted = original_size - truncate_size
+      {first_part, last_part, retained, omitted} = head_tail_slices(result, truncate_size)
+
+      body =
+        if omitted == 0 do
+          first_part
+        else
+          first_part <> "\n... [#{omitted} bytes omitted] ...\n" <> last_part
+        end
 
       truncated =
-        """
-        [WARNING: Output exceeded #{effective_max} bytes (#{format_bytes(effective_max)}) and was truncated to #{truncate_size} bytes]
-        The output from '#{tool_name}' was too large. Consider using more specific arguments
-        or alternative tools to retrieve only the relevant portion of data.
-        #{first_part}
-        ... [#{omitted} bytes omitted] ...
-        #{last_part}
-        """
+        (truncation_header(
+           effective_max,
+           original_size,
+           first_part,
+           last_part,
+           omitted,
+           global_max
+         ) <>
+           "\n" <> body)
         |> String.trim()
+
+      # Defensive UTF-8 safety net: String.byte_slice/3 is already
+      # UTF-8-boundary-safe (Elixir 1.17+ backs off to the last valid codepoint),
+      # but keep the final assembled string valid no matter what. ensure_utf8/1
+      # on an already-valid string is a no-op returning {result, nil} — keep only
+      # the first element so the :size_exceeded truncation_info below is never
+      # clobbered by a repair info.
+      {truncated, _utf8_info} = EvoGit.UTF8.ensure_utf8(truncated)
 
       {truncated,
        %{
          reason: :size_exceeded,
          original_size: original_size,
-         truncated_size: byte_size(truncated)
+         truncated_size: retained
        }}
     end
   end
@@ -159,6 +177,46 @@ defmodule EvoGit.Agent.OutputSanitizer do
   def truncate(result, _tool_name, _tool_args) when not is_binary(result), do: {result, nil}
 
   # --- Private Helpers ---
+
+  # Computes the head/tail content slices for a truncated output using the
+  # kept-budget clamp: never slice more than the original size, so the head and
+  # tail cannot overlap and the omitted count can never go negative. Returns
+  # {first_part, last_part, retained, omitted} where `retained` is the ACTUAL
+  # number of content bytes kept (byte_slice may return slightly fewer bytes on
+  # codepoint backoff) and `omitted` = original_size - retained (always >= 0).
+  defp head_tail_slices(result, truncate_size) do
+    original_size = byte_size(result)
+    kept_budget = min(truncate_size, original_size)
+
+    if kept_budget >= original_size do
+      # Output exceeded the threshold but is smaller than the keep size: keep
+      # the whole original content unchanged (nothing omitted).
+      {result, "", original_size, 0}
+    else
+      half = div(kept_budget, 2)
+      first = String.byte_slice(result, 0, half)
+      last = String.byte_slice(result, -half, half)
+      retained = byte_size(first) + byte_size(last)
+      {first, last, retained, original_size - retained}
+    end
+  end
+
+  # Short, factual inline header the LLM sees at the top of a truncated output.
+  # Must be accurate in both cases: omitted > 0 (head + tail kept) and the
+  # edge case where the whole output was retained (omitted == 0).
+  defp truncation_header(effective_max, original_size, first_part, last_part, omitted, global_max) do
+    if omitted == 0 do
+      "[WARNING: Output truncated: original #{original_size} bytes exceeded the " <>
+        "#{effective_max}-byte limit — the full output was retained unchanged (nothing omitted)]"
+    else
+      first_size = byte_size(first_part)
+      last_size = byte_size(last_part)
+
+      "[WARNING: Output truncated: original #{original_size} bytes exceeded the " <>
+        "#{effective_max}-byte limit — kept first #{first_size} + last #{last_size} bytes, " <>
+        "#{omitted} bytes omitted. Narrow the pattern/path or raise max_bytes (up to #{global_max}).]"
+    end
+  end
 
   defp determine_effective_max(tool_name, tool_args, global_max, default_max) do
     case tool_args do
@@ -171,14 +229,6 @@ defmodule EvoGit.Agent.OutputSanitizer do
         else
           global_max
         end
-    end
-  end
-
-  def format_bytes(bytes) do
-    cond do
-      bytes >= 1024 * 1024 -> "#{Float.round(bytes / (1024 * 1024), 1)} MB"
-      bytes >= 1024 -> "#{Float.round(bytes / 1024, 1)} KB"
-      true -> "#{bytes} bytes"
     end
   end
 
