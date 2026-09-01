@@ -15,11 +15,13 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   defmodule DummyReadOnlyAgent do
     def agent_type, do: :read
     def delegation_level, do: :high
+    def run(_objective, _ctx), do: :ok
   end
 
   defmodule DummyReadWriteAgent do
     def agent_type, do: :read_write
     def delegation_level, do: :high
+    def run(_objective, _ctx), do: :ok
   end
 
   # --- Helpers ---
@@ -56,6 +58,18 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       repo_id: repo_id,
       foreign_repos: foreign_repos
     }
+  end
+
+  # A cross-repo `:read_write` spec whose target repo id is marked writable at
+  # the task level (the pre-condition for root-only + one-at-a-time gating).
+  defp writable_foreign_spec(path: path, repo: repo, repo_id: repo_id) do
+    spec(
+      path: path,
+      repo: repo,
+      repo_id: repo_id,
+      agent_module: DummyReadWriteAgent,
+      foreign_repos: [%ForeignRepo{id: repo_id, root: repo, writable: true}]
+    )
   end
 
   # --- Cross-repo delegation ---
@@ -271,6 +285,224 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
         )
 
       assert Subagents.validate_spatial_contract_for_spec(1, parent, spec) == :ok
+    end
+  end
+
+  # --- Writable foreign repo delegation rules ---
+
+  describe "validate_spatial_contract_for_spec/4 — writable foreign repo delegation rules" do
+    test "allows a writable cross-repo read-write spawn from a depth-0 parent (3-arity)" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      spec =
+        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original")
+
+      # The 3-arity entry point treats the parent as the ROOT agent (depth 0)
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, spec) == :ok
+    end
+
+    test "allows a writable cross-repo read-write spawn from a depth-0 parent (4-arity)" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      spec =
+        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original")
+
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, spec, 0) == :ok
+    end
+
+    test "rejects a writable cross-repo read-write spawn from a nested parent (depth >= 1)" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      spec =
+        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original")
+
+      for depth <- [1, 3] do
+        assert {:error, {:foreign_repo_write_not_root, msg}} =
+                 Subagents.validate_spatial_contract_for_spec(1, parent, spec, depth)
+
+        # The message teaches the root-only delegation model
+        assert msg =~ "ROOT agent"
+        assert msg =~ "report"
+        assert msg =~ "read-only"
+      end
+    end
+
+    test "allows read-only cross-repo spawns into foreign repos at any depth" do
+      parent = parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+
+      read_spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadOnlyAgent
+        )
+
+      # Depth 0 (3-arity backward-compat entry point)
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, read_spec) == :ok
+      # Nested parents via the 4-arity entry point — read-only is unrestricted
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, read_spec, 2) == :ok
+    end
+
+    test "allows read-write same-repo spawns within a foreign repo at any depth" do
+      parent = parent_state(path: "./", repo: "/home/user/original", repo_id: "original")
+
+      same_repo_spec =
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: [
+            %ForeignRepo{id: "original", root: "/home/user/original", writable: true}
+          ]
+        )
+
+      # Same-repo spawns within a foreign repo are never restricted — even at
+      # nested depths (the foreign-repo Manager's own internal parallelism).
+      assert Subagents.validate_spatial_contract_for_spec(1, parent, same_repo_spec, 2) == :ok
+    end
+  end
+
+  describe "spawn_validated_subagents/5 — writable foreign repo one-at-a-time gating" do
+    setup do
+      ensure_ets_table(:evogit_sched_meta)
+      ensure_ets_table(:evogit_agent_state)
+
+      on_exit(fn ->
+        for id <- [9000, 9100, 9101] do
+          :ets.delete(:evogit_sched_meta, id)
+          :ets.delete(:evogit_agent_state, id)
+        end
+      end)
+
+      :ok
+    end
+
+    test "accepts a single writable foreign spec in a batch (no false rejection)" do
+      parent_meta = %{base_sched_meta(9000, %{}) | depth: 0}
+      :ets.insert(:evogit_sched_meta, {9000, parent_meta})
+
+      :ets.insert(:evogit_agent_state, {
+        9000,
+        parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+      })
+
+      specs = [
+        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original")
+      ]
+
+      state = %State{next_agent_id: 9100}
+      ref = make_ref()
+      from = {self(), ref}
+
+      assert {:noreply, _} =
+               Subagents.spawn_validated_subagents(9000, parent_meta, specs, from, state)
+
+      updated = :ets.lookup_element(:evogit_sched_meta, 9000, 2)
+      assert updated.status == :waiting
+      assert updated.total_sub_specs == 1
+      assert updated.pending_sub_agents == MapSet.new([9100])
+      assert updated.sub_agent_results == %{}
+      assert updated.sub_agent_indices == %{9100 => 0}
+
+      # The accepted spec was registered and dispatched
+      assert :ets.lookup(:evogit_agent_state, 9100) != []
+      assert :ets.lookup_element(:evogit_sched_meta, 9100, 2).parent_id == 9000
+    end
+
+    test "rejects the second writable foreign spec in a batch (one-at-a-time)" do
+      parent_meta = %{base_sched_meta(9000, %{}) | depth: 0}
+      :ets.insert(:evogit_sched_meta, {9000, parent_meta})
+
+      :ets.insert(:evogit_agent_state, {
+        9000,
+        parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+      })
+
+      specs = [
+        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original"),
+        writable_foreign_spec(path: "./src", repo: "/home/user/reference", repo_id: "reference")
+      ]
+
+      state = %State{next_agent_id: 9100}
+      ref = make_ref()
+      from = {self(), ref}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, _} =
+                   Subagents.spawn_validated_subagents(9000, parent_meta, specs, from, state)
+        end)
+
+      assert log =~ "foreign_repo_write_serialized"
+
+      updated = :ets.lookup_element(:evogit_sched_meta, 9000, 2)
+      assert updated.status == :waiting
+      assert updated.total_sub_specs == 2
+      # Only the FIRST writable spec was accepted
+      assert updated.pending_sub_agents == MapSet.new([9100])
+      assert updated.sub_agent_indices == %{9100 => 0}
+
+      # The second writable spec lands in invalid_results with the
+      # serialization error — the message teaches one-at-a-time delegation
+      assert %{1 => {:error, {:foreign_repo_write_serialized, msg}}} = updated.sub_agent_results
+      assert msg =~ "ONE write-capable subagent"
+      assert msg =~ "at a time"
+      assert msg =~ "Manager"
+
+      # The rejected second spec was never registered
+      assert :ets.lookup(:evogit_agent_state, 9101) == []
+    end
+
+    test "accepts multiple same-repo writable specs within a foreign repo (no serialization)" do
+      parent_meta = %{base_sched_meta(9000, %{}) | depth: 1}
+      :ets.insert(:evogit_sched_meta, {9000, parent_meta})
+
+      :ets.insert(:evogit_agent_state, {
+        9000,
+        parent_state(path: "./", repo: "/home/user/original", repo_id: "original")
+      })
+
+      # Two writable specs targeting the SAME foreign repo the parent runs in —
+      # same-repo spawns are unrestricted and NOT serialization-gated.
+      specs = [
+        spec(
+          path: "./src",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: [
+            %ForeignRepo{id: "original", root: "/home/user/original", writable: true}
+          ]
+        ),
+        spec(
+          path: "./lib",
+          repo: "/home/user/original",
+          repo_id: "original",
+          agent_module: DummyReadWriteAgent,
+          foreign_repos: [
+            %ForeignRepo{id: "original", root: "/home/user/original", writable: true}
+          ]
+        )
+      ]
+
+      state = %State{next_agent_id: 9100}
+      ref = make_ref()
+      from = {self(), ref}
+
+      assert {:noreply, _} =
+               Subagents.spawn_validated_subagents(9000, parent_meta, specs, from, state)
+
+      updated = :ets.lookup_element(:evogit_sched_meta, 9000, 2)
+      assert updated.total_sub_specs == 2
+      assert updated.pending_sub_agents == MapSet.new([9100, 9101])
+      assert updated.sub_agent_results == %{}
+      assert updated.sub_agent_indices == %{9100 => 0, 9101 => 1}
+
+      # BOTH specs were registered
+      assert :ets.lookup(:evogit_agent_state, 9100) != []
+      assert :ets.lookup(:evogit_agent_state, 9101) != []
     end
   end
 
