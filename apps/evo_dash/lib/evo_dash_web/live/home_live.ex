@@ -29,7 +29,7 @@ defmodule EvoDashWeb.HomeLive do
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
 
-  alias EvoDashWeb.HomeLive.{AgentStream, ChatState, Messages, Transcript}
+  alias EvoDashWeb.HomeLive.{AgentStream, ChatState, Messages, ModelSelect, Transcript}
   alias EvoDashWeb.LiveHooks.NodeAware
 
   import EvoDashWeb.HomeLive.AssistantMessage
@@ -65,6 +65,30 @@ defmodule EvoDashWeb.HomeLive do
               )}
             </p>
           </div>
+          <%= if @model_profiles != [] do %>
+            <select
+              name="model_id"
+              phx-change="select_chat_model"
+              aria-label={gettext("Chat model")}
+              class="shrink-0 max-w-44 rounded-full border border-base-300/50 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary/20"
+            >
+              <%!-- zh_CN: 自动选择模型 — 配置了模型选择脚本时按规则/脚本自动选择，否则使用默认模型 --%>
+              <option value="" selected={@selected_model_id in [nil, ""]}>
+                <%= if @model_selection_enabled do %>
+                  <%!-- zh_CN: Auto → "自动"（按模型选择规则/脚本自动选择模型） --%>
+                  {gettext("Auto (by rules)")}
+                <% else %>
+                  <%!-- zh_CN: Auto → "自动"（未配置模型选择脚本，使用默认模型） --%>
+                  {gettext("Auto")}
+                <% end %>
+              </option>
+              <%= for profile <- @model_profiles do %>
+                <option value={profile.id} selected={@selected_model_id == profile.id}>
+                  {profile.id}
+                </option>
+              <% end %>
+            </select>
+          <% end %>
           <button
             type="button"
             phx-click="new_chat"
@@ -250,6 +274,7 @@ defmodule EvoDashWeb.HomeLive do
         socket
         |> assign(base_assigns())
         |> attach_chat()
+        |> assign_model_select()
 
       {:ok, socket}
     end
@@ -274,8 +299,27 @@ defmodule EvoDashWeb.HomeLive do
       chat_fetch_seq: 0,
       chat_task_fetch_seq: 0,
       shift_down: false,
+      selected_model_id: nil,
+      model_profiles: [],
+      model_selection_enabled: false,
       current_path: ~p"/help"
     }
+  end
+
+  # Loads the node's model profiles + model-selection-script state for the
+  # header model selector (node-aware; degrades to {[], false} on RPC failure —
+  # see ModelSelect.load/1). Re-run on every handle_params so a `?node=` switch
+  # reloads for the resolved target. Only assigns `model_profiles` /
+  # `model_selection_enabled` — the per-chat `selected_model_id` pin (restored
+  # by ChatState / reset by reset_chat) is never touched here.
+  defp assign_model_select(socket) do
+    {model_profiles, model_selection_enabled} =
+      ModelSelect.load(socket.assigns[:current_node] || node())
+
+    assign(socket,
+      model_profiles: model_profiles,
+      model_selection_enabled: model_selection_enabled
+    )
   end
 
   @impl true
@@ -308,7 +352,13 @@ defmodule EvoDashWeb.HomeLive do
         socket
       end
 
-    socket = assign(socket, current_path: ~p"/help")
+    # Re-load the model profiles / selection-script state for the RESOLVED
+    # node (a `?node=` switch may have landed on a different target).
+    socket =
+      socket
+      |> assign_model_select()
+      |> assign(current_path: ~p"/help")
+
     {:noreply, socket}
   end
 
@@ -349,6 +399,25 @@ defmodule EvoDashWeb.HomeLive do
       "Shift" -> {:noreply, assign(socket, shift_down: false)}
       _ -> {:noreply, socket}
     end
+  end
+
+  # Form-less phx-change on the header model select may arrive keyed either by
+  # the select's `name` ("model_id") or by the generic "value" — handle both.
+  # The empty "" (Auto option) normalizes to nil via ChatState.normalize_model_id/1.
+  @impl true
+  def handle_event("select_chat_model", %{"model_id" => id}, socket) do
+    {:noreply,
+     socket
+     |> assign(selected_model_id: ChatState.normalize_model_id(id))
+     |> persist_state()}
+  end
+
+  @impl true
+  def handle_event("select_chat_model", %{"value" => id}, socket) do
+    {:noreply,
+     socket
+     |> assign(selected_model_id: ChatState.normalize_model_id(id))
+     |> persist_state()}
   end
 
   @impl true
@@ -580,11 +649,16 @@ defmodule EvoDashWeb.HomeLive do
           )
 
         # Synchronous per-click mutation (dashboard convention): starts the
-        # repo-less reflect task on the viewed node. NO :path key.
+        # repo-less reflect task on the viewed node. NO :path key. The pinned
+        # model (if any) is threaded via ModelSelect.task_opts/2 — :model_id +
+        # :model_id_locked when the header selector pinned a profile, nothing
+        # on Auto (the runtime's model-selection script or default decides).
         result =
           EvoDash.NodeContext.start_task(socket.assigns[:current_node] || node(), :reflect,
-            mode: "reflect",
-            objective: objective
+            ModelSelect.task_opts(socket.assigns[:selected_model_id],
+              mode: "reflect",
+              objective: objective
+            )
           )
 
         case result do
@@ -872,7 +946,9 @@ defmodule EvoDashWeb.HomeLive do
       thought_process: [],
       chat_node: nil,
       chat_fetch_seq: 0,
-      chat_task_fetch_seq: 0
+      chat_task_fetch_seq: 0,
+      # New chat defaults the model selector back to Auto (nil).
+      selected_model_id: nil
     )
   end
 
