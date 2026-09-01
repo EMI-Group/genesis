@@ -130,10 +130,10 @@ defmodule EvoGit.Agent.OutputSanitizer do
     else
       Logger.warning(
         "Tool output truncated for '#{tool_name}' (arguments: #{inspect(tool_args)}): " <>
-          "original #{original_size} bytes exceeded effective max #{effective_max} bytes — " <>
-          "the LLM received only a PARTIAL result. Raise the limit via the " <>
-          "`[truncation] tool_output_default_max_bytes` / `[truncation] tool_output_max_bytes` " <>
-          "config keys or a per-call `max_bytes` argument (capped by the global ceiling)."
+          "original #{original_size} bytes exceeded effective max #{effective_max} bytes. " <>
+          "Raise the limit via the `[truncation] tool_output_default_max_bytes` / " <>
+          "`[truncation] tool_output_max_bytes` config keys or a per-call `max_bytes` " <>
+          "argument (capped by the global ceiling)."
       )
 
       {first_part, last_part, retained, omitted} = head_tail_slices(result, truncate_size)
@@ -206,17 +206,15 @@ defmodule EvoGit.Agent.OutputSanitizer do
   # edge case where the whole output was retained (omitted == 0).
   defp truncation_header(effective_max, original_size, first_part, last_part, omitted, global_max) do
     if omitted == 0 do
-      "[WARNING: Output exceeded #{effective_max} bytes (#{format_bytes(effective_max)}) — " <>
-        "the full #{original_size} bytes (#{format_bytes(original_size)}) were retained unchanged; nothing omitted]"
+      "[WARNING: Output truncated: original #{original_size} bytes exceeded the " <>
+        "#{effective_max}-byte limit — the full output was retained unchanged (nothing omitted)]"
     else
       first_size = byte_size(first_part)
       last_size = byte_size(last_part)
 
-      "[WARNING: Output exceeded #{effective_max} bytes (#{format_bytes(effective_max)}) — " <>
-        "original #{original_size} bytes, kept first #{first_size} + last #{last_size} bytes, " <>
-        "#{omitted} bytes in the middle omitted " <>
-        "(PARTIAL OUTPUT — do not conclude the result is empty/missing; " <>
-        "narrow the pattern/path or raise max_bytes up to #{global_max})]"
+      "[WARNING: Output truncated: original #{original_size} bytes exceeded the " <>
+        "#{effective_max}-byte limit — kept first #{first_size} + last #{last_size} bytes, " <>
+        "#{omitted} bytes omitted. Narrow the pattern/path or raise max_bytes (up to #{global_max}).]"
     end
   end
 
@@ -231,14 +229,6 @@ defmodule EvoGit.Agent.OutputSanitizer do
         else
           global_max
         end
-    end
-  end
-
-  def format_bytes(bytes) do
-    cond do
-      bytes >= 1024 * 1024 -> "#{Float.round(bytes / (1024 * 1024), 1)} MB"
-      bytes >= 1024 -> "#{Float.round(bytes / 1024, 1)} KB"
-      true -> "#{bytes} bytes"
     end
   end
 
