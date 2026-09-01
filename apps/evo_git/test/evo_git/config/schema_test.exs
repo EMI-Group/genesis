@@ -1128,6 +1128,135 @@ defmodule EvoGit.Config.SchemaTest do
     end
   end
 
+  describe "off_peak_days / window days on model profiles" do
+    test "accepts valid off_peak_days (atom-keyed and string-keyed)" do
+      for profile <- [
+            %{id: "glm", model: "zai:glm-5", off_peak_days: ["sat", "sun"]},
+            %{id: "glm", model: "zai:glm-5", off_peak_days: ["weekends"]},
+            %{id: "glm", model: "zai:glm-5", off_peak_days: []},
+            %{"id" => "glm", "model" => "zai:glm-5", "off_peak_days" => ["Mon"]}
+          ] do
+        config = put_in(Schema.defaults(), [:llm, :models], [profile])
+        assert {:ok, _} = Schema.validate(config)
+      end
+    end
+
+    test "rejects non-list off_peak_days with the :off_peak_days rule" do
+      for bad <- ["sat", 42] do
+        config =
+          put_in(Schema.defaults(), [:llm, :models], [
+            %{id: "glm", model: "zai:glm-5", off_peak_days: bad}
+          ])
+
+        assert {:error, errors} = Schema.validate(config)
+
+        assert Enum.any?(errors, fn e ->
+                 e.key_path == [:llm, :models, 0, :off_peak_days] and
+                   e.rule == :off_peak_days and
+                   String.contains?(e.message, "off_peak_days must be a list of day names")
+               end)
+      end
+    end
+
+    test "rejects an invalid off_peak_days element" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{id: "glm", model: "zai:glm-5", off_peak_days: ["funday"]}
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               e.key_path == [:llm, :models, 0, :off_peak_days] and
+                 e.rule == :off_peak_days and
+                 e.value == "funday" and
+                 String.contains?(e.message, "off_peak_days must be a list of day names")
+             end)
+    end
+
+    test "accepts peak_hours windows with a days key" do
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [%{start: "09:00", end: "12:00", days: ["mon", "wed"]}]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config)
+
+      config2 =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            "id" => "glm",
+            "model" => "zai:glm-5",
+            "peak_hours" => [%{"start" => "09:00", "end" => "12:00", "days" => ["weekdays"]}]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config2)
+    end
+
+    test "rejects a peak_hours window with invalid days at the :days key path" do
+      for days <- ["funday", "mon", 3] do
+        config =
+          put_in(Schema.defaults(), [:llm, :models], [
+            %{
+              id: "glm",
+              model: "zai:glm-5",
+              peak_hours: [%{start: "09:00", end: "12:00", days: days}]
+            }
+          ])
+
+        assert {:error, errors} = Schema.validate(config)
+
+        assert Enum.any?(errors, fn e ->
+                 e.key_path == [:llm, :models, 0, :peak_hours, 0, :days] and
+                   e.rule == :days and
+                   String.contains?(e.message, "peak_hours window has invalid days")
+               end)
+      end
+    end
+
+    test "rejects overlapping windows with shared days and accepts disjoint days" do
+      # Shared day + overlapping time → rejected.
+      config =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [
+              %{start: "09:00", end: "12:00", days: ["mon"]},
+              %{start: "11:00", end: "14:00", days: ["mon", "wed"]}
+            ]
+          }
+        ])
+
+      assert {:error, errors} = Schema.validate(config)
+
+      assert Enum.any?(errors, fn e ->
+               List.starts_with?(e.key_path, [:llm, :models, 0, :peak_hours]) and
+                 String.contains?(e.message, "peak_hours windows overlap")
+             end)
+
+      # Disjoint days + overlapping time → accepted (overlap is per-day).
+      config2 =
+        put_in(Schema.defaults(), [:llm, :models], [
+          %{
+            id: "glm",
+            model: "zai:glm-5",
+            peak_hours: [
+              %{start: "09:00", end: "12:00", days: ["mon"]},
+              %{start: "11:00", end: "14:00", days: ["tue"]}
+            ]
+          }
+        ])
+
+      assert {:ok, _} = Schema.validate(config2)
+    end
+  end
+
   describe "model_profiles/1" do
     test "returns the list of profiles from config" do
       config = %{llm: %{models: [%{id: "default", model: "x:y"}, %{id: "fast", model: "a:b"}]}}

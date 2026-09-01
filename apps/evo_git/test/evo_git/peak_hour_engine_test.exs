@@ -334,6 +334,35 @@ defmodule EvoGit.PeakHourEngineTest do
       assert :ok = PeakHourEngine.check()
       assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
     end
+
+    test "off-peak days suppress peak windows entirely (weekend scenario)" do
+      # Sat 23:00 inside the 22:00–08:00 window — but Sat is off-peak → 4.
+      with_clock(fn -> NaiveDateTime.new!(~D[2026-01-17], Time.new!(23, 0, 0)) end)
+
+      AgentScheduler.update_config(
+        model_profiles: [
+          %{
+            id: "glm",
+            model: "zai:glm",
+            concurrency: 4,
+            peak_concurrency: 2,
+            peak_hours: [%{start: "22:00", end: "08:00"}],
+            off_peak_days: ["sat", "sun"]
+          }
+        ]
+      )
+
+      AgentScheduler.update_config(default_llm_max_concurrency: 1)
+
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 4}
+
+      # Fri 23:00 — same window on a weekday → the explicit peak 2 applies.
+      with_clock(fn -> NaiveDateTime.new!(~D[2026-01-16], Time.new!(23, 0, 0)) end)
+
+      assert :ok = PeakHourEngine.check()
+      assert AgentScheduler.get_config(:model_concurrency) == %{"glm" => 2}
+    end
   end
 
   describe "effective_map/3 (pure)" do
@@ -362,6 +391,47 @@ defmodule EvoGit.PeakHourEngineTest do
 
     test "empty profiles → empty map" do
       assert PeakHourEngine.effective_map([], 3, fake_now(10)) == %{}
+    end
+  end
+
+  describe "effective_map/3 with off_peak_days (day-aware)" do
+    # 22:00–08:00 overnight window, every day (absent :days).
+    @overnight_all_days [%{start: 1320, end: 480}]
+    @weekend_off [
+      %{
+        id: "glm",
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: @overnight_all_days,
+        off_peak_days: ["sat", "sun"]
+      }
+    ]
+
+    test "off-peak day wins: normal concurrency inside what would be a peak window" do
+      # Sat 23:00 is inside 22:00–08:00, but Sat is off-peak → 4 (not peak 2).
+      sat = NaiveDateTime.new!(~D[2026-01-17], Time.new!(23, 0, 0))
+      assert PeakHourEngine.effective_map(@weekend_off, nil, sat) == %{"glm" => 4}
+    end
+
+    test "weekday in the same window is peak and exempt from the floor" do
+      # Fri 23:00 → in peak → the explicit peak 2 is sent as-is (floor 3 ignored).
+      fri = NaiveDateTime.new!(~D[2026-01-16], Time.new!(23, 0, 0))
+      assert PeakHourEngine.effective_map(@weekend_off, 3, fri) == %{"glm" => 2}
+    end
+
+    test "string-keyed off_peak_days is tolerated on an atom-keyed profile" do
+      profiles = [
+        %{
+          "off_peak_days" => ["sat"],
+          id: "glm",
+          concurrency: 4,
+          peak_concurrency: 2,
+          peak_hours: @overnight_all_days
+        }
+      ]
+
+      sat = NaiveDateTime.new!(~D[2026-01-17], Time.new!(23, 0, 0))
+      assert PeakHourEngine.effective_map(profiles, nil, sat) == %{"glm" => 4}
     end
   end
 
@@ -520,6 +590,41 @@ defmodule EvoGit.PeakHourEngineTest do
                [{[], "Asia/Shanghai"}],
                fake_now(10),
                ~U[2025-01-15 02:00:00Z]
+             ) == @six_hours_ms
+    end
+  end
+
+  describe "next_wakeup_ms_for/3 with off_peak_days (3-tuples)" do
+    test "profiles with only off_peak_days and no windows contribute no transitions" do
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{[], [:sat, :sun], nil}],
+               fake_now(10),
+               ~U[2026-01-15 02:00:00Z]
+             ) == @six_hours_ms
+    end
+
+    test "midnight entering an off-peak day is the next wakeup" do
+      # Fri 23:00 inside 22:00–08:00 → the next flip is Sat 00:00 (1h away);
+      # the engine must NOT schedule a pointless Sat mid-day wakeup.
+      overnight = [%{start: 1320, end: 480}]
+      fri = NaiveDateTime.new!(~D[2026-01-16], Time.new!(23, 0, 0))
+
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{overnight, [:sat, :sun], nil}],
+               fri,
+               ~U[2026-01-16 15:00:00Z]
+             ) == 3_600_000 + 100
+    end
+
+    test "a far-away day-scoped transition exceeds the 6h safety-net cap" do
+      # Mon-only window at Mon 13:00 → next boundary is NEXT Mon 09:00 (≫ 6h).
+      mon_only = [%{start: 540, end: 720, days: [:mon]}]
+      mon = NaiveDateTime.new!(~D[2026-01-19], Time.new!(13, 0, 0))
+
+      assert PeakHourEngine.next_wakeup_ms_for(
+               [{mon_only, [], nil}],
+               mon,
+               ~U[2026-01-19 05:00:00Z]
              ) == @six_hours_ms
     end
   end
