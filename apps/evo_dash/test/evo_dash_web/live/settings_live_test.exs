@@ -2554,7 +2554,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "bootstrap_remote_target shows the bar immediately and completes through the manager", %{
       conn: conn
     } do
-      {id, manager} = bootstrap_target!({:ok, :daemon_started})
+      # 200ms delay: keep the fake's reply in flight so the immediate
+      # assertion above does not race the async {:bootstrap_complete, ...}
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
       {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
 
       html = render_click(view, "bootstrap_remote_target", %{"id" => id})
@@ -2568,23 +2570,18 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Probing / preparing"
 
-      # The handler spawns EvoDash.NodeContext.bootstrap/1, which delegates to
-      # the core's bootstrap/2 (being merged by a parallel workstream). Until it
-      # lands the spawned task cannot reach the fake manager, so the round-trip
-      # assertions are guarded on the core export being present. Once merged,
-      # this pins: fake manager answers the GenServer :bootstrap call → the
-      # spawned task delivered {:bootstrap_complete, ...} → frozen all-green bar.
-      if function_exported?(EvoGit.RemoteConnection, :bootstrap, 2) do
-        assert wait_until(view, fn ->
-                 assigns(view)[:bootstrap_progress][id] == %{
-                   stage: 4,
-                   active: false,
-                   status: :success
-                 }
-               end)
+      # Round trip through the fake manager: it answers the GenServer
+      # {:bootstrap, opts} call → the spawned task delivered
+      # {:bootstrap_complete, ...} → frozen all-green bar.
+      assert wait_until(view, fn ->
+               assigns(view)[:bootstrap_progress][id] == %{
+                 stage: 4,
+                 active: false,
+                 status: :success
+               }
+             end)
 
-        assert GenServer.call(manager, :calls) == [:bootstrap]
-      end
+      assert GenServer.call(manager, :calls) == [{:bootstrap, []}]
     end
 
     test "double-click bootstrap_remote_target while in flight does not spawn a second bootstrap",
@@ -2605,13 +2602,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
                status: :active
              }
 
-      # With the core's bootstrap/2 merged, only the FIRST click reaches the
-      # fake manager — the guard prevents a second :bootstrap call. (Guarded on
-      # the export being present, same as the other spawned-task test.)
-      if function_exported?(EvoGit.RemoteConnection, :bootstrap, 2) do
-        assert wait_until(view, fn -> GenServer.call(manager, :calls) == [:bootstrap] end)
-        assert GenServer.call(manager, :calls) == [:bootstrap]
-      end
+      # Only the FIRST click reaches the fake manager — the guard prevents a
+      # second bootstrap call.
+      assert wait_until(view, fn -> GenServer.call(manager, :calls) == [{:bootstrap, []}] end)
+      assert GenServer.call(manager, :calls) == [{:bootstrap, []}]
     end
   end
 
@@ -2653,7 +2647,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "confirm_bootstrap_restart closes the dialog and re-bootstraps with on_running: :restart",
          %{conn: conn} do
-      {id, manager} = bootstrap_target!({:ok, :daemon_started})
+      # 200ms delay: keep the confirm handler's re-bootstrap in flight so the
+      # immediate "progress re-activated" assertion below does not race the
+      # async {:bootstrap_complete, ...}.
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
       {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
 
       send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, "daemon is running"}}})
@@ -2673,18 +2670,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       refute html =~ "Remote daemon already running"
 
-      # The confirm handler spawns EvoDash.NodeContext.bootstrap(id,
-      # on_running: :restart). The core's bootstrap/2 is being merged by a
-      # parallel workstream; until it lands the spawned task cannot reach the
-      # manager (UndefinedFunctionError in the unsupervised task — harmless),
-      # so the forwarding assertion is guarded on the core export being
-      # present. Once merged, this pins the on_running: :restart threading.
-      if function_exported?(EvoGit.RemoteConnection, :bootstrap, 2) do
-        assert wait_until(view, fn ->
-                 GenServer.call(manager, :calls) == [{:bootstrap, [on_running: :restart]}]
-               end),
-               "expected confirm_bootstrap_restart to call bootstrap with on_running: :restart"
-      end
+      # The confirm handler re-bootstraps through the fake manager — pins the
+      # on_running: :restart threading.
+      assert wait_until(view, fn ->
+               GenServer.call(manager, :calls) == [{:bootstrap, [on_running: :restart]}]
+             end),
+             "expected confirm_bootstrap_restart to call bootstrap with on_running: :restart"
 
       # the existing {:bootstrap_complete, ...} path shows progress again
       send(view.pid, {:bootstrap_complete, id, {:ok, :daemon_started}})
