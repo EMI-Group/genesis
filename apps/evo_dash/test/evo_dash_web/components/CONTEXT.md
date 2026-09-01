@@ -13,7 +13,7 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 - `diff_viewer_test.exs` → `EvoDashWeb.DiffViewerTest` — `parse_hunk_header/1` + `build_split_pairs/1` pure units, split-view rendering contract (escaped plain text, no server-side highlight)
 - `task_card_components_test.exs` → `EvoDashWeb.TaskCardComponentsTest` — task-card affordances incl. cancel/force-kill button visibility
 - `setting_card_test.exs` → `EvoDashWeb.SettingCardTest`
-- `model_profiles_editor_test.exs` → `EvoDashWeb.ModelProfilesEditorTest`
+- `model_profiles_editor_test.exs` → `EvoDashWeb.ModelProfilesEditorTest` — render-only peak/off-peak form coverage: peak_concurrency (incl. 0), peak_hours rows, timezone, draft-wins pre-fill, remove-row buttons, PLUS the days-of-week fields (`off_peak_days` profile chips + per-window `peak_hours[<i>][days]` chips — checked-state derivation, no hidden seed for window days, index threading, and a regression guard that start/end/remove-row markup coexists)
 
 ## API Surface
 
