@@ -108,7 +108,7 @@ msgstr "il y a %{count}s"
 msgid "%{n} slots"
 msgstr "%{n} créneaux"
 
-#: lib/evo_dash_web/live/projects_live.ex:2453
+#: lib/evo_dash_web/live/projects_live.ex:2523
 #: lib/evo_dash_web/live/projects_live/github.ex:321
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
@@ -489,12 +489,13 @@ msgstr "Jetons mis en cache"
 msgid "Cancel"
 msgstr "Annuler"
 
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:203
 #: lib/evo_dash_web/live/tasks_live.ex:67
 #, elixir-autogen, elixir-format
 msgid "Cancelled"
 msgstr "Annulé"
 
-#: lib/evo_dash_web/live/projects_live.ex:1340
+#: lib/evo_dash_web/live/projects_live.ex:1342
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "Impossible de supprimer le dépôt principal."
@@ -559,17 +560,17 @@ msgstr "Effacer tout l'historique des tâches terminées ? Cette action est irr�
 msgid "Close"
 msgstr "Fermer"
 
-#: lib/evo_dash_web/live/projects_live.ex:1628
+#: lib/evo_dash_web/live/projects_live.ex:1632
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "Commande « %{command} » terminée :\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1636
+#: lib/evo_dash_web/live/projects_live.ex:1640
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "Commande « %{command} » échouée (code %{code}) :\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1601
+#: lib/evo_dash_web/live/projects_live.ex:1605
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "Commande introuvable : %{command}"
@@ -586,6 +587,7 @@ msgstr "Commits"
 
 #: lib/evo_dash_web/components/archive_components.ex:181
 #: lib/evo_dash_web/components/review_components.ex:392
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:201
 #: lib/evo_dash_web/live/tasks_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Completed"
@@ -864,14 +866,14 @@ msgstr "Détection du système d'exploitation"
 msgid "Dev Commands"
 msgstr "Commandes de développement"
 
-#: lib/evo_dash_web/live/projects_live.ex:2067
-#: lib/evo_dash_web/live/projects_live.ex:2075
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:393
+#: lib/evo_dash_web/live/projects_live.ex:2076
+#: lib/evo_dash_web/live/projects_live.ex:2084
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:420
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
 msgstr "Le répertoire n'existe pas : %{path}"
 
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:350
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:377
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}. Create a new project instead?"
 msgstr "Le répertoire n'existe pas : %{path}. Créer un nouveau projet à la place ?"
@@ -965,7 +967,7 @@ msgstr "Saisissez votre clé API. Elle doit commencer par"
 msgid "Error"
 msgstr "Erreur"
 
-#: lib/evo_dash_web/live/projects_live.ex:1647
+#: lib/evo_dash_web/live/projects_live.ex:1651
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "Erreur lors de l'exécution de « %{command} » : %{error}"
@@ -994,6 +996,7 @@ msgstr "Exporter JSON"
 msgid "Extract Skills"
 msgstr "Extraire les compétences"
 
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:202
 #: lib/evo_dash_web/live/tasks_live.ex:64
 #, elixir-autogen, elixir-format
 msgid "Failed"
@@ -1051,7 +1054,7 @@ msgstr "Échec de l'enregistrement : %{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "Échec du démarrage de l'extraction de compétence : %{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2474
+#: lib/evo_dash_web/live/projects_live.ex:2544
 #: lib/evo_dash_web/live/projects_live/github.ex:330
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
@@ -1108,12 +1111,12 @@ msgstr "Pour les points d'accès proxy/agrégateur ; laisser vide pour les fourn
 msgid "Foreign Repositories"
 msgstr "Dépôts externes"
 
-#: lib/evo_dash_web/live/projects_live.ex:1326
+#: lib/evo_dash_web/live/projects_live.ex:1328
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "Dépôt externe « %{repo_id} » enregistré avec succès."
 
-#: lib/evo_dash_web/live/projects_live.ex:1354
+#: lib/evo_dash_web/live/projects_live.ex:1356
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "Dépôt externe « %{repo_id} » supprimé avec succès."
@@ -1214,11 +1217,11 @@ msgstr "Jetons d'entrée"
 msgid "Invalid key path."
 msgstr "Chemin de clé invalide."
 
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:247
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:262
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:319
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:366
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:431
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:274
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:289
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:346
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:393
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:458
 #, elixir-autogen, elixir-format
 msgid "Invalid project name"
 msgstr "Nom de projet invalide"
@@ -1600,7 +1603,7 @@ msgstr "Parent"
 msgid "Path"
 msgstr "Chemin"
 
-#: lib/evo_dash_web/live/projects_live.ex:2212
+#: lib/evo_dash_web/live/projects_live.ex:2282
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "Le chemin ne peut pas être vide."
@@ -1613,6 +1616,7 @@ msgstr "Mettre le planificateur en pause"
 #: lib/evo_dash_web/helpers.ex:75
 #: lib/evo_dash_web/helpers.ex:76
 #: lib/evo_dash_web/live/agents_live.html.heex:62
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:199
 #: lib/evo_dash_web/live/system_live/charts.ex:114
 #: lib/evo_dash_web/live/tasks_live.ex:55
 #, elixir-autogen, elixir-format
@@ -1669,7 +1673,7 @@ msgstr "Racine du projet"
 msgid "Project Settings"
 msgstr "Paramètres du projet"
 
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:304
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:331
 #, elixir-autogen, elixir-format
 msgid "Project created: %{path}"
 msgstr "Projet créé : %{path}"
@@ -1752,9 +1756,9 @@ msgstr "Dépôt"
 msgid "Repo '%{id}' is already registered."
 msgstr "Le dépôt « %{id} » est déjà enregistré."
 
-#: lib/evo_dash_web/live/projects_live.ex:1346
-#: lib/evo_dash_web/live/projects_live.ex:1367
-#: lib/evo_dash_web/live/projects_live.ex:1442
+#: lib/evo_dash_web/live/projects_live.ex:1348
+#: lib/evo_dash_web/live/projects_live.ex:1369
+#: lib/evo_dash_web/live/projects_live.ex:1446
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "Dépôt « %{id} » introuvable."
@@ -1911,6 +1915,7 @@ msgstr "Exécuter"
 #: lib/evo_dash_web/components/layouts.ex:188
 #: lib/evo_dash_web/helpers.ex:77
 #: lib/evo_dash_web/live/agents_live.html.heex:66
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:198
 #: lib/evo_dash_web/live/system_live/charts.ex:102
 #: lib/evo_dash_web/live/tasks_live.ex:52
 #, elixir-autogen, elixir-format
@@ -2340,6 +2345,7 @@ msgstr "Appels d'outil (%{count})"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:497
 #: lib/evo_dash_web/live/agents_live.html.heex:631
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:152
 #, elixir-autogen, elixir-format
 msgid "Tool Result: %{name}"
 msgstr "Résultat de l'outil : %{name}"
@@ -3051,7 +3057,7 @@ msgstr "Nœud"
 msgid "Open Settings"
 msgstr "Ouvrir les paramètres"
 
-#: lib/evo_dash_web/live/projects_live.ex:2215
+#: lib/evo_dash_web/live/projects_live.ex:2285
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "Le chemin doit être absolu."
@@ -3128,7 +3134,7 @@ msgid "Message sent to agent"
 msgstr "Message envoyé à l'agent"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:703
-#: lib/evo_dash_web/live/home_live.ex:149
+#: lib/evo_dash_web/live/home_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "Send"
 msgstr "Envoyer"
@@ -3431,8 +3437,8 @@ msgstr "Toutes les auto-vérifications ont réussi."
 msgid "Cannot connect to %{name}"
 msgstr "Impossible de se connecter à %{name}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2122
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:419
+#: lib/evo_dash_web/live/projects_live.ex:2131
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:446
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
 msgstr "Impossible d'ouvrir le projet : le nœud distant %{name} n'est pas connecté. Réessayez d'établir la connexion."
@@ -3521,7 +3527,7 @@ msgstr "Connexion perdue ou échouée"
 msgid "Copy"
 msgstr "Copier"
 
-#: lib/evo_dash_web/live/projects_live.ex:1917
+#: lib/evo_dash_web/live/projects_live.ex:1921
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
 msgstr "Le répertoire n'existe pas sur le nœud distant : %{path}"
@@ -3789,11 +3795,13 @@ msgstr "https://..."
 #: lib/evo_dash_web/components/layouts.ex:119
 #: lib/evo_dash_web/components/layouts.ex:123
 #: lib/evo_dash_web/components/layouts/root.html.heex:14
+#: lib/evo_dash_web/live/home_live.ex:92
+#: lib/evo_dash_web/live/home_live.ex:98
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis"
 msgstr "EvoX Genesis"
 
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:278
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:305
 #, elixir-autogen, elixir-format
 msgid "Could not create directory: %{path} (%{reason})"
 msgstr "Impossible de créer le répertoire : %{path} (%{reason})"
@@ -3803,10 +3811,10 @@ msgstr "Impossible de créer le répertoire : %{path} (%{reason})"
 msgid "Dismiss"
 msgstr "Fermer"
 
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:254
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:326
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:373
-#: lib/evo_dash_web/live/projects_live/project_flow.ex:438
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:281
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:353
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:400
+#: lib/evo_dash_web/live/projects_live/project_flow.ex:465
 #, elixir-autogen, elixir-format
 msgid "Enter a full path, e.g. D:\\Projects\\myproject or /home/user/myproject"
 msgstr "Saisissez un chemin complet, p. ex. D:\\Projects\\myproject ou /home/user/myproject"
@@ -3883,6 +3891,7 @@ msgid "Cancelling"
 msgstr "Annulation"
 
 #: lib/evo_dash_web/components/task_card_components.ex:84
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:204
 #, elixir-autogen, elixir-format
 msgid "Cancelling…"
 msgstr "Annulation…"
@@ -4025,7 +4034,7 @@ msgstr "Confirmer le chemin du fichier à joindre"
 msgid "Failed to attach file: %{reason}"
 msgstr "Échec de la pièce jointe : %{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1578
+#: lib/evo_dash_web/live/projects_live.ex:1582
 #, elixir-autogen, elixir-format
 msgid "File not found: %{path}"
 msgstr "Fichier introuvable : %{path}"
@@ -4057,7 +4066,7 @@ msgstr "Descendre"
 msgid "Move up"
 msgstr "Monter"
 
-#: lib/evo_dash_web/live/projects_live.ex:1573
+#: lib/evo_dash_web/live/projects_live.ex:1577
 #, elixir-autogen, elixir-format
 msgid "Please enter a file path."
 msgstr "Veuillez saisir un chemin de fichier."
@@ -4769,17 +4778,17 @@ msgstr "Initialiser un projet existant"
 msgid "An explicit override is in effect"
 msgstr "Un remplacement explicite est en cours"
 
-#: lib/evo_dash_web/live/home_live.ex:48
+#: lib/evo_dash_web/live/home_live.ex:63
 #, elixir-autogen, elixir-format
 msgid "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
 msgstr "Interrogez Genesis, explorez le code source, contrôlez les tâches et laissez-vous guider dans le tableau de bord."
 
-#: lib/evo_dash_web/live/home_live.ex:45
+#: lib/evo_dash_web/live/home_live.ex:60
 #, elixir-autogen, elixir-format
 msgid "Chat with Genesis"
 msgstr "Discuter avec Genesis"
 
-#: lib/evo_dash_web/live/home_live.ex:87
+#: lib/evo_dash_web/live/home_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
 msgstr "Discutez avec l'assistant Genesis : interrogez la base de code, explorez le code source, contrôlez les tâches en cours ou laissez-vous guider dans le tableau de bord."
@@ -4814,17 +4823,17 @@ msgstr "Fermer le guide"
 msgid "Failed to clone the Genesis source."
 msgstr "Échec du clonage de la source Genesis."
 
-#: lib/evo_dash_web/live/home_live.ex:484
+#: lib/evo_dash_web/live/home_live.ex:616
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: %{reason}"
 msgstr "Échec du démarrage de la tâche : %{reason}"
 
-#: lib/evo_dash_web/live/home_live.ex:474
+#: lib/evo_dash_web/live/home_live.ex:605
 #, elixir-autogen, elixir-format
 msgid "Failed to start the task: no task id returned"
 msgstr "Échec du démarrage de la tâche : aucun identifiant de tâche renvoyé"
 
-#: lib/evo_dash_web/live/home_live.ex:276
+#: lib/evo_dash_web/live/home_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "Failed to stop: %{reason}"
 msgstr "Échec de l'arrêt : %{reason}"
@@ -4875,17 +4884,17 @@ msgstr "Aller"
 msgid "Loading…"
 msgstr "Chargement…"
 
-#: lib/evo_dash_web/live/home_live.ex:139
+#: lib/evo_dash_web/live/home_live.ex:186
 #, elixir-autogen, elixir-format
 msgid "Message Genesis…"
 msgstr "Envoyer un message à Genesis…"
 
-#: lib/evo_dash_web/live/home_live.ex:59
+#: lib/evo_dash_web/live/home_live.ex:75
 #, elixir-autogen, elixir-format
 msgid "New chat"
 msgstr "Nouvelle conversation"
 
-#: lib/evo_dash_web/live/home_live.ex:647
+#: lib/evo_dash_web/live/home_live.ex:835
 #, elixir-autogen, elixir-format
 msgid "No response."
 msgstr "Aucune réponse."
@@ -4895,17 +4904,17 @@ msgstr "Aucune réponse."
 msgid "Remote URL"
 msgstr "URL distante"
 
-#: lib/evo_dash_web/live/home_live.ex:84
+#: lib/evo_dash_web/live/home_live.ex:101
 #, elixir-autogen, elixir-format
 msgid "Start a conversation"
 msgstr "Démarrer une conversation"
 
-#: lib/evo_dash_web/live/home_live.ex:68
+#: lib/evo_dash_web/live/home_live.ex:208
 #, elixir-autogen, elixir-format
 msgid "Stop"
 msgstr "Arrêter"
 
-#: lib/evo_dash_web/live/home_live.ex:656
+#: lib/evo_dash_web/live/home_live.ex:844
 #, elixir-autogen, elixir-format
 msgid "Stopped."
 msgstr "Arrêté."
@@ -4915,8 +4924,8 @@ msgstr "Arrêté."
 msgid "The Genesis source has not been cloned yet."
 msgstr "La source Genesis n'a pas encore été clonée."
 
-#: lib/evo_dash_web/live/home_live.ex:612
-#: lib/evo_dash_web/live/home_live.ex:632
+#: lib/evo_dash_web/live/home_live.ex:767
+#: lib/evo_dash_web/live/home_live.ex:791
 #, elixir-autogen, elixir-format
 msgid "The conversation was deleted."
 msgstr "La conversation a été supprimée."
@@ -4926,9 +4935,9 @@ msgstr "La conversation a été supprimée."
 msgid "The self-reflective agent reads: %{path}"
 msgstr "L'agent auto-réflexif lit : %{path}"
 
-#: lib/evo_dash_web/live/home_live.ex:588
-#: lib/evo_dash_web/live/home_live.ex:637
-#: lib/evo_dash_web/live/home_live.ex:648
+#: lib/evo_dash_web/live/home_live.ex:727
+#: lib/evo_dash_web/live/home_live.ex:804
+#: lib/evo_dash_web/live/home_live.ex:836
 #, elixir-autogen, elixir-format
 msgid "The task failed."
 msgstr "La tâche a échoué."
@@ -4953,7 +4962,7 @@ msgstr "Version"
 msgid "in use"
 msgstr "en cours d'utilisation"
 
-#: lib/evo_dash_web/live/projects_live.ex:2235
+#: lib/evo_dash_web/live/projects_live.ex:2305
 #, elixir-autogen, elixir-format
 msgid "Base commit %{base_sha} not found in repository: %{path}"
 msgstr "Commit de base %{base_sha} introuvable dans le dépôt : %{path}"
@@ -4978,12 +4987,12 @@ msgstr "Échec du rejet des modifications dans %{count} des %{total} dépôts. C
 msgid "Failed: %{detail}"
 msgstr "Échec : %{detail}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1438
+#: lib/evo_dash_web/live/projects_live.ex:1442
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' updated successfully."
 msgstr "Dépôt externe « %{repo_id} » mis à jour avec succès."
 
-#: lib/evo_dash_web/live/projects_live.ex:2218
+#: lib/evo_dash_web/live/projects_live.ex:2288
 #, elixir-autogen, elixir-format
 msgid "Foreign repo path does not exist: %{path}"
 msgstr "Le chemin du dépôt externe n'existe pas : %{path}"
@@ -5014,7 +5023,7 @@ msgstr "Résultats de la fusion"
 msgid "Merged into %{target}"
 msgstr "Fusionné dans %{target}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2221
+#: lib/evo_dash_web/live/projects_live.ex:2291
 #, elixir-autogen, elixir-format
 msgid "Path is not a git repository: %{path}"
 msgstr "Le chemin n'est pas un dépôt git : %{path}"
@@ -5058,3 +5067,53 @@ msgstr "branche ou SHA, vide = HEAD"
 #, elixir-autogen, elixir-format
 msgid "no changes"
 msgstr "aucune modification"
+
+#: lib/evo_dash_web/live/home_live.ex:212
+#, elixir-autogen, elixir-format
+msgid "Enter to send · Shift+Enter for a new line"
+msgstr "Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne"
+
+#: lib/evo_dash_web/live/home_live.ex:115
+#, elixir-autogen, elixir-format
+msgid "Explain the Genesis architecture"
+msgstr "Expliquer l'architecture de Genesis"
+
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:200
+#, elixir-autogen, elixir-format
+msgid "Finalizing"
+msgstr "Finalisation"
+
+#: lib/evo_dash_web/live/home_live.ex:217
+#, elixir-autogen, elixir-format
+msgid "Genesis can make mistakes. Verify important information."
+msgstr "Genesis peut faire des erreurs. Vérifiez les informations importantes."
+
+#: lib/evo_dash_web/live/home_live.ex:136
+#, elixir-autogen, elixir-format
+msgid "Guide me through the dashboard"
+msgstr "Guidez-moi à travers le tableau de bord"
+
+#: lib/evo_dash_web/live/home_live.ex:104
+#, elixir-autogen, elixir-format
+msgid "How can I help you today?"
+msgstr "Comment puis-je vous aider aujourd'hui ?"
+
+#: lib/evo_dash_web/live/home_live.ex:122
+#, elixir-autogen, elixir-format
+msgid "How does task cancellation work?"
+msgstr "Comment fonctionne l'annulation de tâche ?"
+
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:45
+#, elixir-autogen, elixir-format
+msgid "Task"
+msgstr "Tâche"
+
+#: lib/evo_dash_web/live/home_live/assistant_message.ex:103
+#, elixir-autogen, elixir-format
+msgid "Thought process"
+msgstr "Processus de réflexion"
+
+#: lib/evo_dash_web/live/home_live.ex:129
+#, elixir-autogen, elixir-format
+msgid "What can you help me with?"
+msgstr "En quoi pouvez-vous m'aider ?"
