@@ -22,6 +22,7 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
         agent_message_count: 3,
         chat_task_status: :running,
         chat_node: :node@host,
+        selected_model_id: "profile-a",
         thought_process: [tp]
       }
 
@@ -34,6 +35,7 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
                agent_message_count: 3,
                chat_task_status: :running,
                chat_node: :node@host,
+               selected_model_id: "profile-a",
                thought_process: [tp]
              }
     end
@@ -48,6 +50,7 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
                agent_message_count: nil,
                chat_task_status: nil,
                chat_node: nil,
+               selected_model_id: nil,
                thought_process: []
              }
     end
@@ -186,6 +189,37 @@ defmodule EvoDashWeb.HomeLive.ChatStateTest do
                %{turn: 0, timestamp: nil, type: "tool", data: %{k: 1}},
                %{turn: 3, timestamp: nil, type: "assistant", data: %{}}
              ]
+    end
+
+    test "selected_model_id round-trips through restore" do
+      assert ChatState.restore(%{selected_model_id: "p1"}).selected_model_id == "p1"
+      assert ChatState.restore(%{selected_model_id: ""}).selected_model_id == nil
+      assert ChatState.restore(%{selected_model_id: nil}).selected_model_id == nil
+      assert ChatState.restore(%{}).selected_model_id == nil
+    end
+  end
+
+  describe "normalize_model_id/1" do
+    test "nil normalizes to nil (Auto)" do
+      assert ChatState.normalize_model_id(nil) == nil
+    end
+
+    test "empty string normalizes to nil (Auto)" do
+      assert ChatState.normalize_model_id("") == nil
+    end
+
+    test "non-binary values normalize to nil" do
+      assert ChatState.normalize_model_id(42) == nil
+    end
+
+    test "non-empty binary is kept as-is" do
+      assert ChatState.normalize_model_id("profile-a") == "profile-a"
+    end
+
+    test "whitespace-only binary is kept as-is (not trimmed)" do
+      # Auto is the empty string from the select; whitespace ids are not
+      # trimmed by design — a whitespace-only binary IS a non-empty binary.
+      assert ChatState.normalize_model_id("  ") == "  "
     end
   end
 end
