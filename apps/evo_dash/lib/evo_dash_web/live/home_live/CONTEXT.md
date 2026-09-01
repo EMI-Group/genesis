@@ -4,7 +4,7 @@
 
 `EvoDashWeb.HomeLive` (`home_live.ex`) is the ChatGPT-style chat page rendered at `GET /help` — the conversation surface wired to the repo-less `:reflect` self-reflective agent. The user talks to Genesis itself: send a message → a `:reflect` task starts on the viewed node → the task's root agent (`EvoGit.Agents.SelfReflective`) runs repo-less (read-only Genesis source access + WebSearch + task-control + guide_user tools) → its assistant turns stream into chat bubbles → the terminal task result finalizes the transcript. Everything is push-based (PubSub) and node-aware (`?node=`), with all cross-node fetches off the LiveView process.
 
-The support modules under `home_live/` keep `home_live.ex` (~990 lines) focused on LiveView wiring; all heavy lifting is pure and unit-testable.
+The support modules under `home_live/` keep `home_live.ex` (~1070 lines — single-responsibility chat page, slightly over the ~1000 concern threshold by design; extraction to a support module is available if it grows further) focused on LiveView wiring; all heavy lifting is pure and unit-testable.
 
 ## API Surface
 
