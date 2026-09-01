@@ -47,4 +47,20 @@ defmodule EvoDashWeb.HomeLive.ModelSelect do
       _ -> false
     end
   end
+
+  @doc """
+  Threads the chat's pinned model into the reflect-task opts (mirrors
+  `projects_live.ex` `task_submit`): a non-empty `selected_model_id` prepends
+  `:model_id => <id>` + `:model_id_locked => true` (the runtime's
+  model-selection script is deferred for this task — the lock is a no-op when
+  no script is configured); `nil`/`""` (Auto) returns `opts` unchanged so the
+  script (or the default model) decides.
+  """
+  @spec task_opts(String.t() | nil, keyword()) :: keyword()
+  def task_opts(selected_model_id, opts)
+      when is_binary(selected_model_id) and selected_model_id != "" do
+    [{:model_id, selected_model_id}, {:model_id_locked, true} | opts]
+  end
+
+  def task_opts(_selected_model_id, opts), do: opts
 end

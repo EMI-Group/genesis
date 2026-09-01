@@ -92,8 +92,19 @@ defmodule EvoDashWeb.HomeLive.ChatState do
   defp normalize_chat_node(node) when is_atom(node), do: node
   defp normalize_chat_node(_node), do: nil
 
-  defp normalize_model_id(id) when is_binary(id) and id != "", do: id
-  defp normalize_model_id(_id), do: nil
+  @doc """
+  Normalizes a (possibly untrusted) model profile id for the chat's
+  `selected_model_id` pin: a non-empty binary → itself; anything else → `nil`
+  (Auto — the runtime's model-selection script or default decides).
+
+  Shared by `restore/1` AND the LiveView's `select_chat_model` event handler so
+  both paths apply the same semantics ("" from the Auto option → nil). NOT
+  validated against the configured profiles: a stored id that no longer exists
+  just threads an unknown id on the next send (the core falls back gracefully).
+  """
+  @spec normalize_model_id(term()) :: String.t() | nil
+  def normalize_model_id(id) when is_binary(id) and id != "", do: id
+  def normalize_model_id(_id), do: nil
 
   defp normalize_thought_process(entries) when is_list(entries) do
     entries
