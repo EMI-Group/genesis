@@ -128,7 +128,7 @@ enabled = false                   # Run tool calls inside a cached Nix dev envir
 flake_output = nil                # Optional, e.g. "devShells.x86_64-linux.default"
 ```
 
-**`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`:
+**`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
 ```toml
 [[llm.models]]
 id = "glm"
@@ -139,13 +139,29 @@ peak_hours = [         # optional — daily windows (local wall-clock unless tim
   { start = "14:00", end = "18:00" }
 ]
 timezone = "Asia/Shanghai"  # optional — IANA tz for this profile's peak windows
+off_peak_days = []     # optional — days the profile is off-peak the ENTIRE day (see below)
+```
+
+A DeepSeek weekends-off-peak example — off-peak all day Saturday/Sunday, peak windows on weekdays only:
+```toml
+[[llm.models]]
+id = "deepseek"
+concurrency = 4
+peak_concurrency = 0        # hard pause inside weekday peak windows
+peak_hours = [              # applies ONLY on weekdays (mon-fri) — see `days`
+  { start = "09:00", end = "12:00", days = ["mon", "tue", "wed", "thu", "fri"] },
+  { start = "14:00", end = "18:00", days = "weekdays" }   # keyword = mon-fri
+]
+off_peak_days = ["sat", "sun"]   # entire weekend: normal concurrency 24/7
 ```
 
 - `peak_concurrency` — NON-NEGATIVE integer when present (`0` = hard pause: zero LLM slots during peak, never raised by the `default_llm_max_concurrency` floor; negatives/floats/strings → validation error at `[:llm, :models, <idx>, :peak_concurrency]`); absent → off-peak `concurrency` always applies.
 - `peak_hours` — list of maps with `start`/`end` written as `"HH:MM"` 24h strings OR integer minutes of day (0..1439; both values of one window must use the same representation), atom- or string-keyed (TOML may yield string keys). Half-open `[start, end)`; `start > end` = overnight wrap; absent/`[]`/invalid → disabled (normal `concurrency` 24/7). `peak_hours` without `peak_concurrency` → legal no-op. `EvoGit.PeakHours.parse_window/1`+`validate_windows/1` are the single parse/validate path — they accept BOTH representations uniformly, so profiles whose `peak_hours` arrive as canonical integer windows (e.g. programmatic/TOML `start = 540`) still get correct engine peak-exemption and transition wakeups.
 - `timezone` — optional IANA name (e.g. `"Asia/Shanghai"`): when present, all peak computations for that profile (in-peak checks + next-transition wakeups) use that tz wall clock, DST-aware; absent/empty/nil → server local wall clock. Validated by `EvoGit.PeakHours.validate_timezone/1` (single source of truth): nil/"" valid; unknown IANA name / no tz database → error at `[:llm, :models, <idx>, :timezone]`. Requires tz database at boot: `Calendar.put_time_zone_database(Tz.TimeZoneDatabase)` in `EvoGit.Application.start/2` (`tz ~> 0.28`; IANA data pre-compiled, no auto-update).
-- **Validation ownership**: window parse/format/overlap checks delegate to `EvoGit.PeakHours.validate_windows/1` (single source of truth — schema does NOT re-implement). `Schema.validate/1` reports `%ValidationError{}` at `[:llm, :models, <idx>, :peak_hours]` (non-list) or `[:llm, :models, <idx>, :peak_hours, <window_idx>]` (invalid entry; overlap error at the later window's index).
-- Peak-hour fields (incl. `timezone`) survive resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys never stripped — reaching `state.model_profiles`, read via `get_config(:model_profiles)`.
+- `off_peak_days` — optional list of days (atom- or string-keyed map tolerated) on which the profile is off-peak the **ENTIRE day**: normal `concurrency` 24/7, every `peak_hours` window suppressed, `peak_concurrency` (incl. hard-pause `0`) never applies. **Precedence: `off_peak_days` wins over window `days`.** Absent/`[]` → disabled. Vocabulary: day identifiers `"mon"|"tue"|"wed"|"thu"|"fri"|"sat"|"sun"` (canonical 3-letter lowercase; case-insensitive input) + keywords `"weekdays"` (= mon-fri) and `"weekends"` (= sat-sun). Validated by `EvoGit.PeakHours.validate_days/1` (single source of truth — do NOT re-implement the day vocabulary); a bad value → `%ValidationError{}` at `[:llm, :models, <idx>, :off_peak_days]`.
+- **Window `days`** — optional key on each `peak_hours` window (same vocabulary as `off_peak_days`): the time window applies ONLY on the listed days; absent → every day (fully backward compatible). A bad window `days` value → `%ValidationError{}` at `[:llm, :models, <idx>, :peak_hours, <window_idx>, :days]` (falling back to bare `[:llm, :models, <idx>, :peak_hours]` when the window can't be located). Validation delegates to `EvoGit.PeakHours` — the schema does NOT re-implement day parsing.
+- **Validation ownership**: window parse/format/overlap/days checks delegate to `EvoGit.PeakHours.validate_windows/1` (single source of truth — schema does NOT re-implement); `off_peak_days` delegates to `EvoGit.PeakHours.validate_days/1`. `Schema.validate/1` reports `%ValidationError{}` at `[:llm, :models, <idx>, :peak_hours]` (non-list) or `[:llm, :models, <idx>, :peak_hours, <window_idx>]` (invalid entry; overlap error at the later window's index), plus `[:llm, :models, <idx>, :off_peak_days]` and `[:llm, :models, <idx>, :peak_hours, <window_idx>, :days]` for day-vocabulary errors.
+- Peak-hour fields (incl. `timezone`, `off_peak_days`, window `days`) survive resolution (`deep_merge` → `atomize_enum_values` → `migrate_llm_models` → `Schema.validate`) untouched — profile keys never stripped — reaching `state.model_profiles`, read via `get_config(:model_profiles)`.
 
 **`[sandbox] backend`**: `:atom` schema key, default `:auto`, validation `[in: [:auto, :systemd, :bwrap]]`. `:auto` tries systemd-run → bwrap → no sandbox (macOS always uses sandbox-exec; bwrap is Linux-only). `:systemd` forces systemd-run (no sandbox if systemd unavailable). `:bwrap` forces bubblewrap — filesystem isolation only, no resource limits; falls back to no sandbox if `bwrap` unavailable. **`[sandbox.resources]`/`[sandbox.process]` are systemd-only, ignored with bwrap.** String values atomized by `atomize_enum_values/1` before `Schema.validate`.
 

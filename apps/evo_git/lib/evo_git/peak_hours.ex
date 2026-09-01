@@ -14,6 +14,45 @@ defmodule EvoGit.PeakHours do
         { start = "14:00", end = "18:00" }
       ]
 
+  ## Day-of-week scoping
+
+  Both the profile and each individual window may be restricted to specific
+  days of the week, using the same vocabulary of day identifiers and
+  keywords:
+
+  - day identifiers: `"mon"` | `"tue"` | `"wed"` | `"thu"` | `"fri"` |
+    `"sat"` | `"sun"` (canonical 3-letter lowercase English)
+  - keywords: `"weekdays"` (= mon–fri) and `"weekends"` (= sat–sun)
+
+  Input is case-insensitive (`"Mon"`, `"MON"` and `"mon"` are equivalent);
+  `validate_days/1` normalizes to a canonical list of day atoms
+  (`:mon..:sun`, keywords expanded, duplicates removed).
+
+  - **Profile `off_peak_days`** (optional list): on the listed days the
+    profile is off-peak the ENTIRE day — normal `concurrency` applies 24/7,
+    every `peak_hours` window is suppressed (never peak), and
+    `peak_concurrency` (including the hard-pause `0`) never applies.
+    `off_peak_days` **wins** over window `days` (precedence rule).
+    Absent / `[]` → disabled.
+  - **Window `days`** (optional key on each `peak_hours` window): the time
+    window applies ONLY on the listed days; absent → every day (fully
+    backward compatible). An overnight window's wrapped tail `[0, end)`
+    occupies the day AFTER each applicable day (e.g.
+    `{ start = "22:00", end = "06:00", days = ["mon"] }` is in peak Mon
+    22:00–24:00 AND Tue 00:00–06:00).
+
+  Example — DeepSeek weekends fully off-peak, weekday peak windows:
+
+      [[llm.models]]
+      id = "deepseek"
+      concurrency = 5
+      peak_concurrency = 2
+      off_peak_days = ["sat", "sun"]        # weekends off-peak the whole day
+      peak_hours = [                        # weekday peak windows
+        { start = "09:00", end = "12:00", days = ["mon", "tue", "wed", "thu", "fri"] },
+        { start = "14:00", end = "18:00", days = ["weekdays"] }
+      ]
+
   ## Semantics
 
   - Each window is a map with `start`/`end` `"HH:MM"` 24-hour strings
@@ -32,8 +71,10 @@ defmodule EvoGit.PeakHours do
 
   `validate_windows/1` parses raw window maps into a canonical list of
   `%{start: minute_of_day, end: minute_of_day}` maps (integers 0..1439,
-  atom keys; `start > end` ⇒ overnight). `in_peak?/2` and
-  `next_transition/2` operate on this canonical form.
+  atom keys; `start > end` ⇒ overnight). A window with a `days` key gains a
+  canonical `:days` key holding its day-atom list; a window without `days`
+  stays exactly `%{start:, end:}` (absent = every day). `in_peak?/2,3` and
+  `next_transition/2,3` operate on this canonical form.
 
   Raw `start`/`end` values may be written either as strict `"HH:MM"`
   strings (e.g. `"09:00"`) or directly as integer minutes of day
@@ -50,15 +91,42 @@ defmodule EvoGit.PeakHours do
   @type minute :: 0..1439
 
   @typedoc """
-  Canonical validated window. `start > end` means an overnight window that
-  wraps midnight.
+  Canonical day of week, aligned with `Date.day_of_week/1` (1 = Monday ..
+  7 = Sunday).
   """
-  @type window :: %{start: minute(), end: minute()}
+  @type day :: :mon | :tue | :wed | :thu | :fri | :sat | :sun
+
+  @typedoc """
+  Canonical validated window. `start > end` means an overnight window that
+  wraps midnight. The optional `:days` key restricts the window to specific
+  days of the week (a canonical day-atom list; absent `:days` = every day).
+  """
+  @type window ::
+          %{start: minute(), end: minute()}
+          | %{start: minute(), end: minute(), days: [day()]}
 
   @typedoc "List of canonical validated windows."
   @type windows :: [window()]
 
   @minutes_per_day 1440
+
+  # All seven canonical day atoms, in `Date.day_of_week/1` order (Mon..Sun).
+  @all_days [:mon, :tue, :wed, :thu, :fri, :sat, :sun]
+
+  # Day-identifier/keyword vocabulary: each key (lowercase input form) maps
+  # to its canonical day-atom list. Day identifiers map 1:1; keywords expand
+  # (`"weekdays"` = mon-fri, `"weekends"` = sat-sun).
+  @day_vocabulary %{
+    "mon" => [:mon],
+    "tue" => [:tue],
+    "wed" => [:wed],
+    "thu" => [:thu],
+    "fri" => [:fri],
+    "sat" => [:sat],
+    "sun" => [:sun],
+    "weekdays" => [:mon, :tue, :wed, :thu, :fri],
+    "weekends" => [:sat, :sun]
+  }
 
   # Fixed mid-year UTC instant used to probe a time zone database for an IANA
   # name (mid-year avoids DST edge cases; any valid instant works for the
@@ -157,6 +225,41 @@ defmodule EvoGit.PeakHours do
   def parse_time(_), do: :error
 
   @doc """
+  Validates a list of day identifiers / keywords into canonical day atoms.
+
+  Accepts the seven day identifiers (`"mon"`..`"sun"`, canonical 3-letter
+  lowercase English) and the keywords `"weekdays"` (= mon–fri) and
+  `"weekends"` (= sat–sun). Input is case-insensitive — `"Mon"`, `"MON"`
+  and `"mon"` are equivalent. Returns a canonical list of day atoms
+  (`:mon..:sun`, aligned with `Date.day_of_week/1`) in first-appearance
+  order, keywords expanded and duplicates removed — e.g.
+  `["mon", "weekdays"]` → `[:mon, :tue, :wed, :thu, :fri]`.
+
+  `nil` / absent / `[]` → `{:ok, []}` (disabled). Any other non-list input
+  or an invalid/unknown identifier → `{:error, {:invalid_days, value}}`
+  where `value` is the offending raw input (the whole non-list value, or
+  the first invalid element) — the config schema uses it to build
+  descriptive error messages. A bare non-list day value (e.g. a single
+  `"mon"` string) is rejected — the field is always a list.
+  """
+  @spec validate_days(term()) :: {:ok, [day()]} | {:error, {:invalid_days, term()}}
+  def validate_days(nil), do: {:ok, []}
+
+  def validate_days(days) when is_list(days) do
+    case Enum.reduce_while(days, {:ok, []}, fn d, {:ok, acc} ->
+           case normalize_day(d) do
+             {:ok, atoms} -> {:cont, {:ok, acc ++ atoms}}
+             :error -> {:halt, {:error, {:invalid_days, d}}}
+           end
+         end) do
+      {:ok, lists} -> {:ok, lists |> List.flatten() |> Enum.uniq()}
+      other -> other
+    end
+  end
+
+  def validate_days(other), do: {:error, {:invalid_days, other}}
+
+  @doc """
   Parses a single peak-hour window map into canonical form.
 
   Accepts atom-keyed (`%{start: "09:00", end: "12:00"}`) and string-keyed
@@ -170,6 +273,12 @@ defmodule EvoGit.PeakHours do
       that is neither a valid `"HH:MM"` string nor an integer minute of day
       in `0..1439`
     * `{:zero_length, window}` — `start == end` (zero-length window)
+    * `{:invalid_days, window}` — invalid `days` value (see `validate_days/1`)
+
+  The optional `days` key (atom- or string-keyed, see the moduledoc) is
+  parsed via `validate_days/1`: absent / `nil` / `[]` → no `:days` key in
+  the canonical map (every day); a valid non-empty list → a canonical
+  `:days` key holding the day-atom list.
   """
   @spec parse_window(term()) :: {:ok, window()} | {:error, term()}
   def parse_window(w) when is_map(w) do
@@ -181,7 +290,7 @@ defmodule EvoGit.PeakHours do
       if s == e do
         {:error, {:zero_length, w}}
       else
-        {:ok, %{start: s, end: e}}
+        build_window(s, e, w)
       end
     else
       :error -> {:error, {:invalid_format, w}}
@@ -230,9 +339,36 @@ defmodule EvoGit.PeakHours do
   `validate_windows/1`; an empty list → false.
   """
   @spec in_peak?(windows(), NaiveDateTime.t()) :: boolean()
-  def in_peak?(windows, %NaiveDateTime{} = now) when is_list(windows) do
-    t = minute_of_day(now)
-    Enum.any?(windows, fn %{start: s, end: e} -> in_window?(t, s, e) end)
+  def in_peak?(windows, now), do: in_peak?(windows, now, [])
+
+  @doc """
+  Day-aware variant of `in_peak?/2`.
+
+  `off_peak_days` is a canonical day-atom list (see `validate_days/1`).
+  When `now`'s weekday is in it the profile is off-peak the ENTIRE day and
+  this returns `false` — `off_peak_days` wins over window `days`
+  (precedence rule). Otherwise true iff `now` falls inside a window whose
+  `:days` include today (a window without a `:days` key applies every
+  day).
+
+  Overnight day-scoped windows: the wrapped tail `[0, end)` occupies the
+  day AFTER each applicable day (e.g. `{22:00-06:00, days: ["mon"]}` is in
+  peak Mon 22:00–24:00 AND Tue 00:00–06:00; Tuesday's own applicability is
+  irrelevant for the tail — it is the continuation of the Monday window).
+  The tail is additionally suppressed when the PREVIOUS day was an
+  off-peak day (the precedence rule cuts the whole window, tail included).
+  """
+  @spec in_peak?(windows(), NaiveDateTime.t(), [day()]) :: boolean()
+  def in_peak?(windows, %NaiveDateTime{} = now, off_peak_days)
+      when is_list(windows) and is_list(off_peak_days) do
+    dow = day_atom(now)
+
+    if dow in off_peak_days do
+      false
+    else
+      t = minute_of_day(now)
+      Enum.any?(windows, fn w -> window_active_at?(w, dow, t, off_peak_days) end)
+    end
   end
 
   @doc """
@@ -246,25 +382,76 @@ defmodule EvoGit.PeakHours do
   be the canonical form produced by `validate_windows/1`.
   """
   @spec next_transition(windows(), NaiveDateTime.t()) :: NaiveDateTime.t() | nil
-  def next_transition([], _now), do: nil
+  def next_transition(windows, now), do: next_transition(windows, now, [])
 
-  def next_transition(windows, %NaiveDateTime{} = now) when is_list(windows) do
+  @doc """
+  Day-aware variant of `next_transition/2`.
+
+  `off_peak_days` is a canonical day-atom list (see `validate_days/1`);
+  windows are suppressed on those days (precedence rule), exactly as in
+  `in_peak?/3`. The next in-peak state flip is computed day-aware:
+
+    * per window, the next start/end minute on an applicable day —
+      non-applicable days are SKIPPED entirely (a Monday-only window at
+      Mon 13:00 → next boundary is NEXT Mon 09:00, not Tue 09:00);
+    * overnight day-scoped windows contribute BOTH the start boundary on
+      the applicable day AND the wrapped tail's end boundary on the
+      following day;
+    * midnight day-boundary flips are real transitions (a day where any
+      window applies ↔ a day where none applies, including off-peak-day
+      boundaries) — the earliest such midnight is a candidate.
+
+  Returns `nil` when `windows` is empty or every applicable day is
+  off-peak (the calling engine caps its sleep at 6h anyway, so `nil` is
+  safe). `windows` must be the canonical form produced by
+  `validate_windows/1`.
+  """
+  @spec next_transition(windows(), NaiveDateTime.t(), [day()]) :: NaiveDateTime.t() | nil
+  def next_transition([], _now, _off_peak_days), do: nil
+
+  def next_transition(windows, %NaiveDateTime{} = now, off_peak_days)
+      when is_list(windows) and is_list(off_peak_days) do
     date = NaiveDateTime.to_date(now)
-    t = minute_of_day(now)
 
-    windows
-    |> Enum.map(fn %{start: s, end: e} -> next_boundary(date, t, s, e) end)
-    |> Enum.min_by(& &1)
+    candidates =
+      Enum.flat_map(0..13, fn offset ->
+        date_d = Date.add(date, offset)
+
+        window_candidates =
+          Enum.flat_map(windows, fn w ->
+            window_day_candidates(w, date_d, now, offset, off_peak_days)
+          end)
+
+        midnight_candidates =
+          if offset >= 1, do: midnight_candidates(windows, date_d, off_peak_days), else: []
+
+        window_candidates ++ midnight_candidates
+      end)
+
+    case candidates do
+      [] ->
+        nil
+
+      _ ->
+        Enum.reduce(candidates, fn c, acc ->
+          if NaiveDateTime.compare(c, acc) == :lt, do: c, else: acc
+        end)
+    end
   end
 
   @doc """
   Returns the effective concurrency for a model profile at `now`.
 
   `profile` is a map with atom keys: `:concurrency` (normal/off-peak),
-  optional `:peak_concurrency`, optional `:peak_hours`. Returns
-  `peak_concurrency` when in peak and the field is present, else
-  `concurrency`. `peak_hours` absent / empty / invalid → always
-  `concurrency`. Also accepts already-canonical windows (integer
+  optional `:peak_concurrency`, optional `:peak_hours`, optional
+  `:off_peak_days` (atom- or string-keyed). Returns `peak_concurrency`
+  when in peak and the field is present, else `concurrency`. `peak_hours`
+  absent / empty / invalid → always `concurrency`. On an off-peak day
+  (`now`'s weekday in the profile's `off_peak_days`) the profile is
+  off-peak the ENTIRE day: `concurrency` applies 24/7 and every
+  `peak_hours` window (and `peak_concurrency`, including the hard-pause
+  `0`) is suppressed — `off_peak_days` wins over window `days`
+  (precedence rule). Also accepts already-canonical windows (integer
   `start`/`end`) in `:peak_hours` for callers that validated once.
   Returns `nil` when `:concurrency` is missing.
   """
@@ -275,19 +462,23 @@ defmodule EvoGit.PeakHours do
         nil
 
       concurrency ->
-        case normalize_peak_hours(Map.get(profile, :peak_hours)) do
-          {:ok, windows} ->
-            if in_peak?(windows, now) do
-              case Map.get(profile, :peak_concurrency) do
-                nil -> concurrency
-                peak -> peak
+        if off_peak_day?(now, profile_off_peak_days(profile)) do
+          concurrency
+        else
+          case normalize_peak_hours(Map.get(profile, :peak_hours)) do
+            {:ok, windows} ->
+              if in_peak?(windows, now) do
+                case Map.get(profile, :peak_concurrency) do
+                  nil -> concurrency
+                  peak -> peak
+                end
+              else
+                concurrency
               end
-            else
-              concurrency
-            end
 
-          {:error, _reason} ->
-            concurrency
+            {:error, _reason} ->
+              concurrency
+          end
         end
     end
   end
@@ -355,13 +546,25 @@ defmodule EvoGit.PeakHours do
     end
   end
 
-  # A window occupies one or two half-open minute segments on [0, 1440):
-  # same-day [s, e); overnight [s, 1440) ∪ [0, e).
+  # Two canonical windows overlap only if they share at least one
+  # applicable day (a window without a `:days` key — or with an empty list
+  # — applies every day) AND their time segments overlap. Windows with
+  # DISJOINT `days` never overlap — overlap is checked per-day.
   defp windows_overlap?(w1, w2) do
-    Enum.any?(segments(w1), fn seg1 ->
-      Enum.any?(segments(w2), fn seg2 -> segments_overlap?(seg1, seg2) end)
-    end)
+    shared_days?(w1, w2) and
+      Enum.any?(segments(w1), fn seg1 ->
+        Enum.any?(segments(w2), fn seg2 -> segments_overlap?(seg1, seg2) end)
+      end)
   end
+
+  # True when the two canonical windows have at least one day in common.
+  defp shared_days?(w1, w2) do
+    Enum.any?(window_days(w1), fn d -> d in window_days(w2) end)
+  end
+
+  # Applicable days of a canonical window: its `:days` list, or all seven
+  # days when absent / empty (every day).
+  defp window_days(w), do: Map.get(w, :days, @all_days) || @all_days
 
   # Two half-open segments [a, b) and [c, d) overlap iff a < d and c < b.
   defp segments_overlap?({a, b}, {c, d}), do: a < d and c < b
@@ -372,24 +575,84 @@ defmodule EvoGit.PeakHours do
     [{s, @minutes_per_day}, {0, e}]
   end
 
-  defp in_window?(t, s, e) when s < e, do: t >= s and t < e
-  defp in_window?(t, s, e), do: t >= s or t < e
+  # All strictly-future transition instants contributed by window `w` on
+  # day `date_d` (`offset` = days after `now`'s date; used only to filter
+  # offset-0 instants to strictly-after-`now` so a boundary that just
+  # flipped — or is exactly `now` — is not re-reported). On an off-peak day
+  # every window is suppressed (no in-day boundaries). Same-day windows
+  # contribute start + end; overnight windows contribute their start on an
+  # applicable day and their wrapped tail's end on the FOLLOWING day.
+  defp window_day_candidates(w, date_d, now, offset, off_peak_days) do
+    %{start: s, end: e} = w
+    dow = day_atom(date_d)
+    prev = prev_day_atom(dow)
 
-  # Next state-flip boundary for one window relative to day `date` and
-  # minute-of-day `t`.
-  defp next_boundary(date, t, s, e) when s < e do
-    cond do
-      t < s -> at(date, s)
-      t < e -> at(date, e)
-      true -> at(Date.add(date, 1), s)
+    instants =
+      cond do
+        dow in off_peak_days ->
+          []
+
+        s < e ->
+          if dow in window_days(w), do: [at(date_d, s), at(date_d, e)], else: []
+
+        true ->
+          start_instant = if dow in window_days(w), do: [at(date_d, s)], else: []
+
+          tail_exit =
+            if prev in window_days(w) and prev not in off_peak_days,
+              do: [at(date_d, e)],
+              else: []
+
+          start_instant ++ tail_exit
+      end
+
+    if offset == 0 do
+      Enum.filter(instants, fn instant -> NaiveDateTime.compare(instant, now) == :gt end)
+    else
+      instants
     end
   end
 
-  defp next_boundary(date, t, s, e) do
-    cond do
-      t < e -> at(date, e)
-      t < s -> at(date, s)
-      true -> at(Date.add(date, 1), e)
+  # Midnight transition candidate at the boundary between `date_d - 1` and
+  # `date_d` (only meaningful for offsets >= 1): the midnight instant is a
+  # real transition iff the in-peak state differs across it (a day where
+  # any window applies ↔ a day where none applies; overnight windows are
+  # continuous across midnight; off-peak days are always out of peak).
+  defp midnight_candidates(windows, date_d, off_peak_days) do
+    if state_at_minute(windows, Date.add(date_d, -1), @minutes_per_day - 1, off_peak_days) !=
+         state_at_minute(windows, date_d, 0, off_peak_days) do
+      [at(date_d, 0)]
+    else
+      []
+    end
+  end
+
+  # In-peak state at minute-of-day `m` on `date` (off-peak days are always
+  # out of peak; window day scoping + overnight tails included).
+  defp state_at_minute(windows, date, m, off_peak_days) do
+    dow = day_atom(date)
+
+    if dow in off_peak_days do
+      false
+    else
+      Enum.any?(windows, fn w -> window_active_at?(w, dow, m, off_peak_days) end)
+    end
+  end
+
+  # True when minute-of-day `m` on weekday `dow` is inside window `w`:
+  # same-day windows need `dow` in `days(w)` and `[s, e)`; overnight
+  # windows are active on `[s, 1440)` when `dow` is applicable and on the
+  # wrapped tail `[0, e)` when the PREVIOUS day is applicable and was not
+  # off-peak.
+  defp window_active_at?(w, dow, m, off_peak_days) do
+    %{start: s, end: e} = w
+    days = window_days(w)
+
+    if s < e do
+      dow in days and m >= s and m < e
+    else
+      prev = prev_day_atom(dow)
+      (dow in days and m >= s) or (prev in days and prev not in off_peak_days and m < e)
     end
   end
 
@@ -398,6 +661,22 @@ defmodule EvoGit.PeakHours do
   end
 
   defp minute_of_day(%NaiveDateTime{hour: h, minute: m}), do: h * 60 + m
+
+  # Canonical day atom of a date (`Date.day_of_week/1`: 1 = Monday ..
+  # 7 = Sunday); also accepts a wall-clock instant.
+  defp day_atom(%Date{} = date), do: Enum.at(@all_days, Date.day_of_week(date) - 1)
+  defp day_atom(%NaiveDateTime{} = now), do: day_atom(NaiveDateTime.to_date(now))
+
+  # The day atom immediately before `d` in the weekly cycle (Mon → Sun,
+  # Tue → Mon, ..., Sun → Sat) — used for overnight window tails that wrap
+  # into the following day.
+  defp prev_day_atom(:mon), do: :sun
+  defp prev_day_atom(:tue), do: :mon
+  defp prev_day_atom(:wed), do: :tue
+  defp prev_day_atom(:thu), do: :wed
+  defp prev_day_atom(:fri), do: :thu
+  defp prev_day_atom(:sat), do: :fri
+  defp prev_day_atom(:sun), do: :sat
 
   # Accepts raw "HH:MM" / integer-minute windows (validated) OR nil/[]; any
   # non-list → {:error, _} so callers fall back to normal concurrency.
@@ -425,4 +704,55 @@ defmodule EvoGit.PeakHours do
   # "HH:MM" strings or both integer minutes of day; mixing the two is
   # rejected as invalid.
   defp same_time_kind?(a, b), do: is_binary(a) == is_binary(b)
+
+  # Assembles the canonical window map after `start`/`end` parsed OK. The
+  # optional `days` key (atom- or string-keyed) is parsed via
+  # `validate_days/1`: absent / nil / [] → no `:days` key (every day); a
+  # valid non-empty list → canonical day atoms. Invalid days →
+  # `{:error, {:invalid_days, w}}` carrying the RAW window map so the
+  # config schema can locate the window by raw-map equality.
+  defp build_window(s, e, w) do
+    case fetch_window_key(w, :days) do
+      :error ->
+        {:ok, %{start: s, end: e}}
+
+      {:ok, days} ->
+        case validate_days(days) do
+          {:ok, []} -> {:ok, %{start: s, end: e}}
+          {:ok, day_atoms} -> {:ok, %{start: s, end: e, days: day_atoms}}
+          {:error, {:invalid_days, _raw}} -> {:error, {:invalid_days, w}}
+        end
+    end
+  end
+
+  # Normalizes one raw day identifier/keyword (a binary) into its canonical
+  # day-atom list. Case-insensitive; unknown identifiers → :error.
+  defp normalize_day(d) when is_binary(d) do
+    case Map.get(@day_vocabulary, String.downcase(d)) do
+      nil -> :error
+      atoms -> {:ok, atoms}
+    end
+  end
+
+  defp normalize_day(_), do: :error
+
+  # Profile's canonical off-peak day list (atom- or string-keyed
+  # `:off_peak_days`); invalid / absent / empty → [] (never crashes,
+  # mirroring how invalid windows fall back to normal concurrency).
+  defp profile_off_peak_days(profile) do
+    case Map.get(profile, :off_peak_days) || Map.get(profile, "off_peak_days") do
+      nil ->
+        []
+
+      days ->
+        case validate_days(days) do
+          {:ok, list} -> list
+          {:error, _reason} -> []
+        end
+    end
+  end
+
+  # True when `now`'s weekday is in the off-peak day list (precedence rule
+  # — the profile is off-peak the entire day).
+  defp off_peak_day?(now, off_peak_days), do: day_atom(now) in off_peak_days
 end

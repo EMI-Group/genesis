@@ -42,6 +42,52 @@ defmodule EvoGit.PeakHoursTest do
     end
   end
 
+  describe "validate_days/1" do
+    test "nil and empty list mean disabled" do
+      assert PeakHours.validate_days(nil) == {:ok, []}
+      assert PeakHours.validate_days([]) == {:ok, []}
+    end
+
+    test "accepts day identifiers case-insensitively" do
+      assert PeakHours.validate_days(["mon"]) == {:ok, [:mon]}
+      assert PeakHours.validate_days(["Mon"]) == {:ok, [:mon]}
+      assert PeakHours.validate_days(["MON"]) == {:ok, [:mon]}
+      # Multi-element inputs canonicalize in first-appearance input order
+      # (keywords expanded, duplicates removed).
+      assert PeakHours.validate_days(["Tue", "WED", "thu"]) == {:ok, [:tue, :wed, :thu]}
+      assert PeakHours.validate_days(["SAT", "Sun"]) == {:ok, [:sat, :sun]}
+    end
+
+    test "expands keywords weekdays and weekends" do
+      assert PeakHours.validate_days(["weekdays"]) == {:ok, [:mon, :tue, :wed, :thu, :fri]}
+      assert PeakHours.validate_days(["weekends"]) == {:ok, [:sat, :sun]}
+    end
+
+    test "dedupes keywords and identifiers" do
+      assert PeakHours.validate_days(["mon", "mon", "weekdays"]) ==
+               {:ok, [:mon, :tue, :wed, :thu, :fri]}
+
+      # "sat" then "weekdays" → first-appearance order: the standalone "sat"
+      # first, then the expanded weekdays (mon-fri).
+      assert PeakHours.validate_days(["sat", "weekdays"]) ==
+               {:ok, [:sat, :mon, :tue, :wed, :thu, :fri]}
+    end
+
+    test "reports the first invalid element" do
+      assert PeakHours.validate_days(["mon", "funday"]) ==
+               {:error, {:invalid_days, "funday"}}
+
+      assert PeakHours.validate_days(["weekdays", 3]) == {:error, {:invalid_days, 3}}
+      assert PeakHours.validate_days([:mon]) == {:error, {:invalid_days, :mon}}
+    end
+
+    test "rejects non-list input as a whole" do
+      assert PeakHours.validate_days("mon") == {:error, {:invalid_days, "mon"}}
+      assert PeakHours.validate_days(42) == {:error, {:invalid_days, 42}}
+      assert PeakHours.validate_days(%{}) == {:error, {:invalid_days, %{}}}
+    end
+  end
+
   describe "parse_window/1" do
     test "parses atom-keyed windows" do
       assert PeakHours.parse_window(%{start: "09:00", end: "12:00"}) ==
@@ -56,6 +102,40 @@ defmodule EvoGit.PeakHoursTest do
     test "parses overnight windows (start > end)" do
       assert PeakHours.parse_window(%{start: "22:00", end: "06:00"}) ==
                {:ok, %{start: 1320, end: 360}}
+    end
+
+    test "parses windows with a days key (canonical day atoms)" do
+      # Day lists canonicalize in first-appearance input order (see
+      # validate_days/1); a single keyword expands to its atoms as-is.
+      assert PeakHours.parse_window(%{start: "09:00", end: "12:00", days: ["mon", "wed"]}) ==
+               {:ok, %{start: 540, end: 720, days: [:mon, :wed]}}
+
+      assert PeakHours.parse_window(%{start: "22:00", end: "06:00", days: ["weekends"]}) ==
+               {:ok, %{start: 1320, end: 360, days: [:sat, :sun]}}
+    end
+
+    test "parses string-keyed days (TOML decoding)" do
+      assert PeakHours.parse_window(%{"start" => "09:00", "end" => "12:00", "days" => ["Mon"]}) ==
+               {:ok, %{start: 540, end: 720, days: [:mon]}}
+    end
+
+    test "absent, nil and empty days → no :days key (every day, backward compat)" do
+      assert PeakHours.parse_window(%{start: "09:00", end: "12:00"}) ==
+               {:ok, %{start: 540, end: 720}}
+
+      assert PeakHours.parse_window(%{start: "09:00", end: "12:00", days: nil}) ==
+               {:ok, %{start: 540, end: 720}}
+
+      assert PeakHours.parse_window(%{start: "09:00", end: "12:00", days: []}) ==
+               {:ok, %{start: 540, end: 720}}
+    end
+
+    test "rejects invalid days carrying the raw window map" do
+      w = %{start: "09:00", end: "12:00", days: ["funday"]}
+      assert PeakHours.parse_window(w) == {:error, {:invalid_days, w}}
+
+      w2 = %{start: "09:00", end: "12:00", days: "mon"}
+      assert PeakHours.parse_window(w2) == {:error, {:invalid_days, w2}}
     end
 
     test "rejects non-map entries" do
@@ -184,6 +264,53 @@ defmodule EvoGit.PeakHoursTest do
       assert w1 == %{start: "22:00", end: "06:00"} or w2 == %{start: "22:00", end: "06:00"}
     end
 
+    test "accepts windows with disjoint days that overlap in time" do
+      hours = [
+        %{start: "09:00", end: "12:00", days: ["mon"]},
+        %{start: "11:00", end: "14:00", days: ["tue"]}
+      ]
+
+      assert {:ok,
+              [
+                %{start: 540, end: 720, days: [:mon]},
+                %{start: 660, end: 840, days: [:tue]}
+              ]} = PeakHours.validate_windows(hours)
+    end
+
+    test "flags overlapping windows that share a day" do
+      hours = [
+        %{start: "09:00", end: "12:00", days: ["mon"]},
+        %{start: "11:00", end: "14:00", days: ["mon", "wed"]}
+      ]
+
+      assert {:error, {:overlap, a, b}} = PeakHours.validate_windows(hours)
+
+      assert MapSet.new([a, b]) ==
+               MapSet.new([
+                 %{start: "09:00", end: "12:00", days: ["mon"]},
+                 %{start: "11:00", end: "14:00", days: ["mon", "wed"]}
+               ])
+    end
+
+    test "a window without days applies every day and overlaps a days-scoped window" do
+      hours = [
+        %{start: "09:00", end: "12:00"},
+        %{start: "11:00", end: "14:00", days: ["sat"]}
+      ]
+
+      assert {:error, {:overlap, _, _}} = PeakHours.validate_windows(hours)
+    end
+
+    test "rejects a window with invalid days" do
+      hours = [
+        %{start: "09:00", end: "12:00"},
+        %{start: "14:00", end: "18:00", days: ["funday"]}
+      ]
+
+      assert {:error, {:invalid_days, w}} = PeakHours.validate_windows(hours)
+      assert w == %{start: "14:00", end: "18:00", days: ["funday"]}
+    end
+
     test "returns the first validation error for malformed windows" do
       hours = [
         %{start: "09:00", end: "12:00"},
@@ -240,6 +367,71 @@ defmodule EvoGit.PeakHoursTest do
       assert PeakHours.in_peak?(@morning, ~N[2025-01-15 09:00:00]) == true
       assert PeakHours.in_peak?(@morning, ~N[2025-01-15 11:59:00]) == true
       assert PeakHours.in_peak?(@morning, ~N[2025-01-15 12:00:00]) == false
+    end
+  end
+
+  describe "in_peak?/3 (day-aware)" do
+    # Weekends off-peak; 22:00-08:00 overnight window applies every day.
+    @weekend_off_peak [:sat, :sun]
+    @overnight_all_days [%{start: 1320, end: 480}]
+
+    test "off-peak days win over windows (weekends fully off-peak)" do
+      # Fri 23:00 inside 22:00–08:00 → in peak.
+      assert PeakHours.in_peak?(@overnight_all_days, ~N[2025-01-17 23:00:00], @weekend_off_peak) ==
+               true
+
+      # Sat/Sun 23:00 → the off-peak day wins.
+      assert PeakHours.in_peak?(@overnight_all_days, ~N[2025-01-18 23:00:00], @weekend_off_peak) ==
+               false
+
+      assert PeakHours.in_peak?(@overnight_all_days, ~N[2025-01-19 23:00:00], @weekend_off_peak) ==
+               false
+
+      # Mon 23:00 → back in peak.
+      assert PeakHours.in_peak?(@overnight_all_days, ~N[2025-01-20 23:00:00], @weekend_off_peak) ==
+               true
+
+      # Sat 03:00 — the wrapped tail of Fri's window is suppressed too.
+      assert PeakHours.in_peak?(@overnight_all_days, ~N[2025-01-18 03:00:00], @weekend_off_peak) ==
+               false
+    end
+
+    test "a window applies only on its listed days" do
+      windows = [%{start: 540, end: 720, days: [:mon, :wed]}]
+
+      assert PeakHours.in_peak?(windows, ~N[2025-01-20 10:00:00], []) == true
+      assert PeakHours.in_peak?(windows, ~N[2025-01-15 10:00:00], []) == true
+      assert PeakHours.in_peak?(windows, ~N[2025-01-16 10:00:00], []) == false
+      assert PeakHours.in_peak?(windows, ~N[2025-01-14 10:00:00], []) == false
+    end
+
+    test "absent days = every day (backward compat via /3)" do
+      assert PeakHours.in_peak?(@morning, ~N[2025-01-18 10:00:00], []) == true
+      assert PeakHours.in_peak?(@morning, ~N[2025-01-15 10:00:00], []) == true
+    end
+
+    test "off_peak_days take precedence over window days" do
+      windows = [%{start: 540, end: 720, days: [:sat]}]
+      assert PeakHours.in_peak?(windows, ~N[2025-01-18 10:00:00], [:sat]) == false
+      assert PeakHours.in_peak?(windows, ~N[2025-01-18 10:00:00], [:sun]) == true
+    end
+
+    test "day-scoped overnight window: tail occupies the following day" do
+      windows = [%{start: 1320, end: 360, days: [:mon]}]
+
+      assert PeakHours.in_peak?(windows, ~N[2025-01-20 23:00:00], []) == true
+      assert PeakHours.in_peak?(windows, ~N[2025-01-21 03:00:00], []) == true
+      assert PeakHours.in_peak?(windows, ~N[2025-01-21 06:00:00], []) == false
+      assert PeakHours.in_peak?(windows, ~N[2025-01-21 07:00:00], []) == false
+      assert PeakHours.in_peak?(windows, ~N[2025-01-22 03:00:00], []) == false
+    end
+
+    test "the wrapped tail is suppressed when the previous day is off-peak" do
+      windows = [%{start: 1320, end: 360, days: [:mon]}]
+
+      # Mon is off-peak → the whole window (incl. the Tue tail) is suppressed.
+      assert PeakHours.in_peak?(windows, ~N[2025-01-20 23:00:00], [:mon]) == false
+      assert PeakHours.in_peak?(windows, ~N[2025-01-21 03:00:00], [:mon]) == false
     end
   end
 
@@ -332,6 +524,88 @@ defmodule EvoGit.PeakHoursTest do
     end
   end
 
+  describe "next_transition/3 (day-aware)" do
+    test "empty windows return nil (with off-peak days)" do
+      assert PeakHours.next_transition([], ~N[2025-01-15 10:00:00], [:sat, :sun]) == nil
+    end
+
+    test "midnight entering an off-peak day is a transition" do
+      # Weekday-only overnight window; Fri 23:30 in peak → Sat 00:00 flips off.
+      windows = [%{start: 1320, end: 360, days: [:mon, :tue, :wed, :thu, :fri]}]
+      off = [:sat, :sun]
+
+      assert PeakHours.next_transition(windows, ~N[2025-01-17 23:30:00], off) ==
+               ~N[2025-01-18 00:00:00]
+    end
+
+    test "midnight entering a day-scoped window is a transition" do
+      # Mon-only window starting at 00:00 → Sun 23:00 → Mon 00:00.
+      windows = [%{start: 0, end: 360, days: [:mon]}]
+
+      assert PeakHours.next_transition(windows, ~N[2025-01-19 23:00:00], []) ==
+               ~N[2025-01-20 00:00:00]
+    end
+
+    test "a Monday-only window skips Tue..Sun (next start is NEXT Monday)" do
+      windows = [%{start: 540, end: 720, days: [:mon]}]
+
+      assert PeakHours.next_transition(windows, ~N[2025-01-20 13:00:00], []) ==
+               ~N[2025-01-27 09:00:00]
+    end
+
+    test "day-scoped overnight window: start on the applicable day, tail end next day" do
+      # Mon-only window: Mon 22:00 start + wrapped tail Tue 00:00-06:00.
+      # NOTE: February dates: the next applicable start after the tail is a
+      # full week out, keeping the earliest-candidate selection unambiguous.
+      windows = [%{start: 1320, end: 360, days: [:mon]}]
+
+      # From before the start on the applicable day → the start itself.
+      assert PeakHours.next_transition(windows, ~N[2025-02-03 21:00:00], []) ==
+               ~N[2025-02-03 22:00:00]
+
+      # In the window on Mon → the wrapped tail's end on Tue 06:00.
+      assert PeakHours.next_transition(windows, ~N[2025-02-03 23:00:00], []) ==
+               ~N[2025-02-04 06:00:00]
+
+      # Inside the Tue tail → still Tue 06:00.
+      assert PeakHours.next_transition(windows, ~N[2025-02-04 03:00:00], []) ==
+               ~N[2025-02-04 06:00:00]
+
+      # After the tail → next applicable start is NEXT Mon 22:00 (Tue..Sun skipped).
+      assert PeakHours.next_transition(windows, ~N[2025-02-04 06:30:00], []) ==
+               ~N[2025-02-10 22:00:00]
+    end
+
+    test "weekend off-peak days with a weekday overnight window" do
+      # February dates — same unambiguous-candidate rationale as the
+      # previous test.
+      windows = [%{start: 1320, end: 360, days: [:mon, :tue, :wed, :thu, :fri]}]
+      off = [:sat, :sun]
+
+      # Sat noon → next peak is Mon 22:00 (Sat/Sun off-peak; no midnight flip).
+      assert PeakHours.next_transition(windows, ~N[2025-02-08 12:00:00], off) ==
+               ~N[2025-02-10 22:00:00]
+
+      # Sun 23:59 → Mon 22:00 (Mon 00:00 is not in the window, no midnight flip).
+      assert PeakHours.next_transition(windows, ~N[2025-02-09 23:59:00], off) ==
+               ~N[2025-02-10 22:00:00]
+    end
+
+    test "a suppressed wrapped tail contributes no transition" do
+      # Mon+Tue window, Mon off-peak → the Mon window is suppressed entirely,
+      # so at Mon 23:00 the next transition is Tue 22:00 (NOT a Tue 06:00 tail).
+      windows = [%{start: 1320, end: 360, days: [:mon, :tue]}]
+
+      assert PeakHours.next_transition(windows, ~N[2025-01-20 23:00:00], [:mon]) ==
+               ~N[2025-01-21 22:00:00]
+    end
+
+    test "nil when every applicable day is off-peak" do
+      windows = [%{start: 540, end: 720, days: [:sat]}]
+      assert PeakHours.next_transition(windows, ~N[2025-01-15 10:00:00], [:sat, :sun]) == nil
+    end
+  end
+
   describe "effective_concurrency/2" do
     @profile %{concurrency: 4, peak_concurrency: 2, peak_hours: [%{start: "09:00", end: "12:00"}]}
 
@@ -414,6 +688,51 @@ defmodule EvoGit.PeakHoursTest do
 
       assert PeakHours.effective_concurrency(profile, ~N[2025-01-15 10:00:00]) == 0
       assert PeakHours.effective_concurrency(profile, ~N[2025-01-15 13:00:00]) == 4
+    end
+
+    test "off-peak days win over windows (weekend scenario)" do
+      profile = %{
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: [%{start: "22:00", end: "08:00"}],
+        off_peak_days: ["sat", "sun"]
+      }
+
+      # Fri 23:00 inside 22:00–08:00 → peak_concurrency.
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-17 23:00:00]) == 2
+
+      # Sat/Sun → off-peak day wins → normal concurrency even inside the window.
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-18 23:00:00]) == 4
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-19 23:00:00]) == 4
+
+      # Mon 23:00 → back in peak.
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-20 23:00:00]) == 2
+    end
+
+    test "string-keyed off_peak_days is tolerated" do
+      profile = %{
+        "off_peak_days" => ["sat"],
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: [%{start: "09:00", end: "12:00"}]
+      }
+
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-18 10:00:00]) == 4
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-15 10:00:00]) == 2
+    end
+
+    test "peak_concurrency 0 never applies on an off-peak day" do
+      profile = %{
+        concurrency: 4,
+        peak_concurrency: 0,
+        peak_hours: [%{start: "09:00", end: "12:00"}],
+        off_peak_days: ["sat"]
+      }
+
+      # Sat inside the window → normal concurrency (the hard-pause 0 is cut).
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-18 10:00:00]) == 4
+      # Fri inside the window → the hard-pause 0 applies.
+      assert PeakHours.effective_concurrency(profile, ~N[2025-01-17 10:00:00]) == 0
     end
   end
 
@@ -544,6 +863,39 @@ defmodule EvoGit.PeakHoursTest do
 
       assert PeakHours.effective_concurrency(profile, ~U[2025-01-15 01:00:00Z], "Asia/Shanghai") ==
                nil
+    end
+
+    test "day-of-week is evaluated in the profile's wall clock (off-peak days)" do
+      profile = %{
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: [%{start: "22:00", end: "06:00"}],
+        off_peak_days: ["sat", "sun"],
+        timezone: "Asia/Shanghai"
+      }
+
+      # 2025-01-17 15:30:00Z = Fri 23:30 Shanghai → in peak → 2.
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-17 15:30:00Z], "Asia/Shanghai") ==
+               2
+
+      # 2025-01-17 16:30:00Z = Sat 00:30 Shanghai → off-peak DAY (not the
+      # window) drives it → 4.
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-17 16:30:00Z], "Asia/Shanghai") ==
+               4
+    end
+
+    test "the day, not the window, drives the off-peak-day result" do
+      # Same profile WITHOUT off_peak_days: Sat 00:30 Shanghai is inside the
+      # overnight window's wrapped tail → 2 (proves day-of-week drives the 4).
+      profile = %{
+        concurrency: 4,
+        peak_concurrency: 2,
+        peak_hours: [%{start: "22:00", end: "06:00"}],
+        timezone: "Asia/Shanghai"
+      }
+
+      assert PeakHours.effective_concurrency(profile, ~U[2025-01-17 16:30:00Z], "Asia/Shanghai") ==
+               2
     end
   end
 
