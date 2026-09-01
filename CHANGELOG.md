@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Improve changelog generation so related pull requests and merges addressing the same feature or bug are collapsed into a single changelog entry.
-- Switch dependency to a personal fork of req_llm.
+- Switch dependency to a personal fork of req_llm to apply a patch that fixes the Z.ai GLM models.
 
 ### Fixed
 
