@@ -88,29 +88,99 @@ defmodule EvoDashWeb.Helpers do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Returns badge class string for task status (`:running`, `:completed`, `:failed`,
-  `:cancelled`, `:cancelling`, `:pending`).
+  Returns badge class string for task status (`:running`, `:finalizing`,
+  `:completed`, `:failed`, `:cancelled`, `:cancelling`, `:pending`).
+
+  Token-driven scheme: transitional/busy states (`:running`, `:finalizing`,
+  `:cancelling`) share the warning amber family, `:completed` is success,
+  `:failed` is error, and terminal-neutral states (`:pending`, `:cancelled`)
+  are muted base-content — the distinct label + pulse carry the state.
   """
   def task_status_badge(:running),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
   def task_status_badge(:finalizing),
-    do: "bg-orange-500/10 text-orange-500 rounded-full flex items-center justify-center"
+    do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
   def task_status_badge(:completed),
-    do: "bg-info/10 text-info rounded-full flex items-center justify-center"
+    do: "bg-success/10 text-success rounded-full flex items-center justify-center"
 
   def task_status_badge(:failed),
     do: "bg-error/10 text-error rounded-full flex items-center justify-center"
 
-  def task_status_badge(:cancelled),
+  def task_status_badge(:cancelling),
     do: "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
-  def task_status_badge(:cancelling),
-    do: "bg-violet-500/10 text-violet-500 rounded-full flex items-center justify-center"
+  def task_status_badge(:cancelled),
+    do: "bg-base-content/10 text-base-content/60 rounded-full flex items-center justify-center"
+
+  def task_status_badge(:pending),
+    do: "bg-base-content/10 text-base-content/60 rounded-full flex items-center justify-center"
 
   def task_status_badge(_),
     do: "bg-base-200 text-base-content/70 rounded-full flex items-center justify-center"
+
+  @doc """
+  Returns the dot background class for a task status (`:running`,
+  `:finalizing`, `:cancelling`, `:completed`, `:failed`, `:pending`,
+  `:cancelled`). Callers compose shape classes (size/rounded) and any
+  pulse/ping animation around the returned color. Statuses arrive as atoms;
+  unknown/non-atom input falls back to a dim neutral gray.
+  """
+  def task_status_dot_class(:running), do: "bg-warning"
+  def task_status_dot_class(:finalizing), do: "bg-warning"
+  def task_status_dot_class(:cancelling), do: "bg-warning"
+  def task_status_dot_class(:completed), do: "bg-success"
+  def task_status_dot_class(:failed), do: "bg-error"
+  def task_status_dot_class(:pending), do: "bg-base-content/40"
+  def task_status_dot_class(:cancelled), do: "bg-base-content/40"
+  def task_status_dot_class(_), do: "bg-base-content/30"
+
+  @doc """
+  Returns the full card-tint class string (border/bg/shadow tint) for a task
+  status, mirroring the collapsed task-card tint shape (bg, shadow, border —
+  e.g. `"bg-warning/5 shadow-warning/10 border-warning/20"`). Neutral tint for
+  `:pending`/`:cancelled` and unknown statuses.
+  """
+  def task_status_tint(:running), do: "bg-warning/5 shadow-warning/10 border-warning/20"
+  def task_status_tint(:finalizing), do: "bg-warning/5 shadow-warning/10 border-warning/20"
+  def task_status_tint(:cancelling), do: "bg-warning/5 shadow-warning/10 border-warning/20"
+  def task_status_tint(:completed), do: "bg-success/5 shadow-success/10 border-success/20"
+  def task_status_tint(:failed), do: "bg-error/5 shadow-error/10 border-error/20"
+  def task_status_tint(:pending), do: "bg-base-200/40 border-base-300/20"
+  def task_status_tint(:cancelled), do: "bg-base-200/40 border-base-300/20"
+  def task_status_tint(_), do: "bg-base-200/40 border-base-300/20"
+
+  @doc """
+  Returns the dot background class for a remote-connection phase (`:local`,
+  `:connected`, `:connecting`, `:disconnecting`, `:error`, `:disconnected`).
+  Callers compose shape classes and any pulse animation around the returned
+  color. Unknown/non-atom phases fall back to a dim neutral gray.
+  """
+  def connection_status_dot_class(:local), do: "bg-info"
+  def connection_status_dot_class(:connected), do: "bg-success"
+  def connection_status_dot_class(:connecting), do: "bg-warning"
+  def connection_status_dot_class(:disconnecting), do: "bg-warning"
+  def connection_status_dot_class(:error), do: "bg-error"
+  def connection_status_dot_class(:disconnected), do: "bg-base-content/40"
+  def connection_status_dot_class(:unknown), do: "bg-base-content/40"
+  def connection_status_dot_class(_), do: "bg-base-content/40"
+
+  @doc """
+  Returns the DaisyUI badge color-modifier class for a remote-connection
+  phase (`:local`, `:connected`, `:connecting`, `:disconnecting`, `:error`,
+  `:disconnected`). Compose with the `badge` base + sizing at the call site
+  (e.g. `"badge badge-sm " <> connection_status_badge_class(phase)`).
+  Unknown/non-atom phases fall back to the neutral ghost modifier.
+  """
+  def connection_status_badge_class(:local), do: "badge-ghost"
+  def connection_status_badge_class(:connected), do: "badge-success"
+  def connection_status_badge_class(:connecting), do: "badge-warning"
+  def connection_status_badge_class(:disconnecting), do: "badge-warning"
+  def connection_status_badge_class(:error), do: "badge-error"
+  def connection_status_badge_class(:disconnected), do: "badge-ghost"
+  def connection_status_badge_class(:unknown), do: "badge-ghost"
+  def connection_status_badge_class(_), do: "badge-ghost"
 
   @doc """
   Returns heroicon name for task type (`:genesis`, `:evolve`).
