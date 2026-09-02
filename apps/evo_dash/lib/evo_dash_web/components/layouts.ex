@@ -252,7 +252,7 @@ defmodule EvoDashWeb.Layouts do
       </aside>
 
       <!-- Main Content Area -->
-      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-white dark:bg-slate-900">
+      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
         <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
              "quit-requested" tray event on every page: hooks only mount on
              elements inside the LiveView root DOM, and this wrapper is part of
@@ -264,7 +264,7 @@ defmodule EvoDashWeb.Layouts do
         >
           <main
             id="main-content"
-            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900"
+            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 py-4 w-full bg-base-100"
             phx-hook="NodeSwitchFade"
             data-node-id={@current_node_id || "local"}
           >

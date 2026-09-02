@@ -1153,7 +1153,7 @@ button, a, input, textarea, select, summary,
   transition: background-color 0.15s;
 }
 .commit-row:hover {
-  background-color: oklch(0.6 0.15 255 / 0.05);
+  background-color: color-mix(in oklch, var(--color-primary) 5%, transparent);
 }
 
 /* File tree scrollbar */
