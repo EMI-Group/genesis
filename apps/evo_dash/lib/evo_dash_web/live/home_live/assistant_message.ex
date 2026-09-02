@@ -7,8 +7,18 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
     * the chat task's status badge (reusing
       `EvoDashWeb.Helpers.task_status_badge/1` and the pulsing-dot/spinner
       conventions of `EvoDashWeb.TaskCardComponents`),
-    * the streamed/final assistant text (pulsing dots while empty + streaming,
-      caret while streaming, plain text otherwise),
+    * the streamed/final assistant text — pulsing dots while empty +
+      streaming, blinking caret while streaming (raw text), and for the
+      FINALIZED (non-streaming) text a **Markdown render** via
+      `EvoDash.MarkdownRender.render/1` (the same helper the tasks/review
+      pages use; always-safe HTML — MDEx `unsafe_: true` with an
+      HTML-escaped fallback), OR the plain raw text when the per-message
+      `raw` flag is set,
+    * a hover-revealed action group at the card's bottom-right corner
+      (finalized entries only): a raw/markdown toggle for THAT message
+      (`phx-click="toggle_assistant_raw"` with `phx-value-id`) and a
+      copy-whole-text button (global `ClipboardCopy` hook with
+      `data-content`, pushing the `"copied"` event),
     * when present, a collapsible zero-JS `<details>` "Thought process"
       section listing the agent's context-history entries (the
       `EvoDashWeb.HomeLive.Messages.to_entries/1` shape; tool calls rendered
@@ -31,6 +41,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   attr(:task_status, :any, default: nil)
   attr(:thought_process, :list, default: [])
 
+  # Per-message raw view flag (ephemeral UI state owned by HomeLive's
+  # :raw_entry_ids assign): true → show the plain raw text instead of the
+  # markdown render. Streaming entries are always raw and ignore this flag.
+  attr(:raw, :boolean, default: false)
+
   def assistant_message(assigns) do
     ~H"""
     <div class="flex justify-start gap-3 w-full">
@@ -38,7 +53,10 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
         <.icon name="hero-sparkles" class="size-3.5 text-primary" />
       </div>
       <div class="min-w-0 flex-1 pt-0.5">
-        <div class={["overflow-hidden rounded-lg border bg-base-100 shadow-sm", card_border(@task_status)]}>
+        <div class={[
+          "relative group/assistant overflow-hidden rounded-lg border bg-base-100 shadow-sm",
+          card_border(@task_status)
+        ]}>
           <%= if @task_status != nil do %>
             <div class="flex items-center justify-between gap-2 border-b border-base-200/60 bg-base-200/30 px-3 py-1.5">
               <span class="text-[10px] font-bold uppercase tracking-widest text-base-content/40">
@@ -73,8 +91,10 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
               </span>
             </div>
           <% end %>
-          <div class="px-3 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
-            <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
+          <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
+            <!-- Empty + streaming: pulsing dots pill (unchanged — never
+                 markdown-rendered). -->
+            <div class="px-3 py-2.5">
               <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2.5">
                 <span
                   class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
@@ -89,13 +109,35 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                   style="animation-delay:300ms"
                 ></span>
               </span>
-            <% else %>
-              {entry_text(@entry)}
-              <%= if streaming?(@entry) do %>
+            </div>
+          <% else %>
+            <%= if streaming?(@entry) do %>
+              <!-- In-progress stream: raw partial text + blinking caret.
+                   Streaming text is NEVER markdown-rendered (a half-rendered
+                   stream would flicker) — the render switches to markdown only
+                   when the entry is finalized (streaming: false). -->
+              <div class="px-3 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
+                {entry_text(@entry)}
                 <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
+              </div>
+            <% else %>
+              <%= if @raw do %>
+                <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
+                <div class="px-3 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
+                  {entry_text(@entry)}
+                </div>
+              <% else %>
+                <!-- Finalized assistant text renders as Markdown — same helper
+                     + call pattern as the tasks/review pages. Always-safe
+                     HTML: MDEx render with an HTML-escaped fallback. -->
+                <div class="px-3 py-2.5">
+                  <div class="md-content text-[15px] leading-relaxed text-base-content">
+                    {raw(EvoDash.MarkdownRender.render(entry_text(@entry)))}
+                  </div>
+                </div>
               <% end %>
             <% end %>
-          </div>
+          <% end %>
           <%= if @thought_process != [] do %>
             <details class="group border-t border-base-200/60">
               <summary class="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content">
@@ -109,6 +151,42 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 <% end %>
               </div>
             </details>
+          <% end %>
+          <%= if not streaming?(@entry) do %>
+            <!-- Bottom-right hover-revealed action group (finalized entries
+                 only — there is nothing to toggle/copy mid-stream): a
+                 per-message raw/markdown toggle + a copy-whole-text button
+                 (global ClipboardCopy hook, pushes the "copied" event). -->
+            <div class="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-0.5 rounded-md bg-base-100/95 p-0.5 opacity-0 shadow-sm ring-1 ring-base-200 transition-opacity duration-150 group-hover/assistant:opacity-100">
+              <%!-- zh_CN: 原始视图：显示本条消息的纯文本（未渲染的 Markdown 源文） --%>
+              <button
+                type="button"
+                phx-click="toggle_assistant_raw"
+                phx-value-id={entry_id(@entry)}
+                title={if @raw, do: gettext("Show rendered markdown"), else: gettext("Show raw text")}
+                aria-label={
+                  if @raw, do: gettext("Show rendered markdown"), else: gettext("Show raw text")
+                }
+                class="flex size-6 items-center justify-center rounded text-base-content/50 transition-colors hover:bg-base-200 hover:text-base-content"
+              >
+                <.icon
+                  name={if @raw, do: "hero-document-text", else: "hero-code-bracket"}
+                  class="size-3.5"
+                />
+              </button>
+              <%!-- zh_CN: 复制本条消息的完整文本到剪贴板 --%>
+              <button
+                type="button"
+                id={"assistant-copy-" <> entry_id(@entry)}
+                phx-hook="ClipboardCopy"
+                data-content={entry_text(@entry)}
+                title={gettext("Copy message text")}
+                aria-label={gettext("Copy message text")}
+                class="flex size-6 items-center justify-center rounded text-base-content/50 transition-colors hover:bg-base-200 hover:text-base-content"
+              >
+                <.icon name="hero-clipboard" class="size-3.5" />
+              </button>
+            </div>
           <% end %>
         </div>
       </div>
@@ -192,6 +270,17 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
 
   defp streaming?(entry), do: Map.get(entry, :streaming) == true
   defp entry_text(entry), do: Map.get(entry, :text) || ""
+
+  # Total id accessor: real entries always carry a normalized binary id;
+  # malformed entries (direct component tests, stray data) fall back to "" so
+  # the id interpolation never raises. In practice entries always pass through
+  # `Transcript.normalize/1`, so ids are unique binaries.
+  defp entry_id(entry) do
+    case Map.get(entry, :id) do
+      id when is_binary(id) -> id
+      _ -> ""
+    end
+  end
 
   # Task status labels (the Helpers module owns the badge CLASSES; the label
   # text mirrors `TaskCardComponents`' rendering conventions).
