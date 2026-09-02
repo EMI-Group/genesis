@@ -942,6 +942,17 @@ defmodule EvoGit.Config.Schema.Definitions do
         sub_category: nil,
         description:
           "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Default is false — distribution uses a custom EPMD module (EvoGit.EpmdDist) that does not require an external epmd process. Set to true only if you need the standard Erlang EPMD daemon."
+      },
+      # ── Appearance ─────────────────────────────────────────────────────
+      %{
+        key_path: [:appearance, :accent_color],
+        type: :string,
+        default: "blue",
+        validation: [in: ~w(blue teal green yellow orange red pink purple brown slate)],
+        category: :appearance,
+        sub_category: nil,
+        description:
+          "Dashboard UI accent color (GNOME/libadwaita palette): blue, teal, green, yellow, orange, red, pink, purple, brown, or slate."
       }
     ]
   end

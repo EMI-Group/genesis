@@ -126,6 +126,9 @@ write_paths = []                  # Optional; unset/nil = platform defaults, set
 [nix]
 enabled = false                   # Run tool calls inside a cached Nix dev environment (requires flake.nix in config dir)
 flake_output = nil                # Optional, e.g. "devShells.x86_64-linux.default"
+
+[appearance]
+accent_color = "blue"             # Dashboard UI accent color (GNOME/libadwaita palette: blue|teal|green|yellow|orange|red|pink|purple|brown|slate)
 ```
 
 **`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
