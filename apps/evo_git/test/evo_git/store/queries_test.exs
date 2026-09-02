@@ -431,14 +431,24 @@ defmodule EvoGit.Store.QueriesTest do
       assert Queries.build_where(search: "") == {"", []}
     end
 
-    test "search produces a LIKE clause with ESCAPE for id, opts, and project_path" do
+    test "search produces a LIKE clause with ESCAPE for id, opts, project_path, and result" do
       {clause, params} = Queries.build_where(search: "foo")
 
       assert String.contains?(clause, "(id LIKE ?1 ESCAPE '\\'")
       assert String.contains?(clause, "opts LIKE ?2 ESCAPE '\\'")
-      assert String.contains?(clause, "project_path LIKE ?3 ESCAPE '\\')")
+      assert String.contains?(clause, "project_path LIKE ?3 ESCAPE '\\'")
+      assert String.contains?(clause, "result LIKE ?4 ESCAPE '\\')")
       assert String.starts_with?(clause, " WHERE (")
-      assert params == ["%foo%", "%foo%", "%foo%"]
+      assert params == ["%foo%", "%foo%", "%foo%", "%foo%"]
+    end
+
+    test "search OR-group joins all four LIKE surfaces (id, opts, project_path, result)" do
+      {clause, _params} = Queries.build_where(search: "foo")
+
+      assert String.contains?(
+               clause,
+               "id LIKE ?1 ESCAPE '\\' OR opts LIKE ?2 ESCAPE '\\' OR project_path LIKE ?3 ESCAPE '\\' OR result LIKE ?4 ESCAPE '\\')"
+             )
     end
 
     test "search escapes special LIKE characters in the pattern" do
@@ -455,7 +465,8 @@ defmodule EvoGit.Store.QueriesTest do
       assert String.contains?(clause, "id LIKE ?2 ESCAPE")
       assert String.contains?(clause, "opts LIKE ?3 ESCAPE")
       assert String.contains?(clause, "project_path LIKE ?4 ESCAPE")
-      assert params == ["running", "%foo%", "%foo%", "%foo%"]
+      assert String.contains?(clause, "result LIKE ?5 ESCAPE")
+      assert params == ["running", "%foo%", "%foo%", "%foo%", "%foo%"]
     end
 
     # -- combined filters --
@@ -477,7 +488,8 @@ defmodule EvoGit.Store.QueriesTest do
       assert String.contains?(clause, "id LIKE ?3 ESCAPE")
       assert String.contains?(clause, "opts LIKE ?4 ESCAPE")
       assert String.contains?(clause, "project_path LIKE ?5 ESCAPE")
-      assert params == ["completed", "/repo", "%abc%", "%abc%", "%abc%"]
+      assert String.contains?(clause, "result LIKE ?6 ESCAPE")
+      assert params == ["completed", "/repo", "%abc%", "%abc%", "%abc%", "%abc%"]
     end
 
     test "all filters combined including search" do
@@ -495,7 +507,8 @@ defmodule EvoGit.Store.QueriesTest do
       assert String.contains?(clause, "id LIKE ?4 ESCAPE")
       assert String.contains?(clause, "opts LIKE ?5 ESCAPE")
       assert String.contains?(clause, "project_path LIKE ?6 ESCAPE")
-      assert params == ["running", "/repo", "rejected", "%test%", "%test%", "%test%"]
+      assert String.contains?(clause, "result LIKE ?7 ESCAPE")
+      assert params == ["running", "/repo", "rejected", "%test%", "%test%", "%test%", "%test%"]
     end
   end
 
