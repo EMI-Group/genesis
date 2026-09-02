@@ -166,6 +166,65 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert html =~ "Build a REST API"
     end
+
+    test "search_tasks handler filters tasks by agent response message", %{conn: conn} do
+      # Each fixture's response fragment appears ONLY in that fixture's result
+      # text (never in any opts/prompt/id), so a hit proves the result-column
+      # match. The prompts are what render in the task cards.
+      insert_fixture!(
+        opts: [prompt: "deploy the delivery scheduling feature"],
+        result:
+          {:ok,
+           %{
+             result: "Widget Deployment finished cleanly",
+             commit_sha: "abc123",
+             branch_name: "agent-1"
+           }}
+      )
+
+      insert_fixture!(
+        opts: [prompt: "write the inventory audit report"],
+        result:
+          {:ok,
+           %{
+             result: "Refactored the legacy parser module",
+             commit_sha: "def456",
+             branch_name: "agent-2"
+           }}
+      )
+
+      insert_fixture!(
+        opts: [prompt: "tune the payment gateway timeouts"],
+        result:
+          {:ok,
+           %{
+             result: "Resolved the checkout race condition",
+             commit_sha: "beef01",
+             branch_name: "agent-3"
+           }}
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Exact-fragment leg: the query occurs in exactly one fixture's response
+      # text, so only that task row survives the store filter.
+      _html = render_hook(view, "search_tasks", %{"search_query" => "Widget Deployment"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "deploy the delivery scheduling feature"
+      refute html =~ "write the inventory audit report"
+      refute html =~ "tune the payment gateway timeouts"
+
+      # Case-insensitive leg: re-search the same response fragment with
+      # different casing and the matching fixture still renders.
+      _html = render_hook(view, "search_tasks", %{"search_query" => "widget deployment"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "deploy the delivery scheduling feature"
+      refute html =~ "write the inventory audit report"
+      refute html =~ "tune the payment gateway timeouts"
+    end
   end
 
   describe "filter selects" do
