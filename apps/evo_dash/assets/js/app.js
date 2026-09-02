@@ -1128,6 +1128,11 @@ const liveSocket = new LiveSocket("/live", Socket, {
 })
 
 // Show progress bar on live navigation and form submits
+// Adwaita: topbar paints a <canvas> (ctx.strokeStyle / ctx.shadowColor in
+// vendor/topbar.js), and canvas color strings cannot resolve CSS variables —
+// so these stay fixed literals. "#29d" is the accent blue, approximating
+// --color-primary (#3584e4); the rgba(0,0,0,.3) shadow is a soft drop glow
+// kept subtle enough to read on both light and dark surfaces.
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
