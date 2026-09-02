@@ -2904,6 +2904,123 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Copied to clipboard"
     end
   end
+
+  describe "appearance category / accent color" do
+    # The :appearance category holds a single [:appearance, :accent_color]
+    # schema (type :string, default "blue", validation in: the ten
+    # GNOME/libadwaita palette names — schema definitions.ex). SettingCard
+    # renders it as a swatch row + a hidden `appearance.accent_color` input
+    # (setting_card.ex); the generic save_category flow persists the hidden
+    # input. SettingsLive.select_appearance_accent whitelist-validates the
+    # phx-value-accent payload via SettingCard.accent_name?/1 and stores ONLY
+    # the pending :appearance_accent_draft assign (threaded into the card by
+    # category_section → card_value/3) — the swatches are type="button" and
+    # never submit the enclosing save_category form.
+    #
+    # The category is never platform-gated (only :sandbox / :nix are), so the
+    # shell (unfiltered) and async-filtered schema maps agree — selecting the
+    # category immediately after live/3 is deterministic, the same pattern as
+    # the "boolean field rendering (nix.enabled)" tests. No config file exists
+    # in the per-test isolated XDG_CONFIG_HOME, so accent_color is unset and
+    # the schema default "blue" is the active value.
+
+    test "selecting the appearance category renders 10 swatches and the hidden accent input", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "appearance"})
+
+      assert assigns(view).active_category == :appearance
+      # The active category's content section is rendered.
+      assert html =~ ~s(id="category-appearance")
+
+      # The hidden input carries the ACTIVE value (schema default "blue" when
+      # the config does not set the key) so the generic save_category flow
+      # persists it.
+      assert html =~ ~s(type="hidden" name="appearance.accent_color" value="blue")
+
+      doc = Floki.parse_document!(html)
+      swatches = Floki.find(doc, ~s(button[phx-click="select_appearance_accent"]))
+      assert length(swatches) == 10
+
+      # Every palette name is present as a phx-value-accent on its swatch.
+      for {name, _hex} <- EvoDashWeb.SettingsComponents.SettingCard.accent_palette() do
+        assert html =~ ~s(phx-value-accent="#{name}")
+      end
+    end
+
+    test "saving the appearance category persists the selected accent color", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "appearance"})
+
+      # The real form submits the hidden input's name/value pair inside the
+      # save_category params (mirroring the sandbox write_paths save tests —
+      # save_category → params_to_category_config passes the :string value
+      # through raw → deep_put [:appearance, :accent_color] => "teal").
+      html =
+        render_hook(view, "save_category", %{
+          "category" => "appearance",
+          "appearance.accent_color" => "teal"
+        })
+
+      assert html =~ "Configuration saved successfully."
+      assert EvoGit.Config.resolve([:appearance, :accent_color]) == "teal"
+      assert File.read!(EvoGit.Config.config_path()) =~ ~s(accent_color = "teal")
+    end
+
+    test "swatch click marks the accent active and updates the hidden input (draft)", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "appearance"})
+
+      html = render_hook(view, "select_appearance_accent", %{"accent" => "teal"})
+
+      # The pending draft re-renders the card: the hidden input now carries
+      # teal (the draft threads via card_value/3 — no form submit involved)
+      # and the previously active blue value is gone.
+      assert html =~ ~s(type="hidden" name="appearance.accent_color" value="teal")
+      refute html =~ ~s(type="hidden" name="appearance.accent_color" value="blue")
+
+      # Exactly one swatch is active (ring-base-content/70 + scale-110 marker;
+      # every swatch carries `focus-visible:ring-2` in its base classes, so the
+      # active marker classes are the discriminator) and it is teal; blue no
+      # longer carries the active marker.
+      doc = Floki.parse_document!(html)
+
+      active_swatches =
+        doc
+        |> Floki.find(~s(button[phx-click="select_appearance_accent"]))
+        |> Enum.filter(fn btn ->
+          btn |> Floki.attribute("class") |> Enum.join(" ") =~ "ring-base-content/70"
+        end)
+
+      assert length(active_swatches) == 1
+
+      [teal_swatch] = Floki.find(doc, ~s(button[phx-value-accent="teal"]))
+      teal_classes = teal_swatch |> Floki.attribute("class") |> Enum.join(" ")
+      assert teal_classes =~ "ring-base-content/70"
+      assert teal_classes =~ "scale-110"
+
+      [blue_swatch] = Floki.find(doc, ~s(button[phx-value-accent="blue"]))
+      blue_classes = blue_swatch |> Floki.attribute("class") |> Enum.join(" ")
+      refute blue_classes =~ "ring-base-content/70"
+    end
+
+    test "unknown accent values are rejected (whitelist via SettingCard.accent_name?/1)", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "select_category", %{"category" => "appearance"})
+
+      html = render_hook(view, "select_appearance_accent", %{"accent" => "chartreuse"})
+
+      # Unknown value → error flash and no draft set — the card keeps the
+      # current (blue) value.
+      assert html =~ "Unknown accent color."
+      assert html =~ ~s(type="hidden" name="appearance.accent_color" value="blue")
+    end
+  end
 end
 
 # A minimal GenServer standing in for a real remote connection manager in
