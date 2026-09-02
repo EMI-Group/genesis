@@ -230,7 +230,7 @@ defmodule EvoDashWeb.TasksLive do
                 <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
                 <p class="text-lg font-medium">{gettext("No tasks found")}</p>
                 <p class="text-sm mt-1">
-                  <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or not @show_reflect_tasks do %>
+                  <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
                     {gettext("Try adjusting your filters or search query.")}
                   <% else %>
                     {gettext("Tasks will appear here once you start them from the dashboard.")}
