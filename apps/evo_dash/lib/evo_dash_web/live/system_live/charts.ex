@@ -16,11 +16,24 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
   Samples arrive PRE-AGGREGATED from the `:evo_git` system sampler on the
   `"system"` PubSub topic (`{:system_sample, node, seq, sample}`, one every
-  3 seconds). Each sample map carries the keys the series builders read:
-  `llm_used, llm_waiting, llm_capacity, tool_used, tool_waiting, tool_capacity,
-  agents_total, agents_running, agents_blocked, agents_waiting, agents_pending,
-  scheduler_alive`. The sampler computes the values with the same semantics
-  the old dashboard-side aggregation used ("in use" = live slot-holder counts,
+  3 seconds). Each sample map carries:
+
+  - a per-model `llm_slots` map (`%{model_id => %{used:, waiting:, capacity:}}`
+    — model ids are config-profile id STRINGS, inner keys are atoms) — the ONLY
+    source for the LLM Slots chart, which plots ONE selected model. The chart
+    reads it DEFENSIVELY (a `Map.get` chain: a sample missing `:llm_slots`, a
+    missing model key, or a missing inner key all contribute 0 for that
+    sample) so sparklines stay continuous while the sampler key is rolled out.
+    Model SELECTION is dashboard-side (see `llm_model_ids/1` + the
+    `selected_llm_model` / `model_ids` attrs).
+  - the 12 aggregate keys (`llm_used, llm_waiting, llm_capacity, tool_used,
+    tool_waiting, tool_capacity, agents_total, agents_running, agents_blocked,
+    agents_waiting, agents_pending, scheduler_alive`) — still consumed by the
+    tool/agents series builders (`values/2` is Map.fetch!-based, those keys
+    always exist); the legacy `llm_*` aggregates NO LONGER drive the LLM chart.
+
+  The sampler computes the tool/agents values with the same semantics the old
+  dashboard-side aggregation used ("in use" = live slot-holder counts,
   "waiting" = agents blocked on a slot), and `scheduler_alive: false` samples
   (zero capacities) drive the dead-scheduler rendering — no LiveView-side
   special-casing is needed.
@@ -62,18 +75,60 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
   # ── Series derivation (pure) ─────────────────────────────────────
 
-  @doc "LLM-slot chart series: capacity (static reference line), in use (running proxy), waiting."
-  def llm_series(samples) when is_list(samples) do
+  @doc """
+  LLM-slot chart series for ONE model profile: capacity (static reference line
+  rendered at the latest per-sample capacity), in use (live slot holders),
+  waiting (agents queued for a slot). Each series' values derive from each
+  sample's `llm_slots[model_id]` map, read DEFENSIVELY (missing `:llm_slots`
+  key on the sample, missing model key, or missing inner key ⇒ 0 for that
+  sample — see `llm_values/3`). `model_id` may be nil (no model ids in the
+  buffer yet / legacy sampler without `llm_slots`): the defensive chain then
+  yields an all-zero series, so the chart renders without raising.
+  """
+  def llm_series(samples, model_id) when is_list(samples) do
     [
       %{
         name: gettext("Capacity"),
         color: @capacity_color,
-        values: values(samples, :llm_capacity),
+        values: llm_values(samples, model_id, :capacity),
         static: true
       },
-      %{name: gettext("In use"), color: @in_use_color, values: values(samples, :llm_used)},
-      %{name: gettext("Waiting"), color: @waiting_color, values: values(samples, :llm_waiting)}
+      %{
+        name: gettext("In use"),
+        color: @in_use_color,
+        values: llm_values(samples, model_id, :used)
+      },
+      %{
+        name: gettext("Waiting"),
+        color: @waiting_color,
+        values: llm_values(samples, model_id, :waiting)
+      }
     ]
+  end
+
+  @doc """
+  Sorted unique model-profile ids present across the samples' `llm_slots`
+  maps: the union of `Map.keys(Map.get(sample, :llm_slots, %{}))` per sample.
+  Samples without the `:llm_slots` key (legacy sampler / pre-merge builds)
+  contribute nothing; `[]` for an empty buffer or a dead scheduler.
+  """
+  def llm_model_ids(samples) when is_list(samples) do
+    samples
+    |> Enum.flat_map(fn sample -> Map.keys(Map.get(sample, :llm_slots, %{})) end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  # Per-sample defensive extraction of one metric for one model profile. The
+  # `Map.get` chain never raises: a sample without `:llm_slots`, a slots map
+  # without the model id, or a model map without the inner key all yield 0 for
+  # that sample, keeping sparklines continuous across rollout gaps.
+  defp llm_values(samples, model_id, key) do
+    Enum.map(samples, fn sample ->
+      slots = Map.get(sample, :llm_slots, %{})
+      model_slots = Map.get(slots, model_id, %{})
+      Map.get(model_slots, key, 0)
+    end)
   end
 
   @doc "Tool-slot chart series: capacity (static reference line), in use (running proxy), waiting."
@@ -201,10 +256,27 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
   attr(:samples, :list, default: [])
   attr(:paused, :boolean, default: false)
+  attr(:selected_llm_model, :string, default: nil)
 
-  @doc "The full charts section: header row + grid of the three chart cards."
+  @doc """
+  The full charts section: header row + grid of the three chart cards.
+
+  The LLM Slots card plots ONE model profile. The resolved model follows the
+  SAME deterministic rule as the LiveView-side `resolve_selected_llm_model/2`:
+  keep `selected_llm_model` when it is present in the samples' model ids,
+  otherwise fall back to the first id (`nil` when no ids are known yet — the
+  series renders all-zero). Model ids + the resolved selection are threaded
+  into the card as `model_ids` / `selected_model` for the in-card selector.
+  """
   def charts_section(assigns) do
-    llm = llm_series(assigns.samples)
+    llm_ids = llm_model_ids(assigns.samples)
+
+    llm_selected =
+      if assigns.selected_llm_model in llm_ids,
+        do: assigns.selected_llm_model,
+        else: List.first(llm_ids)
+
+    llm = llm_series(assigns.samples, llm_selected)
     tools = tool_series(assigns.samples)
     agents = agents_series(assigns.samples)
 
@@ -215,7 +287,9 @@ defmodule EvoDashWeb.SystemLive.Charts do
         agents: agents,
         llm_max: y_max(llm),
         tools_max: y_max(tools),
-        agents_max: y_max(agents)
+        agents_max: y_max(agents),
+        llm_ids: llm_ids,
+        llm_selected: llm_selected
       )
 
     ~H"""
@@ -244,13 +318,16 @@ defmodule EvoDashWeb.SystemLive.Charts do
           title={gettext("LLM Slots")}
           icon="hero-sparkles"
           description={
+            # zh_CN: 该卡片描述所选模型的槽位：容量=该模型当前生效并发数（峰谷暂停窗口为0），使用中=正在占用槽位的智能体，等待中=排队等待槽位的智能体
             gettext(
-              "Capacity: total model-profile concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
+              "Capacity: the selected model's effective concurrency. In use: live slot holders. Waiting: agents queued for a slot."
             )
           }
           samples={@samples}
           series={@llm}
           y_max={@llm_max}
+          model_ids={@llm_ids}
+          selected_model={@llm_selected}
         />
         <.chart_card
           title={gettext("Tool Slots")}
@@ -287,11 +364,21 @@ defmodule EvoDashWeb.SystemLive.Charts do
   attr(:samples, :list, default: [])
   attr(:series, :list, required: true)
   attr(:y_max, :integer, required: true)
+  attr(:model_ids, :list, default: [])
+  attr(:selected_model, :string, default: nil)
 
   @doc """
   One chart card: legend row with last values + a server-rendered SVG
   sparkline. Renders a gettext placeholder while no samples exist yet (static
   mount before the first tick).
+
+  Optional in-card model selector (used by the LLM Slots card): when
+  `model_ids` is non-empty, a compact control renders between the description
+  and the samples body — a static muted single-model label when exactly one
+  model id is known, otherwise a wrap-safe segmented chip set dispatching
+  `select_llm_model` (chips carry the raw user-config model id, never
+  gettext-ed). When `model_ids == []` (no samples yet / legacy sampler without
+  `llm_slots`) no control renders.
   """
   def chart_card(assigns) do
     ~H"""
@@ -301,6 +388,31 @@ defmodule EvoDashWeb.SystemLive.Charts do
         <h3 class="font-semibold text-sm">{@title}</h3>
       </div>
       <p class="text-xs text-base-content/60 mb-3">{@description}</p>
+
+      <%= if @model_ids != [] do %>
+        <%= if length(@model_ids) == 1 do %>
+          <div class="mb-3">
+            <span class="inline-flex items-center gap-1.5 rounded-md border border-base-200 bg-base-100 px-2 py-0.5 text-xs text-base-content/60">
+              <span class="size-1.5 rounded-full bg-primary/60" />
+              {hd(@model_ids)}
+            </span>
+          </div>
+        <% else %>
+          <div class="flex flex-wrap gap-1.5 mb-3" role="group" aria-label={gettext("Model")}>
+            <%= for id <- @model_ids do %>
+              <button
+                type="button"
+                phx-click="select_llm_model"
+                phx-value-model={id}
+                aria-pressed={to_string(id == @selected_model)}
+                class={"inline-flex items-center rounded-md border px-2 py-0.5 text-xs transition-colors #{if id == @selected_model, do: "border-primary/40 bg-primary/10 text-primary font-medium", else: "border-base-200 text-base-content/60 hover:border-base-300 hover:text-base-content/80 hover:bg-base-200/40"}"}
+              >
+                {id}
+              </button>
+            <% end %>
+          </div>
+        <% end %>
+      <% end %>
 
       <%= if @samples == [] do %>
         <div class="h-24 flex items-center justify-center text-xs text-base-content/40">

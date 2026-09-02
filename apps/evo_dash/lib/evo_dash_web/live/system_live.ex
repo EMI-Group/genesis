@@ -522,7 +522,11 @@ defmodule EvoDashWeb.SystemLive do
         </div>
 
         <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib) -->
-        <Charts.charts_section samples={@chart_samples} paused={@scheduler_paused} />
+        <Charts.charts_section
+          samples={@chart_samples}
+          paused={@scheduler_paused}
+          selected_llm_model={@selected_llm_model}
+        />
 
         <!-- System Controls (LAST content section): System Dashboard + Scheduler
              Control + System Control grouped in one responsive 3-card grid -->
@@ -755,6 +759,10 @@ defmodule EvoDashWeb.SystemLive do
             :unknown
           end,
         chart_samples: [],
+        # Selected model profile for the LLM Slots chart — nil until samples
+        # carrying `llm_slots` arrive; resolution re-defaults to the first id
+        # (see resolve_selected_llm_model/2).
+        selected_llm_model: nil,
         chart_node: nil,
         # Monotonic sequence for async sample-seed results (never reset — see
         # spawn_sample_seed/1). `chart_seed_retried` gates the one-shot retry
@@ -822,6 +830,7 @@ defmodule EvoDashWeb.SystemLive do
           socket
           |> assign(:chart_node, socket.assigns.current_node)
           |> assign(:chart_samples, [])
+          |> assign(:selected_llm_model, nil)
           |> assign(:chart_seed_retried, false)
 
         if connected?(socket), do: spawn_sample_seed(socket), else: socket
@@ -898,6 +907,22 @@ defmodule EvoDashWeb.SystemLive do
       )
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("select_llm_model", %{"model" => id}, socket) do
+    # Chip click from the in-card LLM Slots model selector. The choice is
+    # clamped by the SAME deterministic rule as every samples-change path
+    # (resolve_selected_llm_model/2): an id no longer present in the ring
+    # buffer (e.g. a model profile removed from config while stale samples
+    # remain) falls back to the first available id. Ids are user-config
+    # strings — never converted to atoms.
+    {:noreply,
+     assign(
+       socket,
+       :selected_llm_model,
+       resolve_selected_llm_model(id, socket.assigns.chart_samples)
+     )}
   end
 
   @impl true
@@ -1317,7 +1342,13 @@ defmodule EvoDashWeb.SystemLive do
     # ring buffer trims itself to its capacity (Charts.push, 60 samples).
     if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
       samples = Charts.push(socket.assigns.chart_samples, sample)
-      {:noreply, assign(socket, :chart_samples, samples)}
+
+      {:noreply,
+       assign(socket,
+         chart_samples: samples,
+         selected_llm_model:
+           resolve_selected_llm_model(socket.assigns.selected_llm_model, samples)
+       )}
     else
       {:noreply, socket}
     end
@@ -1376,7 +1407,12 @@ defmodule EvoDashWeb.SystemLive do
             filled =
               Enum.reduce(samples, socket.assigns.chart_samples, &Charts.push(&2, &1))
 
-            {:noreply, assign(socket, :chart_samples, filled)}
+            {:noreply,
+             assign(socket,
+               chart_samples: filled,
+               selected_llm_model:
+                 resolve_selected_llm_model(socket.assigns.selected_llm_model, filled)
+             )}
 
           {:error, _reason} ->
             # One-shot retry on failure ONLY — not periodic. The retry timer is
@@ -1499,6 +1535,17 @@ defmodule EvoDashWeb.SystemLive do
     end)
 
     socket
+  end
+
+  # Deterministic model selection for the LLM Slots chart: keep `selected`
+  # when it is still present in the samples' model ids, otherwise fall back to
+  # the first id (`nil` when the buffer has no ids yet — the series then
+  # renders all-zero). Shared by every samples-change path (live push, seed
+  # fill) and the select_llm_model event so the plotted model never flickers
+  # between stale and current profiles.
+  defp resolve_selected_llm_model(selected, samples) do
+    ids = Charts.llm_model_ids(samples)
+    if selected in ids, do: selected, else: List.first(ids)
   end
 
   # Gate for the Software Update card's event handlers — all update events are
