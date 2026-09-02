@@ -40,84 +40,6 @@ defmodule EvoDashWeb.SystemLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <!-- Scheduler Control banner -->
-        <div class="p-4 mb-6 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div class="flex items-center gap-3">
-            <.icon
-              name={if @scheduler_paused, do: "hero-pause-circle", else: "hero-play-circle"}
-              class={"size-5 " <> if(@scheduler_paused, do: "text-warning", else: "text-success")}
-            />
-            <div>
-              <h2 class="text-base font-bold tracking-tight">
-                {if @scheduler_paused,
-                  do: gettext("Scheduler Paused"),
-                  else: gettext("Scheduler Active")} <% # zh_CN: "调度器" %>
-              </h2>
-              <p class="text-sm text-base-content/60 mt-0.5 max-w-lg">
-                <%= if @scheduler_paused do %>
-                  {gettext(
-                    "Running agents continue. No new slots or agents will be granted until resumed."
-                  )} <% # zh_CN: "智能体" %>
-                <% else %>
-                  {gettext("Agents and slots are being granted normally.")} <% # zh_CN: "智能体" %>
-                <% end %>
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            phx-click="toggle_pause"
-            class={[
-              "btn rounded-md font-medium shrink-0",
-              if(@scheduler_paused,
-                do: "bg-success/20 hover:bg-success/30 text-success-content",
-                else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
-              )
-            ]}
-          >
-            <.icon
-              name={if @scheduler_paused, do: "hero-play", else: "hero-pause"}
-              class="size-5 mr-2"
-            />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
-          </button>
-        </div>
-
-        <!-- System Control section (destructive actions) -->
-        <div class="border border-error/30 bg-error/5 p-4 mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div class="flex items-start gap-3">
-            <.icon name="hero-power" class="size-5 text-error shrink-0" />
-            <div>
-              <h2 class="text-base font-bold tracking-tight text-error mb-0.5">
-                {gettext("System Control")}
-              </h2>
-              <p class="text-sm text-base-content/60 max-w-lg">
-                {gettext(
-                  "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
-                )} <% # zh_CN: "平滑重启", "运行时" %>
-              </p>
-            </div>
-          </div>
-          <div class="flex flex-col sm:flex-row gap-3 shrink-0">
-            <button
-              type="button"
-              phx-click="request_restart"
-              class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
-            >
-              <.icon name="hero-arrow-path" class="size-5" />
-              {gettext("Restart System")}
-            </button>
-            <button
-              type="button"
-              phx-click="request_stop"
-              class="btn rounded-md bg-error/15 hover:bg-error/25 text-error font-medium gap-2"
-            >
-              <.icon name="hero-power" class="size-5" />
-              {gettext("Stop System")}
-            </button>
-          </div>
-        </div>
-
         <%= if @update_card_visible do %>
           <!-- Software Update card (desktop shell only; hidden on remote nodes) -->
           <div
@@ -293,146 +215,8 @@ defmodule EvoDashWeb.SystemLive do
           </div>
         <% end %>
 
-        <%= if @source_card_visible do %>
-          <!-- Genesis Source card (local nodes only — a remote genesis_remote
-               daemon's self-reflective agent reads the REMOTE host's
-               filesystem, so clone/update must never act remotely) -->
-          <div
-            id="genesis-source-card"
-            class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6"
-          >
-            <div class="flex items-start gap-3">
-              <.icon name="hero-code-bracket-square" class="size-5 text-info shrink-0" />
-              <div>
-                <h2 class="text-base font-bold tracking-tight">
-                  {gettext("Genesis Source")} <% # zh_CN: "本地 Genesis 源码" %>
-                </h2>
-                <p class="text-sm text-base-content/60 mt-0.5">
-                  {gettext("Genesis source checkout used by the self-reflective agent.")} <% # zh_CN: "自省智能体使用的 Genesis 源码检出目录" %>
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-3">
-              <%= if @source_status_loading do %>
-                <div class="flex items-center gap-3 py-1">
-                  <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
-                  <span class="text-sm text-base-content/60">{gettext("Loading…")} <% # zh_CN: "正在加载" %></span>
-                </div>
-              <% else %>
-                <%= case @source_status do %>
-                  <% {:unavailable, _reason} -> %>
-                    <div class="flex items-center gap-2 py-1">
-                      <.icon name="hero-information-circle" class="size-4 text-info shrink-0" />
-                      <span class="text-sm text-info">
-                        {gettext("Genesis source is not available in this version")} <% # zh_CN: "当前版本不提供 Genesis 源码功能" %>
-                      </span>
-                    </div>
-                  <% nil -> %>
-                    <!-- No status yet — the async load assigns it shortly. -->
-                  <% status when is_map(status) -> %>
-                    <div class="space-y-1.5 text-sm">
-                      <div class="flex items-baseline gap-2 min-w-0">
-                        <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Directory")} <% # zh_CN: "目录" %></span>
-                        <span class="font-mono text-xs text-base-content/80 break-all min-w-0">
-                          {status.dir || ""}
-                        </span>
-                      </div>
-                      <%= if status.exists do %>
-                        <%= if status.commit do %>
-                          <div class="flex items-baseline gap-2 min-w-0">
-                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Commit")} <% # zh_CN: "提交" %></span>
-                            <span class="font-mono text-xs text-base-content/80">{status.commit}</span>
-                          </div>
-                        <% end %>
-                        <%= if status.branch do %>
-                          <div class="flex items-baseline gap-2 min-w-0">
-                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Branch")} <% # zh_CN: "分支" %></span>
-                            <span class="font-mono text-xs text-base-content/80">{status.branch}</span>
-                          </div>
-                        <% end %>
-                        <%= if status.version do %>
-                          <div class="flex items-baseline gap-2 min-w-0">
-                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Version")} <% # zh_CN: "版本" %></span>
-                            <span class="font-mono text-xs text-base-content/80">{status.version}</span>
-                          </div>
-                        <% end %>
-                        <%= if status.remote_url do %>
-                          <div class="flex items-baseline gap-2 min-w-0">
-                            <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Remote URL")} <% # zh_CN: "远程地址" %></span>
-                            <span class="font-mono text-xs text-base-content/80 break-all min-w-0">{status.remote_url}</span>
-                          </div>
-                        <% end %>
-                      <% else %>
-                        <p class="text-sm text-base-content/60 pt-1">
-                          {gettext("The Genesis source has not been cloned yet.")} <% # zh_CN: "尚未克隆 Genesis 源码" %>
-                        </p>
-                      <% end %>
-                    </div>
-
-                    <div class="mt-3">
-                      <%= if status.exists do %>
-                        <button
-                          id="update-source"
-                          type="button"
-                          phx-click="update_source"
-                          class="btn btn-primary btn-sm rounded-md gap-2"
-                          disabled={@source_busy != nil}
-                        >
-                          <.icon
-                            name="hero-arrow-path"
-                            class={"size-4 #{if @source_busy == :update, do: "animate-spin"}"}
-                          />
-                          {if @source_busy == :update,
-                            do: gettext("Updating…"),
-                            else: gettext("Update")} <% # zh_CN: "更新" %>
-                        </button>
-                      <% else %>
-                        <button
-                          id="clone-source"
-                          type="button"
-                          phx-click="clone_source"
-                          class="btn btn-primary btn-sm rounded-md gap-2"
-                          disabled={@source_busy != nil}
-                        >
-                          <.icon
-                            name="hero-arrow-path"
-                            class={"size-4 #{if @source_busy == :clone, do: "animate-spin"}"}
-                          />
-                          {if @source_busy == :clone,
-                            do: gettext("Cloning…"),
-                            else: gettext("Clone")} <% # zh_CN: "克隆" %>
-                        </button>
-                      <% end %>
-                    </div>
-
-                    <div class="mt-3 pt-3 border-t border-base-200/60">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-sm text-base-content/70">
-                          {gettext("The self-reflective agent reads: %{path}",
-                            path: source_reference_path(status)
-                          )} <% # zh_CN: "自省智能体读取的源码路径" %>
-                        </span>
-                        <%= if status.is_reference do %>
-                          <span class="badge badge-info badge-sm gap-1">
-                            {gettext("in use")} <% # zh_CN: "使用中" %>
-                          </span>
-                        <% end %>
-                      </div>
-                      <%= if source_override_in_effect?(status) do %>
-                        <p class="text-xs text-base-content/40 mt-1">
-                          {gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量或应用配置）" %>
-                        </p>
-                      <% end %>
-                    </div>
-                <% end %>
-              <% end %>
-            </div>
-          </div>
-        <% end %>
-
         <!-- System Self-Check -->
-        <div>
+        <div id="system-self-check">
           <div class="p-4 border-b border-slate-200 dark:border-slate-800">
             <div class="flex items-center justify-between mb-4">
               <div class="flex items-center gap-3">
@@ -719,6 +503,18 @@ defmodule EvoDashWeb.SystemLive do
                 </div>
               <% end %>
             </div>
+
+            <%= if @source_card_visible do %>
+              <!-- Genesis Source (merged into the self-check section; local nodes
+                   only — a remote genesis_remote daemon's self-reflective agent
+                   reads the REMOTE host's filesystem, so clone/update must never
+                   act remotely) -->
+              <EvoDashWeb.SystemLive.SourceCard.source_section
+                source_status={@source_status}
+                source_status_loading={@source_status_loading}
+                source_busy={@source_busy}
+              />
+            <% end %>
           </div>
         </div>
 
@@ -742,6 +538,11 @@ defmodule EvoDashWeb.SystemLive do
             </div>
           </.link>
         </div>
+
+        <!-- Scheduler + System controls (bottom of the page, side by side) -->
+        <EvoDashWeb.SystemLive.RuntimeControls.controls_section
+          scheduler_paused={@scheduler_paused}
+        />
 
         <!-- Restart confirmation modal -->
         <%= if @show_restart_confirm do %>
@@ -1810,19 +1611,6 @@ defmodule EvoDashWeb.SystemLive do
 
   defp source_mutation_failure_msg(:clone), do: gettext("Failed to clone the Genesis source.")
   defp source_mutation_failure_msg(:update), do: gettext("Failed to update the Genesis source.")
-
-  # The path the self-reflective agent actually reads: the explicit reference
-  # (GENESIS_SOURCE_ROOT / app-env override) when set, else the managed
-  # checkout dir. Rendered on the Genesis Source card's reference line.
-  defp source_reference_path(status) do
-    status.reference || status.dir || ""
-  end
-
-  # An explicit reference override (reference != the managed dir) is in effect
-  # — the card must not imply that clone/update act on what the agent reads.
-  defp source_override_in_effect?(status) do
-    status.reference != nil and status.reference != status.dir
-  end
 
   # Remote nodes: NodeContext RPC degrades to []/%{}/false on failure, so no
   # gate is needed. Local node: the scheduler may not be started (fresh boot,
