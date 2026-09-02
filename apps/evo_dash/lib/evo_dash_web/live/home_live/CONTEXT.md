@@ -10,7 +10,7 @@ The support modules under `home_live/` keep `home_live.ex` (~1000 lines, at the 
 
 ### `EvoDashWeb.HomeLive` (`home_live.ex`)
 
-LiveView with `use EvoDashWeb, :live_view` (SetLocale/NodeAware/DesktopQuit/UpdateStatus/Guide on-mount hooks automatic) + `use Gettext, backend: EvoDashWeb.Gettext`. Renders through `EvoDashWeb.Layouts.app` with `current_page={:help}` (the active-nav atom that highlights the sidebar Help nav item — HomeLive renders at `/help`).
+LiveView with `use EvoDashWeb, :live_view` (SetLocale/NodeAware/Appearance/DesktopQuit/UpdateStatus/Guide on-mount hooks automatic) + `use Gettext, backend: EvoDashWeb.Gettext`. Renders through `EvoDashWeb.Layouts.app` with `current_page={:help}` (the active-nav atom that highlights the sidebar Help nav item — HomeLive renders at `/help`).
 
 **State assigns** (seeded by `base_assigns/0` in `mount/3`, then overlaid by `attach_chat/1` on connected mounts):
 

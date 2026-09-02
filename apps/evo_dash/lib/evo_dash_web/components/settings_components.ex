@@ -56,6 +56,10 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:model_profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
   attr(:profile_form_draft, :any, default: nil)
+  # Pending accent-color selection for the :appearance category (set by the
+  # `select_appearance_accent` event in SettingsLive; nil = no pending draft).
+  # Threaded into the accent card's value only — see card_value/3.
+  attr(:appearance_accent_draft, :string, default: nil)
   attr(:test_profile_id, :any, default: nil)
   attr(:credentials, :map, default: %{})
 
@@ -88,7 +92,9 @@ defmodule EvoDashWeb.SettingsComponents do
             <div class="mb-8 rounded-lg border border-base-200 bg-base-100 p-5">
               <h3 class="text-lg font-bold text-base-content mb-1">{gettext("Quick Setup")}</h3>
               <p class="text-sm text-base-content/80 mb-5">
-                <%!-- zh_CN: provider → "服务商" --%>{gettext("Select a provider to quickly configure your model and API key.")}
+                <%!-- zh_CN: provider → "服务商" --%>{gettext(
+                  "Select a provider to quickly configure your model and API key."
+                )}
               </p>
 
               <%!-- Provider buttons --%>
@@ -118,16 +124,19 @@ defmodule EvoDashWeb.SettingsComponents do
                 <% credential_key =
                   if @selected_variant_id && is_list(variants) do
                     variant = Enum.find(variants, &(&1.id == @selected_variant_id))
-                    if variant && Map.get(variant, :credential_key), do: variant.credential_key, else: Map.get(provider, :credential_key)
+
+                    if variant && Map.get(variant, :credential_key),
+                      do: variant.credential_key,
+                      else: Map.get(provider, :credential_key)
                   else
                     Map.get(provider, :credential_key)
-                  end
-                %>
+                  end %>
                 <% has_variants = is_list(variants) and length(variants) > 0 %>
                 <% show_models = not has_variants or @selected_variant_id != nil %>
                 <% models = get_in(@file_config, [:llm, :models]) || [] %>
                 <% first_profile = Enum.at(models, 0) %>
-                <% current_model = if first_profile, do: (first_profile[:model] || first_profile["model"]), else: nil %>
+                <% current_model =
+                  if first_profile, do: first_profile[:model] || first_profile["model"], else: nil %>
                 <% show_custom_input = provider[:custom_model] == true %>
                 <% show_model_buttons = show_models and not show_custom_input %>
                 <%!-- Variant selection (only if provider has variants) --%>
@@ -195,14 +204,20 @@ defmodule EvoDashWeb.SettingsComponents do
                          The base_url input renders only for providers that require
                          it (catalog function, not the dead struct field). --%>
                     <%= if @selected_model_string != nil do %>
-                      <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
+                      <% requires_base_url =
+                        EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
                       <% shortcut_prefill_base_url =
                         cond do
                           is_map(current_model) ->
                             to_string(current_model[:base_url] || current_model["base_url"] || "")
+
                           is_tuple(current_model) and tuple_size(current_model) == 2 ->
                             opts = elem(current_model, 1)
-                            if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+
+                            if is_list(opts),
+                              do: to_string(Keyword.get(opts, :base_url, "")),
+                              else: ""
+
                           true ->
                             ""
                         end %>
@@ -252,20 +267,25 @@ defmodule EvoDashWeb.SettingsComponents do
 
                 <%!-- Custom model input (for providers with custom_model: true, e.g. OpenRouter / OpenAI-Compatible) --%>
                 <%= if show_custom_input do %>
-                  <% requires_base_url = EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
+                  <% requires_base_url =
+                    EvoGit.Config.LLMCatalog.requires_base_url?(@selected_provider_id) %>
                   <%!-- Pre-fill helpers: read the current flat model for the selected provider --%>
                   <% custom_prefill_id =
                     cond do
                       is_map(current_model) ->
                         to_string(current_model[:id] || current_model["id"] || "")
+
                       is_tuple(current_model) and tuple_size(current_model) == 2 ->
                         opts = elem(current_model, 1)
                         if is_list(opts), do: to_string(Keyword.get(opts, :id, "")), else: ""
+
                       is_binary(current_model) and String.contains?(current_model, ":") ->
                         [_provider, id] = :binary.split(current_model, ":")
                         id
+
                       is_binary(current_model) ->
                         current_model
+
                       true ->
                         ""
                     end %>
@@ -273,9 +293,11 @@ defmodule EvoDashWeb.SettingsComponents do
                     cond do
                       is_map(current_model) ->
                         to_string(current_model[:base_url] || current_model["base_url"] || "")
+
                       is_tuple(current_model) and tuple_size(current_model) == 2 ->
                         opts = elem(current_model, 1)
                         if is_list(opts), do: to_string(Keyword.get(opts, :base_url, "")), else: ""
+
                       true ->
                         ""
                     end %>
@@ -671,7 +693,10 @@ defmodule EvoDashWeb.SettingsComponents do
                       schema={schema}
                       value={get_in(@file_config, schema.key_path)}
                       error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
-                      disabled={@disabled or (@sandbox_mode == :disabled and schema.key_path != [:sandbox, :mode])}
+                      disabled={
+                        @disabled or
+                          (@sandbox_mode == :disabled and schema.key_path != [:sandbox, :mode])
+                      }
                     />
                   </div>
                 <% end %>
@@ -755,7 +780,9 @@ defmodule EvoDashWeb.SettingsComponents do
                     <div class="bg-info/5 border border-info/20 rounded-lg p-4 mb-6 flex items-start gap-3">
                       <.icon name="hero-information-circle" class="size-5 text-info mt-0.5" />
                       <p class="text-sm font-medium text-info/90 leading-relaxed">
-                        {gettext("Linux security features are only available on Linux with systemd-run.")}
+                        {gettext(
+                          "Linux security features are only available on Linux with systemd-run."
+                        )}
                       </p>
                     </div>
                   <% end %>
@@ -777,7 +804,7 @@ defmodule EvoDashWeb.SettingsComponents do
                   <%= for schema <- @schemas do %>
                     <.setting_card
                       schema={schema}
-                      value={get_in(@file_config, schema.key_path)}
+                      value={card_value(@file_config, schema, @appearance_accent_draft)}
                       error={Enum.find(@errors, &(&1.key_path == schema.key_path))}
                       disabled={@disabled}
                     />
@@ -841,6 +868,26 @@ defmodule EvoDashWeb.SettingsComponents do
 
       true ->
         profile_id_str(hd(profiles))
+    end
+  end
+
+  # Value resolution for the generic "Other categories" setting-card list.
+  #
+  # The :appearance category threads its PENDING accent-color draft (set by the
+  # `select_appearance_accent` event — a phx-click that never submits the
+  # enclosing save_category form) into the accent card's value so the swatch
+  # ring + hidden input re-render without a form submit. Every other schema
+  # reads straight from file_config (as before). The draft is cleared by
+  # SettingsLive whenever file_config is replaced by an authoritative load
+  # (mount, save/reset success, node-data reload), so the card always reflects
+  # the persisted state after any reload. NOTE: SearchResults renders cards with
+  # its own file_config-derived value (no draft) — the appearance card in search
+  # mode always shows the saved color.
+  defp card_value(file_config, schema, draft) do
+    if is_binary(draft) and schema.key_path == [:appearance, :accent_color] do
+      draft
+    else
+      get_in(file_config, schema.key_path)
     end
   end
 end

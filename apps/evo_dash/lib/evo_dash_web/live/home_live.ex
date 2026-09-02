@@ -56,6 +56,7 @@ defmodule EvoDashWeb.HomeLive do
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
+      accent_color={assigns[:accent_color] || "blue"}
     >
       <div class="flex flex-col h-full min-h-0 max-w-3xl mx-auto w-full">
         <!-- Header: slim top bar with title/subtitle left, one ghost New chat button right -->

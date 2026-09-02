@@ -50,6 +50,7 @@ defmodule EvoDashWeb.ProjectsLive do
         desktop_quit_confirm={@desktop_quit_confirm}
         update_status={@update_status}
         guide={@guide}
+        accent_color={assigns[:accent_color] || "blue"}
       >
         <%!--
           Full-bleed Phoenix LiveDashboard: no header chrome — the iframe
@@ -76,6 +77,7 @@ defmodule EvoDashWeb.ProjectsLive do
         pending_tasks={@pending_tasks}
         desktop_quit_confirm={@desktop_quit_confirm}
         update_status={@update_status}
+        accent_color={assigns[:accent_color] || "blue"}
       >
         <%!--
           --project-accent carries the TASK-MODE accent: genesis_new → red,
