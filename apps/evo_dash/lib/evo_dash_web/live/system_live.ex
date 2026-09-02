@@ -219,7 +219,7 @@ defmodule EvoDashWeb.SystemLive do
 
         <!-- System Self-Check -->
         <div id="system-self-check">
-          <div class="p-4 border-b border-slate-200 dark:border-slate-800">
+          <div class="p-4 border-b border-base-300">
             <div class="flex items-center justify-between mb-4">
               <div class="flex items-center gap-3">
                 <.icon name="hero-shield-check" class="size-5 text-success" />

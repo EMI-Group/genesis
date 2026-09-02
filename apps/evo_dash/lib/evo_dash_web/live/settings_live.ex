@@ -37,7 +37,7 @@ defmodule EvoDashWeb.SettingsLive do
       <% else %>
         <%= if @active_category not in [:remote_connections, :agents] do %>
           <%!-- Config file path display --%>
-          <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
+          <div class="mb-4 p-3 flex items-center gap-3 border-b border-base-300">
             <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
             <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext(
               "Configuration file"
@@ -135,7 +135,7 @@ defmodule EvoDashWeb.SettingsLive do
            `mix assets.deploy` (prod) so the new utilities are emitted. --%>
         <div class="flex flex-col gap-8">
           <%!-- Two-column sidebar + content layout --%>
-          <div class="flex flex-col md:flex-row bg-white dark:bg-slate-900">
+          <div class="flex flex-col md:flex-row bg-base-100">
             <%!-- Sidebar --%>
             <EvoDashWeb.SettingsComponents.settings_sidebar
               categories={@schemas_by_category}
@@ -2180,44 +2180,31 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
+  # Phase → color mapping is owned by `EvoDashWeb.Helpers.connection_status_dot_class/1`;
+  # this wrapper resolves the target's phase from the statuses map and keeps the
+  # pulse animation for connecting phases (shape classes live at the call site).
   defp remote_target_dot_color(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    phase = Map.get(status_map, :phase, :disconnected)
+    phase = remote_target_phase(target_id, statuses)
+    pulse = if phase in [:connecting, :disconnecting], do: " animate-pulse", else: ""
+    connection_status_dot_class(phase) <> pulse
+  end
 
-    case phase do
-      :connected -> "bg-blue-500"
-      :connecting -> "bg-amber-500 animate-pulse"
-      :disconnecting -> "bg-amber-500 animate-pulse"
-      :error -> "bg-rose-500"
-      :disconnected -> "bg-slate-400"
-      _ -> "bg-slate-400"
-    end
+  defp remote_target_phase(target_id, statuses) do
+    statuses |> Map.get(target_id, %{}) |> Map.get(:phase, :disconnected)
   end
 
   defp remote_connected?(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    Map.get(status_map, :phase, :disconnected) == :connected
+    remote_target_phase(target_id, statuses) == :connected
   end
 
+  # Composes the `badge badge-sm` base with the shared phase modifier
+  # (`EvoDashWeb.Helpers.connection_status_badge_class/1` owns the mapping).
   defp remote_status_badge_class(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    phase = Map.get(status_map, :phase, :disconnected)
-
-    case phase do
-      :connected -> "badge badge-success badge-sm"
-      :connecting -> "badge badge-warning badge-sm"
-      :disconnecting -> "badge badge-warning badge-sm"
-      :error -> "badge badge-error badge-sm"
-      :disconnected -> "badge badge-ghost badge-sm"
-      _ -> "badge badge-ghost badge-sm"
-    end
+    "badge badge-sm " <> connection_status_badge_class(remote_target_phase(target_id, statuses))
   end
 
   defp remote_status_label(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    phase = Map.get(status_map, :phase, :disconnected)
-
-    case phase do
+    case remote_target_phase(target_id, statuses) do
       :connected -> gettext("Connected")
       :connecting -> gettext("Connecting...")
       :disconnecting -> gettext("Disconnecting...")

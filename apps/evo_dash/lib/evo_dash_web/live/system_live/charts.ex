@@ -34,21 +34,17 @@ defmodule EvoDashWeb.SystemLive.Charts do
   @width 300
   @height 100
 
-  # Series colors (Tailwind palette hex values)
-  # slate-400
-  @capacity_color "#94a3b8"
-  # emerald-500
-  @in_use_color "#10b981"
-  # sky-500
-  @in_use_tool_color "#0ea5e9"
-  # amber-500
-  @waiting_color "#f59e0b"
-  # indigo-500
-  @total_color "#6366f1"
-  # violet-500
-  @agents_waiting_color "#8b5cf6"
-  # slate-400
-  @agents_pending_color "#94a3b8"
+  # Series colors — CSS-variable references into the `--chart-*` series
+  # (defined per theme in app.css: light + dark Adwaita palettes), so chart
+  # colors adapt with the theme. Applied via inline `style` attributes
+  # (`var()` does not work in SVG presentation attributes like stroke/fill).
+  @capacity_color "var(--chart-capacity)"
+  @in_use_color "var(--chart-llm)"
+  @in_use_tool_color "var(--chart-tool)"
+  @waiting_color "var(--chart-waiting)"
+  @total_color "var(--chart-agents)"
+  @agents_waiting_color "var(--chart-agents-waiting)"
+  @agents_pending_color "var(--chart-pending)"
 
   # ── Ring buffer ──────────────────────────────────────────────────
 
@@ -220,7 +216,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
 
     ~H"""
     <div class="mt-4">
-      <div class="p-4 border-b border-slate-200 dark:border-slate-800">
+      <div class="p-4 border-b border-base-300">
         <div class="flex items-center gap-3">
           <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
           <div class="flex-1 min-w-0">
@@ -323,7 +319,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
               x2="300"
               y1={g * 25}
               y2={g * 25}
-              stroke="currentColor"
+              style="stroke: var(--color-base-content)"
               stroke-opacity="0.08"
               stroke-width="1"
             />
@@ -336,18 +332,18 @@ defmodule EvoDashWeb.SystemLive.Charts do
                 x2="300"
                 y1={y}
                 y2={y}
-                stroke={s.color}
+                style={"stroke: #{s.color}"}
                 stroke-width="1.5"
                 vector-effect="non-scaling-stroke"
                 stroke-dasharray="4 3"
               />
             <% else %>
               <% path = path_for(s.values, @y_max) %>
-              <path d={path.area} fill={s.color} fill-opacity="0.12" />
+              <path d={path.area} style={"fill: #{s.color}"} fill-opacity="0.12" />
               <path
                 d={path.line}
                 fill="none"
-                stroke={s.color}
+                style={"stroke: #{s.color}"}
                 stroke-width="1.5"
                 vector-effect="non-scaling-stroke"
                 stroke-linejoin="round"
