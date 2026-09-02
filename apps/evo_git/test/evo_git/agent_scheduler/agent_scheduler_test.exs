@@ -48,6 +48,25 @@ defmodule EvoGit.AgentSchedulerTest do
     end
   end
 
+  # Runs `fun` against the REAL `handle_call(:get_llm_slot_status)` code path
+  # with a purpose-built scheduler state: `state_fun` receives the live state
+  # and returns a modified copy (tests override only the per-model LLM pool
+  # maps). The transformation for get_llm_slot_status/0 is inline in the
+  # GenServer handler — there is no pure State helper to call — so injecting
+  # the state and reading it back through `AgentScheduler.get_llm_slot_status/0`
+  # is the only way to run hand-built holder/queue/capacity values through the
+  # production code. The original live state is restored afterwards.
+  defp with_injected_llm_pools(state_fun, fun) do
+    original = :sys.get_state(EvoGit.AgentScheduler)
+    :sys.replace_state(EvoGit.AgentScheduler, fn _ -> state_fun.(original) end)
+
+    try do
+      fun.()
+    after
+      :sys.replace_state(EvoGit.AgentScheduler, fn _ -> original end)
+    end
+  end
+
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
 
@@ -345,6 +364,148 @@ defmodule EvoGit.AgentSchedulerTest do
         AgentScheduler.release_llm_slot(agent_id)
         Task.shutdown(task, :brutal_kill)
       end
+    end
+  end
+
+  # --- get_llm_slot_status/0: per-model LLM slot read API ---
+
+  describe "get_llm_slot_status/0 — per-model LLM slot read API" do
+    # The read is a pure in-state computation, but it lives in
+    # `handle_call(:get_llm_slot_status)` on the live scheduler GenServer, so
+    # precise holder/queue/capacity values are injected into the state via
+    # `with_injected_llm_pools` and read back through the real code path.
+    # Suspend PeakHourEngine so no concurrent capacity flip (broadcast or
+    # transition timer) can race the read and clobber the injected state.
+    setup do
+      engine = Process.whereis(EvoGit.PeakHourEngine)
+      if engine, do: :sys.suspend(engine)
+      on_exit(fn -> if engine, do: :sys.resume(engine) end)
+      :ok
+    end
+
+    test "reports real holder/waiter counts and configured capacity per model" do
+      with_injected_llm_pools(
+        fn state ->
+          %{
+            state
+            | model_concurrency: %{"fast" => 4, "slow" => 1},
+              llm_holders: %{
+                "fast" => MapSet.new([11, 12, 13]),
+                "slow" => MapSet.new([21])
+              },
+              llm_waiting: %{
+                "fast" =>
+                  :queue.from_list([
+                    {31, {self(), make_ref()}, nil},
+                    {32, {self(), make_ref()}, nil}
+                  ])
+              },
+              llm_backoff_until: %{}
+          }
+        end,
+        fn ->
+          # Two models with DIFFERENT real values: exact map shape and keys.
+          assert AgentScheduler.get_llm_slot_status() == %{
+                   "fast" => %{used: 3, waiting: 2, capacity: 4},
+                   "slow" => %{used: 1, waiting: 0, capacity: 1}
+                 }
+        end
+      )
+    end
+
+    test "peak-pause model with explicit capacity 0 reports capacity 0 (never the floor)" do
+      with_injected_llm_pools(
+        fn state ->
+          # An active floor of 5 must NOT resurrect the explicit peak-pause 0.
+          %{
+            state
+            | default_llm_max_concurrency: 5,
+              model_concurrency: %{"paused" => 0},
+              llm_holders: %{},
+              llm_waiting: %{},
+              llm_backoff_until: %{}
+          }
+        end,
+        fn ->
+          assert AgentScheduler.get_llm_slot_status() == %{
+                   "paused" => %{used: 0, waiting: 0, capacity: 0}
+                 }
+        end
+      )
+    end
+
+    test "pool key absent from model_concurrency falls back to the default floor capacity" do
+      with_injected_llm_pools(
+        fn state ->
+          # "live-only" is a real holder pool whose profile was dropped (or never
+          # configured): concurrency_for/2 falls back to the default floor.
+          %{
+            state
+            | default_llm_max_concurrency: 2,
+              model_concurrency: %{"cfg" => 6},
+              llm_holders: %{"live-only" => MapSet.new([5])},
+              llm_waiting: %{},
+              llm_backoff_until: %{}
+          }
+        end,
+        fn ->
+          assert AgentScheduler.get_llm_slot_status() == %{
+                   "cfg" => %{used: 0, waiting: 0, capacity: 6},
+                   "live-only" => %{used: 1, waiting: 0, capacity: 2}
+                 }
+        end
+      )
+    end
+
+    test "stale pool key no longer configured still appears (0/0/floor capacity)" do
+      with_injected_llm_pools(
+        fn state ->
+          # "stale" is a leftover pool entry from a dropped profile whose waiters
+          # were all granted: its empty waiting-queue key survives, so
+          # all_model_ids/1 must still surface it with floor capacity.
+          %{
+            state
+            | default_llm_max_concurrency: 3,
+              model_concurrency: %{"current" => 2},
+              llm_holders: %{"current" => MapSet.new([1])},
+              llm_waiting: %{"stale" => :queue.new()},
+              llm_backoff_until: %{}
+          }
+        end,
+        fn ->
+          assert AgentScheduler.get_llm_slot_status() == %{
+                   "current" => %{used: 1, waiting: 0, capacity: 2},
+                   "stale" => %{used: 0, waiting: 0, capacity: 3}
+                 }
+        end
+      )
+    end
+
+    test "returns a live map from the running scheduler via the public config path" do
+      original_mc = AgentScheduler.get_config(:model_concurrency)
+      on_exit(fn -> AgentScheduler.update_config(model_concurrency: original_mc) end)
+
+      assert :ok = AgentScheduler.update_config(model_concurrency: %{"status-model" => 2})
+
+      # The plain :model_concurrency update is floored by the live
+      # default_llm_max_concurrency, so assert against the config read-back
+      # rather than a hardcoded number.
+      %{"status-model" => expected_capacity} = AgentScheduler.get_config(:model_concurrency)
+
+      status = AgentScheduler.get_llm_slot_status()
+
+      assert %{"status-model" => %{used: 0, waiting: 0, capacity: ^expected_capacity}} = status
+
+      # Every entry has the exact 3-key shape with non-negative integer values.
+      assert Enum.all?(status, fn {model_id, entry} ->
+               is_binary(model_id) and
+                 match?(
+                   %{used: used, waiting: waiting, capacity: capacity}
+                   when is_integer(used) and used >= 0 and is_integer(waiting) and
+                          waiting >= 0 and is_integer(capacity) and capacity >= 0,
+                   entry
+                 )
+             end)
     end
   end
 end

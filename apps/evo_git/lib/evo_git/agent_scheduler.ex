@@ -212,6 +212,41 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Returns the current per-model LLM slot status from the scheduler's live
+  state: for every model id in `State.all_model_ids/1` (configured model
+  profiles plus any live/stale pools still holding or waiting agents) the map
+  reports
+
+      %{
+        "model_id" => %{used: non_neg_integer, waiting: non_neg_integer, capacity: non_neg_integer}
+      }
+
+  * `used` — agents CURRENTLY HOLDING an LLM slot of that model (the real
+    `MapSet.size` of the holder pool, not a status proxy).
+  * `waiting` — agents queued for a slot of that model (the real `:queue.len`).
+  * `capacity` — the model's effective slot capacity exactly as the scheduler
+    grants it (`State.concurrency_for/2`); a peak-paused model reports `0`,
+    and the value can change across peak/off-peak transitions.
+
+  Cheap pure in-state reads only — no locking, no side effects. The scheduler
+  must be running: callers guard with `Process.whereis(__MODULE__) != nil`
+  (no try/rescue; a call to a dead process exits the caller). This read lives
+  on the scheduler GenServer itself — `AgentScheduler.RemoteAPI` is
+  intentionally ETS-pure and does not expose it.
+  """
+  @spec get_llm_slot_status() ::
+          %{
+            String.t() => %{
+              used: non_neg_integer(),
+              waiting: non_neg_integer(),
+              capacity: non_neg_integer()
+            }
+          }
+  def get_llm_slot_status do
+    GenServer.call(__MODULE__, :get_llm_slot_status)
+  end
+
+  @doc """
   Reads the agent's live state from the agent state table.
   Called by agent processes every turn.
   """
@@ -860,6 +895,21 @@ defmodule EvoGit.AgentScheduler do
       end
 
     {:reply, value, state}
+  end
+
+  @impl true
+  def handle_call(:get_llm_slot_status, _from, %State{} = state) do
+    status =
+      Map.new(State.all_model_ids(state), fn model_id ->
+        {model_id,
+         %{
+           used: MapSet.size(State.holders_for(state, model_id)),
+           waiting: :queue.len(State.waiting_for(state, model_id)),
+           capacity: State.concurrency_for(state, model_id)
+         }}
+      end)
+
+    {:reply, status, state}
   end
 
   @impl true
