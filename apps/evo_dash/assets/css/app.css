@@ -116,12 +116,12 @@
 }
 
 /* === Accent color overrides (GNOME official accent palette) ===
-   INERT until a `data-accent-color` attribute lands on the app-shell wrapper
-   (planned: #app-layout, a descendant of <html data-theme=...> or <body> —
-   plain attribute selectors work wherever the attribute sits). These rules
-   are un-layered author CSS placed AFTER the daisyUI theme @plugin blocks, so
-   they win the cascade for the attributed subtree (un-layered styles beat the
-   plugin's @layer base tokens; equal-specificity ties break by source order).
+   LIVE: EvoDashWeb.LiveHooks.Appearance seeds the @accent_color assign and
+   Layouts.app renders data-accent-color on the #app-layout shell (default
+   "blue"), so these rules are active within that subtree. Un-layered author
+   CSS placed AFTER the daisyUI theme @plugin blocks, so they win the cascade
+   for the attributed subtree (un-layered styles beat the plugin's @layer base
+   tokens; equal-specificity ties break by source order).
    GNOME keeps ONE accent: both --color-primary and --color-accent retarget.
    Content colors: near-black for the light accents (green/yellow/orange/pink)
    where white fails ~4.5:1 on the fill; white elsewhere. --chart-* series
