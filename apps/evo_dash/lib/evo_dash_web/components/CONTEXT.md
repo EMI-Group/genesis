@@ -117,6 +117,10 @@ The app shell sidebar (`EvoDashWeb.Layouts.app/1`, `layouts.ex`) is a `z-50` sta
 - **z-index contract** (do not disturb): sidebar `<aside>` `z-50`; main content `#main-scroll` `z-0` (stacking context, traps page modals below the sidebar); `.dropdown-content { z-index: 50 !important }` (app.css, keeps dropdown panels above sidebar siblings); mobile overlay `z-40`; config warning banner `z-40`; mobile hamburger `z-50`. Lowering the sidebar below `z-50` or raising `#main-scroll` above `z-0` re-breaks the stacking.
 - **`simple_nav` mode** (WelcomeLive) renders branding **only** — the node selector lives INSIDE the `if !@simple_nav` block (bottom bar), so it is hidden in simple_nav mode along with the nav links, active-tasks section, and bottom bar; `overflow-visible` is safe there too.
 
+### `Layouts.app` content background lives on the scroll container (`#main-scroll`)
+
+The page content background is `bg-white dark:bg-slate-900` on **`#main-scroll`** (`layouts.ex` ~line 255) — the ACTUAL scroll container (`flex-1 overflow-auto` inside the fixed `h-dvh` chain `body` / `#app-layout` `bg-slate-50 dark:bg-slate-950` → `#desktop-quit-hook` `flex-1 min-h-0`). It must stay there: a scroll container's own background paints its visible box at every scroll offset, whereas a background on the non-scrolling inner `main#main-content` only paints the first viewport and would reveal the shell's `slate-50`/`slate-950` as a bottom seam when page content exceeds one viewport (System/Settings-style page-scrolled pages). `main#main-content` (`flex-1 min-h-0`, ~line 267) keeps a redundant same-color `bg-white dark:bg-slate-900` (paints the initial viewport) and MUST keep `min-h-0` — main being viewport-capped is what makes Projects' expanded task-form pin-to-bottom and Home's internal chat scroll work. Keep the two background utilities in sync with any theme/background changes.
+
 ### `phx-click` + JS hook on the same element — double firing
 
 `phx-click` + a JS hook (`phx-hook`) on the SAME element sends BOTH the hook's handling AND the `phx-click` event to the server. Don't put both on one element unless a server-side `handle_event/3` clause exists.
