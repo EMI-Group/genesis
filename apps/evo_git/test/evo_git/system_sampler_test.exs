@@ -35,7 +35,9 @@ defmodule EvoGit.SystemSamplerTest do
   # A day-long tick interval: the sampler never self-ticks during a test run.
   @high_interval 86_400_000
 
-  # The exact 12-key sample contract, sorted (atom order == alphabetical).
+  # The exact 13-key sample contract, sorted (atom order == alphabetical).
+  # `llm_slots` (the real per-model LLM slot occupancy map) sorts between the
+  # aggregated `llm_capacity` and `llm_used` keys.
   @sorted_keys [
     :agents_blocked,
     :agents_pending,
@@ -43,6 +45,7 @@ defmodule EvoGit.SystemSamplerTest do
     :agents_total,
     :agents_waiting,
     :llm_capacity,
+    :llm_slots,
     :llm_used,
     :llm_waiting,
     :scheduler_alive,
@@ -139,6 +142,21 @@ defmodule EvoGit.SystemSamplerTest do
     %{llm_capacity: sample.llm_capacity, tool_capacity: sample.tool_capacity}
   end
 
+  # Registers an on_exit that restores the scheduler config to a pre-mutation
+  # baseline cfg. Every test in this file that mutates the global scheduler
+  # config via `AgentScheduler.update_config/1` MUST restore it (the scheduler
+  # state is module-global and outlives this file).
+  defp restore_config_on_exit(cfg) do
+    on_exit(fn ->
+      :ok =
+        AgentScheduler.update_config(
+          model_profiles: cfg.model_profiles,
+          default_llm_max_concurrency: cfg.default_llm_max_concurrency,
+          max_tool_concurrency: cfg.max_tool_concurrency
+        )
+    end)
+  end
+
   # --- Setup ---
 
   # Silence the app-registered sampler for the whole module: set the env FIRST,
@@ -211,13 +229,45 @@ defmodule EvoGit.SystemSamplerTest do
              }
     end
 
-    test "build_sample/3 composes counts, totals and liveness into the exact 12-key map" do
+    test "build_sample/3 composes counts, totals and liveness into the exact 13-key map with an empty llm_slots" do
       counts = %{total: 6, running: 2, blocked: 1, waiting: 1, pending: 1, ready: 1}
       totals = %{llm_capacity: 8, tool_capacity: 9}
 
       sample = EvoGit.SystemSampler.build_sample(counts, totals, true)
 
       assert Map.keys(sample) |> Enum.sort() == @sorted_keys
+      # The backward-compat 3-arity carries no live slot data, so llm_slots
+      # takes the scheduler-dead shape (%{}).
+      assert sample.llm_slots == %{}
+      assert sample.llm_used == 2
+      assert sample.tool_used == 2
+      assert sample.llm_waiting == 1
+      assert sample.tool_waiting == 1
+      assert sample.llm_capacity == 8
+      assert sample.tool_capacity == 9
+      assert sample.agents_total == 6
+      assert sample.agents_running == 2
+      assert sample.agents_blocked == 1
+      assert sample.agents_waiting == 1
+      assert sample.agents_pending == 1
+      assert sample.scheduler_alive == true
+    end
+
+    test "build_sample/4 threads the live per-model llm_slots map through unchanged" do
+      counts = %{total: 6, running: 2, blocked: 1, waiting: 1, pending: 1, ready: 1}
+      totals = %{llm_capacity: 8, tool_capacity: 9}
+
+      llm_slots = %{
+        "model_a" => %{used: 2, waiting: 1, capacity: 3},
+        "model_b" => %{used: 0, waiting: 2, capacity: 1}
+      }
+
+      sample = EvoGit.SystemSampler.build_sample(counts, totals, llm_slots, true)
+
+      assert Map.keys(sample) |> Enum.sort() == @sorted_keys
+      # The 4-arity stores the live per-model map verbatim (this is the shape
+      # the sampler's tick path feeds it).
+      assert sample.llm_slots == llm_slots
       assert sample.llm_used == 2
       assert sample.tool_used == 2
       assert sample.llm_waiting == 1
@@ -250,7 +300,7 @@ defmodule EvoGit.SystemSamplerTest do
   # branch produces (build_sample/3 with empty counts, zero totals, false).
 
   describe "dead-scheduler sample (pure helpers)" do
-    test "build_sample/3 with a dead scheduler produces the zeroed 12-key contract map" do
+    test "build_sample/3 with a dead scheduler produces the zeroed 13-key contract map" do
       sample =
         EvoGit.SystemSampler.build_sample(
           EvoGit.SystemSampler.status_counts([]),
@@ -260,6 +310,8 @@ defmodule EvoGit.SystemSamplerTest do
 
       assert Map.keys(sample) |> Enum.sort() == @sorted_keys
       assert sample.scheduler_alive == false
+      # Dead scheduler → no live slot data → the empty llm_slots shape.
+      assert sample.llm_slots == %{}
       assert sample.agents_total == 0
       assert sample.agents_running == 0
       assert sample.agents_blocked == 0
@@ -283,7 +335,7 @@ defmodule EvoGit.SystemSamplerTest do
   # ── Broadcast contract ───────────────────────────────────────────
 
   describe "broadcast contract (unregistered instance)" do
-    test "one {:system_sample, node, seq, sample} per tick with the exact 12-key payload" do
+    test "one {:system_sample, node, seq, sample} per tick with the exact 13-key payload" do
       # Known status mix: total 6, running 2, blocked 1, waiting 1, pending 1,
       # ready 1 (ready is not exposed as a named sample key).
       seed_sched_meta([
@@ -331,6 +383,49 @@ defmodule EvoGit.SystemSamplerTest do
         assert sample.tool_capacity == expected_totals.tool_capacity
       end
     end
+
+    test "sampled llm_slots reports per-model entries with live effective capacities on every broadcast" do
+      # Deterministic two-profile scheduler config — real per-model pools with
+      # known capacities (overrides any developer user config; restored below).
+      #
+      # Real holders/waiters (used/waiting > 0) are NOT fabricated here:
+      # creating them would require running agents through the public slot
+      # API, which is fragile in this file. This test pins per-model key
+      # presence + effective capacity + used/waiting at their honest zero
+      # baseline; real used/waiting occupancy values are covered by the
+      # AgentScheduler-level (state-built) tests.
+      cfg = RemoteAPI.get_config()
+      restore_config_on_exit(cfg)
+
+      expected_llm_slots = %{
+        "sys-sampler-llm-slots-a" => %{used: 0, waiting: 0, capacity: 2},
+        "sys-sampler-llm-slots-b" => %{used: 0, waiting: 0, capacity: 5}
+      }
+
+      :ok =
+        AgentScheduler.update_config(
+          model_profiles: [
+            %{id: "sys-sampler-llm-slots-a", concurrency: 2},
+            %{id: "sys-sampler-llm-slots-b", concurrency: 5}
+          ],
+          max_tool_concurrency: 4
+        )
+
+      :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, "system")
+      on_exit(fn -> Phoenix.PubSub.unsubscribe(EvoGit.PubSub, "system") end)
+
+      current_node = node()
+      pid = start_unregistered_sampler()
+
+      for expected_seq <- 1..2 do
+        :ok = GenServer.call(pid, :tick)
+
+        assert_receive {:system_sample, ^current_node, ^expected_seq, sample}, 1_000
+
+        assert Map.keys(sample) |> Enum.sort() == @sorted_keys
+        assert sample.llm_slots == expected_llm_slots
+      end
+    end
   end
 
   # ── Ring buffer ──────────────────────────────────────────────────
@@ -357,6 +452,42 @@ defmodule EvoGit.SystemSamplerTest do
       assert List.first(samples).agents_total == 6
       assert List.last(samples).agents_total == 65
     end
+
+    test "ring-buffer samples carry per-model llm_slots entries with live capacities" do
+      # Same deterministic two-profile config as the broadcast per-model test;
+      # every stored sample must carry the live per-model llm_slots map
+      # (see that test's comment about used/waiting key-presence coverage).
+      cfg = RemoteAPI.get_config()
+      restore_config_on_exit(cfg)
+
+      expected_llm_slots = %{
+        "sys-sampler-llm-slots-a" => %{used: 0, waiting: 0, capacity: 2},
+        "sys-sampler-llm-slots-b" => %{used: 0, waiting: 0, capacity: 5}
+      }
+
+      :ok =
+        AgentScheduler.update_config(
+          model_profiles: [
+            %{id: "sys-sampler-llm-slots-a", concurrency: 2},
+            %{id: "sys-sampler-llm-slots-b", concurrency: 5}
+          ],
+          max_tool_concurrency: 4
+        )
+
+      pid = start_unregistered_sampler()
+
+      for _ <- 1..3 do
+        :ok = GenServer.call(pid, :tick)
+      end
+
+      {:ok, samples} = GenServer.call(pid, :get_recent_samples)
+      assert length(samples) == 3
+
+      Enum.each(samples, fn sample ->
+        assert Map.keys(sample) |> Enum.sort() == @sorted_keys
+        assert sample.llm_slots == expected_llm_slots
+      end)
+    end
   end
 
   # ── Config cache (10-tick rule) ──────────────────────────────────
@@ -366,17 +497,8 @@ defmodule EvoGit.SystemSamplerTest do
       # (a) Baseline config BEFORE any mutation.
       cfg = RemoteAPI.get_config()
       baseline_totals = EvoGit.SystemSampler.config_totals(cfg)
-
-      on_exit(fn ->
-        # (f) Restore the original config (this is the ONLY test that mutates
-        # the global scheduler config).
-        :ok =
-          AgentScheduler.update_config(
-            model_profiles: cfg.model_profiles,
-            default_llm_max_concurrency: cfg.default_llm_max_concurrency,
-            max_tool_concurrency: cfg.max_tool_concurrency
-          )
-      end)
+      # (f) Restore the original config.
+      restore_config_on_exit(cfg)
 
       pid = start_unregistered_sampler()
 
@@ -392,18 +514,28 @@ defmodule EvoGit.SystemSamplerTest do
           max_tool_concurrency: 5
         )
 
-      # (d) Ticks 2..10 keep serving the STALE cached baseline.
+      # After (c) the model_concurrency map holds exactly the new profile, so
+      # its effective capacity is 7 (the profile's explicit concurrency).
+      live_llm_slots = %{"sys-sampler-test" => %{used: 0, waiting: 0, capacity: 7}}
+
+      # (d) Ticks 2..10 keep serving the STALE cached baseline — for the
+      # AGGREGATE totals only. llm_slots is fetched LIVE every tick (never
+      # part of the config cache), so the profile added at (c) already shows
+      # up on tick 2 while llm_capacity/tool_capacity are still the stale
+      # cached baseline.
       for tick_n <- 2..10 do
         :ok = GenServer.call(pid, :tick)
 
         if tick_n in [2, 10] do
           assert capacities_of(last_sample(pid)) == baseline_totals
+          assert last_sample(pid).llm_slots == live_llm_slots
         end
       end
 
       # (e) Tick 11 (rem(11, 10) == 1) refreshes from the live config.
       :ok = GenServer.call(pid, :tick)
       assert capacities_of(last_sample(pid)) == %{llm_capacity: 7, tool_capacity: 5}
+      assert last_sample(pid).llm_slots == live_llm_slots
     end
   end
 
