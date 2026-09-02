@@ -91,6 +91,13 @@ defmodule EvoDashWeb.SystemLiveTest do
 
   # A full 12-key sample map as emitted by the evo_git system sampler (the
   # "system" topic contract). Overrides let tests vary individual keys.
+  #
+  # Since the LLM-slots rework the sample also carries `llm_slots` (the
+  # per-model map the LLM Slots chart plots — model ids are config-profile id
+  # STRINGS, inner keys are atoms). The default carries one model profile
+  # ("alpha"); tests override/augment via the `llm_slots/1` helper below. A
+  # legacy 12-key sample WITHOUT the `:llm_slots` key is produced by
+  # `Map.delete(sample_map(), :llm_slots)`.
   defp sample_map(overrides) do
     Map.merge(
       %{
@@ -105,10 +112,33 @@ defmodule EvoDashWeb.SystemLiveTest do
         agents_blocked: 0,
         agents_waiting: 0,
         agents_pending: 0,
-        scheduler_alive: true
+        scheduler_alive: true,
+        llm_slots: llm_slots()
       },
       Map.new(overrides)
     )
+  end
+
+  # Fake per-model LLM slot data (`llm_slots`) for the charts. Default carries
+  # one model profile ("alpha": used 2 / waiting 1 / capacity 4); the override
+  # map is merged on top so tests augment with more profiles (e.g.
+  # `llm_slots(%{"beta" => %{used: 0, waiting: 3, capacity: 0}})` yields
+  # alpha + beta) or replace entries wholesale.
+  defp llm_slots(overrides \\ %{}) do
+    Map.merge(%{"alpha" => %{used: 2, waiting: 1, capacity: 4}}, overrides)
+  end
+
+  # Extracts (label, last-value) pairs from every chart legend on the page. The
+  # legend markup (charts.ex `chart_card/1`) is a `<span
+  # class="text-base-content/70">Label</span>` immediately followed by `<span
+  # class="font-semibold text-base-content/90">Value</span>` — the only place
+  # on the page where those two classes are adjacent, so the regex captures
+  # legend entries only (asserting exact last values, e.g. the LLM Slots
+  # card's per-model "Waiting" count).
+  defp legend_last_values(html) do
+    ~r/<span class="text-base-content\/70">([^<]*)<\/span>\s*<span class="font-semibold text-base-content\/90">([^<]*)<\/span>/
+    |> Regex.scan(html)
+    |> Enum.map(fn [_, label, value] -> {label, value} end)
   end
 
   # Injects a system-checks result directly into the LiveView mailbox and
@@ -886,15 +916,24 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
+      # The foreign sample carries `llm_slots` with TWO model profiles — if it
+      # were (wrongly) applied, the buffer would fill and the selection would
+      # default to "alpha". The node filter must drop it wholesale: buffer
+      # stays empty and the selection stays nil.
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "system",
-        {:system_sample, :remote@elsewhere, 1, sample_map(llm_used: 9)}
+        {:system_sample, :remote@elsewhere, 1,
+         sample_map(
+           llm_used: 9,
+           llm_slots: llm_slots(%{"beta" => %{used: 0, waiting: 3, capacity: 0}})
+         )}
       )
 
       render(view)
 
       assert assigns(view)[:chart_samples] == []
+      assert assigns(view)[:selected_llm_model] == nil
     end
 
     test "the seed RPC fills the chart buffer preserving order", %{conn: conn} do
@@ -1026,6 +1065,214 @@ defmodule EvoDashWeb.SystemLiveTest do
       render_patch(view, "/system?node=" <> id)
 
       assert await_view_assign(view, :chart_samples, [remote_sample], 6_000) == :ok
+    end
+
+    # ── Per-model LLM Slots chart (llm_slots rework) ──────────────────────────
+
+    # The two-model `llm_slots` payload used by most per-model chart tests:
+    # alpha (used 2 / waiting 1 / capacity 4) + beta (used 0 / waiting 3 /
+    # capacity 0). Sorted ids are ["alpha", "beta"], so the deterministic
+    # default selection is "alpha" and beta's distinctive legend last-value is
+    # "Waiting" = 3.
+    defp two_model_sample do
+      sample_map(llm_slots: llm_slots(%{"beta" => %{used: 0, waiting: 3, capacity: 0}}))
+    end
+
+    test "select_llm_model switches the LLM chart to the selected model's series", %{
+      conn: conn
+    } do
+      # Hermetic: the mount's async seed RPC must not fill the buffer.
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, []} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      sample = two_model_sample()
+      send(view.pid, {:system_sample, node(), 1, sample})
+      assert await_chart_sample(view) == :ok
+
+      # Two model ids → the chip selector renders, and the default selection is
+      # the first SORTED id ("alpha"): alpha's legend last-values show
+      # (capacity 4 / waiting 1), beta's do not.
+      html = render(view)
+
+      assert html =~ ~s(role="group" aria-label="Model")
+      assert html =~ ~s(phx-value-model="alpha")
+      assert html =~ ~s(phx-value-model="beta")
+
+      legends = legend_last_values(html)
+      assert {"Capacity", "4"} in legends
+      assert {"Waiting", "1"} in legends
+      refute {"Waiting", "3"} in legends
+      assert assigns(view)[:selected_llm_model] == "alpha"
+
+      # Click the beta chip → the LLM chart plots beta's series only.
+      html =
+        view
+        |> element(~s(button[phx-click="select_llm_model"][phx-value-model="beta"]))
+        |> render_click()
+
+      assert assigns(view)[:selected_llm_model] == "beta"
+      # The clicked chip is marked active.
+      assert html =~ ~s(aria-pressed="true")
+      # Beta's waiting (3) renders; alpha's values (capacity 4 / waiting 1)
+      # are gone from the LLM card legends.
+      legends = legend_last_values(html)
+      assert {"Waiting", "3"} in legends
+      refute {"Capacity", "4"} in legends
+      refute {"Waiting", "1"} in legends
+    end
+
+    test "the seed fill defaults the LLM model selection to the first sorted id", %{
+      conn: conn
+    } do
+      sample = two_model_sample()
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, [sample]} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # Seed fill (async, budgeted like the other seed tests) resolves the
+      # selection deterministically to the first sorted id ("alpha").
+      assert await_view_assign(view, :selected_llm_model, "alpha", 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
+
+      # Two ids → the in-card chip selector renders both models.
+      html = render(view)
+      assert html =~ ~s(role="group" aria-label="Model")
+      assert html =~ ~s(phx-value-model="alpha")
+      assert html =~ ~s(phx-value-model="beta")
+      assert html =~ ~s(aria-pressed="true")
+    end
+
+    test "the seed fill leaves the selection nil and renders no selector without llm_slots", %{
+      conn: conn
+    } do
+      # Legacy sampler sample: the 12 aggregate keys, NO `:llm_slots`.
+      sample = sample_map(tool_used: 1, agents_total: 2) |> Map.delete(:llm_slots)
+
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, [sample]} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
+
+      # No model ids are known → no selection and no selector markup (neither
+      # the chip group nor the single-model muted label).
+      assert assigns(view)[:selected_llm_model] == nil
+
+      html = render(view)
+      refute html =~ ~s(role="group" aria-label="Model")
+      refute html =~ "phx-value-model="
+      refute html =~ "alpha"
+      # The LLM card still renders (its series are all zeros).
+      assert html =~ "<svg"
+      refute html =~ "Collecting data…"
+    end
+
+    test "node switch clears the chart buffer and resets the LLM model selection", %{
+      conn: conn
+    } do
+      remote_sample = two_model_sample()
+
+      # Remote node seed fills the buffer with the two-model sample; the LOCAL
+      # node seed fails (buffer stays empty after the switch — deterministic).
+      Application.put_env(:evo_dash, :system_samples_runner, fn node ->
+        if node == node(), do: {:error, :not_implemented}, else: {:ok, [remote_sample]}
+      end)
+
+      {:ok, view, _html} = mount_remote_system(conn)
+
+      # Remote seed fills the buffer; default selection = first sorted id.
+      assert await_view_assign(view, :selected_llm_model, "alpha", 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [remote_sample], 6_000) == :ok
+
+      # Pick beta.
+      view
+      |> element(~s(button[phx-click="select_llm_model"][phx-value-model="beta"]))
+      |> render_click()
+
+      assert assigns(view)[:selected_llm_model] == "beta"
+
+      # Switch back to the local node: the ring buffer is cleared and the
+      # selection resets to nil (charts never mix samples across nodes).
+      render_patch(view, "/system")
+
+      assert assigns(view)[:chart_samples] == []
+      assert assigns(view)[:selected_llm_model] == nil
+    end
+
+    test "a legacy sample without llm_slots does not crash the charts", %{conn: conn} do
+      # Hermetic seed: nothing fills the buffer except the injected sample.
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, []} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # A legacy 12-key sample (no `:llm_slots`) arriving via live push.
+      legacy = sample_map(tool_used: 1, agents_total: 2) |> Map.delete(:llm_slots)
+      send(view.pid, {:system_sample, node(), 1, legacy})
+      assert await_chart_sample(view) == :ok
+
+      # No model ids → selection stays nil, no selector/label markup renders,
+      # and the chart still renders (LLM series defensively read as zeros).
+      assert assigns(view)[:selected_llm_model] == nil
+      assert assigns(view)[:chart_samples] == [legacy]
+
+      html = render(view)
+      assert html =~ "<svg"
+      refute html =~ "Collecting data…"
+      refute html =~ ~s(role="group" aria-label="Model")
+      refute html =~ "phx-value-model="
+      refute html =~ "alpha"
+
+      # A subsequent two-model sample still works (no wedged state).
+      sample = two_model_sample()
+      send(view.pid, {:system_sample, node(), 2, sample})
+      assert await_view_assign(view, :chart_samples, [legacy, sample]) == :ok
+      assert assigns(view)[:selected_llm_model] == "alpha"
+    end
+
+    test "the selected model is kept while present and clamps to the first id when dropped", %{
+      conn: conn
+    } do
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, []} end)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      both = two_model_sample()
+      send(view.pid, {:system_sample, node(), 1, both})
+      assert await_chart_sample(view) == :ok
+      assert assigns(view)[:selected_llm_model] == "alpha"
+
+      # Select beta.
+      view
+      |> element(~s(button[phx-click="select_llm_model"][phx-value-model="beta"]))
+      |> render_click()
+
+      assert assigns(view)[:selected_llm_model] == "beta"
+
+      # Further samples still carrying beta keep the selection.
+      send(view.pid, {:system_sample, node(), 2, both})
+      assert await_view_assign(view, :chart_samples, [both, both]) == :ok
+      assert assigns(view)[:selected_llm_model] == "beta"
+
+      # 61 alpha-only samples age the beta sample out of the ring buffer (60
+      # sample cap): the model-id union no longer contains beta, so the
+      # selection clamps to the first available id ("alpha").
+      alpha_only = sample_map(llm_slots: %{"alpha" => %{used: 2, waiting: 1, capacity: 4}})
+
+      for i <- 3..63 do
+        send(view.pid, {:system_sample, node(), i, alpha_only})
+      end
+
+      render(view)
+
+      assert length(assigns(view)[:chart_samples]) == 60
+      assert assigns(view)[:selected_llm_model] == "alpha"
+
+      # The clamped chart now plots alpha's values (waiting 1), not beta's (3).
+      legends = legend_last_values(render(view))
+      assert {"Waiting", "1"} in legends
+      refute {"Waiting", "3"} in legends
     end
   end
 
