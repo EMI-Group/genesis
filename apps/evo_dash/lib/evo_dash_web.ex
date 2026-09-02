@@ -51,6 +51,7 @@ defmodule EvoDashWeb do
       use Phoenix.LiveView
       on_mount(EvoDashWeb.LiveHooks.SetLocale)
       on_mount(EvoDashWeb.LiveHooks.NodeAware)
+      on_mount(EvoDashWeb.LiveHooks.Appearance)
       on_mount(EvoDashWeb.LiveHooks.DesktopQuit)
       on_mount(EvoDashWeb.LiveHooks.UpdateStatus)
       on_mount(EvoDashWeb.LiveHooks.Guide)
