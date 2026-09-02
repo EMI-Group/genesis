@@ -106,7 +106,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 - Encode: `Map.new/2` over the keyword list (atom keys → strings), essential-keys fallback + nil-on-failure.
 - Decode: `decode_opts/1` rebuilds a keyword list, atomizing known keys via `decode_opt_key/1` (`@known_opt_keys`). Non-object JSON (legacy pair-array rows, scalars, JSON null) and invalid JSON raise `ArgumentError` — no legacy decode path; run the `mix migrate.store` opts-object rewrite before reading old DBs.
-- `Queries.build_where/1` `:search` filter (`opts LIKE ?N ESCAPE '\'`) matches over the serialized JSON text — `"path"`/`"mode"` key names and string values alike.
+- `Queries.build_where/1` `:search` filter (`opts/result LIKE ?N ESCAPE '\'`) matches over the serialized JSON text — `"path"`/`"mode"` key names and string values alike; the `result` column's raw JSON carries the final agent report under its `"result"` data key, matching with the same semantics.
 
 ## Store.init does not auto-migrate
 
@@ -122,7 +122,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 - **Only two xqlite entry points**: `XqliteNIF.query/3` (SELECT/PRAGMA) and `XqliteNIF.execute/3` (INSERT/UPDATE/DELETE/DDL). No `Xqlite` module-wrapper helpers (no `q/2`, no `exec/3`). Dep: `{:xqlite, "~> 0.10"}` (`apps/evo_git/mix.exs:35`).
 - **All user values parameterized** with `?N` numbered placeholders + params list. The ONLY interpolated identifiers are table names, column lists, PK names — all from closed module-level sets (Codec column lists, hardcoded literals), never user input.
 - **No prepared statements** (one-shot prepare+execute via the NIF per call) and **no transactions** (zero `with_transaction|BEGIN|COMMIT|ROLLBACK` matches in `apps/evo_git/lib`; every execute is its own autocommit). WAL mode set at open (`store.ex:340`: `journal_mode: :wal, synchronous: :normal, cache_size: -2000`); `PRAGMA wal_checkpoint(TRUNCATE)` on terminate (`store.ex:346,364-365`).
-- **SQLite JSON1 functions — migration task only**: `mix migrate.store` step 4 uses `json_valid`/`json_type`/`json_object`/`json_extract` when the bundled SQLite has JSON1 (bundled 3.53.2), with an Elixir/Jason fallback. Everywhere else JSON handling is Elixir/Jason; `build_where/1` `:search` LIKEs over raw JSON text; `id`/`project_path` LIKE matches are the only other search surfaces — no JSON-path querying.
+- **SQLite JSON1 functions — migration task only**: `mix migrate.store` step 4 uses `json_valid`/`json_type`/`json_object`/`json_extract` when the bundled SQLite has JSON1 (bundled 3.53.2), with an Elixir/Jason fallback. Everywhere else JSON handling is Elixir/Jason; `build_where/1` `:search` LIKEs over raw JSON text of the `opts` and `result` columns (the result column's `"result"` data key carries the final agent report text, so response fragments are searchable); `id`/`project_path` LIKE matches are the only other search surfaces — no JSON-path querying.
 - **Heavy vs cheap decode**: `decode_task/1` + `decode_result/1` are HEAVY (full struct reconstruction, JSON decode of result/opts/logs/usage/archive); `decode_atom/1`, `decode_datetime/1`, `decode_logs/1`, `decode_archive/1`, `decode_usage/1` are cheap-to-medium scalar decodes that never raise (nil/[] fallbacks). Raise vectors: positional pattern mismatches in `decode_task/1`/`decode_project/1`, `ArgumentError` from `decode_result/1`/`decode_opts/1` on non-canonical JSON — safe-select + summary callers catch, skip, warn. `decode_reason/1` is the only decode-side try/rescue.
 
 ## Heavy SELECT handlers offloaded to short-lived Tasks
@@ -185,7 +185,7 @@ All 8 write handlers (`put_task`, `delete_task`, `delete_tasks`, `clear_tasks`, 
 ## Known Gaps
 
 - **`type` and `review_status` are unindexed** — the "pending" review filter is driven by the indexed `status = 'completed'` predicate. Indexed columns: `status`, `finished_at`, `lease_expires_at`, `project_path`, `updated_at`, `started_at` (`idx_tasks_started_at` makes the paginated list query's hardcoded `ORDER BY started_at DESC LIMIT ?N OFFSET ?M`, store.ex:468-471, O(page) instead of full-scan + sort).
-- **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search matches only if the JSON text contains the value verbatim.
+- **Search matches raw JSON text**: the `:search` filter LIKEs against the serialized `opts` and `result` JSON, so hits depend on JSON key/string representation (e.g. underscores escaped) — a search matches only if the JSON text contains the value verbatim. The `result` column's JSON carries the final agent report under its `"result"` data key, making response-text fragments searchable.
 
 ## SQLite Optimization Notes
 

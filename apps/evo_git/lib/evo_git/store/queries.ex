@@ -94,7 +94,7 @@ defmodule EvoGit.Store.Queries do
     * `:status` — atom/string status or `"all"` (default `"all"`)
     * `:project_path` — path string or `"all"` (default `"all"`)
     * `:review_status` — `"all"`, `"pending"`, `"merged"`, `"rejected"`, `"continued"`
-    * `:search` — non-empty search string; matches id or opts JSON text
+    * `:search` — non-empty search string; matches id, raw opts/result JSON text, or project_path
 
   Placeholders use incremental `?N` indexing so LIMIT/OFFSET can append their
   own placeholders after the WHERE params.
@@ -139,7 +139,7 @@ defmodule EvoGit.Store.Queries do
           {clauses ++ ["review_status = ?" <> Integer.to_string(idx)], params ++ [rs], idx + 1}
       end
 
-    # search filter — matches id, raw opts JSON text, or project_path
+    # search filter — matches id, raw opts/result JSON text, or project_path
     {clauses, params, _idx} =
       case Keyword.get(filters, :search) do
         nil ->
@@ -153,7 +153,8 @@ defmodule EvoGit.Store.Queries do
           c1 = "id LIKE ?" <> Integer.to_string(idx) <> " ESCAPE '\\'"
           c2 = "opts LIKE ?" <> Integer.to_string(idx + 1) <> " ESCAPE '\\'"
           c3 = "project_path LIKE ?" <> Integer.to_string(idx + 2) <> " ESCAPE '\\'"
-          {clauses ++ ["(#{c1} OR #{c2} OR #{c3})"], params ++ [pat, pat, pat], idx + 3}
+          c4 = "result LIKE ?" <> Integer.to_string(idx + 3) <> " ESCAPE '\\'"
+          {clauses ++ ["(#{c1} OR #{c2} OR #{c3} OR #{c4})"], params ++ [pat, pat, pat, pat], idx + 4}
       end
 
     case clauses do
