@@ -102,6 +102,25 @@ The dashboard attach-file flow (`file_pick` event → `EvoDash.DirectoryPicker.p
 - **Exact block shape** (pinned by the happy-path test): `"\n\n---\n## Attached file: <basename>\n\n<content>\n"` appended to the `file_pick` event's `prompt` snapshot — NOT the stale `@task_prompt` (the `file_pick_bases` snapshot is consumed and cleared). `EvoDash.AttachedFile.read/1` trims plain text; a missing file flashes `"Failed to attach file: File not found: <path>"` and pushes `%{error: true}`.
 - Remote-node and disabled-config `file_pick` cases push `%{unavailable: true}` synchronously from `handle_event` (no picker involvement); `:cancelled`/`:unavailable` result kinds hit the generic `handle_info` clauses.
 
+## Notes for Agents — theming / color-sensitive tests (accent/theme overhaul blast radius)
+
+Nothing in this tree asserts on the theme-toggle markup (root.html.heex localStorage `phx:theme` / `data-theme` attrs), on `dark:` variants, or on generated CSS assets (`priv/static/assets/css/app.css`, digest/manifest, favicon, logo). The layout sidebar's `<details>` theme dropdown appears only in Floki-scoping COMMENTS (`system_live_test.exs:797-799, 1812-1816` — `check_grid/1` exists so disclosure assertions never see it). Color-sensitive tests, by file:
+
+- `theme_color_test.exs` (pure unit) — the ONLY file asserting actual color VALUES on `EvoDashWeb.ThemeColor`: exact OKLCH strings for `accent_color_for_mode/1,2` (genesis red `oklch(0.62 0.19 25)`, existing blue `255`, evolve green `0.72 0.17 152`, custom violet `0.68 0.17 290`, resume-lighter `0.78 0.16 152/290`), `default_color() == "#6366f1"`, and `accent_color/1` project-name-hash → `#rrggbb` hex (regex `^#[0-9a-f]{6}$`; comment at :6-8 says the mapping mirrors `[data-mode]` hover rings in `assets/css/app.css`; :121-124 the `--project-ring-accent` top-bar ring). Breaks if accent values, the default color, or the OKLCH/hex output format change.
+- `helpers_test.exs` — `agent_status_color/bg/border/1`, `task_status_badge/1`, `history_entry_color/1` assert exact DaisyUI token class strings (`text-success`, `bg-base-200/60`, `border-info/30`, `text-accent`, `text-base-content/80`, `bg-violet-500/10 text-violet-500 ...`). Break only on helper-impl changes (class names), NOT on palette value swaps.
+- `home_live_test.exs:478-483, 509-511` — user bubble pins `bg-base-300` present + `bg-primary` absent (comment: DaisyUI theme-token bubble, correct in light AND dark themes).
+- `tasks_live_test.exs:658` — `:cancelling` violet pulsing dot: `assert html =~ "bg-violet-500"`.
+- `system_live/charts_test.exs:243-252` — SVG capacity line `stroke="#94a3b8"` + legend dot `[style*="#94a3b8"]` — the only hardcoded color literal in markup assertions besides theme_color_test.
+- `projects_live_test.exs:1556, 1724` — spinner `class="loading loading-spinner loading-lg text-info"`; `:3767-3768` — `badge-success` "Open" / `badge-outline` "bug" (GitHub issues).
+- `project_components_test.exs:362, 393` — `.badge-warning` "Writable" foreign-repo badge.
+- `welcome_complete_live_test.exs:89` — CTA `btn btn-primary rounded-xl px-8`; `settings_live_test.exs:276-282` — `btn-primary` Save-Model button.
+- `settings_live_test.exs:2480-2693` — DaisyUI wizard steps `li.step.step-primary` counts (remote bootstrap progress).
+- `task_form_components_test.exs:238-259` — Launch button `data-mode` attribute VALUES (the hook CSS `[data-mode]` hover rings key off).
+- `project_components_test.exs:44`, `setting_card_test.exs:36-38` — generic class-string pins containing `text-base-*` tokens (input/row chrome).
+- `system_live_test.exs:715-760` health-light "green/red" tests assert state/text, not CSS classes.
+
+`test_helper.exs` + `support/`: no theme/accent/config-color manipulation (only XDG_DATA_HOME redirect + directory-picker disable).
+
 ## Known Issues
 
 - **Rare intermittent full-suite failures (~1-in-7 runs, e.g. 8/1320 failed, next runs all green)** — mechanism: the `async: false` suites (home_live_test, tasks_live_test, node_aware_test) terminate/restart the GLOBAL `EvoGit.Store`/`EvoGit.TaskRegistry` children of `EvoGit.Supervisor` in setup/on_exit, while `async: true` LiveView suites (tasks/projects/agents/settings...) keep querying the store concurrently; queries landing in the restart window see transient failures. This is a PRE-EXISTING pattern (identical setup code in tasks_live_test) — not specific to HomeLive. To diagnose a flake: loop `mix test apps/evo_dash/test --seed 0` saving output per run and capture the `  N) test ...` failure block; failures scattered across async modules confirm the mechanism. A real fix would remove global-process juggling from suites (out of scope for feature work).
