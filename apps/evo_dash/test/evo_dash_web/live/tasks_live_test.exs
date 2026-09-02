@@ -377,6 +377,42 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
       refute html =~ "MARKER EXCLUDED NORMAL TASK"
     end
+
+    test "empty store renders the first-run nudge, not the adjust-filters hint", %{conn: conn} do
+      # No fixtures at all: genuinely empty DB, no filters, reveal toggle off.
+      # total_count == 0, so the empty-state hint falls through to the friendly
+      # first-run message (not the "adjust your filters" nudge).
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      assert html =~ "No tasks found"
+      assert html =~ "Tasks will appear here once you start them from the dashboard."
+      refute html =~ "Try adjusting your filters or search query."
+    end
+
+    test "a store containing only hidden reflect tasks renders the adjust-filters hint", %{
+      conn: conn
+    } do
+      # A single :reflect (repo-less Home-chat) row: total_count > 0 but the
+      # reveal toggle is off, so the visible list is empty and the hint tells
+      # the user the filter-bar "Show chat tasks" checkbox would un-hide it.
+      insert_fixture!(
+        type: :reflect,
+        opts: [mode: "reflect", prompt: "MARKER ONLY REFLECT CHAT TASK IN STORE"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # The visible list is empty and the hidden :reflect row does not render.
+      assert html =~ "No tasks found"
+      refute html =~ "MARKER ONLY REFLECT CHAT TASK IN STORE"
+
+      # total_count (SQL-truthful) counts the reflect row, so the adjusting
+      # hint wins over the first-run nudge.
+      assert html =~ "Try adjusting your filters or search query."
+      refute html =~ "Tasks will appear here once you start them from the dashboard."
+    end
   end
 
   describe ":task_updated broadcast handling" do
