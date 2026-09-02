@@ -1603,6 +1603,114 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view2, _html} = live(conn, "/help")
       assert assigns(view2)[:selected_model_id] == "profile-a"
     end
+
+    test "suggestion-chip send threads the pinned model exactly like a typed submit", %{
+      conn: conn
+    } do
+      write_model_profile_config()
+
+      {:ok, view, _html} = live(conn, "/help")
+      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      # Chips render only while the transcript is empty (fresh mount) — click
+      # the REAL chip element. Both send routes share the same
+      # handle_event("send_message", %{"message" => text}) clause → send_chat/2
+      # → ModelSelect.task_opts/2, so the pinned id must thread EXACTLY like
+      # the typed-submit test above.
+      html =
+        view
+        |> element(~s(button[phx-value-message="Explain the Genesis architecture"]))
+        |> render_click()
+
+      assert html =~ "Explain the Genesis architecture"
+
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      reflect = Enum.filter(tasks, &(&1.type == :reflect))
+      assert length(reflect) == 1
+      task = hd(reflect)
+
+      # String-key checks: :model_id / :model_id_locked are NOT codec-whitelisted
+      # (round-trip as STRING keys); mode / objective ARE → atom keys.
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "Explain the Genesis architecture"
+      refute has_opt?(task, :path)
+      refute has_opt?(task, "path")
+
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "suggestion-chip send on Auto threads neither model key", %{conn: conn} do
+      # No config written — nothing to pin, the chip send must thread only the
+      # plain reflect opts (mode + objective).
+      {:ok, view, _html} = live(conn, "/help")
+
+      html =
+        view
+        |> element(~s(button[phx-value-message="What can you help me with?"]))
+        |> render_click()
+
+      assert html =~ "What can you help me with?"
+
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      reflect = Enum.filter(tasks, &(&1.type == :reflect))
+      assert length(reflect) == 1
+      task = hd(reflect)
+
+      # Auto (nil/absent) → NEITHER :model_id NOR :model_id_locked is threaded
+      # (string or atom key). Refute the atom forms too so a future codec
+      # whitelist addition can't silently break the contract.
+      refute has_opt?(task, "model_id")
+      refute has_opt?(task, "model_id_locked")
+      refute has_opt?(task, :model_id)
+      refute has_opt?(task, :model_id_locked)
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "What can you help me with?"
+
+      cleanup_task_on_exit(task.id)
+    end
+
+    test "pinned model survives a new chat and threads into the next send", %{conn: conn} do
+      write_model_profile_config()
+
+      {:ok, view, _html} = live(conn, "/help")
+
+      # A fresh first-ever mount (no restored chat) starts on Auto — only
+      # base_assigns/0 seeds selected_model_id (nil).
+      assert assigns(view)[:selected_model_id] == nil
+
+      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+      old_chat_id = assigns(view).chat_id
+      assert old_chat_id != nil
+
+      # New chat while idle: the transcript resets but the PIN survives —
+      # reset_chat/0 deliberately does not clear selected_model_id, and
+      # start_new_chat/1 persists the fresh empty chat carrying the pinned id.
+      html = render_click(view, "new_chat", %{})
+      assert html =~ "Start a conversation"
+      new_chat_id = assigns(view).chat_id
+      assert new_chat_id != old_chat_id
+      assert assigns(view).transcript == []
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      # The next (typed) send threads the surviving pin into the reflect task.
+      render_submit(view, "send_message", %{"message" => "after new chat"})
+
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      reflect = Enum.filter(tasks, &(&1.type == :reflect))
+      assert length(reflect) == 1
+      task = hd(reflect)
+
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
+      assert opt(task, :mode) == "reflect"
+      assert opt(task, :objective) == "after new chat"
+
+      cleanup_task_on_exit(task.id)
+    end
   end
 
   describe "production-mimicking crash repro" do
@@ -1920,6 +2028,35 @@ defmodule EvoDashWeb.HomeLiveTest do
       # the current pointer moves to the new chat).
       assert old_id in EvoDash.ChatHistory.list_chats()
       assert EvoDash.ChatHistory.current_chat_id() == new_id
+    end
+
+    test "pinned model survives a node switch", %{conn: conn} do
+      write_model_profile_config()
+
+      # Mount LOCAL first and pin a profile via the header select.
+      {:ok, view, _html} = live(conn, "/help")
+      render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+      local_chat_id = assigns(view).chat_id
+      assert local_chat_id != nil
+
+      # Switch to the remote node: handle_params starts a NEW persisted chat
+      # (node change), but reset_chat/0 does NOT clear the pinned model — the
+      # selected_model_id assign must survive. Assert the ASSIGN, not the
+      # rendered select: on the unreachable remote node ModelSelect.load
+      # degrades to {[], false} so the header select is absent.
+      html = render_patch(view, "/help?node=test-remote")
+      assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
+      assert html =~ "Start a conversation"
+      assert assigns(view).chat_id != local_chat_id
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      # Back to local: profiles reload (assign_model_select for the local
+      # node) and the pin is still there.
+      html = render_patch(view, "/help")
+      assert assigns(view).current_node == node()
+      assert html =~ "Start a conversation"
+      assert assigns(view)[:selected_model_id] == "profile-a"
     end
   end
 end
