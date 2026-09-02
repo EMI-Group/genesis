@@ -1116,6 +1116,41 @@ defmodule EvoGit.StoreTest do
       assert hd(tasks).opts[:prompt] == "write a database migration"
     end
 
+    test "search by agent response text in result returns only matching tasks" do
+      # Matches: the response message contains "OAuth login" — the lowercase
+      # search term "oauth login" proves case-insensitive matching.
+      insert_filtered!(0,
+        id: "result-oauth",
+        result:
+          {:ok,
+           %{
+             result: "Implemented the OAuth login flow and added tests.",
+             commit_sha: "abc",
+             branch_name: "genesis/agent_1"
+           }}
+      )
+
+      # Does NOT match: a different response message.
+      insert_filtered!(1,
+        id: "result-other",
+        result: {:ok, %{result: "Refactored the database migration layer.", commit_sha: "def"}}
+      )
+
+      # Does NOT match: no result at all.
+      insert_filtered!(2, id: "result-nil", result: nil)
+
+      {tasks, total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: "oauth login"]
+        )
+
+      assert length(tasks) == 1
+      assert total == 1
+      assert hd(tasks).id == "result-oauth"
+    end
+
     test "empty search returns all (no filtering)" do
       insert_filtered!(0, opts: [prompt: "alpha task"])
       insert_filtered!(1, opts: [prompt: "beta task"])

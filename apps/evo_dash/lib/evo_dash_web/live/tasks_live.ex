@@ -119,12 +119,13 @@ defmodule EvoDashWeb.TasksLive do
                     name="hero-magnifying-glass"
                     class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
                   />
+                  <%!-- 搜索结果同时匹配 agent 的最终回复消息 --%>
                   <input
                     type="text"
                     name="search_query"
                     value={@search_query}
                     class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
-                    placeholder={gettext("Search by task ID, prompt, or objective...")}
+                    placeholder={gettext("Search by task ID, prompt, objective, or response...")}
                     phx-change="search_tasks"
                     phx-debounce="200"
                   />
