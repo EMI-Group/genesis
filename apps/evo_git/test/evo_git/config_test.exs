@@ -26,6 +26,12 @@ defmodule EvoGit.ConfigTest do
       defaults = Config.defaults()
       assert defaults.sandbox.mode == :auto
     end
+
+    test "appearance defaults to blue accent color" do
+      defaults = Config.defaults()
+      assert Map.has_key?(defaults.appearance, :accent_color)
+      assert defaults.appearance.accent_color == "blue"
+    end
   end
 
   describe "sandbox backend config" do
@@ -181,6 +187,61 @@ defmodule EvoGit.ConfigTest do
         put_in(Config.defaults(), [:scheduler, :default_llm_max_concurrency], "not_a_number")
 
       assert {:error, _} = Config.save_user_config(invalid)
+    end
+
+    test "rejects an invalid accent color value" do
+      invalid = put_in(Config.defaults(), [:appearance, :accent_color], "neon")
+      assert {:error, errors} = Config.save_user_config(invalid)
+      assert is_list(errors)
+      assert length(errors) > 0
+
+      error = List.first(errors)
+      assert error.key_path == [:appearance, :accent_color]
+      assert error.value == "neon"
+      assert error.rule == {:in, ~w(blue teal green yellow orange red pink purple brown slate)}
+    end
+  end
+
+  describe "appearance accent color save/load round-trip" do
+    # Isolates XDG_CONFIG_HOME so save_user_config/1 writes to a temp dir,
+    # never the developer's real ~/.config/genesis/config.toml.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-config-appearance-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "saving a valid accent color writes it to config.toml and resolves back" do
+      config =
+        Config.defaults()
+        |> put_in([:appearance, :accent_color], "teal")
+
+      assert :ok = Config.save_user_config(config)
+
+      contents = File.read!(Config.config_path())
+      assert contents =~ "accent_color = \"teal\""
+
+      # resolve/0 merges defaults + user config and round-trips the string enum
+      assert get_in(Config.resolve(), [:appearance, :accent_color]) == "teal"
     end
   end
 

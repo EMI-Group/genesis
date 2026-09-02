@@ -116,6 +116,9 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:node, :cookie] in paths
       assert [:node, :dist_port] in paths
       assert [:node, :start_epmd] in paths
+
+      # Appearance
+      assert [:appearance, :accent_color] in paths
     end
 
     test "every schema has required fields" do
@@ -145,8 +148,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 93 schemas" do
-      assert length(Schema.all_schemas()) == 93
+    test "has exactly 94 schemas" do
+      assert length(Schema.all_schemas()) == 94
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -275,6 +278,9 @@ defmodule EvoGit.Config.SchemaTest do
       assert is_nil(defaults.node.cookie)
       assert defaults.node.dist_port == 9000
       assert defaults.node.start_epmd == false
+
+      # Appearance
+      assert defaults.appearance.accent_color == "blue"
     end
 
     test "llm model has nil default" do
@@ -310,6 +316,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :server)
       assert Map.has_key?(grouped, :tools)
       assert Map.has_key?(grouped, :node)
+      assert Map.has_key?(grouped, :appearance)
     end
 
     test "each category has expected count" do
@@ -325,6 +332,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:server]) == 2
       assert length(grouped[:tools]) == 34
       assert length(grouped[:node]) == 6
+      assert length(grouped[:appearance]) == 1
     end
 
     test "sandbox schemas include sub_category metadata" do
@@ -398,6 +406,23 @@ defmodule EvoGit.Config.SchemaTest do
       error = List.first(errors)
       assert error.key_path == [:sandbox, :mode]
       assert error.rule == {:in, [:auto, :enabled, :disabled]}
+    end
+
+    test "rejects invalid accent color value" do
+      config = put_in(Schema.defaults(), [:appearance, :accent_color], "neon")
+      assert {:error, errors} = Schema.validate(config)
+      assert length(errors) > 0
+      error = List.first(errors)
+      assert error.key_path == [:appearance, :accent_color]
+      assert error.value == "neon"
+      assert error.rule == {:in, ~w(blue teal green yellow orange red pink purple brown slate)}
+    end
+
+    test "accepts valid accent color values" do
+      for color <- ~w(blue teal green yellow orange red pink purple brown slate) do
+        config = put_in(Schema.defaults(), [:appearance, :accent_color], color)
+        assert {:ok, _} = Schema.validate(config), "expected #{color} to be valid"
+      end
     end
 
     test "catches string for integer field" do
