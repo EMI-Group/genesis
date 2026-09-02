@@ -116,16 +116,27 @@ defmodule EvoDash.NodeContext do
   @doc """
   Bootstraps the Genesis runtime on the remote host for the given target.
 
-  Delegates to `EvoGit.RemoteConnection.bootstrap/1`. Returns
+  Delegates to `EvoGit.RemoteConnection.bootstrap/2` with an empty opts list.
+  Returns `{:error, :remote_connection_unavailable}` when the connection
+  subsystem is not compiled or its process is not started.
+  """
+  @spec bootstrap(String.t()) :: term() | {:error, :remote_connection_unavailable}
+  def bootstrap(target_id), do: bootstrap(target_id, [])
+
+  @doc """
+  Bootstraps the Genesis runtime on the remote host for the given target,
+  forwarding the given opts (e.g. `on_running: :restart`).
+
+  Delegates to `EvoGit.RemoteConnection.bootstrap/2`. Returns
   `{:error, :remote_connection_unavailable}` when the connection subsystem is
   not compiled or its process is not started.
   """
-  @spec bootstrap(String.t()) :: term() | {:error, :remote_connection_unavailable}
-  def bootstrap(target_id) do
+  @spec bootstrap(String.t(), keyword()) :: term() | {:error, :remote_connection_unavailable}
+  def bootstrap(target_id, opts) do
     with_remote_connection(
       EvoGit.RemoteConnection,
       :bootstrap,
-      [target_id],
+      [target_id, opts],
       {:error, :remote_connection_unavailable}
     )
   end

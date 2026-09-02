@@ -2421,6 +2421,472 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
+  describe "remote-connection bootstrap progress bar (5-step + frozen final states)" do
+    # Saves a unique remote target (so the Settings Remote Connections card
+    # renders) and registers a fake BootstrapManager in
+    # EvoGit.RemoteConnection.Registry answering the bootstrap GenServer calls
+    # that EvoGit.RemoteConnection.bootstrap/1,2 route to with `result` (the
+    # canned completion). `delay_ms` optionally holds the reply back — used to
+    # exercise the double-click guard while a bootstrap is still in flight.
+    # Returns {id, manager_pid}.
+    defp bootstrap_target!(result, delay_ms \\ 0) do
+      id = "settings-bootstrap-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Bootstrap Test Target"
+        })
+
+      manager =
+        start_supervised!(
+          {EvoDashWeb.SettingsLiveTest.BootstrapManager, {id, result, delay_ms}},
+          id: {:settings_bootstrap_manager, id}
+        )
+
+      on_exit(fn ->
+        EvoGit.RemoteConnections.delete(id)
+      end)
+
+      {id, manager}
+    end
+
+    # Polls render(view) until `fun` is truthy or the deadline passes. The
+    # bootstrap handlers spawn their NodeContext call in an async Task whose
+    # completion arrives as a message — render/1 flushes it deterministically.
+    defp wait_until(view, fun, timeout \\ 1_000) do
+      deadline = System.monotonic_time(:millisecond) + timeout
+      do_wait(view, fun, deadline)
+    end
+
+    defp do_wait(view, fun, deadline) do
+      _html = render(view)
+
+      cond do
+        fun.() ->
+          true
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          false
+
+        true ->
+          Process.sleep(10)
+          do_wait(view, fun, deadline)
+      end
+    end
+
+    defp primary_steps(html) do
+      html |> Floki.parse_document!() |> Floki.find("li.step.step-primary") |> length()
+    end
+
+    test "bootstrapping renders the five-step bar with the mapped stage", %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :uploading}}
+      )
+
+      html = render(view)
+
+      # :stage is the MAPPED 0-4 index, not the raw core atom
+      assert assigns(view)[:bootstrap_progress][id] == %{stage: 0, active: true, status: :active}
+
+      doc = Floki.parse_document!(html)
+      # exactly FIVE <li> steps
+      assert length(Floki.find(doc, "li.step")) == 5
+      # stage 0 highlights only the first step
+      assert length(Floki.find(doc, "li.step.step-primary")) == 1
+    end
+
+    test "the five step labels render for a bootstrapping target", %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :extracting}}
+      )
+
+      html = render(view)
+
+      for label <- [
+            "Probing / preparing",
+            "Downloading",
+            "Extracting",
+            "Configuring",
+            "Starting daemon"
+          ] do
+        assert html =~ label
+      end
+    end
+
+    test "maps every core stage atom to its 5-step index", %{conn: conn} do
+      mappings = [
+        {:probing_platform, 0},
+        {:uploading, 0},
+        {:detecting_os, 0},
+        {:downloading, 1},
+        {:downloading_locally, 1},
+        {:extracting, 2},
+        {:setting_permissions, 3},
+        {:copying_config, 3},
+        {:generating_cookie, 3},
+        {:patching_binaries, 3},
+        {:stopping_daemon, 3},
+        {:starting_daemon, 4}
+      ]
+
+      for {stage, expected_idx} <- mappings do
+        {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+        {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+        send(
+          view.pid,
+          {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: stage}}
+        )
+
+        html = render(view)
+
+        assert assigns(view)[:bootstrap_progress][id] ==
+                 %{stage: expected_idx, active: true, status: :active},
+               "stage #{inspect(stage)} should map to step index #{expected_idx}"
+
+        # steps 0..idx are highlighted (step-primary), the rest plain
+        assert primary_steps(html) == expected_idx + 1,
+               "stage #{inspect(stage)} should highlight #{expected_idx + 1} steps"
+      end
+    end
+
+    test "unknown stage atom highlights no step", %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id,
+         %{phase: :bootstrapping, bootstrap_stage: :some_future_stage}}
+      )
+
+      html = render(view)
+
+      assert assigns(view)[:bootstrap_progress][id].stage == -1
+      assert primary_steps(html) == 0
+    end
+
+    test "a broadcast for a different target preserves the active entry", %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :downloading}}
+      )
+
+      render(view)
+      assert assigns(view)[:bootstrap_progress][id] == %{stage: 1, active: true, status: :active}
+
+      send(view.pid, {:remote_connection_status, "some-other-target", %{phase: :connecting}})
+      render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{stage: 1, active: true, status: :active}
+    end
+
+    test "a non-bootstrapping phase while active ends the bootstrap and freezes success", %{
+      conn: conn
+    } do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :extracting}}
+      )
+
+      render(view)
+
+      # The core sets phase: :disconnected with bootstrap_stage: nil right
+      # after a successful bootstrap — while the entry is active that ENDS the
+      # bootstrap and freezes an all-green bar at step 4.
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :disconnected, bootstrap_stage: nil}}
+      )
+
+      html = render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: 4,
+               active: false,
+               status: :success
+             }
+
+      assert primary_steps(html) == 5
+    end
+
+    test "bootstrap completion freezes an all-green bar with Bootstrap/Connect buttons", %{
+      conn: conn
+    } do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :extracting}}
+      )
+
+      render(view)
+
+      send(view.pid, {:bootstrap_complete, id, {:ok, :daemon_started}})
+      html = render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: 4,
+               active: false,
+               status: :success
+             }
+
+      assert primary_steps(html) == 5
+      # Bootstrap + Connect stay visible on the frozen success bar
+      assert html =~ ~s(phx-click="bootstrap_remote_target")
+      assert html =~ ~s(phx-click="connect_remote_target")
+
+      # Frozen — an unrelated broadcast must NOT reset the bar to buttons
+      send(view.pid, {:remote_connection_status, id, %{phase: :disconnected}})
+      render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: 4,
+               active: false,
+               status: :success
+             }
+    end
+
+    test "bootstrap failure freezes a partial bar with error text and a retry button", %{
+      conn: conn
+    } do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :extracting}}
+      )
+
+      render(view)
+
+      send(view.pid, {:bootstrap_complete, id, {:error, "download failed"}})
+      html = render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: 2,
+               active: false,
+               status: :error,
+               error: "download failed"
+             }
+
+      doc = Floki.parse_document!(html)
+      # steps 0..1 primary, the failing step (2) error-marked, steps 3..4 plain
+      assert length(Floki.find(doc, "li.step.step-primary")) == 2
+      assert length(Floki.find(doc, "li.step.step-error")) == 1
+      assert html =~ "download failed"
+      # the error final state has a retry Bootstrap button, not Connect
+      assert html =~ ~s(phx-click="bootstrap_remote_target")
+      refute html =~ ~s(phx-click="connect_remote_target")
+
+      # Frozen — unrelated broadcasts must NOT reset the error bar
+      send(view.pid, {:remote_connection_status, id, %{phase: :disconnected}})
+      render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: 2,
+               active: false,
+               status: :error,
+               error: "download failed"
+             }
+    end
+
+    test "bootstrap failure before any stage broadcast renders error text with an unhighlighted bar",
+         %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(view.pid, {:bootstrap_complete, id, {:error, "early failure"}})
+      html = render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: nil,
+               active: false,
+               status: :error,
+               error: "early failure"
+             }
+
+      assert primary_steps(html) == 0
+      assert html =~ "early failure"
+      assert html =~ ~s(phx-click="bootstrap_remote_target")
+    end
+
+    test "bootstrap_remote_target shows the bar immediately and completes through the manager", %{
+      conn: conn
+    } do
+      # 200ms delay: keep the fake's reply in flight so the immediate
+      # assertion above does not race the async {:bootstrap_complete, ...}
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      html = render_click(view, "bootstrap_remote_target", %{"id" => id})
+
+      # Immediate feedback: active entry with a nil (not yet known) stage
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: nil,
+               active: true,
+               status: :active
+             }
+
+      assert html =~ "Probing / preparing"
+
+      # Round trip through the fake manager: it answers the GenServer
+      # {:bootstrap, opts} call → the spawned task delivered
+      # {:bootstrap_complete, ...} → frozen all-green bar.
+      assert wait_until(view, fn ->
+               assigns(view)[:bootstrap_progress][id] == %{
+                 stage: 4,
+                 active: false,
+                 status: :success
+               }
+             end)
+
+      assert GenServer.call(manager, :calls) == [{:bootstrap, []}]
+    end
+
+    test "double-click bootstrap_remote_target while in flight does not spawn a second bootstrap",
+         %{conn: conn} do
+      # delay the fake's reply so the first bootstrap is still in flight when
+      # the second click lands — the active-entry guard must block it
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "bootstrap_remote_target", %{"id" => id})
+      render_click(view, "bootstrap_remote_target", %{"id" => id})
+
+      # the second click was blocked: the entry is still the FIRST click's
+      # active entry (the guard never resets it)
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: nil,
+               active: true,
+               status: :active
+             }
+
+      # Only the FIRST click reaches the fake manager — the guard prevents a
+      # second bootstrap call.
+      assert wait_until(view, fn -> GenServer.call(manager, :calls) == [{:bootstrap, []}] end)
+      assert GenServer.call(manager, :calls) == [{:bootstrap, []}]
+    end
+  end
+
+  describe "daemon-already-running permission dialog" do
+    test "daemon_running refusal opens the dialog with details, no error flash, entry removed", %{
+      conn: conn
+    } do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      # an active bootstrap entry is showing...
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :downloading}}
+      )
+
+      render(view)
+      assert assigns(view)[:bootstrap_progress][id].status == :active
+
+      details = "Daemon pid 1234 is running (systemd user unit genesis_remote.service)"
+
+      # ...then the bootstrap task reports the daemon_running refusal
+      send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, details}}})
+      html = render(view)
+
+      # the dialog IS the feedback — no generic "Bootstrap failed" flash
+      refute html =~ "Bootstrap failed"
+
+      assert assigns(view)[:bootstrap_restart_confirm] == %{id: id, details: details}
+      assert html =~ "Remote daemon already running"
+      assert html =~ details
+      assert html =~ ~s(phx-click="confirm_bootstrap_restart")
+      assert html =~ ~s(phx-click="cancel_bootstrap_restart")
+
+      # the transient active entry is DELETED — the card returns to buttons
+      refute Map.has_key?(assigns(view)[:bootstrap_progress], id)
+      assert html =~ ~s(phx-click="bootstrap_remote_target")
+    end
+
+    test "confirm_bootstrap_restart closes the dialog and re-bootstraps with on_running: :restart",
+         %{conn: conn} do
+      # 200ms delay: keep the confirm handler's re-bootstrap in flight so the
+      # immediate "progress re-activated" assertion below does not race the
+      # async {:bootstrap_complete, ...}.
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, "daemon is running"}}})
+      render(view)
+      assert assigns(view)[:bootstrap_restart_confirm] == %{id: id, details: "daemon is running"}
+
+      html = render_click(view, "confirm_bootstrap_restart", %{"target_id" => id})
+
+      # dialog closed + progress re-activated
+      assert assigns(view)[:bootstrap_restart_confirm] == nil
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: nil,
+               active: true,
+               status: :active
+             }
+
+      refute html =~ "Remote daemon already running"
+
+      # The confirm handler re-bootstraps through the fake manager — pins the
+      # on_running: :restart threading.
+      assert wait_until(view, fn ->
+               GenServer.call(manager, :calls) == [{:bootstrap, [on_running: :restart]}]
+             end),
+             "expected confirm_bootstrap_restart to call bootstrap with on_running: :restart"
+
+      # the existing {:bootstrap_complete, ...} path shows progress again
+      send(view.pid, {:bootstrap_complete, id, {:ok, :daemon_started}})
+      html = render(view)
+
+      assert assigns(view)[:bootstrap_progress][id] == %{
+               stage: 4,
+               active: false,
+               status: :success
+             }
+
+      assert html =~ ~s(phx-click="connect_remote_target")
+    end
+
+    test "cancel_bootstrap_restart dismisses the dialog without bootstrapping", %{conn: conn} do
+      {id, manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, "daemon is running"}}})
+      render(view)
+      assert assigns(view)[:bootstrap_restart_confirm] != nil
+
+      html = render_click(view, "cancel_bootstrap_restart", %{"target_id" => id})
+
+      assert assigns(view)[:bootstrap_restart_confirm] == nil
+      refute html =~ "Remote daemon already running"
+      # progress is NOT re-activated — the card stays on the plain buttons
+      refute Map.has_key?(assigns(view)[:bootstrap_progress], id)
+      # and no bootstrap call was made
+      assert GenServer.call(manager, :calls) == []
+    end
+  end
+
   describe "copy-to-clipboard" do
     test "config-path copy button renders with the ClipboardCopy hook", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/settings")
@@ -2459,4 +2925,54 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectionManager do
 
   @impl true
   def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
+# A fake manager for bootstrap flows. Registered in
+# `EvoGit.RemoteConnection.Registry` under the target id, it answers the
+# GenServer `:bootstrap` / `{:bootstrap, opts}` call that
+# `EvoGit.RemoteConnection.bootstrap/1,2` routes to it, records every call in
+# `calls` (read back via `GenServer.call(manager, :calls)`), and serves
+# `:status` — used by `EvoDash.NodeContext.connection_status/0` inside the
+# `{:bootstrap_complete, ...}` handler's `reload_remote_statuses/1`.
+# `delay_ms` optionally holds the `:bootstrap` reply back so a test can keep a
+# bootstrap "in flight" (e.g. the double-click guard).
+defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
+  use GenServer
+
+  def start_link({target_id, result, delay_ms}) do
+    GenServer.start_link(__MODULE__, {target_id, result, delay_ms})
+  end
+
+  @impl true
+  def init({target_id, result, delay_ms}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, %{target_id: target_id, result: result, delay_ms: delay_ms, calls: []}}
+  end
+
+  @impl true
+  def handle_call(:bootstrap, _from, state), do: reply_bootstrap(state, :bootstrap)
+
+  @impl true
+  def handle_call({:bootstrap, opts}, _from, state),
+    do: reply_bootstrap(state, {:bootstrap, opts})
+
+  @impl true
+  def handle_call(:status, _from, state) do
+    # A disconnected status keeps `reload_remote_statuses/1` from crashing on a
+    # nil/non-map value while a bootstrap result is being handled.
+    {:reply,
+     %{phase: :disconnected, node: nil, last_error: nil, target: nil, bootstrap_stage: nil},
+     state}
+  end
+
+  @impl true
+  def handle_call(:calls, _from, state), do: {:reply, state.calls, state}
+
+  @impl true
+  def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
+
+  defp reply_bootstrap(state, call) do
+    if state.delay_ms > 0, do: Process.sleep(state.delay_ms)
+    {:reply, state.result, %{state | calls: state.calls ++ [call]}}
+  end
 end
