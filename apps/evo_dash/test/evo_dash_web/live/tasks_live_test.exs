@@ -90,7 +90,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     test "renders the search input", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/tasks")
 
-      assert html =~ "Search by task ID, prompt, or objective"
+      assert html =~ "Search by task ID, prompt, objective, or response"
     end
 
     test "search_tasks handler filters tasks by prompt text", %{conn: conn} do
@@ -408,7 +408,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       # The old info message should NOT appear — the full UI always renders.
       refute html =~ "Task history is only available when viewing the local node"
-      assert html =~ "Search by task ID, prompt, or objective"
+      assert html =~ "Search by task ID, prompt, objective, or response"
     end
   end
 
