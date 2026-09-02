@@ -645,7 +645,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   end
 
   describe "cancelling status display" do
-    test "renders the Cancelling label with a violet pulsing dot", %{conn: conn} do
+    test "renders the Cancelling label with a warning pulsing dot", %{conn: conn} do
       insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling task"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
@@ -653,9 +653,11 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert html =~ "cancelling task"
       # Badge label — gettext("Cancelling…") uses a U+2026 ellipsis; assert the
-      # stable prefix plus the violet pulsing-dot indicator classes.
+      # stable prefix plus the warning pulsing-dot indicator classes
+      # (cancelling shares the transitional warning family via
+      # Helpers.task_status_dot_class/1).
       assert html =~ "Cancelling"
-      assert html =~ "bg-violet-500"
+      assert html =~ "bg-warning"
     end
 
     test "status filter includes a cancelling option and filters to cancelling tasks", %{
