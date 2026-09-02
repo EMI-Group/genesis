@@ -336,6 +336,31 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  # Extracts the FIRST chat-entry wrapper + its bubble's class attribute from
+  # rendered html. The user message is always the first transcript entry after a
+  # fresh send (document order), and its wrapper is right-aligned
+  # (`flex justify-end`) around a single content-fit bubble div (the assistant
+  # entries follow with `flex justify-start` wrappers).
+  defp first_user_bubble(html) do
+    doc = Floki.parse_document!(html)
+
+    wrapper_class =
+      doc
+      |> Floki.find(~s(div[id^="chat-entry-"]))
+      |> hd()
+      |> Floki.attribute("class")
+      |> List.first()
+
+    bubble_class =
+      doc
+      |> Floki.find(~s(div[id^="chat-entry-"] > div))
+      |> hd()
+      |> Floki.attribute("class")
+      |> List.first()
+
+    {wrapper_class, bubble_class}
+  end
+
   describe "send message" do
     test "starts a reflect task with the right opts", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
@@ -437,6 +462,60 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "Start a conversation"
       assert EvoGit.TaskRegistry.get_task(fixture_id) != nil
       assert length(EvoGit.Store.safe_select_all_tasks(EvoGit.Store)) == 1
+    end
+
+    test "typed send renders the right-aligned soft user bubble", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+
+      html = render_submit(view, "send_message", %{"message" => "typed hi"})
+      assert html =~ "typed hi"
+
+      {wrapper_class, bubble_class} = first_user_bubble(html)
+
+      # Right-aligned wrapper around a content-fit bubble.
+      assert wrapper_class =~ "flex justify-end"
+
+      # The DaisyUI theme-token bubble (bg-base-300/text-base-content read
+      # correctly in both light and dark themes), text left-aligned inside.
+      assert bubble_class =~ "w-fit"
+      assert bubble_class =~ "bg-base-300"
+      assert bubble_class =~ "text-left"
+      refute bubble_class =~ "bg-primary"
+
+      reflect =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
+
+      assert reflect != []
+      cleanup_task_on_exit(hd(reflect).id)
+    end
+
+    test "suggestion-chip send renders the same user bubble classes", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+
+      # Chips render only while the transcript is empty — click the REAL chip
+      # element (phx-click="send_message" + phx-value-message); both routes
+      # share the send_chat path and must produce the same user bubble.
+      html =
+        view
+        |> element(~s(button[phx-value-message="Explain the Genesis architecture"]))
+        |> render_click()
+
+      assert html =~ "Explain the Genesis architecture"
+
+      {wrapper_class, bubble_class} = first_user_bubble(html)
+      assert wrapper_class =~ "flex justify-end"
+      assert bubble_class =~ "w-fit"
+      assert bubble_class =~ "bg-base-300"
+      assert bubble_class =~ "text-left"
+      refute bubble_class =~ "bg-primary"
+
+      reflect =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
+
+      assert reflect != []
+      cleanup_task_on_exit(hd(reflect).id)
     end
   end
 
@@ -884,6 +963,32 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert [%{role: :user, text: "hello"}, %{role: :assistant, text: "", streaming: true}] =
                assigns(view).transcript
     end
+
+    test "streamed text stays plain (never markdown) with no action group", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seq = assigns(view)[:chat_fetch_seq]
+      seed_running_chat(view)
+
+      # The history fetch replaces the in-progress bubble text (streaming stays
+      # true) — a mid-stream render must show the literal source + caret, never
+      # a markdown render (half-rendered streams would flicker).
+      send(
+        view.pid,
+        {:chat_history_loaded, node(), seq, 1001,
+         [%{role: :assistant, content: [%{text: "partial **md**"}]}]}
+      )
+
+      html = render(view)
+      assert html =~ "partial **md**"
+      assert html =~ "help-caret"
+      refute html =~ "md-content"
+      # No hover action group on the still-streaming entry.
+      refute html =~ "toggle_assistant_raw"
+      refute html =~ "assistant-copy-"
+
+      assert [%{role: :user}, %{role: :assistant, text: "partial **md**", streaming: true}] =
+               assigns(view).transcript
+    end
   end
 
   # Counts the assistant card's "Task" badge headers in rendered html. The
@@ -916,6 +1021,38 @@ defmodule EvoDashWeb.HomeLiveTest do
                %{role: :assistant, text: "final answer", streaming: false}
              ] =
                assigns(view).transcript
+    end
+
+    test "completed markdown result renders .md-content with the rendered html", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seq = assigns(view)[:chat_task_fetch_seq]
+      seed_running_chat(view)
+
+      send(
+        view.pid,
+        {:chat_task_loaded, node(), seq, "t1",
+         %{status: :completed, result: {:ok, %{result: "**bold** answer"}}}}
+      )
+
+      html = render(view)
+
+      # The finalized assistant entry renders through EvoDash.MarkdownRender:
+      # a .md-content container with the rendered <strong>. Scope the
+      # assertion with Floki — do NOT refute "**bold**" on the WHOLE html, the
+      # copy button's data-content attribute legitimately carries the raw
+      # markdown source.
+      assert assigns(view).chat_status == :idle
+      assert assigns(view).chat_task_id == nil
+
+      md =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find(".md-content")
+
+      assert md != []
+      assert md |> Floki.find("strong") |> Floki.text() == "bold"
+      # The copy action group carries the FULL raw source text.
+      assert html =~ ~s(data-content="**bold** answer")
     end
 
     test "completed task without a result renders No response", %{conn: conn} do
@@ -1123,6 +1260,79 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "result..."
       # Tool-call row via the agents-page ToolCallDisplay contract.
       assert html =~ "spawn_investigator"
+    end
+  end
+
+  describe "assistant raw toggle & copy flash" do
+    test "raw toggle flips exactly one message between markdown and raw view", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seq = assigns(view)[:chat_fetch_seq]
+
+      # Two FINALIZED assistant entries (both render .md-content) plus a
+      # streaming tail. The history fetch materializes the seeded transcript
+      # into the rendered html via the real assign path (replace_state alone
+      # never pushes a diff — same pattern as the badge tests).
+      seed_chat_state(view, %{
+        chat_status: :running,
+        chat_task_id: "t1",
+        chat_agent_id: 1001,
+        transcript: [
+          %{id: "1", role: :user, text: "hello", streaming: false},
+          %{id: "2", role: :assistant, text: "**first** md", streaming: false},
+          %{id: "3", role: :assistant, text: "**second** md", streaming: false},
+          %{id: "4", role: :assistant, text: "", streaming: true}
+        ]
+      })
+
+      send(
+        view.pid,
+        {:chat_history_loaded, node(), seq, 1001,
+         [%{role: :assistant, content: [%{text: "streamed tail"}]}]}
+      )
+
+      html = render(view)
+
+      # NOTE: Floki.find must run on a PARSED document, never on the raw html
+      # binary (LiveView envelope markup confuses the direct-binary path and
+      # tag selectors come back empty) — parse first, everywhere below.
+      doc = Floki.parse_document!(html)
+      assert length(Floki.find(doc, ".md-content")) == 2
+
+      # Toggle entry "2" to raw: its .md-content disappears (plain escaped
+      # source text now), entry "3" is untouched — scope per wrapper id.
+      html = render_click(view, "toggle_assistant_raw", %{"id" => "2"})
+      doc = Floki.parse_document!(html)
+      assert Floki.find(doc, ~s(#chat-entry-2 .md-content)) == []
+      assert Floki.find(doc, ~s(#chat-entry-2)) |> Floki.text() =~ "**first** md"
+      assert length(Floki.find(doc, ~s(#chat-entry-3 .md-content))) == 1
+      assert MapSet.member?(assigns(view).raw_entry_ids, "2")
+      refute MapSet.member?(assigns(view).raw_entry_ids, "3")
+
+      # Toggle back: markdown returns for entry "2", the raw set empties.
+      html = render_click(view, "toggle_assistant_raw", %{"id" => "2"})
+      doc = Floki.parse_document!(html)
+      assert length(Floki.find(doc, ".md-content")) == 2
+      refute MapSet.member?(assigns(view).raw_entry_ids, "2")
+    end
+
+    test "copied event flashes the info confirmation", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seq = assigns(view)[:chat_task_fetch_seq]
+      seed_running_chat(view)
+
+      # Finalize a completed entry (the copy button exists on finalized
+      # entries only; the hook is client-side, the event just flashes).
+      send(
+        view.pid,
+        {:chat_task_loaded, node(), seq, "t1",
+         %{status: :completed, result: {:ok, %{result: "final answer"}}}}
+      )
+
+      render(view)
+
+      html = render_hook(view, "copied", %{})
+      assert html =~ "Copied to clipboard"
+      assert assigns(view).chat_status == :idle
     end
   end
 
