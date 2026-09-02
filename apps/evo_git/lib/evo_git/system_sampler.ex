@@ -18,23 +18,35 @@ defmodule EvoGit.SystemSampler do
   * `seq` — monotonically increasing integer per sampler instance.
   * `sample` — a map with EXACTLY these keys (no extras):
 
-        llm_used, llm_waiting, tool_used, tool_waiting,
+        llm_slots, llm_used, llm_waiting, tool_used, tool_waiting,
         llm_capacity, tool_capacity,
         agents_total, agents_running, agents_blocked, agents_waiting,
         agents_pending, scheduler_alive
 
+    `llm_slots` is the real per-model LLM slot occupancy, read live from the
+    scheduler GenServer state every tick (see "Sampling semantics" below):
+
+        llm_slots: %{model_id => %{used: non_neg_integer, waiting: non_neg_integer, capacity: non_neg_integer}}
+
   ## Sampling semantics (proxy, must stay truthful)
 
-  Live "used slot" holder counts are NOT observable: slot holders live only in
-  the `EvoGit.AgentScheduler` GenServer loop state, are not mirrored to the
-  `:evogit_sched_meta` ETS table, and are not exposed via `RemoteAPI`.
-  "In use" is therefore a clearly-labeled proxy — the count of agents in
-  `:running` status (the agents that acquire/hold slots) — and `:blocked`
-  (agents waiting for a slot) is the saturation signal. The same
-  `:running`/`:blocked` counts feed both the LLM and tool charts; only the
-  capacity lines differ. This reproduces the dashboard's old chart semantics
-  exactly (`EvoDashWeb.SystemLive.Charts`, deleted from evo_dash by the
-  parallel workstream).
+  `llm_slots` reports REAL per-model LLM slot occupancy, fetched per tick from
+  the `EvoGit.AgentScheduler` GenServer state via the scheduler's
+  `get_llm_slot_status/0` read API: `used` is the true holder count
+  (`MapSet.size` of the model's holder pool), `waiting` the true queued count
+  (`:queue.len`), and `capacity` the model's effective capacity exactly as the
+  scheduler grants it — a peak-paused model reports `0` and the value tracks
+  peak/off-peak transitions. This observation point is the scheduler GenServer
+  read API itself, NOT `RemoteAPI` (that surface is intentionally ETS-pure).
+
+  The aggregated `llm_used`/`llm_waiting` keys and both tool keys remain
+  clearly-labeled status proxies, kept for backward compatibility: `:running`
+  (the agents that acquire/hold slots) feeds the "used" lines, `:blocked`
+  (agents waiting for a slot, the saturation signal) feeds the "waiting"
+  lines. The same `:running`/`:blocked` counts feed both the LLM and tool
+  charts; only the capacity lines differ. This reproduces the dashboard's old
+  chart semantics exactly (`EvoDashWeb.SystemLive.Charts`, deleted from
+  evo_dash by the parallel workstream).
 
   ## Tick & configuration cache
 
@@ -51,6 +63,15 @@ defmodule EvoGit.SystemSampler do
   refetches on any tick; zero capacities from the dead-scheduler branch are
   NEVER cached).
 
+  The per-model `llm_slots` map is NOT part of that cache: it is fetched LIVE
+  every tick via `EvoGit.AgentScheduler.get_llm_slot_status/0` so holder and
+  queue changes (slot grants, releases, peak-pause flips) show up on the very
+  next 3s sample. The per-model `capacity` values therefore come from the
+  scheduler-returned effective capacity (`State.concurrency_for/2` — peak-pause
+  correctness), not from the static profile `concurrency` in the config cache;
+  the aggregate `llm_capacity` key keeps its cached Σ-profiled-concurrency
+  value.
+
   **Config source — `RemoteAPI.get_config/0` (a scheduler `GenServer.call`).**
   Chosen because the chart must reflect the LIVE runtime config (including
   runtime overrides such as CLI `-c` and dashboard saves), and the scheduler's
@@ -62,10 +83,11 @@ defmodule EvoGit.SystemSampler do
   ## Graceful degradation
 
   When the scheduler/ETS is absent (`scheduler_alive?/0` false) the sample has
-  zero agent counts and zero capacities with `scheduler_alive: false` —
-  mirrors the dashboard's dead branch. Broadcasts continue (the dashboard
-  rendered zero samples in the dead branch too). The sampler never calls into
-  a dead scheduler: the config refetch is additionally gated on
+  zero agent counts, zero capacities, and `llm_slots: %{}` with
+  `scheduler_alive: false` — mirrors the dashboard's dead branch. Broadcasts
+  continue (the dashboard rendered zero samples in the dead branch too). The
+  sampler never calls into a dead scheduler: the config refetch and the live
+  `llm_slots` fetch are additionally gated on
   `Process.whereis(EvoGit.AgentScheduler) != nil`, so no `GenServer.call`
   exits (and no try/rescue — project policy).
 
@@ -74,7 +96,7 @@ defmodule EvoGit.SystemSampler do
   * `get_recent_samples/0` — the last 60 samples (ring buffer).
   * `tick/0` — synchronous sampling tick (test seam).
   * `scheduler_alive?/0`, `status_counts/1`, `config_totals/1`,
-    `build_sample/3`, `push/3` — pure helpers (public for tests; the
+    `build_sample/3,4`, `push/3` — pure helpers (public for tests; the
     dashboard's old `Charts` equivalents are deleted).
   """
 
@@ -181,15 +203,23 @@ defmodule EvoGit.SystemSampler do
   def config_totals(_), do: %{llm_capacity: 0, tool_capacity: 0}
 
   @doc """
-  Builds one sample map (the 12-key contract map — no extra keys) from status
-  counts, capacity totals and the scheduler-liveness flag. "Used" is the
-  `:running` count (slot-use proxy) and `:blocked` is the "waiting" count, for
-  both the LLM and tool charts (see moduledoc).
+  Builds one sample map (the 13-key contract map — no extra keys) from status
+  counts, capacity totals, the live per-model LLM slot map and the
+  scheduler-liveness flag.
+
+  * `llm_slots` — real per-model LLM slot occupancy read live from the
+    scheduler GenServer state (`EvoGit.AgentScheduler.get_llm_slot_status/0`);
+    the scheduler-dead shape is `%{}`.
+  * The aggregated `llm_used`/`llm_waiting` and both tool keys are the
+    `:running`/`:blocked` status proxies (see moduledoc), kept for backward
+    compatibility.
   """
-  @spec build_sample(map(), map(), boolean()) :: map()
-  def build_sample(counts, totals, scheduler_alive)
-      when is_map(counts) and is_map(totals) and is_boolean(scheduler_alive) do
+  @spec build_sample(map(), map(), map(), boolean()) :: map()
+  def build_sample(counts, totals, llm_slots, scheduler_alive)
+      when is_map(counts) and is_map(totals) and is_map(llm_slots) and
+             is_boolean(scheduler_alive) do
     %{
+      llm_slots: llm_slots,
       llm_used: counts.running,
       llm_waiting: counts.blocked,
       llm_capacity: totals.llm_capacity,
@@ -203,6 +233,18 @@ defmodule EvoGit.SystemSampler do
       agents_pending: counts.pending,
       scheduler_alive: scheduler_alive
     }
+  end
+
+  @doc """
+  Backward-compat 3-arity of `build_sample/4`: composes a sample without live
+  per-model slot data (`llm_slots: %{}` — the scheduler-dead shape). The
+  sampler's live tick path uses `build_sample/4` with the per-tick-fetched
+  `llm_slots` map.
+  """
+  @spec build_sample(map(), map(), boolean()) :: map()
+  def build_sample(counts, totals, scheduler_alive)
+      when is_map(counts) and is_map(totals) and is_boolean(scheduler_alive) do
+    build_sample(counts, totals, %{}, scheduler_alive)
   end
 
   @doc """
@@ -266,15 +308,35 @@ defmodule EvoGit.SystemSampler do
       state = maybe_refresh_config(state)
 
       sample =
-        build_sample(status_counts(read_sched_metas()), cached_totals(state), true)
+        build_sample(
+          status_counts(read_sched_metas()),
+          cached_totals(state),
+          fetch_llm_slots(),
+          true
+        )
 
       broadcast_and_store(state, sample)
     else
-      # Dead scheduler: zero agents and zero capacities — mirrors the
-      # dashboard's dead branch (`{[], nil}`). Zero capacities are NOT cached
-      # (see maybe_refresh_config).
-      sample = build_sample(status_counts([]), zero_totals(), false)
+      # Dead scheduler: zero agents, zero capacities and an empty llm_slots
+      # map — mirrors the dashboard's dead branch (`{[], nil}`). Zero
+      # capacities are NOT cached (see maybe_refresh_config).
+      sample = build_sample(status_counts([]), zero_totals(), %{}, false)
       broadcast_and_store(state, sample)
+    end
+  end
+
+  # Per-tick live read of the per-model LLM slot status from the scheduler
+  # GenServer state (`get_llm_slot_status/0` — cheap pure in-state reads).
+  # The whereis guard mirrors maybe_refresh_config: NEVER GenServer.call a dead
+  # scheduler (a call would exit the sampler with :noproc; no try/rescue —
+  # project policy). scheduler_alive?/0 can be true while the scheduler
+  # process is down (ETS table still exists, crash-restart window) — in that
+  # window the live data is unavailable and the dead shape (%{}) is reported.
+  defp fetch_llm_slots do
+    if Process.whereis(EvoGit.AgentScheduler) != nil do
+      EvoGit.AgentScheduler.get_llm_slot_status()
+    else
+      %{}
     end
   end
 
