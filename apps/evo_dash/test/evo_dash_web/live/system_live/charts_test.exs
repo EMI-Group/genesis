@@ -37,15 +37,23 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
     end
   end
 
-  # A full 12-key sample map as emitted by the evo_git system sampler (the
-  # "system" topic contract — aggregation now lives sampler-side). Overrides
-  # let tests vary individual keys.
+  # A sample map as emitted by the evo_git system sampler (the "system"
+  # topic contract): the 12 aggregate keys (still driving the tool/agents
+  # series) plus the per-model `llm_slots` map (the ONLY source for the LLM
+  # Slots chart, which plots one selected model). Overrides let tests vary
+  # individual keys — pass `llm_slots: %{...}` to replace the whole map.
+  defp sample_map, do: sample_map(%{})
+
   defp sample_map(overrides) do
     Map.merge(
       %{
         llm_used: 0,
         llm_waiting: 0,
         llm_capacity: 4,
+        llm_slots: %{
+          "alpha" => %{used: 2, waiting: 1, capacity: 4},
+          "beta" => %{used: 0, waiting: 3, capacity: 0}
+        },
         tool_used: 0,
         tool_waiting: 0,
         tool_capacity: 2,
@@ -60,21 +68,122 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
     )
   end
 
-  describe "llm_series/1 and tool_series/1" do
+  describe "llm_series/2 and tool_series/1" do
     test "capacity series is marked static and keeps per-sample values" do
-      samples = [sample_map(llm_used: 1, tool_used: 1)]
+      samples = [sample_map(tool_used: 1)]
 
-      # gettext returns the source string "Capacity" in the default locale
-      llm_capacity = Enum.find(Charts.llm_series(samples), &(&1.name == "Capacity"))
+      # gettext returns the source string "Capacity" in the default locale;
+      # the LLM capacity now comes from the selected model's llm_slots entry
+      llm_capacity = Enum.find(Charts.llm_series(samples, "alpha"), &(&1.name == "Capacity"))
       assert llm_capacity.static == true
       assert llm_capacity.values == [4]
 
+      # tool/agents series stay AGGREGATED (driven by the 12 aggregate keys)
       tool_capacity = Enum.find(Charts.tool_series(samples), &(&1.name == "Capacity"))
       assert tool_capacity.static == true
       assert tool_capacity.values == [2]
 
+      tool_used = Enum.find(Charts.tool_series(samples), &(&1.name == "In use"))
+      assert tool_used.values == [1]
+
+      agents_total = Enum.find(Charts.agents_series(samples), &(&1.name == "Total"))
+      assert agents_total.values == [0]
+
       # Non-capacity series stay dynamic (no static marker)
-      refute Enum.any?(Charts.llm_series(samples), &(&1.name != "Capacity" and &1[:static]))
+      refute Enum.any?(
+               Charts.llm_series(samples, "alpha"),
+               &(&1.name != "Capacity" and &1[:static])
+             )
+    end
+
+    test "llm_series/2 plots only the requested model's llm_slots numbers, never a sum" do
+      samples = [
+        sample_map(
+          llm_slots: %{
+            "alpha" => %{used: 2, waiting: 1, capacity: 4},
+            "beta" => %{used: 0, waiting: 3, capacity: 0}
+          }
+        ),
+        sample_map(
+          llm_slots: %{
+            "alpha" => %{used: 3, waiting: 2, capacity: 4},
+            "beta" => %{used: 5, waiting: 0, capacity: 6}
+          }
+        )
+      ]
+
+      # beta's series carry beta's numbers — NOT a sum with alpha
+      beta = Map.new(Charts.llm_series(samples, "beta"), &{&1.name, &1})
+      assert beta["Capacity"].values == [0, 6]
+      assert beta["In use"].values == [0, 5]
+      assert beta["Waiting"].values == [3, 0]
+
+      alpha = Map.new(Charts.llm_series(samples, "alpha"), &{&1.name, &1})
+      assert alpha["Capacity"].values == [4, 4]
+      assert alpha["In use"].values == [2, 3]
+      assert alpha["Waiting"].values == [1, 2]
+    end
+
+    test "llm_series/2 reads defensively: missing :llm_slots or model key yields zeros" do
+      legacy = Map.delete(sample_map(), :llm_slots)
+
+      samples = [
+        sample_map(llm_slots: %{"alpha" => %{used: 2, waiting: 1, capacity: 4}}),
+        # legacy sample without :llm_slots → zeros, no crash
+        legacy,
+        # sample whose llm_slots lacks the "alpha" key → zeros
+        sample_map(llm_slots: %{"beta" => %{used: 9, waiting: 9, capacity: 9}})
+      ]
+
+      by_name = Map.new(Charts.llm_series(samples, "alpha"), &{&1.name, &1})
+      assert by_name["Capacity"].values == [4, 0, 0]
+      assert by_name["In use"].values == [2, 0, 0]
+      assert by_name["Waiting"].values == [1, 0, 0]
+    end
+
+    test "llm_series/2 with a nil model_id yields an all-zero series without crashing" do
+      by_name = Map.new(Charts.llm_series([sample_map(), sample_map()], nil), &{&1.name, &1})
+      assert by_name["Capacity"].values == [0, 0]
+      assert by_name["In use"].values == [0, 0]
+      assert by_name["Waiting"].values == [0, 0]
+
+      # empty buffer: series exist with no values
+      assert Enum.all?(Charts.llm_series([], nil), &(&1.values == []))
+    end
+  end
+
+  describe "llm_model_ids/1" do
+    test "returns [] for an empty buffer" do
+      assert Charts.llm_model_ids([]) == []
+    end
+
+    test "returns [] when every sample is legacy (no :llm_slots)" do
+      samples = [Map.delete(sample_map(), :llm_slots), Map.delete(sample_map(), :llm_slots)]
+      assert Charts.llm_model_ids(samples) == []
+    end
+
+    test "returns [] when llm_slots maps are empty" do
+      samples = [sample_map(llm_slots: %{}), sample_map(llm_slots: %{})]
+      assert Charts.llm_model_ids(samples) == []
+    end
+
+    test "returns sorted unique ids from the union across samples" do
+      samples = [
+        sample_map(
+          llm_slots: %{
+            "beta" => %{used: 1, waiting: 0, capacity: 2},
+            "alpha" => %{used: 0, waiting: 0, capacity: 1}
+          }
+        ),
+        sample_map(
+          llm_slots: %{
+            "alpha" => %{used: 0, waiting: 0, capacity: 1},
+            "gamma" => %{used: 0, waiting: 0, capacity: 3}
+          }
+        )
+      ]
+
+      assert Charts.llm_model_ids(samples) == ["alpha", "beta", "gamma"]
     end
   end
 
@@ -173,22 +282,38 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
           icon: "hero-sparkles",
           description: "desc",
           samples: [],
-          series: Charts.llm_series([]),
+          series: Charts.llm_series([], nil),
           y_max: 4
         )
 
       assert html =~ "Collecting data…"
       refute html =~ "<svg"
       refute html =~ "Scale 0–"
+      # no in-card model selector while no model ids are known yet
+      refute html =~ "role=\"group\""
+      refute html =~ "select_llm_model"
+      refute html =~ "aria-pressed"
     end
 
     test "renders the svg chart with legend entries and scale footer when samples exist" do
       samples = [
-        sample_map(llm_used: 1, llm_waiting: 1),
-        sample_map(llm_used: 2, llm_waiting: 0)
+        sample_map(
+          llm_slots: %{
+            "alpha" => %{used: 1, waiting: 1, capacity: 4},
+            "beta" => %{used: 0, waiting: 0, capacity: 0}
+          }
+        ),
+        sample_map(
+          llm_slots: %{
+            "alpha" => %{used: 2, waiting: 0, capacity: 4},
+            "beta" => %{used: 3, waiting: 2, capacity: 2}
+          }
+        )
       ]
 
-      series = Charts.llm_series(samples)
+      # The card plots the SELECTED model ("alpha"); beta's numbers never
+      # reach the legend.
+      series = Charts.llm_series(samples, "alpha")
 
       html =
         render_component(&Charts.chart_card/1,
@@ -213,12 +338,9 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
     end
 
     test "renders the static capacity series as a dashed horizontal line, not a path" do
-      samples = [
-        sample_map(llm_used: 1, llm_waiting: 1),
-        sample_map(llm_used: 2, llm_waiting: 0)
-      ]
+      samples = [sample_map(), sample_map()]
 
-      series = Charts.llm_series(samples)
+      series = Charts.llm_series(samples, "alpha")
 
       html =
         render_component(&Charts.chart_card/1,
@@ -250,6 +372,87 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
       # The capacity color appears only in the legend dot and the static line
       assert length(Floki.find(doc, ~s([style*="#94a3b8"]))) == 1
       assert length(Floki.find(doc, ~s(line[stroke="#94a3b8"]))) == 1
+    end
+
+    test "renders a static muted single-model label when exactly one model id is known" do
+      samples = [sample_map(llm_slots: %{"alpha" => %{used: 2, waiting: 1, capacity: 4}})]
+      series = Charts.llm_series(samples, "alpha")
+
+      html =
+        render_component(&Charts.chart_card/1,
+          title: "LLM Slots",
+          icon: "hero-sparkles",
+          description: "desc",
+          samples: samples,
+          series: series,
+          y_max: Charts.y_max(series),
+          model_ids: ["alpha"],
+          selected_model: "alpha"
+        )
+
+      # the muted pill (dot + id), NOT the interactive chip set
+      assert html =~ "rounded-full bg-primary/60"
+      assert html =~ "alpha"
+      refute html =~ "role=\"group\""
+      refute html =~ "select_llm_model"
+      refute html =~ "aria-pressed"
+    end
+
+    test "renders a chip set with active/inactive markers when multiple model ids are known" do
+      # alpha + beta present
+      samples = [sample_map()]
+      series = Charts.llm_series(samples, "alpha")
+
+      html =
+        render_component(&Charts.chart_card/1,
+          title: "LLM Slots",
+          icon: "hero-sparkles",
+          description: "desc",
+          samples: samples,
+          series: series,
+          y_max: Charts.y_max(series),
+          model_ids: ["alpha", "beta"],
+          selected_model: "alpha"
+        )
+
+      assert html =~ ~s(role="group")
+      assert html =~ ~s(aria-label="Model")
+
+      doc = Floki.parse_document!(html)
+      buttons = Floki.find(doc, "button")
+      assert length(buttons) == 2
+
+      alpha_btn = Enum.find(buttons, &(Floki.attribute(&1, "phx-value-model") == ["alpha"]))
+      beta_btn = Enum.find(buttons, &(Floki.attribute(&1, "phx-value-model") == ["beta"]))
+      assert Floki.attribute(alpha_btn, "aria-pressed") == ["true"]
+      assert Floki.attribute(beta_btn, "aria-pressed") == ["false"]
+
+      [alpha_class] = Floki.attribute(alpha_btn, "class")
+      [beta_class] = Floki.attribute(beta_btn, "class")
+      assert alpha_class =~ "border-primary/40 bg-primary/10 text-primary font-medium"
+      assert beta_class =~ "border-base-200"
+      refute beta_class =~ "text-primary font-medium"
+    end
+
+    test "renders no in-card model selector when no model ids are known" do
+      samples = [sample_map(llm_slots: %{})]
+      series = Charts.llm_series(samples, nil)
+
+      html =
+        render_component(&Charts.chart_card/1,
+          title: "LLM Slots",
+          icon: "hero-sparkles",
+          description: "desc",
+          samples: samples,
+          series: series,
+          y_max: Charts.y_max(series)
+        )
+
+      assert html =~ "<svg"
+      refute html =~ "role=\"group\""
+      refute html =~ "select_llm_model"
+      refute html =~ "aria-pressed"
+      refute html =~ "rounded-full bg-primary/60"
     end
   end
 end
