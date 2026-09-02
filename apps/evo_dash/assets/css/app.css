@@ -25,26 +25,38 @@
   default: false;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: oklch(22% 0.015 260);
-  --color-base-200: oklch(18% 0.012 260);
-  --color-base-300: oklch(14% 0.01 260);
-  --color-base-content: oklch(95% 0.01 260);
-  --color-primary: oklch(70% 0.2 265);
-  --color-primary-content: oklch(15% 0.02 265);
-  --color-secondary: oklch(65% 0.12 185);
-  --color-secondary-content: oklch(15% 0.02 185);
-  --color-accent: oklch(70% 0.2 295);
-  --color-accent-content: oklch(15% 0.02 295);
-  --color-neutral: oklch(30% 0.015 260);
-  --color-neutral-content: oklch(95% 0.01 260);
-  --color-info: oklch(65% 0.18 255);
-  --color-info-content: oklch(15% 0.02 255);
-  --color-success: oklch(67% 0.15 160);
-  --color-success-content: oklch(15% 0.02 160);
-  --color-warning: oklch(75% 0.18 65);
-  --color-warning-content: oklch(20% 0.02 65);
-  --color-error: oklch(62% 0.22 25);
-  --color-error-content: oklch(15% 0.02 25);
+  /* GNOME/libadwaita (Adwaita) dark palette. Soft dark gray surfaces
+     (#1e1e1e view tone), constant GNOME blue accent, semantic tokens on the
+     LIGHTER end of each hue so text reads on their ~10% tints over #1e1e1e
+     (badge text >= ~4.5:1), near-black -content on the light fills. */
+  --color-base-100: #1e1e1e;
+  --color-base-200: #242424;
+  --color-base-300: #454545;
+  --color-base-content: #ffffff;
+  --color-primary: #3584e4;
+  --color-primary-content: #ffffff;
+  --color-secondary: #33b7cc;
+  --color-secondary-content: #1e1e1e;
+  --color-accent: #3584e4;
+  --color-accent-content: #ffffff;
+  --color-neutral: #505050;
+  --color-neutral-content: #ffffff;
+  --color-info: #62a0ea;
+  --color-info-content: #1e1e1e;
+  --color-success: #2ec27e;
+  --color-success-content: #1e1e1e;
+  --color-warning: #f5c211;
+  --color-warning-content: #1e1e1e;
+  --color-error: #ff7b63;
+  --color-error-content: #1e1e1e;
+  /* Chart series — legible on the dark base surfaces */
+  --chart-capacity: #94a3b8;
+  --chart-llm: #34d399;
+  --chart-tool: #38bdf8;
+  --chart-waiting: #fbbf24;
+  --chart-agents: #c061cb;
+  --chart-agents-waiting: #ff8ec6;
+  --chart-pending: #64748b;
   --radius-selector: 0.375rem;
   --radius-field: 0.5rem;
   --radius-box: 0.75rem;
@@ -60,26 +72,39 @@
   default: true;
   prefersdark: false;
   color-scheme: "light";
-  --color-base-100: oklch(100% 0 0);
-  --color-base-200: oklch(97% 0.005 250);
-  --color-base-300: oklch(93% 0.005 250);
-  --color-base-content: oklch(20% 0.01 260);
-  --color-primary: oklch(55% 0.2 265);
-  --color-primary-content: oklch(98% 0.01 265);
-  --color-secondary: oklch(60% 0.12 185);
-  --color-secondary-content: oklch(98% 0.01 185);
-  --color-accent: oklch(50% 0.22 295);
-  --color-accent-content: oklch(98% 0.01 295);
-  --color-neutral: oklch(40% 0.015 260);
-  --color-neutral-content: oklch(98% 0.005 260);
-  --color-info: oklch(60% 0.18 255);
-  --color-info-content: oklch(98% 0.01 255);
-  --color-success: oklch(62% 0.15 160);
-  --color-success-content: oklch(98% 0.01 160);
-  --color-warning: oklch(72% 0.18 65);
-  --color-warning-content: oklch(20% 0.01 65);
-  --color-error: oklch(58% 0.22 25);
-  --color-error-content: oklch(98% 0.01 25);
+  /* GNOME/libadwaita (Adwaita) light palette. White view surfaces
+     (#ffffff content), #f6f5f4 window chrome, #e5e5e5 borders. Constant GNOME
+     blue accent (#3584e4 = primary = accent — GNOME has ONE accent). Semantic
+     tokens sit on the DARKER end of each hue so badge text (text-<semantic>)
+     keeps >= ~4.5:1 on its ~10% tint over white. */
+  --color-base-100: #ffffff;
+  --color-base-200: #f6f5f4;
+  --color-base-300: #e5e5e5;
+  --color-base-content: #2e3436;
+  --color-primary: #3584e4;
+  --color-primary-content: #ffffff;
+  --color-secondary: #2190a4;
+  --color-secondary-content: #ffffff;
+  --color-accent: #3584e4;
+  --color-accent-content: #ffffff;
+  --color-neutral: #4c4c4c;
+  --color-neutral-content: #ffffff;
+  --color-info: #1a5fb4;
+  --color-info-content: #ffffff;
+  --color-success: #177245;
+  --color-success-content: #ffffff;
+  --color-warning: #ab4f09;
+  --color-warning-content: #1e1e1e;
+  --color-error: #b91c1c;
+  --color-error-content: #ffffff;
+  /* Chart series — legible on the light base surfaces */
+  --chart-capacity: #64748b;
+  --chart-llm: #10b981;
+  --chart-tool: #0ea5e9;
+  --chart-waiting: #f59e0b;
+  --chart-agents: #9141ac;
+  --chart-agents-waiting: #ff61a8;
+  --chart-pending: #94a3b8;
   --radius-selector: 0.375rem;
   --radius-field: 0.5rem;
   --radius-box: 0.75rem;
@@ -88,6 +113,91 @@
   --border: 1px;
   --depth: 1;
   --noise: 0;
+}
+
+/* === Accent color overrides (GNOME official accent palette) ===
+   INERT until a `data-accent-color` attribute lands on the app-shell wrapper
+   (planned: #app-layout, a descendant of <html data-theme=...> or <body> —
+   plain attribute selectors work wherever the attribute sits). These rules
+   are un-layered author CSS placed AFTER the daisyUI theme @plugin blocks, so
+   they win the cascade for the attributed subtree (un-layered styles beat the
+   plugin's @layer base tokens; equal-specificity ties break by source order).
+   GNOME keeps ONE accent: both --color-primary and --color-accent retarget.
+   Content colors: near-black for the light accents (green/yellow/orange/pink)
+   where white fails ~4.5:1 on the fill; white elsewhere. --chart-* series
+   intentionally stays on the semantic chart palette, NOT the accent. */
+[data-accent-color="blue"] {
+  --color-primary: #3584e4;
+  --color-primary-content: #ffffff;
+  --color-accent: #3584e4;
+  --color-accent-content: #ffffff;
+}
+[data-accent-color="teal"] {
+  --color-primary: #2190a4;
+  --color-primary-content: #ffffff;
+  --color-accent: #2190a4;
+  --color-accent-content: #ffffff;
+}
+[data-accent-color="green"] {
+  --color-primary: #2ec27e;
+  --color-primary-content: #1e1e1e;
+  --color-accent: #2ec27e;
+  --color-accent-content: #1e1e1e;
+}
+[data-accent-color="yellow"] {
+  --color-primary: #f5c211;
+  --color-primary-content: #1e1e1e;
+  --color-accent: #f5c211;
+  --color-accent-content: #1e1e1e;
+}
+[data-accent-color="orange"] {
+  --color-primary: #ff7800;
+  --color-primary-content: #1e1e1e;
+  --color-accent: #ff7800;
+  --color-accent-content: #1e1e1e;
+}
+[data-accent-color="red"] {
+  --color-primary: #e01b24;
+  --color-primary-content: #ffffff;
+  --color-accent: #e01b24;
+  --color-accent-content: #ffffff;
+}
+[data-accent-color="pink"] {
+  --color-primary: #ff61a8;
+  --color-primary-content: #1e1e1e;
+  --color-accent: #ff61a8;
+  --color-accent-content: #1e1e1e;
+}
+[data-accent-color="purple"] {
+  --color-primary: #9141ac;
+  --color-primary-content: #ffffff;
+  --color-accent: #9141ac;
+  --color-accent-content: #ffffff;
+}
+[data-accent-color="brown"] {
+  --color-primary: #986a44;
+  --color-primary-content: #ffffff;
+  --color-accent: #986a44;
+  --color-accent-content: #ffffff;
+}
+[data-accent-color="slate"] {
+  --color-primary: #3d3846;
+  --color-primary-content: #ffffff;
+  --color-accent: #3d3846;
+  --color-accent-content: #ffffff;
+}
+/* Dark-tuned variants — GNOME keeps the accent constant across themes, but
+   purple (#9141ac) and slate (#3d3846) are so close to the dark base (#1e1e1e)
+   that they vanish on dark surfaces; shift each one step lighter within its
+   hue (official-adjacent values #c061cb / #5e5c64). Content stays white, as
+   in light. All other accents read fine on dark and stay constant. */
+[data-theme="dark"] [data-accent-color="purple"] {
+  --color-primary: #c061cb;
+  --color-accent: #c061cb;
+}
+[data-theme="dark"] [data-accent-color="slate"] {
+  --color-primary: #5e5c64;
+  --color-accent: #5e5c64;
 }
 
 /* Add variants based on LiveView classes */
@@ -198,20 +308,20 @@ button, a, input, textarea, select, summary,
 /* Pulse glow for running task indicators */
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 0 0 oklch(67% 0.15 160 / 0.15);
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-success) 15%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 4px oklch(67% 0.15 160 / 0);
+    box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-success) 0%, transparent);
   }
 }
 
-/* Pulse glow for finalizing task indicators (warning orange) */
+/* Pulse glow for finalizing task indicators (warning amber) */
 @keyframes pulse-glow-warning {
   0%, 100% {
-    box-shadow: 0 0 0 0 oklch(75% 0.18 65 / 0.15);
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-warning) 15%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 4px oklch(75% 0.18 65 / 0);
+    box-shadow: 0 0 0 4px color-mix(in oklch, var(--color-warning) 0%, transparent);
   }
 }
 
@@ -326,7 +436,7 @@ button, a, input, textarea, select, summary,
 .animation-delay-900 { animation-delay: 900ms; }
 .animation-delay-1000 { animation-delay: 1000ms; }
 
-/* Agent spawn: scale-in + brief glow */
+/* Agent spawn: scale-in + brief primary-tinted glow */
 @keyframes agent-spawn {
   0% {
     opacity: 0;
@@ -335,12 +445,12 @@ button, a, input, textarea, select, summary,
   60% {
     opacity: 1;
     transform: scale(1.03);
-    box-shadow: 0 0 20px oklch(70% 0.2 265 / 0.3);
+    box-shadow: 0 0 20px color-mix(in oklch, var(--color-primary) 30%, transparent);
   }
   100% {
     opacity: 1;
     transform: scale(1);
-    box-shadow: 0 0 0 oklch(70% 0.2 265 / 0);
+    box-shadow: 0 0 0 color-mix(in oklch, var(--color-primary) 0%, transparent);
   }
 }
 
@@ -438,9 +548,9 @@ button, a, input, textarea, select, summary,
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    oklch(67% 0.15 160 / 0.03) 25%,
-    oklch(67% 0.15 160 / 0.06) 50%,
-    oklch(67% 0.15 160 / 0.03) 75%,
+    color-mix(in oklch, var(--color-success) 3%, transparent) 25%,
+    color-mix(in oklch, var(--color-success) 6%, transparent) 50%,
+    color-mix(in oklch, var(--color-success) 3%, transparent) 75%,
     transparent 100%
   );
   background-size: 200% 100%;
@@ -460,7 +570,7 @@ button, a, input, textarea, select, summary,
   transition: box-shadow 200ms ease;
 }
 .hover-glow:hover {
-  box-shadow: 0 0 0 3px oklch(55% 0.2 265 / 0.15), 0 4px 15px -3px oklch(55% 0.2 265 / 0.1);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-primary) 15%, transparent), 0 4px 15px -3px color-mix(in oklch, var(--color-primary) 10%, transparent);
 }
 
 
@@ -1125,14 +1235,15 @@ button, a, input, textarea, select, summary,
   }
 }
 
-/* Active card shimmer for running tasks */
+/* Active card shimmer for running tasks (running/finalizing/cancelling are
+   the warning amber family in the status mapping) */
 .task-card-active {
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    oklch(65% 0.18 255 / 0.03) 25%,
-    oklch(65% 0.18 255 / 0.06) 50%,
-    oklch(65% 0.18 255 / 0.03) 75%,
+    color-mix(in oklch, var(--color-warning) 3%, transparent) 25%,
+    color-mix(in oklch, var(--color-warning) 6%, transparent) 50%,
+    color-mix(in oklch, var(--color-warning) 3%, transparent) 75%,
     transparent 100%
   );
   background-size: 200% 100%;
@@ -1375,9 +1486,9 @@ button, a, input, textarea, select, summary,
   background-image: linear-gradient(
     270deg,
     transparent 0%,
-    oklch(65% 0.18 255 / 0.03) 25%,
-    oklch(65% 0.18 255 / 0.06) 50%,
-    oklch(65% 0.18 255 / 0.03) 75%,
+    color-mix(in oklch, var(--color-warning) 3%, transparent) 25%,
+    color-mix(in oklch, var(--color-warning) 6%, transparent) 50%,
+    color-mix(in oklch, var(--color-warning) 3%, transparent) 75%,
     transparent 100%
   );
 }
