@@ -56,7 +56,7 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 | `GET /tasks` | `TasksLive` | Task history page — full task list with status filters, pagination, archive details, cancel/force-kill actions. |
 | `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration |
-| `GET /system` | `SystemLive` | Scheduler controls, system controls (restart/stop), system self-check, and usage guides/references |
+| `GET /system` | `SystemLive` | System page — Software Update card, System Self-Check (health banner + check grid incl. the Genesis Source card), scheduler-status charts, and the grouped System Controls section (System Dashboard + scheduler pause/resume + VM restart/stop) |
 | `GET /review/:task_id` | `ReviewLive` (`:show`) | Code review page — diff viewer with expandable context, commit list, merge/reject/resume actions. Supports post-merge re-review via persisted SHAs. |
 | `GET /review/:task_id/commit/:commit_sha` | `ReviewLive` (`:commit`) | Single-commit inspection — reuses the shared diff viewer component to show changes for one commit. |
 | `GET /tasks/:task_id/export` | `TaskExportController` (`:export`) | Downloads a task's `archive_metadata` as a JSON file (`archive-<task_id>.json`). 404 when the task or archive data is missing. Node-aware via `?node=` (remote task resolution) — detail in `controllers/CONTEXT.md`. |

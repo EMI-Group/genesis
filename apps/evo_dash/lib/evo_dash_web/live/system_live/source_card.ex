@@ -31,34 +31,40 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   `{:unavailable, :runner_error}` so a crashing runner can never wedge the
   card's loading/busy state.
 
-  ## Merged section markup
+  ## Grid-card markup
 
-  The Genesis Source UI is rendered as a sub-section of the System Self-Check
-  section (`source_section/1` component) rather than a standalone card: it
-  shows only the minimal useful info — the checkout directory (`dir`), the
-  checked-out commit + version when cloned, and the reference line — plus the
-  clone/update buttons. The branch and remote-URL displays were dropped (they
-  were always the constants `main` / the repo path).
+  The Genesis Source UI renders as a CELL of the System Self-Check check grid
+  (`source_section/1` component) — a peer of the Configuration / Required
+  Tools / Sandbox / Nix / LLM Connection cards, with the same
+  `rounded-lg border border-base-200 bg-base-100` container, tinted icon box,
+  and `font-semibold text-sm` title. It shows only the minimal useful info:
+  the checkout directory (`dir`), the checked-out commit + version when
+  cloned, and the clone/update buttons. The branch and remote-URL displays
+  were dropped (they were always the constants `main` / the repo path), and
+  there is no separate reference line — the Directory row already shows the
+  checkout path, so the only reference info kept is the "in use" badge and,
+  when an explicit override is in effect, a muted note carrying the override
+  path.
   """
 
   use Phoenix.Component
   use Gettext, backend: EvoDashWeb.Gettext
   import EvoDashWeb.CoreComponents, only: [icon: 1]
 
-  @doc "Whether the Genesis Source section should render for the given node context."
+  @doc "Whether the Genesis Source card should render for the given node context."
   def visible?(node), do: node in [nil, node()]
 
-  # ── Merged section markup (rendered inside the System Self-Check) ─────────
+  # ── Grid-card markup (rendered inside the System Self-Check check grid) ──
 
   attr(:source_status, :any)
   attr(:source_status_loading, :boolean, default: false)
   attr(:source_busy, :any)
 
   @doc """
-  The Genesis Source sub-section of the System Self-Check section: minimal
-  checkout info (directory, commit + version when cloned) and the clone/update
-  buttons. The always-constant branch (`main`) and remote-URL displays were
-  deliberately dropped when this was merged into the self-check section.
+  The Genesis Source card of the System Self-Check check grid: minimal checkout
+  info (directory, commit + version when cloned) and the clone/update buttons.
+  The always-constant branch (`main`) and remote-URL displays were deliberately
+  dropped when this was merged into the self-check section.
 
   Button visibility mirrors the old standalone card: only a map status renders
   buttons (loading / `nil` / `{:unavailable, _}` states show no buttons), and
@@ -66,16 +72,18 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   """
   def source_section(assigns) do
     ~H"""
-    <div id="genesis-source-card" class="mt-6 pt-5 border-t border-base-200/60">
-      <div class="flex items-center justify-between gap-4 mb-3">
-        <div class="flex items-center gap-3">
-          <.icon name="hero-code-bracket-square" class="size-5 text-info shrink-0" />
-          <div>
-            <h3 class="font-bold text-sm">{gettext("Genesis Source")} <% # zh_CN: "本地 Genesis 源码" %></h3>
-            <p class="text-xs text-base-content/60 mt-0.5">
-              {gettext("Genesis source checkout used by the self-reflective agent.")} <% # zh_CN: "自省智能体使用的 Genesis 源码检出目录" %>
-            </p>
-          </div>
+    <div id="genesis-source-card" class="rounded-lg border border-base-200 bg-base-100">
+      <div class="flex items-center gap-3 p-4">
+        <div class="p-2 rounded-md bg-info/10 shrink-0">
+          <.icon name="hero-code-bracket-square" class="size-4 text-info" />
+        </div>
+        <div class="flex-1 min-w-0 flex items-center gap-2">
+          <span class="font-semibold text-sm">{gettext("Genesis Source")} <% # zh_CN: "本地 Genesis 源码" %></span>
+          <%= if is_map(@source_status) and @source_status.is_reference do %>
+            <span class="badge badge-info badge-sm gap-1 shrink-0">
+              {gettext("in use")} <% # zh_CN: "使用中" %>
+            </span>
+          <% end %>
         </div>
         <%= if not @source_status_loading and is_map(@source_status) do %>
           <%= if @source_status.exists do %>
@@ -114,7 +122,10 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
         <% end %>
       </div>
 
-      <div>
+      <div class="px-4 pb-4 text-sm">
+        <p class="text-xs text-base-content/60 mb-2">
+          {gettext("Genesis source checkout used by the self-reflective agent.")} <% # zh_CN: "自省智能体使用的 Genesis 源码检出目录" %>
+        </p>
         <%= if @source_status_loading do %>
           <div class="flex items-center gap-3 py-1">
             <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
@@ -159,25 +170,15 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
                 <% end %>
               </div>
 
-              <div class="mt-3 pt-3 border-t border-base-200/60">
-                <div class="flex items-center gap-2 flex-wrap">
-                  <span class="text-sm text-base-content/70">
-                    {gettext("The self-reflective agent reads: %{path}",
-                      path: reference_path(status)
-                    )} <% # zh_CN: "自省智能体读取的源码路径" %>
-                  </span>
-                  <%= if status.is_reference do %>
-                    <span class="badge badge-info badge-sm gap-1">
-                      {gettext("in use")} <% # zh_CN: "使用中" %>
-                    </span>
-                  <% end %>
-                </div>
-                <%= if override_in_effect?(status) do %>
-                  <p class="text-xs text-base-content/40 mt-1">
-                    {gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量或应用配置）" %>
-                  </p>
-                <% end %>
-              </div>
+              <%= if override_in_effect?(status) do %>
+                <!-- The Directory row shows the managed checkout dir; when an
+                     explicit override is in effect the self-reflective agent
+                     actually reads `reference`, so carry it here -->
+                <p class="text-xs text-base-content/40 mt-2 flex items-baseline gap-1 flex-wrap">
+                  <span>{gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量或应用配置）" %></span>
+                  <span class="font-mono break-all">{status.reference}</span>
+                </p>
+              <% end %>
           <% end %>
         <% end %>
       </div>
@@ -186,17 +187,8 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   end
 
   @doc """
-  The path the self-reflective agent actually reads: the explicit reference
-  (GENESIS_SOURCE_ROOT / app-env override) when set, else the managed checkout
-  dir. Rendered on the section's reference line.
-  """
-  def reference_path(status) do
-    status.reference || status.dir || ""
-  end
-
-  @doc """
   An explicit reference override (reference != the managed dir) is in effect —
-  the section must not imply that clone/update act on what the agent reads.
+  the card must not imply that clone/update act on what the agent reads.
   """
   def override_in_effect?(status) do
     status.reference != nil and status.reference != status.dir

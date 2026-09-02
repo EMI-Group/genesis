@@ -1530,19 +1530,26 @@ defmodule EvoDashWeb.SystemLiveTest do
     # socket assigns (`await_view_assign/3`); `render_async/2` does not await
     # TaskSupervisor children.
 
-    test "card renders on a local node", %{conn: conn} do
+    test "card renders on a local node as a peer card of the self-check grid", %{conn: conn} do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
-      {:ok, view, html} = live(conn, ~p"/system")
+      {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
+      html = render(view)
 
       assert assigns(view)[:source_card_visible] == true
       assert html =~ ~s(id="genesis-source-card")
       assert html =~ "Genesis Source"
       assert html =~ "Genesis source checkout used by the self-reflective agent."
+      # The card is a real cell INSIDE the self-check check grid (it hides
+      # together with the grid while a re-check is running).
+      assert Floki.find(check_grid(html), ~s(div[id="genesis-source-card"])) != []
     end
 
     test "card is hidden when viewing a remote node", %{conn: conn} do
-      {:ok, view, html} = mount_remote_system(conn)
+      {:ok, view, _html} = mount_remote_system(conn)
+      await_checks_done(view)
+      html = render(view)
 
       assert assigns(view)[:remote?] == true
       assert assigns(view)[:source_card_visible] == false
@@ -1556,6 +1563,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, not_cloned_status())
 
       html = render(view)
@@ -1566,13 +1574,14 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ ~s(id="update-source")
     end
 
-    test "cloned status renders the checkout details, Update button, and reference line", %{
+    test "cloned status renders the checkout details and Update button, no reference line", %{
       conn: conn
     } do
       status = source_status()
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, status)
 
       html = render(view)
@@ -1582,29 +1591,42 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "https://example.com/genesis.git"
       refute html =~ "Remote URL"
       refute html =~ ">Branch</span>"
-      assert html =~ "The self-reflective agent reads: /tmp/genesis-source"
+      # The redundant reference line is gone — the Directory row already shows
+      # the checkout path.
+      refute html =~ "The self-reflective agent reads"
       assert html =~ ~s(id="update-source")
       assert html =~ "Update"
       refute html =~ ~s(id="clone-source")
       refute html =~ "in use"
       refute html =~ "An explicit override is in effect"
       assert html =~ ~s(id="system-self-check")
+      # The source card is a real cell of the self-check grid
+      assert Floki.find(check_grid(html), ~s(div[id="genesis-source-card"])) != []
+      # The three system controls (Dashboard + Scheduler + System) are grouped
+      # into ONE section
+      assert html =~ ~s(id="system-controls")
+      assert html =~ "System Dashboard"
       assert html =~ ~s(id="runtime-controls")
       assert html =~ "System Control"
     end
 
-    test "an explicit reference override shows the muted note and the in-use badge", %{
-      conn: conn
-    } do
+    test "an explicit reference override shows the muted note (carrying the path) and the in-use badge",
+         %{
+           conn: conn
+         } do
       status = source_status(%{reference: "/custom/genesis-root", is_reference: true})
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, status)
 
       html = render(view)
       assert html =~ "An explicit override is in effect"
-      assert html =~ "The self-reflective agent reads: /custom/genesis-root"
+      # The override note carries the actual reference path (info preservation —
+      # it differs from the Directory row's managed dir)
+      assert html =~ "/custom/genesis-root"
+      refute html =~ "The self-reflective agent reads"
       assert html =~ "in use"
     end
 
@@ -1623,13 +1645,14 @@ defmodule EvoDashWeb.SystemLiveTest do
       # The runner signals it started, then sleeps — the loading spinner is
       # observable for a deterministic window.
       assert_receive :source_status_task_started, 1_000
+      await_checks_done(view)
       html = render(view)
       assert html =~ "Loading…"
 
       await_view_assign(view, :source_status, status)
       html = render(view)
       refute html =~ "Loading…"
-      assert html =~ "The self-reflective agent reads: /tmp/genesis-source"
+      refute html =~ "The self-reflective agent reads"
     end
 
     test "card shows the unavailable message when the backend module is missing", %{conn: conn} do
@@ -1638,6 +1661,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, {:unavailable, :module_missing})
 
       html = render(view)
@@ -1658,6 +1682,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, not_cloned_status())
 
       html = render_click(view, "clone_source")
@@ -1688,6 +1713,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, not_cloned_status())
 
       html = render_click(view, "clone_source")
@@ -1713,6 +1739,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, original)
 
       html = render_click(view, "update_source")
@@ -1739,6 +1766,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
+      await_checks_done(view)
       await_view_assign(view, :source_status, status)
 
       html = render_click(view, "update_source")

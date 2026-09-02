@@ -1,7 +1,9 @@
 defmodule EvoDashWeb.SystemLive do
   @moduledoc """
-  System page: scheduler and system controls (pause/resume, restart/stop)
-  and system self-check.
+  System page: software update, system self-check (merged health banner +
+  responsive check grid, including the local-only Genesis Source grid card),
+  scheduler-status charts, and the grouped System Controls section (System
+  Dashboard + scheduler pause/resume + VM restart/stop).
   """
 
   # zh_CN glossary translations used in this file:
@@ -500,48 +502,33 @@ defmodule EvoDashWeb.SystemLive do
                       </div>
                     </:details>
                   </.check_cell>
+
+                  <%= if @source_card_visible do %>
+                    <!-- Genesis Source cell (local nodes only — a remote
+                         genesis_remote daemon's self-reflective agent reads the
+                         REMOTE host's filesystem, so clone/update must never act
+                         remotely). A peer card in the check grid, so it hides
+                         together with the grid while a re-check is running. -->
+                    <EvoDashWeb.SystemLive.SourceCard.source_section
+                      source_status={@source_status}
+                      source_status_loading={@source_status_loading}
+                      source_busy={@source_busy}
+                    />
+                  <% end %>
                 </div>
               <% end %>
             </div>
-
-            <%= if @source_card_visible do %>
-              <!-- Genesis Source (merged into the self-check section; local nodes
-                   only — a remote genesis_remote daemon's self-reflective agent
-                   reads the REMOTE host's filesystem, so clone/update must never
-                   act remotely) -->
-              <EvoDashWeb.SystemLive.SourceCard.source_section
-                source_status={@source_status}
-                source_status_loading={@source_status_loading}
-                source_busy={@source_busy}
-              />
-            <% end %>
           </div>
         </div>
 
         <!-- Scheduler status charts (server-rendered SVG, no JS plotting lib) -->
         <Charts.charts_section samples={@chart_samples} paused={@scheduler_paused} />
 
-        <!-- System Dashboard -->
-        <div class="mt-4">
-          <.link navigate={with_node_param(~p"/dashboard", @current_node_id)} class="block">
-            <div class="rounded-lg border border-base-200 bg-base-100 p-4 hover:border-base-300 transition-colors">
-              <div class="flex items-center gap-3">
-                <.icon name="hero-chart-bar" class="size-5 text-info shrink-0" />
-                <div class="flex-1">
-                  <h3 class="font-semibold text-base">{gettext("System Dashboard")}</h3>
-                  <p class="text-sm text-base-content/60 mt-0.5">
-                    {gettext("View system metrics, processes, and application telemetry")}
-                  </p>
-                </div>
-                <.icon name="hero-arrow-right" class="size-5 text-base-content/30" />
-              </div>
-            </div>
-          </.link>
-        </div>
-
-        <!-- Scheduler + System controls (bottom of the page, side by side) -->
+        <!-- System Controls (LAST content section): System Dashboard + Scheduler
+             Control + System Control grouped in one responsive 3-card grid -->
         <EvoDashWeb.SystemLive.RuntimeControls.controls_section
           scheduler_paused={@scheduler_paused}
+          dashboard_path={with_node_param(~p"/dashboard", @current_node_id)}
         />
 
         <!-- Restart confirmation modal -->
