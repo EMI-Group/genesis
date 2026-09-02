@@ -66,22 +66,19 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 "badge border-0 font-medium px-2 py-1 text-[11px]",
                 EvoDashWeb.Helpers.task_status_badge(@task_status)
               ]}>
-                <%= if @task_status == :running do %>
+                <%= if @task_status in [:running, :cancelling] do %>
                   <span class="relative flex h-2 w-2 mr-1.5">
                     <span
-                      class="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"
+                      class={[
+                        "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                        EvoDashWeb.Helpers.task_status_dot_class(@task_status)
+                      ]}
                       style="animation-duration: 2s"
                     ></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-warning"></span>
-                  </span>
-                <% end %>
-                <%= if @task_status == :cancelling do %>
-                  <span class="relative flex h-2 w-2 mr-1.5">
-                    <span
-                      class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-500 opacity-75"
-                      style="animation-duration: 2s"
-                    ></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-violet-500"></span>
+                    <span class={[
+                      "relative inline-flex rounded-full h-2 w-2",
+                      EvoDashWeb.Helpers.task_status_dot_class(@task_status)
+                    ]}></span>
                   </span>
                 <% end %>
                 <%= if @task_status == :finalizing do %>
@@ -294,12 +291,14 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp status_label(status) when is_atom(status), do: Atom.to_string(status)
   defp status_label(_status), do: ""
 
+  # Assistant-card frame border per task status — mirrors the LOCKED semantic
+  # mapping (transitional/busy → warning amber, completed → success, failed →
+  # error, cancelled/pending/unknown → neutral gray).
   defp card_border(:running), do: "border-warning/25"
-  defp card_border(:cancelling), do: "border-violet-500/25"
-  defp card_border(:finalizing), do: "border-orange-500/25"
-  defp card_border(:completed), do: "border-info/25"
+  defp card_border(:finalizing), do: "border-warning/25"
+  defp card_border(:cancelling), do: "border-warning/25"
+  defp card_border(:completed), do: "border-success/25"
   defp card_border(:failed), do: "border-error/25"
-  defp card_border(:cancelled), do: "border-warning/25"
   defp card_border(_status), do: "border-base-200/60"
 
   defp type_color("user"), do: "text-info"

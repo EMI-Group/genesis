@@ -56,26 +56,23 @@ defmodule EvoDashWeb.TaskCardComponents do
               task_status_badge(@task.status),
               "font-medium border-0 px-2.5 py-2 rounded-md"
             ]}>
-              <%= if @task.status == :running do %>
+              <%= if @task.status in [:running, :cancelling] do %>
                 <span class="relative flex h-2.5 w-2.5 mr-2">
                   <span
-                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-warning opacity-75"
+                    class={[
+                      "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                      task_status_dot_class(@task.status)
+                    ]}
                     style="animation-duration: 2s"
                   ></span>
-                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-warning"></span>
+                  <span class={[
+                    "relative inline-flex rounded-full h-2.5 w-2.5",
+                    task_status_dot_class(@task.status)
+                  ]}></span>
                 </span>
               <% end %>
               <%= if @task.status == :finalizing do %>
                 <span class="loading loading-spinner loading-xs mr-2"></span>
-              <% end %>
-              <%= if @task.status == :cancelling do %>
-                <span class="relative flex h-2.5 w-2.5 mr-2">
-                  <span
-                    class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-500 opacity-75"
-                    style="animation-duration: 2s"
-                  ></span>
-                  <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500"></span>
-                </span>
               <% end %>
               <%= cond do %>
                 <% @task.status == :finalizing -> %>
@@ -478,13 +475,12 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Private helpers — accent color for task_card status bar
   # ---------------------------------------------------------------------------
 
-  defp status_accent_color(:running), do: "bg-warning"
-  defp status_accent_color(:finalizing), do: "bg-orange-500"
-  defp status_accent_color(:cancelling), do: "bg-violet-500"
-  defp status_accent_color(:completed), do: "bg-info"
-  defp status_accent_color(:failed), do: "bg-error"
-  defp status_accent_color(:cancelled), do: "bg-warning"
-  defp status_accent_color(_), do: "bg-base-300"
+  # Top accent bar color for the task-card status bar — delegates to the
+  # shared semantic dot mapping (LOCKED task-status table: transitional/busy →
+  # warning amber, completed → success, failed → error, pending/cancelled →
+  # neutral gray). Review-status overrides for completed tasks are handled in
+  # task_accent_color/1 (a distinct review-outcome dimension).
+  defp status_accent_color(status), do: task_status_dot_class(status)
 
   defp task_accent_color(%{status: :completed, review_status: :merged}), do: "bg-success"
   defp task_accent_color(%{status: :completed, review_status: :rejected}), do: "bg-error"
@@ -492,8 +488,9 @@ defmodule EvoDashWeb.TaskCardComponents do
   defp task_accent_color(%{status: :completed, review_status: :ignored}), do: "bg-base-300"
   defp task_accent_color(%{status: status}), do: status_accent_color(status)
 
-  defp task_card_tint(%{status: :running}), do: "bg-warning/5 shadow-warning/10 border-warning/20"
-
+  # Card tint — completed+review_status variants stay distinct (review
+  # outcome is a separate semantic dimension); every other task status
+  # delegates to the shared semantic tint (LOCKED mapping).
   defp task_card_tint(%{status: :completed, review_status: :merged}),
     do: "bg-success/5 shadow-success/10 border-success/20"
 
@@ -506,16 +503,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   defp task_card_tint(%{status: :completed, review_status: :ignored}),
     do: "bg-base-200/40 shadow-base-300/10 border-base-300/20"
 
-  defp task_card_tint(%{status: :completed}), do: "bg-info/5 shadow-info/10 border-info/20"
-
-  defp task_card_tint(%{status: :finalizing}),
-    do: "bg-orange-500/5 shadow-orange-500/10 border-orange-500/20"
-
-  defp task_card_tint(%{status: :cancelling}),
-    do: "bg-violet-500/5 shadow-violet-500/10 border-violet-500/20"
-
-  defp task_card_tint(%{status: :failed}), do: "bg-error/5 shadow-error/10 border-error/20"
-  defp task_card_tint(_), do: ""
+  defp task_card_tint(%{status: status}), do: task_status_tint(status)
 
   # ---------------------------------------------------------------------------
   # Public helpers — render_options/2
