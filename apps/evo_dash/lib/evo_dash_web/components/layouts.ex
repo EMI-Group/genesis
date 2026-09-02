@@ -60,6 +60,14 @@ defmodule EvoDashWeb.Layouts do
         "renders the floating guide panel when present"
   )
 
+  attr(:accent_color, :string,
+    default: "blue",
+    doc:
+      "the user-configured accent color name (seeded by EvoDashWeb.LiveHooks.Appearance from " <>
+        "EvoGit.Config.resolve([:appearance, :accent_color])); set as data-accent-color on #app-layout " <>
+        "so the app.css [data-accent-color] override rules retarget --color-primary/--color-accent for the shell"
+  )
+
   slot(:inner_block, required: true)
 
   def app(assigns) do
@@ -67,6 +75,7 @@ defmodule EvoDashWeb.Layouts do
     <div
       class="flex h-dvh overflow-hidden bg-base-200 transition-colors duration-300"
       id="app-layout"
+      data-accent-color={@accent_color}
     >
       <!-- Mobile hamburger button (visible on < lg screens) -->
       <div class="lg:hidden fixed top-0 left-0 z-50 p-2">

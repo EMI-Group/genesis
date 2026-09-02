@@ -38,6 +38,7 @@ defmodule EvoDashWeb.SystemLive do
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
+      accent_color={assigns[:accent_color] || "blue"}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}

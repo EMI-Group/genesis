@@ -42,6 +42,7 @@ All LiveViews register the `EvoDashWeb.LiveHooks.NodeAware` on-mount hook (via t
 ### Shared Conventions
 - All LiveViews use `use EvoDashWeb, :live_view` and import `CoreComponents` and `Layouts`.
 - All pages use `EvoDashWeb.Layouts.app/1` layout with `current_page` for nav highlighting.
+- Every page also carries `@accent_color` (the shell-wide config accent, `data-accent-color` on `#app-layout`), seeded by `EvoDashWeb.LiveHooks.Appearance` (registered in `live_view/0` after `NodeAware`). On a LOCAL node it resolves `EvoGit.Config.resolve([:appearance, :accent_color])` synchronously inside a `:handle_params` interceptor; on a REMOTE (`?node=`) connected node it joins the node-aware async pattern — a supervised `EvoDash.TaskSupervisor` fetch via `NodeContext.get_resolved_config/1` lands through a stale-guarded `:handle_info` interceptor, never an RPC on the render path. Detail: `../live_hooks/CONTEXT.md`.
 - Styled with DaisyUI/Tailwind CSS; business logic delegated to context modules.
 
 ### UI Patterns (modals, forms, events)
