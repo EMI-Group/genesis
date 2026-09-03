@@ -541,9 +541,9 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <details id={@id} open={@open} class="overflow-hidden group border-b border-base-300">
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors">
-        <.icon :if={@icon} name={@icon} class="size-5 shrink-0" />
+        <.icon :if={@icon} name={@icon} class="size-5 shrink-0 text-base-content/70" />
         <span class="font-semibold flex-1">{@title}</span>
-        <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
+        <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/70 transition-transform duration-200 group-open:rotate-180" />
       </summary>
       <div class="p-4">
         {render_slot(@inner_block)}

@@ -58,12 +58,12 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           card_border(@task_status)
         ]}>
           <%= if @task_status != nil do %>
-            <div class="flex items-center justify-between gap-2 border-b border-base-200/60 bg-base-200/30 px-3 py-1.5">
-              <span class="text-[10px] font-bold uppercase tracking-widest text-base-content/40">
+            <div class="flex items-center justify-between gap-2 border-b border-base-300 bg-base-200/30 px-3 py-1.5">
+              <span class="text-xs font-bold uppercase tracking-widest text-base-content/70">
                 <%!-- zh_CN: "任务" --%>{gettext("Task")}
               </span>
               <span class={[
-                "badge border-0 font-medium px-2 py-1 text-[11px]",
+                "badge border-0 font-medium px-2 py-1 text-xs",
                 EvoDashWeb.Helpers.task_status_badge(@task_status)
               ]}>
                 <%= if @task_status in [:running, :cancelling] do %>
@@ -136,11 +136,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
             <% end %>
           <% end %>
           <%= if @thought_process != [] do %>
-            <details class="group border-t border-base-200/60">
+            <details class="group border-t border-base-300">
               <summary class="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content">
                 <.icon name="hero-chevron-down" class="size-3.5 transition-transform group-open:rotate-180" />
                 <%!-- zh_CN: "思考过程" --%>{gettext("Thought process")}
-                <span class="font-mono text-[10px] text-base-content/40">({length(@thought_process)})</span>
+                <span class="font-mono text-xs text-base-content/70">({length(@thought_process)})</span>
               </summary>
               <div class="space-y-1.5 px-3 pb-3">
                 <%= for tp_entry <- @thought_process do %>
@@ -154,7 +154,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                  only — there is nothing to toggle/copy mid-stream): a
                  per-message raw/markdown toggle + a copy-whole-text button
                  (global ClipboardCopy hook, pushes the "copied" event). -->
-            <div class="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-0.5 rounded-md bg-base-100/95 p-0.5 opacity-0 shadow-sm ring-1 ring-base-200 transition-opacity duration-150 group-hover/assistant:opacity-100">
+            <div class="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-0.5 rounded-md bg-base-100/95 p-0.5 opacity-0 shadow-sm ring-1 ring-base-300 transition-opacity duration-150 group-hover/assistant:opacity-100">
               <%!-- zh_CN: 原始视图：显示本条消息的纯文本（未渲染的 Markdown 源文） --%>
               <button
                 type="button"
@@ -164,7 +164,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 aria-label={
                   if @raw, do: gettext("Show rendered markdown"), else: gettext("Show raw text")
                 }
-                class="flex size-6 items-center justify-center rounded text-base-content/50 transition-colors hover:bg-base-200 hover:text-base-content"
+                class="flex size-6 items-center justify-center rounded text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content"
               >
                 <.icon
                   name={if @raw, do: "hero-document-text", else: "hero-code-bracket"}
@@ -179,7 +179,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 data-content={entry_text(@entry)}
                 title={gettext("Copy message text")}
                 aria-label={gettext("Copy message text")}
-                class="flex size-6 items-center justify-center rounded text-base-content/50 transition-colors hover:bg-base-200 hover:text-base-content"
+                class="flex size-6 items-center justify-center rounded text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content"
               >
                 <.icon name="hero-clipboard" class="size-3.5" />
               </button>
@@ -204,31 +204,31 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
     <% reasoning_details = Map.get(data, :reasoning_details) || [] %>
     <% tool_name = Map.get(data, :tool_name) %>
     <div class="rounded-md bg-base-200/50 px-2.5 py-1.5">
-      <div class="flex items-center gap-2 text-[11px]">
+      <div class="flex items-center gap-2 text-xs">
         <span class={["font-mono font-semibold uppercase tracking-wide", type_color(Map.get(@entry, :type))]}>
           {entry_type(Map.get(@entry, :type))}
         </span>
         <%= if is_integer(Map.get(@entry, :turn)) do %>
-          <span class="font-mono text-base-content/40">#<%= Map.get(@entry, :turn) %></span>
+          <span class="font-mono text-base-content/60">#<%= Map.get(@entry, :turn) %></span>
         <% end %>
-        <span class="ml-auto font-mono text-base-content/40">{tp_timestamp(Map.get(@entry, :timestamp))}</span>
+        <span class="ml-auto font-mono text-base-content/60">{tp_timestamp(Map.get(@entry, :timestamp))}</span>
       </div>
       <%= if reasoning_details != [] do %>
         <% reasoning_text = reasoning_text(reasoning_details) %>
         <%= if reasoning_text != "" do %>
-          <div class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs italic text-base-content/50">
+          <div class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs italic text-base-content/70">
             {reasoning_text}
           </div>
         <% end %>
       <% end %>
       <%= if Map.get(@entry, :type) == "tool" do %>
         <%= if tool_name do %>
-          <div class="mt-1 font-mono text-[11px] text-success">
+          <div class="mt-1 font-mono text-xs text-success">
             <%= gettext("Tool Result: %{name}", name: tool_name) %>
           </div>
         <% end %>
         <%= if content != "" do %>
-          <div class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded bg-success/10 px-2 py-1 text-[11px] text-success">
+          <div class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded bg-success/10 px-2 py-1 text-xs text-success">
             {content}
           </div>
         <% end %>
@@ -244,18 +244,18 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           <%= for call <- tool_calls do %>
             <% display = ToolCallDisplay.display(call) %>
             <div class="flex items-start gap-2">
-              <span class="shrink-0 font-mono text-[11px] font-semibold text-secondary">{display.label}</span>
+              <span class="shrink-0 font-mono text-xs font-semibold text-secondary">{display.label}</span>
               <%= if display.kind == :structured do %>
                 <div class="min-w-0 flex-1 space-y-0.5">
                   <%= for {key, value} <- display.rows do %>
                     <div class="flex items-start gap-1.5">
-                      <span class="w-16 shrink-0 font-mono text-[10px] uppercase tracking-wide text-base-content/50">{key}</span>
-                      <span class="min-w-0 break-all whitespace-pre-wrap font-mono text-[11px]">{value}</span>
+                      <span class="w-16 shrink-0 font-mono text-xs uppercase tracking-wide text-base-content/70">{key}</span>
+                      <span class="min-w-0 break-all whitespace-pre-wrap font-mono text-xs">{value}</span>
                     </div>
                   <% end %>
                 </div>
               <% else %>
-                <span class="min-w-0 truncate font-mono text-[11px]">{display.summary}</span>
+                <span class="min-w-0 truncate font-mono text-xs">{display.summary}</span>
               <% end %>
             </div>
           <% end %>
@@ -304,7 +304,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp type_color("user"), do: "text-info"
   defp type_color("assistant"), do: "text-primary"
   defp type_color("tool"), do: "text-success"
-  defp type_color(_type), do: "text-base-content/50"
+  defp type_color(_type), do: "text-base-content/60"
 
   defp entry_type(type) when is_binary(type) and type != "", do: type
   defp entry_type(_type), do: "message"

@@ -63,11 +63,11 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               category == @active_category && "bg-primary text-primary-content",
               category != @active_category &&
                 "hover:bg-base-200/70 text-base-content/90 hover:text-base-content",
-              (@search_text != "" and match_count == 0) && "opacity-30"
+              (@search_text != "" and match_count == 0) && "opacity-60"
             ]}
           >
             <%= if category == @active_category do %>
-              <div class="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div class="absolute inset-0 bg-primary-content/10 opacity-0 group-hover:opacity-100 transition-opacity">
               </div>
             <% end %>
             <.icon name={category_icon(category)} class="size-5 shrink-0 relative z-10" />

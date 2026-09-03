@@ -243,7 +243,7 @@ defmodule EvoDashWeb.SettingsComponents do
                               name="base_url"
                               value={shortcut_prefill_base_url}
                               placeholder="https://..."
-                              class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                              class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
                             />
                             <p class="text-xs text-base-content/70 leading-relaxed mt-1">
                               <%!-- zh_CN: provider → "服务商" --%>{gettext(
@@ -312,7 +312,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         name="model_name"
                         value={custom_prefill_id}
                         placeholder={gettext("e.g. gpt-4o or anthropic/claude-3.5-sonnet")}
-                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
                       />
                     </div>
                     <div class="form-control">
@@ -329,7 +329,7 @@ defmodule EvoDashWeb.SettingsComponents do
                         name="base_url"
                         value={custom_prefill_base_url}
                         placeholder={gettext("https://api.my-provider.com/v1")}
-                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-50 font-mono text-sm"
+                        class="input input-bordered w-full rounded-xl shadow-sm bg-base-100 font-mono text-sm"
                       />
                       <p class="text-xs text-base-content/70 leading-relaxed mt-1">
                         <%= if requires_base_url do %>
@@ -349,7 +349,7 @@ defmodule EvoDashWeb.SettingsComponents do
                           name="hero-exclamation-triangle"
                           class="size-5 text-warning shrink-0 mt-0.5"
                         />
-                        <p class="text-xs font-medium text-warning/80 leading-relaxed">
+                        <p class="text-xs font-medium text-warning/90 leading-relaxed">
                           <%!-- zh_CN: tool calls → "工具调用", provider → "服务商" --%>{gettext(
                             "Warning: OpenAI-compatible APIs vary in compatibility. Some features (tool calls, streaming, structured output) may not work depending on the provider."
                           )}
@@ -386,7 +386,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
                         }
                         class={[
-                          "input input-bordered flex-1 rounded-xl shadow-sm bg-base-50",
+                          "input input-bordered flex-1 rounded-xl shadow-sm bg-base-100",
                           key_is_set && "input-success"
                         ]}
                       />
@@ -395,7 +395,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       </button>
                     </div>
                     <%= if key_is_set do %>
-                      <p class="text-[11px] text-success/70 mt-1.5 font-medium">
+                      <p class="text-[11px] text-success/90 mt-1.5 font-medium">
                         ✓ {gettext("Your API key is configured and ready to use.")}
                       </p>
                     <% else %>
@@ -441,7 +441,7 @@ defmodule EvoDashWeb.SettingsComponents do
                 <%= case @llm_test_status do %>
                   <% :idle -> %>
                     <%= if @model_profiles == [] do %>
-                      <span class="text-sm text-base-content/50 italic">{gettext(
+                      <span class="text-sm text-base-content/70 italic">{gettext(
                         "No model profiles configured — add a profile first"
                       )}</span>
                       <button disabled class="btn btn-primary btn-sm gap-2 opacity-50">
@@ -622,7 +622,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             systemd-run
                             <span class="badge badge-success badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                           </h3>
-                          <p class="text-sm font-medium text-success/80 leading-relaxed">
+                          <p class="text-sm font-medium text-success/90 leading-relaxed">
                             <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
                               "Full sandboxing is enabled: filesystem isolation, resource limits, and syscall filtering are active."
                             )}
@@ -639,7 +639,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             sandbox-exec
                             <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                           </h3>
-                          <p class="text-sm font-medium text-warning/80 leading-relaxed">
+                          <p class="text-sm font-medium text-warning/90 leading-relaxed">
                             {gettext(
                               "Filesystem isolation is active. Note: Resource limits are not available on macOS."
                             )}
@@ -656,7 +656,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             bwrap
                             <span class="badge badge-warning badge-sm text-[10px] uppercase tracking-wider font-bold">Active</span>
                           </h3>
-                          <p class="text-sm font-medium text-warning/80 leading-relaxed">
+                          <p class="text-sm font-medium text-warning/90 leading-relaxed">
                             <%!-- zh_CN: 沙箱后端 bwrap：仅文件系统隔离可用，无资源限制/系统调用过滤 --%>{gettext(
                               "Filesystem isolation is active (bubblewrap). Resource limits/syscall filtering not available with bwrap."
                             )}
@@ -673,7 +673,7 @@ defmodule EvoDashWeb.SettingsComponents do
                             {gettext("Not Available")}
                             <span class="badge badge-error badge-sm text-[10px] uppercase tracking-wider font-bold">Disabled</span>
                           </h3>
-                          <p class="text-sm font-medium text-error/80 leading-relaxed">
+                          <p class="text-sm font-medium text-error/90 leading-relaxed">
                             <%!-- zh_CN: sandbox → "沙箱" --%>{gettext(
                               "No sandbox support on this platform. Commands will run directly on the host."
                             )}

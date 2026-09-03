@@ -174,7 +174,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
             required
           />
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             {gettext("A unique identifier is generated from the name")}
           </p>
         </div>
@@ -189,7 +189,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             placeholder={gettext("optional")}
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
           />
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             {gettext("Free-form description")}
           </p>
         </div>
@@ -207,7 +207,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
           placeholder={gettext("You are...")}
           class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm resize-y"
         ><%= agent_prompt(@agent) %></textarea>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           {gettext("The system prompt that defines this agent's role")}
         </p>
       </div>
@@ -224,7 +224,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             <option value="read_write" selected={agent_type(@agent) == :read_write}>read_write</option>
             <option value="read" selected={agent_type(@agent) == :read}>read</option>
           </select>
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             <%!-- zh_CN: read → "只读", read_write → "可读可写" --%>{gettext(
               "\"read\" agents cannot modify files"
             )}
@@ -241,7 +241,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             <option value="low" selected={agent_delegation_level(@agent) == :low}>low</option>
             <option value="high" selected={agent_delegation_level(@agent) == :high}>high</option>
           </select>
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             <%!-- zh_CN: Subagent → "子智能体" --%>{gettext("Subagent delegation level")}
           </p>
         </div>
@@ -263,7 +263,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
               <% end %>
             <% end %>
           </select>
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             {gettext("The model profile to use; none = auto-selected")}
           </p>
         </div>
@@ -281,7 +281,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
           placeholder={gettext("empty")}
           class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
         />
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           {gettext("Per-agent turn cap override; empty = default")}
         </p>
       </div>
@@ -306,7 +306,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             </label>
           <% end %>
         </div>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           {gettext("None selected = all tools")}
         </p>
       </div>
@@ -331,7 +331,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             </label>
           <% end %>
         </div>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           <%!-- zh_CN: built-in agent types → "内置智能体类型" --%>{gettext(
             "Built-in agent types this agent may spawn; none selected = no subagents"
           )}

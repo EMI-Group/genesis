@@ -41,7 +41,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
         class="h-14 w-auto hidden dark:block"
         alt={gettext("EvoX Genesis")}
       />
-      <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/40">
+      <p class="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/60">
         <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
       </p>
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-base-content">
@@ -49,7 +49,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
           "How can I help you today?"
         )}
       </h2>
-      <p class="max-w-md text-sm text-base-content/50">
+      <p class="max-w-md text-sm text-base-content/80">
         <%!-- zh_CN: "与 Genesis 助手聊天：询问代码库、探索源码、控制任务，或获得仪表盘引导" --%>{gettext(
           "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
         )}
@@ -59,28 +59,28 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
         <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
           <.icon
             name="hero-light-bulb"
-            class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
           />
         </.suggestion_chip>
         <%!-- zh_CN: "任务取消是如何工作的？" --%>
         <.suggestion_chip message={gettext("How does task cancellation work?")}>
           <.icon
             name="hero-magnifying-glass"
-            class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
           />
         </.suggestion_chip>
         <%!-- zh_CN: "你能帮我做什么？" --%>
         <.suggestion_chip message={gettext("What can you help me with?")}>
           <.icon
             name="hero-puzzle-piece"
-            class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
           />
         </.suggestion_chip>
         <%!-- zh_CN: "引导我使用仪表盘" --%>
         <.suggestion_chip message={gettext("Guide me through the dashboard")}>
           <.icon
             name="hero-map"
-            class="size-4 mt-0.5 shrink-0 text-primary/70 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
           />
         </.suggestion_chip>
       </div>
@@ -114,7 +114,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
                 thought_process={if is_last, do: @thought_process, else: []}
               />
             <% :error -> %>
-              <div class="flex items-start gap-2 rounded-xl border border-error/25 bg-error/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-error whitespace-pre-wrap break-words">
+              <div class="flex items-start gap-2 rounded-xl border border-error/25 bg-error/10 px-3.5 py-2.5 text-sm leading-relaxed text-error whitespace-pre-wrap break-words">
                 <.icon name="hero-exclamation-circle" class="mt-0.5 size-4 shrink-0" />
                 {Map.get(entry, :text, "")}
               </div>
@@ -170,7 +170,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       type="button"
       phx-click="send_message"
       phx-value-message={@message}
-      class="group flex items-start gap-2.5 rounded-xl border border-base-300/50 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
+      class="group flex items-start gap-2.5 rounded-xl border border-base-300 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
     >
       {render_slot(@inner_block)}
       {@message}

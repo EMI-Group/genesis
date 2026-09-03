@@ -36,7 +36,7 @@ defmodule EvoDashWeb.TasksLive do
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <!-- Filter Bar -->
-        <div class="rounded-lg border border-base-200 bg-base-100 p-3 sm:p-4 mb-4">
+        <div class="rounded-lg border border-base-300 bg-base-100 p-3 sm:p-4 mb-4">
           <form id="task-filters" phx-submit="noop">
             <div class="flex flex-col sm:flex-row gap-3">
               <!-- Status Filter -->
@@ -118,7 +118,7 @@ defmodule EvoDashWeb.TasksLive do
                 <div class="relative">
                   <.icon
                     name="hero-magnifying-glass"
-                    class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/40 pointer-events-none z-10"
+                    class="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-base-content/60 pointer-events-none z-10"
                   />
                   <%!-- 搜索结果同时匹配 agent 的最终回复消息 --%>
                   <input
@@ -161,8 +161,8 @@ defmodule EvoDashWeb.TasksLive do
 
           <!-- Active filters indicator -->
           <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
-            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-200/50">
-              <span class="text-xs text-base-content/50">{gettext("Active filters:")}</span>
+            <div class="flex items-center gap-2 mt-3 pt-3 border-t border-base-300">
+              <span class="text-xs text-base-content/70">{gettext("Active filters:")}</span>
               <%= if @status_filter != "all" do %>
                 <span class="badge badge-primary gap-1 rounded-md">
                   {@status_filter}
@@ -221,14 +221,14 @@ defmodule EvoDashWeb.TasksLive do
         <!-- Task List -->
         <div class="space-y-4 lg:space-y-5">
           <%= if @tasks_loading do %>
-            <div class="text-center py-12 sm:py-16 text-base-content/50">
-              <.icon name="hero-arrow-path" class="size-10 mx-auto mb-4 opacity-50 animate-spin" />
+            <div class="text-center py-12 sm:py-16 text-base-content/70">
+              <.icon name="hero-arrow-path" class="size-10 mx-auto mb-4 text-base-content/40 animate-spin" />
               <p class="text-lg font-medium">{gettext("Loading tasks...")}</p>
             </div>
           <% else %>
             <%= if @filtered_tasks == [] do %>
-              <div class="text-center py-12 sm:py-16 text-base-content/50">
-                <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
+              <div class="text-center py-12 sm:py-16 text-base-content/70">
+                <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
                 <p class="text-lg font-medium">{gettext("No tasks found")}</p>
                 <p class="text-sm mt-1">
                   <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
@@ -262,7 +262,7 @@ defmodule EvoDashWeb.TasksLive do
           <% range_end = min(offset + @page_size, @total_count) %>
           <% pages = page_window(@current_page, @total_pages) %>
           <div class="mt-4 flex flex-col items-center gap-3">
-            <p class="text-sm text-base-content/60">
+            <p class="text-sm text-base-content/70">
               {gettext("Showing %{start}–%{end} of %{total} tasks",
                 start: range_start,
                 end: range_end,
@@ -302,7 +302,7 @@ defmodule EvoDashWeb.TasksLive do
                 </button>
               </div>
             </div>
-            <p class="text-xs text-base-content/50">
+            <p class="text-xs text-base-content/70">
               {gettext("Page %{current} of %{total}", current: @current_page, total: @total_pages)}
             </p>
           </div>
@@ -312,7 +312,7 @@ defmodule EvoDashWeb.TasksLive do
         <div class="mt-6 flex justify-center sm:justify-end">
           <button
             type="button"
-            class="btn btn-ghost btn-sm text-error/60 hover:text-error gap-1"
+            class="btn btn-ghost btn-sm text-error gap-1"
             phx-click="clear_task_history"
             phx-confirm={gettext("Clear all finished task history? This cannot be undone.")}
           >
@@ -369,7 +369,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_cancel_modal">
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
                 <h3 class="text-lg font-bold">{gettext("Cancel Task?")}</h3>
@@ -380,7 +380,7 @@ defmodule EvoDashWeb.TasksLive do
                   "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
                 )}
               </p>
-              <p class="text-xs text-base-content/40 mb-5">
+              <p class="text-xs text-base-content/70 mb-5">
                 {gettext("Task: %{task_id}", task_id: @confirm_cancel_task_id)}
               </p>
 
@@ -410,7 +410,7 @@ defmodule EvoDashWeb.TasksLive do
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="close_force_kill_modal">
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
                 <h3 class="text-lg font-bold">{gettext("Force Kill Task?")}</h3>
@@ -421,7 +421,7 @@ defmodule EvoDashWeb.TasksLive do
                   "Immediately stops the task and all of its agents. ALL progress will be completely lost. This cannot be undone."
                 )}
               </p>
-              <p class="text-xs text-base-content/40 mb-5">
+              <p class="text-xs text-base-content/70 mb-5">
                 {gettext("Task: %{task_id}", task_id: @confirm_force_kill_task_id)}
               </p>
 

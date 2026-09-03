@@ -164,7 +164,7 @@ defmodule EvoDashWeb.SettingsLive do
                 <%!-- Remote Connections UI — same design as category_section but
                    for the special :remote_connections pseudo-category --%>
                 <div class="flex-1 flex flex-col min-w-0">
-                  <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
+                  <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-300/70">
                     <div class="flex items-center gap-3 mb-1">
                       <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
                       <h2 class="text-lg font-bold text-base-content">
@@ -191,7 +191,7 @@ defmodule EvoDashWeb.SettingsLive do
                     <div :if={@remote_targets != []} class="space-y-3">
                       <div
                         :for={target <- @remote_targets}
-                        class="rounded-lg border border-base-200 bg-base-100 p-4"
+                        class="rounded-lg border border-base-300 bg-base-100 p-4"
                       >
                         <div class="flex items-start justify-between gap-2">
                           <div class="flex items-center gap-3 min-w-0">
@@ -201,7 +201,7 @@ defmodule EvoDashWeb.SettingsLive do
                             ]}></span>
                             <div class="min-w-0">
                               <p class="font-semibold text-sm truncate">{target.name}</p>
-                              <p class="text-xs text-base-content/50 font-mono truncate">
+                              <p class="text-xs text-base-content/70 font-mono truncate">
                                 {target[:ssh_target] ||
                                   "#{target[:user]}@#{target[:host]}#{if target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: ""}"}
                               </p>
@@ -336,8 +336,8 @@ defmodule EvoDashWeb.SettingsLive do
                       </div>
                     </div>
 
-                    <div :if={@remote_targets == []} class="text-center py-10 text-base-content/50">
-                      <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 opacity-40" />
+                    <div :if={@remote_targets == []} class="text-center py-10 text-base-content/70">
+                      <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 text-base-content/40" />
                       <p class="text-sm">{gettext("No remote connections configured.")}</p>
                     </div>
 
@@ -364,7 +364,7 @@ defmodule EvoDashWeb.SettingsLive do
                     </div>
 
                     <%!-- Add / Edit target form --%>
-                    <div class="border-t border-base-200 pt-5">
+                    <div class="border-t border-base-300 pt-5">
                       <%= if @remote_form_target do %>
                         <h4 class="font-semibold text-sm mb-4">
                           <%= if @remote_form_target[:id] do %>
@@ -385,7 +385,7 @@ defmodule EvoDashWeb.SettingsLive do
                                 name="name"
                                 value={@remote_form_target[:name]}
                                 placeholder={gettext("e.g. GPU Server")}
-                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                               />
                             </div>
                             <div class="form-control col-span-2">
@@ -397,13 +397,13 @@ defmodule EvoDashWeb.SettingsLive do
                                 name="ssh_target"
                                 value={@remote_form_target[:ssh_target]}
                                 placeholder={gettext("gpu-server or user@host")}
-                                class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                                class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                               />
                             </div>
                             <div class="col-span-2 flex">
                               <button
                                 type="button"
-                                class="btn btn-ghost btn-xs gap-1 -mt-1 text-base-content/60"
+                                class="btn btn-ghost btn-xs gap-1 -mt-1 text-base-content/70"
                                 phx-click="toggle_remote_advanced"
                               >
                                 <.icon
@@ -433,9 +433,9 @@ defmodule EvoDashWeb.SettingsLive do
                                   name="local_binary_path"
                                   value={@remote_form_target[:local_binary_path]}
                                   placeholder="_build/prod/rel/genesis_remote.tar.xz"
-                                  class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                                  class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                                 />
-                                <p class="text-xs text-base-content/50 mt-1">
+                                <p class="text-xs text-base-content/70 mt-1">
                                   {gettext("Leave blank to auto-download the release on the remote")}
                                 </p>
                               </div>
@@ -450,9 +450,9 @@ defmodule EvoDashWeb.SettingsLive do
                                   name="platform"
                                   value={@remote_form_target[:platform]}
                                   placeholder="linux_x64, darwin_arm64, windows_x64"
-                                  class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                                  class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                                 />
-                                <p class="text-xs text-base-content/50 mt-1">
+                                <p class="text-xs text-base-content/70 mt-1">
                                   {gettext("Blank = auto-probe the remote OS/arch")}
                                 </p>
                               </div>
@@ -465,7 +465,7 @@ defmodule EvoDashWeb.SettingsLive do
                                   name="dist_port"
                                   value={@remote_form_target[:dist_port]}
                                   placeholder="9000"
-                                  class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                                  class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                                 />
                               </div>
                               <div class="form-control">
@@ -479,7 +479,7 @@ defmodule EvoDashWeb.SettingsLive do
                                   name="remote_path"
                                   value={@remote_form_target[:remote_path]}
                                   placeholder="/tmp/genesis_remote"
-                                  class="input input-bordered input-sm w-full rounded-lg bg-base-50 font-mono text-sm"
+                                  class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                                 />
                               </div>
                             </div>
@@ -530,7 +530,7 @@ defmodule EvoDashWeb.SettingsLive do
                       phx-value-target_id={@bootstrap_restart_confirm.id}
                     >
                     </div>
-                    <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+                    <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
                       <div class="flex items-center gap-3 mb-4">
                         <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
                         <h3 class="text-lg font-bold">
@@ -544,7 +544,7 @@ defmodule EvoDashWeb.SettingsLive do
                           "The remote daemon is already running. Re-bootstrapping will stop it and any tasks running on the remote."
                         )}
                       </p>
-                      <p class="text-xs text-base-content/50 mb-5 leading-relaxed font-mono break-all">
+                      <p class="text-xs text-base-content/70 mb-5 leading-relaxed font-mono break-all">
                         {@bootstrap_restart_confirm.details}
                       </p>
 
@@ -580,7 +580,7 @@ defmodule EvoDashWeb.SettingsLive do
                    HTML). --%>
                 <%= if @active_category == :agents do %>
                   <div class="flex-1 flex flex-col min-w-0">
-                    <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-200/70">
+                    <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-300/70">
                       <div class="flex items-center gap-3 mb-1">
                         <.icon name="hero-user-group" class="size-5 text-base-content/70" />
                         <h2 class="text-lg font-bold text-base-content">

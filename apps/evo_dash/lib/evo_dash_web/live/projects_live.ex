@@ -208,7 +208,7 @@ defmodule EvoDashWeb.ProjectsLive do
                         <summary class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
                           <.icon name="hero-sparkles" class="size-4 shrink-0 text-primary/70" />
                           <span>{gettext("New to Genesis? Start with an example")}</span>
-                          <span class="ml-auto text-xs font-normal text-base-content/40">
+                          <span class="ml-auto text-xs font-normal text-base-content/60">
                             <span class="group-open:hidden">{gettext("Show example")}</span>
                             <span class="hidden group-open:inline">{gettext("Hide example")}</span>
                           </span>
@@ -307,7 +307,7 @@ defmodule EvoDashWeb.ProjectsLive do
                       <span class="loading loading-spinner loading-sm text-primary"></span>
                       <%!-- 正在通过远程节点加载所选项目，加载完成前任务表单保持禁用 --%>
                       <span class="text-sm text-base-content/70">{gettext("Loading project…")}</span>
-                      <code class="text-xs text-base-content/40 font-mono truncate min-w-0">
+                      <code class="text-xs text-base-content/70 font-mono truncate min-w-0">
                         {@remote_project_loading}
                       </code>
                     </div>
@@ -334,9 +334,9 @@ defmodule EvoDashWeb.ProjectsLive do
                 </div>
 
                 <%= if @remote_agents == [] do %>
-                  <div class="mt-6 text-center py-10 text-base-content/50 animate-fade-in-up">
+                  <div class="mt-6 text-center py-10 text-base-content/70 animate-fade-in-up">
                     <div class="animate-float">
-                      <.icon name="hero-inbox" class="size-14 mx-auto mb-3 opacity-50" />
+                      <.icon name="hero-inbox" class="size-14 mx-auto mb-3 text-base-content/40" />
                     </div>
                     <p class="text-base font-medium">{gettext("No active agents")}</p>
                     <p class="text-sm mt-1">
@@ -356,13 +356,13 @@ defmodule EvoDashWeb.ProjectsLive do
                     </div>
                     <div class="space-y-3">
                       <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
-                        <div class="rounded-2xl border border-base-200 bg-base-100 p-4">
+                        <div class="rounded-lg border border-base-300 bg-base-100 p-4">
                           <div class="flex items-center justify-between gap-3 mb-2">
                             <div class="flex items-center gap-2 min-w-0">
                               <span class="badge badge-ghost badge-sm font-mono shrink-0">
                                 #{Map.get(agent, :id, "?")}
                               </span>
-                              <code class="text-xs text-base-content/60 truncate">
+                              <code class="text-xs text-base-content/70 truncate">
                                 {Map.get(agent, :agent_module, "")}
                               </code>
                             </div>
@@ -390,7 +390,7 @@ defmodule EvoDashWeb.ProjectsLive do
                           <%= if objective do %>
                             <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
                           <% end %>
-                          <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/50">
+                          <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/70">
                             <%= if Map.get(agent, :model_id) do %>
                               <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
                             <% end %>

@@ -16,10 +16,10 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
 
   def diff_stats_bar(assigns) do
     ~H"""
-    <div class="bg-base-100 border-b border-base-200 px-5 py-4 md:px-6 md:py-4">
+    <div class="bg-base-100 border-b border-base-300 px-5 py-4 md:px-6 md:py-4">
       <div class="flex items-center gap-4 flex-wrap text-sm">
         <div class="flex items-center gap-2.5">
-          <.icon name="hero-document-text" class="size-4.5 text-base-content/50" />
+          <.icon name="hero-document-text" class="size-4.5 text-base-content/70" />
           <span class="font-medium text-base-content/80">
             {gettext("%{count} files changed", count: @files_count)}
           </span>
@@ -34,7 +34,7 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
         </div>
         <span class="text-base-content/30 hidden sm:inline">·</span>
         <div class="flex items-center gap-2.5">
-          <.icon name="hero-clock" class="size-4.5 text-base-content/50" />
+          <.icon name="hero-clock" class="size-4.5 text-base-content/70" />
           <span class="font-medium text-base-content/80">
             <%!-- zh_CN: commit → "提交" --%>
             {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
@@ -69,19 +69,19 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
             phx-click="inspect_commit"
             phx-value-sha={commit.sha}
           >
-            <span class="badge badge-sm badge-ghost rounded-full font-mono text-xs px-2.5 py-3 shrink-0">
+            <span class="badge badge-sm badge-outline border-base-content/20 rounded-lg font-mono text-xs px-2.5 shrink-0">
               {commit.short_sha}
             </span>
             <span class="text-sm font-medium flex-1 truncate" title={commit.message}>
               {commit.message}
             </span>
-            <span class="text-sm text-base-content/50 shrink-0 hidden sm:inline">
+            <span class="text-sm text-base-content/60 shrink-0 hidden sm:inline">
               {commit.author_name}
             </span>
-            <span class="text-sm text-base-content/50 shrink-0">
+            <span class="text-sm text-base-content/60 shrink-0">
               {relative_time(commit.date)}
             </span>
-            <.icon name="hero-chevron-right" class="size-4 text-base-content/30 shrink-0" />
+            <.icon name="hero-chevron-right" class="size-4 text-base-content/60 shrink-0" />
           </button>
         <% end %>
       </div>
