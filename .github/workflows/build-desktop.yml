@@ -176,7 +176,7 @@ jobs:
                   "runner": "ubuntu-24.04",
                   "vendor_platform": "linux-x86_64",
                   "rg_target": "x86_64-unknown-linux-musl",
-                  "rg_sha256": "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                  "rg_sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
                   "rust_target": "x86_64-unknown-linux-gnu",
                   "bundles": "deb,rpm,appimage",
                   "portable": True,
@@ -188,7 +188,7 @@ jobs:
                   "runner": "ubuntu-24.04-arm",
                   "vendor_platform": "linux-arm64",
                   "rg_target": "aarch64-unknown-linux-gnu",
-                  "rg_sha256": "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e",
+                  "rg_sha256": "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d",
                   "rust_target": "aarch64-unknown-linux-gnu",
                   "bundles": "deb,rpm",
                   "portable": False,
@@ -237,7 +237,7 @@ jobs:
                   "runner": "ubuntu-22.04",
                   "vendor_platform": "linux-x86_64",
                   "rg_target": "x86_64-unknown-linux-musl",
-                  "rg_sha256": "1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599",
+                  "rg_sha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
                   "image_os": "",
               })
           if os.environ["LINUX_ARM64"] == "1":
@@ -246,7 +246,7 @@ jobs:
                   "runner": "ubuntu-22.04-arm",
                   "vendor_platform": "linux-arm64",
                   "rg_target": "aarch64-unknown-linux-gnu",
-                  "rg_sha256": "2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e",
+                  "rg_sha256": "a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d",
                   "image_os": "ubuntu22",
               })
           print(json.dumps(rows))
@@ -519,7 +519,7 @@ jobs:
         env:
           VENDOR_PLATFORM: macos-arm64
           RG_TARGET: aarch64-apple-darwin
-          RG_SHA256: 378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715
+          RG_SHA256: 3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4
         run: |
           set -euo pipefail
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
@@ -741,7 +741,7 @@ jobs:
         env:
           VENDOR_PLATFORM: windows-x64
           RG_TARGET: x86_64-pc-windows-msvc
-          RG_SHA256: 124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a
+          RG_SHA256: 71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5
           MINGIT_SHA256: 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e
         run: |
           set -euo pipefail
@@ -754,8 +754,12 @@ jobs:
           echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
           unzip -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -d "${DOWNLOAD_DIR}/rg-extract"
           cp "${DOWNLOAD_DIR}/rg-extract/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg.exe" "${VENDOR_DIR}/rg.exe"
-          MINGIT_VERSION_CLEAN="${MINGIT_VERSION%.windows.*}"
-          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION_CLEAN}-64-bit.zip"
+          # git-for-windows asset naming is inconsistent: for 2.55.0.windows.5 the asset
+          # is MinGit-2.55.0.5-64-bit.zip (patch included), but e.g. v2.51.0.windows.1
+          # ships MinGit-2.51.0-64-bit.zip (patch omitted). This replacement handles the
+          # CURRENT pin (2.55.0.windows.5 -> 2.55.0.5); re-verify the asset name when
+          # bumping MINGIT_VERSION, especially to a *.windows.1 release.
+          MINGIT_ARCHIVE="MinGit-${MINGIT_VERSION//.windows./.}-64-bit.zip"
           MINGIT_URL="https://github.com/git-for-windows/git/releases/download/v${MINGIT_VERSION}/${MINGIT_ARCHIVE}"
           curl -fsSL "${MINGIT_URL}" -o "${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}"
           echo "${MINGIT_SHA256}  ${DOWNLOAD_DIR}/${MINGIT_ARCHIVE}" | sha256sum -c -
