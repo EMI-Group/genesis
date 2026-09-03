@@ -35,12 +35,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ELIXIR_VERSION: "1.20.3"
+  ELIXIR_VERSION: "1.20.4"
   OTP_VERSION: "29"
   RUST_VERSION: "1.97.1"
   TAURI_CLI_VERSION: "2.11.4"
-  RIPGREP_VERSION: "15.1.0"
-  MINGIT_VERSION: "2.54.0.windows.1"
+  RIPGREP_VERSION: "15.2.0"
+  MINGIT_VERSION: "2.55.0.windows.5"
 
 permissions:
   contents: read
@@ -742,7 +742,7 @@ jobs:
           VENDOR_PLATFORM: windows-x64
           RG_TARGET: x86_64-pc-windows-msvc
           RG_SHA256: 124510b94b6baa3380d051fdf4650eaa80a302c876d611e9dba0b2e18d87493a
-          MINGIT_SHA256: 04f937e1f0918b17b9be6f2294cb2bb66e96e1d9832d1c298e2de088a1d0e668
+          MINGIT_SHA256: 56d7b226b7693196cfc71fef26568f536c4a021ab6c37ff2db4287bed908e96e
         run: |
           set -euo pipefail
           VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
