@@ -12,9 +12,7 @@
       <div class="agents-tree-panel card bg-base-100 shadow-md border border-base-300 rounded-xl">
         <div class="card-body p-4">
           <h3 class="card-title mb-2">
-            <.icon name="hero-squares-2x2" class="size-5 text-primary" />
-            <%!-- 渐变标题：仅应用于纯文本 span，切勿整段应用（内联 SVG 图标会在 text-transparent 下隐形） --%>
-            <span class="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent"><%= gettext("Agent Tree") %></span>
+            <.icon name="hero-squares-2x2" class="size-5" /> <%= gettext("Agent Tree") %>
           </h3>
 
           <%= if @agents_loading do %>
@@ -86,9 +84,7 @@
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-3">
                   <h3 class="card-title">
-                    <.icon name="hero-identification" class="size-5 text-secondary" />
-                    <%!-- 渐变标题：仅应用于纯文本 span，切勿整段应用（内联 SVG 图标会在 text-transparent 下隐形） --%>
-                    <span class="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">#<%= agent.task_local_id || agent.id %></span>
+                    <.icon name="hero-identification" class="size-5" /> #<%= agent.task_local_id || agent.id %>
                   </h3>
                   <div class={["badge badge-md", agent_status_bg(agent.status)]}>
                     <.icon name={agent_status_icon(agent.status)} class={"size-4 mr-1 #{agent_status_color(agent.status)}"} />
