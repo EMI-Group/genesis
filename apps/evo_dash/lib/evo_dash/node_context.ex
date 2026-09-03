@@ -465,6 +465,31 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Responds to a pending interactive approval request on the given node.
+
+  Approval requests are broadcast by the self-reflective agent's command
+  approval flow (`{:approval_requested, request}` on the "approvals" PubSub
+  topic) for security levels 2 and 3; the agent BLOCKS until this decision
+  arrives. `decision` is the binary `"approve" | "deny"` coming from the UI
+  confirmation cards — it is normalized to the atom the core expects
+  (`:approve | :deny`) via a strict whitelist (never `String.to_atom` on raw
+  input). Local node → `EvoGit.CommandApproval.respond/2` (guarded — that
+  module ships as parallel core work); remote node → the
+  `EvoGit.AgentScheduler.RemoteAPI.respond_approval` responder chain via
+  `:erpc`. Total function: returns `:ok` / the backend's verbatim result, or
+  `{:error, reason}` (including `{:error, :command_approval_unavailable}` when
+  the local backend module is not yet compiled, `{:error, {:invalid_decision, d}}`
+  for a non-"approve"/"deny" binary, and `{:error, reason}` with the
+  `:badrpc` reason unwrapped for remote transport failures).
+  """
+  @spec approval_response(node(), String.t(), String.t() | atom()) :: :ok | {:error, term()}
+  def approval_response(node, request_id, decision) do
+    with {:ok, decision_atom} <- approval_decision_atom(decision) do
+      dispatch_approval(node, request_id, decision_atom)
+    end
+  end
+
+  @doc """
   Deletes a task on the given node.
 
   Delegates to `EvoGit.RemoteNode.delete_task/2`. Returns `:ok` on success
@@ -988,6 +1013,65 @@ defmodule EvoDash.NodeContext do
       end
     else
       fallback
+    end
+  end
+
+  # Whitelist-normalizes a command-approval decision to the atom the core
+  # expects. Accepts both the UI binary (`"approve" | "deny"`) and the
+  # already-atomic form (`:approve | :deny`, idempotent). Total — never
+  # String.to_atom on raw input (atom-table exhaustion DoS risk); anything
+  # else → `{:error, {:invalid_decision, decision}}`.
+  defp approval_decision_atom(decision) do
+    case decision do
+      "approve" -> {:ok, :approve}
+      "deny" -> {:ok, :deny}
+      :approve -> {:ok, :approve}
+      :deny -> {:ok, :deny}
+      other -> {:error, {:invalid_decision, other}}
+    end
+  end
+
+  # Local/remote dispatch for approval_response/3. Returns `:ok` / the
+  # backend's verbatim result, or `{:error, reason}` on any failure.
+  defp dispatch_approval(node, request_id, decision_atom) do
+    if node == node() do
+      # Local node — respond through EvoGit.CommandApproval.respond/2, guarded
+      # exactly like the lifecycle calls above: Code.ensure_loaded? + dynamic
+      # apply/3 so the compiler never warns about the module (it ships as
+      # parallel core work and legitimately does not exist yet), returning
+      # {:error, :command_approval_unavailable} until it lands.
+      with_remote_connection(
+        EvoGit.CommandApproval,
+        :respond,
+        [request_id, decision_atom],
+        {:error, :command_approval_unavailable}
+      )
+    else
+      # Remote node — route through :erpc.call/5 to the responder chain on the
+      # remote BEAM. Module/function are passed as atoms, so there is no
+      # compile-time reference to the RemoteAPI responder.
+      #
+      # Justified try/catch — cross-node RPC boundary: :erpc.call/5 returns
+      # {:badrpc, reason} for transport failures (node down, timeout) but
+      # raises/exits when the remote function itself fails (a GenServer call
+      # to a dead responder process exits), and this function must never raise
+      # from a LiveView call path. The {:badrpc, _} return value is unwrapped
+      # into {:error, reason}; other failure modes normalize to
+      # {:error, {kind, reason}}.
+      try do
+        case :erpc.call(
+               node,
+               EvoGit.AgentScheduler.RemoteAPI,
+               :respond_approval,
+               [request_id, decision_atom],
+               15_000
+             ) do
+          {:badrpc, reason} -> {:error, reason}
+          result -> result
+        end
+      catch
+        kind, reason -> {:error, {kind, reason}}
+      end
     end
   end
 end
