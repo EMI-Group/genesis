@@ -258,7 +258,8 @@ defmodule EvoGit.CommandShell do
       rows
       |> Enum.zip(lefts)
       |> Enum.map(fn {{_path, entry}, left} ->
-        "  " <> String.pad_trailing(left, width) <> "   " <> entry.summary <> confirmation_marker(entry)
+        "  " <>
+          String.pad_trailing(left, width) <> "   " <> entry.summary <> confirmation_marker(entry)
       end)
 
     (["Available commands:"] ++

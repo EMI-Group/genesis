@@ -132,7 +132,8 @@ defmodule EvoGit.CommandApproval do
   raises, never crashes.
   """
   @spec respond(String.t(), :approve | :deny) :: :ok | {:error, :not_found}
-  def respond(request_id, decision) when is_binary(request_id) and decision in [:approve, :deny] do
+  def respond(request_id, decision)
+      when is_binary(request_id) and decision in [:approve, :deny] do
     case Process.whereis(__MODULE__) do
       nil -> {:error, :not_found}
       pid -> GenServer.call(pid, {:respond, request_id, decision})
@@ -190,7 +191,7 @@ defmodule EvoGit.CommandApproval do
 
     # The caller blocks in GenServer.call(:infinity); we reply later via
     # GenServer.reply/2 once the request is resolved.
-    Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic,{:approval_requested, request})
+    Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic, {:approval_requested, request})
 
     {:noreply, %{state | pending: Map.put(state.pending, request_id, entry)}}
   end
@@ -203,7 +204,13 @@ defmodule EvoGit.CommandApproval do
 
       {entry, pending} ->
         resolve(entry, caller_result(decision))
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic,{:approval_resolved, request_id, decision})
+
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          @topic,
+          {:approval_resolved, request_id, decision}
+        )
+
         {:reply, :ok, %{state | pending: pending}}
     end
   end
@@ -216,7 +223,13 @@ defmodule EvoGit.CommandApproval do
 
       {entry, pending} ->
         resolve(entry, :timeout)
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic,{:approval_resolved, request_id, :timed_out})
+
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          @topic,
+          {:approval_resolved, request_id, :timed_out}
+        )
+
         {:noreply, %{state | pending: pending}}
     end
   end
@@ -237,7 +250,12 @@ defmodule EvoGit.CommandApproval do
     else
       Enum.each(owned, fn {request_id, entry} ->
         resolve(entry, :timeout)
-        Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic,{:approval_resolved, request_id, :timed_out})
+
+        Phoenix.PubSub.broadcast(
+          EvoGit.PubSub,
+          @topic,
+          {:approval_resolved, request_id, :timed_out}
+        )
       end)
 
       {:noreply, %{state | pending: Map.new(rest)}}
@@ -257,7 +275,7 @@ defmodule EvoGit.CommandApproval do
       else
         Enum.each(owned, fn {request_id, entry} ->
           resolve(entry, :denied)
-          Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic,{:approval_resolved, request_id, :deny})
+          Phoenix.PubSub.broadcast(EvoGit.PubSub, @topic, {:approval_resolved, request_id, :deny})
         end)
 
         {:noreply, %{state | pending: Map.new(rest)}}
