@@ -377,30 +377,16 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call(:list_tasks, from, state) do
-    # Delegate the heavy decode to a short-lived Task process so the large
-    # decoded terms are allocated and discarded on that process's heap rather
-    # than ratcheting up this GenServer's heap.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        tasks = EvoGit.Store.safe_select_all_tasks(state.task_store)
-        GenServer.reply(from, tasks)
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn ->
+      EvoGit.Store.safe_select_all_tasks(state.task_store)
+    end)
   end
 
   @impl true
   def handle_call({:list_tasks_paginated, opts}, from, state) do
-    # Delegate the heavy decode to a short-lived Task process so the large
-    # decoded terms are allocated and discarded on that process's heap rather
-    # than ratcheting up this GenServer's heap.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        result = EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
-        GenServer.reply(from, result)
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn ->
+      EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
+    end)
   end
 
   @impl true
@@ -573,19 +559,16 @@ defmodule EvoGit.TaskRegistry do
     # Push filtering to SQL via safe_select_paginated_tasks with project_path filter.
     # This avoids decoding ALL tasks — only matching tasks are decoded by SQLite.
     # Use a high limit since path-filtered results are typically manageable.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        {tasks, _total} =
-          EvoGit.Store.safe_select_paginated_tasks(
-            state.task_store,
-            filters: [project_path: path],
-            limit: 5000
-          )
+    offload(from, state, fn ->
+      {tasks, _total} =
+        EvoGit.Store.safe_select_paginated_tasks(
+          state.task_store,
+          filters: [project_path: path],
+          limit: 5000
+        )
 
-        GenServer.reply(from, tasks)
-      end)
-
-    {:noreply, state}
+      tasks
+    end)
   end
 
   @impl true
@@ -599,46 +582,23 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:list_tasks_summary, statuses, since}, from, state) do
-    # Delegate the heavy decode to a short-lived Task process so the large
-    # decoded terms are allocated and discarded on that process's heap rather
-    # than ratcheting up this GenServer's heap.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        result = EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
-        GenServer.reply(from, result)
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn ->
+      EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
+    end)
   end
 
   @impl true
   def handle_call({:list_tasks_summary_by_path, path, statuses, since}, from, state) do
-    # Delegate the heavy decode to a short-lived Task process so the large
-    # decoded terms are allocated and discarded on that process's heap rather
-    # than ratcheting up this GenServer's heap.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        result =
-          EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
-
-        GenServer.reply(from, result)
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn ->
+      EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
+    end)
   end
 
   @impl true
   def handle_call({:list_tasks_changed_since, since_iso}, from, state) do
-    # Delegate the heavy decode to a short-lived Task process so the large
-    # decoded terms are allocated and discarded on that process's heap rather
-    # than ratcheting up this GenServer's heap.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        result = EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
-        GenServer.reply(from, result)
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn ->
+      EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
+    end)
   end
 
   @impl true
@@ -1016,6 +976,55 @@ defmodule EvoGit.TaskRegistry do
     :ok
   end
 
+  # --- Shared Private Helpers ---
+
+  # Delegates a heavy Store decode to a short-lived Task process so the large
+  # decoded terms are allocated and discarded on that process's heap rather
+  # than ratcheting up this GenServer's heap. `fun` returns the value to reply
+  # with; it captures the caller's bindings (incl. `state`) before the reply is
+  # sent — `state` is never moved into the Task.
+  defp offload(from, state, fun) do
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, fun.())
+      end)
+
+    {:noreply, state}
+  end
+
+  # Reverse lookup: finds the task id whose in-memory %Task{} ref matches `ref`.
+  defp task_id_for_ref(state, ref) do
+    Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
+      if task_ref == ref, do: id
+    end)
+  end
+
+  # Reads the task's currently persisted status (nil when the task is unknown),
+  # used to log failed transitions with the previous status.
+  defp prev_status(state, task_id) do
+    case task_get(state, task_id) do
+      %TaskInfo{status: s} -> s
+      nil -> nil
+    end
+  end
+
+  # Extracts an optional typed field from a `{:ok, map}` task result. `validator`
+  # mirrors the original case-arm TYPE GUARD (e.g.
+  # `&match?(%EvoGit.Agent.Usage{}, &1)`), so a wrong-typed or absent value
+  # still yields nil and never flows into the DB write.
+  defp result_field(result, key, validator) do
+    case result do
+      {:ok, data} when is_map(data) ->
+        case Map.fetch(data, key) do
+          {:ok, value} -> if validator.(value), do: value, else: nil
+          :error -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
   # Shared result-recovery logic used by handle_info({:recheck_task, _}). The
   # wrapper process is dead so the runtime result was lost (delivered via
   # GenServer.reply to a dead process). We try a best-effort result lookup from
@@ -1204,10 +1213,7 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_info({ref, result}, state) when is_reference(ref) do
     # Search the in-memory task_refs map for the matching task reference
-    task_id =
-      Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
-        if task_ref == ref, do: id
-      end)
+    task_id = task_id_for_ref(state, ref)
 
     if task_id do
       status =
@@ -1233,44 +1239,19 @@ defmodule EvoGit.TaskRegistry do
 
       # Log the failed transition with the result value and current stacktrace.
       if status == :failed do
-        prev_status =
-          case task_get(state, task_id) do
-            %TaskInfo{status: s} -> s
-            nil -> nil
-          end
-
-        Diagnostics.log_failed_transition(task_id, :result_handler, prev_status, result: result)
+        Diagnostics.log_failed_transition(
+          task_id,
+          :result_handler,
+          prev_status(state, task_id),
+          result: result
+        )
       end
 
-      task_usage =
-        case result do
-          {:ok, %{usage: %EvoGit.Agent.Usage{} = u}} -> u
-          _ -> nil
-        end
-
-      task_agent_count =
-        case result do
-          {:ok, %{agent_count: count}} when is_integer(count) -> count
-          _ -> nil
-        end
-
-      task_commit_sha =
-        case result do
-          {:ok, %{commit_sha: sha}} when is_binary(sha) -> sha
-          _ -> nil
-        end
-
-      task_archive_records =
-        case result do
-          {:ok, %{archive_records: records}} when is_list(records) -> records
-          _ -> nil
-        end
-
       update_task_status_with_caller(task_id, status, result,
-        usage: task_usage,
-        agent_count: task_agent_count,
-        commit_sha: task_commit_sha,
-        archive_records: task_archive_records
+        usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
+        agent_count: result_field(result, :agent_count, &is_integer/1),
+        commit_sha: result_field(result, :commit_sha, &is_binary/1),
+        archive_records: result_field(result, :archive_records, &is_list/1)
       )
     end
 
@@ -1281,10 +1262,7 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
-    task_id =
-      Enum.find_value(state.task_refs, fn {id, %Task{ref: task_ref}} ->
-        if task_ref == ref, do: id
-      end)
+    task_id = task_id_for_ref(state, ref)
 
     if task_id do
       case reason do
@@ -1312,13 +1290,7 @@ defmodule EvoGit.TaskRegistry do
             # Do NOT update status — leave as :running
           else
             # No active agents — genuine failure
-            prev_status =
-              case task_get(state, task_id) do
-                %TaskInfo{status: s} -> s
-                nil -> nil
-              end
-
-            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status,
+            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status(state, task_id),
               result: "Task process exited: #{inspect(reason)}",
               extra: [
                 pid: inspect(pid),
