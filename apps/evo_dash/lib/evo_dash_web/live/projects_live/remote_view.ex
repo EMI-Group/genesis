@@ -88,7 +88,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
            possible while the selected remote node is not connected. -->
       <div class="flex-1 min-w-0">
         <%= if @hide_palette do %>
-          <p class="text-sm text-base-content/40 truncate">
+          <p class="text-sm text-base-content/70 truncate">
             {gettext("Project control unavailable")}
           </p>
         <% else %>
@@ -154,7 +154,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
           <% %{state: :ok, owner: owner, repo: repo} when is_binary(owner) and is_binary(repo) -> %>
             <button
               type="button"
-              class="btn btn-ghost btn-sm gap-2 rounded-lg border border-base-300/60 hover:bg-base-200/50 transition-colors"
+              class="btn btn-ghost btn-sm gap-2 rounded-lg border border-base-300 hover:bg-base-200 transition-colors"
               phx-click="open_github_issues"
               title={gettext("Open GitHub Issues")}
             >
@@ -185,13 +185,13 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
              Using class-based toggling (not conditional render) so content
              stays in the DOM and phx events inside still work reliably. -->
         <div class={[
-          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
+          "absolute right-0 z-50 w-80 sm:w-96 mt-2 rounded-xl border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl overflow-hidden",
           !@show_configure_dropdown && "hidden"
         ]}>
           <div class="p-3 max-h-[60vh] overflow-y-auto overflow-x-hidden">
             <!-- Section 1: Task Options -->
             <div>
-              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+              <p class="text-xs font-semibold uppercase tracking-wide text-base-content/70 mb-2">
                 {gettext("Task Options")}
               </p>
               <EvoDashWeb.TaskFormComponents.task_options_tab
@@ -208,8 +208,8 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
 
             <!-- Section 2: Project Settings (only when a project is active) -->
             <%= if @active_project != nil do %>
-              <div class="mt-4 pt-4 border-t border-base-200">
-                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/40 mb-2">
+              <div class="mt-4 pt-4 border-t border-base-300">
+                <p class="text-xs font-semibold uppercase tracking-wide text-base-content/70 mb-2">
                   {gettext("Project Settings")}
                 </p>
                 <EvoDashWeb.ProjectComponents.project_settings_tab

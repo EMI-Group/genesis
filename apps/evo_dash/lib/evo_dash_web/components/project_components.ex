@@ -74,16 +74,16 @@ defmodule EvoDashWeb.ProjectComponents do
           <span class="text-base font-bold text-base-content truncate leading-tight">
             {@active_project.name}
           </span>
-          <span class="text-sm text-base-content/50 font-mono truncate hidden md:inline">
+          <span class="text-sm text-base-content/80 font-mono truncate hidden md:inline">
             {@active_project.path}
           </span>
         <% else %>
-          <.icon name="hero-folder-open" class="size-4 text-base-content/40 shrink-0" />
-          <span class="text-base text-base-content/50 truncate">
+          <.icon name="hero-folder-open" class="size-4 text-base-content/60 shrink-0" />
+          <span class="text-base text-base-content/80 truncate">
             {gettext("Open a project...")}
           </span>
         <% end %>
-        <.icon name="hero-chevron-down" class="size-3.5 text-base-content/40 shrink-0 ml-auto" />
+        <.icon name="hero-chevron-down" class="size-3.5 text-base-content/60 shrink-0 ml-auto" />
       </button>
 
       <%= if @palette_open do %>
@@ -141,7 +141,7 @@ defmodule EvoDashWeb.ProjectComponents do
       <div class="relative">
         <.icon
           name="hero-magnifying-glass"
-          class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+          class="size-4 text-base-content/60 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
         />
         <input
           type="text"
@@ -165,7 +165,7 @@ defmodule EvoDashWeb.ProjectComponents do
       phx-hook="PaletteList"
     >
       <%= if filtered != [] do %>
-        <p class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 px-2 py-1">
+        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/60 px-2 py-1">
           {gettext("Recent Projects")}
         </p>
         <%= for {project, i} <- Enum.with_index(filtered) do %>
@@ -180,7 +180,7 @@ defmodule EvoDashWeb.ProjectComponents do
               <.icon name="hero-folder" class="size-4 shrink-0" />
               <div class="min-w-0 flex-1">
                 <div class="text-sm font-medium truncate">{project.name}</div>
-                <div class="text-xs text-base-content/50 font-mono truncate">{project.path}</div>
+                <div class="text-xs text-base-content/70 font-mono truncate">{project.path}</div>
               </div>
             </button>
             <%= unless @remote do %>
@@ -197,7 +197,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 phx-stop-propagation
                 aria-label={gettext("Remove %{name} from recent projects", name: project.name)}
                 title={gettext("Remove from recent projects")}
-                class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/40 hover:text-red-500 hover:bg-red-500/10 transition-opacity"
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto text-base-content/60 hover:text-error hover:bg-error/10 transition-opacity"
               >
                 <.icon name="hero-trash" class="size-4" />
               </button>
@@ -236,14 +236,14 @@ defmodule EvoDashWeb.ProjectComponents do
       <% end %>
 
       <%= if filtered == [] and @palette_search != "" do %>
-        <p class="text-xs text-base-content/40 px-3 py-2 text-center">
+        <p class="text-xs text-base-content/60 px-3 py-2 text-center">
           {gettext("No matching projects")}
         </p>
       <% end %>
     </div>
 
     <!-- Footer keyboard hints -->
-    <div class="project-palette-footer px-3 py-2 border-t border-base-200 flex items-center gap-3 text-[11px] text-base-content/40">
+    <div class="project-palette-footer px-3 py-2 border-t border-base-200 flex items-center gap-3 text-xs text-base-content/60">
       <span><kbd>↑↓</kbd> {gettext("Navigate")}</span>
       <span><kbd>↵</kbd> {gettext("Select")}</span>
       <span><kbd>Esc</kbd> {gettext("Close")}</span>
@@ -498,7 +498,7 @@ defmodule EvoDashWeb.ProjectComponents do
           )}
         </span>
       <% else %>
-        <span class="text-base-content/50 flex items-center gap-1">
+        <span class="text-base-content/70 flex items-center gap-1">
           <.icon name="hero-information-circle" class="size-4" /> {gettext(
             "No genesis.toml — using global defaults"
           )}
@@ -508,7 +508,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
     <!-- Project Root -->
     <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
-      <p class="text-[11px] text-base-content/50 font-medium uppercase tracking-wide">
+      <p class="text-xs text-base-content/70 font-medium uppercase tracking-wide">
         {gettext("Project Root")}
       </p>
       <p class="text-xs font-mono mt-0.5 truncate">{@active_project}</p>
@@ -516,7 +516,7 @@ defmodule EvoDashWeb.ProjectComponents do
 
     <%= if @worktree_script do %>
       <div class="bg-base-200/40 rounded-lg p-2.5 border border-base-200">
-        <p class="text-[11px] text-base-content/50 font-medium uppercase tracking-wide">
+        <p class="text-xs text-base-content/70 font-medium uppercase tracking-wide">
           {gettext("Worktree Init Script")}
         </p>
         <p class="text-xs font-mono mt-0.5">{@worktree_script}</p>
@@ -560,7 +560,7 @@ defmodule EvoDashWeb.ProjectComponents do
       </h3>
 
       <%= if @foreign_repos == [] do %>
-        <div class="border-2 border-dashed border-base-300 rounded-lg p-4 text-center text-base-content/50">
+        <div class="border-2 border-dashed border-base-300 rounded-lg p-4 text-center text-base-content/60">
           <.icon name="hero-server-stack" class="size-6 mx-auto mb-1 opacity-30" />
           <p class="text-xs font-medium">{gettext("No foreign repositories registered")}</p>
         </div>
@@ -694,7 +694,7 @@ defmodule EvoDashWeb.ProjectComponents do
                 <div class="ml-2 mt-1">
                   <span class="text-xs font-mono block truncate" title={repo.root}>{repo.root}</span>
                   <%= if repo.description do %>
-                    <span class="text-xs text-base-content/50 block mt-0.5">{repo.description}</span>
+                    <span class="text-xs text-base-content/70 block mt-0.5">{repo.description}</span>
                   <% end %>
                 </div>
               <% end %>

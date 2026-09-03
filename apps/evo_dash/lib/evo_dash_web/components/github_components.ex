@@ -52,7 +52,7 @@ defmodule EvoDashWeb.GitHubComponents do
       </div>
 
       <!-- Panel -->
-      <div class="relative w-full max-w-2xl max-h-[80vh] flex flex-col rounded-2xl border border-base-200 bg-base-100 shadow-2xl overflow-hidden">
+      <div class="relative w-full max-w-2xl max-h-[80vh] flex flex-col rounded-xl border border-base-200 bg-base-100 shadow-2xl overflow-hidden">
         <!-- Header -->
         <div class="flex items-center gap-3 px-5 py-4 border-b border-base-200 shrink-0">
           <span class="rounded-lg bg-base-200/60 p-2 shrink-0">
@@ -62,7 +62,7 @@ defmodule EvoDashWeb.GitHubComponents do
             <h2 class="text-base font-semibold">{gettext("GitHub Issues")}</h2>
             <p
               :if={repo_label(@github_status) != ""}
-              class="text-xs font-mono text-base-content/50 truncate"
+              class="text-xs font-mono text-base-content/60 truncate"
             >
               {repo_label(@github_status)}
             </p>
@@ -104,7 +104,7 @@ defmodule EvoDashWeb.GitHubComponents do
                       "px-3 py-1.5 rounded-md text-xs font-medium cursor-pointer transition-colors whitespace-nowrap",
                       @issues.state_filter == state && "bg-base-100 shadow-sm text-base-content",
                       @issues.state_filter != state &&
-                        "text-base-content/60 hover:text-base-content hover:bg-base-200/80"
+                        "text-base-content/70 hover:text-base-content hover:bg-base-200/80"
                     ]}
                   >
                     {label}
@@ -114,8 +114,8 @@ defmodule EvoDashWeb.GitHubComponents do
 
               <%= if @issues.issues == [] do %>
                 <div class="flex flex-col items-center justify-center gap-2 py-14 text-center">
-                  <.icon name="hero-inbox" class="size-10 text-base-content/30" />
-                  <p class="text-sm text-base-content/50">{empty_message(@issues.state_filter)}</p>
+                  <.icon name="hero-inbox" class="size-10 text-base-content/60" />
+                  <p class="text-sm text-base-content/70">{empty_message(@issues.state_filter)}</p>
                 </div>
               <% else %>
                 <ul class="flex flex-col gap-2">
@@ -123,7 +123,7 @@ defmodule EvoDashWeb.GitHubComponents do
                     <li class="flex items-center gap-3 rounded-xl border border-base-200 bg-base-100/60 px-3 py-2.5 transition-colors hover:border-base-300">
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-2 min-w-0">
-                          <span class="font-mono text-xs text-base-content/50 shrink-0">
+                          <span class="font-mono text-xs text-base-content/60 shrink-0">
                             ##{issue.number}
                           </span>
                           <span class={["badge badge-sm shrink-0", state_badge_class(issue.state)]}>
@@ -135,7 +135,7 @@ defmodule EvoDashWeb.GitHubComponents do
                           <%= for label <- issue.labels do %>
                             <span class="badge badge-outline badge-xs">{label}</span>
                           <% end %>
-                          <span class="text-xs text-base-content/40 truncate">
+                          <span class="text-xs text-base-content/60 truncate">
                             {issue.author}<%= if issue.author != "" and created_date(issue.created_at) != "" do %> · {created_date(issue.created_at)}<% end %>
                           </span>
                         </div>

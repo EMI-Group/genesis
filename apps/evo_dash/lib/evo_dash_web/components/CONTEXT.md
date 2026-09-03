@@ -180,3 +180,15 @@ Task results (the runtime `{:ok, %{...}}` value inside `result`) may carry a top
 1. The ONLY dashboard-rendered task-list markup under `components/` is the sidebar Active Tasks section in `layouts.ex`. It uses only contract keys (status/id/started_at/finished_at via dot; opts/project_path via Map.get) — summary-safe.
 2. `task_card_components.ex` is rendered ONLY by TasksLive with full structs; its heavy-field sections are `Map.get`-guarded — behavior-identical for structs, KeyError-safe for maps.
 3. **No heavy field (logs/usage/archive_metadata) is needed by any dashboard-rendered card** — the dashboard card surface is the sidebar only (no full-result modal exists on the dashboard), and it needs only contract fields. Nothing is fetched lazily.
+
+## Design Conventions — Adwaita token grammar (markup)
+
+Durable rules for writing NEW markup in this subtree (applied repo-wide in the Adwaita restyle audit; see the parent `lib/evo_dash_web/CONTEXT.md` catalog for the full record):
+
+- **Alpha floor** (base-content on light, binding constraint): user-relevant text never below `/50`; labels/meta ≥ `/60`; small/primary content ≥ `/70`; fold `text-[10px]`/`text-[11px]` → `text-xs` where feasible. Decorative large icons and "·" separators may keep `/30`–`/40`.
+- **Hairlines/dividers on flat `bg-base-100` content surfaces** use `border-base-300` (never `border-base-200` — ≈1.06:1 invisible); tinted wells/`bg-base-200/30`-style strips may keep `border-base-200/80`.
+- **Corners**: cards/panels `rounded-xl` max (prefer `rounded-lg`); NORMAL action buttons `rounded-lg`/`rounded-md`; only genuine pill/badge elements keep `rounded-full`.
+- **`*-content` color tokens are tuned for solid fills** — never `text-*-content` on translucent tints; on `/10`–`/30` tints use `text-error`/`text-warning`/`text-success` with the semantic token, and `-content` only on solid fills (e.g. `btn-primary` content).
+- **No raw color literals** (`text-red-500`, `bg-white/10`, `bg-black/10`, `bg-neutral text-neutral-content`, `bg-base-50` — the last is a dead class that compiles to no fill) → theme tokens (`text-error`, `bg-error/10`, `bg-base-200`, `bg-base-content/5`, …).
+- **Empty/loading states**: exactly ONE dim layer (icon + copy should not both be at floor alpha).
+- **Locked contracts — never restyle helper OUTPUTS**: the `EvoDashWeb.Helpers.task_status_*` / `agent_status_*` / `connection_status_*` class helpers, the task-form mode/model/Launch DOM order + `data-layout`, `phx-hook`/`phx-click` bindings, and chart CSS-var strings. Markup class LITERALS may be polished; helper function outputs are the single source of truth.

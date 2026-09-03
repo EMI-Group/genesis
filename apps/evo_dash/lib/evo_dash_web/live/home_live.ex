@@ -65,7 +65,7 @@ defmodule EvoDashWeb.HomeLive do
             <h1 class="text-base font-semibold truncate">
               <%!-- zh_CN: "与 Genesis 对话" --%>{gettext("Chat with Genesis")}
             </h1>
-            <p class="text-xs text-base-content/50 truncate hidden sm:block">
+            <p class="text-xs text-base-content/60 truncate hidden sm:block">
               <%!-- zh_CN: "向 Genesis 提问、阅读源码、控制任务或获得仪表盘引导" --%>{gettext(
                 "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
               )}
@@ -76,7 +76,7 @@ defmodule EvoDashWeb.HomeLive do
               name="model_id"
               phx-change="select_chat_model"
               aria-label={gettext("Chat model")}
-              class="shrink-0 max-w-44 rounded-full border border-base-300/50 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary/20"
+              class="shrink-0 max-w-44 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary/20"
             >
               <%!-- zh_CN: 自动选择模型 — 配置了模型选择脚本时按规则/脚本自动选择，否则使用默认模型 --%>
               <option value="" selected={@selected_model_id in [nil, ""]}>
@@ -140,7 +140,7 @@ defmodule EvoDashWeb.HomeLive do
               disabled={@chat_status != :idle}
               placeholder={gettext("Message Genesis…")}
               rows="1"
-              class="w-full min-h-[46px] max-h-40 resize-y bg-transparent px-4 py-3 text-[15px] leading-relaxed placeholder:text-base-content/40 focus:outline-none disabled:opacity-50"
+              class="w-full min-h-[46px] max-h-40 resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
             ></textarea>
             <!-- Send → Stop morph: exactly one button is visible at a time; both
                  stay in the DOM (the hidden one disabled) so the Stop button's
@@ -163,7 +163,7 @@ defmodule EvoDashWeb.HomeLive do
               <span class="sr-only"><%!-- zh_CN: "停止" --%>{gettext("Stop")}</span>
             </button>
           </form>
-          <div class="mt-1.5 text-center text-[11px] text-base-content/40">
+          <div class="mt-1.5 text-center text-xs text-base-content/60">
             <%!-- zh_CN: "回车发送 · Shift+回车换行" --%>{gettext(
               "Enter to send · Shift+Enter for a new line"
             )}

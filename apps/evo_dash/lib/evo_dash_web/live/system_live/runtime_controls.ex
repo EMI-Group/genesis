@@ -50,7 +50,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
       </div>
       <div id="runtime-controls" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
         <!-- Scheduler Control card -->
-        <div class="rounded-lg border border-base-200 bg-base-100 p-4 flex flex-col gap-3">
+        <div class="rounded-lg border border-base-300 bg-base-100 p-4 flex flex-col gap-3">
           <div class="flex items-center gap-3 min-w-0">
             <div class={"p-2 rounded-md shrink-0 " <>
               if(@scheduler_paused, do: "bg-warning/10", else: "bg-success/10")}>
@@ -81,8 +81,8 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
             class={[
               "btn rounded-md font-medium self-start",
               if(@scheduler_paused,
-                do: "bg-success/20 hover:bg-success/30 text-success-content",
-                else: "bg-warning/20 hover:bg-warning/30 text-warning-content"
+                do: "bg-success/10 hover:bg-success/20 text-success",
+                else: "bg-warning/10 hover:bg-warning/20 text-warning"
               )
             ]}
           >
@@ -96,7 +96,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
 
         <!-- System Dashboard card (link to the full-bleed LiveDashboard iframe) -->
         <.link navigate={@dashboard_path} class="block h-full">
-          <div class="rounded-lg border border-base-200 bg-base-100 p-4 flex flex-col gap-3 h-full hover:border-base-300 transition-colors">
+          <div class="rounded-lg border border-base-300 bg-base-100 p-4 flex flex-col gap-3 h-full hover:border-base-content/30 transition-colors">
             <div class="flex items-center gap-3 min-w-0">
               <div class="p-2 rounded-md bg-info/10 shrink-0">
                 <.icon name="hero-chart-bar" class="size-5 text-info" />
@@ -108,7 +108,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
             </p>
             <span class="flex items-center gap-1 text-sm font-medium text-base-content/70 self-start">
               {gettext("Open")} <% # zh_CN: "打开系统仪表盘" %>
-              <.icon name="hero-arrow-right" class="size-4 text-base-content/30" />
+              <.icon name="hero-arrow-right" class="size-4 text-base-content/60" />
             </span>
           </div>
         </.link>

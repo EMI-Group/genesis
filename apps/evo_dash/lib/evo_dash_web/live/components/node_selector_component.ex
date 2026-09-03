@@ -24,7 +24,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
     <div id={@id}>
       <details class={["dropdown dropdown-start", @drop_up && "dropdown-top"]} id={"#{@id}-details"}>
       <summary
-        class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-base-200 transition-colors"
+        class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-base-300 transition-colors"
         title={gettext("Switch node")}
       >
         <span class={dot_color_class(@current_node_id, @connection_statuses)}></span>
@@ -32,7 +32,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
           {@current_node_name}
         </span>
       </summary>
-      <div class={["dropdown-content z-50 w-72 rounded-xl border border-base-200 bg-base-100/95 backdrop-blur-md shadow-xl p-2", (@drop_up && "mb-2") || "mt-2"]}>
+      <div class={["dropdown-content z-50 w-72 rounded-xl border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl p-2", (@drop_up && "mb-2") || "mt-2"]}>
         <div class="flex flex-col gap-0.5">
           <button
             class={[
@@ -49,7 +49,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
           <div
             :if={@remote_targets != []}
-            class="my-1 border-t border-base-200"
+            class="my-1 border-t border-base-300"
           >
           </div>
 
@@ -65,14 +65,14 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             <span class={dot_color_class(target.id, @connection_statuses)}></span>
             <span class="flex-1 text-left">
               <span class="block">{target.name}</span>
-              <span class="block text-xs text-base-content/50">
+              <span class="block text-xs text-base-content/70">
                 {target[:ssh_target] || "#{target[:user]}#{maybe_at()}#{target[:host]}#{if(target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: "")}"}
               </span>
             </span>
             <.icon :if={@current_node_id == target.id} name="hero-check-solid" class="size-4 text-primary shrink-0" />
           </button>
 
-          <div class="my-1 border-t border-base-200"></div>
+          <div class="my-1 border-t border-base-300"></div>
 
           <.link
             navigate={~p"/settings?category=remote_connections" <> (if @current_node_id, do: "&node=#{@current_node_id}", else: "")}
