@@ -18,7 +18,7 @@
 set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────
-RIPGREP_VERSION="15.1.0"
+RIPGREP_VERSION="15.2.0"
 
 ARCH="$(uname -m)"
 case "$ARCH" in
