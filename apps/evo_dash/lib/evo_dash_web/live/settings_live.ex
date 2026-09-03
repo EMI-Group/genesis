@@ -36,32 +36,10 @@ defmodule EvoDashWeb.SettingsLive do
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-        <%= if @active_category not in [:remote_connections, :agents] do %>
-          <%!-- Config file path display --%>
-          <div class="mb-4 p-3 flex items-center gap-3 border-b border-base-300">
-            <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
-            <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext(
-              "Configuration file"
-            )}</span>
-            <code class="font-mono text-sm text-base-content/80 flex-1 truncate">{@config_path}</code>
-            <button
-              id="settings-config-path-copy"
-              phx-hook="ClipboardCopy"
-              data-content={@config_path}
-              class="btn btn-ghost btn-sm btn-square"
-              title={gettext("Copy path")}
-            >
-              <.icon name="hero-clipboard-document" class="size-4" />
-            </button>
-          </div>
-          <%= if not @config_file_exists do %>
-            <p class="mb-4 text-xs text-base-content/70">{gettext("File does not exist yet")}</p>
-          <% end %>
-        <% end %>
-
-        <%!-- Config Status Warning --%>
+        <div class="flex flex-col md:h-full">
+          <%!-- Config Status Warning --%>
         <%= if @config_status && not @config_status.ok? do %>
-          <div class="mb-4 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
+          <div class="mb-4 shrink-0 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
             <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
             <div>
               <h3 class="font-bold text-sm text-warning mb-2">{gettext("Missing Configuration")}</h3>
@@ -85,7 +63,7 @@ defmodule EvoDashWeb.SettingsLive do
            "No LLM Model Configured" warning below so the user sees the real
            problem rather than a bogus unconfigured-model message. --%>
         <%= if @remote_config_error do %>
-          <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
+          <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
             <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
             <div>
               <h3 class="font-bold text-sm text-error mb-2">
@@ -104,7 +82,7 @@ defmodule EvoDashWeb.SettingsLive do
         <%= if @remote_config_error == nil and
               (is_nil(get_in(@file_config, [:llm, :models])) or
                  Enum.empty?(get_in(@file_config, [:llm, :models]) || [])) do %>
-          <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
+          <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
             <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
             <div>
               <h3 class="font-bold text-sm text-error mb-2">{gettext("No LLM Model Configured")}</h3>
@@ -124,24 +102,34 @@ defmodule EvoDashWeb.SettingsLive do
           </div>
         <% end %>
 
-        <%!-- Settings card: two-column sidebar + content layout.
-           Note: `gap-8` generates correctly in Tailwind v4 via
-           `calc(var(--spacing) * N)` (with `--spacing: 0.25rem` at `:root`).
-           The cards ARE direct children (HEEx comments emit no DOM nodes).
-           The earlier spacing fixes (commits 08c3ec35 and 6a48e9e2) appeared to
-           fail only because the gitignored CSS build (`priv/static/assets/css/`)
-           was never regenerated after the HEEx edits, so the app served a stale
-           bundle lacking the new utility classes. After editing Tailwind classes
-           here, rebuild assets with `mix tailwind evo_dash` (dev) or
-           `mix assets.deploy` (prod) so the new utilities are emitted. --%>
-        <div class="flex flex-col gap-8">
+          <%!-- Settings card: two-column sidebar + content layout.
+
+             md+ INDEPENDENT-SCROLL HEIGHT CHAIN: `#main-content` (layouts.ex)
+             is `flex-1 min-h-0` inside the `h-dvh` app shell, so this
+             wrapper's `md:h-full` is bounded to viewport-minus-chrome; the
+             two-column row below is `md:flex-1 md:min-h-0`, giving the
+             sidebar (`md:h-full overflow-y-auto` in sidebar.ex) and each
+             content column (category_section/search_results internal
+             `flex-1 overflow-y-auto`; the :remote_connections/:agents
+             columns carry `overflow-y-auto` on their wrapper) a bounded
+             height so they scroll independently of the outer page. The
+             `sticky top-0` section headers stick within their content
+             column's scroll. Below md the row stacks naturally and the whole
+             page scrolls via `#main-scroll`. Warning banners above are
+             direct children of the wrapper (shrink-0 so they never squish).
+             Note: after editing Tailwind classes here, rebuild assets with
+             `mix tailwind evo_dash` (dev) or `mix assets.deploy` (prod) —
+             the CSS build (`priv/static/assets/css/`) is gitignored, so a
+             stale bundle silently no-ops new utility classes. --%>
           <%!-- Two-column sidebar + content layout --%>
-          <div class="flex flex-col md:flex-row bg-base-100">
+          <div class="flex flex-col md:flex-row md:flex-1 md:min-h-0 bg-base-100">
             <%!-- Sidebar --%>
             <EvoDashWeb.SettingsComponents.settings_sidebar
               categories={@schemas_by_category}
               active_category={@active_category}
               search_text={@search_text}
+              config_path={@config_path}
+              config_file_exists={@config_file_exists}
             />
 
             <%!-- Content area --%>
@@ -162,8 +150,10 @@ defmodule EvoDashWeb.SettingsLive do
             <% else %>
               <%= if @active_category == :remote_connections do %>
                 <%!-- Remote Connections UI — same design as category_section but
-                   for the special :remote_connections pseudo-category --%>
-                <div class="flex-1 flex flex-col min-w-0">
+                   for the special :remote_connections pseudo-category. Carries
+                   `overflow-y-auto` (md+ bounded column) so the sticky header
+                   below sticks within this column's own scroll. --%>
+                <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
                   <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-300/70">
                     <div class="flex items-center gap-3 mb-1">
                       <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
@@ -579,7 +569,7 @@ defmodule EvoDashWeb.SettingsLive do
                    save_category form (nested <form> elements are invalid
                    HTML). --%>
                 <%= if @active_category == :agents do %>
-                  <div class="flex-1 flex flex-col min-w-0">
+                  <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
                     <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-300/70">
                       <div class="flex items-center gap-3 mb-1">
                         <.icon name="hero-user-group" class="size-5 text-base-content/70" />

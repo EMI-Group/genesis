@@ -1,6 +1,17 @@
 defmodule EvoDashWeb.SettingsComponents.Sidebar do
   @moduledoc """
   `settings_sidebar/1` — Category sidebar component.
+
+  On md+ (inside the bounded settings two-column row) the sidebar is a
+  full-height flex column: the search box and the config-path footer are
+  pinned (`shrink-0`) while the category `<nav>` scrolls independently
+  (`flex-1 overflow-y-auto min-h-0`). The config-path footer renders for
+  EVERY category — it is the single place on the settings page showing the
+  config file path (the old content-area "Configuration file" header was
+  removed), carrying the copy button with the test-pinned DOM contract
+  (`id="settings-config-path-copy"` / `phx-hook="ClipboardCopy"` /
+  `data-content`). Below md the container stacks naturally (no fixed
+  height), so the footer simply sits at the end of the stacked sidebar.
   """
 
   use EvoDashWeb, :html
@@ -15,11 +26,13 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
   attr(:categories, :map, required: true)
   attr(:active_category, :atom, required: true)
   attr(:search_text, :string, default: "")
+  attr(:config_path, :string, required: true)
+  attr(:config_file_exists, :boolean, required: true)
 
   def settings_sidebar(assigns) do
     ~H"""
-    <div class="w-full md:w-72 bg-base-100 md:flex-shrink-0 md:h-full overflow-y-auto p-4 border-b md:border-b-0 md:border-r border-base-200/70 relative">
-      <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md pb-4 pt-2 -mx-4 px-4">
+    <div class="w-full md:w-72 bg-base-100 md:flex-shrink-0 md:h-full flex flex-col p-4 border-b md:border-b-0 md:border-r border-base-200/70 relative">
+      <div class="shrink-0 -mx-4 px-4 pt-2 pb-3">
         <div class="relative group">
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
             <.icon
@@ -50,7 +63,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
         </div>
       </div>
 
-      <nav class="space-y-2 mt-2 pb-4">
+      <nav class="space-y-2 mt-2 pb-4 flex-1 overflow-y-auto min-h-0 pr-1">
         <%= for {category, schemas} <- sort_categories(@categories) do %>
           <% match_count = category_match_count(category, schemas, @search_text) %>
           <% total = length(schemas) %>
@@ -89,6 +102,37 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
           </button>
         <% end %>
       </nav>
+
+      <%!-- Config-path footer — rendered for EVERY category (it replaced the
+           old content-area "Configuration file" header above the two-column
+           layout). The copy button keeps the DOM contract pinned by
+           settings_live_test: id="settings-config-path-copy",
+           phx-hook="ClipboardCopy", data-content={config_path}. --%>
+      <div class="shrink-0 mt-3 pt-3 border-t border-base-300 -mx-4 px-4">
+        <div class="flex items-center gap-2 min-w-0">
+          <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
+          <%!-- 配置文件路径所在行 --%>
+          <span class="text-xs font-medium text-base-content/70 truncate">{gettext(
+            "Configuration file"
+          )}</span>
+        </div>
+        <div class="flex items-center gap-2 mt-1.5 min-w-0">
+          <code class="font-mono text-xs text-base-content/80 flex-1 truncate">{@config_path}</code>
+          <button
+            id="settings-config-path-copy"
+            phx-hook="ClipboardCopy"
+            data-content={@config_path}
+            class="btn btn-ghost btn-xs btn-square shrink-0"
+            title={gettext("Copy path")}
+          >
+            <.icon name="hero-clipboard-document" class="size-3.5" />
+          </button>
+        </div>
+        <%= if not @config_file_exists do %>
+          <%!-- 配置文件尚不存在（首次保存时才会创建） --%>
+          <p class="mt-1.5 text-xs text-base-content/70">{gettext("File does not exist yet")}</p>
+        <% end %>
+      </div>
     </div>
     """
   end
