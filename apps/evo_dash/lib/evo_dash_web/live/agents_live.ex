@@ -1096,7 +1096,7 @@ defmodule EvoDashWeb.AgentsLive do
       # (semantic meaning preserved) on the hairline commit chip.
       "bg-warning/20 border border-warning/30"
     else
-      "bg-base-100 border border-base-300"
+      "bg-base-200/60 border border-base-300"
     end
   end
 
