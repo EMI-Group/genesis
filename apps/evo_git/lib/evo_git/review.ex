@@ -44,6 +44,11 @@ defmodule EvoGit.Review do
     Git.show(repo_path, "#{commit_sha}:#{file_path}")
   end
 
+  # Record separator and git log pretty-format shared by list_commits/2 and
+  # list_commits_from_shas/3.
+  @commit_separator "|||COMMIT_SEP|||"
+  @commit_format "%H%n%h%n%s%n%an%n%ae%n%aI%n#{@commit_separator}"
+
   @doc """
   Lists commits between base and branch tip, returning a list of CommitInfo structs.
   Returns {:ok, commits} or {:error, reason}.
@@ -51,23 +56,7 @@ defmodule EvoGit.Review do
   def list_commits(repo_path, branch_name) do
     with {:ok, commit_sha} <- Git.rev_parse(repo_path, branch_name),
          {:ok, base_sha} <- resolve_merge_base(repo_path, commit_sha) do
-      separator = "|||COMMIT_SEP|||"
-      format = "%H%n%h%n%s%n%an%n%ae%n%aI%n#{separator}"
-
-      case Git.log(repo_path, ["--format=#{format}", "#{base_sha}..#{commit_sha}"]) do
-        {:ok, output} ->
-          commits =
-            output
-            |> String.trim()
-            |> String.split(separator)
-            |> Enum.map(&parse_commit_entry/1)
-            |> Enum.reject(&is_nil/1)
-
-          {:ok, commits}
-
-        {:error, {_, _}} ->
-          {:ok, []}
-      end
+      do_list_commits(repo_path, ["--format=#{@commit_format}", "#{base_sha}..#{commit_sha}"])
     else
       _ -> {:ok, []}
     end
@@ -123,7 +112,7 @@ defmodule EvoGit.Review do
       files = parse_diff_stat_into_files(diff_stat)
 
       # Use --shortstat for accurate totals (single line from git, no per-file summing)
-      {total_additions, total_deletions} =
+      totals =
         case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
           {:ok, shortstat} ->
             totals = parse_shortstat(shortstat)
@@ -142,17 +131,7 @@ defmodule EvoGit.Review do
             count_changes(files)
         end
 
-      {:ok,
-       %{
-         commit_sha: commit_sha,
-         base_sha: base_sha,
-         diff_stat: diff_stat,
-         diff: nil,
-         files: files,
-         changed_files_count: length(files),
-         total_additions: total_additions,
-         total_deletions: total_deletions
-       }}
+      {:ok, build_metadata_map(base_sha, commit_sha, diff_stat, files, totals)}
     else
       error -> error
     end
@@ -203,24 +182,8 @@ defmodule EvoGit.Review do
   def load_review_metadata_from_shas(repo_path, base_sha, commit_sha) do
     with {:ok, diff_stat} <- Git.diff_numstat(repo_path, base_sha, commit_sha) do
       files = parse_diff_stat_into_files(diff_stat)
-
-      {total_additions, total_deletions} =
-        case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
-          {:ok, shortstat} -> parse_shortstat(shortstat)
-          _ -> count_changes(files)
-        end
-
-      {:ok,
-       %{
-         commit_sha: commit_sha,
-         base_sha: base_sha,
-         diff_stat: diff_stat,
-         diff: nil,
-         files: files,
-         changed_files_count: length(files),
-         total_additions: total_additions,
-         total_deletions: total_deletions
-       }}
+      totals = totals_via_shortstat(repo_path, base_sha, commit_sha, files)
+      {:ok, build_metadata_map(base_sha, commit_sha, diff_stat, files, totals)}
     end
   end
 
@@ -231,23 +194,7 @@ defmodule EvoGit.Review do
   Returns `{:ok, commits}`.
   """
   def list_commits_from_shas(repo_path, base_sha, commit_sha) do
-    separator = "|||COMMIT_SEP|||"
-    format = "%H%n%h%n%s%n%an%n%ae%n%aI%n#{separator}"
-
-    case Git.log(repo_path, ["--format=#{format}", "#{base_sha}..#{commit_sha}"]) do
-      {:ok, output} ->
-        commits =
-          output
-          |> String.trim()
-          |> String.split(separator)
-          |> Enum.map(&parse_commit_entry/1)
-          |> Enum.reject(&is_nil/1)
-
-        {:ok, commits}
-
-      {:error, {_, _}} ->
-        {:ok, []}
-    end
+    do_list_commits(repo_path, ["--format=#{@commit_format}", "#{base_sha}..#{commit_sha}"])
   end
 
   @doc """
@@ -264,24 +211,8 @@ defmodule EvoGit.Review do
 
     with {:ok, diff_stat} <- Git.diff_numstat(repo_path, base_sha, commit_sha) do
       files = parse_diff_stat_into_files(diff_stat)
-
-      {total_additions, total_deletions} =
-        case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
-          {:ok, shortstat} -> parse_shortstat(shortstat)
-          _ -> count_changes(files)
-        end
-
-      {:ok,
-       %{
-         commit_sha: commit_sha,
-         base_sha: base_sha,
-         diff_stat: diff_stat,
-         diff: nil,
-         files: files,
-         changed_files_count: length(files),
-         total_additions: total_additions,
-         total_deletions: total_deletions
-       }}
+      totals = totals_via_shortstat(repo_path, base_sha, commit_sha, files)
+      {:ok, build_metadata_map(base_sha, commit_sha, diff_stat, files, totals)}
     end
   end
 
@@ -342,7 +273,7 @@ defmodule EvoGit.Review do
         check_merge_with_merge_tree(repo_path, branch_sha, target_sha)
       end
     else
-      error -> normalize_git_error(error)
+      error -> error
     end
   end
 
@@ -367,11 +298,11 @@ defmodule EvoGit.Review do
             end
 
           other ->
-            normalize_git_error(other)
+            other
         end
 
       other ->
-        normalize_git_error(other)
+        other
     end
   end
 
@@ -461,7 +392,7 @@ defmodule EvoGit.Review do
         end
 
       other ->
-        normalize_git_error(other)
+        other
     end
   end
 
@@ -477,7 +408,7 @@ defmodule EvoGit.Review do
   defp force_restore_branch(repo_path, branch) do
     case Git.run(["checkout", "--force", branch], repo_path) do
       {:ok, _} -> :ok
-      other -> normalize_git_error(other)
+      other -> other
     end
   end
 
@@ -537,8 +468,6 @@ defmodule EvoGit.Review do
     |> Enum.map(&String.trim/1)
     |> Enum.reject(&(&1 == "" or Regex.match?(@merge_tree_oid_re, &1)))
   end
-
-  defp normalize_git_error({:error, {code, output}}), do: {:error, {code, output}}
 
   @doc """
   Rejects the changes by deleting the branch.
@@ -622,6 +551,25 @@ defmodule EvoGit.Review do
     case Git.merge_base(repo_path, "HEAD", commit_sha) do
       {:ok, base_sha} -> {:ok, base_sha}
       _ -> Git.rev_parse(repo_path, "HEAD")
+    end
+  end
+
+  # Runs `git log` with the given args and parses the shared commit format.
+  # Git errors are normalized to an empty list.
+  defp do_list_commits(repo_path, git_log_args) do
+    case Git.log(repo_path, git_log_args) do
+      {:ok, output} ->
+        commits =
+          output
+          |> String.trim()
+          |> String.split(@commit_separator)
+          |> Enum.map(&parse_commit_entry/1)
+          |> Enum.reject(&is_nil/1)
+
+        {:ok, commits}
+
+      {:error, {_, _}} ->
+        {:ok, []}
     end
   end
 
@@ -712,6 +660,35 @@ defmodule EvoGit.Review do
       end
 
     {insertions, deletions}
+  end
+
+  # Computes total additions/deletions from `git diff --shortstat` when git
+  # reports them (single authoritative line), falling back to per-file summing.
+  defp totals_via_shortstat(repo_path, base_sha, commit_sha, files) do
+    case Git.diff_shortstat(repo_path, base_sha, commit_sha) do
+      {:ok, shortstat} -> parse_shortstat(shortstat)
+      _ -> count_changes(files)
+    end
+  end
+
+  # Shared metadata map shape (`:diff` nil) returned by the metadata loaders.
+  defp build_metadata_map(
+         base_sha,
+         commit_sha,
+         diff_stat,
+         files,
+         {total_additions, total_deletions}
+       ) do
+    %{
+      commit_sha: commit_sha,
+      base_sha: base_sha,
+      diff_stat: diff_stat,
+      diff: nil,
+      files: files,
+      changed_files_count: length(files),
+      total_additions: total_additions,
+      total_deletions: total_deletions
+    }
   end
 
   defp parse_file_section(section) do
