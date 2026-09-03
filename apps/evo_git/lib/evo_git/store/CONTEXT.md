@@ -18,6 +18,13 @@ Contains the `EvoGit.Store` GenServer and its support modules for the SQLite per
 
 GenServer wrapping a single xqlite (SQLite) connection. Public API for task and project CRUD and lightweight queries.
 
+**Internal helper patterns (worth knowing before editing `store.ex`)**:
+- `offload/3` (store.ex:963) — spawns a short-lived linked `Task.start` that performs the query+decode and replies via `GenServer.reply/2` (`{:noreply, state}` immediately), keeping large decoded terms off the GenServer heap; used by the heavy query handlers (see "Heavy SELECT handlers offloaded to short-lived Tasks").
+- `fetch_single_row/4` (store.ex:1236) — single-row SELECT + decode-fn; deliberately NO catch-all `_` clause, so an unexpected query/row shape raises exactly as before (crash semantics preserved).
+- `count_table/2` (store.ex:1307) — shared by the `:count_tasks`/`:count_projects` handlers.
+
+**Length note** — `store.ex` (~1310 lines) is the main persistence GenServer (WAL writes, decode/offload read handlers, bookkeeping); the focused support modules (Codec, Schema, Queries, Errors) live in this `store/` directory — it stays cohesive, do NOT split it without a plan.
+
 ### `EvoGit.Store.Codec` (`codec.ex`)
 
 | Function | Description |
@@ -127,7 +134,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 ## Heavy SELECT handlers offloaded to short-lived Tasks
 
-`select_tasks_summary`, `select_tasks_summary_by_path`, `select_tasks_changed_since`, `select_all_tasks`, `safe_select_all_tasks`, and `safe_select_paginated_tasks` run query AND decode inside a short-lived linked `Task.start` that replies via `GenServer.reply/2` (`{:noreply, state}` immediately) — large decoded terms never inflate the Store GenServer heap. Cross-process xqlite use is safe (NIF mutex-guarded: `deps/xqlite/native/xqlitenif/src/connection.rs` `with_conn`/`with_conn_mut`, NO owner-process constraint; NIFs `DirtyIo`-scheduled). The link preserves crash-on-raise behavior exactly — including the skip-and-log boundary (`decode_skipping_bad` runs in the Task process) and the `_ -> []` query-failure arms. Caller's 30s `@call_timeout` unchanged (a slow Task = caller timeout). Bodies in `do_*` private helpers (store.ex `do_select_all_tasks`/`do_safe_select_paginated_tasks`/`do_safe_select_all_tasks`/`do_select_tasks_summary*`/`do_select_tasks_changed_since`). **Kept synchronous** (single-row/tiny — a Task spawn would cost more than the decode): `get_task`, `select_task_logs`, `select_task_update_info`, `get_task_status`, `get_project`, all id-only projections (`select_task_paths`, `select_finished_task_ids`, `select_task_ids`, `select_running_lease_info`, `select_cleanup_info/1,/3`), `count_tasks`, `count_projects`, `size`, `select_all_projects`/`safe_select_all_projects` (≤10 rows after trim).
+`select_tasks_summary`, `select_tasks_summary_by_path`, `select_tasks_changed_since`, `select_all_tasks`, `safe_select_all_tasks`, and `safe_select_paginated_tasks` run query AND decode inside a short-lived linked `Task.start` via the shared private `offload/3` helper (spawns the Task, replies via `GenServer.reply/2`, returns `{:noreply, state}` immediately) — large decoded terms never inflate the Store GenServer heap. Cross-process xqlite use is safe (NIF mutex-guarded: `deps/xqlite/native/xqlitenif/src/connection.rs` `with_conn`/`with_conn_mut`, NO owner-process constraint; NIFs `DirtyIo`-scheduled). The link preserves crash-on-raise behavior exactly — including the skip-and-log boundary (`decode_skipping_bad` runs in the Task process) and the `_ -> []` query-failure arms. Caller's 30s `@call_timeout` unchanged (a slow Task = caller timeout). Bodies in `do_*` private helpers (store.ex `do_select_all_tasks`/`do_safe_select_paginated_tasks`/`do_safe_select_all_tasks`/`do_select_tasks_summary*`/`do_select_tasks_changed_since`). **Kept synchronous** (single-row/tiny — a Task spawn would cost more than the decode): `get_task`, `select_task_logs`, `select_task_update_info`, `get_task_status`, `get_project`, all id-only projections (`select_task_paths`, `select_finished_task_ids`, `select_task_ids`, `select_running_lease_info`, `select_cleanup_info/1,/3`), `count_tasks`, `count_projects`, `size`, `select_all_projects`/`safe_select_all_projects` (≤10 rows after trim).
 
 ## Disk-Full Handling
 

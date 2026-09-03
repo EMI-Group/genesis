@@ -117,6 +117,10 @@ AgentSpec.new(context_node, phylo_node, agent_module, objective, opts)
 
 The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short integer), `agent_id` (`T<task_number>_A<task_local_id>`); 2) computes the worktree path (`worker_T<task_number>_A<task_local_id>`) into sched_meta — **no worktree I/O here**; 3) stores initial state in `:evogit_agent_state` (agent-owned) + `:evogit_sched_meta` (scheduler-owned); 4) spawns a Task running the agent loop; 5) inside the Task, `Runner.setup_dispatch_context/1` requests a FRESH worktree from `WorktreeManager.create_worktree_for_agent/6` (1-hour call; lazy per-repo init + the create pipeline — `git clean`/checkout/init script — offloaded inside WorktreeManager); 6) on `complete_task`/crash/cancel → WorktreeManager reclaims the worktree via its `:DOWN` process monitor, scheduler replies to caller.
 
+### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
+
+`EvoGit.Runtime.Helpers.build_root_agent_spec/7` (`helpers.ex:484-493`) is the shared builder producing the root-agent `{agent_module, opts}` spec for evolution (simple AND custom modes) and genesis phase specs — resolving the default/custom root module and threading the custom-agent id + `model_id_locked` opts into the spec. New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
+
 ### Agent Hierarchy by Phase
 
 - **Genesis Mode A (Existing)**: `ContextExtractor` root → recursive `subagent_context_extractor` children (one per child dir).

@@ -27,7 +27,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |
 | `complete_task` | Agent completion (injected separately, not in standard schemas) | Special | No |
 | `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent) | Special | No |
-| *(utility)* `Shared` | Argument parsing, path validation, scope checking | — | — |
+| *(utility)* `Shared` | Designated anti-duplication home for cross-tool helpers — arg parsing/validation, path/scope checking, string edits, plus the consolidated `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, `describe_error/2` | — | — |
 
 ## Constraints
 - All tool execution results must be strings.
@@ -50,6 +50,10 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 ### Web Search Providers (provider-adapter architecture)
 
 `WebSearch` (`web_search.ex`) supports five providers — `:tavily`, `:perplexity`, `:exa`, `:bing`, `:brave` — selected via `EvoGit.Config.resolve()` (`[:tools, :search, :provider]`, default `:tavily`; unknown/nil normalizes to `:tavily`). Per-provider request building and response parsing are **pure, I/O-free functions** in `EvoGit.Agent.Tools.WebSearchProviders` (`web_search_providers.ex`): `build_request/5` → `{:ok, %{method: :post \| :get, url:, headers:, body:}}` and `parse_response/2` → `{:ok, %{kind: :results, entries: [%{title, url, content}]}}` (Tavily/Exa/Bing/Brave) or `{:ok, %{kind: :answer, text:, citations:}}` (Perplexity). `WebSearch` itself keeps the schema/validations/API-key resolution and does the real HTTP via `Req`; the HTTP call is routed through the `:web_search_http_runner` app-env test seam (read at call time, default = private Req runner), and `do_web_search/4` is `@doc false` public so execute-level tests can drive the full tail with hardcoded provider maps. The provider list's single source of truth is `EvoGit.Config.Schema.Definitions.search_providers/0` (also used by the schema `in:` validation and config atomization); this module reads the provider atom generically via `EvoGit.Config.resolve()` and needs no per-provider changes beyond a `WebSearchProviders` adapter clause. Param applicability: `search_depth` is Tavily/Exa-only (Exa maps advanced→`type: "neural"`, basic→`"keyword"`); `max_results` is ignored by Perplexity (as is `search_depth`).
+
+### Shared utility helpers (anti-duplication home)
+
+`EvoGit.Agent.Tools.Shared` (`tools/shared.ex`) is the **designated anti-duplication home** for helpers shared across tool modules. It owns the consolidated helpers `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, and `describe_error/2`, alongside its pre-existing arg-validation / file-scope / string-edit helpers (e.g. `fetch_string_arg/2`, `fetch_array_arg/2`, `validate_file_scope/3`, `do_git_commit/3`). New cross-tool helpers should be added there rather than re-created in individual tool modules.
 
 ## Known Issues / Notes for Agents
 

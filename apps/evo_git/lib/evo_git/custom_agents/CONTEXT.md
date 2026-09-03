@@ -20,6 +20,7 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 - `model_selection_script/0` → script `String.t()` | `nil`.
 - `save_model_selection_script/1` → `:ok | {:error, term}` (empty string removes the key; preserves `[[agents]]`).
 - `reload/0` → `:ok` — invalidates the `ModelSelector` compile cache (guarded with `Code.ensure_loaded?/1` + `function_exported?/3`).
+- `stringify_keys/1` (public, `@doc false`) → shared map-stringify helper: `EvoGit.RemoteConnections` (`lib/evo_git/remote_connections.ex`) calls it when serializing connection maps to TOML, rather than keeping a local copy. New code needing string-keyed map serialization for config/TOML stores should reuse `CustomAgents.stringify_keys/1` instead of duplicating it.
 
 **Validation error atoms** (`save/1` only — reads never raise): `:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
 
