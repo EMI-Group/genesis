@@ -187,11 +187,7 @@ defmodule EvoGit.SandboxSlice do
         false
 
       true ->
-        case EvoGit.Config.resolve([:sandbox, :mode]) do
-          :enabled -> true
-          :disabled -> false
-          :auto -> EvoGit.Platform.systemd_available?()
-        end
+        Helpers.sandbox_mode_enabled?(&EvoGit.Platform.systemd_available?/0)
     end
   end
 
@@ -261,32 +257,14 @@ defmodule EvoGit.SandboxSlice do
   end
 
   defp resource_properties(resources) do
-    props = []
-
-    props =
-      case Map.get(resources, :cpu_quota) do
-        nil -> props
-        v -> props ++ ["CPUQuota=#{v}"]
-      end
-
-    props =
-      case Map.get(resources, :cpu_weight) do
-        nil -> props
-        v -> props ++ ["CPUWeight=#{v}"]
-      end
-
-    props =
-      case Map.get(resources, :memory_max) do
-        nil -> props
-        v -> props ++ ["MemoryMax=#{v}"]
-      end
-
-    props =
-      case Map.get(resources, :tasks_max) do
-        nil -> props
-        v -> props ++ ["TasksMax=#{v}"]
-      end
-
-    props
+    for {key, prop} <- [
+          {:cpu_quota, "CPUQuota"},
+          {:cpu_weight, "CPUWeight"},
+          {:memory_max, "MemoryMax"},
+          {:tasks_max, "TasksMax"}
+        ],
+        value = Map.get(resources, key),
+        not is_nil(value),
+        do: "#{prop}=#{value}"
   end
 end

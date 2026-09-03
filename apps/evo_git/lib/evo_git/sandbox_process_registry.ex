@@ -159,11 +159,7 @@ defmodule EvoGit.SandboxProcessRegistry do
         false
 
       true ->
-        case EvoGit.Config.resolve([:sandbox, :mode]) do
-          :enabled -> true
-          :disabled -> false
-          :auto -> EvoGit.Platform.systemd_available?()
-        end
+        Helpers.sandbox_mode_enabled?(&EvoGit.Platform.systemd_available?/0)
     end
   end
 end

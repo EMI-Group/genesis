@@ -637,7 +637,7 @@ defmodule EvoGit.AgentScheduler do
         _from,
         %State{llm_model: nil, model_profiles: profiles} = state
       )
-      when profiles == [] or profiles == nil do
+      when profiles == nil do
     Logger.warning("AgentScheduler: Rejecting agent spawn — LLM model not configured")
     {:reply, {:error, :llm_not_configured}, state}
   end
@@ -713,10 +713,7 @@ defmodule EvoGit.AgentScheduler do
         )
 
         # 2. Find ALL agents with this task_id
-        agent_ids =
-          Store.list_sched_meta()
-          |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
-          |> Enum.map(fn {id, _meta} -> id end)
+        agent_ids = agent_ids_for_task(task_id)
 
         cancel_set = MapSet.new(agent_ids)
 
@@ -758,10 +755,8 @@ defmodule EvoGit.AgentScheduler do
         # 6. Cancel agents in reverse depth order (leaf subagents first, then parents)
         #    Sort by depth descending so deepest agents are cancelled first
         sorted_agents =
-          Store.list_sched_meta()
-          |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
-          |> Enum.sort_by(fn {_id, %SchedMeta{depth: d}} -> d end, :desc)
-          |> Enum.map(fn {id, _meta} -> id end)
+          agent_ids_for_task(task_id)
+          |> Enum.sort_by(&Store.depth_of/1, :desc)
 
         state =
           Enum.reduce(sorted_agents, state, fn agent_id, acc_state ->
@@ -788,10 +783,7 @@ defmodule EvoGit.AgentScheduler do
     # 2. Find all agents of this task (SchedMeta.task_id scan — same pattern
     #    as force_kill_task_agents) and put each live agent into cancel-grace:
     #    append the cancel notification message and set cancel_requested=true.
-    agent_ids =
-      Store.list_sched_meta()
-      |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
-      |> Enum.map(fn {id, _meta} -> id end)
+    agent_ids = agent_ids_for_task(task_id)
 
     Enum.each(agent_ids, fn agent_id ->
       case Store.get_agent_state(agent_id) do
@@ -848,53 +840,12 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def handle_call(:get_config, _from, %State{} = state) do
-    config = %{
-      default_llm_max_concurrency: state.default_llm_max_concurrency,
-      max_tool_concurrency: state.max_tool_concurrency,
-      agent_max_retries: state.agent_max_retries,
-      max_agent_depth: state.max_depth,
-      max_retries: state.max_retries,
-      max_turns: state.max_turns,
-      max_turns_root: state.max_turns_root,
-      llm_model: state.llm_model,
-      llm_generation_params: state.llm_generation_params,
-      model_profiles: state.model_profiles,
-      paused: state.paused,
-      sandbox_mode: state.sandbox_mode,
-      sandbox_resources: state.sandbox_resources,
-      sandbox_process_resources: state.sandbox_process_resources,
-      sandbox_backend: EvoGit.Platform.sandbox_backend(),
-      sandbox_capabilities: EvoGit.Sandbox.capabilities()
-    }
-
-    {:reply, config, state}
+    {:reply, config_map(state), state}
   end
 
   @impl true
   def handle_call({:get_config, key}, _from, %State{} = state) do
-    value =
-      case key do
-        :default_llm_max_concurrency -> state.default_llm_max_concurrency
-        :max_tool_concurrency -> state.max_tool_concurrency
-        :agent_max_retries -> state.agent_max_retries
-        :max_agent_depth -> state.max_depth
-        :max_retries -> state.max_retries
-        :max_turns -> state.max_turns
-        :max_turns_root -> state.max_turns_root
-        :llm_model -> state.llm_model
-        :llm_generation_params -> state.llm_generation_params
-        :model_profiles -> state.model_profiles
-        :model_concurrency -> state.model_concurrency
-        :paused -> state.paused
-        :sandbox_mode -> state.sandbox_mode
-        :sandbox_resources -> state.sandbox_resources
-        :sandbox_process_resources -> state.sandbox_process_resources
-        :sandbox_backend -> EvoGit.Platform.sandbox_backend()
-        :sandbox_capabilities -> EvoGit.Sandbox.capabilities()
-        _ -> nil
-      end
-
-    {:reply, value, state}
+    {:reply, config_value(state, key), state}
   end
 
   @impl true
@@ -1033,6 +984,51 @@ defmodule EvoGit.AgentScheduler do
     end
   end
 
+  # Every key served by the map-form :get_config reply. Deliberately omits
+  # :model_concurrency — the map-form reply has never included it; the
+  # single-key accessor serves it from live state via config_value/2.
+  @config_keys [
+    :default_llm_max_concurrency,
+    :max_tool_concurrency,
+    :agent_max_retries,
+    :max_agent_depth,
+    :max_retries,
+    :max_turns,
+    :max_turns_root,
+    :llm_model,
+    :llm_generation_params,
+    :model_profiles,
+    :paused,
+    :sandbox_mode,
+    :sandbox_resources,
+    :sandbox_process_resources,
+    :sandbox_backend,
+    :sandbox_capabilities
+  ]
+
+  # Builds the full resolved config map for the map-form :get_config reply.
+  defp config_map(%State{} = state) do
+    Map.new(@config_keys, fn key -> {key, config_value(state, key)} end)
+  end
+
+  # Lazy per-key accessor shared by the map-form builder and the single-key
+  # :get_config handler. Each call evaluates ONLY the requested key (a direct
+  # %State{} field read for field-backed keys, or the platform/sandbox probe
+  # for the two computed keys) — never the whole map, so single-key hot paths
+  # (e.g. PeakHourEngine's per-broadcast reads) do not pay for unrelated
+  # values. Unknown keys resolve to nil.
+  defp config_value(%State{} = _state, :sandbox_backend), do: EvoGit.Platform.sandbox_backend()
+  defp config_value(%State{} = _state, :sandbox_capabilities), do: EvoGit.Sandbox.capabilities()
+  defp config_value(%State{} = state, :max_agent_depth), do: state.max_depth
+
+  defp config_value(%State{} = state, key)
+       when key in @config_keys or key == :model_concurrency do
+    # For every other config key the config key IS the %State{} field name.
+    Map.get(state, key)
+  end
+
+  defp config_value(_state, _key), do: nil
+
   @impl true
   def handle_cast({:release_llm_slot, agent_id}, %State{} = state) do
     {new_state, status_updates} = Slots.handle_release_llm_slot(agent_id, state)
@@ -1076,58 +1072,49 @@ defmodule EvoGit.AgentScheduler do
   @spec get_agent_context(pos_integer()) :: ReqLLM.Context.t() | nil
   def get_agent_context(agent_id), do: Store.get_agent_context(agent_id)
 
-  @doc """
-  Updates multiple fields for an agent in a single ETS get+put cycle.
-  Accepts a keyword list of field-value pairs (e.g., `[context: ctx, turn: 5, usage: usage, total_tokens: 100]`).
-  This avoids redundant `:ets.lookup` + `:ets.insert` round-trips when syncing
-  multiple fields per agent turn.
-  """
+  @doc "Updates multiple fields for an agent in a single ETS get+put cycle."
   @spec batch_update_agent(pos_integer(), keyword()) :: :ok
   def batch_update_agent(agent_id, fields), do: Store.batch_update_agent(agent_id, fields)
 
-  @doc """
-  Updates the conversation context for an agent in the agent state table.
-  """
+  @doc "Updates the conversation context for an agent in the agent state table."
   @spec update_agent_context(pos_integer(), ReqLLM.Context.t()) :: :ok
   def update_agent_context(agent_id, context), do: Store.update_agent_context(agent_id, context)
 
-  @doc """
-  Updates the cumulative usage for an agent in the agent state table.
-  """
+  @doc "Updates the cumulative usage for an agent in the agent state table."
   @spec update_agent_usage(pos_integer(), EvoGit.Agent.Usage.t()) :: :ok
   def update_agent_usage(agent_id, usage), do: Store.update_agent_usage(agent_id, usage)
 
-  @doc """
-  Updates the current turn for an agent in the agent state table.
-  """
+  @doc "Updates the current turn for an agent in the agent state table."
   @spec update_agent_turn(pos_integer(), non_neg_integer()) :: :ok
   def update_agent_turn(agent_id, turn), do: Store.update_agent_turn(agent_id, turn)
 
-  @doc """
-  Updates the cumulative token count for an agent in the agent state table.
-
-  This mirrors `LoopState.total_tokens` so the dashboard can display context
-  progress. Reset to 0 on each context compression.
-  """
+  @doc "Updates the cumulative token count for an agent in the agent state table."
   @spec update_total_tokens(pos_integer(), non_neg_integer()) :: :ok
   def update_total_tokens(agent_id, total_tokens),
     do: Store.update_total_tokens(agent_id, total_tokens)
 
-  @doc """
-  Increments the compression count for an agent in the agent state table.
-
-  Called once per successful context-compression event to track how many times
-  an agent's context has been compressed.
-  """
+  @doc "Increments the compression count for an agent in the agent state table."
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id), do: Store.increment_compression_count(agent_id)
 
   # --- Graceful-cancel marker helpers ---
 
+  # Collects the ids of every agent registered under the given task by scanning
+  # the scheduler metadata table. Each call takes its own fresh
+  # `Store.list_sched_meta()` snapshot — never share one read across call sites.
+  defp agent_ids_for_task(task_id) do
+    Store.list_sched_meta()
+    |> Enum.filter(fn {_id, %SchedMeta{task_id: tid}} -> tid == task_id end)
+    |> Enum.map(fn {id, _meta} -> id end)
+  end
+
+  @doc false
   # Returns true when the task_id is registered in the :evogit_cancelling_tasks
   # marker (a graceful cancel is in flight). Defensive against a missing table
   # (should not happen — Application.start/2 creates it before the scheduler).
-  defp cancelling_task?(task_id) do
+  # Public (hidden from docs) so Dispatch.register_agent shares the single
+  # implementation instead of duplicating it.
+  def cancelling_task?(task_id) do
     case :ets.whereis(:evogit_cancelling_tasks) do
       :undefined -> false
       _tid -> :ets.member(:evogit_cancelling_tasks, task_id)

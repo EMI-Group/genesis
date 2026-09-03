@@ -12,6 +12,8 @@ defmodule EvoGit.Core.ContextNode do
   threaded through `load/3` and `hierarchy_nodes/3` when working with foreign
   repositories.
   """
+  require Logger
+
   @enforce_keys [:path, :repo]
   defstruct [:path, :repo, repo_id: "primary"]
 
@@ -51,7 +53,7 @@ defmodule EvoGit.Core.ContextNode do
     end
   end
 
-  defp check_path_ignored(_, _) when true, do: false
+  defp check_path_ignored(_, _), do: false
 
   @doc """
   Normalizes a relative path to canonical "./foo/bar" format.
@@ -193,7 +195,6 @@ defmodule EvoGit.Core.ContextNode do
               # LLM request pipeline).
               truncated_content =
                 if byte_size(display_content) > context_max do
-                  require Logger
                   Logger.warning("Content truncated for file: #{file}")
 
                   String.byte_slice(display_content, 0, context_max) <>

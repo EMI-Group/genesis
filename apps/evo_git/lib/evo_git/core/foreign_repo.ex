@@ -116,13 +116,11 @@ defmodule EvoGit.Core.ForeignRepo do
   def normalize(%__MODULE__{} = repo), do: repo
 
   def normalize(repo) when is_map(repo) do
-    id = Map.get(repo, "id") || Map.get(repo, :id)
+    id = fetch(repo, :id)
 
-    root =
-      Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root) ||
-        Map.get(repo, :path)
+    root = fetch(repo, :root) || fetch(repo, :path)
 
-    description = Map.get(repo, "description") || Map.get(repo, :description)
+    description = fetch(repo, :description)
 
     with true <- is_binary(id) and id != "",
          true <- is_binary(root) and root != "" do
@@ -130,7 +128,7 @@ defmodule EvoGit.Core.ForeignRepo do
         if is_binary(description) and description != "", do: [description: description], else: []
 
       writable = Map.get(repo, "writable", Map.get(repo, :writable, false))
-      base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
+      base_sha = fetch(repo, :base_sha)
 
       new(id, root, Keyword.merge(opts, writable: writable, base_sha: base_sha))
     else
@@ -139,6 +137,13 @@ defmodule EvoGit.Core.ForeignRepo do
   end
 
   def normalize(_other), do: nil
+
+  # Reads a key from a map that may be string- or atom-keyed (persisted JSON
+  # round-trips yield string keys). The string form is tried first, mirroring
+  # the original explicit `Map.get(map, "k") || Map.get(map, :k)` ordering.
+  defp fetch(map, key) do
+    Map.get(map, Atom.to_string(key)) || Map.get(map, key)
+  end
 
   # Coerces a `writable` opt to a boolean: only the literal `true` is writable;
   # anything else (nil, non-boolean values) is coerced to `false` rather than
