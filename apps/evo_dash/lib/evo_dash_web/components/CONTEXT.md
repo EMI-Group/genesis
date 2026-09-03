@@ -181,6 +181,10 @@ Task results (the runtime `{:ok, %{...}}` value inside `result`) may carry a top
 2. `task_card_components.ex` is rendered ONLY by TasksLive with full structs; its heavy-field sections are `Map.get`-guarded — behavior-identical for structs, KeyError-safe for maps.
 3. **No heavy field (logs/usage/archive_metadata) is needed by any dashboard-rendered card** — the dashboard card surface is the sidebar only (no full-result modal exists on the dashboard), and it needs only contract fields. Nothing is fetched lazily.
 
+## Notes for Agents — narrow-width (mobile) layout conventions
+- **Branch-name badges** (`task_card_components.ex`, 3 sites: the per-repo badge in `result_repos_badges/1` + the two `render_result/2` top-level branch badges): truncate on narrow widths via the shared private **`branch_badge_class/0`** (`min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none`) plus an inner `<span class="truncate min-w-0">` around the branch text — daisyUI `.badge` is `inline-flex` with no wrapping, so the ellipsis must live on a blockified inner span, and flex parents need `min-w-0` to shrink. Reuse the helper for any NEW branch-badge site (keep the class string a literal so the Tailwind v4 scanner picks it up); the full branch name always shows at `md`+ (`md:max-w-none`).
+- **Agent tree** (`agents_components.ex` `path_tree/1`): the per-level agents-row wrapper carries **`pl-7 xl:pl-0`** — below `xl` the row stacks (`flex-col`) and the 28px indent (= folder icon `size-5` 20px + `gap-2` 8px) puts the first agent box AND every wrapped line exactly at that level's directory-text left edge, clear of the children trunk (`absolute left-2.5`, spans the full content row). Do NOT remove the indent or the wrapped boxes overlap the trunk connector on mobile; `xl:pl-0` keeps the desktop two-column layout byte-identical.
+
 ## Design Conventions — Adwaita token grammar (markup)
 
 Durable rules for writing NEW markup in this subtree (applied repo-wide in the Adwaita restyle audit; see the parent `lib/evo_dash_web/CONTEXT.md` catalog for the full record):
