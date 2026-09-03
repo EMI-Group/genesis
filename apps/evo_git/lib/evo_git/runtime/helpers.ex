@@ -2,6 +2,7 @@ defmodule EvoGit.Runtime.Helpers do
   @moduledoc "Shared helper functions for runtime phases."
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
+  alias EvoGit.AgentSpec
   alias EvoGit.Core.ForeignRepo
   require Logger
 
@@ -466,5 +467,50 @@ defmodule EvoGit.Runtime.Helpers do
   @spec model_id_locked?(keyword()) :: boolean()
   def model_id_locked?(opts) do
     Keyword.get(opts, :model_id_locked, false) || not is_nil(Keyword.get(opts, :model_id))
+  end
+
+  @doc """
+  Builds the resolved root-agent `%EvoGit.AgentSpec{}` for a runtime phase.
+
+  Resolves the root agent via `resolve_root_agent/2` — `default_module`, or an
+  agents.toml custom agent when `opts[:agent]` is set (unknown ids raise). The
+  resolved `custom_agent_id` is folded into the spec opts BEFORE
+  `AgentSpec.new/5` (appended at the end of the keyword list): since
+  `AgentSpec.new/5` stores opts verbatim and the base list never carries a
+  `:custom_agent_id` key, this is byte-identical to the former
+  `%{spec | opts: Keyword.merge(spec.opts, agent_opts)}` post-step — ordering
+  in the merged opts list is unchanged.
+  """
+  @spec build_root_agent_spec(
+          EvoGit.Core.ContextNode.t(),
+          EvoGit.Core.PhyloGraphNode.t(),
+          module(),
+          String.t(),
+          keyword(),
+          [ForeignRepo.t()],
+          String.t() | nil
+        ) :: AgentSpec.t()
+  def build_root_agent_spec(
+        context_node,
+        phylo_node,
+        default_module,
+        objective,
+        opts,
+        foreign_repos,
+        repo_notes
+      ) do
+    {agent_module, agent_opts} = resolve_root_agent(opts, default_module)
+
+    spec_opts =
+      [
+        foreign_repos: foreign_repos,
+        repo_notes: repo_notes,
+        archive: Keyword.get(opts, :archive, false),
+        task_id: Keyword.get(opts, :task_id),
+        model_id: Keyword.get(opts, :model_id),
+        model_id_locked: model_id_locked?(opts)
+      ] ++ agent_opts
+
+    AgentSpec.new(context_node, phylo_node, agent_module, objective, spec_opts)
   end
 end

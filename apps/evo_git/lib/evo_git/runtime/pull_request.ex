@@ -15,7 +15,8 @@ defmodule EvoGit.Runtime.PullRequest do
   Returns the PR URL on success, `nil` otherwise.
   Never raises — all failures are logged and return `nil`.
   """
-  @spec try_create(String.t(), String.t(), String.t(), String.t()) :: {String.t(), String.t()} | {nil, nil}
+  @spec try_create(String.t(), String.t(), String.t(), String.t()) ::
+          {String.t(), String.t()} | {nil, nil}
   def try_create(repo_path, head_branch, objective, agent_result) do
     if Git.gh_available?() do
       with true <-
@@ -126,7 +127,6 @@ defmodule EvoGit.Runtime.PullRequest do
     case generate_title(objective, agent_result) do
       nil -> "Genesis: #{head_branch}"
       generated when is_binary(generated) and generated != "" -> "Genesis: #{generated}"
-      _ -> "Genesis: #{head_branch}"
     end
   end
 
@@ -150,7 +150,9 @@ defmodule EvoGit.Runtime.PullRequest do
       context = ReqLLM.Context.new([ReqLLM.Context.user(prompt)])
 
       with {:ok, stream_response} <-
-             ReqLLM.stream_text(model, context, provider_options: EvoGit.Config.Schema.LLM.provider_options_for_model(model)),
+             ReqLLM.stream_text(model, context,
+               provider_options: EvoGit.Config.Schema.LLM.provider_options_for_model(model)
+             ),
            {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response),
            text <- ReqLLM.Response.text(response) do
         trimmed = String.trim(text)

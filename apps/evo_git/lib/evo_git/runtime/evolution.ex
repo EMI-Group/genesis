@@ -3,7 +3,6 @@ defmodule EvoGit.Runtime.Evolution do
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.AgentScheduler
-  alias EvoGit.AgentSpec
   alias EvoGit.Runtime
   alias EvoGit.Agent.Result
   alias EvoGit.Runtime.Helpers
@@ -34,8 +33,27 @@ defmodule EvoGit.Runtime.Evolution do
          {:ok, current_sha} <- Helpers.resolve_starting_commit(repo_path, starting_commit),
          :ok <- Helpers.validate_node_path(node_path, repo_path) do
       case mode do
-        :simple -> run_simple_mode(objective, repo_path, current_sha, node_path, opts)
-        :custom -> run_custom_mode(objective, repo_path, current_sha, node_path, opts)
+        :simple ->
+          run_mode(
+            objective,
+            repo_path,
+            current_sha,
+            node_path,
+            opts,
+            EvoGit.Agents.Manager,
+            "Evolution: Running Mode A (Top-Down)"
+          )
+
+        :custom ->
+          run_mode(
+            objective,
+            repo_path,
+            current_sha,
+            node_path,
+            opts,
+            EvoGit.Agents.Custom,
+            "Evolution: Running custom mode with agent '#{Keyword.get(opts, :agent)}'"
+          )
       end
     else
       {:error, {:invalid_node_path, message}} ->
@@ -62,73 +80,31 @@ defmodule EvoGit.Runtime.Evolution do
     :simple
   end
 
-  # Mode A: Top-Down Evolution (Simple)
-  defp run_simple_mode(objective, repo_path, current_sha, node_path, opts) do
-    Logger.info("Evolution: Running Mode A (Top-Down)")
+  # Both modes share this single flow — they differ only in the default root
+  # module and the emitted log line. Simple mode uses the built-in Manager;
+  # custom mode runs the agents.toml agent via EvoGit.Agents.Custom (opts[:agent]
+  # is guaranteed non-nil/non-empty here — checked in run/2; unknown ids raise
+  # in Helpers.resolve_root_agent/2, reached from build_root_agent_spec/7).
+  defp run_mode(objective, repo_path, current_sha, node_path, opts, default_module, log_text) do
+    Logger.info(log_text)
 
-    {agent_module, agent_opts} =
-      Helpers.resolve_root_agent(opts, EvoGit.Agents.Manager)
-
-    run_resolved_root_agent(
-      objective,
-      repo_path,
-      current_sha,
-      node_path,
-      opts,
-      agent_module,
-      agent_opts
-    )
-  end
-
-  # Mode C: Custom Root Agent (agents.toml) — `opts[:agent]` is guaranteed
-  # non-nil/non-empty here (checked in run/2); unknown ids raise in
-  # Helpers.resolve_root_agent/2.
-  defp run_custom_mode(objective, repo_path, current_sha, node_path, opts) do
-    Logger.info("Evolution: Running custom mode with agent '#{Keyword.get(opts, :agent)}'")
-
-    {agent_module, agent_opts} =
-      Helpers.resolve_root_agent(opts, EvoGit.Agents.Custom)
-
-    run_resolved_root_agent(
-      objective,
-      repo_path,
-      current_sha,
-      node_path,
-      opts,
-      agent_module,
-      agent_opts
-    )
-  end
-
-  # Shared flow for both modes: build the phylo/context nodes and foreign-repo
-  # list, run the resolved root agent, and merge/report on success.
-  defp run_resolved_root_agent(
-         objective,
-         repo_path,
-         current_sha,
-         node_path,
-         opts,
-         agent_module,
-         agent_opts
-       ) do
     phylo_node = PhyloGraphNode.new(repo_path, current_sha)
     context_node = ContextNode.load(node_path, repo_path)
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
     repo_notes = Helpers.load_repo_notes(repo_path, current_sha)
 
-    case AgentSpec.new(context_node, phylo_node, agent_module, objective,
-           foreign_repos: foreign_repos,
-           repo_notes: repo_notes,
-           archive: Keyword.get(opts, :archive, false),
-           task_id: Keyword.get(opts, :task_id),
-           model_id: Keyword.get(opts, :model_id),
-           model_id_locked: Helpers.model_id_locked?(opts)
-         )
-         |> then(fn spec ->
-           # merge custom_agent_id into the spec opts when present
-           %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
-         end)
-         |> AgentScheduler.run_agent() do
+    spec =
+      Helpers.build_root_agent_spec(
+        context_node,
+        phylo_node,
+        default_module,
+        objective,
+        opts,
+        foreign_repos,
+        repo_notes
+      )
+
+    case AgentScheduler.run_agent(spec) do
       {:ok, %Result{} = agent_output} ->
         Helpers.notify_finalizing(Keyword.get(opts, :task_id))
         Helpers.merge_and_report(repo_path, agent_output, "evolve", foreign_repos)
