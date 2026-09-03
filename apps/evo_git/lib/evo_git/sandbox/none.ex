@@ -49,8 +49,7 @@ defmodule EvoGit.Sandbox.None do
 
     # Wrap in bash with stdin redirected from /dev/null so commands like rg
     # that read stdin on missing args get immediate EOF instead of hanging.
-    inner_cmd = Enum.map_join([exec | exec_args], " ", &Helpers.shell_escape/1)
-    wrapped_cmd = inner_cmd <> " < /dev/null"
+    wrapped_cmd = Helpers.build_shell_command(exec, exec_args) <> " < /dev/null"
 
     # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
     # automated operations that may open an interactive editor (e.g.
@@ -200,14 +199,9 @@ defmodule EvoGit.Sandbox.None do
   end
 
   defp run_with_partial_unix(cwd, executable, args, timeout, max_bytes) do
-    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
-    File.mkdir_p!(tmpdir)
+    tmpfile = Helpers.partial_output_tmpfile()
 
-    tmpfile =
-      Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
-
-    inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> Helpers.shell_escape(tmpfile) <> " 2>&1 < /dev/null"
+    wrapped_cmd = Helpers.build_redirected_command(executable, args, tmpfile)
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash)
     is_git = EvoGit.GitEnv.git_command?(executable)
@@ -221,24 +215,7 @@ defmodule EvoGit.Sandbox.None do
 
     git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
-    task =
-      Task.async(fn ->
-        System.cmd(exec, exec_args,
-          cd: cwd,
-          stderr_to_stdout: true,
-          env: git_env
-        )
-      end)
-
-    case Task.yield(task, timeout) || Task.shutdown(task) do
-      {:ok, {_output, exit_code}} ->
-        content = Helpers.read_tempfile(tmpfile, max_bytes)
-        {:ok, content, exit_code}
-
-      nil ->
-        partial = Helpers.read_tempfile(tmpfile, max_bytes)
-        {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-    end
+    Helpers.run_task_with_partial(exec, exec_args, cwd, git_env, timeout, tmpfile, max_bytes)
   end
 
   defp run_with_partial_windows(cwd, executable, args, timeout, max_bytes) do
@@ -292,27 +269,9 @@ defmodule EvoGit.Sandbox.None do
           [{:args, args}, {:cd, cwd}, {:env, git_env}]
       )
 
-    os_pid = wait_for_os_pid(port)
+    os_pid = Helpers.wait_for_os_pid(port)
 
     collect_windows_output(port, [], timeout, max_bytes, os_pid)
-  end
-
-  # The OS PID is populated asynchronously after the child process is spawned;
-  # poll briefly for it. If it never materializes, fall back to :undefined and
-  # the timeout path degrades to closing the port (kills only the direct child —
-  # identical to the pre-hardening behavior).
-  defp wait_for_os_pid(port, attempts \\ 10) do
-    case Port.info(port, :os_pid) do
-      pid when is_integer(pid) ->
-        pid
-
-      _ when attempts > 0 ->
-        Process.sleep(10)
-        wait_for_os_pid(port, attempts - 1)
-
-      _ ->
-        :undefined
-    end
   end
 
   defp collect_windows_output(port, acc, timeout, max_bytes, os_pid) do
@@ -332,7 +291,7 @@ defmodule EvoGit.Sandbox.None do
       timeout ->
         kill_windows_tree(os_pid)
         Port.close(port)
-        drain_port_messages(port)
+        Helpers.drain_port_messages(port)
 
         partial =
           acc
@@ -356,14 +315,4 @@ defmodule EvoGit.Sandbox.None do
   end
 
   defp kill_windows_tree(_), do: :ok
-
-  # After Port.close/1, messages already delivered stay in this process's
-  # mailbox; drain them so they can't be matched by later receives.
-  defp drain_port_messages(port) do
-    receive do
-      {^port, _message} -> drain_port_messages(port)
-    after
-      0 -> :ok
-    end
-  end
 end

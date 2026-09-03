@@ -237,7 +237,6 @@ defmodule EvoGit.Nix do
     |> Enum.filter(fn {key, _value} ->
       String.starts_with?(key, "NIX") or key == "SSL_CERT_FILE"
     end)
-    |> Enum.map(fn {key, value} -> {key, value} end)
   end
 
   # --- Private: dev-env cache management ---

@@ -196,6 +196,247 @@ defmodule EvoGit.Sandbox.Helpers do
   end
 
   # ---------------------------------------------------------------------------
+  # Git metadata resolution (linked-worktree gitdir: pointer handling)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Resolves the git metadata directory a sandbox must grant read+write access
+  to. Returns `nil` when no git metadata dir should be exposed.
+
+  - `base = repo_root || cwd`; `literal = Path.join(base, ".git")`.
+  - If `literal` is a FILE, it is a linked-worktree pointer (a
+    `gitdir: <path>` line as produced by `git worktree add`). The pointer
+    target is the per-worktree metadata dir (`<common>/worktrees/<name>`);
+    git also needs the COMMON dir (objects/refs/logs/packed-refs/config),
+    so the prefix before the LAST "/worktrees/" segment is returned (a
+    subpath rule on the common dir covers the per-worktree dir inside it).
+    A pointer without a "/worktrees/" segment resolves to itself.
+  - Otherwise (`.git` is a real directory, or missing):
+    - repo_root given → the literal `<repo_root>/.git`.
+    - repo_root nil → nil, UNLESS the literal is an existing directory
+      (cwd IS a repo with a real `.git` — e.g. the skills executor passing
+      cwd = worktree and repo_root = nil).
+
+  Shared by the macOS (SBPL subpath rule) and bwrap (per-path writable bind)
+  backends — their pointer resolution is byte-identical.
+  """
+  @spec git_metadata_dir(String.t(), String.t() | nil) :: String.t() | nil
+  def git_metadata_dir(cwd, repo_root) do
+    base = repo_root || cwd
+    literal = Path.join(base, ".git")
+
+    case File.read(literal) do
+      {:ok, content} -> parse_gitdir_pointer(content, base, literal)
+      {:error, _} -> if repo_root || File.dir?(literal), do: literal, else: nil
+    end
+  end
+
+  @doc """
+  Parses a linked-worktree `.git` pointer file. Finds the first line
+  starting with "gitdir:", strips the prefix, trims whitespace; empty or
+  missing → unparseable → falls back to `literal`. The resolved target is
+  expanded relative to `base` when not absolute, then reduced to the common
+  git dir (prefix before the last "/worktrees/" segment — `binary_part` on
+  the last match start, NOT `String.split` with parts: 2, which is wrong
+  when the repo path itself contains "/worktrees/").
+  """
+  @spec parse_gitdir_pointer(String.t(), String.t(), String.t()) :: String.t()
+  def parse_gitdir_pointer(content, base, literal) do
+    target =
+      content
+      |> String.split("\n")
+      |> Enum.find(&String.starts_with?(&1, "gitdir:"))
+      |> case do
+        nil -> nil
+        line -> line |> String.replace_prefix("gitdir:", "") |> String.trim()
+      end
+
+    case target do
+      nil ->
+        literal
+
+      "" ->
+        literal
+
+      pointer ->
+        resolved = Path.expand(pointer, base)
+
+        case :binary.matches(resolved, "/worktrees/") do
+          [] ->
+            resolved
+
+          matches ->
+            {start, _len} = List.last(matches)
+
+            case :binary.part(resolved, 0, start) do
+              # Pathological: common dir at filesystem root — never emit a
+              # broken empty path; use the resolved target itself.
+              "" -> resolved
+              common -> common
+            end
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partial-output temp files (run_with_partial timeout recovery)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Creates the shared `genesis_partial_outputs` directory under
+  `EvoGit.Sandbox.resolve_tmpdir/0` (if needed) and returns a fresh unique
+  temp file path inside it.
+
+  Used by every backend's `run_with_partial/6` to redirect the command's
+  stdout/stderr so partial output can be recovered on timeout.
+  """
+  @spec partial_output_tmpfile() :: Path.t()
+  def partial_output_tmpfile do
+    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
+    File.mkdir_p!(tmpdir)
+
+    Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
+  end
+
+  # ---------------------------------------------------------------------------
+  # Shell command building (bash -c string assembly)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Builds the `bash -c` command string for `executable` + `args`: every element
+  shell-escaped and joined with single spaces (the exact `Enum.map_join`
+  shape used by all Unix sandbox backends).
+  """
+  @spec build_shell_command(String.t(), [String.t()]) :: String.t()
+  def build_shell_command(executable, args) do
+    Enum.map_join([executable | args], " ", &shell_escape/1)
+  end
+
+  @doc """
+  Builds a `bash -c` command string that redirects stdout/stderr to `tmpfile`
+  and stdin from `/dev/null` — the `run_with_partial/6` wrapping used by every
+  Unix sandbox backend:
+
+      <escaped executable + args> > <escaped tmpfile> 2>&1 < /dev/null
+  """
+  @spec build_redirected_command(String.t(), [String.t()], Path.t()) :: String.t()
+  def build_redirected_command(executable, args, tmpfile) do
+    build_shell_command(executable, args) <>
+      " > " <> shell_escape(tmpfile) <> " 2>&1 < /dev/null"
+  end
+
+  # ---------------------------------------------------------------------------
+  # Timed command execution (Task + partial-output recovery)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Runs `exec` + `exec_args` (a `bash -c` wrapped command) in a `Task` with a
+  `timeout`, recovering partial output from `tmpfile` (created beforehand via
+  `partial_output_tmpfile/0`) when the timeout fires.
+
+  Shared tail of every backend's `run_with_partial/6` non-sandbox / Unix path
+  (linux/bwrap/macos disabled paths + the `None` backend's Unix path, which
+  passes nix-wrapped `exec`/`exec_args`).
+
+  Returns:
+    * `{:ok, output, exit_code}` — command completed within timeout
+    * `{:timeout, partial_output}` — command timed out; partial_output may be empty
+  """
+  @spec run_task_with_partial(
+          String.t(),
+          [String.t()],
+          String.t(),
+          [{String.t(), String.t()}],
+          pos_integer(),
+          Path.t(),
+          integer() | nil
+        ) ::
+          {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
+  def run_task_with_partial(exec, exec_args, cwd, env, timeout, tmpfile, max_bytes) do
+    task =
+      Task.async(fn ->
+        System.cmd(exec, exec_args,
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: env
+        )
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task) do
+      {:ok, {_output, exit_code}} ->
+        content = read_tempfile(tmpfile, max_bytes)
+        {:ok, content, exit_code}
+
+      nil ->
+        partial = read_tempfile(tmpfile, max_bytes)
+        {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Port helpers (direct Port ownership in run_with_partial enabled paths)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Waits for the OS PID of a spawned port to materialize (it is populated
+  asynchronously after spawn). Polls briefly; falls back to `:undefined` when
+  it never appears — the caller's timeout path then degrades to closing the
+  port (group/process-tree kill skipped).
+  """
+  @spec wait_for_os_pid(port(), non_neg_integer()) :: pos_integer() | :undefined
+  def wait_for_os_pid(port, attempts \\ 10) do
+    case Port.info(port, :os_pid) do
+      pid when is_integer(pid) ->
+        pid
+
+      _ when attempts > 0 ->
+        Process.sleep(10)
+        wait_for_os_pid(port, attempts - 1)
+
+      _ ->
+        :undefined
+    end
+  end
+
+  @doc """
+  After `Port.close/1`, messages already delivered stay in the calling
+  process's mailbox; drain them so they cannot be matched by later receives.
+  """
+  @spec drain_port_messages(port()) :: :ok
+  def drain_port_messages(port) do
+    receive do
+      {^port, _message} -> drain_port_messages(port)
+    after
+      0 -> :ok
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Sandbox mode resolution
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Resolves the `[sandbox] mode` config value to an enabled boolean:
+
+    * `:enabled` → `true`
+    * `:disabled` → `false`
+    * `:auto` → the result of `auto_available?.()` — the caller's platform
+      availability check for the `:auto` fallback
+
+  Shared by the Linux backend and the systemd lifecycle modules
+  (`SandboxSlice`/`SandboxProcessRegistry`), whose `:auto` arms are identical
+  (`EvoGit.Platform.systemd_available?/0`).
+  """
+  @spec sandbox_mode_enabled?((-> boolean())) :: boolean()
+  def sandbox_mode_enabled?(auto_available?) do
+    case EvoGit.Config.resolve([:sandbox, :mode]) do
+      :enabled -> true
+      :disabled -> false
+      :auto -> auto_available?.()
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Command execution (for SandboxSlice / SandboxProcessRegistry)
   # ---------------------------------------------------------------------------
 
