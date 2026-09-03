@@ -55,7 +55,13 @@ defmodule EvoDashWeb.AgentsComponents do
 
           <!-- Agents Row -->
           <%= if length(node.agents) > 0 do %>
-            <div class="flex flex-wrap gap-2 flex-1 mt-1 xl:mt-0">
+            <!-- Mobile/stacked (flex-col): indent agent boxes by the directory-text
+                 leading (folder icon 20px + gap-2 8px = pl-7) so the first box and
+                 every wrapped line start at the directory label's left edge and clear
+                 the children trunk (left-2.5 = 10px) running down the content row.
+                 xl+ (flex-row): boxes live in their own column right of the path info,
+                 so the trunk never reaches them — keep the indent at pl-0. -->
+            <div class="flex flex-wrap gap-2 flex-1 mt-1 xl:mt-0 pl-7 xl:pl-0">
               <%= for agent <- node.agents do %>
                 <div
                   id={"agent-card-#{agent.id}"}
