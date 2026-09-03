@@ -1,3 +1,50 @@
+defmodule EvoGit.RemoteNode.Defnode do
+  @moduledoc false
+
+  # Module-level macro generating the mechanical node-dispatch wrapper body
+  # shared by the identity-unwrap RPC functions in `EvoGit.RemoteNode`:
+  # a direct local call when `node == node()` (no error catching — local
+  # bugs surface truthfully), otherwise the `call_remote/4` erpc route with
+  # the plain `{:ok, r} -> r; {:error, e} -> {:error, e}` identity unwrap.
+  #
+  # Only functions whose remote branch is EXACTLY that identity-unwrap
+  # pattern are migrated through this macro; per-function RPC failure
+  # fallbacks (`[]`/`%{}`/`nil`/`false`/bool-guards/`{:error, :rpc_failed}`)
+  # stay hand-written. The macro invocation mirrors the underlying local
+  # call — e.g. `defnode EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id)`
+  # — so the generated wrapper's name/args are always in lockstep with the
+  # delegated module function. Default args (`arg \\ value`) are kept in the
+  # generated head and stripped from the call sites.
+  defmacro defnode(local_call) do
+    {{:., _, [mod, fun]}, _, args} = local_call
+    node = Macro.var(:node, __MODULE__)
+
+    clean_args =
+      Enum.map(args, fn
+        {:\\, _, [lhs, _default]} -> lhs
+        other -> other
+      end)
+
+    quote do
+      def unquote(fun)(unquote(node), unquote_splicing(args)) do
+        if unquote(node) == node() do
+          unquote(mod).unquote(fun)(unquote_splicing(clean_args))
+        else
+          case call_remote(
+                 unquote(node),
+                 unquote(mod),
+                 unquote(fun),
+                 [unquote_splicing(clean_args)]
+               ) do
+            {:ok, result} -> result
+            {:error, reason} -> {:error, reason}
+          end
+        end
+      end
+    end
+  end
+end
+
 defmodule EvoGit.RemoteNode do
   @moduledoc """
   Core-runtime cross-node RPC helper for remote (SSH) dashboard connections.
@@ -16,6 +63,9 @@ defmodule EvoGit.RemoteNode do
   # The env key is read at CALL time (see rpc_timeout/0), so the timeout can
   # be tuned at runtime (e.g. via config or tests) without recompiling.
   @default_rpc_timeout 30_000
+
+  require EvoGit.RemoteNode.Defnode
+  import EvoGit.RemoteNode.Defnode
 
   @doc """
   Evaluates `apply(module, function, args)` on the given node, returning
@@ -102,16 +152,7 @@ defmodule EvoGit.RemoteNode do
   (including RPC failure).
   """
   @spec get_recent_system_samples(node()) :: {:ok, term()} | {:error, term()}
-  def get_recent_system_samples(node) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.get_recent_system_samples()
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_recent_system_samples, []) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.get_recent_system_samples())
 
   @doc """
   Returns the conversation history for an agent on the given node.
@@ -189,16 +230,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec reload_config(node()) :: :ok | {:error, term()}
-  def reload_config(node) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.reload_config()
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :reload_config, []) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.reload_config())
 
   @doc """
   Saves a config map to the given node's config file on disk.
@@ -210,16 +242,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec save_user_config(node(), map()) :: :ok | {:error, term()}
-  def save_user_config(node, config) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.save_user_config(config)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_user_config, [config]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.save_user_config(config))
 
   @doc """
   Saves a credentials map to the given node's credentials file on disk.
@@ -231,16 +254,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec save_credentials(node(), map()) :: :ok | {:error, term()}
-  def save_credentials(node, creds) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.save_credentials(creds)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_credentials, [creds]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.save_credentials(creds))
 
   @doc """
   Returns the config health status on the given node.
@@ -290,16 +304,7 @@ defmodule EvoGit.RemoteNode do
   result tuple `{:ok, _} | {:error, _}` directly.
   """
   @spec llm_test(node(), term(), term()) :: {:ok, term()} | {:error, term()}
-  def llm_test(node, model, gen_opts) do
-    if node == node() do
-      EvoGit.SystemCheck.llm_test(model, gen_opts)
-    else
-      case call_remote(node, EvoGit.SystemCheck, :llm_test, [model, gen_opts]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.SystemCheck.llm_test(model, gen_opts))
 
   @doc """
   Sends a user message to a running agent on the given node.
@@ -486,16 +491,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec cancel_task(node(), String.t()) :: :ok | {:error, term()}
-  def cancel_task(node, task_id) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :cancel_task, [task_id]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.cancel_task(task_id))
 
   @doc """
   Force-kills a task on the given node — the BRUTAL cancellation path (no
@@ -510,16 +506,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec force_kill_task(node(), String.t()) :: :ok | {:error, term()}
-  def force_kill_task(node, task_id) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.force_kill_task(task_id)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :force_kill_task, [task_id]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.force_kill_task(task_id))
 
   @doc """
   Deletes a task on the given node.
@@ -531,16 +518,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec delete_task(node(), String.t()) :: :ok | {:error, term()}
-  def delete_task(node, task_id) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.delete_task(task_id)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :delete_task, [task_id]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.delete_task(task_id))
 
   @doc """
   Returns a single task by id on the given node.
@@ -573,19 +551,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec set_review_status(node(), String.t(), atom()) :: :ok | {:error, term()}
-  def set_review_status(node, task_id, status) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.set_review_status(task_id, status)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :set_review_status, [
-             task_id,
-             status
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.set_review_status(task_id, status))
 
   @doc """
   Sets the review metadata (base and commit SHAs) for a task on the given node.
@@ -599,20 +565,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec set_review_metadata(node(), String.t(), String.t(), String.t()) ::
           :ok | {:error, term()}
-  def set_review_metadata(node, task_id, base_sha, commit_sha) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.set_review_metadata(task_id, base_sha, commit_sha)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :set_review_metadata, [
-             task_id,
-             base_sha,
-             commit_sha
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.set_review_metadata(task_id, base_sha, commit_sha))
 
   @doc """
   Clears all finished tasks on the given node.
@@ -624,16 +577,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec clear_finished_tasks(node()) :: :ok | {:error, term()}
-  def clear_finished_tasks(node) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks()
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :clear_finished_tasks, []) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.clear_finished_tasks())
 
   @doc """
   Fetches the full content of a file at a specific commit on the given node.
@@ -650,20 +594,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec get_file_content(node(), String.t(), String.t(), String.t()) ::
           {:ok, String.t()} | {:error, term()}
-  def get_file_content(node, repo_path, commit_sha, file_path) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.get_file_content(repo_path, commit_sha, file_path)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_file_content, [
-             repo_path,
-             commit_sha,
-             file_path
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.get_file_content(repo_path, commit_sha, file_path))
 
   @doc """
   Lists commits between the merge-base and a branch tip on the given node.
@@ -678,19 +609,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec list_commits(node(), String.t(), String.t()) ::
           {:ok, [EvoGit.Review.CommitInfo.t()]} | {:error, term()}
-  def list_commits(node, repo_path, branch_name) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_commits(repo_path, branch_name)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_commits, [
-             repo_path,
-             branch_name
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.list_commits(repo_path, branch_name))
 
   @doc """
   Loads all review data (diff stat, full diff, parsed files) for a branch on
@@ -706,19 +625,7 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec load_review_data(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
-  def load_review_data(node, repo_path, branch_name) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_review_data(repo_path, branch_name)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_review_data, [
-             repo_path,
-             branch_name
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.load_review_data(repo_path, branch_name))
 
   @doc """
   Loads review metadata only (file list with counts, no diffs) for a branch
@@ -734,19 +641,7 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec load_review_metadata(node(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
-  def load_review_metadata(node, repo_path, branch_name) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_review_metadata(repo_path, branch_name)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_review_metadata, [
-             repo_path,
-             branch_name
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.load_review_metadata(repo_path, branch_name))
 
   @doc """
   Loads the diff of a single file between two commits on the given node.
@@ -761,21 +656,9 @@ defmodule EvoGit.RemoteNode do
   returns `{:error, {kind, reason}}`.
   """
   @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t()) :: term()
-  def load_file_diff(node, repo_path, base_sha, commit_sha, file_path) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_file_diff(repo_path, base_sha, commit_sha, file_path)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_file_diff, [
-             repo_path,
-             base_sha,
-             commit_sha,
-             file_path
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(
+    EvoGit.AgentScheduler.RemoteAPI.load_file_diff(repo_path, base_sha, commit_sha, file_path)
+  )
 
   @doc """
   Loads the diff of a single file between two commits on the given node,
@@ -793,28 +676,15 @@ defmodule EvoGit.RemoteNode do
   """
   @spec load_file_diff(node(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
           term()
-  def load_file_diff(node, repo_path, base_sha, commit_sha, file_path, opts) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_file_diff(
-        repo_path,
-        base_sha,
-        commit_sha,
-        file_path,
-        opts
-      )
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_file_diff, [
-             repo_path,
-             base_sha,
-             commit_sha,
-             file_path,
-             opts
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(
+    EvoGit.AgentScheduler.RemoteAPI.load_file_diff(
+      repo_path,
+      base_sha,
+      commit_sha,
+      file_path,
+      opts
+    )
+  )
 
   @doc """
   Loads review metadata from explicit base/commit SHAs on the given node (no
@@ -830,24 +700,13 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec load_review_metadata_from_shas(node(), String.t(), String.t(), String.t()) :: term()
-  def load_review_metadata_from_shas(node, repo_path, base_sha, commit_sha) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_review_metadata_from_shas(
-        repo_path,
-        base_sha,
-        commit_sha
-      )
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_review_metadata_from_shas, [
-             repo_path,
-             base_sha,
-             commit_sha
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(
+    EvoGit.AgentScheduler.RemoteAPI.load_review_metadata_from_shas(
+      repo_path,
+      base_sha,
+      commit_sha
+    )
+  )
 
   @doc """
   Lists commits between explicit base/commit SHAs on the given node (no
@@ -863,20 +722,7 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec list_commits_from_shas(node(), String.t(), String.t(), String.t()) :: term()
-  def list_commits_from_shas(node, repo_path, base_sha, commit_sha) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_commits_from_shas(repo_path, base_sha, commit_sha)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_commits_from_shas, [
-             repo_path,
-             base_sha,
-             commit_sha
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.list_commits_from_shas(repo_path, base_sha, commit_sha))
 
   @doc """
   Lists the files changed in a single commit on the given node.
@@ -891,19 +737,7 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec load_commit_files(node(), String.t(), String.t()) :: term()
-  def load_commit_files(node, repo_path, commit_sha) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_commit_files(repo_path, commit_sha)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_commit_files, [
-             repo_path,
-             commit_sha
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.load_commit_files(repo_path, commit_sha))
 
   @doc """
   Loads the diff of a single file within a single commit on the given node.
@@ -918,20 +752,7 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec load_commit_file_diff(node(), String.t(), String.t(), String.t()) :: term()
-  def load_commit_file_diff(node, repo_path, commit_sha, file_path) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.load_commit_file_diff(repo_path, commit_sha, file_path)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :load_commit_file_diff, [
-             repo_path,
-             commit_sha,
-             file_path
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.load_commit_file_diff(repo_path, commit_sha, file_path))
 
   @doc """
   Merges an agent branch into the repository's default merge target on the
@@ -948,19 +769,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec merge_branch(node(), String.t(), String.t()) ::
           {:ok, String.t()} | {:conflict, term()} | {:error, term()}
-  def merge_branch(node, repo_path, branch_name) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :merge_branch, [
-             repo_path,
-             branch_name
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name))
 
   @doc """
   Merges an agent branch into an explicit target branch on the given node.
@@ -976,20 +785,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec merge_branch(node(), String.t(), String.t(), String.t()) ::
           {:ok, String.t()} | {:conflict, term()} | {:error, term()}
-  def merge_branch(node, repo_path, branch_name, target_branch) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name, target_branch)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :merge_branch, [
-             repo_path,
-             branch_name,
-             target_branch
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.merge_branch(repo_path, branch_name, target_branch))
 
   @doc """
   Checks whether a branch or commit SHA can be merged into an explicit target
@@ -1007,20 +803,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec check_merge(node(), String.t(), String.t(), String.t()) ::
           {:ok, :clean} | {:ok, {:conflict, term()}} | {:error, term()}
-  def check_merge(node, repo_path, branch_or_sha, target_branch) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.check_merge(repo_path, branch_or_sha, target_branch)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :check_merge, [
-             repo_path,
-             branch_or_sha,
-             target_branch
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.check_merge(repo_path, branch_or_sha, target_branch))
 
   @doc """
   Resolves the default merge target branch for a repository on the given node.
@@ -1036,18 +819,7 @@ defmodule EvoGit.RemoteNode do
   returns `{:error, {kind, reason}}`.
   """
   @spec default_merge_target(node(), String.t()) :: {:ok, String.t()} | {:error, term()}
-  def default_merge_target(node, repo_path) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.default_merge_target(repo_path)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :default_merge_target, [
-             repo_path
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.default_merge_target(repo_path))
 
   @doc """
   Lists all local branches in a repository on the given node.
@@ -1061,16 +833,7 @@ defmodule EvoGit.RemoteNode do
   returns `{:error, {kind, reason}}`.
   """
   @spec list_branches(node(), String.t()) :: {:ok, [String.t()]} | {:error, term()}
-  def list_branches(node, repo_path) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_branches(repo_path)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_branches, [repo_path]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.list_branches(repo_path))
 
   @doc """
   Rejects (deletes) an agent branch in a repository on the given node.
@@ -1084,19 +847,7 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec reject_branch(node(), String.t(), String.t()) :: term()
-  def reject_branch(node, repo_path, branch_name) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.reject_branch(repo_path, branch_name)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :reject_branch, [
-             repo_path,
-             branch_name
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.reject_branch(repo_path, branch_name))
 
   @doc """
   Creates a GitHub pull request for an agent branch on the given node.
@@ -1111,21 +862,9 @@ defmodule EvoGit.RemoteNode do
   `{:error, {kind, reason}}`.
   """
   @spec create_github_pr(node(), String.t(), String.t(), String.t(), String.t()) :: term()
-  def create_github_pr(node, repo_path, branch_name, objective, result) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.create_github_pr(repo_path, branch_name, objective, result)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :create_github_pr, [
-             repo_path,
-             branch_name,
-             objective,
-             result
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(
+    EvoGit.AgentScheduler.RemoteAPI.create_github_pr(repo_path, branch_name, objective, result)
+  )
 
   @doc """
   Gets the GitHub upstream information for a repository on the given node.
@@ -1139,16 +878,7 @@ defmodule EvoGit.RemoteNode do
   returns `{:error, {kind, reason}}`.
   """
   @spec github_upstream(node(), String.t()) :: term()
-  def github_upstream(node, repo_path) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.github_upstream(repo_path)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :github_upstream, [repo_path]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.github_upstream(repo_path))
 
   @doc """
   Lists GitHub issues of a repository's upstream on the given node.
@@ -1162,19 +892,7 @@ defmodule EvoGit.RemoteNode do
   returns `{:error, {kind, reason}}`.
   """
   @spec list_github_issues(node(), String.t(), keyword()) :: {:ok, [map()]} | {:error, term()}
-  def list_github_issues(node, repo_path, opts \\ []) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_github_issues(repo_path, opts)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_github_issues, [
-             repo_path,
-             opts
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.list_github_issues(repo_path, opts \\ []))
 
   @doc """
   Fetches a GitHub issue of a repository's upstream on the given node and
@@ -1191,19 +909,7 @@ defmodule EvoGit.RemoteNode do
   """
   @spec github_issue_markdown(node(), String.t(), integer() | String.t()) ::
           {:ok, String.t()} | {:error, term()}
-  def github_issue_markdown(node, repo_path, number) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.github_issue_markdown(repo_path, number)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :github_issue_markdown, [
-             repo_path,
-             number
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.github_issue_markdown(repo_path, number))
 
   @doc """
   Checks whether a branch exists in a repository on the given node.
@@ -1216,19 +922,7 @@ defmodule EvoGit.RemoteNode do
   Returns a boolean. On RPC failure, returns `{:error, {kind, reason}}`.
   """
   @spec branch_exists?(node(), String.t(), String.t()) :: boolean() | {:error, term()}
-  def branch_exists?(node, repo_path, branch_name) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.branch_exists?(repo_path, branch_name)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :branch_exists?, [
-             repo_path,
-             branch_name
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.branch_exists?(repo_path, branch_name))
 
   @doc """
   Lists recent projects on the given node.
@@ -1285,16 +979,7 @@ defmodule EvoGit.RemoteNode do
   (including RPC failures such as node down or timeout).
   """
   @spec list_custom_agents(node()) :: {:ok, map()} | {:error, term()}
-  def list_custom_agents(node) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.list_custom_agents()
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_custom_agents, []) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.list_custom_agents())
 
   @doc """
   Saves a custom agent definition on the given node.
@@ -1308,16 +993,7 @@ defmodule EvoGit.RemoteNode do
   as node down or timeout).
   """
   @spec save_custom_agent(node(), map()) :: {:ok, map()} | {:error, atom() | term()}
-  def save_custom_agent(node, def) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.save_custom_agent(def)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_custom_agent, [def]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.save_custom_agent(def))
 
   @doc """
   Deletes a custom agent definition on the given node.
@@ -1330,16 +1006,7 @@ defmodule EvoGit.RemoteNode do
   no agent has that id, or RPC failures such as node down or timeout).
   """
   @spec delete_custom_agent(node(), String.t()) :: :ok | {:error, :not_found | term()}
-  def delete_custom_agent(node, id) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.delete_custom_agent(id)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :delete_custom_agent, [id]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.delete_custom_agent(id))
 
   @doc """
   Saves the model-selection script on the given node.
@@ -1353,18 +1020,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec save_model_selection_script(node(), String.t()) :: :ok | {:error, term()}
-  def save_model_selection_script(node, script) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.save_model_selection_script(script)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :save_model_selection_script, [
-             script
-           ]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.save_model_selection_script(script))
 
   @doc """
   Invalidates the model-selector compile cache on the given node.
@@ -1377,16 +1033,7 @@ defmodule EvoGit.RemoteNode do
   failures such as node down or timeout).
   """
   @spec reload_custom_agents(node()) :: :ok | {:error, term()}
-  def reload_custom_agents(node) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.reload_custom_agents()
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :reload_custom_agents, []) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.reload_custom_agents())
 
   @doc """
   Returns filesystem path suggestions for the given node.
@@ -1439,16 +1086,7 @@ defmodule EvoGit.RemoteNode do
   (including RPC failures such as node down or timeout).
   """
   @spec start_task(node(), atom(), keyword()) :: {:ok, EvoGit.TaskInfo.t()} | {:error, term()}
-  def start_task(node, task_type, opts) do
-    if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.start_task(task_type, opts)
-    else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :start_task, [task_type, opts]) do
-        {:ok, result} -> result
-        {:error, reason} -> {:error, reason}
-      end
-    end
-  end
+  defnode(EvoGit.AgentScheduler.RemoteAPI.start_task(task_type, opts))
 
   @doc """
   Checks whether a file exists on the given node's filesystem.
