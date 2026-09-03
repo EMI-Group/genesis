@@ -22,6 +22,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Result
+  alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentSpec
@@ -138,7 +139,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
     Enum.map(indexed_calls, fn {call, index} ->
       name = ReqLLM.ToolCall.name(call)
       args = ReqLLM.ToolCall.args_map(call)
-      mod = subagent_module_for(name, state)
+      mod = SubagentSchemas.subagent_module_for(name, state.agent_module.subagent_modules())
       raw_path = Map.get(args, "path")
       objective = Map.get(args, "objective")
 
@@ -527,14 +528,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
             # No changes - all subagents returned the same commit
             nil
 
-          {:ok, _new_commit} ->
-            """
-            System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
-            Merge output:
-            #{output}
-            """
-
-          _error ->
+          _ ->
             """
             System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
             Merge output:
@@ -720,12 +714,4 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   defp git_error_detail({:enoent, msg}) when is_binary(msg), do: " Git error: #{msg}"
   defp git_error_detail(_other), do: ""
-
-  # Looks up the agent module for a given subagent tool name.
-  # Accesses the agent's `subagent_modules/0` via state.
-  defp subagent_module_for(tool_name, state) do
-    Enum.find(state.agent_module.subagent_modules(), fn mod ->
-      mod.subagent_tool_name() == tool_name
-    end)
-  end
 end

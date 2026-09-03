@@ -13,6 +13,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Tools.CompleteTask
   alias EvoGit.Agent.OutputSanitizer
+  alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler
@@ -553,7 +554,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       # Detect subagent calls to reset the middle-warning counter
       had_subagent_call =
         Enum.any?(tool_calls, fn call ->
-          subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
+          SubagentSchemas.subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
         end)
 
       new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
@@ -784,7 +785,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # 3. Split: Partition into subagent and standard calls
     {indexed_subagent_calls, indexed_standard_calls} =
       Enum.split_with(indexed_calls, fn {call, _index} ->
-        subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
+        SubagentSchemas.subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
       end)
 
     # 4. Batch: Process each batch
@@ -1100,10 +1101,6 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   # --- Shared Helpers ---
-
-  defp subagent_module_for(tool_name, subagent_mods) do
-    Enum.find(subagent_mods, fn mod -> mod.subagent_tool_name() == tool_name end)
-  end
 
   defp agent_type_from_module(module) when is_atom(module) do
     module |> Module.split() |> List.last() |> Macro.underscore()
