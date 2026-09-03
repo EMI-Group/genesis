@@ -8,7 +8,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 ## Routing Table
 - `./tools/` → LLM tool modules (17+ tools for file I/O, context, search, shell, etc.)
 - `./runner.ex` → `EvoGit.Agent.Runner` — shared agent loop runner (run/3, do_run/2, loop/1, do_turn/1, effective_tools/1, trigger_recovery/2, enter_grace/3, maybe_enter_cancel_grace/1, etc.)
-- `./subagent_schemas.ex` → `EvoGit.Agent.SubagentSchemas` — shared subagent tool/schema generation (tools/1, schemas/1), parameterized by agent_module
+- `./subagent_schemas.ex` → `EvoGit.Agent.SubagentSchemas` — shared subagent tool/schema generation (tools/1, schemas/1) + the subagent-type → implementation-module resolver `subagent_module_for/2`, parameterized by agent_module
 - `./context_compression.ex` → Context compression helper (compresses chat history when token threshold exceeded)
 - `./subagent_processing.ex` → Subagent call processing (builds specs, spawns subagents, merges results)
 - `./loop_state.ex` → `LoopState` struct — agent loop state threaded through every turn
@@ -29,6 +29,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 | `EvoGit.Agent.ContextCompression` | Compresses chat history when `total_tokens` exceeds threshold |
 | `EvoGit.Agent.SubagentProcessing` | Spawns subagents, resolves cross-repo paths, merges results via octopus merge, formats results for LLM context. Foreign-repo subagent phylo nodes (`build_subagent_phylo_node/7`): starting-commit precedence = per-repo `base_sha` (task-level starting commit, non-nil wins) → tracked commit from the `foreign_repo_commits` map (previous subagent's latest commit in that foreign repo) → foreign repo HEAD; an unresolvable `base_sha` or a missing/non-git foreign repo root returns a descriptive `{:error, msg}` (surfaced as `{:error, {call, index, msg}}`) — never a MatchError crash. `format_subagent_result/1` surfaces foreign-repo spawn-gate rejection hints verbatim: `{:error, {:foreign_repo_read_only, msg}}`, `{:error, {:foreign_repo_write_not_root, msg}}` (write-capable spawn into a foreign repo by a nested agent — root-agent-only), and `{:error, {:foreign_repo_write_serialized, msg}}` (parallel writable-foreign-repo spawns in one batch — one-at-a-time) all render as `"Error: #{msg}"` |
 | `EvoGit.Agent.TurnWarning` | Adaptive turn-budget warnings — 3 positional categories (beginning/end/critical) scaling with max_turns, plus a periodic middle reminder based on turns since last subagent delegation. `:beginning` delegation-strategy warning fires at ~25% of budget (min turn 6); `:middle` reminder fires every 15 turns (`:high`) / 45 turns (`:low`). Low-level agents (Executor, TaskScheduler, etc.) skip `:beginning` and have a 3x longer middle reminder interval |
+| `EvoGit.Agent.SubagentSchemas` | Shared subagent tool/schema machinery (tools/1, schemas/1, and `subagent_module_for/2` — the subagent-type → implementation-module resolver used by subagent spawning and subagent-call detection in tool_dispatch). Subagent tool/module resolution always goes through this schema machinery — the `EvoGit.Agent` behaviour injects NO default `subagent_tools/0` callback (the macro-injected default `available_tools/0` is `Tools.schemas() ++ SubagentSchemas.schemas(__MODULE__) ++ [CompleteTask.schema()]`) |
 
 ### Tool Library (`EvoGit.Agent.Tools`)
 | Component | Role |
@@ -47,6 +48,10 @@ Two independent hinting mechanisms, both per-child-directory counter + fire-once
 - Both hints show once per child dir (`hint_shown` flag); suppressed during merge-conflict resolution (`filter_child_paths_if_conflicts/2`). Implemented in `EvoGit.Agent.ToolDispatch` + `EvoGit.Agent.DelegationHints`: `batch_execute_tools/4`, `extract_child_paths/4` (target child dir from write-tool args), `maybe_append_delegation_hint/4`. Hints stored in `LoopState.delegation_hints`, threaded via process dictionary.
 
 ## Design Decisions
+
+### Module sizes (cohesive-by-design)
+
+`agent/tool_dispatch.ex` is ~1100 lines — the tool-dispatch orchestrator (`EvoGit.Agent.ToolDispatch`, extracted from the agent macro): per-turn LLM call with retry, tool-call routing (complete vs regular vs subagent; standard-tool batching through the write-gated `Tools.execute/5` dispatch), timeout management, the output sanitization/truncation-feedback call site (tool_dispatch.ex:995-1002), and subagent-spawn plumbing. Deliberately kept cohesive — do not split without a plan.
 
 ### Parallel standard tool call execution (bounded by scheduler tool slots)
 
