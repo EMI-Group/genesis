@@ -29,3 +29,12 @@ A LiveComponent that renders a compact dropdown for switching between local and 
 - All domain logic stays in `EvoDash.NodeContext`; component is pure presentation + event routing.
 - Uses Gettext for i18n.
 - Connection management (add/edit/connect/disconnect/delete) is handled on the Settings page — this component only selects nodes and links to Settings.
+
+## Known Issues — Theme/Markup (Adwaita restyle audit)
+
+Verified against current code + app.css tokens (light/dark). Catalog only — nothing fixed:
+
+- The ghost trigger's `hover:bg-base-200` (node_selector_component.ex:27) is **invisible**: the whole control sits on the `bg-base-200` sidebar, so the hover state equals the resting surface in BOTH themes (hover affordance is dead; the utility also overrides daisyUI's built-in `btn-ghost` base-content/10 hover). Sibling bottom-bar/collapse controls use `hover:bg-base-300`; nav links use `hover:bg-base-300/70`. Fix grammar: `hover:bg-base-300/70` (or `hover:bg-base-content/10`).
+- Floating-dropdown boundary issues on the `bg-base-100/95` panel (:35 `border border-base-200`) and the two `border-t border-base-200` dividers (:52, :75): in the DARK theme the border is #242424 on #1e1e1e — effectively invisible; in light it is #f6f5f4 on white. App grammar for floating panels is `border-base-300` (guide panel, palettes). Fix grammar: `border-base-300` (or `border-base-content/10`).
+- Per-target ssh meta line `text-xs text-base-content/50` (:68): ≈2.9:1 on the light panel — below the documented `/60` secondary-text floor; also inherits nothing from row hover. Fix grammar: at least `text-base-content/60`.
+- Resting row/trigger text is `text-base-content/70` (~5:1 light / ~8:1 dark — acceptable); the app's primary-label grammar is `/80` (nav links), so `/70` resting is a slight inconsistency, not a readability bug.
