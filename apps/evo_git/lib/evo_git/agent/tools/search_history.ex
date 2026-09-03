@@ -25,7 +25,8 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
         "properties" => %{
           "pattern" => %{
             "type" => "string",
-            "description" => "The regex pattern to search for in commit messages (and optionally notes)"
+            "description" =>
+              "The regex pattern to search for in commit messages (and optionally notes)"
           },
           "commit_id" => %{
             "type" => "string",
@@ -35,19 +36,19 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
           },
           "search_notes" => %{
             "type" => "boolean",
-            "description" => "Whether to also search in git notes. Default: #{@default_search_notes}",
+            "description" =>
+              "Whether to also search in git notes. Default: #{@default_search_notes}",
             "default" => @default_search_notes
           },
           "max_count" => %{
             "type" => "integer",
-            "description" => "Maximum number of commits to search through. Default: #{@default_max_count}",
+            "description" =>
+              "Maximum number of commits to search through. Default: #{@default_max_count}",
             "default" => @default_max_count
           },
           "max_bytes" => %{
             "type" => "integer",
-            "description" =>
-              "Maximum output size in bytes before truncation. " <>
-                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "description" => Shared.tool_output_limit_description(),
             "default" => 16_384
           }
         },
@@ -63,7 +64,10 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "pattern") do
       {:ok, pattern} ->
-        commit_id = Shared.get_optional_string(args, "commit_id", @default_commit_id) |> blank_to_default(@default_commit_id)
+        commit_id =
+          Shared.get_optional_string(args, "commit_id", @default_commit_id)
+          |> blank_to_default(@default_commit_id)
+
         search_notes = Shared.get_optional_boolean(args, "search_notes", @default_search_notes)
         max_count = Shared.get_optional_integer(args, "max_count", @default_max_count)
 
@@ -93,7 +97,14 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
       if search_notes do
         # --no-standard-notes disables the default refs/notes/commits ref so only
         # evogit notes (refs/notes/evogit) are included in %N.
-        ["log", format, commit_id, "--max-count=#{max_count}", "--no-standard-notes", "--notes=evogit"]
+        [
+          "log",
+          format,
+          commit_id,
+          "--max-count=#{max_count}",
+          "--no-standard-notes",
+          "--notes=evogit"
+        ]
       else
         ["log", format, commit_id, "--max-count=#{max_count}"]
       end

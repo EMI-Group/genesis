@@ -3,7 +3,6 @@ defmodule EvoGit.Runtime.Genesis do
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.Core.ContextNode
   alias EvoGit.AgentScheduler
-  alias EvoGit.AgentSpec
   alias EvoGit.Agents.Architect
   alias EvoGit.Agents.Manager
   alias EvoGit.Agents.ContextExtractor
@@ -38,28 +37,13 @@ defmodule EvoGit.Runtime.Genesis do
   # Mode A: Existing Codebase
   defp run_existing_codebase(objective, repo_path, current_sha, opts) do
     Logger.info("Genesis: Running Mode A (Existing Codebase)")
-    phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load("./", repo_path)
 
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
-    repo_notes = Helpers.load_repo_notes(repo_path, current_sha)
 
-    {agent_module, agent_opts} =
-      Helpers.resolve_root_agent(opts, ContextExtractor)
+    spec =
+      build_phase_spec(objective, repo_path, current_sha, opts, foreign_repos, ContextExtractor)
 
-    case AgentSpec.new(context_node, phylo_node, agent_module, objective,
-           foreign_repos: foreign_repos,
-           repo_notes: repo_notes,
-           archive: Keyword.get(opts, :archive, false),
-           task_id: Keyword.get(opts, :task_id),
-           model_id: Keyword.get(opts, :model_id),
-           model_id_locked: Helpers.model_id_locked?(opts)
-         )
-         |> then(fn spec ->
-           # merge custom_agent_id into the spec opts when present
-           %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
-         end)
-         |> AgentScheduler.run_agent() do
+    case AgentScheduler.run_agent(spec) do
       {:ok, agent_output} ->
         Helpers.notify_finalizing(Keyword.get(opts, :task_id))
         Helpers.merge_and_report(repo_path, agent_output, "genesis", foreign_repos)
@@ -104,28 +88,10 @@ defmodule EvoGit.Runtime.Genesis do
       end
 
     foreign_repos = Helpers.load_foreign_repos(repo_path, opts)
-    repo_notes = Helpers.load_repo_notes(repo_path, current_sha)
 
     # --- Phase 1: Architecture (Architect as root agent) ---
-    phylo_node = PhyloGraphNode.new(repo_path, current_sha)
-    context_node = ContextNode.load("./", repo_path)
-
-    {agent_module, agent_opts} =
-      Helpers.resolve_root_agent(opts, Architect)
-
     architect_spec =
-      AgentSpec.new(context_node, phylo_node, agent_module, objective,
-        foreign_repos: foreign_repos,
-        repo_notes: repo_notes,
-        archive: Keyword.get(opts, :archive, false),
-        task_id: task_id,
-        model_id: Keyword.get(opts, :model_id),
-        model_id_locked: Helpers.model_id_locked?(opts)
-      )
-      |> then(fn spec ->
-        # merge custom_agent_id into the spec opts when present
-        %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
-      end)
+      build_phase_spec(objective, repo_path, current_sha, opts, foreign_repos, Architect)
 
     case AgentScheduler.run_agent(architect_spec) do
       {:ok, architect_output} ->
@@ -161,9 +127,6 @@ defmodule EvoGit.Runtime.Genesis do
        ) do
     # Start the Manager from the architect's final commit (or original base if no commit)
     architect_commit = architect_output.commit_sha || base_sha
-    phylo_node = PhyloGraphNode.new(repo_path, architect_commit)
-    context_node = ContextNode.load("./", repo_path)
-    repo_notes = Helpers.load_repo_notes(repo_path, architect_commit)
 
     architect_report = architect_output.result || "(No report provided by the architect)"
 
@@ -190,22 +153,8 @@ defmodule EvoGit.Runtime.Genesis do
     Call complete_task only when the codebase is complete, functional, and polished — when you can confidently say the original objective has been 100% delivered.
     """
 
-    {agent_module, agent_opts} =
-      Helpers.resolve_root_agent(opts, Manager)
-
     manager_spec =
-      AgentSpec.new(context_node, phylo_node, agent_module, impl_objective,
-        foreign_repos: foreign_repos,
-        repo_notes: repo_notes,
-        archive: Keyword.get(opts, :archive, false),
-        task_id: task_id,
-        model_id: Keyword.get(opts, :model_id),
-        model_id_locked: Helpers.model_id_locked?(opts)
-      )
-      |> then(fn spec ->
-        # merge custom_agent_id into the spec opts when present
-        %{spec | opts: Keyword.merge(spec.opts, agent_opts)}
-      end)
+      build_phase_spec(impl_objective, repo_path, architect_commit, opts, foreign_repos, Manager)
 
     case AgentScheduler.run_agent(manager_spec) do
       {:ok, manager_output} ->
@@ -252,6 +201,28 @@ defmodule EvoGit.Runtime.Genesis do
         Helpers.notify_finalizing(task_id)
         Helpers.merge_and_report(repo_path, architect_output, "genesis", foreign_repos)
     end
+  end
+
+  # Shared prologue for the three root-agent phases (Mode A existing, Mode B
+  # architecture, Mode B implementation): builds the phylo/context nodes at
+  # `tip_sha`, loads the repo-notes block at that tree, and builds the resolved
+  # root-agent spec. Foreign repos are loaded by each caller — the
+  # implementation phase reuses the architecture phase's list (repo-state
+  # changes between the two roots never re-trigger validation).
+  defp build_phase_spec(objective, repo_path, tip_sha, opts, foreign_repos, default_module) do
+    phylo_node = PhyloGraphNode.new(repo_path, tip_sha)
+    context_node = ContextNode.load("./", repo_path)
+    repo_notes = Helpers.load_repo_notes(repo_path, tip_sha)
+
+    Helpers.build_root_agent_spec(
+      context_node,
+      phylo_node,
+      default_module,
+      objective,
+      opts,
+      foreign_repos,
+      repo_notes
+    )
   end
 
   # Validate genesis.toml integrity in case a root agent (Architect/Manager) modified it.

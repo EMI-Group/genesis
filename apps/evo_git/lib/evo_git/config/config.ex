@@ -427,12 +427,10 @@ defmodule EvoGit.Config do
   end
 
   def resolve(path) when is_list(path) do
-    resolve()
-    |> get_in_path(path)
-    |> then(fn
+    case EvoGit.Config.Schema.safe_get_in(resolve(), path) do
       nil -> get_in(EvoGit.Config.Schema.defaults(), path)
       value -> value
-    end)
+    end
   end
 
   @doc """
@@ -637,11 +635,11 @@ defmodule EvoGit.Config do
        end},
       {:search_api_key, "Web search is enabled but the API key is not configured.",
        fn ->
-         # Use get_in_path (safe accessor) instead of get_in: if a user wrote
+         # Use safe_get_in (safe accessor) instead of get_in: if a user wrote
          # `tools = "string"` instead of a [tools] table, get_in would crash
          # because strings don't implement Access.
          tools_search_enabled?() == false and
-           get_in_path(resolved, [:tools, :search, :enabled]) == true
+           EvoGit.Config.Schema.safe_get_in(resolved, [:tools, :search, :enabled]) == true
        end}
     ]
 
@@ -792,7 +790,8 @@ defmodule EvoGit.Config do
     end)
   end
 
-  defp ensure_trailing_newline(content) when is_binary(content) do
+  @doc false
+  def ensure_trailing_newline(content) when is_binary(content) do
     {:ok, String.trim_trailing(content) <> "\n"}
   end
 
@@ -923,18 +922,6 @@ defmodule EvoGit.Config do
   end
 
   defp atomize_keys(value), do: value
-
-  # Walks a nested map following a list of atom keys.
-  defp get_in_path(map, []), do: map
-
-  defp get_in_path(map, [key | rest]) when is_map(map) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> get_in_path(value, rest)
-      :error -> nil
-    end
-  end
-
-  defp get_in_path(_map, _path), do: nil
 
   # --- File Caching (config.toml / credentials.toml) ---
 

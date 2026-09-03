@@ -10,6 +10,8 @@ defmodule EvoGit.Agent.Tools.SystemInfo do
   directory.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Executes the system_info tool.
 
@@ -23,9 +25,9 @@ defmodule EvoGit.Agent.Tools.SystemInfo do
       key_value("os", "#{EvoGit.Platform.os()} (#{inspect(:os.type())})"),
       key_value("architecture", architecture()),
       key_value("hostname", hostname()),
-      key_value("local time", format_datetime(NaiveDateTime.local_now())),
+      key_value("local time", Shared.format_datetime(NaiveDateTime.local_now())),
       key_value("timezone", timezone()),
-      key_value("utc time", format_datetime(DateTime.utc_now())),
+      key_value("utc time", Shared.format_datetime(DateTime.utc_now())),
       key_value("elixir version", System.version()),
       key_value("otp version", System.otp_release()),
       key_value("data directory", EvoGit.Platform.data_dir())
@@ -62,9 +64,6 @@ defmodule EvoGit.Agent.Tools.SystemInfo do
       _ -> "server local (TZ unset)"
     end
   end
-
-  defp format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  defp format_datetime(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
 
   defp key_value(key, value), do: "#{key}: #{value}"
 end

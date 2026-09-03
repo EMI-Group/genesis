@@ -5,6 +5,8 @@ defmodule EvoGit.Agent.Tools.ListRecentProjects do
   opened projects from the task registry.
   """
 
+  alias EvoGit.Agent.Tools.Shared
+
   @doc """
   Executes the list_recent_projects tool.
 
@@ -49,7 +51,7 @@ defmodule EvoGit.Agent.Tools.ListRecentProjects do
   defp format_project_line(project) do
     path = Map.get(project, :path) || "<unknown>"
     name = project_name(Map.get(project, :name), path)
-    last_opened = format_datetime(Map.get(project, :last_opened_at))
+    last_opened = Shared.format_datetime(Map.get(project, :last_opened_at))
 
     "- #{name} | path: #{path} | last opened: #{last_opened}"
   end
@@ -57,8 +59,4 @@ defmodule EvoGit.Agent.Tools.ListRecentProjects do
   # `name` is optional; fall back to the path, then "<unknown>".
   defp project_name(name, _path) when is_binary(name) and name != "", do: name
   defp project_name(_name, path), do: path
-
-  defp format_datetime(nil), do: "unknown"
-  defp format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  defp format_datetime(other), do: to_string(other)
 end

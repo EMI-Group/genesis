@@ -63,11 +63,11 @@ defmodule EvoGit.Distribution do
   Returns `:ok` or `{:error, reason}`.
   """
   @spec enable_for_remote(map()) :: :ok | {:error, term()}
-  def enable_for_remote(target) do
+  def enable_for_remote(_target) do
     if distributed?() do
       :ok
     else
-      enable_for_connection(target)
+      enable_for_connection()
     end
   end
 
@@ -96,12 +96,12 @@ defmodule EvoGit.Distribution do
     end
   end
 
-  defp enable_for_connection(_target) do
+  defp enable_for_connection do
     # Configure EPMD-less distribution listen ports for the local side.
     # The remote daemon listens on 9000; we use 9100-9200 locally to avoid
-    # conflict. The SSH tunnel forwards local_port → remote_port 9000.
-    # (`target` is unused — the cookie comes from the config [node] category,
-    # not the target map, which has no :cookie field.)
+    # conflict. The SSH tunnel forwards local_port -> remote_port 9000.
+    # (The cookie comes from the config [node] category, not the target map,
+    # which has no :cookie field.)
     unless Application.get_env(:kernel, :inet_dist_listen_min) do
       Application.put_env(:kernel, :inet_dist_listen_min, 9100)
     end
@@ -113,7 +113,7 @@ defmodule EvoGit.Distribution do
     # Always use our EPMD-less module when starting distribution on-demand.
     Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
 
-    case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
+    case start_net_kernel([:"genesis@127.0.0.1", :longnames]) do
       {:ok, _pid} ->
         # Set the distribution cookie to match the remote daemon. Must be
         # done after :net_kernel.start succeeds — set_cookie/1 crashes on
@@ -142,10 +142,7 @@ defmodule EvoGit.Distribution do
         Logger.info("Distribution enabled for remote connection: #{node()}")
         :ok
 
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      {:error, {:already_started, _pid}, _mode} ->
+      :already_started ->
         :ok
 
       {:error, reason} = error ->
@@ -214,18 +211,34 @@ defmodule EvoGit.Distribution do
     name = node_name_from_config(node_config) |> String.to_atom()
     mode = if Map.get(node_config, :shortnames, false), do: :shortnames, else: :longnames
 
-    case :net_kernel.start([name, mode]) do
+    case start_net_kernel([name, mode]) do
       {:ok, _pid} ->
         :ok
 
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      {:error, {:already_started, _pid}, _mode} ->
+      :already_started ->
         :ok
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Starts `:net_kernel` and normalizes its "already started" results (both the
+  # 2-tuple and 3-tuple mode variants) to `:already_started` so callers can treat
+  # an already-running distribution as success.
+  defp start_net_kernel(args) do
+    case :net_kernel.start(args) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, _pid}} ->
+        :already_started
+
+      {:error, {:already_started, _pid}, _mode} ->
+        :already_started
+
+      other ->
+        other
     end
   end
 

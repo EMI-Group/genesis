@@ -100,11 +100,7 @@ defmodule EvoGit.Agent.Tools do
         # contract of the per-function task-control tools).
       ]
 
-    if EvoGit.Config.tools_search_enabled?() do
-      schemas ++ [WebSearch.schema()]
-    else
-      schemas
-    end
+    maybe_append_web_search(schemas)
   end
 
   @doc """
@@ -139,6 +135,15 @@ defmodule EvoGit.Agent.Tools do
         SearchHistory.schema()
       ]
 
+    maybe_append_web_search(schemas)
+  end
+
+  # Web search is gated behind the `[tools] search_enabled` config. Both the
+  # full `schemas/0` set and the read-only `read_only_schemas/0` set append the
+  # WebSearch schema under the same condition — defined ONCE here so the gating
+  # literal lives in a single place. Evaluated at call time (not a module
+  # attribute) because the config can change at runtime.
+  defp maybe_append_web_search(schemas) do
     if EvoGit.Config.tools_search_enabled?() do
       schemas ++ [WebSearch.schema()]
     else

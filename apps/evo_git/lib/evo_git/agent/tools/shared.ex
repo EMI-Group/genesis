@@ -496,4 +496,90 @@ defmodule EvoGit.Agent.Tools.Shared do
         "Error reading file #{display_path}: #{:file.format_error(reason)}"
     end
   end
+
+  # --- Display Formatting ---
+
+  @doc """
+  Formats a datetime value for display in tool output.
+
+  `nil` renders as "unknown"; `%DateTime{}` and `%NaiveDateTime{}` render via
+  their canonical ISO-8601 forms; any other value is stringified. Shared by
+  the task-control command handlers (GetTask, ListTasks, ListRecentProjects,
+  SystemInfo) — previously each carried a private copy.
+  """
+  def format_datetime(nil), do: "unknown"
+  def format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  def format_datetime(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
+  def format_datetime(other), do: to_string(other)
+
+  @doc """
+  Truncates a string to `max` characters, appending the "...[truncated]"
+  marker when it exceeds the cap.
+  """
+  def truncate(string, max) when is_binary(string) do
+    if String.length(string) <= max do
+      string
+    else
+      String.slice(string, 0, max) <> "...[truncated]"
+    end
+  end
+
+  @doc """
+  Builds a single-line objective snippet from a task's opts, truncated to
+  `max` characters.
+
+  Missing/blank objectives render as "(no objective)". Shared by GetTask and
+  ListTasks, which differ only in the snippet length cap.
+  """
+  def objective_snippet(opts, max) do
+    case objective_from_opts(opts) do
+      nil ->
+        "(no objective)"
+
+      obj when is_binary(obj) ->
+        case String.trim(obj) do
+          "" -> "(no objective)"
+          trimmed -> truncate(trimmed, max)
+        end
+
+      obj ->
+        truncate(inspect(obj), max)
+    end
+  end
+
+  # `opts` may be a keyword list (%TaskInfo{}) or a STRING-keyed map (store
+  # summary rows). Checks both key shapes defensively.
+  defp objective_from_opts(opts) when is_map(opts),
+    do: Map.get(opts, "objective") || Map.get(opts, :objective)
+
+  defp objective_from_opts(opts) when is_list(opts), do: Keyword.get(opts, :objective)
+  defp objective_from_opts(_opts), do: nil
+
+  @doc """
+  Returns the standard `max_bytes` tool-output truncation description shared
+  by every tool schema that exposes a `max_bytes` parameter.
+  """
+  def tool_output_limit_description do
+    "Maximum output size in bytes before truncation. " <>
+      "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output."
+  end
+
+  # --- Task-Control Error Formatting ---
+
+  @doc """
+  Formats a task-control error reason for display.
+
+  The `:not_running` message differs per command (graceful cancel vs
+  force-kill), so each handler passes its own literal. `:not_found` and
+  `{:registry_unavailable, reason}` render identically across handlers;
+  unknown reasons fall back to `inspect/1` so the formatter never crashes.
+  """
+  def describe_error(:not_found, _not_running_msg), do: "task not found"
+
+  def describe_error(:not_running, not_running_msg), do: not_running_msg
+
+  def describe_error({:registry_unavailable, reason}, _not_running_msg),
+    do: "task registry unavailable: #{inspect(reason)}"
+
+  def describe_error(other, _not_running_msg), do: inspect(other)
 end

@@ -581,27 +581,179 @@ defmodule EvoGit.Config.Schema.Definitions do
         category: :tools,
         sub_category: nil,
         description: "Search service provider."
-      },
+      }
+    ] ++
+      search_provider_schema_maps() ++
+      [
+        # ── Server ─────────────────────────────────────────────────────────
+        %{
+          key_path: [:server, :listen_ip],
+          type: :string,
+          default: "127.0.0.1",
+          validation: [],
+          category: :server,
+          sub_category: nil,
+          description:
+            "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
+        },
+        %{
+          key_path: [:server, :listen_port],
+          type: :pos_integer,
+          default: 9999,
+          validation: [min: 1024, max: 65535],
+          category: :server,
+          sub_category: nil,
+          description:
+            "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
+        },
+        # ── Node / Distribution ─────────────────────────────────────────────
+        %{
+          key_path: [:node, :enabled],
+          type: :boolean,
+          default: false,
+          validation: [],
+          category: :node,
+          sub_category: nil,
+          description:
+            "Enable distributed Erlang at application startup. When enabled, the node starts EPMD, sets a distributed node name, and sets the magic cookie, allowing the local dashboard to connect to remote genesis_remote daemons over SSH tunnels."
+        },
+        %{
+          key_path: [:node, :node_name],
+          type: :string,
+          default: "genesis@127.0.0.1",
+          validation: [],
+          category: :node,
+          sub_category: nil,
+          description:
+            "The distributed Erlang node name. For longnames mode this must include the hostname (e.g. 'genesis@127.0.0.1'); for shortnames mode it should be a short name (e.g. 'genesis')."
+        },
+        %{
+          key_path: [:node, :shortnames],
+          type: :boolean,
+          default: false,
+          validation: [],
+          category: :node,
+          sub_category: nil,
+          description:
+            "Whether to use short names (:shortnames) or long names (:longnames) distribution mode. Short names are suitable for single-host or local network setups; long names are required for cross-network distribution."
+        },
+        %{
+          key_path: [:node, :cookie],
+          type: :string,
+          default: nil,
+          validation: [],
+          category: :node,
+          sub_category: nil,
+          description:
+            "The Erlang magic cookie for distribution authentication. Auto-generated during the first remote bootstrap. Must match the cookie used by remote nodes you want to connect to. Defaults to nil — a secure random cookie is generated on first use when bootstrapping an SSH remote connection."
+        },
+        %{
+          key_path: [:node, :dist_port],
+          type: :pos_integer,
+          default: 9000,
+          validation: [min: 1024, max: 65535],
+          category: :node,
+          sub_category: nil,
+          description:
+            "Distribution port used for EPMD-less distribution or inet_dist_listen configuration. Must match the port used by remote nodes for SSH tunnel forwarding."
+        },
+        %{
+          key_path: [:node, :start_epmd],
+          type: :boolean,
+          default: false,
+          validation: [],
+          category: :node,
+          sub_category: nil,
+          description:
+            "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Default is false — distribution uses a custom EPMD module (EvoGit.EpmdDist) that does not require an external epmd process. Set to true only if you need the standard Erlang EPMD daemon."
+        },
+        # ── Appearance ─────────────────────────────────────────────────────
+        %{
+          key_path: [:appearance, :accent_color],
+          type: :string,
+          default: "blue",
+          validation: [in: ~w(blue teal green yellow orange red pink purple brown slate)],
+          category: :appearance,
+          sub_category: nil,
+          description:
+            "Dashboard UI accent color (GNOME/libadwaita palette): blue, teal, green, yellow, orange, red, pink, purple, brown, or slate."
+        }
+      ]
+  end
+
+  # ── Web search provider schemas (data-driven) ─────────────────────
+  # Each `@search_provider_defs` entry expands into one
+  # `[:tools, :search, <name>, ...]` schema map per key below, in the
+  # order: api_key_credential_key, base_url, search_depth, max_results,
+  # timeout, max_bytes. An optional `:model` string appends a final
+  # `:model` schema. The generated maps are identical to the former
+  # hand-written literals (same order, keys and values).
+  @search_provider_defs [
+    %{
+      name: :tavily,
+      label: "Tavily",
+      credential_key: "TAVILY_API_KEY",
+      base_url: "https://api.tavily.com/search"
+    },
+    %{
+      name: :perplexity,
+      label: "Perplexity",
+      credential_key: "PERPLEXITY_API_KEY",
+      base_url: "https://api.perplexity.ai/chat/completions",
+      model: "sonar"
+    },
+    %{
+      name: :exa,
+      label: "Exa",
+      credential_key: "EXA_API_KEY",
+      base_url: "https://api.exa.ai/search"
+    },
+    %{
+      name: :bing,
+      label: "Bing Search",
+      credential_key: "BING_SEARCH_API_KEY",
+      base_url: "https://api.bing.microsoft.com/v7.0/search"
+    },
+    %{
+      name: :brave,
+      label: "Brave Search",
+      credential_key: "BRAVE_SEARCH_API_KEY",
+      base_url: "https://api.search.brave.com/res/v1/web/search"
+    }
+  ]
+
+  defp search_provider_schema_maps do
+    Enum.flat_map(@search_provider_defs, &search_provider_schema_maps/1)
+  end
+
+  defp search_provider_schema_maps(provider) do
+    name = provider.name
+    label = provider.label
+    base = [:tools, :search, name]
+
+    credential = %{
+      key_path: base ++ [:api_key_credential_key],
+      type: :string,
+      default: provider.credential_key,
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description: "Credential key name for the #{label} API key."
+    }
+
+    base_url = %{
+      key_path: base ++ [:base_url],
+      type: :string,
+      default: provider.base_url,
+      validation: [],
+      category: :tools,
+      sub_category: nil,
+      description: "#{label} API endpoint URL."
+    }
+
+    common = [
       %{
-        key_path: [:tools, :search, :tavily, :api_key_credential_key],
-        type: :string,
-        default: "TAVILY_API_KEY",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Credential key name for the Tavily API key."
-      },
-      %{
-        key_path: [:tools, :search, :tavily, :base_url],
-        type: :string,
-        default: "https://api.tavily.com/search",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Tavily API endpoint URL."
-      },
-      %{
-        key_path: [:tools, :search, :tavily, :search_depth],
+        key_path: base ++ [:search_depth],
         type: :atom,
         default: :basic,
         validation: [in: [:basic, :advanced]],
@@ -610,7 +762,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         description: "Search depth (basic or advanced)."
       },
       %{
-        key_path: [:tools, :search, :tavily, :max_results],
+        key_path: base ++ [:max_results],
         type: :pos_integer,
         default: 10,
         validation: [min: 1, max: 50],
@@ -619,7 +771,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         description: "Maximum number of search results (1-50)."
       },
       %{
-        key_path: [:tools, :search, :tavily, :timeout],
+        key_path: base ++ [:timeout],
         type: :pos_integer,
         default: 60000,
         validation: [],
@@ -628,332 +780,35 @@ defmodule EvoGit.Config.Schema.Definitions do
         description: "Search request timeout in milliseconds."
       },
       %{
-        key_path: [:tools, :search, :tavily, :max_bytes],
+        key_path: base ++ [:max_bytes],
         type: :pos_integer,
         default: 16384,
         validation: [],
         category: :tools,
         sub_category: nil,
         description: "Maximum output size in bytes."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :api_key_credential_key],
-        type: :string,
-        default: "PERPLEXITY_API_KEY",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Credential key name for the Perplexity API key."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :base_url],
-        type: :string,
-        default: "https://api.perplexity.ai/chat/completions",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Perplexity API endpoint URL."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :search_depth],
-        type: :atom,
-        default: :basic,
-        validation: [in: [:basic, :advanced]],
-        category: :tools,
-        sub_category: nil,
-        description: "Search depth (basic or advanced)."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :max_results],
-        type: :pos_integer,
-        default: 10,
-        validation: [min: 1, max: 50],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum number of search results (1-50)."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :timeout],
-        type: :pos_integer,
-        default: 60000,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Search request timeout in milliseconds."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :max_bytes],
-        type: :pos_integer,
-        default: 16384,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum output size in bytes."
-      },
-      %{
-        key_path: [:tools, :search, :perplexity, :model],
-        type: :string,
-        default: "sonar",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Perplexity model to use for search."
-      },
-      %{
-        key_path: [:tools, :search, :exa, :api_key_credential_key],
-        type: :string,
-        default: "EXA_API_KEY",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Credential key name for the Exa API key."
-      },
-      %{
-        key_path: [:tools, :search, :exa, :base_url],
-        type: :string,
-        default: "https://api.exa.ai/search",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Exa API endpoint URL."
-      },
-      %{
-        key_path: [:tools, :search, :exa, :search_depth],
-        type: :atom,
-        default: :basic,
-        validation: [in: [:basic, :advanced]],
-        category: :tools,
-        sub_category: nil,
-        description: "Search depth (basic or advanced)."
-      },
-      %{
-        key_path: [:tools, :search, :exa, :max_results],
-        type: :pos_integer,
-        default: 10,
-        validation: [min: 1, max: 50],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum number of search results (1-50)."
-      },
-      %{
-        key_path: [:tools, :search, :exa, :timeout],
-        type: :pos_integer,
-        default: 60000,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Search request timeout in milliseconds."
-      },
-      %{
-        key_path: [:tools, :search, :exa, :max_bytes],
-        type: :pos_integer,
-        default: 16384,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum output size in bytes."
-      },
-      %{
-        key_path: [:tools, :search, :bing, :api_key_credential_key],
-        type: :string,
-        default: "BING_SEARCH_API_KEY",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Credential key name for the Bing Search API key."
-      },
-      %{
-        key_path: [:tools, :search, :bing, :base_url],
-        type: :string,
-        default: "https://api.bing.microsoft.com/v7.0/search",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Bing Search API endpoint URL."
-      },
-      %{
-        key_path: [:tools, :search, :bing, :search_depth],
-        type: :atom,
-        default: :basic,
-        validation: [in: [:basic, :advanced]],
-        category: :tools,
-        sub_category: nil,
-        description: "Search depth (basic or advanced)."
-      },
-      %{
-        key_path: [:tools, :search, :bing, :max_results],
-        type: :pos_integer,
-        default: 10,
-        validation: [min: 1, max: 50],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum number of search results (1-50)."
-      },
-      %{
-        key_path: [:tools, :search, :bing, :timeout],
-        type: :pos_integer,
-        default: 60000,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Search request timeout in milliseconds."
-      },
-      %{
-        key_path: [:tools, :search, :bing, :max_bytes],
-        type: :pos_integer,
-        default: 16384,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum output size in bytes."
-      },
-      %{
-        key_path: [:tools, :search, :brave, :api_key_credential_key],
-        type: :string,
-        default: "BRAVE_SEARCH_API_KEY",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Credential key name for the Brave Search API key."
-      },
-      %{
-        key_path: [:tools, :search, :brave, :base_url],
-        type: :string,
-        default: "https://api.search.brave.com/res/v1/web/search",
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Brave Search API endpoint URL."
-      },
-      %{
-        key_path: [:tools, :search, :brave, :search_depth],
-        type: :atom,
-        default: :basic,
-        validation: [in: [:basic, :advanced]],
-        category: :tools,
-        sub_category: nil,
-        description: "Search depth (basic or advanced)."
-      },
-      %{
-        key_path: [:tools, :search, :brave, :max_results],
-        type: :pos_integer,
-        default: 10,
-        validation: [min: 1, max: 50],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum number of search results (1-50)."
-      },
-      %{
-        key_path: [:tools, :search, :brave, :timeout],
-        type: :pos_integer,
-        default: 60000,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Search request timeout in milliseconds."
-      },
-      %{
-        key_path: [:tools, :search, :brave, :max_bytes],
-        type: :pos_integer,
-        default: 16384,
-        validation: [],
-        category: :tools,
-        sub_category: nil,
-        description: "Maximum output size in bytes."
-      },
-      # ── Server ─────────────────────────────────────────────────────────
-      %{
-        key_path: [:server, :listen_ip],
-        type: :string,
-        default: "127.0.0.1",
-        validation: [],
-        category: :server,
-        sub_category: nil,
-        description:
-          "IP address the web dashboard binds to. Defaults to loopback (127.0.0.1) for security — only local connections are accepted. Set to \"0.0.0.0\" to accept connections from any network interface."
-      },
-      %{
-        key_path: [:server, :listen_port],
-        type: :pos_integer,
-        default: 9999,
-        validation: [min: 1024, max: 65535],
-        category: :server,
-        sub_category: nil,
-        description:
-          "Port the web dashboard listens on. Must be between 1024 and 65535 (privileged ports below 1024 are not supported for security reasons)."
-      },
-      # ── Node / Distribution ─────────────────────────────────────────────
-      %{
-        key_path: [:node, :enabled],
-        type: :boolean,
-        default: false,
-        validation: [],
-        category: :node,
-        sub_category: nil,
-        description:
-          "Enable distributed Erlang at application startup. When enabled, the node starts EPMD, sets a distributed node name, and sets the magic cookie, allowing the local dashboard to connect to remote genesis_remote daemons over SSH tunnels."
-      },
-      %{
-        key_path: [:node, :node_name],
-        type: :string,
-        default: "genesis@127.0.0.1",
-        validation: [],
-        category: :node,
-        sub_category: nil,
-        description:
-          "The distributed Erlang node name. For longnames mode this must include the hostname (e.g. 'genesis@127.0.0.1'); for shortnames mode it should be a short name (e.g. 'genesis')."
-      },
-      %{
-        key_path: [:node, :shortnames],
-        type: :boolean,
-        default: false,
-        validation: [],
-        category: :node,
-        sub_category: nil,
-        description:
-          "Whether to use short names (:shortnames) or long names (:longnames) distribution mode. Short names are suitable for single-host or local network setups; long names are required for cross-network distribution."
-      },
-      %{
-        key_path: [:node, :cookie],
-        type: :string,
-        default: nil,
-        validation: [],
-        category: :node,
-        sub_category: nil,
-        description:
-          "The Erlang magic cookie for distribution authentication. Auto-generated during the first remote bootstrap. Must match the cookie used by remote nodes you want to connect to. Defaults to nil — a secure random cookie is generated on first use when bootstrapping an SSH remote connection."
-      },
-      %{
-        key_path: [:node, :dist_port],
-        type: :pos_integer,
-        default: 9000,
-        validation: [min: 1024, max: 65535],
-        category: :node,
-        sub_category: nil,
-        description:
-          "Distribution port used for EPMD-less distribution or inet_dist_listen configuration. Must match the port used by remote nodes for SSH tunnel forwarding."
-      },
-      %{
-        key_path: [:node, :start_epmd],
-        type: :boolean,
-        default: false,
-        validation: [],
-        category: :node,
-        sub_category: nil,
-        description:
-          "Whether to start EPMD (Erlang Port Mapper Daemon) explicitly from the running ERTS. Default is false — distribution uses a custom EPMD module (EvoGit.EpmdDist) that does not require an external epmd process. Set to true only if you need the standard Erlang EPMD daemon."
-      },
-      # ── Appearance ─────────────────────────────────────────────────────
-      %{
-        key_path: [:appearance, :accent_color],
-        type: :string,
-        default: "blue",
-        validation: [in: ~w(blue teal green yellow orange red pink purple brown slate)],
-        category: :appearance,
-        sub_category: nil,
-        description:
-          "Dashboard UI accent color (GNOME/libadwaita palette): blue, teal, green, yellow, orange, red, pink, purple, brown, or slate."
       }
     ]
+
+    model =
+      case provider[:model] do
+        nil ->
+          []
+
+        model ->
+          [
+            %{
+              key_path: base ++ [:model],
+              type: :string,
+              default: model,
+              validation: [],
+              category: :tools,
+              sub_category: nil,
+              description: "#{label} model to use for search."
+            }
+          ]
+      end
+
+    [credential, base_url] ++ common ++ model
   end
 end

@@ -42,7 +42,8 @@ defmodule EvoGit.Agent.Tools.DeleteTask do
 
   # The only error shape reachable here is the boundary guard's
   # {:registry_unavailable, _} (delete_task/1 is a cast and always returns
-  # :ok), so a single clause is both total and warning-free.
-  defp describe_error({:registry_unavailable, reason}),
-    do: "task registry unavailable: #{inspect(reason)}"
+  # :ok), so the :not_running literal is never reached — any value is inert.
+  defp describe_error(reason) do
+    Shared.describe_error(reason, "task is not in a deletable state")
+  end
 end

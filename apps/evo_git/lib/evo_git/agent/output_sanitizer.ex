@@ -235,10 +235,7 @@ defmodule EvoGit.Agent.OutputSanitizer do
   # When \r appears within a line, keep only the last segment (after the final \r).
   # This handles progress bars that overwrite the same line using \r.
   defp handle_carriage_returns(line) do
-    case String.split(line, "\r") do
-      [_single] -> line
-      parts -> List.last(parts)
-    end
+    line |> String.split("\r") |> List.last()
   end
 
   # Returns true if the line is a progress bar artifact that should be filtered out.

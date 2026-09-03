@@ -65,13 +65,22 @@ defmodule EvoGit.Adapters.Git do
     if cd && not File.dir?(cd) do
       {:error, {:enoent, "Repository path does not exist: #{cd}"}}
     else
-      System.cmd(EvoGit.Executable.resolve("git"), args,
-        cd: cd,
-        stderr_to_stdout: true,
-        env: EvoGit.GitEnv.git_env(cd)
-      )
+      run_git(cd, args)
       |> handle_git_command_result(args, cd)
     end
+  end
+
+  # Single raw git-invocation envelope used by every direct `System.cmd` in
+  # this module: the resolved git executable, the repository as working
+  # directory, the locale-stable env (LC_ALL=C, no-op GIT_EDITOR, commit
+  # identity) and stderr merged into stdout. Returns the raw
+  # `{output, exit_code}` pair — the caller decides how to interpret it.
+  defp run_git(path, args) when is_list(args) do
+    System.cmd(EvoGit.Executable.resolve("git"), args,
+      cd: path,
+      stderr_to_stdout: true,
+      env: EvoGit.GitEnv.git_env(path)
+    )
   end
 
   defp handle_git_command_result({output, 0}, _args, _cd), do: {:ok, String.trim(output)}
@@ -156,19 +165,29 @@ defmodule EvoGit.Adapters.Git do
         ok
 
       {:error, _reason} = error ->
-        # git creates the branch BEFORE validating the worktree path, so a failed
-        # add (e.g. the path already exists) can leave a FREE branch behind — it
-        # was never checked out anywhere, and `git branch -D` itself refuses to
-        # delete a branch checked out in a live worktree (defense in depth).
-        # Also remove any partial/plain dir left at `worktree_path` so a retry
-        # succeeds.
-        if branch_name && branch_exists?(repo_path, branch_name) do
-          delete_branch(repo_path, branch_name)
-        end
-
-        remove_leftover_worktree_dir(worktree_path)
+        # A failed add can leave a free branch and/or a partial/plain dir behind
+        # — see cleanup_failed_worktree_add/3 for the rationale.
+        cleanup_failed_worktree_add(repo_path, worktree_path, branch_name)
         error
     end
+  end
+
+  @doc false
+  # Shared failure-tail cleanup for a failed `git worktree add`: git creates
+  # the branch BEFORE validating the worktree path, so a failed add (e.g. the
+  # path already exists) can leave a FREE branch behind — it was never checked
+  # out anywhere, and `git branch -D` itself refuses to delete a branch checked
+  # out in a live worktree (defense in depth). Also removes any partial/plain
+  # dir left at `worktree_path` (see remove_leftover_worktree_dir/1) so a
+  # retry succeeds. `branch_name` may be nil (a detached add leaves no branch
+  # to clean up). Best-effort: returns `:ok`.
+  def cleanup_failed_worktree_add(repo_root, worktree_path, branch_name) do
+    if branch_name && branch_exists?(repo_root, branch_name) do
+      delete_branch(repo_root, branch_name)
+    end
+
+    remove_leftover_worktree_dir(worktree_path)
+    :ok
   end
 
   @doc false
@@ -241,20 +260,9 @@ defmodule EvoGit.Adapters.Git do
         do: @co_author_trailer,
         else: ""
 
-    full_message = message <> trailer
-    temp_path = temp_file_path(".txt")
-
-    try do
-      case File.write(temp_path, full_message) do
-        :ok ->
-          run(["commit", "-F", normalize_temp_path(temp_path)], path)
-
-        {:error, reason} ->
-          {:error, {:temp_file, to_string(:file.format_error(reason))}}
-      end
-    after
-      File.rm(temp_path)
-    end
+    with_temp_msg_file(".txt", message <> trailer, fn temp_path ->
+      run(["commit", "-F", normalize_temp_path(temp_path)], path)
+    end)
   end
 
   @doc """
@@ -285,15 +293,13 @@ defmodule EvoGit.Adapters.Git do
   end
 
   def conflict_files(path) when is_binary(path) do
-    # Returns list of files with conflicts
-    case run(["diff", "--name-only", "--diff-filter=U"], path) do
-      {:ok, output} ->
-        files = if output == "", do: [], else: String.split(output, "\n")
-        {:ok, files}
-
-      error ->
-        error
-    end
+    # Returns list of files with conflicts. Note: splits WITHOUT `trim: true` —
+    # the input is already trimmed by `run/2`; an empty output is handled by
+    # parse_list_result (a no-trim split of "" would yield [""], not []).
+    parse_list_result(
+      run(["diff", "--name-only", "--diff-filter=U"], path),
+      &String.split(&1, "\n")
+    )
   end
 
   def status(path) when is_binary(path) do
@@ -333,11 +339,7 @@ defmodule EvoGit.Adapters.Git do
   def check_ignore(path, files) when is_binary(path) and is_list(files) do
     # git check-ignore returns 0 if any matches, 1 if none.
     # We want the list of ignored files.
-    case System.cmd(EvoGit.Executable.resolve("git"), ["check-ignore" | files],
-           cd: path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(path)
-         ) do
+    case run_git(path, ["check-ignore" | files]) do
       {output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {_output, 1} -> {:ok, []}
       {output, code} -> {:error, {code, String.trim(output)}}
@@ -418,20 +420,7 @@ defmodule EvoGit.Adapters.Git do
   """
   def ls_tree_names(repo_path, treeish)
       when is_binary(repo_path) and is_binary(treeish) do
-    # Run WITHOUT `--name-only` so each line carries the entry type:
-    # `<mode> <type> <oid>\t<path>`. `--name-only` hides the type and would
-    # return gitlink paths too, which are directories (submodule checkouts)
-    # in the source working tree — copying them as files fails.
-    case run(["ls-tree", "-r", treeish], repo_path) do
-      {:ok, ""} ->
-        {:ok, []}
-
-      {:ok, output} ->
-        {:ok, parse_ls_tree_output(output, :files)}
-
-      error ->
-        error
-    end
+    ls_tree(repo_path, treeish, :files)
   end
 
   @doc """
@@ -445,15 +434,28 @@ defmodule EvoGit.Adapters.Git do
   """
   def ls_tree_gitlinks(repo_path, treeish)
       when is_binary(repo_path) and is_binary(treeish) do
-    case run(["ls-tree", "-r", treeish], repo_path) do
-      {:ok, ""} ->
-        {:ok, []}
+    ls_tree(repo_path, treeish, :gitlinks)
+  end
 
-      {:ok, output} ->
-        {:ok, parse_ls_tree_output(output, :gitlinks)}
+  # Runs `git ls-tree -r <treeish>` and keeps either `:files` (non-gitlink
+  # entries) or `:gitlinks` (type "commit", mode 160000) — see the public
+  # wrappers' docs. Shared by `ls_tree_names/2` and `ls_tree_gitlinks/2`.
+  defp ls_tree(repo_path, treeish, keep) do
+    parse_list_result(
+      run(["ls-tree", "-r", treeish], repo_path),
+      &parse_ls_tree_output(&1, keep)
+    )
+  end
 
-      error ->
-        error
+  # Shared "run → empty → `[]` → split/parse → pass-through error" boilerplate
+  # for the list-returning queries. `splitter` maps a NON-EMPTY trimmed output
+  # string to the list of entries; each call site keeps its own exact splitter
+  # (e.g. conflict_files splits WITHOUT `trim: true`, the others use it).
+  defp parse_list_result(result, splitter) when is_function(splitter, 1) do
+    case result do
+      {:ok, ""} -> {:ok, []}
+      {:ok, output} -> {:ok, splitter.(output)}
+      error -> error
     end
   end
 
@@ -490,11 +492,10 @@ defmodule EvoGit.Adapters.Git do
   """
   def diff_name_only(repo_path, commit_a, commit_b)
       when is_binary(repo_path) and is_binary(commit_a) and is_binary(commit_b) do
-    case run(["diff", "--name-only", commit_a, commit_b], repo_path) do
-      {:ok, ""} -> {:ok, []}
-      {:ok, output} -> {:ok, String.split(output, "\n", trim: true)}
-      error -> error
-    end
+    parse_list_result(
+      run(["diff", "--name-only", commit_a, commit_b], repo_path),
+      &String.split(&1, "\n", trim: true)
+    )
   end
 
   @doc """
@@ -534,23 +535,14 @@ defmodule EvoGit.Adapters.Git do
       when is_binary(path) and is_binary(object) and is_binary(message) and
              is_list(args) and is_boolean(force) do
     force_flag = if force, do: ["-f"], else: []
-    temp_path = temp_file_path(".json")
 
-    try do
-      case File.write(temp_path, message) do
-        :ok ->
-          run(
-            ["notes" | args] ++
-              ["add" | force_flag] ++ ["-F", normalize_temp_path(temp_path), object],
-            path
-          )
-
-        {:error, reason} ->
-          {:error, {:temp_file, to_string(:file.format_error(reason))}}
-      end
-    after
-      File.rm(temp_path)
-    end
+    with_temp_msg_file(".json", message, fn temp_path ->
+      run(
+        ["notes" | args] ++
+          ["add" | force_flag] ++ ["-F", normalize_temp_path(temp_path), object],
+        path
+      )
+    end)
   end
 
   @doc """
@@ -639,13 +631,10 @@ defmodule EvoGit.Adapters.Git do
   Uses `git for-each-ref --format=%(refname:short) refs/heads`.
   """
   def list_branches(repo_root) when is_binary(repo_root) do
-    case run(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repo_root) do
-      {:ok, output} ->
-        {:ok, output |> String.split("\n", trim: true) |> Enum.map(&String.trim/1)}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    parse_list_result(
+      run(["for-each-ref", "--format=%(refname:short)", "refs/heads"], repo_root),
+      fn output -> output |> String.split("\n", trim: true) |> Enum.map(&String.trim/1) end
+    )
   end
 
   @doc """
@@ -657,16 +646,14 @@ defmodule EvoGit.Adapters.Git do
   Uses `git branch --list <pattern>`.
   """
   def list_branches(repo_root, pattern) when is_binary(repo_root) and is_binary(pattern) do
-    case run(["branch", "--list", pattern], repo_root) do
-      {:ok, output} ->
-        {:ok,
-         output
-         |> String.split("\n", trim: true)
-         |> Enum.map(fn line -> line |> String.trim_leading("* ") |> String.trim() end)}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    parse_list_result(
+      run(["branch", "--list", pattern], repo_root),
+      fn output ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.map(fn line -> line |> String.trim_leading("* ") |> String.trim() end)
+      end
+    )
   end
 
   @doc """
@@ -698,12 +685,7 @@ defmodule EvoGit.Adapters.Git do
     if not File.dir?(repo_path) do
       false
     else
-      case System.cmd(
-             EvoGit.Executable.resolve("git"),
-             ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"],
-             cd: repo_path,
-             env: EvoGit.GitEnv.git_env(repo_path)
-           ) do
+      case run_git(repo_path, ["show-ref", "--verify", "--quiet", "refs/heads/#{branch_name}"]) do
         {_output, 0} -> true
         {_output, _code} -> false
       end
@@ -728,13 +710,7 @@ defmodule EvoGit.Adapters.Git do
   def branch_has_unique_commits?(repo_path, branch, base)
       when is_binary(repo_path) and is_binary(branch) and is_binary(base) do
     # Check if branch tip is an ancestor of base (meaning branch has no unique commits)
-    case System.cmd(
-           EvoGit.Executable.resolve("git"),
-           ["merge-base", "--is-ancestor", branch, base],
-           cd: repo_path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(repo_path)
-         ) do
+    case run_git(repo_path, ["merge-base", "--is-ancestor", branch, base]) do
       # branch is ancestor of base, no unique commits
       {_output, 0} -> false
       # branch has commits not in base
@@ -803,11 +779,7 @@ defmodule EvoGit.Adapters.Git do
   Returns `true` if origin remote exists, `false` otherwise.
   """
   def has_origin_remote?(repo_path) when is_binary(repo_path) do
-    case System.cmd(EvoGit.Executable.resolve("git"), ["remote", "get-url", "origin"],
-           cd: repo_path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(repo_path)
-         ) do
+    case run_git(repo_path, ["remote", "get-url", "origin"]) do
       {_output, 0} -> true
       {_output, _} -> false
     end
@@ -855,13 +827,7 @@ defmodule EvoGit.Adapters.Git do
   Returns `{:ok, branch_name}` or `{:error, reason}`.
   """
   def origin_default_branch(repo_path) when is_binary(repo_path) do
-    case System.cmd(
-           EvoGit.Executable.resolve("git"),
-           ["symbolic-ref", "refs/remotes/origin/HEAD"],
-           cd: repo_path,
-           stderr_to_stdout: true,
-           env: EvoGit.GitEnv.git_env(repo_path)
-         ) do
+    case run_git(repo_path, ["symbolic-ref", "refs/remotes/origin/HEAD"]) do
       {output, 0} ->
         branch = output |> String.trim() |> String.split("/") |> List.last()
         {:ok, branch}
@@ -892,10 +858,33 @@ defmodule EvoGit.Adapters.Git do
     end
   end
 
+  # Shared "write content to a unique temp file → `-F` run → cleanup" pattern
+  # used by `commit/2` and `add_note/4` (see the "## Notes for agents"
+  # moduledoc section for why content-bearing args go through `-F`). `run_fun`
+  # receives the temp path and performs the git run; the file is ALWAYS deleted
+  # via try/after (never try/rescue — nothing is swallowed). A failed write
+  # returns `{:error, {:temp_file, reason}}`.
+  defp with_temp_msg_file(extension, content, run_fun)
+       when is_binary(extension) and is_binary(content) and is_function(run_fun, 1) do
+    temp_path = temp_file_path(extension)
+
+    try do
+      case File.write(temp_path, content) do
+        :ok ->
+          run_fun.(temp_path)
+
+        {:error, reason} ->
+          {:error, {:temp_file, to_string(:file.format_error(reason))}}
+      end
+    after
+      File.rm(temp_path)
+    end
+  end
+
   # Generates a unique temporary file path for `-F` content files (note
   # messages, commit messages). Content-bearing args must be passed via a temp
   # file, never as a `-m`-style argv element (see "## Notes for agents" in the
-  # moduledoc). The file is deleted by the caller's `try/after`.
+  # moduledoc). The file is deleted by `with_temp_msg_file/3`'s try/after.
   defp temp_file_path(extension) do
     Path.join(
       System.tmp_dir!(),

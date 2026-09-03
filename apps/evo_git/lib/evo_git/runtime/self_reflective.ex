@@ -41,7 +41,11 @@ defmodule EvoGit.Runtime.SelfReflective do
   end
 
   def run(objective, opts) when is_binary(objective) and is_list(opts) do
-    node_path = Keyword.get(opts, :node_path, "./")
+    # Resolve the node path once here and thread it through opts — build_spec/2
+    # derives its node_path from the same key (it drops :node_path from the spec
+    # opts, so the resolved value never leaks into the AgentSpec).
+    opts = Keyword.put_new(opts, :node_path, "./")
+    node_path = opts[:node_path]
 
     Logger.info("SelfReflective: Starting for objective: #{objective} (node: #{node_path})")
 
