@@ -26,7 +26,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `search_history` | Search git commit history | Read | Yes |
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |
 | `complete_task` | Agent completion (injected separately, not in standard schemas) | Special | No |
-| `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent) | Special | No |
+| `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent). Level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
 | *(utility)* `Shared` | Argument parsing, path validation, scope checking | — | — |
 
 ### Tool Schema Shape (ReqLLM.tool/2 conventions in this directory)
@@ -92,26 +92,28 @@ Every tool module exposes a schema via a `schema/0` (or `schema/1` — only `Web
 
 ### Task Management & Guide Tools (repo-less "self-reflective" workstream)
 
-The **task system** (`EvoGit.TaskRegistry`), transient **user guides** (PubSub topic `"guides"`), recent-projects inspection, and local platform/system facts are exposed to the self-reflective agent through ONE generic tool: `run_command` (`run_command.ex`). The tool passes a command STRING verbatim to `EvoGit.CommandShell.execute/1` and returns the handler output (or an `Error: ...` string for parse/validation failures). It is dispatch-registered ONLY — a single `execute_tool/5` clause in `tools.ex`, never in `schemas/0` or `read_only_schemas/0` (giving every coding agent task-control access would be a scope/security violation), and deliberately absent from `@write_tools` (a control tool, NOT a write tool — the repo-less guard must not block the self-reflective agent's own task control).
+The **task system** (`EvoGit.TaskRegistry`), transient **user guides** (PubSub topic `"guides"`), recent-projects inspection, and local platform/system facts are exposed to the self-reflective agent through ONE generic tool: `run_command` (`run_command.ex`). The tool passes a command STRING verbatim to `EvoGit.CommandShell.execute/1` and returns the handler output (or an `Error: ...` string for parse/validation failures). It is dispatch-registered ONLY — a single `execute_tool/5` clause in `tools.ex`, never in `schemas/0` or `read_only_schemas/0` (giving every coding agent task-control access would be a scope/security violation), and deliberately absent from `@write_tools` (a control tool, NOT a write tool — the repo-less guard must not block the self-reflective agent's own task control). **Approval gate**: registry entries carry `level:` and level-2/3 commands (`GuideUser.guide_user`, `StartTask`/`CancelTask`/`ForceKillTask`/`DeleteTask`) pause inside the shell at the dispatch choke point, awaiting user approval via `EvoGit.CommandApproval.request/5` (blocking; broadcasts on PubSub topic `"approvals"`; bounded window, default 120s via app env `[:evo_git, :command_approval_timeout]`); they run ONLY on `:approved` — denied/timed-out fail closed and the handler never runs. Level-1 commands execute immediately.
 
 **The 10 former per-function tool modules are now COMMAND HANDLERS**: `ListTasks`, `GetTask`, `StartTask`, `CancelTask`, `ForceKillTask`, `DeleteTask`, `SpawnInvestigator`, `GuideUser`, `ListRecentProjects`, `SystemInfo` keep their `execute/3` functions and are invoked by the shell as `apply(module, :execute, [parsed_args_map, nil, nil])` with a STRING-keyed argument map built from the registry entry's declared arg specs (no per-tool schema, no dispatch clause). They return readable strings and never raise — the task-system calls are wrapped in justified tool-boundary `rescue`/`catch :exit` (TaskRegistry GenServer down → `:noproc` exit; 30s `GenServer.call` timeout) returning `"task system unavailable: ..."` style strings.
 
 **Command catalog** — the declarative compile-time registry lives in `EvoGit.CommandShell` (`apps/evo_git/lib/evo_git/command_shell.ex`):
 
-| Command | Args |
-|---|---|
-| `ListTasks.list_tasks` | optional `statuses=` (comma-separated enum_list: `pending/running/finalizing/completed/failed/cancelled/cancelling`) |
-| `GetTask.get_task <task_id>` | required positional task_id |
-| `StartTask.start_task <task_type> [objective] [path= mode= resume_from= starting_commit= model_id=]` | task_type positional enum `genesis/evolve/reflect/extract_skills`; objective positional optional (default `""`); rest optional kv strings |
-| `CancelTask.cancel_task <task_id>` | required positional |
-| `ForceKillTask.force_kill_task <task_id>` | required positional |
-| `DeleteTask.delete_task <task_id>` | required positional |
-| `SpawnInvestigator.spawn_investigator <path> <objective>` | both required positionals — **v1 placeholder, does NOT spawn** |
-| `GuideUser.guide_user <message> [page= selector= dismissible=true\|false]` | message required positional; page/selector optional kv; dismissible optional bool (default `true`) |
-| `ListRecentProjects.list_recent_projects` | none |
-| `SystemInfo.system_info` | none |
-| `help [command]` | built-in — handled by the shell itself |
+| Command | Level | Args |
+|---|---|---|
+| `ListTasks.list_tasks` | 1 | optional `statuses=` (comma-separated enum_list: `pending/running/finalizing/completed/failed/cancelled/cancelling`) |
+| `GetTask.get_task <task_id>` | 1 | required positional task_id |
+| `StartTask.start_task <task_type> [objective] [path= mode= resume_from= starting_commit= model_id=]` | 3 | task_type positional enum `genesis/evolve/reflect/extract_skills`; objective positional optional (default `""`); rest optional kv strings |
+| `CancelTask.cancel_task <task_id>` | 3 | required positional |
+| `ForceKillTask.force_kill_task <task_id>` | 3 | required positional |
+| `DeleteTask.delete_task <task_id>` | 3 | required positional |
+| `SpawnInvestigator.spawn_investigator <path> <objective>` | 1 | both required positionals — **v1 placeholder, does NOT spawn** |
+| `GuideUser.guide_user <message> [page= selector= dismissible=true\|false]` | 2 | message required positional; page/selector optional kv; dismissible optional bool (default `true`) |
+| `ListRecentProjects.list_recent_projects` | 1 | none |
+| `SystemInfo.system_info` | 1 | none |
+| `help [command]` | 1 | built-in — handled by the shell itself |
 
-**Security constraints**: the registry is a compile-time literal — no `Code.eval_string`, no dynamic apply/eval with input-derived names (module/function atoms come only from the literal registry); **no `String.to_atom` on input** — enum/bool/statuses are validated against fixed literal lists and passed through as strings (handlers do their own validated atom conversion); whitelist-only dispatch (unknown command paths rejected); length guardrails `@max_command_length` 4000, `@max_tokens` 40, `@max_token_length` 2000.
+Level 1 = safe read-only, executes immediately; level 2 = needs the user's attention; level 3 = real side effects. Level-2/3 commands are approval-gated (see above).
 
-**HOW TO ADD A NEW COMMAND**: write/point a handler `execute/3` + add ONE registry entry in `EvoGit.CommandShell` — no tool schema, no dispatch clause.
+**Security constraints**: the registry is a compile-time literal — no `Code.eval_string`, no dynamic apply/eval with input-derived names (module/function atoms come only from the literal registry); **no `String.to_atom` on input** — enum/bool/statuses are validated against fixed literal lists and passed through as strings (handlers do their own validated atom conversion); whitelist-only dispatch (unknown command paths rejected); length guardrails `@max_command_length` 4000, `@max_tokens` 40, `@max_token_length` 2000. **Security levels**: each entry carries `level:` (see table above); level-2/3 commands are additionally gated on human approval at the shell's dispatch choke point (`EvoGit.CommandShell.run_command/3` → `EvoGit.CommandApproval.request/5`) — level-1 commands and parse/validation errors bypass the gate. `security_level/1` maps a path string to 1\|2\|3 (`"help"`/`"Help"` → 1; unknown/non-binary → 1).
+
+**HOW TO ADD A NEW COMMAND**: write/point a handler `execute/3` + add ONE registry entry in `EvoGit.CommandShell` (including its `level:`) — no tool schema, no dispatch clause.

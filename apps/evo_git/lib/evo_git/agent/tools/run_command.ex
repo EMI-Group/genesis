@@ -8,6 +8,21 @@ defmodule EvoGit.Agent.Tools.RunCommand do
   `EvoGit.CommandShell.execute/1`, which returns `{:ok, output} | {:error,
   reason}`; errors are surfaced to the agent as a readable `Error: ...`
   string so it can adjust its next command.
+
+  ## Security levels (user confirmation)
+
+  Commands carry a security level enforced at the shell dispatch choke point:
+  level-1 commands (listing/inspecting — `ListTasks.list_tasks`,
+  `GetTask.get_task`, `ListRecentProjects.list_recent_projects`,
+  `SystemInfo.system_info`, `help`) execute immediately. Level-2 commands
+  (`GuideUser.guide_user` — needs the user's attention) and level-3 commands
+  (`StartTask.start_task`, `CancelTask.cancel_task`,
+  `ForceKillTask.force_kill_task`, `DeleteTask.delete_task` — real side
+  effects) do NOT execute until the user approves them interactively in the
+  /help chat (`EvoGit.CommandApproval`). The command's handler runs only on
+  approval; a denial or a timeout returns an `Error: ...` string and the
+  command never runs. Run `help` to see which commands are marked
+  "requires user confirmation".
   """
 
   alias EvoGit.Agent.Tools.Shared
@@ -20,7 +35,11 @@ defmodule EvoGit.Agent.Tools.RunCommand do
       name: "run_command",
       description:
         "Executes a command-shell command and returns its output. Run 'help' " <>
-          "to list available commands.",
+          "to list available commands. NOTE: task-control commands (start / " <>
+          "cancel / force-kill / delete a task) and dashboard-guide commands do " <>
+          "NOT execute until you ask the user to confirm them and the user " <>
+          "approves in the chat — expect the command to pause for user " <>
+          "confirmation (or to be refused).",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{

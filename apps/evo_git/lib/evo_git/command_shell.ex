@@ -26,6 +26,17 @@ defmodule EvoGit.CommandShell do
   - Only the whitelisted commands are callable, and handlers are only ever
     invoked with the parsed argument map built from their declared arg specs —
     never with arbitrary arguments.
+  - **Security levels** (`level` per registry entry; `security_level/1`): level
+    1 = safe read-only commands that execute immediately; level 2 = commands
+    that need the user's attention (a transient dashboard guide); level 3 =
+    commands with real side effects (task start/cancel/force-kill/delete).
+    Levels 2 and 3 are enforced at the dispatch choke point
+    (`run_command/3`): the handler runs ONLY after the user approves the
+    command in the /help chat via `EvoGit.CommandApproval` (blocking, bounded
+    approval window, task-lifecycle auto-deny). Any non-`:approved` outcome
+    (denied, timed out, approval service unavailable) fails closed — the
+    handler never runs. This is defense-in-depth: it gates the actual dispatch,
+    not just LLM prompt guidance.
   """
 
   alias EvoGit.Agent.Tools.{
@@ -58,10 +69,17 @@ defmodule EvoGit.CommandShell do
   # The registry: a compile-time literal map of command path → handler entry.
   # `module` is the existing task-control tool module; `args` declares how the
   # shell parses and validates the command's tokens into the handler's
-  # STRING-keyed argument map (e.g. `%{"task_type" => "evolve"}`).
+  # STRING-keyed argument map (e.g. `%{"task_type" => "evolve"}`). `level` is
+  # the command's security level, enforced at the dispatch choke point
+  # (`run_command/3`): level 1 = safe read-only (executes immediately), level 2
+  # = needs the user's attention (a transient dashboard guide), level 3 = real
+  # side effects (task start/cancel/force-kill/delete). Levels 2 and 3 do NOT
+  # execute until the user approves them in the /help chat via
+  # `EvoGit.CommandApproval` (see `security_level/1`).
   @registry %{
     "ListTasks.list_tasks" => %{
       module: ListTasks,
+      level: 1,
       summary: "Lists tasks from the task registry, optionally filtered by status.",
       args: [
         %{
@@ -76,6 +94,7 @@ defmodule EvoGit.CommandShell do
     },
     "GetTask.get_task" => %{
       module: GetTask,
+      level: 1,
       summary: "Fetches the details of a single task by id.",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
@@ -83,6 +102,7 @@ defmodule EvoGit.CommandShell do
     },
     "StartTask.start_task" => %{
       module: StartTask,
+      level: 3,
       summary: "Starts a new background task (genesis / evolve / reflect / extract_skills).",
       args: [
         %{
@@ -103,6 +123,7 @@ defmodule EvoGit.CommandShell do
     },
     "CancelTask.cancel_task" => %{
       module: CancelTask,
+      level: 3,
       summary: "Gracefully cancels a task by id (intermediate results preserved).",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
@@ -110,6 +131,7 @@ defmodule EvoGit.CommandShell do
     },
     "ForceKillTask.force_kill_task" => %{
       module: ForceKillTask,
+      level: 3,
       summary: "Force-kills a task by id (all progress lost).",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
@@ -117,6 +139,7 @@ defmodule EvoGit.CommandShell do
     },
     "DeleteTask.delete_task" => %{
       module: DeleteTask,
+      level: 3,
       summary: "Permanently deletes a task by id (history removed).",
       args: [
         %{key: "task_id", type: :string, required: true, positional: 1, default: nil}
@@ -124,6 +147,7 @@ defmodule EvoGit.CommandShell do
     },
     "SpawnInvestigator.spawn_investigator" => %{
       module: SpawnInvestigator,
+      level: 1,
       summary: "Investigates a codebase path (v1 placeholder — does NOT spawn a subagent).",
       args: [
         %{key: "path", type: :string, required: true, positional: 1, default: nil},
@@ -132,6 +156,7 @@ defmodule EvoGit.CommandShell do
     },
     "GuideUser.guide_user" => %{
       module: GuideUser,
+      level: 2,
       summary: "Shows a transient user-facing guide in the dashboard UI.",
       args: [
         %{key: "message", type: :string, required: true, positional: 1, default: nil},
@@ -142,11 +167,13 @@ defmodule EvoGit.CommandShell do
     },
     "ListRecentProjects.list_recent_projects" => %{
       module: ListRecentProjects,
+      level: 1,
       summary: "Lists the user's recently opened projects, most recent first.",
       args: []
     },
     "SystemInfo.system_info" => %{
       module: SystemInfo,
+      level: 1,
       summary: "Reports local platform and system information.",
       args: []
     }
@@ -182,6 +209,32 @@ defmodule EvoGit.CommandShell do
   end
 
   @doc """
+  Returns the security level of a command path: `1` (safe read-only — executes
+  immediately), `2` (needs the user's attention — guide), or `3` (real side
+  effects — task start/cancel/force-kill/delete).
+
+  Levels 2 and 3 require interactive user confirmation via
+  `EvoGit.CommandApproval` before the command's handler runs (enforced in
+  `run_command/3`). The built-in `help` command is level 1. Unknown paths
+  report `1` (they fail dispatch fast with an error regardless).
+
+  The tool-dispatch layer uses this to size the per-call timeout of
+  approval-requiring `run_command` calls (`EvoGit.Agent.ToolDispatch`).
+  """
+  @spec security_level(String.t()) :: 1 | 2 | 3
+  def security_level("help"), do: 1
+  def security_level("Help"), do: 1
+
+  def security_level(path) when is_binary(path) do
+    case Map.fetch(@registry, path) do
+      {:ok, entry} -> Map.get(entry, :level, 1)
+      :error -> 1
+    end
+  end
+
+  def security_level(_other), do: 1
+
+  @doc """
   Returns a human-readable catalog of every registered command with its
   argument syntax and summary — the LLM-facing help text. Also returned by the
   built-in `help` command.
@@ -205,7 +258,8 @@ defmodule EvoGit.CommandShell do
       rows
       |> Enum.zip(lefts)
       |> Enum.map(fn {{_path, entry}, left} ->
-        "  " <> String.pad_trailing(left, width) <> "   " <> entry.summary
+        "  " <>
+          String.pad_trailing(left, width) <> "   " <> entry.summary <> confirmation_marker(entry)
       end)
 
     (["Available commands:"] ++
@@ -249,8 +303,15 @@ defmodule EvoGit.CommandShell do
   defp handle_help([path]), do: help(path)
   defp handle_help(_more), do: {:error, "help accepts at most one command path argument."}
 
+  # Dispatch choke point. After the command tokenizes and its arguments parse
+  # and validate, the security-level gate runs BEFORE the handler: level-1
+  # commands execute immediately (unchanged behavior); level-2/3 commands route
+  # through EvoGit.CommandApproval and run ONLY on `:approved`. Denied, timed
+  # out, or an unavailable approval service fail closed — the handler never
+  # runs.
   defp run_command(path, entry, tokens) do
-    with {:ok, args_map} <- parse_args(path, entry.args, tokens) do
+    with {:ok, args_map} <- parse_args(path, entry.args, tokens),
+         :ok <- approval_gate(path, entry, args_map) do
       # The module/function atoms come from the compile-time registry literal —
       # never derived from input. The handler returns a plain string and never
       # raises; wrap it defensively anyway.
@@ -261,6 +322,54 @@ defmodule EvoGit.CommandShell do
       else
         {:error, "Unexpected handler output: #{inspect(output)}"}
       end
+    end
+  end
+
+  # Security-level gate: level-1 commands (and entries without an explicit
+  # level — default 1) never gate; zero behavioral change for the read-only
+  # inspection commands. Levels 2 and 3 block on user approval.
+  defp approval_gate(path, entry, args_map) when is_map(entry) do
+    level = Map.get(entry, :level, 1)
+
+    if level >= 2 do
+      request_approval(path, level, args_map)
+    else
+      :ok
+    end
+  end
+
+  # Blocks until the user approves/denies the command in the /help chat (or
+  # the approval window expires). The requesting agent/task are read from the
+  # process dictionary — the tool-dispatch layer re-establishes these keys
+  # inside the spawned tool task (spawned tasks do not inherit the caller's
+  # process dictionary); direct/test callers have neither and pass nil (the
+  # request still gates by request_id and its own task lifecycle).
+  defp request_approval(path, level, args_map) do
+    agent_id = Process.get(:evogit_agent_id)
+    task_id = Process.get(:evogit_task_id)
+
+    case EvoGit.CommandApproval.request(path, human_args(args_map), level, agent_id, task_id) do
+      :approved ->
+        :ok
+
+      :denied ->
+        {:error,
+         "Action denied by the user: #{path} was not executed. Tell the user what you " <>
+           "intended and let them decide."}
+
+      :timeout ->
+        {:error,
+         "The user did not confirm #{path} in time, so it was not executed. " <>
+           "You can ask again if still needed."}
+    end
+  end
+
+  # Renders the validated argument map as a compact human-readable string for
+  # the approval request (nil/default entries omitted).
+  defp human_args(args_map) when is_map(args_map) do
+    case Enum.reject(args_map, fn {_key, value} -> is_nil(value) end) do
+      [] -> "(no arguments)"
+      kvs -> kvs |> Enum.map(fn {key, value} -> "#{key}=#{inspect(value)}" end) |> Enum.join(", ")
     end
   end
 
@@ -541,12 +650,22 @@ defmodule EvoGit.CommandShell do
       end
 
     ([
-       "#{path} — #{entry.summary}",
+       "#{path} — #{entry.summary}#{confirmation_marker(entry)}",
        "Usage: #{path} #{usage_syntax(entry.args)}",
        "",
        "Arguments:"
      ] ++ arg_lines)
     |> Enum.join("\n")
+  end
+
+  # Level >= 2 commands need interactive user confirmation before they execute;
+  # reflect that in every help surface so the catalog the LLM sees is accurate.
+  defp confirmation_marker(entry) do
+    if Map.get(entry, :level, 1) >= 2 do
+      " — requires user confirmation"
+    else
+      ""
+    end
   end
 
   defp describe_arg(spec) do
