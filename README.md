@@ -233,7 +233,7 @@ More package managers will be added over time. Contributions are welcome — see
 
 ## 🙏 Acknowledgements
 
-Genesis was born out of the [EvoGit](https://github.com/EMI-Group/evogit) project and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
+Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit) project and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
 
 ---
 
