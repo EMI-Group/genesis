@@ -43,7 +43,7 @@ defmodule EvoDashWeb.TasksLive do
               <div class="form-control">
                 <select
                   name="status_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
                   phx-change="filter_tasks"
                 >
                   <option value="all" selected={@status_filter == "all"}>
@@ -74,7 +74,7 @@ defmodule EvoDashWeb.TasksLive do
               <div class="form-control">
                 <select
                   name="project_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
                   phx-change="filter_tasks"
                 >
                   <option value="all" selected={@project_filter == "all"}>
@@ -92,7 +92,7 @@ defmodule EvoDashWeb.TasksLive do
               <div class="form-control">
                 <select
                   name="review_filter"
-                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  class="select select-bordered select-md rounded-md bg-base-100 sm:w-48"
                   phx-change="filter_review"
                 >
                   <option value="all" selected={@review_status_filter == "all"}>
@@ -125,7 +125,7 @@ defmodule EvoDashWeb.TasksLive do
                     type="text"
                     name="search_query"
                     value={@search_query}
-                    class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary shadow-sm"
+                    class="input input-bordered input-md rounded-md bg-base-100 pl-10 w-full shadow-sm"
                     placeholder={gettext("Search by task ID, prompt, objective, or response...")}
                     phx-change="search_tasks"
                     phx-debounce="200"

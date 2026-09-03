@@ -173,7 +173,7 @@ defmodule EvoDashWeb.WelcomeLive do
                       name="search_query"
                       value={@search_query}
                       placeholder={gettext("Search models…")}
-                      class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all duration-200"
+                      class="input input-bordered rounded-xl w-full pl-9 pr-9 shadow-sm bg-base-100 hover:bg-base-100/80 transition-all duration-200"
                     />
                   </form>
                   <%= if @search_query != "" do %>
