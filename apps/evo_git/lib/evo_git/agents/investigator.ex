@@ -5,11 +5,8 @@ defmodule EvoGit.Agents.Investigator do
   """
   use EvoGit.Agent
 
-  alias EvoGit.Agent.Tools
-
-  alias EvoGit.Agent.Tools.CompleteTask
-
   alias EvoGit.Agents.PromptFragments
+  alias EvoGit.Agents.ReadOnlyTools
 
   def agent_type, do: :read
   def delegation_level, do: :low
@@ -26,10 +23,7 @@ defmodule EvoGit.Agents.Investigator do
       "unrestricted; it may update CONTEXT.md but never modifies source files)."
   end
 
-  def available_tools do
-    Tools.read_only_schemas() ++
-      EvoGit.Agent.SubagentSchemas.schemas(__MODULE__) ++ [CompleteTask.schema()]
-  end
+  def available_tools, do: ReadOnlyTools.available_tools(__MODULE__)
 
   def subagent_modules, do: [__MODULE__]
 
