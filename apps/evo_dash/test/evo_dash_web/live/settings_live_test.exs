@@ -3025,14 +3025,30 @@ defmodule EvoDashWeb.SettingsLiveTest do
   describe "md+ independent scroll layout contract" do
     # The two-column row (`flex flex-col md:flex-row md:flex-1 md:min-h-0` in
     # settings_live.ex) is sized by the flex algorithm and has NO definite
-    # `height` property. A percentage `h-full` on a content-column ROOT
-    # therefore resolves to auto: the column grows to its content, the whole
-    # page inflates past the viewport, the BODY scrolls, and the section nav +
-    # content panes scroll LINKED on md+ instead of independently (the
-    # reported "Scheduler/Sandbox/Tools scrolling linked" bug). Contract:
-    # every content column is sized by `flex-1` alone (+ `overflow-y-auto` on
-    # the column or its inner scroll div). The `md:h-full` on the outer
-    # wrapper (settings_live.ex) and the sidebar are correct and must stay.
+    # `height` property. Two rules keep the section-nav sidebar and the
+    # content pane scrolling INDEPENDENTLY on md+:
+    #
+    # 1. A content-column ROOT must NEVER carry `h-full`: a percentage height
+    #    resolves to auto (the row has no definite height), the column grows
+    #    to its content, the whole page inflates past the viewport, the BODY
+    #    scrolls, and the panes scroll LINKED (the reported
+    #    "Scheduler/Sandbox/Tools scrolling linked" bug). Content columns are
+    #    sized by `flex-1` alone (+ `overflow-y-auto` on the column or its
+    #    inner scroll div). The `md:h-full` on the outer wrapper
+    #    (settings_live.ex) and the sidebar are correct and must stay.
+    # 2. Every main-axis (column-direction) NON-scroll flex item between the
+    #    bounded column and the inner scroll container MUST carry `min-h-0`.
+    #    Without it, the flexbox content-based automatic minimum
+    #    (`min-height: auto`) keeps the item from shrinking below its content
+    #    (~3000px), the inner `flex-1 overflow-y-auto` body never engages,
+    #    content spills to `#main-scroll`, and the panes scroll LINKED. The
+    #    generic categories' `save_category` `<.form>` sits between the
+    #    `category_section` root and its scroll body, so it is THE element
+    #    needing `min-h-0`. The `:llm` category works because its scroll body
+    #    is a DIRECT child of the column root (scroll containers get automatic
+    #    min-size 0); search/`:remote_connections`/`:agents` work because the
+    #    column/form ITSELF is the scroll container. Only the generic `:else`
+    #    path buries the scroll body behind the non-`min-h-0` form.
     test "content columns size by flex-1, never h-full", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/settings")
 
@@ -3052,6 +3068,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         root_classes = root |> Floki.attribute("class") |> Enum.join(" ")
         assert root_classes =~ "flex-1 flex flex-col min-w-0"
         refute root_classes =~ "h-full", "category root must not carry h-full"
+        assert root_classes =~ "min-h-0", "category root must carry min-h-0 (main-axis non-scroll flex intermediate chain)"
 
         # The save_category form fills the column and its inner scroll body
         # (flex-1 overflow-y-auto) owns the scrolling.
@@ -3059,6 +3076,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         form_classes = form |> Floki.attribute("class") |> Enum.join(" ")
         assert form_classes =~ "flex-1 flex flex-col min-w-0"
         refute form_classes =~ "h-full"
+        assert form_classes =~ "min-h-0", "save_category form must carry min-h-0 so the inner overflow-y-auto body engages"
 
         assert Floki.find(doc, ~s(div[id="category-#{cat}"] .overflow-y-auto)) != [],
                "category section must keep an inner overflow-y-auto scroll body"
