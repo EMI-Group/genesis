@@ -107,17 +107,22 @@ defmodule EvoDashWeb.SettingsLive do
              md+ INDEPENDENT-SCROLL HEIGHT CHAIN: `#main-content` (layouts.ex)
              is `flex-1 min-h-0` inside the `h-dvh` app shell, so this
              wrapper's `md:h-full` is bounded to viewport-minus-chrome; the
-             two-column row below is `md:flex-1 md:min-h-0`, giving the
-             sidebar (`md:h-full overflow-y-auto` in sidebar.ex) and each
-             content column (category_section/search_results internal
-             `flex-1 overflow-y-auto`; the :remote_connections/:agents
-             columns carry `overflow-y-auto` on their wrapper) a bounded
-             height so they scroll independently of the outer page. The
-             `sticky top-0` section headers stick within their content
-             column's scroll. Below md the row stacks naturally and the whole
-             page scrolls via `#main-scroll`. Warning banners above are
-             direct children of the wrapper (shrink-0 so they never squish).
-             Note: after editing Tailwind classes here, rebuild assets with
+             two-column row below is `md:flex-1 md:min-h-0`. Every CONTENT
+             column is a direct flex child of that row and is sized by
+             `flex-1` ALONE (plus `overflow-y-auto` on the column or its
+             inner scroll div) — the sidebar (`md:h-full overflow-y-auto` in
+             sidebar.ex) and each content column are therefore bounded and
+             scroll independently of the outer page. CONTRACT: a content
+             column must NEVER carry `h-full` — the row has no definite
+             `height` property (it is flex-sized), so a percentage `h-full`
+             resolves to auto → the column grows to its content → the whole
+             page inflates past the viewport → the BODY scrolls and the two
+             panes scroll LINKED instead of independently. The `sticky
+             top-0` section headers stick within their content column's
+             scroll. Below md the row stacks naturally and the whole page
+             scrolls via `#main-scroll`. Warning banners above are direct
+             children of the wrapper (shrink-0 so they never squish). Note:
+             after editing Tailwind classes here, rebuild assets with
              `mix tailwind evo_dash` (dev) or `mix assets.deploy` (prod) —
              the CSS build (`priv/static/assets/css/`) is gitignored, so a
              stale bundle silently no-ops new utility classes. --%>
@@ -137,7 +142,7 @@ defmodule EvoDashWeb.SettingsLive do
               <.form
                 for={%{}}
                 phx-submit="save_search"
-                class="flex-1 flex flex-col min-w-0 relative"
+                class="flex-1 flex flex-col min-w-0 overflow-y-auto relative"
                 id="settings-form-search"
               >
                 <EvoDashWeb.SettingsComponents.search_results
