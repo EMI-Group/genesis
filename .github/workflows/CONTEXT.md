@@ -25,7 +25,7 @@ Triggered by **tag pushes** (`push: tags: ['v*']`, e.g. `git push origin v1.2.3`
 
 **Build process** (12 steps per platform):
 1. Checkout code
-2. Set up Erlang/OTP + Elixir (`ELIXIR_VERSION` env var pins Elixir 1.20.3; `OTP_VERSION` pins OTP 29)
+2. Set up Erlang/OTP + Elixir (`ELIXIR_VERSION` env var pins Elixir 1.20.4; `OTP_VERSION` pins OTP 29)
 3. Set up Rust toolchain (stable)
 4. Install system dependencies (Linux: webkit2gtk, libayatana, libdbus; macOS: none; Windows: none)
 5. Cache Mix deps (`deps/`), Mix build (`_build/`), Rust target, Tauri CLI (npm `@tauri-apps/cli`, cached in `~/tauri-cli`)
@@ -49,7 +49,7 @@ Triggered by **tag pushes** (`push: tags: ['v*']`, e.g. `git push origin v1.2.3`
 
 **Platform-specific quirks**:
 - **ARM64 ImageOS fix**: GitHub ARM partner runners report unrecognized `ImageOS` values; the workflow sets `ImageOS` via `$GITHUB_ENV` before `erlef/setup-beam` (`ubuntu24` on `build-linux`, `ubuntu22` on `build-linux-remote`).
-- **`build-linux-remote` runs on ubuntu-22.04** (x64 + arm64) — the dedicated `genesis_remote` glibc build — for a wider glibc (2.35) compatibility range than the desktop build's ubuntu-24.04. The pinned `.github/actions/setup-mix` (setup-beam) supports ubuntu-22.04 with OTP 29 / Elixir 1.20.3: the pinned setup-beam's README support matrix lists `ubuntu-22.04 | 24.2 - 29 | x86_64, arm64`, builds.hex.pm ships precompiled OTP-29.0.5 builds for both amd64 and arm64 ubuntu-22.04 (the floating `"29"` resolves to OTP-29.0.5), and Elixir precompiled zips are platform-independent — no `compile: true` fallback is needed.
+- **`build-linux-remote` runs on ubuntu-22.04** (x64 + arm64) — the dedicated `genesis_remote` glibc build — for a wider glibc (2.35) compatibility range than the desktop build's ubuntu-24.04. The pinned `.github/actions/setup-mix` (setup-beam) supports ubuntu-22.04 with OTP 29 / Elixir 1.20.4: the pinned setup-beam's README support matrix lists `ubuntu-22.04 | 24.2 - 29 | x86_64, arm64`, builds.hex.pm ships precompiled OTP-29.0.6 builds for both amd64 and arm64 ubuntu-22.04 (the floating `"29"` resolves to OTP-29.0.6), and Elixir precompiled zips are platform-independent — no `compile: true` fallback is needed.
 - **Desktop stays on ubuntu-24.04**: `build-linux` uses ubuntu-24.04 (x64/arm64) because the AppImage bundling requires the wxWidgets 3.2 runtime, which only noble's default repos ship.
 - **Windows**: Uses `robocopy` (not `cp -a`) for release copy; `pwsh` for shell steps.
 - **Linux x86_64**: Downloads musl-linked ripgrep (static binary). AppImage bundling requires the wxWidgets 3.2 runtime because the desktop release's wx NIFs link against wxWidgets 3.2 sonames — linuxdeploy fails with the generic "failed to run linuxdeploy" without it (see desktop/src-tauri/CONTEXT.md → Known Issues). On ubuntu-24.04 the wx 3.2 runtime is plain-apt-installed from Ubuntu's default repos (`libwxbase3.2-1t64`, `libwxgtk3.2-1t64`, `libwxgtk-gl3.2-1t64`, `libwxgtk-webview3.2-1t64` + `libglu1-mesa`) in the "Install wxWidgets 3.2 runtime (AppImage bundling)" step, gated to x64 — no PPA needed.
