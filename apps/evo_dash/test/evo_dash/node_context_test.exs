@@ -250,4 +250,65 @@ defmodule EvoDash.NodeContextTest do
                EvoDash.NodeContext.list_custom_agents(node())
     end
   end
+
+  describe "approval_response/3 (interactive command approvals)" do
+    test "non-approve/deny decisions are rejected before any dispatch (whitelist is total)" do
+      # The decision whitelist normalizes "approve"|"deny" binaries AND
+      # :approve|:deny atoms; anything else returns the error tuple without
+      # ever dispatching (never String.to_atom on raw input). node() is
+      # irrelevant here — the invalid decision short-circuits first.
+      assert EvoDash.NodeContext.approval_response(node(), "r1", "maybe") ==
+               {:error, {:invalid_decision, "maybe"}}
+
+      assert EvoDash.NodeContext.approval_response(node(), "r1", 42) ==
+               {:error, {:invalid_decision, 42}}
+    end
+
+    test "valid decisions dispatch on the local path" do
+      # EvoGit.CommandApproval ships as parallel core work and does not exist
+      # in this tree, so the guarded local path degrades to
+      # {:error, :command_approval_unavailable}. Guard on the backend's
+      # presence (mirrors home_live_test.exs:63 and the node_context.ex
+      # with_remote_connection/4 pattern) so this stays valid once the core
+      # lands: with the real module present, responding on an unknown request
+      # id must degrade to an error tuple rather than raise.
+      if Code.ensure_loaded?(EvoGit.CommandApproval) do
+        assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", "approve"))
+      else
+        assert EvoDash.NodeContext.approval_response(node(), "r1", "approve") ==
+                 {:error, :command_approval_unavailable}
+      end
+
+      # The atom-decision form is idempotent — same dispatch shape as the
+      # binary form (whitelist maps :deny -> :deny unchanged).
+      if Code.ensure_loaded?(EvoGit.CommandApproval) do
+        assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", :deny))
+      else
+        assert EvoDash.NodeContext.approval_response(node(), "r1", :deny) ==
+                 {:error, :command_approval_unavailable}
+      end
+    end
+
+    test "remote path transport failure is normalized and never raises" do
+      # No distribution to that node in the test env. The exact failure shape
+      # depends on whether the LOCAL node is distributed (some dev machines
+      # boot with [node] enabled + a free dist port — the boot attempt is
+      # skipped/fails on CI and here, where port 9000 is busy):
+      #   * non-distributed local node (:nonode@nohost) — :erpc.call RAISES
+      #     {:erpc, :noconnection}, which the catch clause normalizes into
+      #     {:error, {:error, {:erpc, :noconnection}}} (the same fast-fail
+      #     :noconnection the node_aware_test.exs remote-node tests rely on);
+      #   * distributed local node — :erpc.call returns {:badrpc, :nodedown},
+      #     which the case unwraps to {:error, :nodedown}.
+      # Either way the function is total: it returns an error tuple, never
+      # raises from a LiveView call path.
+      result = EvoDash.NodeContext.approval_response(:"nonexistent-node@nowhere", "r1", "approve")
+
+      if node() == :nonode@nohost do
+        assert result == {:error, {:error, {:erpc, :noconnection}}}
+      else
+        assert result == {:error, :nodedown}
+      end
+    end
+  end
 end
