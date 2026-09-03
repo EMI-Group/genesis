@@ -645,7 +645,7 @@ defmodule EvoDashWeb.TaskCardComponents do
     ~H"""
     <div class={["flex flex-wrap items-center gap-x-3 gap-y-1.5", @size_class]}>
       <%= for repo <- @repos do %>
-        <span class="inline-flex items-center gap-1.5">
+        <span class="inline-flex items-center gap-1.5 min-w-0">
           <span class="badge badge-ghost font-mono font-medium">
             {repo.id}:
           </span>
@@ -656,9 +656,9 @@ defmodule EvoDashWeb.TaskCardComponents do
             </span>
           <% end %>
           <%= if repo.branch_name do %>
-            <span class="badge badge-primary font-mono">
-              <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
-              {repo.branch_name}
+            <span class={branch_badge_class()}>
+              <.icon name="hero-code-bracket-square" class="size-3 mr-1 shrink-0" />
+              <span class="truncate min-w-0"><%= repo.branch_name %></span>
             </span>
           <% else %>
             <%= if repo.id == "primary" do %>
@@ -826,9 +826,9 @@ defmodule EvoDashWeb.TaskCardComponents do
       <%= if !@truncate do %>
         <div class="flex flex-wrap gap-2 mb-4">
           <%= if @branch_name do %>
-            <span class="badge badge-primary font-mono text-sm">
-              <.icon name="hero-code-bracket-square" class="size-4 mr-1" />
-              {@branch_name}
+            <span class={[branch_badge_class(), "text-sm"]}>
+              <.icon name="hero-code-bracket-square" class="size-4 mr-1 shrink-0" />
+              <span class="truncate min-w-0"><%= @branch_name %></span>
             </span>
           <% end %>
           <%= if @commit_sha do %>
@@ -899,9 +899,9 @@ defmodule EvoDashWeb.TaskCardComponents do
             </span>
           <% end %>
           <%= if @branch_name do %>
-            <span class="badge badge-primary font-mono">
-              <.icon name="hero-code-bracket-square" class="size-3 mr-1" />
-              {@branch_name}
+            <span class={branch_badge_class()}>
+              <.icon name="hero-code-bracket-square" class="size-3 mr-1 shrink-0" />
+              <span class="truncate min-w-0"><%= @branch_name %></span>
             </span>
           <% end %>
           <%= if @pr_url do %>
@@ -997,6 +997,17 @@ defmodule EvoDashWeb.TaskCardComponents do
   def result_copy_text(%{result: result}) when is_binary(result), do: result
   def result_copy_text(result), do: inspect(result, pretty: true, limit: :infinity)
 
+  # Shared truncation classes for branch-name badges (all 3 render sites).
+  # daisyUI `.badge` is `display: inline-flex; width: fit-content` with no
+  # wrapping, so a long unbreakable branch name (`genesis/agent_<id>`) would
+  # force the badge wider than the card. `min-w-0` lets the badge (a flex
+  # item) shrink below its content width, the responsive `max-w-*` caps it at
+  # narrow widths only (`md:max-w-none` = full name on desktop), and the text
+  # itself is wrapped in a `truncate` span — text-overflow ellipsis does NOT
+  # apply on the flex badge container itself, only on a block container.
+  defp branch_badge_class do
+    "badge badge-primary font-mono min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none"
+  end
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
        when is_binary(branch) and branch != "", do: true
 
