@@ -29,8 +29,6 @@ defmodule EvoDashWeb.AgentsComponents do
           <!-- L-connector from parent's trunk to this node's folder icon -->
           <!-- Connects x=10px (parent trunk) to x=24px (left edge of this child's folder icon) -->
           <div class="absolute -left-3.5 top-0 w-3.5 h-[18px] border-l-2 border-b-2 border-base-content/20 rounded-bl-sm z-0 pointer-events-none"></div>
-          <!-- Accent node dot at the connector elbow — theme-token accent, visible in both themes -->
-          <div class="absolute -left-4 top-[15px] size-1.5 rounded-full bg-primary/60 z-0 pointer-events-none"></div>
           
           <!-- Continuation trunk for next siblings -->
           <%= if not is_last do %>
