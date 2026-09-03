@@ -214,6 +214,22 @@ defmodule EvoGit.Config.LLMCatalogTest do
                %{provider: :deepseek, id: "deepseek-v4-flash-vision-exp"}
     end
 
+    test "resolves gemini-3.8-flash and claude-fable-5.1 catalog additions to their ids" do
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.8-flash") ==
+               %{provider: :google, id: "gemini-3.8-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-fable-5.1") ==
+               %{provider: :anthropic, id: "claude-fable-5.1"}
+    end
+
+    test "resolves gemini-3.8-flash and claude-fable-5.1 display names to canonical catalog ids" do
+      assert LLMCatalog.resolve_model_spec(:google, "Gemini 3.8 Flash") ==
+               %{provider: :google, id: "gemini-3.8-flash"}
+
+      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Fable 5.1") ==
+               %{provider: :anthropic, id: "claude-fable-5.1"}
+    end
+
     test "includes base_url when a non-empty value is provided" do
       assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "https://my.proxy/v1") ==
                %{provider: :openai, id: "gpt-5.5", base_url: "https://my.proxy/v1"}
