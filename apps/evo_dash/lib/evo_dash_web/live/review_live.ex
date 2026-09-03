@@ -30,7 +30,7 @@ defmodule EvoDashWeb.ReviewLive do
         <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
           <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
-          <p class="text-sm text-base-content/60 mb-4">{@error}</p>
+          <p class="text-sm text-base-content/80 mb-4">{@error}</p>
           <.link navigate={with_node_param(~p"/projects", @current_node_id)} class="btn btn-primary px-6 gap-2">
             <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
           </.link>
@@ -178,9 +178,9 @@ defmodule EvoDashWeb.ReviewLive do
                         <div class="p-8 text-center">
                           <.icon
                             name="hero-document-magnifying-glass"
-                            class="size-10 text-base-content/30 mx-auto mb-3"
+                            class="size-10 text-base-content/50 mx-auto mb-3"
                           />
-                          <p class="text-sm text-base-content/50">
+                          <p class="text-sm text-base-content/70">
                             {gettext("No diff data available for this review.")}
                           </p>
                         </div>
@@ -197,9 +197,9 @@ defmodule EvoDashWeb.ReviewLive do
                         <div class="p-8 text-center">
                           <.icon
                             name="hero-archive-box-x-mark"
-                            class="size-10 text-base-content/30 mx-auto mb-3"
+                            class="size-10 text-base-content/50 mx-auto mb-3"
                           />
-                          <p class="text-sm text-base-content/50">
+                          <p class="text-sm text-base-content/70">
                             {gettext("No archived agent data available for this task.")}
                           </p>
                         </div>

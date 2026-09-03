@@ -36,7 +36,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   The Genesis Source UI renders as a CELL of the System Self-Check check grid
   (`source_section/1` component) — a peer of the Configuration / Required
   Tools / Sandbox / Nix / LLM Connection cards, with the same
-  `rounded-lg border border-base-200 bg-base-100` container, tinted icon box,
+  `rounded-lg border border-base-300 bg-base-100` container, tinted icon box,
   and `font-semibold text-sm` title. It shows only the minimal useful info:
   the checkout directory (`dir`), the checked-out commit + version when
   cloned, and the clone/update buttons. The branch and remote-URL displays
@@ -72,7 +72,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   """
   def source_section(assigns) do
     ~H"""
-    <div id="genesis-source-card" class="rounded-lg border border-base-200 bg-base-100">
+    <div id="genesis-source-card" class="rounded-lg border border-base-300 bg-base-100">
       <div class="flex items-center gap-3 p-4">
         <div class="p-2 rounded-md bg-info/10 shrink-0">
           <.icon name="hero-code-bracket-square" class="size-4 text-info" />
@@ -145,7 +145,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
             <% status when is_map(status) -> %>
               <div class="space-y-1.5 text-sm">
                 <div class="flex items-baseline gap-2 min-w-0">
-                  <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Directory")} <% # zh_CN: "目录" %></span>
+                  <span class="text-base-content/70 shrink-0 font-medium w-24">{gettext("Directory")} <% # zh_CN: "目录" %></span>
                   <span class="font-mono text-xs text-base-content/80 break-all min-w-0">
                     {status.dir || ""}
                   </span>
@@ -153,13 +153,13 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
                 <%= if status.exists do %>
                   <%= if status.commit do %>
                     <div class="flex items-baseline gap-2 min-w-0">
-                      <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Commit")} <% # zh_CN: "提交" %></span>
+                      <span class="text-base-content/70 shrink-0 font-medium w-24">{gettext("Commit")} <% # zh_CN: "提交" %></span>
                       <span class="font-mono text-xs text-base-content/80">{status.commit}</span>
                     </div>
                   <% end %>
                   <%= if status.version do %>
                     <div class="flex items-baseline gap-2 min-w-0">
-                      <span class="text-base-content/50 shrink-0 font-medium w-24">{gettext("Version")} <% # zh_CN: "版本" %></span>
+                      <span class="text-base-content/70 shrink-0 font-medium w-24">{gettext("Version")} <% # zh_CN: "版本" %></span>
                       <span class="font-mono text-xs text-base-content/80">{status.version}</span>
                     </div>
                   <% end %>
@@ -174,7 +174,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
                 <!-- The Directory row shows the managed checkout dir; when an
                      explicit override is in effect the self-reflective agent
                      actually reads `reference`, so carry it here -->
-                <p class="text-xs text-base-content/40 mt-2 flex items-baseline gap-1 flex-wrap">
+                <p class="text-xs text-base-content/70 mt-2 flex items-baseline gap-1 flex-wrap">
                   <span>{gettext("An explicit override is in effect")} <% # zh_CN: "已设置显式覆盖（GENESIS_SOURCE_ROOT 环境变量或应用配置）" %></span>
                   <span class="font-mono break-all">{status.reference}</span>
                 </p>
