@@ -47,20 +47,20 @@ defmodule EvoDashWeb.SystemLive do
           <!-- Software Update card (desktop shell only; hidden on remote nodes) -->
           <div
             id="software-update-card"
-            class="rounded-lg border border-base-200 bg-base-100 p-4 mb-6"
+            class="rounded-lg border border-base-300 bg-base-100 p-4 mb-6"
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-start gap-3">
                 <.icon name="hero-arrow-down-tray" class="size-5 text-info shrink-0" />
                 <div>
-                  <h2 class="text-base font-bold tracking-tight">
+                  <h2 class="text-base font-bold">
                     {gettext("Software Update")} <% # zh_CN: "软件更新" %>
                   </h2>
                   <p class="text-sm text-base-content/60 mt-0.5">
                     {gettext("Check for and install the latest Genesis release.")} <% # zh_CN: "检查并安装最新版 Genesis" %>
                   </p>
                   <%= if @update_status.current_version do %>
-                    <p class="text-xs text-base-content/40 mt-1">
+                    <p class="text-xs text-base-content/60 mt-1">
                       {gettext("Current version: %{version}",
                         version: @update_status.current_version
                       )} <% # zh_CN: "当前版本" %>
@@ -96,7 +96,7 @@ defmodule EvoDashWeb.SystemLive do
                     <.icon name="hero-arrow-path" class="size-5 animate-spin text-base-content/50" />
                     <span class="text-sm text-base-content/60">{gettext("Checking for updates…")}</span>
                     <%= if @update_status.last_checked_at do %>
-                      <span class="text-xs text-base-content/40">
+                      <span class="text-xs text-base-content/60">
                         {gettext("Last checked")} {EvoDashWeb.Helpers.format_datetime(
                           @update_status.last_checked_at
                         )}
@@ -112,7 +112,7 @@ defmodule EvoDashWeb.SystemLive do
                       )} <% # zh_CN: "已是最新版本" %>
                     </span>
                   </div>
-                  <p class="text-xs text-base-content/40 mt-1">
+                  <p class="text-xs text-base-content/60 mt-1">
                     {gettext("Last checked")} {EvoDashWeb.Helpers.format_datetime(
                       @update_status.last_checked_at
                     )}
@@ -198,7 +198,7 @@ defmodule EvoDashWeb.SystemLive do
                           <span class="text-sm text-error">{gettext("Check failed")}</span>
                           <%= if @update_status.error do %>
                             <!-- Raw backend diagnostic detail (English) — not a UI string -->
-                            <span class="block text-xs text-base-content/40 break-all">
+                            <span class="block text-xs text-base-content/60 break-all">
                               {@update_status.error}
                             </span>
                           <% end %>
@@ -401,7 +401,7 @@ defmodule EvoDashWeb.SystemLive do
                               else: gettext("Disabled")}
                           </span>
                           <%= if @sandbox_check.backend != :none do %>
-                            <span class="text-xs text-base-content/40">
+                            <span class="text-xs text-base-content/70">
                               {gettext("Filesystem isolation")}: {if @sandbox_check.capabilities.filesystem_isolation,
                                 do: "✓",
                                 else: "✗"} · {gettext("Resource limits")}: {if @sandbox_check.capabilities.resource_limits,
@@ -450,7 +450,7 @@ defmodule EvoDashWeb.SystemLive do
                             {gettext("flake.nix")}: {if @nix_check.flake_present, do: "✓", else: "✗"}
                           </span>
                           <%= if @nix_check.flake_present do %>
-                            <span class="text-xs text-base-content/40">
+                            <span class="text-xs text-base-content/70">
                               {gettext("Flake valid")}: {if @nix_check.dev_env_built,
                                 do: "✓",
                                 else: "✗"}
@@ -537,7 +537,7 @@ defmodule EvoDashWeb.SystemLive do
         <%= if @show_restart_confirm do %>
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_restart"></div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
                 <h3 class="text-lg font-bold">{gettext("Restart System?")}</h3>
@@ -581,7 +581,7 @@ defmodule EvoDashWeb.SystemLive do
         <%= if @show_stop_confirm do %>
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="cancel_stop"></div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
                 <h3 class="text-lg font-bold">{gettext("Stop System?")}</h3>
@@ -625,7 +625,7 @@ defmodule EvoDashWeb.SystemLive do
           <!-- Software Update busy-apply modal (tasks still running) -->
           <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div class="fixed inset-0 bg-black/50 backdrop-blur-sm"></div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-clock" class="size-5 text-warning" />
                 <h3 class="text-lg font-bold">{gettext("Tasks still running")}</h3>
@@ -677,7 +677,7 @@ defmodule EvoDashWeb.SystemLive do
               phx-click="cancel_force_kill_update"
             >
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
                 <h3 class="text-lg font-bold">{gettext("Force Kill & Update?")}</h3>
@@ -721,7 +721,7 @@ defmodule EvoDashWeb.SystemLive do
               phx-click="close_changelog"
             >
             </div>
-            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-2xl w-full p-6 md:p-8">
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-2xl w-full p-6 md:p-8">
               <div class="flex items-center gap-3 mb-4">
                 <.icon name="hero-document-text" class="size-5 text-info" />
                 <h3 class="text-lg font-bold">
@@ -1723,7 +1723,7 @@ defmodule EvoDashWeb.SystemLive do
   # hint when the term is failing (any status other than :ok/:info).
   defp check_cell(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100">
+    <div class="rounded-lg border border-base-300 bg-base-100">
       <div class="flex items-center gap-3 p-4">
         <div class={"p-2 rounded-md #{status_bg(@status)}"}>
           <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
@@ -1745,7 +1745,7 @@ defmodule EvoDashWeb.SystemLive do
       <div class="px-4 pb-4 text-sm">
         {render_slot(@details)}
         <%= if @status not in [:ok, :info] and @fix != [] do %>
-          <div class="mt-3 pt-3 border-t border-base-200/60 flex items-start gap-2 text-xs text-base-content/70">
+          <div class="mt-3 pt-3 border-t border-base-300/60 flex items-start gap-2 text-xs text-base-content/70">
             <.icon name="hero-light-bulb" class="size-3.5 text-warning shrink-0 mt-0.5" />
             <div class="min-w-0">{render_slot(@fix)}</div>
           </div>
@@ -1764,7 +1764,7 @@ defmodule EvoDashWeb.SystemLive do
       <%= if @check.available do %>
         <.icon name="hero-check-circle" class="size-4 text-success" />
         <span class="text-sm">{@name}</span>
-        <span class="text-xs text-base-content/40">{@check.version}</span>
+        <span class="text-xs text-base-content/60">{@check.version}</span>
       <% else %>
         <.icon name="hero-x-circle" class="size-4 text-error" />
         <span class="text-sm text-error">{@name}</span>
@@ -1788,7 +1788,7 @@ defmodule EvoDashWeb.SystemLive do
         id="view-changelog"
         type="button"
         phx-click="open_changelog"
-        class="link link-hover text-xs text-base-content/60"
+        class="link link-hover text-xs text-primary"
       >
         {gettext("View changelog")} <% # zh_CN: "查看更新日志" %>
       </button>
@@ -1823,7 +1823,7 @@ defmodule EvoDashWeb.SystemLive do
   defp health_banner_class(:ok), do: "border-success/40 bg-success/10"
   defp health_banner_class(:warning), do: "border-warning/40 bg-warning/10"
   defp health_banner_class(:error), do: "border-error/40 bg-error/10"
-  defp health_banner_class(:loading), do: "border-base-200 bg-base-100"
+  defp health_banner_class(:loading), do: "border-base-300 bg-base-100"
 
   # Status background colors for check_cell
   defp status_bg(:ok), do: "bg-success/10"
