@@ -554,10 +554,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
       # - A worktree path (e.g., ".../.genesis/workers/worker_T1_A1") for subagents
       # Derive the repo root by stripping the worktree suffix if present.
-      case String.split(spec.phylo_node.repo, "/.genesis/workers/", parts: 2) do
-        [root, _rest] -> root
-        [_] -> spec.phylo_node.repo
-      end
+      Worktrees.repo_root_from_worktree(spec.phylo_node.repo)
     else
       # Foreign repo — resolve from the spec's foreign_repos list
       spec.foreign_repos

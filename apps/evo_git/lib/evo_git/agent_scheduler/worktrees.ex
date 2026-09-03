@@ -26,6 +26,18 @@ defmodule EvoGit.AgentScheduler.Worktrees do
   def workers_dir(repo_root), do: Path.join(repo_root, ".genesis/workers")
 
   @doc """
+  Derives the repo root from a worktree path (primary-repo layout): strips the
+  `.genesis/workers/` suffix when present, otherwise returns the path unchanged.
+  """
+  @spec repo_root_from_worktree(String.t()) :: String.t()
+  def repo_root_from_worktree(worktree_path) do
+    case String.split(worktree_path, "/.genesis/workers/", parts: 2) do
+      [root, _rest] -> root
+      [_] -> worktree_path
+    end
+  end
+
+  @doc """
   Single source of truth for the agent branch-name derivation.
   """
   @spec branch_name(pos_integer(), pos_integer()) :: String.t()
