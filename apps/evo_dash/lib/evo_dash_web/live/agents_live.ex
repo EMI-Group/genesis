@@ -1092,9 +1092,11 @@ defmodule EvoDashWeb.AgentsLive do
 
   defp commit_bg_class(agent) do
     if agent.current_commit != agent.base_commit do
-      "bg-warning/20"
+      # Uncommitted changes on this agent's branch — warning-family highlight
+      # (semantic meaning preserved) on the hairline commit chip.
+      "bg-warning/20 border border-warning/30"
     else
-      "bg-base-200"
+      "bg-base-100 border border-base-300"
     end
   end
 

@@ -16,17 +16,17 @@
           </h3>
 
           <%= if @agents_loading do %>
-            <div class="text-center py-16 text-base-content/70">
-              <.icon name="hero-arrow-path" class="size-20 mx-auto mb-4 text-base-content/30 animate-spin" />
+            <div class="text-center py-16">
+              <.icon name="hero-arrow-path" class="size-20 mx-auto mb-4 text-base-content/40 animate-spin" />
               <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
-              <p class="text-lg"><%= gettext("Loading agents…") %></p>
+              <p class="text-lg text-base-content"><%= gettext("Loading agents…") %></p>
             </div>
           <% else %>
             <%= if @agents == [] do %>
-              <div class="text-center py-16 text-base-content/70">
-                <.icon name="hero-server" class="size-20 mx-auto mb-4 text-base-content/30 animate-float" />
-                <p class="text-lg"><%= gettext("No agents currently registered") %></p>
-                <p class="text-sm mt-2"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
+              <div class="text-center py-16">
+                <.icon name="hero-server" class="size-20 mx-auto mb-4 text-base-content/40 animate-float" />
+                <p class="text-lg text-base-content"><%= gettext("No agents currently registered") %></p>
+                <p class="text-sm mt-2 text-base-content/60"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
               </div>
             <% else %>
               <div class="space-y-4">
@@ -116,36 +116,36 @@
                 <!-- Agent Module + Context Path on a single row -->
                 <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
                   <div class="shrink-0 min-w-[130px]">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Agent Module") %>
                     </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                    <code class="text-xs bg-base-100 border border-base-300 px-2 py-1 rounded block break-all">
                       {inspect(agent.agent_module)}
                     </code>
                   </div>
                   <div class="shrink-0 min-w-[130px]">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Model") %>
                     </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                    <code class="text-xs bg-base-100 border border-base-300 px-2 py-1 rounded block break-all">
                       {agent.model_id || gettext("N/A")}
                     </code>
                   </div>
                   <div class="flex-1 min-w-[150px]">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Context Path") %>
                     </h4>
-                    <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all w-full">
+                    <code class="text-xs bg-base-100 border border-base-300 px-2 py-1 rounded block break-all w-full">
                       {agent.context_path || gettext("N/A")}
                     </code>
                   </div>
                 </div>
 
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                  <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                     <%= gettext("Objective") %>
                   </h4>
-                  <p class="text-sm bg-base-200 p-3 rounded">
+                  <p class="text-sm bg-base-100 border border-base-300 p-3 rounded">
                     {String.slice(agent.objective, 0, 150)}{if String.length(agent.objective) >
                                                                  150,
                                                                do: "..."}
@@ -162,10 +162,10 @@
                 </div>
 
                 <div>
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                  <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                     <%= gettext("Worktree") %>
                   </h4>
-                  <code class="text-xs bg-base-200 px-2 py-1 rounded block break-all">
+                  <code class="text-xs bg-base-100 border border-base-300 px-2 py-1 rounded block break-all">
                     {agent.worktree || gettext("Not assigned")}
                   </code>
                 </div>
@@ -173,21 +173,21 @@
                 <!-- Task ID, Depth, Retries (compact) + Base/Current Commit (wide) on a single row -->
                 <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
                   <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Task ID") %>
                     </h4>
                     <span class="text-sm">#<%= agent.task_number || agent.task_id %></span>
                   </div>
 
                   <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Depth") %>
                     </h4>
                     <span class="text-sm">{agent.depth}</span>
                   </div>
 
                   <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Retries") %>
                     </h4>
                     <span class="text-sm">{agent.retries}</span>
@@ -195,10 +195,10 @@
 
                   <%= if agent.base_commit do %>
                     <div class="flex-1 min-w-0">
-                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                      <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Base Commit") %>
                       </h4>
-                      <code class="text-xs font-mono bg-base-200 px-3 py-1.5 rounded block truncate w-full" title={agent.base_commit}>
+                      <code class="text-xs font-mono bg-base-100 border border-base-300 px-3 py-1.5 rounded block truncate w-full" title={agent.base_commit}>
                         {shorten_sha(agent.base_commit)}
                       </code>
                     </div>
@@ -206,7 +206,7 @@
 
                   <%= if agent.current_commit do %>
                     <div class="flex-1 min-w-0">
-                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                      <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                         <.icon name="hero-circle-stack" class="size-3 inline mr-1" /> <%= gettext("Current Commit") %>
                       </h4>
                       <code class={"text-xs font-mono px-3 py-1.5 rounded block truncate w-full " <> commit_bg_class(agent)} title={agent.current_commit}>
@@ -218,7 +218,7 @@
 
                 <div class="flex flex-col sm:flex-row gap-4">
                   <div class="shrink-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Parent") %>
                     </h4>
                     <%= if agent.parent_id do %>
@@ -230,12 +230,12 @@
                         #<%= @id_to_display[agent.parent_id] || agent.parent_id %>
                       </button>
                     <% else %>
-                      <span class="text-sm text-base-content/60"><%= gettext("None") %></span>
+                      <span class="text-sm text-base-content/70"><%= gettext("None") %></span>
                     <% end %>
                   </div>
 
                   <div class="flex-1 min-w-0">
-                    <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">
+                    <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">
                       <%= gettext("Children") %>
                     </h4>
                     <%= if agent.has_children do %>
@@ -251,14 +251,14 @@
                         <% end %>
                       </div>
                     <% else %>
-                      <span class="text-sm text-base-content/60"><%= gettext("None") %></span>
+                      <span class="text-sm text-base-content/70"><%= gettext("None") %></span>
                     <% end %>
                   </div>
 
                     <div class="shrink-0">
-                      <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-1">&nbsp;</h4>
+                      <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-1">&nbsp;</h4>
                       <button
-                        class="cursor-pointer text-xs font-semibold uppercase text-base-content/60 flex items-center gap-1.5 select-none outline-none hover:text-base-content/80 transition-colors"
+                        class="cursor-pointer text-xs font-semibold uppercase text-base-content/70 flex items-center gap-1.5 select-none outline-none hover:text-base-content transition-colors"
                         phx-click="toggle_usage"
                       >
                         <.icon name="hero-currency-dollar" class="size-3.5" />
@@ -277,31 +277,31 @@
                 <%= if @show_usage do %>
                   <div class="mt-2">
                     <div class="grid grid-cols-3 gap-2 mt-2">
-                      <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                         <div class="text-xs text-base-content/70"><%= gettext("Input Tokens") %></div>
                         <div class="text-sm font-semibold"><%= format_number(agent.usage.input_tokens) %></div>
                       </div>
-                      <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                         <div class="text-xs text-base-content/70"><%= gettext("Output Tokens") %></div>
                         <div class="text-sm font-semibold"><%= format_number(agent.usage.output_tokens) %></div>
                       </div>
-                      <div class="bg-base-200 rounded-lg p-2.5">
+                      <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                         <div class="text-xs text-base-content/70"><%= gettext("Total Tokens") %></div>
                         <div class="text-sm font-semibold"><%= format_number(agent.usage.total_tokens) %></div>
                       </div>
                     </div>
                     <div class="mt-4 pt-4 border-t border-base-300">
                         <div class="grid grid-cols-3 gap-2 mt-2">
-                          <div class="bg-base-200 rounded-lg p-2.5">
+                          <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                             <div class="text-xs text-base-content/70"><%= gettext("Cached Tokens") %></div>
                             <div class="text-sm font-semibold"><%= format_number(Map.get(agent.usage, :cached_tokens, 0)) %></div>
                           </div>
-                          <div class="bg-base-200 rounded-lg p-2.5">
+                          <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                             <div class="text-xs text-base-content/70"><%= gettext("Cache Hit Rate") %></div>
                             <div class="text-sm font-semibold text-success"><%= format_cache_hit_rate(agent.usage) %></div>
                             <progress class="progress progress-success w-full mt-1" value={if agent.usage.input_tokens > 0, do: min(round(Map.get(agent.usage, :cached_tokens, 0) / agent.usage.input_tokens * 100), 100), else: 0} max="100"></progress>
                           </div>
-                          <div class="bg-base-200 rounded-lg p-2.5">
+                          <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                             <div class="text-xs text-base-content/70"><%= gettext("Context") %></div>
                             <div class="text-sm font-semibold"><%= agent.compression_count %> (<%= agent.compression_pct %>%)</div>
                             <progress class="progress progress-primary w-full mt-1" value={agent.compression_pct} max="100"></progress>
@@ -310,15 +310,15 @@
                       </div>
                     <div class="mt-4 pt-4 border-t border-base-300">
                       <div class="grid grid-cols-3 gap-2 mt-2">
-                        <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                           <div class="text-xs text-base-content/70"><%= gettext("Input Cost") %></div>
                           <div class="text-sm font-semibold">$<%= format_cost(agent.usage.input_cost) %></div>
                         </div>
-                        <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                           <div class="text-xs text-base-content/70"><%= gettext("Output Cost") %></div>
                           <div class="text-sm font-semibold">$<%= format_cost(agent.usage.output_cost) %></div>
                         </div>
-                        <div class="bg-base-200 rounded-lg p-2.5">
+                        <div class="bg-base-100 border border-base-300 rounded-lg p-2.5">
                           <div class="text-xs text-base-content/70"><%= gettext("Total Cost") %></div>
                           <div class="text-sm font-semibold text-primary">$<%= format_cost(agent.usage.total_cost) %></div>
                         </div>
@@ -329,7 +329,7 @@
 
                 <!-- Chat History -->
                 <div class="agent-detail-history mt-6">
-                  <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
+                  <h4 class="text-xs font-semibold uppercase text-base-content/70 mb-2">
                     <%= gettext("Chat History / Session Memory") %>
                   </h4>
                   <% history_entries =
@@ -338,7 +338,7 @@
                          Map.get(@optimistic_messages, agent.id, [])
                        ) %>
                   <%= if history_entries != [] do %>
-                    <div id={"agent-history-#{@selected_agent_id}"} class="bg-base-200 rounded-lg overflow-y-auto agent-history-scroll" phx-hook="AgentHistoryAutoScroll">
+                    <div id={"agent-history-#{@selected_agent_id}"} class="bg-base-100 border border-base-300 rounded-lg overflow-y-auto agent-history-scroll" phx-hook="AgentHistoryAutoScroll">
                       <div class="divide-y divide-base-300">
                         <%= for {entry, index} <- Enum.with_index(history_entries) do %>
                           <div class="p-3 hover:bg-base-300/50">
@@ -361,10 +361,10 @@
                               >
                                 <.icon name="hero-arrows-pointing-out" class="size-3" />
                               </button>
-                              <span class="text-xs text-base-content/60 ml-auto flex items-center gap-2">
+                              <span class="text-xs text-base-content/70 ml-auto flex items-center gap-2">
                                 {format_turn(entry.turn)}
                                 <%= if timestamp = format_history_timestamp(entry.timestamp) do %>
-                                  <span class="text-base-content/60">{timestamp}</span>
+                                  <span class="text-base-content/70">{timestamp}</span>
                                 <% end %>
                               </span>
                             </div>
@@ -413,7 +413,7 @@
                                   </div>
                                 </div>
                               <% "QUEUED" -> %>
-                                <div class="text-sm mt-1 bg-base-200 p-2 rounded">
+                                <div class="text-sm mt-1 bg-base-content/5 p-2 rounded">
                                   {entry.data.message}
                                 </div>
                               <% "CONTEXT_TREE" -> %>
@@ -438,10 +438,10 @@
                                       {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/60 italic"><%= gettext("<empty message>") %></div>
+                                    <div class="text-sm text-base-content/70 italic"><%= gettext("<empty message>") %></div>
                                   <% end %>
                                   <%= if Map.get(entry, :optimistic, false) do %>
-                                    <div class="text-xs text-base-content/60 italic mt-1 flex items-center gap-1">
+                                    <div class="text-xs text-base-content/70 italic mt-1 flex items-center gap-1">
                                       <.icon name="hero-clock" class="size-3" />
                                       <%= gettext("Pending — will be added on the agent's next turn") %>
                                     </div>
@@ -461,7 +461,7 @@
                                       {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/60 italic"><%= gettext("<no text content>") %></div>
+                                    <div class="text-sm text-base-content/70 italic"><%= gettext("<no text content>") %></div>
                                   <% end %>
                                   <%= if entry.data.tool_calls && entry.data.tool_calls != [] do %>
                                     <div class="text-xs bg-secondary/10 p-2 rounded text-secondary">
@@ -475,7 +475,7 @@
                                               <div class="min-w-0 flex-1 max-h-12 overflow-y-auto space-y-0.5">
                                                 <%= for {key, value} <- display.rows do %>
                                                   <div class="flex items-start gap-1.5">
-                                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/60 shrink-0 w-20">{key}</span>
+                                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/70 shrink-0 w-20">{key}</span>
                                                     <span class="font-mono text-xs whitespace-pre-wrap break-all min-w-0">{safe_text(value)}</span>
                                                   </div>
                                                 <% end %>
@@ -502,11 +502,11 @@
                                       <pre class="text-xs whitespace-pre-wrap">{String.slice(entry.data.content, 0, 500)}{if String.length(entry.data.content) > 500, do: "\n...[truncated]"}</pre>
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/60 italic"><%= gettext("<empty result>") %></div>
+                                    <div class="text-sm text-base-content/70 italic"><%= gettext("<empty result>") %></div>
                                   <% end %>
                                 </div>
                               <% _ -> %>
-                                <pre class="text-xs mt-1 overflow-x-auto bg-base-200 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
+                                <pre class="text-xs mt-1 overflow-x-auto bg-base-content/5 p-2 rounded"><%= inspect(entry.data, limit: :infinity) %></pre>
                             <% end %>
                           </div>
                         <% end %>
@@ -514,13 +514,13 @@
                     </div>
                   <% else %>
                     <%= if @history_loading_agent_id == agent.id do %>
-                      <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center flex items-center justify-center gap-2">
+                      <div class="text-sm text-base-content/70 bg-base-content/5 p-4 rounded-lg text-center flex items-center justify-center gap-2">
                         <.icon name="hero-arrow-path" class="size-4 animate-spin" />
                         <%!-- 对话历史加载中提示：选中智能体后异步拉取历史时的过渡态 --%>
                         <span><%= gettext("Loading history…") %></span>
                       </div>
                     <% else %>
-                      <div class="text-sm text-base-content/60 bg-base-200 p-4 rounded-lg text-center">
+                      <div class="text-sm text-base-content/70 bg-base-content/5 p-4 rounded-lg text-center">
                         <%= gettext("No history recorded yet") %>
                       </div>
                     <% end %>
@@ -528,12 +528,12 @@
                 </div>
               </div>
             <% else %>
-              <p class="text-base-content/70"><%= gettext("Agent not found") %></p>
+              <p class="text-base-content"><%= gettext("Agent not found") %></p>
             <% end %>
           <% else %>
-            <div class="text-center py-16 text-base-content/70">
-              <.icon name="hero-finger-pointing" class="size-20 mx-auto mb-4 text-base-content/30 animate-float" />
-              <p class="text-lg"><%= gettext("Select an agent to view details") %></p>
+            <div class="text-center py-16">
+              <.icon name="hero-finger-pointing" class="size-20 mx-auto mb-4 text-base-content/40 animate-float" />
+              <p class="text-lg text-base-content"><%= gettext("Select an agent to view details") %></p>
             </div>
           <% end %>
         </div>
@@ -553,7 +553,7 @@
           </span>
         </h3>
 
-        <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+        <div class="bg-base-100 border border-base-300 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
           <%= case @selected_history_entry.type do %>
             <% "USER_PROMPT" -> %>
               <pre class="text-sm whitespace-pre-wrap"><%= safe_text(@selected_history_entry.data.content) %></pre>
@@ -609,7 +609,7 @@
                               <div class="min-w-0 flex-1 max-h-60 overflow-y-auto space-y-1">
                                 <%= for {key, value} <- display.rows do %>
                                   <div class="flex items-start gap-1.5">
-                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/60 shrink-0 w-20">{key}</span>
+                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/70 shrink-0 w-20">{key}</span>
                                     <span class="font-mono text-xs whitespace-pre-wrap break-all min-w-0">{safe_text(value)}</span>
                                   </div>
                                 <% end %>
@@ -657,7 +657,7 @@
           <%= gettext("Full Objective") %>
         </h3>
 
-        <div class="bg-base-200 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
+        <div class="bg-base-100 border border-base-300 p-4 rounded-lg overflow-x-auto max-h-[70vh] overflow-y-auto">
           <pre class="text-sm whitespace-pre-wrap"><%= @selected_objective %></pre>
         </div>
 
