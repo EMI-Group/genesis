@@ -8,6 +8,13 @@ defmodule EvoGit.CommandShellTest do
   every registered command against the real TaskRegistry (isolated via
   `EvoGit.TaskRegistryCase`), asserting the same handler outputs the old
   per-tool tests asserted.
+
+  Since the security-level feature, level-2/3 dispatch-success tests route
+  through the blocking `EvoGit.CommandApproval` gate: a separate responder
+  process (see `execute_approved!/1`) approves each request while the shell
+  call blocks the test process. The `setup` below shrinks the approval window
+  so a test that fails to resolve its request fails fast instead of hanging
+  the 120 s default.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -30,6 +37,16 @@ defmodule EvoGit.CommandShellTest do
     SystemInfo.system_info
   )
 
+  # Level-2/3 commands (StartTask/CancelTask/ForceKillTask/DeleteTask/GuideUser)
+  # now BLOCK on the EvoGit.CommandApproval gate. Shrink the approval window so
+  # any request that is never resolved times out in seconds rather than the
+  # 120 s default; the approve/deny responders resolve requests immediately, so
+  # the smaller window never truncates a legitimate approval.
+  setup do
+    Application.put_env(:evo_git, :command_approval_timeout, 5_000)
+    on_exit(fn -> Application.delete_env(:evo_git, :command_approval_timeout) end)
+    :ok
+  end
   describe "execute/1 - parsing" do
     test "positional tokens bind to declared positional args" do
       task = seed_task!()
@@ -232,6 +249,45 @@ defmodule EvoGit.CommandShellTest do
     end
   end
 
+  describe "security_level/1" do
+    test "level-1 read-only commands (and the built-in help) map to 1" do
+      for path <- ~w(
+        ListTasks.list_tasks
+        GetTask.get_task
+        ListRecentProjects.list_recent_projects
+        SystemInfo.system_info
+        SpawnInvestigator.spawn_investigator
+      ) do
+        assert CommandShell.security_level(path) == 1
+      end
+
+      assert CommandShell.security_level("help") == 1
+      assert CommandShell.security_level("Help") == 1
+    end
+
+    test "GuideUser.guide_user maps to level 2" do
+      assert CommandShell.security_level("GuideUser.guide_user") == 2
+    end
+
+    test "side-effect commands map to level 3" do
+      for path <- ~w(
+        StartTask.start_task
+        CancelTask.cancel_task
+        ForceKillTask.force_kill_task
+        DeleteTask.delete_task
+      ) do
+        assert CommandShell.security_level(path) == 3
+      end
+    end
+
+    test "unknown and non-binary paths map to 1" do
+      assert CommandShell.security_level("task.nonexistent") == 1
+      assert CommandShell.security_level("") == 1
+      assert CommandShell.security_level(123) == 1
+      assert CommandShell.security_level(nil) == 1
+      assert CommandShell.security_level(%{}) == 1
+    end
+  end
   describe "execute/1 - ListTasks.list_tasks" do
     test "lists seeded tasks with id, status, type, project path, and objective" do
       task = seed_task!(opts: [path: "/tmp/test", objective: "hello"], project_path: "/tmp/test")
@@ -282,7 +338,7 @@ defmodule EvoGit.CommandShellTest do
   describe "execute/1 - StartTask.start_task" do
     test "starts a reflect task and returns the new task id" do
       without_model_profiles(fn ->
-        assert {:ok, output} = CommandShell.execute(~s(StartTask.start_task reflect "hi"))
+        assert {:ok, output} = execute_approved!(~s(StartTask.start_task reflect "hi"))
 
         assert output =~ "started (type: reflect)"
         assert output =~ "Objective: hi"
@@ -307,13 +363,13 @@ defmodule EvoGit.CommandShellTest do
     test "gracefully cancels a pending task and returns the confirmation" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("CancelTask.cancel_task #{task.id}")
+      assert {:ok, output} = execute_approved!("CancelTask.cancel_task #{task.id}")
       assert output == "Task #{task.id} cancellation requested (graceful)."
       assert TaskRegistry.get_task(task.id).status == :cancelled
     end
 
     test "returns an error for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("CancelTask.cancel_task ghost")
+      assert {:ok, output} = execute_approved!("CancelTask.cancel_task ghost")
       assert output == "Error cancelling task ghost: task not found"
     end
   end
@@ -322,13 +378,13 @@ defmodule EvoGit.CommandShellTest do
     test "force-kills a running task and returns the confirmation" do
       {task_id, _wrapper} = seed_running_task_with_wrapper!()
 
-      assert {:ok, output} = CommandShell.execute("ForceKillTask.force_kill_task #{task_id}")
+      assert {:ok, output} = execute_approved!("ForceKillTask.force_kill_task #{task_id}")
       assert output == "Task #{task_id} force-killed."
       assert TaskRegistry.get_task(task_id).status == :failed
     end
 
     test "returns an error for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("ForceKillTask.force_kill_task ghost")
+      assert {:ok, output} = execute_approved!("ForceKillTask.force_kill_task ghost")
       assert output == "Error force-killing task ghost: task not found"
     end
   end
@@ -337,7 +393,7 @@ defmodule EvoGit.CommandShellTest do
     test "deletes a task and returns the confirmation" do
       task = seed_task!()
 
-      assert {:ok, output} = CommandShell.execute("DeleteTask.delete_task #{task.id}")
+      assert {:ok, output} = execute_approved!("DeleteTask.delete_task #{task.id}")
       assert output == "Task #{task.id} deleted."
 
       # delete_task/1 is a fire-and-forget cast; a call syncs the mailbox so the
@@ -347,7 +403,7 @@ defmodule EvoGit.CommandShellTest do
     end
 
     test "delete_task is a cast, so it reports deleted even for an unknown id" do
-      assert {:ok, output} = CommandShell.execute("DeleteTask.delete_task ghost")
+      assert {:ok, output} = execute_approved!("DeleteTask.delete_task ghost")
       assert output == "Task ghost deleted."
     end
   end
@@ -357,7 +413,7 @@ defmodule EvoGit.CommandShellTest do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "guides")
 
       assert {:ok, output} =
-               CommandShell.execute(
+               execute_approved!(
                  "GuideUser.guide_user \"m\" page=/tasks selector=#x dismissible=true"
                )
 
@@ -376,7 +432,7 @@ defmodule EvoGit.CommandShellTest do
     test "dismissible defaults to true when absent" do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "guides")
 
-      assert {:ok, _output} = CommandShell.execute("GuideUser.guide_user hello")
+      assert {:ok, _output} = execute_approved!("GuideUser.guide_user hello")
 
       assert_receive {:guide_updated, _guide_id, guide_map, _node}
       assert guide_map.dismissible == true
@@ -524,6 +580,59 @@ defmodule EvoGit.CommandShellTest do
       end
     else
       fun.()
+    end
+  end
+
+  # --- Approval-gate helpers ------------------------------------------------
+  #
+  # Level-2/3 shell commands BLOCK in EvoGit.CommandApproval.request/5 until
+  # the user approves them. In tests the shell call runs synchronously in the
+  # TEST process, so the approval must come from a SEPARATE responder process
+  # that subscribes to the "approvals" topic and replies to every request it
+  # observes.
+
+  # Runs CommandShell.execute/1 while a background responder APPROVES the
+  # approval request. Returns the shell result unchanged.
+  defp execute_approved!(command) do
+    responder = start_approval_responder(:approve)
+
+    try do
+      CommandShell.execute(command)
+    after
+      Process.exit(responder, :kill)
+    end
+  end
+
+  # Spawns a responder that subscribes to "approvals" and replies `decision` to
+  # every request it observes. Signals readiness with a handshake message so the
+  # caller never races the subscription. Returns the responder pid.
+  defp start_approval_responder(decision) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
+        send(parent, {:approval_responder_ready, self()})
+        approval_responder_loop(decision)
+      end)
+
+    receive do
+      {:approval_responder_ready, ^pid} -> :ok
+    after
+      2_000 -> flunk("approval responder failed to subscribe in time")
+    end
+
+    pid
+  end
+
+  defp approval_responder_loop(decision) do
+    receive do
+      {:approval_requested, %{request_id: request_id}} ->
+        EvoGit.CommandApproval.respond(request_id, decision)
+        approval_responder_loop(decision)
+
+      _other ->
+        approval_responder_loop(decision)
     end
   end
 end

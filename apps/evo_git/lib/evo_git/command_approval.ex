@@ -79,6 +79,14 @@ defmodule EvoGit.CommandApproval do
 
   # --- Public API ------------------------------------------------------------
 
+  @doc false
+  # Starts the approval gate GenServer registered under its module name
+  # (`Process.whereis(EvoGit.CommandApproval)` is the service-running probe used
+  # by request/2 and respond/2).
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
   @doc """
   Registers a pending approval request and BLOCKS until it is resolved.
 
