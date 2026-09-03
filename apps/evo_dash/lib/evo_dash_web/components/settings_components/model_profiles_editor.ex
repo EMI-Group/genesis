@@ -315,7 +315,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       </div>
 
       <%!-- Off-peak days (optional) ── --%>
-      <% off_peak_days = draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile)) %>
+      <%!-- normalize_days/1 keeps the render TOTAL: the draft value (or a bare
+           string from any source) is always coerced to the canonical day list
+           before the chip membership test below. --%>
+      <% off_peak_days =
+           ModelProfileHelpers.normalize_days(
+             draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile))
+           ) %>
       <div class="form-control">
         <label class="label pb-1">
           <span class="label-text font-semibold text-xs">
@@ -712,26 +718,21 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   defp normalize_peak_window(_), do: %{start: "", end: ""}
 
   # Per-window days pre-fill: reads `:days`/`"days"` from a window map → list
-  # of lowercase day-vocab strings, `[]` when absent/not-a-list. Used by the
-  # template AND by normalize_peak_window/1, so pre-existing rows without a
-  # days key render fine (all days unchecked = every day).
+  # of lowercase day-vocab strings (normalize_days/1 keeps the render total —
+  # a bare string collapses to a one-element list). Used by the template AND by
+  # normalize_peak_window/1, so pre-existing rows without a days key render
+  # fine (all days unchecked = every day).
   defp peak_window_days(window) when is_map(window) do
-    case Map.get(window, :days) || Map.get(window, "days") do
-      days when is_list(days) -> Enum.filter(days, &is_binary/1)
-      _ -> []
-    end
+    ModelProfileHelpers.normalize_days(Map.get(window, :days) || Map.get(window, "days"))
   end
 
   defp peak_window_days(_), do: []
 
   # Profile-level off-peak days pre-fill: reads `:off_peak_days`/`"off_peak_days"`
-  # from the profile map → list of lowercase day-vocab strings. Only binary
-  # entries are kept; non-list/absent → `[]`.
+  # from the profile map → list of lowercase day-vocab strings via the shared
+  # normalizer (absent/odd shapes → []).
   defp profile_off_peak_days(profile) when is_map(profile) do
-    case profile_param(profile, :off_peak_days) do
-      days when is_list(days) -> Enum.filter(days, &is_binary/1)
-      _ -> []
-    end
+    ModelProfileHelpers.normalize_days(profile_param(profile, :off_peak_days))
   end
 
   defp profile_off_peak_days(_), do: []

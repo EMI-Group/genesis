@@ -578,6 +578,57 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
       assert profile.off_peak_days == ["sat"]
     end
 
+    test "a BARE-STRING off_peak_days param is wrapped, not dropped (crash repro)" do
+      # Plug collapses a repeated form param to a plain string when exactly one
+      # checkbox is submitted (`off_peak_days=weekends`). Before the fix the
+      # save-time normalization was list-only and silently DROPPED the day.
+      params = Map.merge(@peak_params, %{"off_peak_days" => "weekends"})
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.off_peak_days == ["weekends"]
+
+      # parse_peak_fields/1 exposes the same normalization directly.
+      assert {:ok, %{off_peak_days: ["mon"]}} =
+               ModelProfileHelpers.parse_peak_fields(%{"off_peak_days" => "mon"})
+    end
+
+    test "a bare-string per-window days value is wrapped, not dropped" do
+      params =
+        Map.merge(@peak_params, %{
+          "peak_hours" => %{"0" => %{"start" => "09:00", "end" => "12:00", "days" => "fri"}}
+        })
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.peak_hours == [%{start: "09:00", end: "12:00", days: ["fri"]}]
+    end
+
+    test "normalize_days/1 is total across every input shape" do
+      # Bare binary (single-checked-chip collapse) → one-element list.
+      assert ModelProfileHelpers.normalize_days("weekends") == ["weekends"]
+      assert ModelProfileHelpers.normalize_days(" mon ") == ["mon"]
+
+      # List form: seed "" entries filtered, trim+downcase, vocabulary whitelist,
+      # order-preserving uniq.
+      assert ModelProfileHelpers.normalize_days(["", " mon ", "TUE", "garbage", "mon"]) == [
+               "mon",
+               "tue"
+             ]
+
+      # All-unchecked group (`[""]`) and absent/empty shapes → [].
+      assert ModelProfileHelpers.normalize_days([""]) == []
+      assert ModelProfileHelpers.normalize_days([]) == []
+      assert ModelProfileHelpers.normalize_days(nil) == []
+
+      # Odd non-list/non-binary shapes never raise.
+      assert ModelProfileHelpers.normalize_days(930) == []
+      assert ModelProfileHelpers.normalize_days(%{"days" => ["mon"]}) == []
+      assert ModelProfileHelpers.normalize_days({:mon, :tue}) == []
+    end
+
     test "off_peak_days entries are trimmed and downcased" do
       params = Map.merge(@peak_params, %{"off_peak_days" => [" Mon ", "TUE", "  wed  "]})
 
