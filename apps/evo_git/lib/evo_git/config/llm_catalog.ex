@@ -40,6 +40,7 @@ defmodule EvoGit.Config.LLMCatalog do
       models: [
         %{id: "claude-opus-4-7", display_name: "Claude Opus 4.7"},
         %{id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6"},
+        %{id: "claude-fable-5.1", display_name: "Claude Fable 5.1"},
         %{id: "claude-fable-5", display_name: "Claude Fable 5"},
         %{id: "claude-opus-4.8", display_name: "Claude Opus 4.8"},
         %{id: "claude-sonnet-5", display_name: "Claude Sonnet 5"},
@@ -67,6 +68,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "google_api_key",
       variants: nil,
       models: [
+        %{id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash"},
         %{id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash"},
         %{id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash"},
         %{id: "gemini-3.5-flash", display_name: "Gemini 3.5 Flash"},
