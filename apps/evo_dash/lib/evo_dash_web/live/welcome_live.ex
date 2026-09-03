@@ -231,7 +231,7 @@ defmodule EvoDashWeb.WelcomeLive do
 
                 <!-- End-of-list guidance -->
                 <div class="mt-3 mb-2 bg-base-200/50 rounded-xl p-3 text-center">
-                  <p class="text-xs text-base-content/50 leading-relaxed">
+                  <p class="text-xs text-base-content/70 leading-relaxed">
                     {gettext(
                       "Need a different model, a custom API base URL, or advanced settings? Skip this page and visit the full"
                     )}

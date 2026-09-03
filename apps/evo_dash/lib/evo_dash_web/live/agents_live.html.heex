@@ -151,7 +151,7 @@
                                                                do: "..."}
                     <%= if String.length(agent.objective) > 150 do %>
                       <button
-                        class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
+                        class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/70 hover:text-base-content"
                         phx-click="view_full_objective"
                         title={gettext("View Full Objective")}
                       >
@@ -230,7 +230,7 @@
                         #<%= @id_to_display[agent.parent_id] || agent.parent_id %>
                       </button>
                     <% else %>
-                      <span class="text-sm text-base-content/50"><%= gettext("None") %></span>
+                      <span class="text-sm text-base-content/60"><%= gettext("None") %></span>
                     <% end %>
                   </div>
 
@@ -251,7 +251,7 @@
                         <% end %>
                       </div>
                     <% else %>
-                      <span class="text-sm text-base-content/50"><%= gettext("None") %></span>
+                      <span class="text-sm text-base-content/60"><%= gettext("None") %></span>
                     <% end %>
                   </div>
 
@@ -354,7 +354,7 @@
                                 {entry.type}
                               </span>
                               <button
-                                class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/50 hover:text-base-content"
+                                class="btn btn-xs btn-ghost px-2 ml-2 text-base-content/70 hover:text-base-content"
                                 phx-click="view_full_message"
                                 phx-value-index={index}
                                 title={gettext("View Full Message")}
@@ -438,7 +438,7 @@
                                       {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><%= gettext("<empty message>") %></div>
+                                    <div class="text-sm text-base-content/60 italic"><%= gettext("<empty message>") %></div>
                                   <% end %>
                                   <%= if Map.get(entry, :optimistic, false) do %>
                                     <div class="text-xs text-base-content/60 italic mt-1 flex items-center gap-1">
@@ -461,7 +461,7 @@
                                       {String.slice(entry.data.content, 0, 300)}{if String.length(entry.data.content) > 300, do: "..."}
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><%= gettext("<no text content>") %></div>
+                                    <div class="text-sm text-base-content/60 italic"><%= gettext("<no text content>") %></div>
                                   <% end %>
                                   <%= if entry.data.tool_calls && entry.data.tool_calls != [] do %>
                                     <div class="text-xs bg-secondary/10 p-2 rounded text-secondary">
@@ -475,7 +475,7 @@
                                               <div class="min-w-0 flex-1 max-h-12 overflow-y-auto space-y-0.5">
                                                 <%= for {key, value} <- display.rows do %>
                                                   <div class="flex items-start gap-1.5">
-                                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/50 shrink-0 w-20">{key}</span>
+                                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/60 shrink-0 w-20">{key}</span>
                                                     <span class="font-mono text-xs whitespace-pre-wrap break-all min-w-0">{safe_text(value)}</span>
                                                   </div>
                                                 <% end %>
@@ -502,7 +502,7 @@
                                       <pre class="text-xs whitespace-pre-wrap">{String.slice(entry.data.content, 0, 500)}{if String.length(entry.data.content) > 500, do: "\n...[truncated]"}</pre>
                                     </div>
                                   <% else %>
-                                    <div class="text-sm text-base-content/50 italic"><%= gettext("<empty result>") %></div>
+                                    <div class="text-sm text-base-content/60 italic"><%= gettext("<empty result>") %></div>
                                   <% end %>
                                 </div>
                               <% _ -> %>
@@ -609,7 +609,7 @@
                               <div class="min-w-0 flex-1 max-h-60 overflow-y-auto space-y-1">
                                 <%= for {key, value} <- display.rows do %>
                                   <div class="flex items-start gap-1.5">
-                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/50 shrink-0 w-20">{key}</span>
+                                    <span class="font-mono text-xs uppercase tracking-wide text-base-content/60 shrink-0 w-20">{key}</span>
                                     <span class="font-mono text-xs whitespace-pre-wrap break-all min-w-0">{safe_text(value)}</span>
                                   </div>
                                 <% end %>
