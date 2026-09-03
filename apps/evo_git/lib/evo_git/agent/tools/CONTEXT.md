@@ -29,6 +29,10 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent) | Special | No |
 | *(utility)* `Shared` | Argument parsing, path validation, scope checking | — | — |
 
+### Tool Schema Shape (ReqLLM.tool/2 conventions in this directory)
+
+Every tool module exposes a schema via a `schema/0` (or `schema/1` — only `WebSearch` has the 1-arity variant, `schema/0` delegates to it with `[]`; `Context` exposes three: `read_schema/0`, `write_schema/0`, `edit_schema/0`). All calls use the same four top-level keyword fields — `name:`, `description:`, `parameter_schema:`, `callback:` — and NO EvoGit tool uses the optional `strict:`/`provider_options:` fields of the `ReqLLM.Tool` struct (deps/req_llm/lib/req_llm/tool.ex:71-79). `parameter_schema` is always a STRING-keyed JSON-Schema map: `%{"type" => "object", "properties" => %{<arg> => %{"type" => ..., "description" => ...}}, "required" => [<args>]}`. Per-property vocabulary actually used: `"type"` (`string`/`integer`/`boolean`/`array`/`object`), `"description"`, `"default"` (declared INSIDE the property map), `"enum"` (`make_dir.ex` `@keep_file_options`, `curl.ex` HTTP methods), `"items"` (`make_dir`/`git`/`ripgrep`/`file_create` array args), `"additionalProperties"` (`curl.ex` headers object). `callback` is always the no-op `fn _ -> {:ok, nil} end` — real execution goes through the module's `execute`. Richest example: `curl.ex:15-67` (6 properties covering string/integer/object/array vocabulary + enum + default); second: `make_dir.ex:13-70` (array + items + enum). `file_read.ex:11-55` shows the standard multi-optional-param shape with defaults. `shell_tool.ex:67-93` builds its description dynamically at schema-build time via `generate_description/0` (platform/config-aware prose).
+
 ## Constraints
 - All tool execution results must be strings.
 - Sandboxed tools use `EvoGit.sandbox_run/4` (`systemd-run`); file tools use Elixir `File` directly.
