@@ -66,11 +66,11 @@ defmodule EvoDashWeb.AgentsComponents do
                 <div
                   id={"agent-card-#{agent.id}"}
                   class={[
-                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter,transform] duration-300 motion-reduce:transition-none motion-reduce:transform-none cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:brightness-95 min-w-[120px] sm:min-w-[140px]",
+                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter,transform] duration-300 motion-reduce:transition-none motion-reduce:transform-none cursor-pointer hover:shadow-lg hover:shadow-primary/20 hover:brightness-95 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id && "ring-2 ring-primary ring-offset-1 ring-offset-base-100",
-                    @selected_id != agent.id && "hover:ring-1 hover:ring-primary/25",
+                    @selected_id != agent.id && "hover:ring-1 hover:ring-primary/40",
                     agent.status == :running && "agent-card-running",
                     agent.status == :running && "animate-pulse-glow",
                     MapSet.member?(@new_agent_ids, agent.id) && "animate-agent-spawn"
