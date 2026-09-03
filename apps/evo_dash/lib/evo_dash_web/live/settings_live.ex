@@ -107,25 +107,47 @@ defmodule EvoDashWeb.SettingsLive do
              md+ INDEPENDENT-SCROLL HEIGHT CHAIN: `#main-content` (layouts.ex)
              is `flex-1 min-h-0` inside the `h-dvh` app shell, so this
              wrapper's `md:h-full` is bounded to viewport-minus-chrome; the
-             two-column row below is `md:flex-1 md:min-h-0`. Every CONTENT
-             column is a direct flex child of that row and is sized by
-             `flex-1` ALONE (plus `overflow-y-auto` on the column or its
-             inner scroll div) — the sidebar (`md:h-full overflow-y-auto` in
-             sidebar.ex) and each content column are therefore bounded and
-             scroll independently of the outer page. CONTRACT: a content
-             column must NEVER carry `h-full` — the row has no definite
-             `height` property (it is flex-sized), so a percentage `h-full`
-             resolves to auto → the column grows to its content → the whole
-             page inflates past the viewport → the BODY scrolls and the two
-             panes scroll LINKED instead of independently. The `sticky
-             top-0` section headers stick within their content column's
-             scroll. Below md the row stacks naturally and the whole page
-             scrolls via `#main-scroll`. Warning banners above are direct
-             children of the wrapper (shrink-0 so they never squish). Note:
-             after editing Tailwind classes here, rebuild assets with
-             `mix tailwind evo_dash` (dev) or `mix assets.deploy` (prod) —
-             the CSS build (`priv/static/assets/css/`) is gitignored, so a
-             stale bundle silently no-ops new utility classes. --%>
+             two-column row below is `md:flex-1 md:min-h-0`. The sidebar
+             (`md:h-full overflow-y-auto` in sidebar.ex) and each content
+             column are bounded by that row and scroll independently of the
+             outer page. TWO height rules govern the content columns (full
+             detail: `components/CONTEXT.md` → "Settings two-column layout"):
+
+             (1) A content-column root must NEVER carry `h-full` — the row
+             has no definite `height` property (it is flex-sized), so a
+             percentage `h-full` resolves to auto → the column grows to its
+             content → the whole page inflates past the viewport → the BODY
+             scrolls and the two panes scroll LINKED instead of
+             independently. Content columns are sized by `flex-1` ALONE
+             (+ `overflow-y-auto` on the column or its inner scroll div).
+
+             (2) Every main-axis (column-direction) NON-scroll flex item
+             between the bounded column and the inner scroll container MUST
+             carry `min-h-0` — a non-scroll flex item defaults to
+             `min-height: auto` (the content-based automatic minimum, which
+             INCLUDES the overflow content of a nested `overflow-y-auto`
+             body), so it cannot shrink below its content and the inner
+             scroll body never engages; content spills to `#main-scroll`
+             and the panes scroll LINKED. The generic categories'
+             `save_category` `<.form>` (components/settings_components.ex)
+             is the main-axis non-scroll flex item between the
+             `category_section` root and its `flex-1 overflow-y-auto` scroll
+             body, so both the form and the section root carry `min-h-0`.
+             The `:llm` category needs no intermediate `min-h-0` because
+             its scroll body is a DIRECT child of the column root (a scroll
+             container's own automatic min size is 0);
+             search/`:remote_connections`/`:agents` work because the
+             column/form ITSELF is the scroll container.
+
+             The `sticky top-0` section headers stick within their content
+             column's scroll. Below md the row stacks naturally and the
+             whole page scrolls via `#main-scroll`. Warning banners above
+             are direct children of the wrapper (shrink-0 so they never
+             squish). Note: after editing Tailwind classes here, rebuild
+             assets with `mix tailwind evo_dash` (dev) or
+             `mix assets.deploy` (prod) — the CSS build
+             (`priv/static/assets/css/`) is gitignored, so a stale bundle
+             silently no-ops new utility classes. --%>
           <%!-- Two-column sidebar + content layout --%>
           <div class="flex flex-col md:flex-row md:flex-1 md:min-h-0 bg-base-100">
             <%!-- Sidebar --%>
