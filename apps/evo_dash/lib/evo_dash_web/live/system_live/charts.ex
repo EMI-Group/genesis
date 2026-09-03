@@ -378,7 +378,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
   """
   def chart_card(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 p-4">
+    <div class="rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="flex items-center gap-2 mb-1">
         <.icon name={@icon} class="size-4 text-base-content/50 shrink-0" />
         <h3 class="font-semibold text-sm">{@title}</h3>
@@ -388,7 +388,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
       <%= if @model_ids != [] do %>
         <%= if length(@model_ids) == 1 do %>
           <div class="mb-3">
-            <span class="inline-flex items-center gap-1.5 rounded-md border border-base-200 bg-base-100 px-2 py-0.5 text-xs text-base-content/60">
+            <span class="inline-flex items-center gap-1.5 rounded-md border border-base-300 bg-base-100 px-2 py-0.5 text-xs text-base-content/60">
               <span class="size-1.5 rounded-full bg-primary/60" />
               {hd(@model_ids)}
             </span>
@@ -411,7 +411,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
       <% end %>
 
       <%= if @samples == [] do %>
-        <div class="h-24 flex items-center justify-center text-xs text-base-content/40">
+        <div class="h-24 flex items-center justify-center text-xs text-base-content/70">
           {gettext("Collecting data…")}
         </div>
       <% else %>
@@ -464,7 +464,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
             <% end %>
           <% end %>
         </svg>
-        <div class="mt-1 flex items-center justify-between text-[10px] text-base-content/40">
+        <div class="mt-1 flex items-center justify-between text-xs text-base-content/70">
           <span>{gettext("Scale 0–%{max}", max: @y_max)}</span>
           <span>{gettext("Last 3 minutes")}</span>
         </div>
