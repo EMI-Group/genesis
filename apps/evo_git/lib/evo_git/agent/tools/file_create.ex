@@ -119,7 +119,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
 
   defp do_create_file(full_path, display_path, parents?) do
     with :ok <- mkdir_if_needed(Path.dirname(full_path), parents?),
-         :ok <- perform_create_file(full_path) do
+         :ok <- File.write(full_path, "") do
       :ok
     else
       {:error, reason} ->
@@ -129,15 +129,9 @@ defmodule EvoGit.Agent.Tools.FileCreate do
 
   defp mkdir_if_needed(path, parents), do: Shared.mkdir_if_needed(path, parents)
 
-  defp perform_create_file(path) do
-    case File.write(path, "") do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
   defp do_commit(repo_path, paths) do
     files_to_add = paths
+
     commit_message =
       "Create file#{if(length(paths) == 1, do: "", else: "s")}: #{Enum.join(paths, ", ")}"
 

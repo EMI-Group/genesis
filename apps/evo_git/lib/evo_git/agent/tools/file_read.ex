@@ -23,7 +23,8 @@ defmodule EvoGit.Agent.Tools.FileRead do
         "properties" => %{
           "file_path" => %{
             "type" => "string",
-            "description" => "The path to the file to read (relative to git repo path, e.g., './src/main.ex')"
+            "description" =>
+              "The path to the file to read (relative to git repo path, e.g., './src/main.ex')"
           },
           "offset" => %{
             "type" => "integer",
@@ -42,9 +43,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
           },
           "max_bytes" => %{
             "type" => "integer",
-            "description" =>
-              "Maximum output size in bytes before truncation. " <>
-                "Default: 16384 (16KB). Increase up to 131072 (128KB) if you need more output.",
+            "description" => Shared.tool_output_limit_description(),
             "default" => 16_384
           }
         },
@@ -137,7 +136,9 @@ defmodule EvoGit.Agent.Tools.FileRead do
       start_index = max(0, offset - 1)
       start_index = min(start_index, total_lines)
 
-      amount = if limit, do: min(limit, total_lines - start_index), else: total_lines - start_index
+      amount =
+        if limit, do: min(limit, total_lines - start_index), else: total_lines - start_index
+
       amount = max(0, amount)
 
       selected_lines = Enum.slice(lines, start_index, amount)

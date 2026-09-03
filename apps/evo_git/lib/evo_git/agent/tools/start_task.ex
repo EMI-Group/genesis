@@ -96,15 +96,7 @@ defmodule EvoGit.Agent.Tools.StartTask do
 
     case String.trim(objective) do
       "" -> base
-      obj -> base <> ". Objective: #{truncate(obj, @truncate_length)}"
-    end
-  end
-
-  defp truncate(string, max) when is_binary(string) do
-    if String.length(string) <= max do
-      string
-    else
-      String.slice(string, 0, max) <> "...[truncated]"
+      obj -> base <> ". Objective: #{Shared.truncate(obj, @truncate_length)}"
     end
   end
 end

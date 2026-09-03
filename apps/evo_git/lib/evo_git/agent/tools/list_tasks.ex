@@ -108,46 +108,10 @@ defmodule EvoGit.Agent.Tools.ListTasks do
     status = Map.get(task, :status, :unknown)
     type = Map.get(task, :type) || "unknown"
     project = Map.get(task, :project_path) || "<system>"
-    objective = objective_snippet(Map.get(task, :opts))
-    started_at = format_datetime(Map.get(task, :started_at))
+    objective = Shared.objective_snippet(Map.get(task, :opts), @objective_snippet_length)
+    started_at = Shared.format_datetime(Map.get(task, :started_at))
 
     "- #{id} | status: #{status} | type: #{type} | project: #{project} | " <>
       "objective: #{objective} | started: #{started_at}"
-  end
-
-  defp objective_snippet(opts) do
-    case objective_from_opts(opts) do
-      nil ->
-        "(no objective)"
-
-      obj when is_binary(obj) ->
-        case String.trim(obj) do
-          "" -> "(no objective)"
-          trimmed -> truncate(trimmed, @objective_snippet_length)
-        end
-
-      obj ->
-        truncate(inspect(obj), @objective_snippet_length)
-    end
-  end
-
-  # `opts` comes from the store as a STRING-keyed map (JSON object); a keyword
-  # list form is handled too. Checks both key shapes defensively.
-  defp objective_from_opts(opts) when is_map(opts),
-    do: Map.get(opts, "objective") || Map.get(opts, :objective)
-
-  defp objective_from_opts(opts) when is_list(opts), do: Keyword.get(opts, :objective)
-  defp objective_from_opts(_opts), do: nil
-
-  defp format_datetime(nil), do: "unknown"
-  defp format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  defp format_datetime(other), do: to_string(other)
-
-  defp truncate(string, max) when is_binary(string) do
-    if String.length(string) <= max do
-      string
-    else
-      String.slice(string, 0, max) <> "...[truncated]"
-    end
   end
 end
