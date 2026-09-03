@@ -36,6 +36,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
+        "https://genesis.evox.group/dl/latest.json",
         "https://github.com/EMI-Group/genesis/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZFRDc4NDYwNzEyN0M0QUUKUldTdXhDZHhZSVRYYmg2Z25Pb3FmazZ3c3E1YkFLdExDS0dKM3BXL2VCMXlWcUpsSXlOZGtLeDAK",
