@@ -38,6 +38,7 @@ defmodule EvoDashWeb.HomeLive do
   alias EvoDashWeb.LiveHooks.NodeAware
 
   import EvoDashWeb.HomeLive.ChatMessages
+  import EvoDashWeb.HomeLive.ApprovalCard
 
   # Statuses that END a task (finalize the transcript + clear refs). All other
   # statuses mean the task is still alive: badge-only updates, refs kept.
@@ -124,6 +125,20 @@ defmodule EvoDashWeb.HomeLive do
           <% end %>
         </div>
 
+        <!-- Pending command approvals (security levels 2 & 3): the reflect
+             agent is BLOCKED mid-turn on a run_command approval until the user
+             decides. Render one ApprovalCard per pending request, pinned
+             between the messages scroller and the composer so they stay
+             visible while the transcript scrolls. The area scrolls internally
+             if several requests ever pend at once. -->
+        <%= if @pending_approvals != [] do %>
+          <div class="shrink-0 max-h-44 overflow-y-auto scrollbar-thin">
+            <%= for request <- @pending_approvals do %>
+              <.approval_card request={request} />
+            <% end %>
+          </div>
+        <% end %>
+
         <!-- Composer: pinned bottom, outside the messages scroller -->
         <div class="shrink-0 px-4 pt-2 pb-3 bg-gradient-to-t from-base-100 from-60% to-transparent">
           <form
@@ -199,6 +214,9 @@ defmodule EvoDashWeb.HomeLive do
       if connected?(socket) do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
+        # Run-command approvals (security levels 2 & 3): the reflect agent is
+        # blocked mid-turn until the user decides on the request card.
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
       end
 
       socket =
@@ -235,6 +253,12 @@ defmodule EvoDashWeb.HomeLive do
       # text) view instead of the markdown render. Never persisted — entries
       # are cleared with the transcript on reset_chat.
       raw_entry_ids: MapSet.new(),
+      # Ephemeral UI state: pending run-command approval requests (security
+      # levels 2 & 3) for THIS chat's task/agent, each waiting for the user's
+      # Confirm/Deny on its ApprovalCard. Never persisted — a page refresh
+      # clears them (the backend resolves stragglers with a timeout
+      # :approval_resolved broadcast); cleared on reset_chat too.
+      pending_approvals: [],
       model_profiles: [],
       model_selection_enabled: false,
       current_path: ~p"/help"
@@ -419,6 +443,67 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
+  # Command-approval decision (Confirm/Deny on an ApprovalCard — security
+  # levels 2 & 3). Validates the decision, resolves the target node from the
+  # pending request map (it may differ from the viewed node if the request
+  # raced a node switch), routes the response through the call-time
+  # :approval_responder seam, and OPTIMISTICALLY removes the card regardless
+  # of the outcome (the :approval_resolved broadcast is the backstop). Total:
+  # the responder contract is `:ok | {:error, reason}` and every clause keeps
+  # the LiveView alive.
+  @impl true
+  def handle_event(
+        "approval_response",
+        %{"request_id" => request_id, "decision" => decision},
+        socket
+      )
+      when decision in ["approve", "deny"] and is_binary(request_id) and request_id != "" do
+    pending =
+      case socket.assigns[:pending_approvals] do
+        list when is_list(list) -> list
+        _ -> []
+      end
+
+    # The request's OWN node wins when still pending; the viewed node is the
+    # fallback once the card is gone (double click / already resolved).
+    node =
+      case Enum.find(pending, &(Map.get(&1, :request_id) == request_id)) do
+        %{node: req_node} when not is_nil(req_node) -> req_node
+        _ -> socket.assigns[:current_node] || node()
+      end
+
+    # Call-time test seam (dashboard idiom — mirrors :review_merge_runner /
+    # :update_check_runner): tests inject `:approval_responder` to capture the
+    # args deterministically while the backend responder lands.
+    responder =
+      Application.get_env(:evo_dash, :approval_responder, &EvoDash.NodeContext.approval_response/3)
+
+    socket = assign(socket, pending_approvals: drop_approval(pending, request_id))
+
+    case responder.(node, request_id, decision) do
+      :ok ->
+        {:noreply, socket}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           # zh_CN: 审批响应失败（本地/远程审批通道出错；卡片已收起，超时会兜底清理）
+           gettext("Failed to respond: %{reason}", reason: inspect(reason))
+         )}
+
+      _other ->
+        # Total guard: an unexpected return shape must never crash the
+        # LiveView — the card is already removed, nothing more to do.
+        {:noreply, socket}
+    end
+  end
+
+  # Missing params / invalid decision (or a blank request id) — no-op.
+  @impl true
+  def handle_event("approval_response", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_info({:task_updated, task_id, status, node} = msg, socket) do
     # NodeAware.handle_task_info/2 applies the node filter (drops foreign-node
@@ -486,6 +571,42 @@ defmodule EvoDashWeb.HomeLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # A run-command approval was requested by the reflect agent (security levels
+  # 2 & 3 — level 1 executes immediately and never broadcasts). Keep ONLY
+  # requests that belong to THIS chat's task/agent AND THIS node — everything
+  # else (other chats/tasks/agents, other nodes) is ignored. On match the
+  # request map is upserted into :pending_approvals (deduped by request_id — a
+  # duplicate REPLACES the earlier entry). Ephemeral UI state — never
+  # persisted.
+  @impl true
+  def handle_info({:approval_requested, request}, socket) do
+    if own_request?(socket, request) do
+      pending =
+        case socket.assigns[:pending_approvals] do
+          list when is_list(list) -> list
+          _ -> []
+        end
+
+      {:noreply, assign(socket, pending_approvals: upsert_approval(pending, request))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # An approval was resolved somewhere (approve/deny by the user, or
+  # :cancelled / :timed_out by the backend) — drop its card. Total: unknown
+  # request ids filter to a no-op.
+  @impl true
+  def handle_info({:approval_resolved, request_id, _decision}, socket) do
+    pending =
+      case socket.assigns[:pending_approvals] do
+        list when is_list(list) -> list
+        _ -> []
+      end
+
+    {:noreply, assign(socket, pending_approvals: drop_approval(pending, request_id))}
   end
 
   @impl true
@@ -916,8 +1037,59 @@ defmodule EvoDashWeb.HomeLive do
       #
       # `raw_entry_ids` (per-entry raw-view flags) IS cleared here — the
       # transcript entries it refers to are gone with the reset.
-      raw_entry_ids: MapSet.new()
+      raw_entry_ids: MapSet.new(),
+      # Pending approval cards belong to the OLD chat's task — cleared here
+      # too (the backend resolves stragglers with a timeout broadcast).
+      pending_approvals: []
     )
+  end
+
+  # Own-request filter for `{:approval_requested, request}` broadcasts. A
+  # request belongs to this chat when it carries a usable request_id AND
+  # (its task_id matches OUR chat task OR its agent_id matches OUR chat
+  # agent) AND its node matches the chat's node (the chat's own `:chat_node`,
+  # falling back to the viewed node; a nil request node matches everything —
+  # the backend always stamps it, but stay lenient). Type tolerance: agent
+  # ids may be integers in the core while the request contract says strings →
+  # compared via `to_string/1`; task ids are binaries on both sides
+  # (`chat_task_id` is normalized to a binary by `ChatState.restore/1` and
+  # `AgentStream.task_id_from_start/1` only accepts binaries). Total — the
+  # assigns may be nil/absent on fresh sockets.
+  defp own_request?(socket, request) do
+    is_map(request) and
+      is_binary(Map.get(request, :request_id)) and
+      (own_task_request?(socket, request) or own_agent_request?(socket, request)) and
+      own_node_request?(socket, request)
+  end
+
+  defp own_task_request?(socket, request) do
+    req_task_id = Map.get(request, :task_id)
+    chat_task_id = socket.assigns[:chat_task_id]
+    req_task_id != nil and chat_task_id != nil and req_task_id == chat_task_id
+  end
+
+  defp own_agent_request?(socket, request) do
+    req_agent_id = Map.get(request, :agent_id)
+    chat_agent_id = socket.assigns[:chat_agent_id]
+    req_agent_id != nil and chat_agent_id != nil and to_string(req_agent_id) == to_string(chat_agent_id)
+  end
+
+  defp own_node_request?(socket, request) do
+    req_node = Map.get(request, :node)
+    chat_node = socket.assigns[:chat_node] || socket.assigns[:current_node]
+    req_node == nil or req_node == chat_node
+  end
+
+  # Upserts a request into the pending list (newest first): any earlier entry
+  # with the same request_id is dropped (replaced) so duplicates never stack.
+  defp upsert_approval(pending, request) do
+    [request | Enum.reject(pending, &(Map.get(&1, :request_id) == Map.get(request, :request_id)))]
+  end
+
+  # Drops the pending entry with the given request_id (no-op when absent).
+  # Total — request_id may be any term.
+  defp drop_approval(pending, request_id) do
+    Enum.reject(pending, &(Map.get(&1, :request_id) == request_id))
   end
 
   # Starts a NEW persisted chat (old chats stay in ChatHistory — there is no
