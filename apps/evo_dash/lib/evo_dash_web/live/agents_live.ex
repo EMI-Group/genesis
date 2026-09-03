@@ -62,6 +62,7 @@ defmodule EvoDashWeb.AgentsLive do
         repo_trees: [],
         config_status: nil,
         previous_agent_ids: MapSet.new(),
+        agents_initialized: false,
         previous_statuses: %{},
         new_agent_ids: MapSet.new(),
         changed_status_ids: MapSet.new(),
@@ -117,6 +118,7 @@ defmodule EvoDashWeb.AgentsLive do
         socket
         |> assign(
           previous_agent_ids: MapSet.new(),
+          agents_initialized: false,
           previous_statuses: %{},
           new_agent_ids: MapSet.new(),
           changed_status_ids: MapSet.new(),
@@ -765,8 +767,16 @@ defmodule EvoDashWeb.AgentsLive do
     current_ids = MapSet.new(agents, & &1.id)
     current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
 
-    # Detect new agents
-    new_agent_ids = MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
+    # Detect new agents. The FIRST apply per node (initial page mount and the
+    # first load after a node switch) must not mark pre-existing agents as
+    # new — otherwise every already-registered agent plays the one-shot
+    # spawn animation on page load.
+    new_agent_ids =
+      if socket.assigns.agents_initialized do
+        MapSet.difference(current_ids, socket.assigns.previous_agent_ids)
+      else
+        MapSet.new()
+      end
 
     # Detect status changes (agents that exist in both but have different status)
     changed_status_ids =
@@ -812,6 +822,7 @@ defmodule EvoDashWeb.AgentsLive do
       previous_statuses: current_statuses,
       new_agent_ids: new_agent_ids,
       changed_status_ids: changed_status_ids,
+      agents_initialized: true,
       history_gate: history_gate
     )
     |> maybe_fetch_selected_history()
