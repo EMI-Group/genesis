@@ -1230,13 +1230,19 @@ defmodule EvoDashWeb.HomeLiveTest do
     } do
       {:ok, view, _html} = live(conn, "/help")
       seed_running_chat(view)
-      # Before any task event there is no badge (chat_task_status nil).
+      # Before any task event there is no badge (chat_task_status nil). Scoped
+      # to .badge elements: the run-command approvals HTML comment in
+      # home_live.ex also contains the word "Pending", so a bare substring
+      # refute would always fail — the badge's presence is what matters.
       html = render(view)
-      refute html =~ "Pending"
+      doc = Floki.parse_document!(html)
+      assert Floki.find(doc, ".badge") == []
       # :pending → "Pending" badge appears on the card header.
       send(view.pid, {:task_updated, "t1", :pending, node()})
       html = render(view)
-      assert html =~ "Pending"
+      doc = Floki.parse_document!(html)
+      assert [badge] = Floki.find(doc, ".badge")
+      assert Floki.text(badge) =~ "Pending"
       assert badge_count(html) == 1
       # :running → "Running" + the pulsing-dot convention (animate-ping).
       send(view.pid, {:task_updated, "t1", :running, node()})
@@ -2016,6 +2022,232 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
       assert html =~ "Start a conversation"
+    end
+  end
+
+  # Command-approval request fixtures (security levels 2 & 3 of the core's
+  # run_command tool). Defaults match the seeded running chat used by the
+  # approval tests below: task "t1" on the LOCAL node; agent_id nil so the
+  # task-id path of own_request?/2 does the matching.
+  defp l2_request(overrides \\ %{}) do
+    Map.merge(
+      %{
+        request_id: "req-1",
+        command: "NavigateToPage.navigate",
+        args: "guide the user to the Settings page",
+        level: 2,
+        agent_id: nil,
+        task_id: "t1",
+        node: node()
+      },
+      Map.new(overrides)
+    )
+  end
+
+  defp l3_request(overrides \\ %{}) do
+    Map.merge(
+      %{
+        request_id: "req-1",
+        command: "StartTask.start_task",
+        args: "start a genesis task",
+        level: 3,
+        agent_id: nil,
+        task_id: "t1",
+        node: node()
+      },
+      Map.new(overrides)
+    )
+  end
+
+  describe "command approvals (security levels 2 & 3)" do
+    test "level-2 request renders an informational card with both buttons", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l2_request()})
+      html = render(view)
+
+      # Informational wording + info styling (title/badge/icon/Confirm).
+      assert html =~ "The assistant wants your attention"
+      assert html =~ "hero-information-circle"
+      assert html =~ "btn btn-primary btn-sm"
+      assert html =~ "badge badge-sm badge-info"
+      # The command shows in a <code> block; args as plain escaped text below it.
+      assert html =~ "NavigateToPage.navigate"
+      assert html =~ "guide the user to the Settings page"
+
+      # Both buttons: Confirm (approve) + Deny (deny), each carrying the
+      # phx-click + request id.
+      doc = Floki.parse_document!(html)
+      assert length(Floki.find(doc, ~s([phx-click="approval_response"]))) == 2
+      assert length(Floki.find(doc, ~s([phx-value-decision="approve"]))) == 1
+      assert length(Floki.find(doc, ~s([phx-value-decision="deny"]))) == 1
+      assert length(Floki.find(doc, ~s([phx-value-request_id="req-1"]))) == 2
+
+      assert [entry] = assigns(view)[:pending_approvals]
+      assert entry.request_id == "req-1"
+    end
+
+    test "level-3 request renders a danger card with alarming wording", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l3_request()})
+      html = render(view)
+
+      # Danger wording + error styling (title/badge/icon/Confirm).
+      assert html =~ "Action required — real side effects"
+      assert html =~ "StartTask.start_task"
+      assert html =~ "hero-exclamation-triangle"
+      assert html =~ "btn btn-error btn-sm"
+      assert html =~ "badge badge-sm badge-error"
+      refute html =~ "The assistant wants your attention"
+    end
+
+    test "requests for other tasks, agents, and nodes are ignored", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      # Other task id (agent_id nil → no agent match either).
+      send(view.pid, {:approval_requested, l2_request(task_id: "other-task")})
+      render(view)
+      assert assigns(view)[:pending_approvals] == []
+
+      # Same shape but a foreign agent: string "someone-else" vs the integer
+      # 1001 → the to_string/1 comparison never matches.
+      send(view.pid, {:approval_requested, l2_request(task_id: nil, agent_id: "someone-else")})
+      render(view)
+      assert assigns(view)[:pending_approvals] == []
+
+      # Matching task but a foreign node.
+      send(view.pid, {:approval_requested, l2_request(node: :foreign@node)})
+      html = render(view)
+      assert assigns(view)[:pending_approvals] == []
+      refute html =~ "The assistant wants your attention"
+      refute html =~ "Action required — real side effects"
+    end
+
+    test "approval_resolved removes the card (unknown ids are no-ops)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l2_request()})
+      render(view)
+      assert length(assigns(view)[:pending_approvals]) == 1
+
+      # Unknown id: harmless no-op — the card stays.
+      send(view.pid, {:approval_resolved, "unknown-id", :approve})
+      render(view)
+      assert length(assigns(view)[:pending_approvals]) == 1
+
+      send(view.pid, {:approval_resolved, "req-1", :approve})
+      html = render(view)
+      assert assigns(view)[:pending_approvals] == []
+      refute html =~ "The assistant wants your attention"
+    end
+
+    test "confirm/deny clicks route through the responder and remove the card", %{conn: conn} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn node, id, decision ->
+        send(test_pid, {:approval_response_called, node, id, decision})
+        :ok
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :approval_responder) end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l2_request()})
+      render(view)
+
+      # Confirm (approve): responder gets the request's node + the binary
+      # decision; the card is removed optimistically; no error flash.
+      html =
+        render_click(view, "approval_response", %{
+          "request_id" => "req-1",
+          "decision" => "approve"
+        })
+
+      assert_receive {:approval_response_called, req_node, "req-1", "approve"}
+      assert req_node == node()
+      assert assigns(view)[:pending_approvals] == []
+      refute html =~ "Failed to respond"
+
+      # Deny on a SECOND request (fresh id — the upsert would replace "req-1").
+      send(view.pid, {:approval_requested, l2_request(request_id: "req-2")})
+      render(view)
+
+      render_click(view, "approval_response", %{
+        "request_id" => "req-2",
+        "decision" => "deny"
+      })
+
+      assert_receive {:approval_response_called, req_node_2, "req-2", "deny"}
+      assert req_node_2 == node()
+      assert assigns(view)[:pending_approvals] == []
+    end
+
+    test "invalid decision never reaches the responder and keeps the card", %{conn: conn} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn node, id, decision ->
+        send(test_pid, {:approval_response_called, node, id, decision})
+        :ok
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :approval_responder) end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l2_request()})
+      render(view)
+
+      render_click(view, "approval_response", %{"request_id" => "req-1", "decision" => "maybe"})
+      refute_received {:approval_response_called, _, _, _}
+      assert length(assigns(view)[:pending_approvals]) == 1
+    end
+
+    test "responder error flashes while the card is still removed", %{conn: conn} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn node, id, decision ->
+        send(test_pid, {:approval_response_called, node, id, decision})
+        {:error, :nodedown}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :approval_responder) end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l2_request()})
+      render(view)
+
+      html =
+        render_click(view, "approval_response", %{
+          "request_id" => "req-1",
+          "decision" => "approve"
+        })
+
+      assert_receive {:approval_response_called, req_node, "req-1", "approve"}
+      assert req_node == node()
+      assert assigns(view)[:pending_approvals] == []
+      assert html =~ "Failed to respond"
+    end
+
+    test "duplicate approval_requested upserts instead of stacking", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      send(view.pid, {:approval_requested, l2_request()})
+      send(view.pid, {:approval_requested, l2_request()})
+      render(view)
+
+      assert length(assigns(view)[:pending_approvals]) == 1
+      assert hd(assigns(view)[:pending_approvals]).request_id == "req-1"
     end
   end
 
