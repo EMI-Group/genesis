@@ -166,11 +166,6 @@ defmodule EvoGit.Agent do
       """
       def subagent_modules, do: []
 
-      @doc false
-      def subagent_tools do
-        EvoGit.Agent.SubagentSchemas.tools(__MODULE__)
-      end
-
       @doc """
       Returns the system prompt that defines the agent's core behavior, persona, and rules.
 
