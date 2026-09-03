@@ -72,7 +72,7 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   """
   def source_section(assigns) do
     ~H"""
-    <div id="genesis-source-card" class="rounded-lg border border-base-300 bg-base-100">
+    <div id="genesis-source-card" class="rounded-lg border border-base-300 bg-base-100 flex flex-col">
       <div class="flex items-center gap-3 p-4">
         <div class="p-2 rounded-md bg-info/10 shrink-0">
           <.icon name="hero-code-bracket-square" class="size-4 text-info" />
@@ -85,44 +85,9 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
             </span>
           <% end %>
         </div>
-        <%= if not @source_status_loading and is_map(@source_status) do %>
-          <%= if @source_status.exists do %>
-            <button
-              id="update-source"
-              type="button"
-              phx-click="update_source"
-              class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
-              disabled={@source_busy != nil}
-            >
-              <.icon
-                name="hero-arrow-path"
-                class={"size-4 #{if @source_busy == :update, do: "animate-spin"}"}
-              />
-              {if @source_busy == :update,
-                do: gettext("Updating…"),
-                else: gettext("Update")} <% # zh_CN: "更新" %>
-            </button>
-          <% else %>
-            <button
-              id="clone-source"
-              type="button"
-              phx-click="clone_source"
-              class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
-              disabled={@source_busy != nil}
-            >
-              <.icon
-                name="hero-arrow-path"
-                class={"size-4 #{if @source_busy == :clone, do: "animate-spin"}"}
-              />
-              {if @source_busy == :clone,
-                do: gettext("Cloning…"),
-                else: gettext("Clone")} <% # zh_CN: "克隆" %>
-            </button>
-          <% end %>
-        <% end %>
       </div>
 
-      <div class="px-4 pb-4 text-sm">
+      <div class="px-4 pb-4 text-sm flex-1 flex flex-col">
         <p class="text-xs text-base-content/60 mb-2">
           {gettext("Genesis source checkout used by the self-reflective agent.")} <% # zh_CN: "自省智能体使用的 Genesis 源码检出目录" %>
         </p>
@@ -180,6 +145,46 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
                 </p>
               <% end %>
           <% end %>
+        <% end %>
+
+        <%= if not @source_status_loading and is_map(@source_status) do %>
+          <!-- Bottom-right action row (only a map status renders buttons —
+               loading / nil / {:unavailable, _} states show none) -->
+          <div class="mt-auto pt-3 flex justify-end gap-2">
+            <%= if @source_status.exists do %>
+              <button
+                id="update-source"
+                type="button"
+                phx-click="update_source"
+                class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
+                disabled={@source_busy != nil}
+              >
+                <.icon
+                  name="hero-arrow-path"
+                  class={"size-4 #{if @source_busy == :update, do: "animate-spin"}"}
+                />
+                {if @source_busy == :update,
+                  do: gettext("Updating…"),
+                  else: gettext("Update")} <% # zh_CN: "更新" %>
+              </button>
+            <% else %>
+              <button
+                id="clone-source"
+                type="button"
+                phx-click="clone_source"
+                class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
+                disabled={@source_busy != nil}
+              >
+                <.icon
+                  name="hero-arrow-path"
+                  class={"size-4 #{if @source_busy == :clone, do: "animate-spin"}"}
+                />
+                {if @source_busy == :clone,
+                  do: gettext("Cloning…"),
+                  else: gettext("Clone")} <% # zh_CN: "克隆" %>
+              </button>
+            <% end %>
+          </div>
         <% end %>
       </div>
     </div>

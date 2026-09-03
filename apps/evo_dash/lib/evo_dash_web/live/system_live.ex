@@ -484,15 +484,15 @@ defmodule EvoDashWeb.SystemLive do
                           "Check that your LLM provider is reachable with the configured API key."
                         )}
                       </p>
-                      <div class="flex items-center gap-3">
-                        <span class="text-sm text-base-content/60">{gettext(
+                      <div class="flex items-center gap-3 mt-auto">
+                        <span class="text-sm text-base-content/60 flex-1">{gettext(
                           "LLM connection testing is now available on the Settings page."
                         )}</span>
                         <.link
                           navigate={
                             ~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"
                           }
-                          class="btn btn-primary btn-sm gap-2"
+                          class="btn btn-primary btn-sm gap-2 shrink-0"
                         >
                           <.icon name="hero-sparkles" class="size-4" />
                           {gettext("Test in Settings")}
@@ -1723,7 +1723,7 @@ defmodule EvoDashWeb.SystemLive do
   # hint when the term is failing (any status other than :ok/:info).
   defp check_cell(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-300 bg-base-100">
+    <div class="rounded-lg border border-base-300 bg-base-100 flex flex-col">
       <div class="flex items-center gap-3 p-4">
         <div class={"p-2 rounded-md #{status_bg(@status)}"}>
           <.icon name={@icon} class={"size-4 #{status_text(@status)}"} />
@@ -1742,7 +1742,7 @@ defmodule EvoDashWeb.SystemLive do
           <% end %>
         </div>
       </div>
-      <div class="px-4 pb-4 text-sm">
+      <div class="px-4 pb-4 text-sm flex-1 flex flex-col">
         {render_slot(@details)}
         <%= if @status not in [:ok, :info] and @fix != [] do %>
           <div class="mt-3 pt-3 border-t border-base-300/60 flex items-start gap-2 text-xs text-base-content/70">
