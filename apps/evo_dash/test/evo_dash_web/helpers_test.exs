@@ -106,13 +106,29 @@ defmodule EvoDashWeb.HelpersTest do
 
   describe "task_status_badge/1" do
     test "returns correct badge for known statuses" do
-      assert task_status_badge(:running) =~ "text-warning"
-      assert task_status_badge(:completed) =~ "text-info"
-      assert task_status_badge(:failed) =~ "text-error"
-      assert task_status_badge(:cancelled) =~ "text-warning"
+      # Transitional/busy states share the warning (amber) family
+      assert task_status_badge(:running) ==
+               "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
+      assert task_status_badge(:finalizing) ==
+               "bg-warning/10 text-warning rounded-full flex items-center justify-center"
 
       assert task_status_badge(:cancelling) ==
-               "bg-violet-500/10 text-violet-500 rounded-full flex items-center justify-center"
+               "bg-warning/10 text-warning rounded-full flex items-center justify-center"
+
+      # Completed is success, failed is error
+      assert task_status_badge(:completed) ==
+               "bg-success/10 text-success rounded-full flex items-center justify-center"
+
+      assert task_status_badge(:failed) ==
+               "bg-error/10 text-error rounded-full flex items-center justify-center"
+
+      # Terminal-neutral states are muted base-content
+      assert task_status_badge(:cancelled) ==
+               "bg-base-content/10 text-base-content/60 rounded-full flex items-center justify-center"
+
+      assert task_status_badge(:pending) ==
+               "bg-base-content/10 text-base-content/60 rounded-full flex items-center justify-center"
     end
 
     test "all badges have rounded-full" do
@@ -130,6 +146,100 @@ defmodule EvoDashWeb.HelpersTest do
       badge = task_status_badge(:unknown)
       assert badge =~ "bg-base-200"
       assert badge =~ "text-base-content/70"
+    end
+  end
+
+  describe "task_status_dot_class/1" do
+    test "returns correct dot class for known statuses" do
+      assert task_status_dot_class(:running) == "bg-warning"
+      assert task_status_dot_class(:finalizing) == "bg-warning"
+      assert task_status_dot_class(:cancelling) == "bg-warning"
+      assert task_status_dot_class(:completed) == "bg-success"
+      assert task_status_dot_class(:failed) == "bg-error"
+      assert task_status_dot_class(:pending) == "bg-base-content/40"
+      assert task_status_dot_class(:cancelled) == "bg-base-content/40"
+    end
+
+    test "transitional/busy statuses share the warning dot" do
+      assert task_status_dot_class(:running) == task_status_dot_class(:cancelling)
+      assert task_status_dot_class(:finalizing) == task_status_dot_class(:cancelling)
+    end
+
+    test "pending and cancelled share the neutral dim dot" do
+      assert task_status_dot_class(:pending) == task_status_dot_class(:cancelled)
+    end
+
+    test "falls back to a dim neutral gray for unknown statuses" do
+      assert task_status_dot_class(:unknown) == "bg-base-content/30"
+      assert task_status_dot_class(nil) == "bg-base-content/30"
+      assert task_status_dot_class("running") == "bg-base-content/30"
+    end
+  end
+
+  describe "task_status_tint/1" do
+    test "returns correct tint for known statuses" do
+      assert task_status_tint(:running) == "bg-warning/5 shadow-warning/10 border-warning/20"
+      assert task_status_tint(:finalizing) == "bg-warning/5 shadow-warning/10 border-warning/20"
+      assert task_status_tint(:cancelling) == "bg-warning/5 shadow-warning/10 border-warning/20"
+      assert task_status_tint(:completed) == "bg-success/5 shadow-success/10 border-success/20"
+      assert task_status_tint(:failed) == "bg-error/5 shadow-error/10 border-error/20"
+    end
+
+    test "transitional/busy statuses share the warning tint" do
+      assert task_status_tint(:running) == task_status_tint(:cancelling)
+      assert task_status_tint(:finalizing) == task_status_tint(:cancelling)
+    end
+
+    test "falls back to the neutral tint for pending/cancelled/unknown" do
+      neutral = "bg-base-200/40 border-base-300/20"
+      assert task_status_tint(:pending) == neutral
+      assert task_status_tint(:cancelled) == neutral
+      assert task_status_tint(:unknown) == neutral
+      assert task_status_tint(nil) == neutral
+    end
+  end
+
+  describe "connection_status_dot_class/1" do
+    test "returns correct dot class for known phases" do
+      assert connection_status_dot_class(:local) == "bg-info"
+      assert connection_status_dot_class(:connected) == "bg-success"
+      assert connection_status_dot_class(:connecting) == "bg-warning"
+      assert connection_status_dot_class(:disconnecting) == "bg-warning"
+      assert connection_status_dot_class(:error) == "bg-error"
+    end
+
+    test "connecting and disconnecting share the warning dot" do
+      assert connection_status_dot_class(:connecting) ==
+               connection_status_dot_class(:disconnecting)
+    end
+
+    test "falls back to a dim neutral gray for disconnected/unknown phases" do
+      assert connection_status_dot_class(:disconnected) == "bg-base-content/40"
+      assert connection_status_dot_class(:unknown) == "bg-base-content/40"
+      assert connection_status_dot_class(:bogus) == "bg-base-content/40"
+      assert connection_status_dot_class(nil) == "bg-base-content/40"
+    end
+  end
+
+  describe "connection_status_badge_class/1" do
+    test "returns correct badge modifier for known phases" do
+      assert connection_status_badge_class(:local) == "badge-ghost"
+      assert connection_status_badge_class(:connected) == "badge-success"
+      assert connection_status_badge_class(:connecting) == "badge-warning"
+      assert connection_status_badge_class(:disconnecting) == "badge-warning"
+      assert connection_status_badge_class(:error) == "badge-error"
+    end
+
+    test "connecting and disconnecting share the warning modifier" do
+      assert connection_status_badge_class(:connecting) ==
+               connection_status_badge_class(:disconnecting)
+    end
+
+    test "falls back to the neutral ghost modifier for disconnected/unknown phases" do
+      assert connection_status_badge_class(:disconnected) == "badge-ghost"
+      assert connection_status_badge_class(:unknown) == "badge-ghost"
+      assert connection_status_badge_class(:bogus) == "badge-ghost"
+      assert connection_status_badge_class(nil) == "badge-ghost"
     end
   end
 

@@ -11,7 +11,7 @@
     />
     <meta name="csrf-token" content={get_csrf_token()} />
     <meta name="locale" content={Gettext.get_locale(EvoDashWeb.Gettext)} />
-    <meta name="theme-color" content="#f8fafc" />
+    <meta name="theme-color" content="#f6f5f4" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <%!-- Page title: EvoX Genesis (天演 · 启元 / 天演 · 啟元) --%>
@@ -50,7 +50,7 @@
         const updateThemeColor = (resolvedTheme) => {
           const meta = document.querySelector('meta[name="theme-color"]');
           if (meta) {
-            meta.content = resolvedTheme === "dark" ? "#020617" : "#f8fafc";
+            meta.content = resolvedTheme === "dark" ? "#242424" : "#f6f5f4";
           }
         };
 
@@ -125,7 +125,7 @@
       })();
     </script>
   </head>
-  <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased h-dvh overflow-hidden selection:bg-indigo-500/30">
+  <body class="bg-base-200 text-base-content antialiased h-dvh overflow-hidden selection:bg-primary/30">
     {@inner_content}
   </body>
 </html>

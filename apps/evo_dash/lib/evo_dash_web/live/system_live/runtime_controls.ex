@@ -33,7 +33,7 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
   def controls_section(assigns) do
     ~H"""
     <div id="system-controls" class="mt-4">
-      <div class="p-4 border-b border-slate-200 dark:border-slate-800">
+      <div class="p-4 border-b border-base-300">
         <div class="flex items-center gap-3">
           <.icon name="hero-adjustments-horizontal" class="size-5 text-info shrink-0" />
           <div class="flex-1 min-w-0">

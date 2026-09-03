@@ -2,11 +2,11 @@
 
 ## Intent
 
-Phoenix LiveView on-mount hooks registered globally via the `live_view/0` macro in `evo_dash_web.ex` (`apps/evo_dash/lib/evo_dash_web.ex:52-56`). Five hooks — `SetLocale`, `NodeAware`, `DesktopQuit`, `UpdateStatus`, `Guide` — apply to ALL LiveViews (including Welcome/WelcomeComplete) automatically; no per-LiveView opt-in required.
+Phoenix LiveView on-mount hooks registered globally via the `live_view/0` macro in `evo_dash_web.ex` (`apps/evo_dash/lib/evo_dash_web.ex:52-57`). Six hooks — `SetLocale`, `NodeAware`, `Appearance`, `DesktopQuit`, `UpdateStatus`, `Guide` — apply to ALL LiveViews (including Welcome/WelcomeComplete) automatically; no per-LiveView opt-in required.
 
 ## Routing Table
 
-None — leaf directory (five module files: `set_locale.ex`, `node_aware.ex`, `desktop_quit.ex`, `update_status.ex`, `guide.ex`).
+None — leaf directory (six module files: `set_locale.ex`, `node_aware.ex`, `appearance.ex`, `desktop_quit.ex`, `update_status.ex`, `guide.ex`).
 
 ## API Surface
 
@@ -62,6 +62,19 @@ The "spatial glue" for SSH Remote Development node-aware navigation. Provides on
 | `handle_tasks_result/2` | Stale-guard seam (pure socket in/out): drops mismatched node/seq results, assigns `:running_tasks`/`:pending_tasks` on match. Called by the attached `handle_info/2` hook. |
 | `handle_info/2` | Attached `:handle_info` hook — `{:halt, socket}` for `{:node_aware_active_tasks, ...}` (via `handle_tasks_result/2`), `{:cont, socket}` for all other messages. |
 
+### `EvoDashWeb.LiveHooks.Appearance` (`appearance.ex`)
+
+Global on-mount hook that applies the user-configured accent color to the app shell. Registered AFTER `NodeAware`, BEFORE `DesktopQuit` in the `live_view/0` macro (`evo_dash_web.ex:54`) — Guide stays LAST. Reads `EvoGit.Config.resolve([:appearance, :accent_color])` (schema default `"blue"`, validated to one of the ten CSS-known names) and seeds `@accent_color`; `EvoDashWeb.Layouts.app` declares `attr(:accent_color, :string, default: "blue")` and sets `data-accent-color={@accent_color}` on the `#app-layout` shell div, activating the ten `[data-accent-color="<name>"]` override rules in app.css (un-layered author CSS after the daisyUI theme `@plugin` blocks) that retarget `--color-primary`/`--color-accent` within the shell subtree.
+
+- **Seed + attach** (`on_mount/4`): `assign_new(:accent_color, fn -> "blue" end)` (never raises on bare sockets / absent config) then `attach_hook(:appearance_accent, :handle_params, &handle_params/3)` + `attach_hook(:appearance_accent, :handle_info, &handle_info/2)` on EVERY mount path (dead render AND connected — no desktop-mode gate; the async remote fetch itself is gated on `connected?` inside the interceptor). The FIRST hook to attach a `:handle_params` interceptor in the codebase (no collision; attached hooks run before the LiveView's own `handle_params/3`).
+- **Node-aware resolution** happens in the `:handle_params` interceptor (handle_params runs after mount on BOTH the dead render and the connected mount, and on every push_patch/push_navigate):
+  - **Local node** (no `?node=`, `"local"`, unknown id, or known-but-not-yet-connected target): SYNCHRONOUS `EvoGit.Config.resolve([:appearance, :accent_color])` — a local file read, cheap on every mount, so the accent is correct on first paint (no flash).
+  - **Remote node** (`params["node"]` naming a connected `genesis_remote` target — presence heuristic + `NodeContext.get_target/1` + `connection_status/1` `%{phase: :connected, node: binary}`, mirroring `NodeAware`'s resolution): ASYNC via `Task.Supervisor.start_child(EvoDash.TaskSupervisor, ...)` calling `EvoDash.NodeContext.get_resolved_config(remote_node)` (the remote's FULL resolved config — the same RPC SettingsLive uses; `{:ok, config}` → `accent_from_config/1`, anything else → `"blue"`, rescue at the async boundary) → `send(pid, {:appearance_accent_result, seq, node_param, accent})`. The seed stays until the result lands — NEVER an RPC on the render path. The spawn captures pid + next `:accent_fetch_seq` BEFORE spawning and bumps the seq assign (latest-request-wins), mirroring `request_tasks_load/1`.
+  - **Re-resolve trigger**: re-resolves only when `params["node"]` OR the resolved node mode (`:local` vs `{:remote, node_atom}`) CHANGED since the last run (tracked in `:accent_node_param`/`:accent_node_mode` assigns). Initial mount, node switches, AND a pending→connected transition (NodeAware's `handle_connection_status/2` push_patch re-runs `handle_params` with the same `?node=` but the mode now resolves remote) all re-resolve; pagination/search push_patches that leave the node context untouched pass through cheaply. Always returns `{:cont, socket}` — the page's own `handle_params` (assign_node etc.) must run regardless.
+  - **`handle_info` interceptor**: `{:appearance_accent_result, seq, node_param, accent}` → `{:halt, handle_accent_result(...)}` — the stale-guard drops the result when `seq` != `:accent_fetch_seq` or `node_param` != `:accent_node_param` (node switched mid-flight / newer fetch superseded); a matching result assigns `:accent_color` (normalized via `resolve_accent/1`). All other messages pass `{:cont, socket}`.
+- **No PubSub subscription**: the accent is static per node until the config changes (which requires a page reload anyway); `on_mount` + the two interceptors suffice.
+- **Pure test seams** (`@doc false`): `resolve_accent/1` (whitelist normalization — the ten known names pass, everything else → `"blue"`) and `accent_from_config/1` (`get_in(config, [:appearance, :accent_color])` → normalize; non-map → `"blue"`). Bare-socket unit tests drive `on_mount/4` / `handle_params/3` (local params resolve the local config, which is `"blue"` with no user config file — deterministic in the isolated test env) and the pure helpers directly.
+
 ### `EvoDashWeb.LiveHooks.UpdateStatus` (`update_status.ex`)
 
 Global on-mount hook bridging the Tauri updater hub (`EvoDash.UpdateStatus` GenServer, which broadcasts `{:update_status, state}` on `EvoGit.PubSub` topic `"updates"` from every `handle_cast` transition, `apps/evo_dash/lib/evo_dash/update_status.ex:236`). The reference pattern for a global push-based hook:
@@ -70,7 +83,7 @@ Global on-mount hook bridging the Tauri updater hub (`EvoDash.UpdateStatus` GenS
 - `maybe_attach/2` (update_status.ex:160-172): when desktop AND `connected?(socket)` → `Phoenix.PubSub.subscribe(EvoGit.PubSub, "updates")` + `attach_hook(:update_status, :handle_info, &handle_info/2)` + `attach_hook(:update_status, :handle_event, &handle_event/3)`. Dead-render skip mirrors NodeAware. Non-desktop → no-op (dormant hook).
 - `handle_info` interceptor (update_status.ex:117-124): `{:update_status, state}` → `{:halt, assign(socket, :update_status, state)}` — attached hooks run BEFORE the LiveView's own `handle_info`; other messages pass `{:cont, socket}`. NOTE: the broadcast assign is UNCONDITIONAL — a transition on a remote-view page would populate the assign (only the INITIAL seed is hidden on remote views).
 - `handle_event` interceptor (update_status.ex:127-155): consumes the four JS-hook result events (`update_check_result`, `update_download_result`, `update_apply_confirmed`, `update_apply_failed`) with `{:halt, socket}` so no page sees unhandled-pushEvent warnings; everything else passes `{:cont, socket}`. Check results may auto-request a download via `push_event` (line 129). `update_apply_confirmed` stops the backend through the shared `:evo_dash, :desktop_quit_stop_fun` config seam (default `DesktopQuit.default_stop/0`).
-- Every page receives broadcasts because the hook is registered globally (evo_dash_web.ex:55); the shared layout renders the System-nav notification dot from `@update_status` (layouts.ex:49, 148, 450-451 — only phases `:available`/`:ready`).
+- Every page receives broadcasts because the hook is registered globally (evo_dash_web.ex:56); the shared layout renders the System-nav notification dot from `@update_status` (layouts.ex:49, 148, 450-451 — only phases `:available`/`:ready`).
 
 ### `EvoDashWeb.LiveHooks.DesktopQuit` (`desktop_quit.ex`)
 
@@ -88,7 +101,7 @@ Handlers are idempotent (`requested` always assigns true; `cancelled` assigns fa
 
 ### Hook registration, process lifetime & reconnection
 
-- **Registration**: all five hooks are registered via `on_mount` in the shared `live_view/0` macro (`apps/evo_dash/lib/evo_dash_web.ex:52-56`) — SetLocale → NodeAware → DesktopQuit → UpdateStatus → Guide. Every LiveView (including Welcome/WelcomeComplete) gets them automatically.
+- **Registration**: all six hooks are registered via `on_mount` in the shared `live_view/0` macro (`apps/evo_dash/lib/evo_dash_web.ex:52-57`) — SetLocale → NodeAware → Appearance → DesktopQuit → UpdateStatus → Guide. Every LiveView (including Welcome/WelcomeComplete) gets them automatically.
 - **Process lifetime**: one LiveView process per connected page session. `on_mount` runs TWICE per page load: (1) dead render inside the initial HTTP request process — `connected?/1` false → NO PubSub subscriptions (interceptor attaches and assign seeds still apply); (2) connected mount in the NEW LiveView process — `connected?/1` true → subscribe + initial loads. Subscriptions are per-process and die with the process (Phoenix PubSub auto-cleans); nothing re-subscribes within a process.
 - **Navigation**: `push_patch` (palette/pagination/node switches) re-runs `handle_params/3` on the SAME process — no re-subscription; `assign_node/2`'s `:tasks_node_loaded` dedup prevents redundant sidebar reloads. `push_navigate` to a DIFFERENT LiveView module (all dashboard routes are distinct modules) spawns a NEW process → full re-mount → re-subscribe. `push_navigate` to the same module keeps the process.
 - **Disconnect/reconnect**: on socket close the channel stops the LiveView process (`{:shutdown, :closed}`); on reconnect the client mounts a NEW process → `on_mount` re-runs → re-subscribes. Missed-event catch-up is per-hook reload-on-mount only (no cursors/replay): NodeAware re-runs `load_running_and_pending_tasks/1` on the connected mount (node_aware.ex:98 — full DB/RPC re-query); UpdateStatus re-reads the hub's CURRENT state via `UpdateStatus.get()` (update_status.ex:63 — GenServer snapshot).
@@ -113,7 +126,7 @@ Handlers are idempotent (`requested` always assigns true; `cancelled` assigns fa
 
 ### `EvoDashWeb.LiveHooks.Guide` (`guide.ex`)
 
-Global on-mount hook bridging the core's `guide_user` tool broadcasts to the floating "Genesis Guide" panel in `EvoDashWeb.Layouts.app` (registered LAST in the `live_view/0` macro, after `UpdateStatus`, `evo_dash_web.ex:56`). The panel renders from `@guide`; the 9 `guide={@guide}` call sites in the live pages pass it through (layouts + home/welcome/welcome_complete/projects/tasks/review/agents/settings/system). This hook only maintains the assign.
+Global on-mount hook bridging the core's `guide_user` tool broadcasts to the floating "Genesis Guide" panel in `EvoDashWeb.Layouts.app` (registered LAST in the `live_view/0` macro, after `UpdateStatus`, `evo_dash_web.ex:57`). The panel renders from `@guide`; the 9 `guide={@guide}` call sites in the live pages pass it through (layouts + home/welcome/welcome_complete/projects/tasks/review/agents/settings/system). This hook only maintains the assign.
 
 - **PubSub contract**: subscribes to `EvoGit.PubSub` topic `"guides"` on the connected mount only (`maybe_attach/1`, dead-render skip); message shape `{:guide_updated, guide_id, %{message: String.t(), page: String.t() | nil, selector: String.t() | nil, dismissible: boolean}, node()}`.
 - **Node filtering**: the attached `handle_info/2` drops foreign-node broadcasts FIRST via the pure `relevant?/2` wrapper over `NodeAware.event_from_current_node?/2` (node_aware.ex:592) — a guide broadcast on a remote `genesis_remote` node only surfaces while that node is being viewed.

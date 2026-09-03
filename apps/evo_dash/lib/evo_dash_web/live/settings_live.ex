@@ -31,13 +31,14 @@ defmodule EvoDashWeb.SettingsLive do
       desktop_quit_confirm={@desktop_quit_confirm}
       update_status={@update_status}
       guide={@guide}
+      accent_color={assigns[:accent_color] || "blue"}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <%= if @active_category not in [:remote_connections, :agents] do %>
           <%!-- Config file path display --%>
-          <div class="mb-4 p-3 flex items-center gap-3 border-b border-slate-200 dark:border-slate-800">
+          <div class="mb-4 p-3 flex items-center gap-3 border-b border-base-300">
             <.icon name="hero-document-text" class="size-4 text-base-content/70 shrink-0" />
             <span class="text-xs font-medium text-base-content/70 shrink-0">{gettext(
               "Configuration file"
@@ -135,7 +136,7 @@ defmodule EvoDashWeb.SettingsLive do
            `mix assets.deploy` (prod) so the new utilities are emitted. --%>
         <div class="flex flex-col gap-8">
           <%!-- Two-column sidebar + content layout --%>
-          <div class="flex flex-col md:flex-row bg-white dark:bg-slate-900">
+          <div class="flex flex-col md:flex-row bg-base-100">
             <%!-- Sidebar --%>
             <EvoDashWeb.SettingsComponents.settings_sidebar
               categories={@schemas_by_category}
@@ -646,6 +647,7 @@ defmodule EvoDashWeb.SettingsLive do
                     model_profiles={@file_config[:llm][:models] || []}
                     editing_profile_id={@editing_profile_id}
                     profile_form_draft={@profile_form_draft}
+                    appearance_accent_draft={@appearance_accent_draft}
                     test_profile_id={@test_profile_id}
                     credentials={@credentials}
                   />
@@ -728,6 +730,11 @@ defmodule EvoDashWeb.SettingsLive do
         llm_test_status: :idle,
         editing_profile_id: nil,
         profile_form_draft: nil,
+        # Pending accent-color selection for the :appearance category (nil = no
+        # pending draft). Set by `select_appearance_accent`; cleared whenever
+        # file_config is replaced by an authoritative load (see
+        # apply_node_data_results, save paths, reset_key).
+        appearance_accent_draft: nil,
         test_profile_id: test_profile_id,
         remote_config: false,
         remote_config_error: nil,
@@ -843,7 +850,9 @@ defmodule EvoDashWeb.SettingsLive do
         socket
       end
 
-    {:noreply, socket}
+    # A node switch changes the config domain — a draft picked on the previous
+    # node's config must not leak onto the new node's appearance card.
+    {:noreply, assign(socket, :appearance_accent_draft, nil)}
   end
 
   @impl true
@@ -1058,6 +1067,10 @@ defmodule EvoDashWeb.SettingsLive do
               |> assign(:file_config, file_config)
               |> assign(:config_file_exists, config_file_exists)
               |> assign(:per_category_errors, %{})
+              # The reloaded file_config is authoritative — clear any pending
+              # appearance accent draft (its value, if the appearance form was
+              # submitted, is already persisted via the hidden input).
+              |> assign(:appearance_accent_draft, nil)
               |> put_flash(:info, gettext("Configuration saved successfully."))
 
             # Update runtime scheduler when LLM or scheduler categories change
@@ -1146,6 +1159,10 @@ defmodule EvoDashWeb.SettingsLive do
               |> assign(:file_config, file_config)
               |> assign(:config_file_exists, config_file_exists)
               |> assign(:per_category_errors, %{})
+              # The reloaded file_config is authoritative — clear any pending
+              # appearance accent draft (its value, if the appearance form was
+              # submitted, is already persisted via the hidden input).
+              |> assign(:appearance_accent_draft, nil)
               |> put_flash(:info, gettext("Configuration saved successfully."))
 
             # Update runtime scheduler when LLM or scheduler keys change
@@ -1191,7 +1208,37 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_event("reset_key", params, socket), do: SearchEvents.handle_reset_key(socket, params)
+  def handle_event("reset_key", params, socket) do
+    {:noreply, socket} = SearchEvents.handle_reset_key(socket, params)
+    # A successful reset persists + reloads file_config (authoritative) — clear
+    # any pending appearance accent draft so the stale draft can never override
+    # the reset value on re-render. Harmless on the invalid-key error branch.
+    {:noreply, assign(socket, :appearance_accent_draft, nil)}
+  end
+
+  # ── Appearance category: accent-color swatch picker ───────────────────────
+  #
+  # `select_appearance_accent` updates ONLY the pending `:appearance_accent_draft`
+  # assign (NOT file_config). The swatch buttons in SettingCard are type="button"
+  # so the enclosing save_category form is never submitted and unsaved edits in
+  # sibling cards of the same category are never wiped. The draft is threaded
+  # into the accent card's value by category_section (via
+  # `card_value/3` in components/settings_components.ex) so the active ring +
+  # hidden input re-render immediately. The draft is cleared whenever file_config
+  # is replaced by an authoritative load (mount, save/reset success, node-data
+  # reload) so the card always reflects the persisted state after any reload.
+
+  @impl true
+  def handle_event("select_appearance_accent", %{"accent" => accent}, socket) do
+    # Whitelist: accept only the ten palette names from
+    # SettingCard.accent_palette/0 (untrusted client payload — never trust it
+    # blindly, never String.to_atom on it).
+    if EvoDashWeb.SettingsComponents.SettingCard.accent_name?(accent) do
+      {:noreply, assign(socket, :appearance_accent_draft, accent)}
+    else
+      {:noreply, put_flash(socket, :error, gettext("Unknown accent color."))}
+    end
+  end
 
   # ── :list_of_strings list editor (e.g. [sandbox] write_paths) ─────────────
   #
@@ -1828,6 +1875,10 @@ defmodule EvoDashWeb.SettingsLive do
       |> assign(:file_config, results.file_config)
       |> assign(:config_status, results.config_status)
       |> assign(:remote_config, false)
+      # Node-data loads replace file_config with an authoritative snapshot
+      # (navigation + node switches) — clear any pending appearance accent draft
+      # so the accent card always reflects the loaded config.
+      |> assign(:appearance_accent_draft, nil)
 
     socket =
       case results.remote_config_error do
@@ -2180,44 +2231,31 @@ defmodule EvoDashWeb.SettingsLive do
     end
   end
 
+  # Phase → color mapping is owned by `EvoDashWeb.Helpers.connection_status_dot_class/1`;
+  # this wrapper resolves the target's phase from the statuses map and keeps the
+  # pulse animation for connecting phases (shape classes live at the call site).
   defp remote_target_dot_color(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    phase = Map.get(status_map, :phase, :disconnected)
+    phase = remote_target_phase(target_id, statuses)
+    pulse = if phase in [:connecting, :disconnecting], do: " animate-pulse", else: ""
+    connection_status_dot_class(phase) <> pulse
+  end
 
-    case phase do
-      :connected -> "bg-blue-500"
-      :connecting -> "bg-amber-500 animate-pulse"
-      :disconnecting -> "bg-amber-500 animate-pulse"
-      :error -> "bg-rose-500"
-      :disconnected -> "bg-slate-400"
-      _ -> "bg-slate-400"
-    end
+  defp remote_target_phase(target_id, statuses) do
+    statuses |> Map.get(target_id, %{}) |> Map.get(:phase, :disconnected)
   end
 
   defp remote_connected?(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    Map.get(status_map, :phase, :disconnected) == :connected
+    remote_target_phase(target_id, statuses) == :connected
   end
 
+  # Composes the `badge badge-sm` base with the shared phase modifier
+  # (`EvoDashWeb.Helpers.connection_status_badge_class/1` owns the mapping).
   defp remote_status_badge_class(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    phase = Map.get(status_map, :phase, :disconnected)
-
-    case phase do
-      :connected -> "badge badge-success badge-sm"
-      :connecting -> "badge badge-warning badge-sm"
-      :disconnecting -> "badge badge-warning badge-sm"
-      :error -> "badge badge-error badge-sm"
-      :disconnected -> "badge badge-ghost badge-sm"
-      _ -> "badge badge-ghost badge-sm"
-    end
+    "badge badge-sm " <> connection_status_badge_class(remote_target_phase(target_id, statuses))
   end
 
   defp remote_status_label(target_id, statuses) do
-    status_map = Map.get(statuses, target_id, %{})
-    phase = Map.get(status_map, :phase, :disconnected)
-
-    case phase do
+    case remote_target_phase(target_id, statuses) do
       :connected -> gettext("Connected")
       :connecting -> gettext("Connecting...")
       :disconnecting -> gettext("Disconnecting...")

@@ -355,23 +355,30 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
       doc = Floki.parse_document!(html)
 
       # Static capacity: ONE full-width horizontal dashed line (y1 == y2),
-      # stroked with the capacity color
+      # stroked with the capacity color. Colors are CSS-variable references in
+      # inline style attributes (var() is invalid in SVG presentation
+      # attributes like stroke), so no stroke attribute is present.
       [line] = Floki.find(doc, "line[stroke-dasharray='4 3']")
       assert Floki.attribute(line, "x1") == ["0"]
       assert Floki.attribute(line, "x2") == ["300"]
       [y1] = Floki.attribute(line, "y1")
       [y2] = Floki.attribute(line, "y2")
       assert y1 == y2
-      assert Floki.attribute(line, "stroke") == ["#94a3b8"]
+      assert Floki.attribute(line, "style") == ["stroke: var(--chart-capacity)"]
 
       # No path is rendered for the capacity series: only the 2 non-static
       # series (in use, waiting) each render an area + line path
       assert length(Floki.find(doc, "path")) == 4
-      refute Enum.any?(Floki.find(doc, "path"), &(Floki.attribute(&1, "stroke") == ["#94a3b8"]))
 
-      # The capacity color appears only in the legend dot and the static line
-      assert length(Floki.find(doc, ~s([style*="#94a3b8"]))) == 1
-      assert length(Floki.find(doc, ~s(line[stroke="#94a3b8"]))) == 1
+      refute Enum.any?(
+               Floki.find(doc, "path"),
+               &(Floki.attribute(&1, "style") == ["stroke: var(--chart-capacity)"])
+             )
+
+      # The capacity color appears only in the legend dot (background-color)
+      # and the static line (stroke) — two elements carrying the CSS var
+      assert length(Floki.find(doc, ~s|[style*="var(--chart-capacity)"]|)) == 2
+      assert length(Floki.find(doc, ~s|line[style*="var(--chart-capacity)"]|)) == 1
     end
 
     test "renders a static muted single-model label when exactly one model id is known" do

@@ -33,6 +33,7 @@ defmodule EvoDashWeb.SettingCardTest do
       assert attr(inputs, 0, "name") == [@key_path]
       assert attr(inputs, 0, "value") == ["/tmp/a"]
       assert attr(inputs, 0, "placeholder") == ["e.g. ~/.cache/genesis"]
+
       assert attr(inputs, 0, "class") == [
                "input input-bordered input-sm rounded-md w-full font-mono text-base"
              ]
@@ -83,7 +84,8 @@ defmodule EvoDashWeb.SettingCardTest do
     end
 
     test "nil value renders the Not set hint with no text inputs" do
-      html = render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: nil)
+      html =
+        render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: nil)
 
       assert html =~ "Not set — platform default writable paths are used."
       assert text_inputs(html) == []
@@ -92,7 +94,8 @@ defmodule EvoDashWeb.SettingCardTest do
     end
 
     test "empty list renders the hidden sentinel with no text inputs" do
-      html = render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: [])
+      html =
+        render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: [])
 
       assert length(hidden_sentinels(html)) == 1
       assert hidden_sentinels(html) |> attr(0, "value") == [""]
@@ -128,7 +131,8 @@ defmodule EvoDashWeb.SettingCardTest do
     end
 
     test "renders the key path and description" do
-      html = render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: nil)
+      html =
+        render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: nil)
 
       assert html =~ "sandbox.write_paths"
       assert html =~ "User-defined list of writable paths"
@@ -137,7 +141,8 @@ defmodule EvoDashWeb.SettingCardTest do
 
   describe "default_label/1 — rendered on the Default line" do
     test "nil default renders 'empty'" do
-      html = render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: nil)
+      html =
+        render_component(&SettingCard.setting_card/1, schema: write_paths_schema(), value: nil)
 
       assert default_label_text(html) == "empty"
     end
@@ -160,6 +165,96 @@ defmodule EvoDashWeb.SettingCardTest do
         )
 
       assert default_label_text(html) == "/tmp/a, /tmp/b"
+    end
+  end
+
+  describe "setting_card/1 — :appearance accent swatch picker" do
+    test "renders ten round swatch buttons mirroring the palette" do
+      html = render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: nil)
+
+      swatches = accent_swatches(html)
+      assert length(swatches) == 10
+
+      # Swatch order = schema validation order = @accent_palette order.
+      names = Enum.map(swatches, fn swatch -> attr(swatch, "phx-value-accent") |> hd() end)
+      assert names == ~w(blue teal green yellow orange red pink purple brown slate)
+    end
+
+    test "hidden input named appearance.accent_color carries the current value" do
+      html = render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: "teal")
+
+      [hidden] = accent_hidden_inputs(html)
+      assert attr(hidden, "type") == ["hidden"]
+      assert attr(hidden, "name") == ["appearance.accent_color"]
+      assert attr(hidden, "value") == ["teal"]
+    end
+
+    test "value nil resolves to the schema default blue (hidden input + active swatch)" do
+      html = render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: nil)
+
+      [hidden] = accent_hidden_inputs(html)
+      assert attr(hidden, "value") == ["blue"]
+
+      # Active marker (pinned from setting_card.ex markup): the blue swatch alone
+      # carries the ring classes "ring-2 ring-offset-2 ring-base-content/70
+      # scale-110" and a hero-check glyph; inactive swatches carry neither.
+      [blue] = accent_swatch(html, "blue")
+      assert attr(blue, "class") |> hd() =~ "ring-2 ring-offset-2 ring-base-content/70 scale-110"
+      assert length(Floki.find(blue, "span.hero-check")) == 1
+
+      [teal] = accent_swatch(html, "teal")
+      refute attr(teal, "class") |> hd() =~ "ring-base-content/70"
+      assert Floki.find(teal, "span.hero-check") == []
+    end
+
+    test "explicit teal value threads into the hidden input and marks teal active" do
+      html = render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: "teal")
+
+      [hidden] = accent_hidden_inputs(html)
+      assert attr(hidden, "value") == ["teal"]
+
+      assert accent_active?(html, "teal")
+      refute accent_active?(html, "blue")
+
+      # Exactly one swatch is active at a time.
+      assert Enum.count(accent_swatches(html), fn swatch ->
+               attr(swatch, "class") |> hd() =~ "ring-base-content/70"
+             end) == 1
+    end
+
+    test "swatches are type=button buttons carrying select_appearance_accent" do
+      html = render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: nil)
+
+      Enum.each(accent_swatches(html), fn swatch ->
+        assert attr(swatch, "type") == ["button"]
+        assert attr(swatch, "phx-click") == ["select_appearance_accent"]
+        assert attr(swatch, "phx-value-accent") != []
+      end)
+    end
+
+    test "non-palette value falls back to the blue schema default" do
+      html =
+        render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: "hotpink")
+
+      [hidden] = accent_hidden_inputs(html)
+      assert attr(hidden, "value") == ["blue"]
+      assert accent_active?(html, "blue")
+    end
+
+    test "yellow active swatch gets a dark check glyph for contrast" do
+      html =
+        render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: "yellow")
+
+      [yellow] = accent_swatch(html, "yellow")
+      assert accent_active?(html, "yellow")
+
+      # Yellow is a light swatch — its check glyph must be dark (text-black);
+      # every other active swatch gets a white check.
+      [glyph] = Floki.find(yellow, "span.hero-check")
+      assert attr(glyph, "class") |> hd() =~ "text-black"
+
+      [blue] = accent_swatch(html, "blue")
+      assert Floki.find(blue, "span.hero-check") == []
     end
   end
 
@@ -212,4 +307,43 @@ defmodule EvoDashWeb.SettingCardTest do
 
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
   defp parse(html), do: Floki.parse_document!(html)
+
+  # Schema fixture mirroring the real EvoGit.Config.Schema definition for
+  # [:appearance, :accent_color] (type :string, default "blue", validation
+  # `in:` the ten GNOME/libadwaita accent names, category :appearance).
+  defp accent_schema(overrides \\ []) do
+    Map.merge(
+      %{
+        key_path: [:appearance, :accent_color],
+        type: :string,
+        default: "blue",
+        validation: [in: ~w(blue teal green yellow orange red pink purple brown slate)],
+        category: :appearance,
+        sub_category: nil,
+        description:
+          "Dashboard UI accent color (GNOME/libadwaita palette): blue, teal, green, yellow, orange, red, pink, purple, brown, or slate."
+      },
+      Map.new(overrides)
+    )
+  end
+
+  defp accent_swatches(html) do
+    Floki.find(parse(html), ~s(button[phx-click="select_appearance_accent"]))
+  end
+
+  defp accent_swatch(html, name) do
+    Floki.find(parse(html), ~s(button[phx-value-accent="#{name}"]))
+  end
+
+  defp accent_hidden_inputs(html) do
+    Floki.find(parse(html), ~s(input[type="hidden"][name="appearance.accent_color"]))
+  end
+
+  # The active swatch is the ONLY one carrying the ring marker class
+  # "ring-base-content/70" (full fragment: "ring-2 ring-offset-2
+  # ring-base-content/70 scale-110") — see setting_card.ex.
+  defp accent_active?(html, name) do
+    [swatch] = accent_swatch(html, name)
+    attr(swatch, "class") |> hd() =~ "ring-base-content/70"
+  end
 end

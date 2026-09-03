@@ -60,19 +60,28 @@ defmodule EvoDashWeb.Layouts do
         "renders the floating guide panel when present"
   )
 
+  attr(:accent_color, :string,
+    default: "blue",
+    doc:
+      "the user-configured accent color name (seeded by EvoDashWeb.LiveHooks.Appearance from " <>
+        "EvoGit.Config.resolve([:appearance, :accent_color])); set as data-accent-color on #app-layout " <>
+        "so the app.css [data-accent-color] override rules retarget --color-primary/--color-accent for the shell"
+  )
+
   slot(:inner_block, required: true)
 
   def app(assigns) do
     ~H"""
     <div
-      class="flex h-dvh overflow-hidden bg-slate-50 dark:bg-slate-950 transition-colors duration-300"
+      class="flex h-dvh overflow-hidden bg-base-200 transition-colors duration-300"
       id="app-layout"
+      data-accent-color={@accent_color}
     >
       <!-- Mobile hamburger button (visible on < lg screens) -->
       <div class="lg:hidden fixed top-0 left-0 z-50 p-2">
         <button
           id="sidebar-mobile-toggle"
-          class="p-2 rounded-lg bg-white dark:bg-slate-900 shadow-md border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+          class="p-2 rounded-lg bg-base-200 shadow-md border border-base-300 text-base-content/70 hover:text-base-content transition-colors"
           aria-label={gettext("Toggle navigation")}
         >
           <.icon name="hero-bars-3" class="w-5 h-5" />
@@ -82,7 +91,7 @@ defmodule EvoDashWeb.Layouts do
       <!-- Mobile overlay (hidden by default, JS-controlled) -->
       <div
         id="sidebar-overlay"
-        class="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
+        class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 lg:hidden"
       >
       </div>
 
@@ -104,7 +113,7 @@ defmodule EvoDashWeb.Layouts do
         id="sidebar"
         data-sidebar-collapsed="false"
         phx-hook="SidebarCollapse"
-        class="fixed lg:relative z-50 h-dvh flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
+        class="fixed lg:relative z-50 h-dvh flex flex-col bg-base-200 border-r border-base-300 shadow-sm lg:shadow-none transition-all duration-300 ease-in-out w-60 -translate-x-full lg:translate-x-0 overflow-visible!"
       >
         <!-- Branding -->
         <div class="flex items-center h-14 px-4 shrink-0">
@@ -124,7 +133,7 @@ defmodule EvoDashWeb.Layouts do
               class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("EvoX Genesis")}
             />
-            <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent truncate sidebar-label">
+            <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-base-content to-base-content/60 bg-clip-text text-transparent truncate sidebar-label">
               <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
               {gettext("EvoX Genesis")}
             </span>
@@ -169,7 +178,7 @@ defmodule EvoDashWeb.Layouts do
             <!-- Task Indicators Section -->
             <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">
               <div class="px-3 mb-3 mt-1">
-                <span class="text-sm font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                <span class="text-sm font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
                   {gettext("Active Tasks")}
                 </span>
               </div>
@@ -177,7 +186,7 @@ defmodule EvoDashWeb.Layouts do
                 <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
                   <!-- Project group header -->
                   <div class="px-3 pt-2 pb-1 first:pt-0">
-                    <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 sidebar-label">
+                    <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
                       <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
                       {project_name}
                     </span>
@@ -193,21 +202,21 @@ defmodule EvoDashWeb.Layouts do
                       }
                       data-sidebar-task-link
                       title={task_label(task) <> " — " <> (if is_running, do: format_elapsed(task.started_at), else: gettext("completed") <> " " <> format_elapsed(task.finished_at))}
-                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                      class="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm text-base-content/80 hover:bg-base-300/70 hover:text-base-content transition-colors group"
                     >
                       <span
                         class={[
                           "w-2.5 h-2.5 rounded-full shrink-0",
-                          task_status_dot_color(task),
+                          task_status_dot_class(task.status),
                           is_running && "animate-pulse"
                         ]}
                         title={if is_running, do: gettext("Running"), else: gettext("Pending Review")}
                       ></span>
                       <div class="min-w-0 flex-1 sidebar-label">
-                        <span class="block truncate group-hover:text-slate-900 dark:group-hover:text-white transition-colors">
+                        <span class="block truncate group-hover:text-base-content transition-colors">
                           {task_label(task)}
                         </span>
-                        <span class="block text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        <span class="block text-xs text-base-content/60 mt-0.5">
                           <%= if is_running do %>
                             {format_elapsed(task.started_at)}
                           <% else %>
@@ -223,7 +232,7 @@ defmodule EvoDashWeb.Layouts do
           </nav>
 
           <!-- Bottom section: Node selector + Language + Theme + Collapse -->
-          <div class="px-3 py-3 border-t border-slate-200 dark:border-slate-800 shrink-0">
+          <div class="px-3 py-3 border-t border-base-300 shrink-0">
             <div data-sidebar-bottom-bar class="flex items-center justify-between gap-1">
               <div data-sidebar-bottom-group class="flex items-center gap-1">
                 <!-- Node Selector (remote server switch — dropdown opens upward) -->
@@ -240,7 +249,7 @@ defmodule EvoDashWeb.Layouts do
                 <.theme_toggle_compact drop_up={true} />
                 <button
                   id="sidebar-collapse-toggle"
-                  class="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors hidden lg:flex"
+                  class="p-1.5 rounded-lg text-base-content/60 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex"
                   title={gettext("Collapse sidebar")}
                 >
                   <.icon name="hero-chevron-double-left" class="w-4 h-4" />
@@ -252,7 +261,7 @@ defmodule EvoDashWeb.Layouts do
       </aside>
 
       <!-- Main Content Area -->
-      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-white dark:bg-slate-900">
+      <div id="main-scroll" class="flex-1 flex flex-col overflow-auto min-w-0 z-0 bg-base-100">
         <%!-- The DesktopQuit hook wrapper listens for the Tauri shell's
              "quit-requested" tray event on every page: hooks only mount on
              elements inside the LiveView root DOM, and this wrapper is part of
@@ -264,7 +273,7 @@ defmodule EvoDashWeb.Layouts do
         >
           <main
             id="main-content"
-            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 py-4 w-full bg-white dark:bg-slate-900"
+            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 py-4 w-full bg-base-100"
             phx-hook="NodeSwitchFade"
             data-node-id={@current_node_id || "local"}
           >
@@ -289,11 +298,11 @@ defmodule EvoDashWeb.Layouts do
       <!-- Config Warning Banner -->
       <%= if @config_status && not @config_status.ok? do %>
         <div class="fixed bottom-4 right-4 z-40 max-w-sm w-full animate-fade-in-up">
-          <div class="bg-amber-50 dark:bg-amber-900/30 text-amber-900 dark:text-amber-200 rounded-xl shadow-lg border border-amber-200 dark:border-amber-800 p-4">
+          <div class="bg-warning/10 text-warning rounded-xl shadow-lg border border-warning/30 p-4">
             <div class="flex items-start gap-3">
               <.icon
                 name="hero-exclamation-triangle"
-                class="w-5 h-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-500"
+                class="w-5 h-5 shrink-0 mt-0.5"
               />
               <div class="flex-1 min-w-0">
                 <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
@@ -304,11 +313,11 @@ defmodule EvoDashWeb.Layouts do
                 </ul>
                 <.link
                   navigate={with_node_param(~p"/settings", @current_node_id)}
-                  class="text-xs font-medium underline mt-2 inline-block hover:text-amber-700 dark:hover:text-amber-300"
+                  class="text-xs font-medium underline mt-2 inline-block hover:opacity-80"
                 >{gettext("Configure now →")}</.link>
               </div>
               <button
-                class="p-1 rounded-md hover:bg-amber-100 dark:hover:bg-amber-800/50 transition-colors"
+                class="p-1 rounded-md hover:bg-warning/20 transition-colors"
                 onclick="this.closest('.fixed').remove()"
               >
                 <.icon name="hero-x-mark" class="w-4 h-4" />
@@ -374,16 +383,16 @@ defmodule EvoDashWeb.Layouts do
            the guide continues across pages (retention handled by the hook's
            session + the JS highlight re-apply). -->
       <%= if @guide do %>
-        <div class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg p-4">
+        <div class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-base-100 border border-base-300 rounded-xl shadow-lg p-4">
           <div class="flex items-center gap-2 mb-2">
-            <.icon name="hero-sparkles" class="w-4 h-4 text-indigo-500 shrink-0" />
+            <.icon name="hero-sparkles" class="w-4 h-4 text-primary shrink-0" />
             <%!-- 自省智能体向导 — 由运行中的 reflect 任务推送的引导提示 --%>
             <h3 class="text-sm font-semibold flex-1 min-w-0">{gettext("Genesis Guide")}</h3>
             <%= if @guide.dismissible do %>
               <%!-- 关闭向导提示 --%>
               <button
                 type="button"
-                class="p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                class="p-1 rounded-md hover:bg-base-200 transition-colors shrink-0"
                 phx-click="guide_dismissed"
                 aria-label={gettext("Dismiss guide")}
               >
@@ -391,7 +400,7 @@ defmodule EvoDashWeb.Layouts do
               </button>
             <% end %>
           </div>
-          <p class="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">{@guide.message}</p>
+          <p class="text-sm text-base-content/70 leading-relaxed">{@guide.message}</p>
           <%= if is_binary(@guide.page) do %>
             <div class="mt-3">
               <.link
@@ -437,16 +446,6 @@ defmodule EvoDashWeb.Layouts do
       true -> "#{div(diff, 86400)}d ago"
     end
   end
-
-  # Returns a Tailwind color class for a task status dot
-  defp task_status_dot_color(%{status: :running}), do: "bg-green-500"
-  defp task_status_dot_color(%{status: :finalizing}), do: "bg-orange-500"
-  defp task_status_dot_color(%{status: :cancelling}), do: "bg-violet-500"
-  defp task_status_dot_color(%{status: :pending}), do: "bg-amber-500"
-  defp task_status_dot_color(%{status: :completed}), do: "bg-blue-500"
-  defp task_status_dot_color(%{status: :failed}), do: "bg-red-500"
-  defp task_status_dot_color(%{status: :cancelled}), do: "bg-amber-500"
-  defp task_status_dot_color(_), do: "bg-slate-400"
 
   # Groups running and pending tasks by project name for sidebar display.
   # Returns a list of {project_name, tasks} tuples sorted alphabetically by
@@ -504,10 +503,9 @@ defmodule EvoDashWeb.Layouts do
       navigate={@navigate}
       class={[
         "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 w-full",
-        @current &&
-          "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 shadow-sm",
+        @current && "bg-primary/10 text-primary shadow-sm",
         !@current &&
-          "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+          "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"
       ]}
       aria-current={if @current, do: "page", else: false}
     >
@@ -515,7 +513,7 @@ defmodule EvoDashWeb.Layouts do
         name={@icon}
         class={
         "w-5 h-5 transition-colors " <>
-        if(@current, do: "text-indigo-500 dark:text-indigo-400", else: "text-slate-400 dark:text-slate-500")
+        if(@current, do: "text-primary", else: "text-base-content/60")
       }
       />
       <span class="sidebar-label">{render_slot(@inner_block)}</span>
@@ -534,11 +532,12 @@ defmodule EvoDashWeb.Layouts do
   end
 
   # Tailwind color class for the System sidebar item's update notification dot:
-  # :available → static amber, :ready → blue with a ping animation (mirrors the
-  # task-status dot conventions above). Any other phase renders no dot.
-  defp update_notification_dot(:available), do: "bg-amber-500"
-  defp update_notification_dot(:ready), do: "bg-blue-500 animate-ping"
-  defp update_notification_dot(_), do: "bg-slate-400"
+  # :available → static warning amber, :ready → success with a ping animation
+  # (token family — mirrors Helpers.task_status_dot_class/1). Any other phase
+  # renders no dot.
+  defp update_notification_dot(:available), do: "bg-warning"
+  defp update_notification_dot(:ready), do: "bg-success animate-ping"
+  defp update_notification_dot(_), do: "bg-base-content/40"
 
   # Notification phase for the System nav link: nil unless the update status
   # phase is :available (amber dot) or :ready (blue ping dot).
@@ -553,7 +552,7 @@ defmodule EvoDashWeb.Layouts do
     ~H"""
     <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
       <summary
-        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-base-300 transition-colors"
         title={gettext("Change theme")}
       >
         <.icon name="hero-swatch" class="size-4" />
@@ -565,7 +564,7 @@ defmodule EvoDashWeb.Layouts do
       ]}>
         <div class="flex flex-col gap-0.5">
           <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/80"
             phx-click={JS.dispatch("phx:set-theme")}
             data-phx-theme="system"
           >
@@ -573,7 +572,7 @@ defmodule EvoDashWeb.Layouts do
             <span>{gettext("System")}</span>
           </button>
           <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/80"
             phx-click={JS.dispatch("phx:set-theme")}
             data-phx-theme="light"
           >
@@ -581,7 +580,7 @@ defmodule EvoDashWeb.Layouts do
             <span>{gettext("Light")}</span>
           </button>
           <button
-            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+            class="flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/80"
             phx-click={JS.dispatch("phx:set-theme")}
             data-phx-theme="dark"
           >
@@ -657,14 +656,14 @@ defmodule EvoDashWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="relative flex p-1 bg-slate-100 dark:bg-slate-800 rounded-full ring-1 ring-slate-200 dark:ring-slate-700 shadow-inner overflow-hidden">
+    <div class="relative flex p-1 bg-base-300 rounded-full ring-1 ring-base-content/10 shadow-inner overflow-hidden">
       <!-- Background slider -->
-      <div class="absolute inset-y-1 left-1 w-9 rounded-full bg-white dark:bg-slate-700 shadow transition-transform duration-300 ease-out z-0
+      <div class="absolute inset-y-1 left-1 w-9 rounded-full bg-base-100 shadow transition-transform duration-300 ease-out z-0
         [[data-theme-mode=light]_&]:translate-x-9
         [[data-theme-mode=dark]_&]:translate-x-[4.5rem]" />
 
       <button
-        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/60 hover:text-base-content transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
         title={gettext("System theme")}
@@ -673,7 +672,7 @@ defmodule EvoDashWeb.Layouts do
       </button>
 
       <button
-        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/60 hover:text-base-content transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
         title={gettext("Light theme")}
@@ -682,7 +681,7 @@ defmodule EvoDashWeb.Layouts do
       </button>
 
       <button
-        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/60 hover:text-base-content transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
         title={gettext("Dark theme")}
@@ -732,7 +731,7 @@ defmodule EvoDashWeb.Layouts do
     ~H"""
     <details class={["dropdown", !@drop_up && "dropdown-end", @drop_up && "dropdown-top"]}>
       <summary
-        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+        class="btn btn-sm btn-ghost btn-circle rounded-full hover:bg-base-300 transition-colors"
         title={gettext("Change language")}
       >
         <.icon name="hero-language" class="size-5" />
@@ -748,9 +747,9 @@ defmodule EvoDashWeb.Layouts do
             class={[
               "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
               @locale == code &&
-                "bg-indigo-50 dark:bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+                "bg-primary/10 text-primary",
               @locale != code &&
-                "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                "hover:bg-base-200 text-base-content/80"
             ]}
             phx-click={JS.dispatch("phx:set-locale", detail: %{locale: code})}
           >
@@ -758,7 +757,7 @@ defmodule EvoDashWeb.Layouts do
             <.icon
               :if={@locale == code}
               name="hero-check-solid"
-              class="size-4 text-indigo-500 shrink-0"
+              class="size-4 text-primary shrink-0"
             />
           </button>
         </div>

@@ -539,8 +539,8 @@ defmodule EvoDashWeb.CoreComponents do
 
   def collapsible_card(assigns) do
     ~H"""
-    <details id={@id} open={@open} class="overflow-hidden group border-b border-slate-200 dark:border-slate-800">
-      <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+    <details id={@id} open={@open} class="overflow-hidden group border-b border-base-300">
+      <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors">
         <.icon :if={@icon} name={@icon} class="size-5 shrink-0" />
         <span class="font-semibold flex-1">{@title}</span>
         <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/50 transition-transform duration-200 group-open:rotate-180" />
