@@ -485,7 +485,7 @@ defmodule EvoDashWeb.ProjectsLive do
     <select
       name="build_system"
       form="task-form"
-      class="select select-ghost select-sm bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-32"
+      class="select select-ghost select-sm bg-transparent font-medium min-w-32"
       title={gettext("Build System")}
     >
       <option value="">{gettext("No build system")}</option>

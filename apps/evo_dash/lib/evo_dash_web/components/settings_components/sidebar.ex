@@ -47,7 +47,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               value={@search_text}
               placeholder={gettext("Filter settings...")}
               phx-change="search"
-              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 focus:border-primary/30 focus:ring-2 focus:ring-primary/20 transition-all duration-200 rounded-md font-medium text-sm h-10"
+              class="input w-full pl-10 pr-9 bg-base-200/50 border-transparent hover:bg-base-200 focus:bg-base-100 transition-all duration-200 rounded-md font-medium text-sm h-10"
             />
           </form>
           <%= if @search_text != "" do %>

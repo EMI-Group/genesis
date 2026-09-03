@@ -267,6 +267,20 @@ button, a, input, textarea, select, summary,
   transition-duration: 200ms;
 }
 
+/* Glow-on-focus: single source of truth for all DaisyUI form controls
+   (matches the tasks-page filter-bar look). Un-layered on purpose —
+   un-layered author rules beat the DaisyUI plugin's @layer components
+   focus outline (the "double border"). State classes (.input-success,
+   .input-error, ...) keep their own focus styling via the :not() guards. */
+.input:focus:not(.input-success):not(.input-error),
+.input:focus-within:not(.input-success):not(.input-error),
+.select:focus:not(.select-success):not(.select-error),
+.textarea:focus:not(.textarea-success):not(.textarea-error) {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary) 40%, transparent);
+}
+
 /* Loading skeleton animation */
 @keyframes shimmer {
   0% { background-position: -200% 0; }

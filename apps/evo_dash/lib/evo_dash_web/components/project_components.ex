@@ -153,7 +153,7 @@ defmodule EvoDashWeb.ProjectComponents do
           phx-debounce="100"
           value={@palette_search}
           placeholder={gettext("Search projects...")}
-          class="input input-bordered w-full pl-9 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
+          class="input input-bordered w-full pl-9 text-sm"
         />
       </div>
     </div>
@@ -293,7 +293,7 @@ defmodule EvoDashWeb.ProjectComponents do
             <input
               type="text"
               name="path"
-              class="input input-bordered input-sm w-full pr-8 focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+              class="input input-bordered input-sm w-full pr-8 font-mono text-sm"
               placeholder={gettext("Project path")}
               autofocus
               phx-hook="PathAutocomplete"
@@ -367,7 +367,7 @@ defmodule EvoDashWeb.ProjectComponents do
               <input
                 type="text"
                 name="path"
-                class="input input-bordered input-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20 font-mono text-sm"
+                class="input input-bordered input-sm w-full font-mono text-sm"
                 placeholder={gettext("Project path")}
                 id="new-project-path-input"
                 phx-hook="PathAutocomplete"

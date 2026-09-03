@@ -301,7 +301,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               <select
                 name="mode"
                 phx-change="task_change"
-                class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-1"
+                class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
                 title={mode_description(@mode)}
               >
                 <option value="genesis_existing" selected={@mode == "genesis_existing"}>
@@ -333,7 +333,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <select
                   name="agent"
                   phx-change="select_agent"
-                  class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-1"
+                  class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
                 >
                   <%= if @mode != "custom_agent" do %>
                     <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
@@ -373,7 +373,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <select
                   name="model_id"
                   phx-change="select_model"
-                  class="select select-ghost select-md text-base bg-transparent font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 min-w-0 truncate order-3"
+                  class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-3"
                 >
                   <%!-- "Auto (by rules)" is offered when a model-selection
                        script is configured (show_auto_model_option) — and
@@ -497,7 +497,7 @@ defmodule EvoDashWeb.TaskFormComponents do
           <select
             name="build_system"
             form="task-form"
-            class="select select-bordered select-sm w-full focus:outline-none focus:ring-2 focus:ring-base-content/20"
+            class="select select-bordered select-sm w-full"
           >
             <option value="">{gettext("No build system")}</option>
             <%= for bs <- @build_systems do %>
@@ -526,7 +526,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               name="node_path"
               form="task-form"
               value={@node_path}
-              class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+              class="input input-bordered input-sm w-full font-mono"
               placeholder={gettext("e.g., ./src/components")}
             />
           </div>
@@ -542,7 +542,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               name="starting_commit"
               form="task-form"
               value={@starting_commit}
-              class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+              class="input input-bordered input-sm w-full font-mono"
               placeholder={gettext("e.g., abc1234 or HEAD")}
             />
           </div>
@@ -561,7 +561,7 @@ defmodule EvoDashWeb.TaskFormComponents do
             name="resume_from"
             form="task-form"
             value={@resume_from}
-            class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+            class="input input-bordered input-sm w-full font-mono"
             placeholder="a1b2c3d4"
           />
         </div>
@@ -635,7 +635,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 name="node_path"
                 form="task-form"
                 value={@node_path}
-                class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+                class="input input-bordered input-sm w-full font-mono"
                 placeholder={gettext("e.g., ./src/components")}
               />
             </div>
@@ -656,7 +656,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                 name="starting_commit"
                 form="task-form"
                 value={@starting_commit}
-                class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+                class="input input-bordered input-sm w-full font-mono"
                 placeholder={gettext("e.g., abc1234 or HEAD")}
               />
             </div>
@@ -675,7 +675,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               name="resume_from"
               form="task-form"
               value={@resume_from}
-              class="input input-bordered input-sm w-full font-mono focus:outline-none focus:ring-2 focus:ring-base-content/20"
+              class="input input-bordered input-sm w-full font-mono"
               placeholder="a1b2c3d4"
             />
           </div>
