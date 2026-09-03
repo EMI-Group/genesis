@@ -60,7 +60,7 @@ defmodule EvoDashWeb.AgentsComponents do
                 <div
                   id={"agent-card-#{agent.id}"}
                   class={[
-                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-colors duration-500 motion-reduce:transition-none cursor-pointer hover:bg-base-content/5 min-w-[120px] sm:min-w-[140px]",
+                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter] duration-500 motion-reduce:transition-none cursor-pointer hover:shadow-md hover:brightness-95 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id && "ring-2 ring-primary ring-offset-1",
