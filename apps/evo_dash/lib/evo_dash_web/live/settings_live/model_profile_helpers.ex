@@ -292,8 +292,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   `params["peak_hours"]` (Phoenix-nested map keyed by string index, a list, or
   absent), `params["timezone"]` (IANA string, optional), and
   `params["off_peak_days"]` (multi-checkbox list of day strings — may contain a
-  `""` hidden-seed entry). Each `peak_hours` row may also carry a `"days"` key
-  (list of day strings; absent = every day). Day values are trim + downcase +
+  `""` hidden-seed entry, or a BARE string when Plug collapses the repeated
+  param to a single value with exactly one checked chip). Each `peak_hours` row
+  may also carry a `"days"` key (list of day strings — same bare-string
+  hazard; absent = every day). Day values are trim + downcase +
   vocabulary-whitelist normalized (`normalize_days/1`); no day validation
   errors are raised — the evo_git core owns authoritative validation. Returns
   `{:ok, %{}}` when all fields are disabled/absent (keys must stay ABSENT from
@@ -333,10 +335,12 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   string index, a list, or absent) into a numerically-sorted list of windows
   `[%{start: "HH:MM", end: "HH:MM"}]` for draft-tracking re-renders. Values are
   stringified with `""` for nil/absent, so blank/partially-filled rows
-  round-trip losslessly. Rows carrying a `"days"`/`:days` list keep a `:days`
-  key ONLY when the normalized day list is non-empty — a no-days window stays
-  EXACTLY `%{start: ..., end: ...}` (backward compatible). Total — never
-  raises; unknown/absent input → `[]`.
+  round-trip losslessly. Rows carrying a `"days"`/`:days` value (a list — with
+  `""` seed entries, or a bare string when Plug collapses the repeated
+  `peak_hours[i][days]` param to a single value) keep a `:days` key ONLY when
+  the normalized day list is non-empty — a no-days window stays EXACTLY
+  `%{start: ..., end: ...}` (backward compatible). Total — never raises;
+  unknown/absent input → `[]`.
   """
   def normalize_peak_hours_draft(input) do
     {:ok, rows} = normalize_peak_hours_input(input)
@@ -578,15 +582,35 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
                     "weekends"
                   ])
 
-  # Normalizes a days-of-week list (multi-checkbox form values or atom-keyed
-  # draft rows) into the canonical vocabulary: trim + downcase per entry, drop
-  # blanks, drop entries NOT in the whitelist via MapSet membership lookup (NO
-  # String.to_atom/to_existing_atom on user input), then order-preserving
-  # uniq. Total — never raises; absent/empty/odd input → [] (callers omit the
-  # key). No dashboard-side validation ERRORS for day values (the evo_git core
-  # owns authoritative validation).
-  defp normalize_days(days) when is_list(days) do
+  # Normalizes a days-of-week value (form param OR saved/draft profile value)
+  # into the canonical 9-value vocabulary list. TOTAL across every input shape:
+  #
+  #   * BARE BINARY — Plug/LiveView collapse a repeated form param to a plain
+  #     string when exactly ONE value is submitted (the single-checked-chip
+  #     case: `off_peak_days=weekends` arrives as `"weekends"`, not a list).
+  #     `List.wrap/1` turns it back into a one-element list. Treating a binary
+  #     as `[]` here would silently DROP the user's day on save.
+  #   * LIST (multi-checkbox) — may contain `""` entries from the hidden seed
+  #     input (e.g. `["", "mon"]`, or `[""]` when nothing is checked).
+  #   * nil / absent / any other shape → [] (callers omit the key).
+  #
+  # Per entry: trim + downcase, drop blanks, drop entries NOT in the whitelist
+  # via MapSet membership lookup (NO String.to_atom/to_existing_atom on user
+  # input), then order-preserving uniq. No dashboard-side validation ERRORS for
+  # day values (the evo_git core owns authoritative validation).
+  @doc """
+  Normalizes a days-of-week value into the canonical 9-value vocabulary list
+  (`mon`..`sun`, `weekdays`, `weekends`). Total — never raises. A bare binary
+  (Plug collapses a repeated form param to a plain string when exactly one
+  value is submitted — the single-checked-chip case) is wrapped via
+  `List.wrap/1`; list entries are trimmed + downcased, blanks and
+  non-vocabulary entries dropped, order-preserving uniq. Absent/empty/odd
+  input → `[]` (callers omit the key). No dashboard-side validation errors for
+  day values — the evo_git core owns authoritative validation.
+  """
+  def normalize_days(days) do
     days
+    |> List.wrap()
     |> Enum.map(fn
       day when is_binary(day) -> day |> String.trim() |> String.downcase()
       _ -> ""
@@ -594,8 +618,6 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
     |> Enum.filter(&MapSet.member?(@day_vocabulary, &1))
     |> Enum.uniq()
   end
-
-  defp normalize_days(_), do: []
 
   # Reads a single start/end value from a peak-hours draft row (atom-or-string
   # key safe), stringified with "" for nil/absent.

@@ -338,19 +338,39 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   # (add/remove row) does NOT send the enclosing form's data, so without the
   # draft the row buttons would re-render the form from file_config and wipe
   # all unsaved typing. The nested peak_hours is normalized to the canonical
-  # list form defensively (total — never crashes on partial/odd params).
+  # list form defensively (total — never crashes on partial/odd params), and
+  # off_peak_days is normalized to a day-vocabulary list: Plug collapses a
+  # repeated form param to a BARE STRING when exactly one checkbox is checked
+  # (e.g. `off_peak_days=weekends` → "weekends"), and the template's day-chip
+  # membership test would crash on that binary (Enumerable protocol error) if
+  # the raw value were stored verbatim. Empty/absent → [] (all chips render
+  # unchecked); the seed-filtering + vocabulary whitelist live in
+  # ModelProfileHelpers.normalize_days/1.
   def model_profile_form_change(socket, params) when is_map(params) do
     draft =
-      Map.put(
-        params,
+      params
+      |> Map.put(
         "peak_hours",
         ModelProfileHelpers.normalize_peak_hours_draft(params["peak_hours"])
       )
+      |> normalize_draft_off_peak_days()
 
     {:noreply, assign(socket, :profile_form_draft, draft)}
   end
 
   def model_profile_form_change(socket, _params), do: {:noreply, socket}
+
+  # The real edit form ALWAYS submits off_peak_days (the hidden seed input
+  # guarantees at least a `""` entry), so the key is present whenever the
+  # change originates from this form. When present it is stored as a NORMALIZED
+  # day list (never a bare string — the crash trigger); when genuinely absent
+  # (synthetic/partial params) the key stays missing so the template's
+  # draft_or_profile/3 falls back to the profile's saved days, as before.
+  defp normalize_draft_off_peak_days(%{"off_peak_days" => raw} = draft) do
+    Map.put(draft, "off_peak_days", ModelProfileHelpers.normalize_days(raw))
+  end
+
+  defp normalize_draft_off_peak_days(draft), do: draft
 
   def add_peak_hours_row(socket, _params) do
     file_config = socket.assigns.file_config

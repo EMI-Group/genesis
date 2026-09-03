@@ -226,6 +226,45 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
       assert_day_chips(html, ~s(input[type="checkbox"][name="off_peak_days"]), ["fri", "weekends"])
     end
 
+    test "a draft's off_peak_days as a BARE STRING renders without crashing (regression)" do
+      # The exact crash repro: a draft (or any source) holding the raw
+      # single-checked-chip value — a binary, not a list — previously crashed
+      # the chip membership test with "protocol Enumerable not implemented for
+      # BitString". The render is now total: the value is normalized at the
+      # boundary so only "weekends" renders checked.
+      html =
+        render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"},
+          draft: %{"off_peak_days" => "weekends"}
+        )
+
+      assert_day_chips(html, ~s(input[type="checkbox"][name="off_peak_days"]), ["weekends"])
+    end
+
+    test "a draft's off_peak_days as an odd shape (atom list) renders all-unchecked" do
+      html =
+        render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"},
+          draft: %{"off_peak_days" => [930]}
+        )
+
+      assert_day_chips(html, ~s(input[type="checkbox"][name="off_peak_days"]), [])
+    end
+
+    test "a draft's per-window days as a bare string renders without crashing" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        peak_hours: [%{start: "09:00", end: "12:00", days: "tue"}]
+      }
+
+      html = render_edit_form(profile)
+
+      assert_day_chips(
+        html,
+        ~s(input[type="checkbox"][name="peak_hours[0][days]"]),
+        ["tue"]
+      )
+    end
+
     test "per-window days chips render checked for a window's saved days" do
       profile = %{
         id: "profile-1",

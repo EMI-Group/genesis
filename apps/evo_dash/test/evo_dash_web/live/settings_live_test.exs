@@ -1259,13 +1259,75 @@ defmodule EvoDashWeb.SettingsLiveTest do
       })
 
       draft = assigns(view).profile_form_draft
-      # off_peak_days is preserved verbatim (the raw checkbox list, seed entry
-      # included) — the save flow normalizes it later via parse_peak_fields.
-      assert draft["off_peak_days"] == ["", "mon", "fri"]
+      # off_peak_days is stored as the NORMALIZED day list — the "" hidden-seed
+      # entry is filtered at the draft boundary (a bare string from
+      # single-checked-chip submissions would crash the chip membership test).
+      assert draft["off_peak_days"] == ["mon", "fri"]
       # peak_hours is normalized to atom-keyed windows; the per-window days
       # list is kept because it is non-empty (a no-days window would stay
       # exactly %{start:, end:}).
       assert draft["peak_hours"] == [%{start: "09:00", end: "12:00", days: ["mon", "tue"]}]
+    end
+
+    test "model_profile_form_change with a single checked day (bare string param)", %{
+      conn: conn
+    } do
+      # Regression: Plug collapses a repeated form param to a BARE STRING when
+      # exactly one checkbox is submitted (`off_peak_days=weekends`). The draft
+      # must normalize it (the raw binary crashed the render's
+      # `Enum.member?(off_peak_days, value)` with an Enumerable protocol error).
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "model_profile_form_change", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "off_peak_days" => "weekends",
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00", "days" => "mon"}
+          }
+        })
+
+      doc = Floki.parse_document!(html)
+
+      # The draft stores the wrapped list form for both day fields.
+      draft = assigns(view).profile_form_draft
+      assert draft["off_peak_days"] == ["weekends"]
+      assert draft["peak_hours"] == [%{start: "09:00", end: "12:00", days: ["mon"]}]
+
+      # The chips render checked accordingly (no Enumerable crash).
+      assert Floki.find(doc, ~s(input[name="off_peak_days"][value="weekends"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
+      assert Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="mon"][checked])) != []
+      refute Floki.find(doc, ~s(input[name="peak_hours[0][days]"][value="tue"][checked])) != []
+    end
+
+    test "model_profile_form_change with all-unchecked days ([] seed entry only)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "model_profile_form_change", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "off_peak_days" => [""]
+        })
+
+      doc = Floki.parse_document!(html)
+
+      # Nothing checked → normalized to [] (all chips unchecked, no crash).
+      assert assigns(view).profile_form_draft["off_peak_days"] == []
+
+      chips = Floki.find(doc, ~s(input[type="checkbox"][name="off_peak_days"]))
+      assert length(chips) == 9
+      assert Enum.all?(chips, fn chip -> Floki.attribute(chip, "checked") == [] end)
     end
 
     test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
@@ -1345,9 +1407,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute Floki.find(doc, ~s(input[name="peak_hours[1][days]"][value="mon"][checked])) != []
 
       # The draft still carries both the off_peak_days and the (now two-row)
-      # peak_hours with days intact.
+      # peak_hours with days intact (normalized — seed entry filtered).
       draft = assigns(view).profile_form_draft
-      assert draft["off_peak_days"] == ["", "mon", "fri"]
+      assert draft["off_peak_days"] == ["mon", "fri"]
 
       assert draft["peak_hours"] == [
                %{start: "09:00", end: "12:00", days: ["mon", "tue"]},
@@ -1414,7 +1476,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute Floki.find(doc, ~s(input[name="off_peak_days"][value="mon"][checked])) != []
 
       draft = assigns(view).profile_form_draft
-      assert draft["off_peak_days"] == ["", "weekends"]
+      assert draft["off_peak_days"] == ["weekends"]
       assert draft["peak_hours"] == [%{start: "14:00", end: "18:00", days: ["wed"]}]
     end
 
@@ -1574,6 +1636,40 @@ defmodule EvoDashWeb.SettingsLiveTest do
       file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
       assert file_profile["off_peak_days"] == ["mon", "fri"]
       assert hd(file_profile["peak_hours"])["days"] == ["mon", "tue"]
+    end
+
+    test "save_model_profile with single-checked days (bare string params) round-trips", %{
+      conn: conn
+    } do
+      # Plug collapses a repeated form param to a bare string when exactly one
+      # chip is checked. Save-time parsing must wrap it — previously the day
+      # was silently dropped (list-only normalization).
+      {:ok, view, _html} = live(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "off_peak_days" => "weekends",
+          "peak_hours" => %{
+            "0" => %{"start" => "09:00", "end" => "12:00", "days" => "mon"}
+          }
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert profile.off_peak_days == ["weekends"]
+      [window] = profile.peak_hours
+      assert (Map.get(window, "days") || Map.get(window, :days)) == ["mon"]
+
+      # File-level TOML round-trip: the saved profile carries the wrapped lists.
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      assert file_profile["off_peak_days"] == ["weekends"]
+      assert hd(file_profile["peak_hours"])["days"] == ["mon"]
     end
 
     test "save_model_profile omits off_peak_days and per-window days when empty", %{conn: conn} do
