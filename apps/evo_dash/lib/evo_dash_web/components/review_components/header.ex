@@ -17,10 +17,10 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def review_header(assigns) do
     ~H"""
-    <div class="border-y border-base-200 bg-base-100 ">
+    <div class="border-y border-base-300 bg-base-100 ">
       <div class="p-4">
         <div class="flex items-start gap-3">
-          <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
+          <.icon name="hero-code-bracket-square" class="size-5 text-base-content/70 shrink-0 mt-0.5" />
           <div class="flex-1 min-w-0">
             <h1 class="text-lg font-bold leading-tight truncate">{@title}</h1>
             <div class="flex flex-wrap items-center gap-2 mt-2">
@@ -58,13 +58,13 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   def objective_section(assigns) do
     ~H"""
     <%= if @objective do %>
-      <div class="bg-base-100 border border-base-200 rounded-lg p-4">
+      <div class="bg-base-100 border border-base-300 rounded-lg p-4">
         <div class="flex items-start gap-3">
           <div class="bg-primary/15 text-primary p-2 shrink-0">
             <.icon name="hero-bullseye" class="size-5" />
           </div>
           <div class="flex-1 min-w-0">
-            <h3 class="text-xs font-bold text-base-content/50 uppercase tracking-wide mb-1">
+            <h3 class="text-xs font-bold text-base-content/70 uppercase tracking-wide mb-1">
               {gettext("Objective")}
             </h3>
             <p class="text-sm text-base-content/90 leading-relaxed whitespace-pre-wrap break-words">
@@ -91,11 +91,11 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def task_summary(assigns) do
     ~H"""
-    <div class="border-b border-base-200 bg-base-100 p-3">
+    <div class="border-b border-base-300 bg-base-100 p-3">
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <%= if @usage do %>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-cpu-chip" class="size-3.5" /> <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">
@@ -103,7 +103,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             </span>
           </div>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-currency-dollar" class="size-3.5" /> {gettext("Total Cost")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">
@@ -111,7 +111,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             </span>
           </div>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-bolt" class="size-3.5" /> {gettext("Cache Hit Rate")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">
@@ -121,7 +121,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @agent_count do %>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-user-group" class="size-3.5" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">{@agent_count}</span>
@@ -129,7 +129,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @status do %>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-signal" class="size-3.5" /> {gettext("Status")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5 capitalize">{@status}</span>
@@ -137,7 +137,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @task_type do %>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-cube" class="size-3.5" /> {gettext("Task Type")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5 capitalize">{@task_type}</span>
@@ -145,7 +145,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @started_at do %>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-play" class="size-3.5" /> {gettext("Started")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">{relative_time(@started_at)}</span>
@@ -153,7 +153,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @finished_at do %>
           <div class="flex flex-col">
-            <span class="text-xs font-medium text-base-content/50 uppercase tracking-wide flex items-center gap-1">
+            <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
               <.icon name="hero-stop" class="size-3.5" /> {gettext("Finished")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">{relative_time(@finished_at)}</span>
@@ -167,12 +167,12 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <summary class="cursor-pointer text-xs font-medium text-base-content/60 hover:text-base-content flex items-center gap-1.5 select-none outline-none py-1 w-fit">
             <.icon name="hero-currency-dollar" class="size-3.5 text-primary" />
             {gettext("Token & Cost Usage")}
-            <.icon name="hero-chevron-down" class="size-3.5 text-base-content/40" />
+            <.icon name="hero-chevron-down" class="size-3.5 text-base-content/60" />
           </summary>
           <div class="mt-3 bg-base-200/30 p-4 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
             <div class="grid grid-cols-3 gap-3">
               <div>
-                <div class="text-xs text-base-content/50 mb-1">
+                <div class="text-xs text-base-content/70 mb-1">
                   <%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}
                 </div>
                 <div class="text-sm font-semibold">
@@ -180,7 +180,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                 </div>
               </div>
               <div>
-                <div class="text-xs text-base-content/50 mb-1">
+                <div class="text-xs text-base-content/70 mb-1">
                   <%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}
                 </div>
                 <div class="text-sm font-semibold">
@@ -188,7 +188,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                 </div>
               </div>
               <div>
-                <div class="text-xs text-base-content/50 mb-1">
+                <div class="text-xs text-base-content/70 mb-1">
                   <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
                 </div>
                 <div class="text-sm font-semibold">
@@ -201,7 +201,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
               <div class="mt-4 pt-4 border-t border-base-200">
                 <div class="grid grid-cols-3 gap-3">
                   <div>
-                    <div class="text-xs text-base-content/50 mb-1">
+                    <div class="text-xs text-base-content/70 mb-1">
                       <%!-- zh_CN: Token → "词元" --%>{gettext("Cached Tokens")}
                     </div>
                     <div class="text-sm font-semibold">
@@ -209,7 +209,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                     </div>
                   </div>
                   <div>
-                    <div class="text-xs text-base-content/50 mb-1">
+                    <div class="text-xs text-base-content/70 mb-1">
                       {gettext("Cache Creation")}
                     </div>
                     <div class="text-sm font-semibold">
@@ -217,7 +217,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                     </div>
                   </div>
                   <div>
-                    <div class="text-xs text-base-content/50 mb-1">
+                    <div class="text-xs text-base-content/70 mb-1">
                       {gettext("Cache Hit Rate")}
                     </div>
                     <div class="text-sm font-semibold text-success">
@@ -242,19 +242,19 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             <div class="mt-4 pt-4 border-t border-base-200">
               <div class="grid grid-cols-3 gap-3">
                 <div>
-                  <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
+                  <div class="text-xs text-base-content/70 mb-1">{gettext("Input Cost")}</div>
                   <div class="text-sm font-semibold">
                     ${format_cost(Map.get(@usage, :input_cost, 0))}
                   </div>
                 </div>
                 <div>
-                  <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
+                  <div class="text-xs text-base-content/70 mb-1">{gettext("Output Cost")}</div>
                   <div class="text-sm font-semibold">
                     ${format_cost(Map.get(@usage, :output_cost, 0))}
                   </div>
                 </div>
                 <div>
-                  <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
+                  <div class="text-xs text-base-content/70 mb-1">{gettext("Total Cost")}</div>
                   <div class="text-sm font-semibold text-primary">
                     ${format_cost(Map.get(@usage, :total_cost, 0))}
                   </div>
@@ -265,7 +265,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             <%= if @agent_count do %>
               <div class="mt-4 pt-4 border-t border-base-200 flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
-                  <span class="text-xs text-base-content/50 flex items-center gap-1">
+                  <span class="text-xs text-base-content/70 flex items-center gap-1">
                     <.icon name="hero-user-group" class="size-3.5" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
                       "Agents Spawned"
                     )}
@@ -273,7 +273,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                   <span class="text-sm font-bold text-primary">{format_number(@agent_count)}</span>
                 </div>
                 <%= if @model_id do %>
-                  <span class="text-xs font-medium text-base-content/50">
+                  <span class="text-xs font-medium text-base-content/60">
                     {gettext("Model")}: <span class="font-mono">{@model_id}</span>
                   </span>
                 <% end %>
@@ -295,7 +295,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
 
   def agent_summary(assigns) do
     ~H"""
-    <div class="bg-base-100 border-b border-base-200 ">
+    <div class="bg-base-100 border-b border-base-300 ">
       <div class="relative">
         <!-- static header -->
         <div class="p-5 md:p-6 pr-44 flex items-center gap-4">
