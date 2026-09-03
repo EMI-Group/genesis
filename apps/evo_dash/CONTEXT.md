@@ -16,7 +16,7 @@ Users open a Project (a Git repository path), and the dashboard auto-detects the
 - `./lib/evo_dash_web/live/` → LiveView pages (`projects_live.ex` + `projects_live/`, `home_live.ex` + `home_live/`, `review_live.ex` + `review_live/`, `agents_live.ex` + `agents_live/`, `tasks_live.ex`, `settings_live.ex` + `settings_live/`, `system_live.ex` + `system_live/`, `welcome_live.ex`, `welcome_complete_live.ex`, `components/` LiveComponents) — `live/CONTEXT.md`
 - `./lib/evo_dash_web/live/projects_live/` → ProjectsLive support modules (`Project`, `ProjectFlow`, `Assigns`, `StatePersistence`, `AttachFile`, `GitHub`, `RemoteView`) — `live/projects_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/settings_live/` → SettingsLive support modules (`NodeData`, `ModelProfileHelpers`, `ModelProfileEvents`, `ConfigIO`, `SearchEvents`, `CustomAgentEvents`) — `live/settings_live/CONTEXT.md`
-- `./lib/evo_dash_web/live/home_live/` → HomeLive support modules (`Transcript`, `Messages`, `AgentStream`, `AssistantMessage`, `ChatState`) — `live/home_live/CONTEXT.md`
+- `./lib/evo_dash_web/live/home_live/` → HomeLive support modules (`Transcript`, `Messages`, `AgentStream`, `AssistantMessage`, `ChatState`, `ApprovalCard`) — `live/home_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/review_live/` → ReviewLive support modules (`LoadData`, `MergeCheck`) — `live/review_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/system_live/` → SystemLive support modules (`Status`, `Charts`, `UpdateCard`, `SourceCard`, `RuntimeControls`) — `live/system_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/tasks_live/` → TasksLive (leaf, no support modules) — `live/tasks_live/CONTEXT.md`
