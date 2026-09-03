@@ -46,10 +46,10 @@ defmodule EvoDashWeb.AgentsComponents do
           <% end %>
           <!-- Path info -->
           <div class="flex items-center gap-2 h-7 shrink-0 relative w-full xl:w-[var(--agent-max-width)]" style={"--agent-max-width: #{@max_width}ch"}>
-            <.icon name="hero-folder" class="size-5 text-base-content/60 shrink-0 relative z-10 bg-base-100/50 rounded" />
+            <.icon name="hero-folder" class="size-5 text-base-content/70 shrink-0 relative z-10 bg-base-100/50 rounded" />
             <span class="font-semibold text-base-content truncate min-w-0" title={node.name}>{node.name}</span>
             <%= if length(node.agents) > 0 do %>
-              <div class="grow border-b-2 border-dotted border-base-content/10 mx-2 hidden xl:block"></div>
+              <div class="grow border-b-2 border-dotted border-base-content/20 mx-2 hidden xl:block"></div>
             <% end %>
           </div>
 
@@ -60,7 +60,7 @@ defmodule EvoDashWeb.AgentsComponents do
                 <div
                   id={"agent-card-#{agent.id}"}
                   class={[
-                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-colors duration-500 motion-reduce:transition-none cursor-pointer hover:bg-base-200/80 min-w-[120px] sm:min-w-[140px]",
+                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-colors duration-500 motion-reduce:transition-none cursor-pointer hover:bg-base-content/5 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id && "ring-2 ring-primary ring-offset-1",
@@ -89,11 +89,11 @@ defmodule EvoDashWeb.AgentsComponents do
                   </div>
 
                   <div class="flex items-center justify-between gap-2">
-                    <div class="text-xs text-base-content/70 truncate">
+                    <div class="text-xs text-base-content/80 truncate">
                       {format_module_name(agent.agent_module)}
                     </div>
                     <div class="flex items-center gap-1">
-                      <span class="text-xs text-base-content/60 font-mono" title={"Task ##{agent.task_number || agent.task_id}"}>T{agent.task_number || agent.task_id}</span>
+                      <span class="text-xs text-base-content/70 font-mono" title={"Task ##{agent.task_number || agent.task_id}"}>T{agent.task_number || agent.task_id}</span>
                       <%= if agent.retries > 0 do %>
                         <span class="badge badge-warning badge-sm">Retry {agent.retries}</span>
                       <% end %>
