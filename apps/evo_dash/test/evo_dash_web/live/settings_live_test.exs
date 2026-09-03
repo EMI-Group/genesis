@@ -3021,6 +3021,63 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ ~s(type="hidden" name="appearance.accent_color" value="blue")
     end
   end
+
+  describe "md+ independent scroll layout contract" do
+    # The two-column row (`flex flex-col md:flex-row md:flex-1 md:min-h-0` in
+    # settings_live.ex) is sized by the flex algorithm and has NO definite
+    # `height` property. A percentage `h-full` on a content-column ROOT
+    # therefore resolves to auto: the column grows to its content, the whole
+    # page inflates past the viewport, the BODY scrolls, and the section nav +
+    # content panes scroll LINKED on md+ instead of independently (the
+    # reported "Scheduler/Sandbox/Tools scrolling linked" bug). Contract:
+    # every content column is sized by `flex-1` alone (+ `overflow-y-auto` on
+    # the column or its inner scroll div). The `md:h-full` on the outer
+    # wrapper (settings_live.ex) and the sidebar are correct and must stay.
+    test "content columns size by flex-1, never h-full", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/settings")
+
+      # Default load renders the :llm category section, already on the
+      # flex-1-only pattern.
+      assert html =~ ~s(id="settings-form-llm")
+      assert html =~ "flex-1 flex flex-col min-w-0"
+      refute html =~ "h-full bg-base-100/50"
+
+      for cat <- ["scheduler", "sandbox", "tools"] do
+        html = render_hook(view, "select_category", %{"category" => cat})
+        doc = Floki.parse_document!(html)
+
+        # The category root div IS the content column — a direct flex child of
+        # the two-column row. It must be sized by flex-1 alone, never h-full.
+        [root] = Floki.find(doc, ~s(div[id="category-#{cat}"]))
+        root_classes = root |> Floki.attribute("class") |> Enum.join(" ")
+        assert root_classes =~ "flex-1 flex flex-col min-w-0"
+        refute root_classes =~ "h-full", "category root must not carry h-full"
+
+        # The save_category form fills the column and its inner scroll body
+        # (flex-1 overflow-y-auto) owns the scrolling.
+        [form] = Floki.find(doc, ~s(form[id="settings-form-#{cat}"]))
+        form_classes = form |> Floki.attribute("class") |> Enum.join(" ")
+        assert form_classes =~ "flex-1 flex flex-col min-w-0"
+        refute form_classes =~ "h-full"
+
+        assert Floki.find(doc, ~s(div[id="category-#{cat}"] .overflow-y-auto)) != [],
+               "category section must keep an inner overflow-y-auto scroll body"
+      end
+    end
+
+    test "search results column carries overflow-y-auto on the form", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/settings")
+
+      html = render_hook(view, "search", %{"value" => "scheduler"})
+      doc = Floki.parse_document!(html)
+
+      # The search form is the content column — explicitly scrollable so
+      # every content column is structurally identical.
+      [form] = Floki.find(doc, ~s(form[id="settings-form-search"]))
+      form_classes = form |> Floki.attribute("class") |> Enum.join(" ")
+      assert form_classes == "flex-1 flex flex-col min-w-0 overflow-y-auto relative"
+    end
+  end
 end
 
 # A minimal GenServer standing in for a real remote connection manager in
