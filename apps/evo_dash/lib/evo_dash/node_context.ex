@@ -999,6 +999,23 @@ defmodule EvoDash.NodeContext do
   # pattern for cross-app GenServer calls to a possibly-dead process). This is
   # the single guard point so the degradation logic is not duplicated across
   # the six lifecycle functions.
+  defp with_remote_connection(module, function, args, fallback) do
+    if Code.ensure_loaded?(module) do
+      try do
+        apply(module, function, args)
+      catch
+        :exit, reason ->
+          Logger.warning(
+            "NodeContext: #{inspect(module)}.#{function} call failed (exit): #{inspect(reason)}"
+          )
+
+          fallback
+      end
+    else
+      fallback
+    end
+  end
+
   # Whitelist-normalizes a command-approval decision to the atom the core
   # expects. Accepts both the UI binary (`"approve" | "deny"`) and the
   # already-atomic form (`:approve | :deny`, idempotent). Total — never
@@ -1055,23 +1072,6 @@ defmodule EvoDash.NodeContext do
       catch
         kind, reason -> {:error, {kind, reason}}
       end
-    end
-  end
-
-  defp with_remote_connection(module, function, args, fallback) do
-    if Code.ensure_loaded?(module) do
-      try do
-        apply(module, function, args)
-      catch
-        :exit, reason ->
-          Logger.warning(
-            "NodeContext: #{inspect(module)}.#{function} call failed (exit): #{inspect(reason)}"
-          )
-
-          fallback
-      end
-    else
-      fallback
     end
   end
 end
