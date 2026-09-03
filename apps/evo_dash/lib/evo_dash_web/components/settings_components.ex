@@ -65,7 +65,7 @@ defmodule EvoDashWeb.SettingsComponents do
 
   def category_section(assigns) do
     ~H"""
-    <div class="flex-1 flex flex-col min-w-0 bg-base-100" id={"category-#{@category}"}>
+    <div class="flex-1 flex flex-col min-w-0 min-h-0 bg-base-100" id={"category-#{@category}"}>
       <%!-- Sticky Header --%>
       <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
         <div class="flex items-center gap-3 mb-1">
@@ -600,7 +600,7 @@ defmodule EvoDashWeb.SettingsComponents do
         <.form
           for={%{}}
           phx-submit="save_category"
-          class="flex-1 flex flex-col min-w-0 relative"
+          class="flex-1 flex flex-col min-w-0 min-h-0 relative"
           id={"settings-form-#{@category}"}
         >
           <input type="hidden" name="category" value={@category} />
