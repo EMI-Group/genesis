@@ -85,12 +85,7 @@ defmodule EvoGit.Core.PhyloGraphNode do
   @doc """
   Returns the current HEAD SHA for a given repo path.
   """
-  def current_head(repo) do
-    case Git.rev_parse(repo) do
-      {:ok, sha} -> {:ok, sha}
-      error -> error
-    end
-  end
+  def current_head(repo), do: Git.rev_parse(repo)
 
   @doc """
   Lists all files in the given commit recursively.
@@ -121,7 +116,12 @@ defmodule EvoGit.Core.PhyloGraphNode do
           ["ls-tree", "--name-only", node.current_commit, path]
 
         true ->
-          ["ls-tree", "--name-only", node.current_commit, Platform.trim_trailing_separators(path) <> "/"]
+          [
+            "ls-tree",
+            "--name-only",
+            node.current_commit,
+            Platform.trim_trailing_separators(path) <> "/"
+          ]
       end
 
     case Git.run(args, node.repo) do
