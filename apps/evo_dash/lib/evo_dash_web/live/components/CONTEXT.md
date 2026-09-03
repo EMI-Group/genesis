@@ -12,7 +12,7 @@ None — leaf directory (single file: `node_selector_component.ex`).
 
 ### `EvoDashWeb.NodeSelectorComponent` (`node_selector_component.ex`)
 
-A LiveComponent that renders a compact dropdown for switching between local and remote BEAM nodes. It is rendered **inside the sidebar** (not a top navbar) via `Layouts.app/1`, in the node selector slot below the brand header.
+A LiveComponent that renders a compact dropdown for switching between local and remote BEAM nodes. It is rendered **inside the sidebar** (not a top navbar) via `Layouts.app/1`, in the node selector slot of the sidebar bottom bar (leftmost of the bottom group; its dropdown opens UPWARD over the main content).
 
 - **Display**: Shows the current node name with a colored status dot (green = local, blue = connected remote, amber+pulse = connecting/disconnecting, rose = error, slate = disconnected).
 - **Dropdown**: Lists Local node, saved remote targets with connection status dots, and a "Manage Connections..." link to the Settings page's Remote Connections category.
