@@ -275,6 +275,146 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  describe "reflect chat tasks (show_reflect_tasks reveal toggle)" do
+    # :reflect repo-less Home-chat (self-reflective agent) tasks are hidden
+    # from the cross-project list by default and only revealed when the
+    # "Show chat tasks" checkbox in the filter bar is checked. The toggle is a
+    # page-local REVEAL preference, NOT a narrowing filter: it is deliberately
+    # left out of reset_filters and the active-filters indicator.
+
+    test "reflect tasks are hidden by default; the reveal checkbox renders unchecked", %{
+      conn: conn
+    } do
+      insert_fixture!(opts: [prompt: "MARKER NORMAL TASK SHOWN BY DEFAULT"])
+
+      insert_fixture!(
+        type: :reflect,
+        opts: [mode: "reflect", prompt: "MARKER REFLECT CHAT TASK HIDDEN BY DEFAULT"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # The normal task renders; the :reflect task does NOT.
+      assert html =~ "MARKER NORMAL TASK SHOWN BY DEFAULT"
+      refute html =~ "MARKER REFLECT CHAT TASK HIDDEN BY DEFAULT"
+
+      # The "Show chat tasks" label renders in the filter bar, and its checkbox
+      # (value="true") is present but unchecked (default false).
+      assert html =~ "Show chat tasks"
+      assert attribute(html, "input[name=show_reflect_tasks]", "value") == ["true"]
+      assert attribute(html, "input[name=show_reflect_tasks]", "checked") == []
+    end
+
+    test "checking the reveal toggle shows reflect tasks", %{conn: conn} do
+      insert_fixture!(
+        type: :reflect,
+        opts: [mode: "reflect", prompt: "MARKER REFLECT CHAT TASK REVEALED BY TOGGLE"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # With only a hidden :reflect row the list renders its empty state.
+      assert html =~ "No tasks found"
+      refute html =~ "MARKER REFLECT CHAT TASK REVEALED BY TOGGLE"
+
+      # A CHECKED daisyUI checkbox submits "true" (an unchecked box would be
+      # absent from the form params); the async page load re-runs.
+      _html = render_hook(view, "toggle_reflect_tasks", %{"show_reflect_tasks" => "true"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "MARKER REFLECT CHAT TASK REVEALED BY TOGGLE"
+      refute html =~ "No tasks found"
+      assert html =~ "Show chat tasks"
+      assert attribute(html, "input[name=show_reflect_tasks]", "checked") != []
+
+      # The reveal preference is not counted as an active (narrowing) filter:
+      # no active-filters indicator appears just because reflect tasks are shown.
+      refute html =~ "Active filters:"
+    end
+
+    test "toggle is additive: normal tasks render regardless and other filter assigns survive", %{
+      conn: conn
+    } do
+      insert_fixture!(opts: [prompt: "MARKER KEEPS VISIBLE NORMAL TASK"])
+      insert_fixture!(opts: [prompt: "MARKER EXCLUDED NORMAL TASK"])
+
+      insert_fixture!(
+        type: :reflect,
+        opts: [mode: "reflect", prompt: "MARKER KEEPS VISIBLE REFLECT CHAT TASK"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Narrow with a search query: the matching normal task renders, the
+      # non-matching one is filtered out, and the matching :reflect row is
+      # hidden by the reveal preference (it passes the SQL filter but is
+      # dropped by visible_tasks/2).
+      _html = render_hook(view, "search_tasks", %{"search_query" => "MARKER KEEPS VISIBLE"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "MARKER KEEPS VISIBLE NORMAL TASK"
+      refute html =~ "MARKER EXCLUDED NORMAL TASK"
+      refute html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
+
+      # Toggling reveal ON adds the matching :reflect row without disturbing
+      # the search query — the excluded normal task stays excluded.
+      _html = render_hook(view, "toggle_reflect_tasks", %{"show_reflect_tasks" => "true"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "MARKER KEEPS VISIBLE NORMAL TASK"
+      assert html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
+      refute html =~ "MARKER EXCLUDED NORMAL TASK"
+
+      # Toggling reveal back OFF (an unchecked box sends no param) hides only
+      # the :reflect row; the search query is still intact.
+      _html = render_hook(view, "toggle_reflect_tasks", %{})
+      html = flush_tasks_load(view)
+
+      assert html =~ "MARKER KEEPS VISIBLE NORMAL TASK"
+      refute html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
+      refute html =~ "MARKER EXCLUDED NORMAL TASK"
+    end
+
+    test "empty store renders the first-run nudge, not the adjust-filters hint", %{conn: conn} do
+      # No fixtures at all: genuinely empty DB, no filters, reveal toggle off.
+      # total_count == 0, so the empty-state hint falls through to the friendly
+      # first-run message (not the "adjust your filters" nudge).
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      assert html =~ "No tasks found"
+      assert html =~ "Tasks will appear here once you start them from the dashboard."
+      refute html =~ "Try adjusting your filters or search query."
+    end
+
+    test "a store containing only hidden reflect tasks renders the adjust-filters hint", %{
+      conn: conn
+    } do
+      # A single :reflect (repo-less Home-chat) row: total_count > 0 but the
+      # reveal toggle is off, so the visible list is empty and the hint tells
+      # the user the filter-bar "Show chat tasks" checkbox would un-hide it.
+      insert_fixture!(
+        type: :reflect,
+        opts: [mode: "reflect", prompt: "MARKER ONLY REFLECT CHAT TASK IN STORE"]
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      html = flush_tasks_load(view)
+
+      # The visible list is empty and the hidden :reflect row does not render.
+      assert html =~ "No tasks found"
+      refute html =~ "MARKER ONLY REFLECT CHAT TASK IN STORE"
+
+      # total_count (SQL-truthful) counts the reflect row, so the adjusting
+      # hint wins over the first-run nudge.
+      assert html =~ "Try adjusting your filters or search query."
+      refute html =~ "Tasks will appear here once you start them from the dashboard."
+    end
+  end
+
   describe ":task_updated broadcast handling" do
     # The EvoGit runtime broadcasts {:task_updated, task_id, status, node} on
     # the "tasks" PubSub topic (node-identity contract). TasksLive forwards the

@@ -60,6 +60,38 @@ through to the catch-all `handle_info(_msg, socket)` clause.
   `sync_apply_page/2` path (no loading state, no seq bump) — documented
   decision: immediate feedback.
 
+## `:reflect` tasks hidden by default (reveal toggle)
+
+The Tasks page hides `:reflect` tasks (repo-less Home-chat / self-reflective
+agent chat tasks) by default so they don't pollute the cross-project task
+list. Page-local filter state `@show_reflect_tasks` (default `false`, seeded in
+`mount/3` with the other filters) drives it; the filter-bar checkbox
+(`name="show_reflect_tasks"`, `value="true"`, `phx-change="toggle_reflect_tasks"`,
+gettext label "Show chat tasks") reveals them when checked. The handler parses
+`params["show_reflect_tasks"] not in [nil, "false"]` (a checked box sends
+`"true"`, an unchecked box is absent from FormData) and reloads via
+`start_async_page_load(1, true)`.
+
+The exclusion is applied **client-side post-load** by `visible_tasks/2`
+(`Enum.reject(tasks, &(&1.type == :reflect))` when hiding) at the two choke
+points where loaded page rows become the displayed list: the async
+`{:tasks_page_loaded, ...}` handler and `sync_apply_page/2` (both `:tasks` and
+`:filtered_tasks` get the post-load filtered list). This is because the SQL
+`filters` keyword (`build_filters_from_assigns/1`) cannot express "exclude
+type" — the WHERE builder lives in the read-only sibling app `evo_git`. Rows
+are full `%TaskInfo{}` structs so `type` is already a decoded atom (no atom
+conversion). `@total_count`/`@total_pages`/pagination stay SQL-truthful and
+untouched — a page may show slightly fewer cards when reflect rows are
+dropped (accepted by design).
+
+The toggle is a **reveal preference, not a narrowing filter**: it survives
+pagination `push_patch`es and filter reloads (it is a plain socket assign,
+never cleared by `handle_params/3`), it is NOT reset by `reset_filters`, and
+it does NOT appear in the active-filters indicator. When the reflect-hiding
+empties the list with no other filter active, the empty-state shows "Try
+adjusting your filters or search query." instead of the start-tasks hint
+(`not @show_reflect_tasks` added to the first branch's condition).
+
 ## RPC payload audit (transferred vs consumed)
 
 All data access goes through `EvoDash.NodeContext` → `EvoGit.RemoteNode` (local

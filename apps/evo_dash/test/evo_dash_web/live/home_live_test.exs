@@ -1165,6 +1165,63 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "Completed"
       assert badge_count(html) == 1
     end
+
+    test "reflect task result renders as a mini task-card chat message", %{conn: conn} do
+      # Pins the reflect-task rendering path on /help: a repo-less :reflect row
+      # (the shape the Home send flow starts — mode "reflect", NO :path key, nil
+      # project_path) whose terminal result must render as the final assistant
+      # task-card entry on the Home page, regardless of how the Tasks page
+      # displays (or hides) reflect tasks. Pure insert + deterministic terminal
+      # injection — no real send, so neither cleanup_task_on_exit/1 nor the ETS
+      # sweep is needed.
+      fixture_id =
+        insert_task_fixture!(
+          id: "reflect_card_pin",
+          type: :reflect,
+          opts: [mode: "reflect", objective: "REFLECT_PIN_OBJECTIVE"],
+          project_path: nil
+        )
+
+      {:ok, view, _html} = live(conn, "/help")
+      seq = assigns(view)[:chat_task_fetch_seq]
+
+      seed_chat_state(view, %{
+        chat_status: :running,
+        chat_task_id: fixture_id,
+        chat_agent_id: 1001,
+        transcript: [
+          %{id: "1", role: :user, text: "hello", streaming: false},
+          %{id: "2", role: :assistant, text: "", streaming: true}
+        ]
+      })
+
+      send(
+        view.pid,
+        {:chat_task_loaded, node(), seq, fixture_id,
+         %{
+           status: :completed,
+           result: {:ok, %{result: "REFLECT_PIN_RESULT rendered as task-card"}}
+         }}
+      )
+
+      html = render(view)
+      assert html =~ "REFLECT_PIN_RESULT rendered as task-card"
+      # The finalized entry carries the mini task-card header + Completed badge.
+      assert assigns(view).chat_task_status == :completed
+      assert html =~ "Completed"
+      assert badge_count(html) == 1
+      assert assigns(view).chat_status == :idle
+      assert assigns(view).chat_task_id == nil
+
+      # The pinned row really is the repo-less reflect task (type :reflect, nil
+      # project_path) — the row shape this chat renders results for.
+      [reflect] =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
+
+      assert reflect.id == fixture_id
+      assert reflect.project_path == nil
+    end
   end
 
   describe "assistant task-card" do

@@ -134,6 +134,18 @@ defmodule EvoDashWeb.TasksLive do
 
               <!-- Actions -->
               <div class="flex items-center gap-2 shrink-0">
+                <%!-- 勾选后显示 Home 聊天页(自省智能体, :reflect 仓库外聊天任务)产生的聊天任务 --%>
+                <label class="label cursor-pointer gap-2">
+                  <input
+                    type="checkbox"
+                    name="show_reflect_tasks"
+                    value="true"
+                    checked={@show_reflect_tasks}
+                    phx-change="toggle_reflect_tasks"
+                    class="checkbox checkbox-sm"
+                  />
+                  <span class="label-text whitespace-nowrap">{gettext("Show chat tasks")}</span>
+                </label>
                 <button
                   type="button"
                   class="btn btn-ghost btn-md"
@@ -218,7 +230,7 @@ defmodule EvoDashWeb.TasksLive do
                 <.icon name="hero-inbox" class="size-10 mx-auto mb-4 opacity-50" />
                 <p class="text-lg font-medium">{gettext("No tasks found")}</p>
                 <p class="text-sm mt-1">
-                  <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" do %>
+                  <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
                     {gettext("Try adjusting your filters or search query.")}
                   <% else %>
                     {gettext("Tasks will appear here once you start them from the dashboard.")}
@@ -461,6 +473,11 @@ defmodule EvoDashWeb.TasksLive do
         project_filter: "all",
         search_query: "",
         review_status_filter: "all",
+        # Reveal preference (default OFF): hides :reflect repo-less Home-chat
+        # tasks from the cross-project list. A page-local reveal toggle, NOT a
+        # narrowing filter — deliberately left out of reset_filters and the
+        # active-filters indicator.
+        show_reflect_tasks: false,
         expanded_task_ids: MapSet.new(),
         selected_result: nil,
         selected_options: nil,
@@ -565,14 +582,18 @@ defmodule EvoDashWeb.TasksLive do
 
       case result do
         {:ok, m} ->
+          # :reflect tasks are excluded client-side after load (see
+          # visible_tasks/2) — the SQL WHERE builder cannot express it.
+          visible = visible_tasks(m.tasks, socket.assigns.show_reflect_tasks)
+
           socket =
             socket
-            |> assign(:tasks, m.tasks)
+            |> assign(:tasks, visible)
             |> assign(:current_page, m.current_page)
             |> assign(:total_count, m.total_count)
             |> assign(:total_pages, m.total_pages)
             |> assign(:project_paths, m.project_paths)
-            |> assign(:filtered_tasks, m.tasks)
+            |> assign(:filtered_tasks, visible)
 
           {:noreply, socket}
 
@@ -618,6 +639,22 @@ defmodule EvoDashWeb.TasksLive do
   # Prevents page reload when pressing Enter in the filter/search form
   @impl true
   def handle_event("noop", _params, socket), do: {:noreply, socket}
+
+  # Reveal toggle for :reflect (repo-less Home-chat) tasks, default OFF. The
+  # checkbox carries value="true", so a CHECKED box sends "true" and an
+  # UNCHECKED box is absent from FormData — anything other than nil/"false"
+  # means checked. Deliberately only assigns show_reflect_tasks (the phx-change
+  # submits the whole form, but the other filters keep their socket assigns)
+  # and reloads through the same async path as the other filters.
+  @impl true
+  def handle_event("toggle_reflect_tasks", params, socket) do
+    show = params["show_reflect_tasks"] not in [nil, "false"]
+
+    {:noreply,
+     socket
+     |> assign(:show_reflect_tasks, show)
+     |> start_async_page_load(1, true)}
+  end
 
   @impl true
   def handle_event("retry_remote_connection", _params, socket) do
@@ -939,13 +976,17 @@ defmodule EvoDashWeb.TasksLive do
     {tasks, current_page, total_count, total_pages} =
       load_page(node, page, socket.assigns.page_size, filters)
 
+    # :reflect tasks are excluded client-side after load (see visible_tasks/2) —
+    # the SQL WHERE builder cannot express it.
+    visible = visible_tasks(tasks, socket.assigns.show_reflect_tasks)
+
     socket
-    |> assign(:tasks, tasks)
+    |> assign(:tasks, visible)
     |> assign(:current_page, current_page)
     |> assign(:total_count, total_count)
     |> assign(:total_pages, total_pages)
     |> assign(:project_paths, EvoDash.NodeContext.get_unique_paths(node))
-    |> assign(:filtered_tasks, tasks)
+    |> assign(:filtered_tasks, visible)
   end
 
   # Spawns one async page load in a supervised Task (same pattern as
@@ -1009,6 +1050,17 @@ defmodule EvoDashWeb.TasksLive do
       search: socket.assigns.search_query
     ]
   end
+
+  # :reflect tasks are repo-less Home-chat (self-reflective agent) tasks that
+  # pollute the cross-project list, so they are hidden by default and only
+  # shown when the reveal toggle is on. Applied CLIENT-SIDE at the two choke
+  # points where loaded page rows become the displayed list (async
+  # {:tasks_page_loaded} handler and sync_apply_page/2): the SQL `filters`
+  # keyword built above cannot express "exclude type" (that would require
+  # touching the read-only evo_git WHERE builder). Rows are full %TaskInfo{}
+  # structs, so `type` is already a decoded atom — no atom conversion.
+  defp visible_tasks(tasks, true), do: tasks
+  defp visible_tasks(tasks, false), do: Enum.reject(tasks, &(&1.type == :reflect))
 
   defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"
   defp animation_delay_class(_), do: ""
