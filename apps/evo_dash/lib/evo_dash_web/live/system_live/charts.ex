@@ -378,7 +378,7 @@ defmodule EvoDashWeb.SystemLive.Charts do
   """
   def chart_card(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-300 bg-base-100 p-4">
+    <div class="flex flex-col rounded-lg border border-base-300 bg-base-100 p-4">
       <div class="flex items-center gap-2 mb-1">
         <.icon name={@icon} class="size-4 text-base-content/50 shrink-0" />
         <h3 class="font-semibold text-sm">{@title}</h3>
@@ -411,11 +411,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
       <% end %>
 
       <%= if @samples == [] do %>
-        <div class="h-24 flex items-center justify-center text-xs text-base-content/70">
+        <div class="mt-auto h-24 flex items-center justify-center text-xs text-base-content/70">
           {gettext("Collecting data…")}
         </div>
       <% else %>
-        <div class="flex flex-wrap gap-x-4 gap-y-1 mb-2">
+        <div class="mt-auto flex flex-wrap gap-x-4 gap-y-1 mb-2">
           <%= for s <- @series do %>
             <span class="flex items-center gap-1.5 text-xs">
               <span class="size-2 rounded-full shrink-0" style={"background-color: #{s.color}"} />
