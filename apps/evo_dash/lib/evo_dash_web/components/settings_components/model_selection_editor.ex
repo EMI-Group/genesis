@@ -78,7 +78,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
             placeholder={"if agent.depth == 0, do: \"default\", else: \"fast\""}
             class="textarea textarea-bordered rounded-md w-full font-mono text-sm resize-y"
           ><%= @script %></textarea>
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             {gettext("Leave empty to disable model selection (the default model is used)")}
           </p>
         </div>
@@ -104,7 +104,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
         <summary class="cursor-pointer text-xs font-semibold text-base-content/70 hover:text-base-content">
           {gettext("Script contract")} <%!-- zh_CN: 脚本契约（帮助说明的折叠标题） --%>
         </summary>
-        <pre class="mt-2 text-xs font-mono text-base-content/70 bg-base-200 rounded-md p-3 overflow-x-auto whitespace-pre-wrap"><%= EvoGit.CustomAgents.ModelSelector.describe_contract() %></pre>
+        <pre class="mt-2 text-xs font-mono text-base-content/80 bg-base-200 rounded-md p-3 overflow-x-auto whitespace-pre-wrap"><%= EvoGit.CustomAgents.ModelSelector.describe_contract() %></pre>
       </details>
 
       <%!-- Example box --%>
@@ -123,7 +123,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
             {gettext("Copy")}
           </button>
         </div>
-        <pre class="text-xs font-mono text-base-content/70 overflow-x-auto whitespace-pre"><%= example_script() %></pre>
+        <pre class="text-xs font-mono text-base-content/80 overflow-x-auto whitespace-pre"><%= example_script() %></pre>
       </div>
 
       <%!-- Test results --%>
