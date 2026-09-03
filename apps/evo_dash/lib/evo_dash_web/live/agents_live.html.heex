@@ -23,7 +23,7 @@
             </div>
           <% else %>
             <%= if @agents == [] do %>
-              <div class="text-center py-16 bg-base-200/40 rounded-xl">
+              <div class="text-center py-16">
                 <.icon name="hero-server" class="size-20 mx-auto mb-4 text-base-content/40 animate-float" />
                 <p class="text-lg text-base-content"><%= gettext("No agents currently registered") %></p>
                 <p class="text-sm mt-2 text-base-content/60"><%= gettext("Start a task from the dashboard to see agents here.") %></p>
