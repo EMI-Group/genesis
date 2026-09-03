@@ -92,6 +92,16 @@ The review diff viewer highlights code in the BROWSER (no server-side highlighte
 
 **theme-aware base CSS**: everything theme-driven uses `var(--color-*)` + `color-mix(in oklab|oklch, var(--color-*) <alpha/amount>%, …)` — NEVER `oklch(var(--x) / a)` nesting (Known Issue (i)); base-100 80% mixes give the glassmorphism. Rules confined to `:root` fallback + `.guide-highlight` (primary outline), `.agents-legend-tip` (neutral bg), `.md-content` (base-* + primary links/blockquote), `.input-*`/`.palette-*`/`.no-project-*`/`.dashboard-topbar` (project-accent + base-*).
 
+## Form-control focus styling ("glow-on-focus") — CURRENT CONTRACT
+
+**The "good glow" (TasksLive filter bar / task form) is pure INLINE TAILWIND UTILITIES, not a custom CSS class**: `focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary` (optionally + `shadow-sm`), e.g. `tasks_live.ex` search input L128 and its three selects L46/77/95; `welcome_live.ex` model search L176; variant `focus:ring-primary/20` on the ghost-mode selects + Home chat model select; variant `focus:ring-base-content/20` on task-form path inputs + project pickers. It works because DaisyUI 5 (`assets/vendor/daisyui.js` v5.0.35, Tailwind-4 plugin) emits `.input/.select/.textarea` focus rules as **`outline: 2px solid var(--input-color); outline-offset: 2px`** on `&:focus, &:focus-within` (select/textarea `&:focus`) inside the plugin's `@layer components` — Tailwind `focus:outline-none` + `focus:ring-*` live in the LATER `@layer utilities`, so they override the outline and paint the soft ring instead (the perceived "glow, no double border").
+
+**Vanilla DaisyUI focus (the "ugly" state) is the DEFAULT**: any `input/select/textarea` carrying `input-bordered`/`select-bordered`/etc. WITHOUT `focus:outline-none` shows the detached 2px outline — this is what projects foreign-repo inputs and Settings "filter settings" input (sidebar.ex L48, has ring utilities but lacks `focus:outline-none`) and the connection-test select look like today. DaisyUI 5 prefers `outline` over `border-color`/`box-shadow` for focus, so ring utilities without `outline-none` do NOT fully fix it.
+
+**No global override exists today**: app.css has NO `@layer` blocks and NO bare `.input`/`.select`/`.textarea` rules — the only custom focus rules are page-scoped: `.input-prompt:focus { outline: none }` (ProjectsLive prompt textarea, L1899), `.file-manual-input:focus { border-color: …warning… }` (AttachFile manual-entry input, L2138, amber border-color), and `.help-composer:focus-within` (Home chat composer container glow, L2211). Custom colors in these rules follow the `color-mix + var(--color-*)` token policy above (NEVER nested `oklch(var(--x))`).
+
+**Known conflict sites for any future global focus restyle** (a global `.input:focus` override would need to keep these working): `input-success` (conditional on `settings_components.ex:390` + `welcome_live.ex:297` API-key inputs), `-error` validation classes via `CoreComponents.input` error plumbing (helpers DEFINED at `core_components.ex` L188-288 but NOT used in real markup — only their own doc examples; every real control is raw HTML with explicit classes), and the three page-scoped rules above. Checkbox/toggle are unaffected visually (DaisyUI 5 styles them via `&:focus-visible` outline only).
+
 ## Static Assets (`priv/static/`)
 
 | File | Purpose |
