@@ -78,7 +78,7 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
       !@remote and !@hide_palette and is_nil(@active_project) and
         !@no_project_hint_dismissed %>
     <div
-      class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex items-center justify-between gap-3 px-4 py-3"
+      class="dashboard-topbar shrink-0 sticky top-0 z-30 w-full flex flex-wrap items-center justify-between gap-3 px-4 py-3"
       data-remote={@remote}
       data-no-project={show_hint}
     >
@@ -154,12 +154,16 @@ defmodule EvoDashWeb.ProjectsLive.RemoteView do
           <% %{state: :ok, owner: owner, repo: repo} when is_binary(owner) and is_binary(repo) -> %>
             <button
               type="button"
-              class="btn btn-ghost btn-sm gap-2 rounded-lg border border-base-300 hover:bg-base-200 transition-colors"
+              class="btn btn-ghost btn-sm gap-2 rounded-lg border border-base-300 hover:bg-base-200 transition-colors min-w-0"
               phx-click="open_github_issues"
               title={gettext("Open GitHub Issues")}
             >
-              <.icon name="brand-github" class="size-4" />
-              <span class="font-mono text-xs whitespace-nowrap">{owner}/{repo}</span>
+              <.icon name="brand-github" class="size-4 shrink-0" />
+              <%!-- Narrow viewports: icon-only presentation (owner/repo label
+                   hidden below `sm`, mirroring the Configure button), and on
+                   wider but tight rows the label truncates with an ellipsis
+                   instead of forcing the bar to overflow. --%>
+              <span class="font-mono text-xs truncate min-w-0 hidden sm:inline">{owner}/{repo}</span>
             </button>
           <% _ -> %>
         <% end %>
