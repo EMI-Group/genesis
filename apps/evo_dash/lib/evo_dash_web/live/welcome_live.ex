@@ -163,7 +163,7 @@ defmodule EvoDashWeb.WelcomeLive do
                 <div class="relative mb-3">
                   <.icon
                     name="hero-magnifying-glass"
-                    class="size-4 text-base-content/40 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                    class="size-4 text-base-content/60 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                   />
                   <form id="welcome-search" class="contents" phx-submit="noop">
                     <input
@@ -181,7 +181,7 @@ defmodule EvoDashWeb.WelcomeLive do
                       type="button"
                       phx-click="search_models"
                       phx-value-search_query=""
-                      class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/40 hover:text-base-content transition-colors"
+                      class="absolute inset-y-0 right-0 flex items-center pr-3 text-base-content/60 hover:text-base-content transition-colors"
                     >
                       <.icon name="hero-x-mark" class="size-4" />
                     </button>
@@ -197,8 +197,8 @@ defmodule EvoDashWeb.WelcomeLive do
                 <%= if filtered_provider_models(entries, @search_query) == [] do %>
                   <!-- Zero search results -->
                   <div class="py-6 text-center">
-                    <.icon name="hero-magnifying-glass" class="size-8 text-base-content/30 mx-auto mb-2" />
-                    <p class="text-sm text-base-content/50">
+                    <.icon name="hero-magnifying-glass" class="size-8 text-base-content/40 mx-auto mb-2" />
+                    <p class="text-sm text-base-content/70">
                       {gettext("No models match your search.")}
                     </p>
                   </div>
@@ -218,9 +218,9 @@ defmodule EvoDashWeb.WelcomeLive do
                       >
                         <span class="font-semibold text-xs">{entry.model_display_name}</span>
                         <span class={[
-                          "text-[11px] leading-tight",
+                          "text-xs leading-tight",
                           selected && "text-primary-content/80",
-                          !selected && "text-base-content/50"
+                          !selected && "text-base-content/60"
                         ]}>
                           {t_provider(entry.provider_display_name)}{variant_suffix(entry)}
                         </span>
@@ -246,9 +246,9 @@ defmodule EvoDashWeb.WelcomeLive do
 
             <!-- STEP 3: Credentials — rendered ONLY after a model is chosen
                  (pinned at bottom on large screens) -->
-            <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-200">
+            <div class="mt-4 lg:shrink-0 lg:pt-4 lg:border-t lg:border-base-300">
               <%= if @selected_entry do %>
-                <div class="bg-base-50 rounded-xl border border-base-200 p-5">
+                <div class="bg-base-200 rounded-xl border border-base-300 p-5">
                   <% key_is_set = Map.get(@credentials, @selected_entry.credential_key) not in [nil, ""] %>
                   <% can_save = @api_key_input != "" or key_is_set %>
                   <% requires_base_url =
@@ -298,7 +298,7 @@ defmodule EvoDashWeb.WelcomeLive do
                         key_is_set && "input-success"
                       ]}
                     />
-                    <p class="text-[11px] text-base-content/70 mt-1.5">
+                    <p class="text-xs text-base-content/70 mt-1.5">
                       {gettext("Enter your API key for %{provider}.",
                         provider: t_provider(@selected_entry.provider_display_name)
                       )}
@@ -322,7 +322,7 @@ defmodule EvoDashWeb.WelcomeLive do
                         placeholder={gettext("https://...")}
                         class="input input-bordered w-full rounded-xl shadow-sm bg-base-100"
                       />
-                      <p class="text-[11px] text-base-content/70 mt-1.5">
+                      <p class="text-xs text-base-content/70 mt-1.5">
                         {gettext("Required for this provider.")}
                       </p>
                     <% else %>
@@ -349,7 +349,7 @@ defmodule EvoDashWeb.WelcomeLive do
                        form, NOT inside it, so the button is not a form submit.
                        Tests the resolved model value with the already-saved key
                        (or the key typed above, which is saved first). -->
-                  <div class="mt-4 pt-3 border-t border-base-200/70">
+                  <div class="mt-4 pt-3 border-t border-base-300/70">
                     <%= case @llm_test_status do %>
                       <% :idle -> %>
                         <button
@@ -397,8 +397,8 @@ defmodule EvoDashWeb.WelcomeLive do
               <% else %>
                 <!-- Placeholder when no model is selected -->
                 <div class="bg-base-200/30 rounded-xl border border-dashed border-base-300 p-5 text-center">
-                  <.icon name="hero-cursor-arrow-rays" class="size-5 text-base-content/30 mx-auto mb-1" />
-                  <p class="text-xs text-base-content/40">
+                  <.icon name="hero-cursor-arrow-rays" class="size-5 text-base-content/50 mx-auto mb-1" />
+                  <p class="text-xs text-base-content/70">
                     {gettext("Select a provider and a model above to enter your API key.")}
                   </p>
                 </div>
@@ -410,14 +410,14 @@ defmodule EvoDashWeb.WelcomeLive do
           <div class="flex justify-center mt-6 shrink-0">
             <button
               phx-click="skip"
-              class="text-sm text-base-content/50 hover:text-base-content/70 transition-colors"
+              class="text-sm text-base-content/70 hover:text-base-content transition-colors"
             >
               {gettext("Skip")}
             </button>
           </div>
 
         <!-- Version footer -->
-        <div class="mt-6 text-xs text-base-content/40 shrink-0">
+        <div class="mt-6 text-xs text-base-content/60 shrink-0">
           {gettext("Genesis %{version}", version: @current_version)}
         </div>
       </div>
