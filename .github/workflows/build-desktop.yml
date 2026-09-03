@@ -965,9 +965,13 @@ jobs:
           import datetime, json, os, sys
 
           tag = os.environ["RELEASE_TAG"]
-          repo = os.environ["REPO"]
           version = tag[1:] if tag.startswith("v") else tag
-          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+          # Payload URLs point at the genesis.evox.group Cloudflare worker
+          # ("smart download" proxy, mainland-China reachable) so desktop
+          # auto-updates work for China-mainland users. The GitHub
+          # releases/download/<tag>/<file> URL is the UPSTREAM source the worker
+          # proxies — assets are still uploaded to the GitHub release unchanged.
+          base_url = "https://genesis.evox.group/dl"
           entries = {
               "darwin-aarch64": (
                   "genesis_desktop_darwin_arm64.app.tar.gz",
