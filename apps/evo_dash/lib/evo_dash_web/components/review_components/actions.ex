@@ -19,7 +19,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
   def action_buttons(assigns) do
     ~H"""
-    <div class="bg-base-100 border-b border-base-200 p-5 md:p-6">
+    <div class="bg-base-100 border-b border-base-300 p-5 md:p-6">
       <div class="flex items-center gap-3 mb-5">
         <.icon name="hero-hand-raised" class="size-5 text-base-content/60" />
         <h3 class="font-semibold text-base">{gettext("Actions")}</h3>
@@ -51,7 +51,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
               </label>
               <button
                 type="submit"
-                class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
+                class="btn btn-success rounded-lg px-6 gap-2 shadow-sm"
                 phx-confirm={
                   gettext("Merge these changes into %{target}?", target: @default_merge_target)
                 }
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </form>
           <% else %>
             <button
-              class="btn btn-success rounded-full px-6 gap-2 shadow-sm"
+              class="btn btn-success rounded-lg px-6 gap-2 shadow-sm"
               phx-click="merge"
               phx-value-repo_id={@repo_id}
               phx-confirm={gettext("Merge these changes into the current branch?")}
@@ -74,7 +74,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </button>
           <% end %>
           <button
-            class="btn btn-outline btn-error rounded-full px-6 gap-2"
+            class="btn btn-outline btn-error rounded-lg px-6 gap-2"
             phx-click="reject"
             phx-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
             disabled={@loading}
@@ -83,7 +83,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             {gettext("Reject")}
           </button>
           <button
-            class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
+            class="btn btn-outline btn-secondary rounded-lg px-6 gap-2"
             phx-click="resume"
             disabled={@loading}
           >
@@ -95,7 +95,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <% end %>
         <%= if @branch_exists and not @has_pr do %>
           <button
-            class="btn btn-outline rounded-full px-6 gap-2"
+            class="btn btn-outline rounded-lg px-6 gap-2"
             phx-click="create_pr"
             disabled={@loading}
           >
@@ -107,7 +107,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           <a
             href={@pr_url}
             target="_blank"
-            class="btn btn-outline btn-success rounded-full px-6 gap-2"
+            class="btn btn-outline btn-success rounded-lg px-6 gap-2"
           >
             <.icon name="hero-arrow-top-right-on-square" class="size-4.5" />
             {gettext("View PR")}
@@ -117,7 +117,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           <div class="divider divider-horizontal mx-2 hidden lg:block before:bg-base-200/50 after:bg-base-200/50">
           </div>
           <button
-            class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
+            class="btn btn-outline btn-secondary rounded-lg px-6 gap-2"
             phx-click="extract_skills"
             disabled={@loading}
           >
@@ -157,7 +157,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <% end %>
         <%= if not @branch_exists and @can_resume do %>
           <button
-            class="btn btn-outline btn-secondary rounded-full px-6 gap-2"
+            class="btn btn-outline btn-secondary rounded-lg px-6 gap-2"
             phx-click="resume"
             disabled={@loading}
           >
@@ -166,7 +166,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
           </button>
         <% end %>
         <button
-          class="btn btn-outline btn-ghost rounded-full px-6 gap-2"
+          class="btn btn-outline btn-ghost rounded-lg px-6 gap-2"
           phx-click="ignore"
           phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
           disabled={@loading}
@@ -215,7 +215,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </span>
           </div>
           <button
-            class="btn btn-warning rounded-full px-6 gap-2 shrink-0 sm:ml-auto"
+            class="btn btn-warning rounded-lg px-6 gap-2 shrink-0 sm:ml-auto"
             phx-click="auto_resolve"
             phx-confirm={
               gettext(
@@ -287,7 +287,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
                   )
                 }
               ></textarea>
-              <p class="text-xs text-base-content/50 mt-1">
+              <p class="text-xs text-base-content/60 mt-1">
                 {gettext(
                   "Provide specific instructions on what knowledge should be captured as skills."
                 )}
@@ -297,12 +297,12 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             <div class="flex justify-end gap-3 pt-2">
               <button
                 type="button"
-                class="btn btn-ghost rounded-full px-6"
+                class="btn btn-ghost rounded-lg px-6"
                 phx-click="cancel_extract_skills"
               >
                 {gettext("Cancel")}
               </button>
-              <button type="submit" class="btn btn-secondary rounded-full px-6 gap-2">
+              <button type="submit" class="btn btn-secondary rounded-lg px-6 gap-2">
                 <.icon name="hero-academic-cap" class="size-4.5" />
                 {gettext("Extract Skills")}
               </button>

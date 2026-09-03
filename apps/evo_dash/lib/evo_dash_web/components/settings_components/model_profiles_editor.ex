@@ -199,7 +199,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
             required
           />
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             {gettext("A unique identifier for this profile")}
           </p>
         </div>
@@ -214,7 +214,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             placeholder={gettext("e.g. anthropic, openai")}
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
           />
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             <%!-- zh_CN: provider → "服务商" --%>{gettext("The LLM provider name")}
           </p>
         </div>
@@ -234,7 +234,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
             required
           />
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             {gettext("The model name")}
           </p>
         </div>
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             placeholder={gettext("https://api.my-provider.com/v1")}
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
           />
-          <p class="text-[11px] text-base-content/60 mt-1">
+          <p class="text-xs text-base-content/70 mt-1">
             <%!-- zh_CN: provider → "服务商" --%>{gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
           </p>
         </div>
@@ -267,7 +267,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           min="1"
           class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
         />
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           {gettext("Number of parallel LLM request slots")}
         </p>
       </div>
@@ -286,7 +286,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           min="0"
           class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
         />
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用，0 表示高峰时段完全暂停该模型（0 个并发槽位） --%>{gettext(
             "Optional; used only during peak hours. Leave empty to disable. Enter 0 to fully pause the model during peak hours."
           )}
@@ -307,7 +307,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           placeholder={gettext("Asia/Shanghai")}
           class="input input-bordered input-sm rounded-md w-full sm:w-64 font-mono text-sm"
         />
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           <%!-- zh_CN: IANA 时区名用于解释 peak_hours 时段（如 Asia/Shanghai）；留空表示使用服务器本地时间 --%>{gettext(
             "IANA timezone for interpreting peak hours (e.g. Asia/Shanghai). Leave empty to use the server's local time."
           )}
@@ -337,7 +337,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             </label>
           <% end %>
         </div>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           <%!-- zh_CN: 这些天整天完全离峰——正常并发全天生效，peak 时段与峰值并发均被抑制 --%>{gettext(
             "On these days the profile is off-peak all day — normal concurrency applies, peak windows and peak concurrency are suppressed."
           )}
@@ -360,7 +360,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
                   value={peak_window_value(window, :start)}
                   class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
                 />
-                <span class="text-xs text-base-content/50">–</span>
+                <span class="text-xs text-base-content/60">–</span>
                 <input
                   type="time"
                   name={"peak_hours[#{index}][end]"}
@@ -379,7 +379,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
                 </button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <span class="text-[11px] text-base-content/60 shrink-0">
+                <span class="text-xs text-base-content/70 shrink-0">
                   <%!-- zh_CN: 适用日期 --%>{gettext("Days:")}
                 </span>
                 <div class="flex flex-wrap gap-2">
@@ -396,7 +396,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
                     </label>
                   <% end %>
                 </div>
-                <span class="text-[11px] text-base-content/50">
+                <span class="text-xs text-base-content/70">
                   <%!-- zh_CN: 不选择 = 每天 --%>{gettext("No selection = every day")}
                 </span>
               </div>
@@ -411,7 +411,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <.icon name="hero-plus" class="size-4" />
           <%!-- zh_CN: Add time window → "添加时段" --%>{gettext("Add time window")}
         </button>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           <%!-- zh_CN: 每日时间窗口，24 小时制 HH:MM 本地时间；同一天允许两个窗口，例如 09:00–12:00 与 14:00–18:00 --%>{gettext(
             "Daily time windows in 24h HH:MM local time. Two windows for one day are allowed, e.g. 09:00–12:00 and 14:00–18:00."
           )}
@@ -425,7 +425,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <span class="text-xs font-bold uppercase tracking-widest text-base-content/60">{gettext(
             "Generation Parameters"
           )}</span>
-          <span class="text-[11px] text-base-content/50">{gettext("optional")}</span>
+          <span class="text-xs text-base-content/60">{gettext("optional")}</span>
           <div class="h-px bg-base-200 flex-1"></div>
         </div>
 
@@ -566,7 +566,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
           rows="3"
         ><%= extra_val %></textarea>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           {gettext("Advanced provider-specific options merged into the model spec map.")}
         </p>
       </div>
@@ -582,7 +582,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
           rows="3"
         ><%= provider_options_val %></textarea>
-        <p class="text-[11px] text-base-content/60 mt-1">
+        <p class="text-xs text-base-content/70 mt-1">
           {gettext("Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically.")}
         </p>
       </div>

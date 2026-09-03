@@ -84,7 +84,7 @@ defmodule EvoDashWeb.Layouts do
           class="p-2 rounded-lg bg-base-200 shadow-md border border-base-300 text-base-content/70 hover:text-base-content transition-colors"
           aria-label={gettext("Toggle navigation")}
         >
-          <.icon name="hero-bars-3" class="w-5 h-5" />
+          <.icon name="hero-bars-3" class="size-5" />
         </button>
       </div>
 
@@ -133,7 +133,7 @@ defmodule EvoDashWeb.Layouts do
               class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("EvoX Genesis")}
             />
-            <span class="text-lg font-extrabold tracking-tight bg-gradient-to-r from-base-content to-base-content/60 bg-clip-text text-transparent truncate sidebar-label">
+            <span class="text-lg font-extrabold tracking-tight text-base-content truncate sidebar-label">
               <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
               {gettext("EvoX Genesis")}
             </span>
@@ -186,7 +186,7 @@ defmodule EvoDashWeb.Layouts do
                 <%= for {project_name, tasks} <- group_tasks_by_project(@running_tasks, @pending_tasks) do %>
                   <!-- Project group header -->
                   <div class="px-3 pt-2 pb-1 first:pt-0">
-                    <span class="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-base-content/60 sidebar-label">
+                    <span class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-base-content/70 sidebar-label">
                       <.icon name="hero-folder" class="w-3 h-3 shrink-0" />
                       {project_name}
                     </span>
@@ -249,7 +249,7 @@ defmodule EvoDashWeb.Layouts do
                 <.theme_toggle_compact drop_up={true} />
                 <button
                   id="sidebar-collapse-toggle"
-                  class="p-1.5 rounded-lg text-base-content/60 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex"
+                  class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex"
                   title={gettext("Collapse sidebar")}
                 >
                   <.icon name="hero-chevron-double-left" class="w-4 h-4" />
@@ -302,13 +302,13 @@ defmodule EvoDashWeb.Layouts do
             <div class="flex items-start gap-3">
               <.icon
                 name="hero-exclamation-triangle"
-                class="w-5 h-5 shrink-0 mt-0.5"
+                class="size-5 shrink-0 mt-0.5"
               />
               <div class="flex-1 min-w-0">
                 <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
                 <ul class="mt-1 space-y-0.5">
                   <%= for warning <- @config_status.warnings do %>
-                    <li class="text-xs opacity-90">{warning}</li>
+                    <li class="text-xs">{warning}</li>
                   <% end %>
                 </ul>
                 <.link
@@ -512,7 +512,7 @@ defmodule EvoDashWeb.Layouts do
       <.icon
         name={@icon}
         class={
-        "w-5 h-5 transition-colors " <>
+        "size-5 transition-colors " <>
         if(@current, do: "text-primary", else: "text-base-content/60")
       }
       />
@@ -663,7 +663,7 @@ defmodule EvoDashWeb.Layouts do
         [[data-theme-mode=dark]_&]:translate-x-[4.5rem]" />
 
       <button
-        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/60 hover:text-base-content transition-colors"
+        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/70 hover:text-base-content transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
         title={gettext("System theme")}
@@ -672,7 +672,7 @@ defmodule EvoDashWeb.Layouts do
       </button>
 
       <button
-        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/60 hover:text-base-content transition-colors"
+        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/70 hover:text-base-content transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
         title={gettext("Light theme")}
@@ -681,7 +681,7 @@ defmodule EvoDashWeb.Layouts do
       </button>
 
       <button
-        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/60 hover:text-base-content transition-colors"
+        class="relative z-10 p-2 w-9 h-8 flex items-center justify-center rounded-full text-base-content/70 hover:text-base-content transition-colors"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
         title={gettext("Dark theme")}

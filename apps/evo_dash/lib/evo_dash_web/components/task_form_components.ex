@@ -166,7 +166,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               id="prompt"
               phx-update="ignore"
               phx-hook="AdaptiveInput"
-              class="input-prompt w-full p-4 text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/25 transition-colors"
+              class="input-prompt w-full p-4 text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/45 transition-colors"
               placeholder={
                 cond do
                   @mode == "genesis_existing" ->
@@ -413,7 +413,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                   )}
                 </p>
               <% else %>
-                <p class="px-4 pb-3 text-xs text-base-content/55 flex items-center gap-1.5">
+                <p class="px-4 pb-3 text-xs text-base-content/70 flex items-center gap-1.5">
                   <.icon name="hero-user-circle" class="size-3.5 shrink-0" />
                   <%!-- zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体" --%>
                   {gettext("Runs the selected custom agent as the root agent of an evolution task.")}
@@ -430,10 +430,10 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <div class="animate-float">
                   <.icon name="hero-sparkles" class="size-6 mx-auto mb-1 text-base-content/40" />
                 </div>
-                <p class="text-sm font-medium text-base-content/50">
+                <p class="text-sm font-medium text-base-content/70">
                   {gettext("Open a project to get started")}
                 </p>
-                <p class="text-xs text-base-content/35">
+                <p class="text-xs text-base-content/60">
                   {gettext("Use the project picker in the top bar to open or create one.")}
                 </p>
               </div>
@@ -582,7 +582,7 @@ defmodule EvoDashWeb.TaskFormComponents do
         />
         <div class="flex-1">
           <span class="text-sm font-medium block">{gettext("Archive agent detail")}</span>
-          <span class="text-xs text-base-content/50">
+          <span class="text-xs text-base-content/70">
             {gettext("Collect per-agent metadata for review")}
           </span>
         </div>
