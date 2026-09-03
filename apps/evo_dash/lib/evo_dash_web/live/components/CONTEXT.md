@@ -2,7 +2,7 @@
 
 ## Intent
 
-LiveComponents (`use EvoDashWeb, :live_component`) rendered within parent LiveViews. Currently contains the `NodeSelectorComponent` for the SSH Remote Development feature — rendered in the navbar next to the brand logo via `Layouts.app/1`.
+LiveComponents (`use EvoDashWeb, :live_component`) rendered within parent LiveViews. Currently contains the `NodeSelectorComponent` for the SSH Remote Development feature — rendered via `Layouts.app/1` in the sidebar's BOTTOM bar (leftmost; invoked with `drop_up={true}` at `components/layouts.ex` ~L239) — NOT a top navbar.
 
 ## Routing Table
 
