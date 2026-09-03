@@ -397,15 +397,16 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
           selected_model: "alpha"
         )
 
-      # the muted pill (dot + id), NOT the interactive chip set
+      # the muted pill (dot + id), NOT the interactive dropdown
       assert html =~ "rounded-full bg-primary/60"
       assert html =~ "alpha"
       refute html =~ "role=\"group\""
       refute html =~ "select_llm_model"
+      refute html =~ "<select"
       refute html =~ "aria-pressed"
     end
 
-    test "renders a chip set with active/inactive markers when multiple model ids are known" do
+    test "renders a compact dropdown selector when multiple model ids are known" do
       # alpha + beta present
       samples = [sample_map()]
       series = Charts.llm_series(samples, "alpha")
@@ -422,23 +423,25 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
           selected_model: "alpha"
         )
 
-      assert html =~ ~s(role="group")
+      assert html =~ ~s(phx-change="select_llm_model")
       assert html =~ ~s(aria-label="Model")
+      assert html =~ "select-sm"
 
       doc = Floki.parse_document!(html)
-      buttons = Floki.find(doc, "button")
-      assert length(buttons) == 2
+      selects = Floki.find(doc, ~s(select[name="model"][phx-change="select_llm_model"]))
+      assert length(selects) == 1
 
-      alpha_btn = Enum.find(buttons, &(Floki.attribute(&1, "phx-value-model") == ["alpha"]))
-      beta_btn = Enum.find(buttons, &(Floki.attribute(&1, "phx-value-model") == ["beta"]))
-      assert Floki.attribute(alpha_btn, "aria-pressed") == ["true"]
-      assert Floki.attribute(beta_btn, "aria-pressed") == ["false"]
+      options = Floki.find(doc, "option")
+      assert length(options) == 2
+      assert Enum.map(options, &Floki.attribute(&1, "value")) == [["alpha"], ["beta"]]
 
-      [alpha_class] = Floki.attribute(alpha_btn, "class")
-      [beta_class] = Floki.attribute(beta_btn, "class")
-      assert alpha_class =~ "border-primary/40 bg-primary/10 text-primary font-medium"
-      assert beta_class =~ "border-base-200"
-      refute beta_class =~ "text-primary font-medium"
+      # The option equal to `selected_model` ("alpha") is preselected.
+      alpha_opt = Enum.find(options, &(Floki.attribute(&1, "value") == ["alpha"]))
+      beta_opt = Enum.find(options, &(Floki.attribute(&1, "value") == ["beta"]))
+      assert Floki.attribute(alpha_opt, "selected") == ["selected"]
+      assert Floki.attribute(beta_opt, "selected") == []
+      refute html =~ "role=\"group\""
+      refute html =~ "aria-pressed"
     end
 
     test "renders no in-card model selector when no model ids are known" do
@@ -456,9 +459,9 @@ defmodule EvoDashWeb.SystemLive.ChartsTest do
         )
 
       assert html =~ "<svg"
-      refute html =~ "role=\"group\""
+      # no control at all: neither the dropdown nor the single-model pill
       refute html =~ "select_llm_model"
-      refute html =~ "aria-pressed"
+      refute html =~ "<select"
       refute html =~ "rounded-full bg-primary/60"
     end
   end

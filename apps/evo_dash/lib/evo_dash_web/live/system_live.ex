@@ -944,7 +944,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("select_llm_model", %{"model" => id}, socket) do
-    # Chip click from the in-card LLM Slots model selector. The choice is
+    # Dropdown change from the in-card LLM Slots model selector. The choice is
     # clamped by the SAME deterministic rule as every samples-change path
     # (resolve_selected_llm_model/2): an id no longer present in the ring
     # buffer (e.g. a model profile removed from config while stale samples

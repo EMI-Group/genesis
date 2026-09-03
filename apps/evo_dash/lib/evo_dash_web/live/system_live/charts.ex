@@ -371,10 +371,11 @@ defmodule EvoDashWeb.SystemLive.Charts do
   Optional in-card model selector (used by the LLM Slots card): when
   `model_ids` is non-empty, a compact control renders between the description
   and the samples body — a static muted single-model label when exactly one
-  model id is known, otherwise a wrap-safe segmented chip set dispatching
-  `select_llm_model` (chips carry the raw user-config model id, never
-  gettext-ed). When `model_ids == []` (no samples yet / legacy sampler without
-  `llm_slots`) no control renders.
+  model id is known, otherwise a compact dropdown `<select>` (DaisyUI
+  `select-sm`) listing every model id, the currently selected model
+  preselected, dispatching `select_llm_model` on change (options carry the raw
+  user-config model id, never gettext-ed). When `model_ids == []` (no samples
+  yet / legacy sampler without `llm_slots`) no control renders.
   """
   def chart_card(assigns) do
     ~H"""
@@ -394,19 +395,25 @@ defmodule EvoDashWeb.SystemLive.Charts do
             </span>
           </div>
         <% else %>
-          <div class="flex flex-wrap gap-1.5 mb-3" role="group" aria-label={gettext("Model")}>
-            <%= for id <- @model_ids do %>
-              <button
-                type="button"
-                phx-click="select_llm_model"
-                phx-value-model={id}
-                aria-pressed={to_string(id == @selected_model)}
-                class={"inline-flex items-center rounded-md border px-2 py-0.5 text-xs transition-colors #{if id == @selected_model, do: "border-primary/40 bg-primary/10 text-primary font-medium", else: "border-base-200 text-base-content/60 hover:border-base-300 hover:text-base-content/80 hover:bg-base-200/40"}"}
-              >
-                {id}
-              </button>
-            <% end %>
-          </div>
+          <%!-- Multiple model ids → a compact dropdown. The select sits in a
+               minimal form (no submit button, inert — no implicit
+               submission from a lone select): LiveView change events only
+               fire from inputs inside a form. The select itself carries
+               phx-change, so only its own field ("model") is serialized —
+               the event params land as `%{"model" => id}`, matching the
+               existing `select_llm_model` handler. --%>
+          <form class="mb-3">
+            <select
+              name="model"
+              phx-change="select_llm_model"
+              aria-label={gettext("Model")}
+              class="select select-sm select-bordered rounded-md w-full"
+            >
+              <%= for id <- @model_ids do %>
+                <option value={id} selected={id == @selected_model}>{id}</option>
+              <% end %>
+            </select>
+          </form>
         <% end %>
       <% end %>
 
