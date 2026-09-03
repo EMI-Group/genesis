@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-09-03
+
+### Added
+
+- Add a node-aware appearance/accent-color system with GNOME/libadwaita (Adwaita) theming across the dashboard, including a configurable accent-color picker and tokenized status/connection colors.
+- Add per-model LLM Slots charting with model selection, foreign-node fallback, and live ring-buffer handling in the EVO dashboard, backed by a new scheduler read API exposing real per-model slot usage and capacity.
+- Render finalized assistant chat messages as Markdown with per-message hover actions to toggle raw view and copy text, and keep the pinned model across new chats and node switches.
+- Add days-of-week peak/off-peak configuration to the Model Profiles editor, with parsing/serialization support and fixes for day-order reversal and cross-month wakeup-timing bugs.
+- Add support for gemini-3.8-flash and claude-fable-5.1 models to the LLM catalog.
+
+### Changed
+
+- Redesign the System page: move Genesis Source into the System Self-Check grid, group System Dashboard, Scheduler, and System Controls into a single System Controls section, pin card action buttons to card bottoms, and re-arrange the System Live layout.
+- Replace the LLM Slots model chip-set selector with a compact dropdown on the System page.
+- Reframe the agent as a first-person Genesis persona that answers chat users directly without tool calls.
+- Improve UI contrast and consistency across settings, review, dashboard, agents, welcome, and live pages via an Adwaita-theme polish pass, including better readability for low-alpha text, hardened borders, and refined radii.
+- Rework the Agents page with a recolored layered surface system, hover-lift interactions, brighter surfaces, higher-contrast text, and plain-text styling without gradient accents on titles and headers.
+- Improve settings layout by pinning the config-path footer in the sidebar, adding independent column scrolling on medium and larger screens, and making the layout consistent across all settings categories.
+- Show software update changelog in a modal instead of an inline dump, and fix a Windows NSIS update install race.
+- Rework remote-connection bootstrap to never kill a running daemon without permission, adding a 5-step progress bar with frozen final state and a daemon_running permission dialog to the Settings UX.
+- Polished the agents page styling and refined agent spawn animations on initial load, and restyled the agents tree component with refined gray text tiers and hover/surface styling.
+- Hide reflect chat tasks by default on the Tasks page with a reveal toggle, and fix the empty-state hint so fresh installs show the first-run nudge.
+- Allow task search to also match agent response text, with updated placeholder.
+- Updated translations.
+- Update bundled ripgrep to version 15.2.0.
+
+### Fixed
+
+- Fix mobile layout overflows in the dashboard tree, task branch badges, and GitHub top-bar button.
+- Fix icon color.
+- Fix diff-viewer and input theme contrast, shadows, and skeleton shimmer for better accessibility and visual consistency.
+- Fix a bottom seam appearing on scrolled pages by painting the content background across the full scroll container.
+- Fix visual layering and tactile depth issues alongside polish of agents and live pages.
+- Bottom-align SVG plots in scheduler chart cards so they line up consistently regardless of wrapping text.
+- Remove gray background boxes from the Agents page empty states.
+
 ## [0.11.6] - 2026-09-01
 
 ### Added
