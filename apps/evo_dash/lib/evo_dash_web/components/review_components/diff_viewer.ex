@@ -12,7 +12,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   def file_tree_sidebar(assigns) do
     ~H"""
     <div class="diff-file-sidebar">
-      <div class="p-3 border-b border-base-200 bg-base-100 sticky top-0 z-10">
+      <div class="p-3 border-b border-base-300 bg-base-100 sticky top-0 z-10">
         <h3 class="font-semibold text-xs text-base-content/60 uppercase tracking-wider">
           {gettext("Changed Files")}
         </h3>
@@ -152,10 +152,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   def commit_detail_header(assigns) do
     ~H"""
-    <div class="border-y border-base-200 bg-base-100 ">
+    <div class="border-y border-base-300 bg-base-100 ">
       <div class="p-4">
         <div class="flex items-start gap-3">
-          <.icon name="hero-code-bracket-square" class="size-5 text-base-content/50 shrink-0 mt-0.5" />
+          <.icon name="hero-code-bracket-square" class="size-5 text-base-content/70 shrink-0 mt-0.5" />
           <div class="flex-1 min-w-0">
             <h1 class="text-lg font-bold leading-tight">{@commit.message}</h1>
             <div class="flex flex-wrap items-center gap-2 mt-2">
@@ -163,9 +163,9 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                 <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
                 {String.slice(@commit.sha, 0..7)}
               </span>
-              <span class="text-sm text-base-content/50">{@commit.author_name}</span>
+              <span class="text-sm text-base-content/60">{@commit.author_name}</span>
               <span class="text-sm text-base-content/30">·</span>
-              <span class="text-sm text-base-content/50">{relative_time(@commit.date)}</span>
+              <span class="text-sm text-base-content/60">{relative_time(@commit.date)}</span>
             </div>
           </div>
         </div>
@@ -218,7 +218,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     ~H"""
     <div class="text-xs font-mono">
       <%= if is_nil(@file.diff) do %>
-        <div class="flex items-center justify-center py-8 gap-2 text-base-content/50">
+        <div class="flex items-center justify-center py-8 gap-2 text-base-content/60">
           <span class="loading loading-spinner loading-sm"></span>
           <span>{gettext("Loading diff...")}</span>
         </div>
@@ -571,7 +571,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   defp file_status_color("added"), do: "text-success"
   defp file_status_color("deleted"), do: "text-error"
   defp file_status_color("modified"), do: "text-info"
-  defp file_status_color(_), do: "text-base-content/50"
+  defp file_status_color(_), do: "text-base-content/60"
 
   # Build a recursive nested tree from file paths. Each node is either a
   # directory node (%{type: :dir, ...}) or a file node (%{type: :file, ...}).
