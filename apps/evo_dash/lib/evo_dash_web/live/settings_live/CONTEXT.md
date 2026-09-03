@@ -77,6 +77,14 @@ Event handlers for the Settings `:agents` category (custom agents + model-select
 - `ConfigIO` delegates to `EvoGit.Config`, `EvoGit.AgentScheduler`, and `EvoGit.Config.Schema` — never calls them through `try/rescue`.
 - `NodeData` is the ONE justified exception: its `try/rescue` is at the RPC/config-file boundary (expected failure = unreachable node) and funnels every failure mode into the results map (see above).
 
+## Notes for Agents — Settings two-pane scroll layout (siblings own the markup)
+
+The independent-scrolling layout chain lives OUTSIDE this directory (escalate writes to the parent):
+`live/settings_live.ex` render (wrapper `flex flex-col md:h-full` → two-column row `flex flex-col md:flex-row md:flex-1 md:min-h-0`) → sidebar (`components/settings_components/sidebar.ex`, `md:h-full` + nav `flex-1 overflow-y-auto min-h-0`) → content columns. Every content column is a DIRECT flex child of the two-column row and must get its height ONLY from `flex-1` (+ `overflow-y-auto` on the inner scroll div):
+- `category_section/1` root div (`components/settings_components.ex` ~line 68) and the search-form/`:remote_connections`/`:agents` wrappers in `settings_live.ex`.
+- ⚠️ NEVER put `h-full` on a content-column root: the row has no definite `height` property (it is a flex child sized by `flex-1`), so `h-full` = percentage-of-undefined → content height → the row/wrapper/`#main-content`/`#main-scroll` grow past the viewport → the BODY scrolls and the two panes scroll LINKED (the reported "Scheduler/Sandbox/Tools scrolling linked" bug). `:llm`, search, `:remote_connections`, `:agents` (no `h-full`) are the working reference pattern.
+- Regression test to add under `test/evo_dash_web/live/settings_live_test.exs` (also a sibling): for each generic category (`scheduler`, `sandbox`, `tools`) via `render_hook(view, "select_category", %{"category" => cat})` + one default-load (`:llm`), assert `id="settings-form-<cat>"` has the `flex-1` form class and NO `h-full` anywhere on the category root (`id="category-<cat>"`).
+
 ## Async node-data loading (NodeData) — behavior contract
 
 SettingsLive navigation loads are ASYNC (remote-SSH UX optimization #4); per-save flows remain synchronous.
