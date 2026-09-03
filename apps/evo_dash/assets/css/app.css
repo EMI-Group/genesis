@@ -274,7 +274,12 @@ button, a, input, textarea, select, summary,
 }
 
 .skeleton {
-  background: linear-gradient(90deg, oklch(0.9 0 0 / 0.1) 25%, oklch(0.95 0 0 / 0.2) 50%, oklch(0.9 0 0 / 0.1) 75%);
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--color-base-content) 6%, transparent) 25%,
+    color-mix(in oklab, var(--color-base-content) 12%, transparent) 50%,
+    color-mix(in oklab, var(--color-base-content) 6%, transparent) 75%
+  );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
 }
@@ -563,7 +568,7 @@ button, a, input, textarea, select, summary,
 }
 .hover-lift:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px -5px oklch(0 0 0 / 0.1), 0 4px 10px -6px oklch(0 0 0 / 0.05);
+  box-shadow: 0 8px 25px -5px color-mix(in oklab, var(--color-base-content) 10%, transparent), 0 4px 10px -6px color-mix(in oklab, var(--color-base-content) 5%, transparent);
 }
 
 .hover-glow {
@@ -840,11 +845,11 @@ button, a, input, textarea, select, summary,
 }
 
 .diff-line-gutter {
-  @apply w-12 shrink-0 text-right pr-3 select-none text-base-content/25;
+  @apply w-12 shrink-0 text-right pr-3 select-none text-base-content/42;
 }
 
 .diff-line-prefix {
-  @apply w-5 shrink-0 select-none text-center text-base-content/25;
+  @apply w-5 shrink-0 select-none text-center text-base-content/42;
 }
 
 .diff-line-content {
@@ -892,7 +897,7 @@ button, a, input, textarea, select, summary,
 }
 
 .diff-line-meta {
-  @apply text-base-content/30;
+  @apply text-base-content/45;
 }
 
 /* Diff expand context bar */
@@ -913,7 +918,7 @@ button, a, input, textarea, select, summary,
   width: 100%;
   padding: 2px 0;
   cursor: pointer;
-  color: oklch(0.5 0 0 0 / 0.5);
+  color: oklch(0.5 0 0 / 0.5);
   transition: background-color 0.15s, color 0.15s;
   background: transparent;
   border: none;
@@ -963,7 +968,7 @@ button, a, input, textarea, select, summary,
   text-align: right;
   padding: 0 8px;
   user-select: none;
-  color: oklch(0.5 0 0 / 0.25);
+  color: color-mix(in oklab, var(--color-base-content) 42%, transparent);
   min-width: 40px;
   white-space: nowrap;
   line-height: 20px;
@@ -1037,7 +1042,7 @@ button, a, input, textarea, select, summary,
   word-break: break-all;
 }
 .diff-split-pre-hunk.diff-line-meta {
-  color: oklch(0.5 0 0 / 0.3);
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
 }
 
 /* Syntax highlight overrides for split-view cells — same as .diff-line-content */
@@ -1210,6 +1215,7 @@ button, a, input, textarea, select, summary,
   .animate-toast-exit,
   .animate-history-appear,
   .agent-card-running,
+  .skeleton,
   .no-project-overlay,
   .dashboard-topbar[data-no-project="true"] {
     animation: none;
@@ -1458,13 +1464,6 @@ button, a, input, textarea, select, summary,
   margin-left: 0.5em;
 }
 
-/* RTL: Theme toggle slider direction */
-[dir="rtl"] .theme-toggle-slider,
-[dir="rtl"] [class*="left-1"] {
-  left: auto;
-  right: 0.25rem;
-}
-
 /* RTL: Fix dropdown positioning */
 [dir="rtl"] .dropdown-end .dropdown-content {
   left: 0;
@@ -1510,6 +1509,17 @@ button, a, input, textarea, select, summary,
   --project-ring-accent: var(--project-accent);
 }
 
+/* Subtree fallback: --color-primary alone resolves at :root (the default
+   light theme's base blue via :where(:root)), NOT under the
+   [data-accent-color=...] override that Layouts.app sets on #app-layout.
+   Re-declaring the accent vars under any accent-colored subtree makes
+   accent-scoped content OUTSIDE #dashboard-root's inline style scope (e.g.
+   topbar elements, overlays) honor the user's accent selection too. */
+[data-accent-color] {
+  --project-accent: var(--color-primary);
+  --project-ring-accent: var(--project-accent);
+}
+
 /* === Floating Top Bar === */
 /* A floating, glassmorphic panel that sticks to the top of the viewport. */
 .dashboard-topbar {
@@ -1523,7 +1533,7 @@ button, a, input, textarea, select, summary,
   /* NOTE: no backdrop-filter here — it would create a containing block that
      traps the fixed-position command-palette backdrop/overlay (descendants of
      the topbar) so they could only cover the topbar strip, not the viewport. */
-  box-shadow: 0 4px 24px -6px oklch(0% 0 0 / 0.2);
+  box-shadow: 0 4px 24px -6px color-mix(in oklab, var(--color-base-content) 20%, transparent);
   /* NOTE: no `overflow: hidden` here on purpose. The Configure dropdown
      and the command palette overlay are positioned outside the bar and
      must be allowed to escape it. */
@@ -1578,7 +1588,7 @@ button, a, input, textarea, select, summary,
 
 /* Topbar "no project" state: grows slightly (py-3 = 0.75rem → 0.875rem) and
    pulses an accent ring via box-shadow. The keyframes REPEAT the base
-   .dashboard-topbar elevation (0 4px 24px -6px oklch(0% 0 0 / 0.2)) so the
+   .dashboard-topbar elevation (0 4px 24px -6px color-mix(in oklab, var(--color-base-content) 20%, transparent)) so the
    bar never loses its shadow mid-pulse. Box-shadow does not create a
    containing block, so the command palette stays un-trapped (Known Issue (ii)). */
 .dashboard-topbar[data-no-project="true"] {
@@ -1590,12 +1600,12 @@ button, a, input, textarea, select, summary,
 @keyframes no-project-pulse {
   0%, 100% {
     box-shadow:
-      0 4px 24px -6px oklch(0% 0 0 / 0.2),
+      0 4px 24px -6px color-mix(in oklab, var(--color-base-content) 20%, transparent),
       0 0 0 0 color-mix(in oklch, var(--color-primary) 0%, transparent);
   }
   50% {
     box-shadow:
-      0 4px 24px -6px oklch(0% 0 0 / 0.2),
+      0 4px 24px -6px color-mix(in oklab, var(--color-base-content) 20%, transparent),
       0 0 0 4px color-mix(in oklch, var(--color-primary) 22%, transparent);
   }
 }
@@ -1681,7 +1691,7 @@ button, a, input, textarea, select, summary,
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--color-base-300);
-  box-shadow: 0 16px 48px -8px oklch(0% 0 0 / 0.3);
+  box-shadow: 0 16px 48px -8px color-mix(in oklab, var(--color-base-content) 30%, transparent);
   overflow: hidden;
   animation: palette-slide-down 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1806,7 +1816,7 @@ button, a, input, textarea, select, summary,
   -webkit-backdrop-filter: blur(8px);
   border: 1px solid color-mix(in oklch, var(--project-accent) 25%, var(--color-base-300));
   box-shadow:
-    0 4px 16px -4px oklch(0% 0 0 / 0.15),
+    0 4px 16px -4px color-mix(in oklab, var(--color-base-content) 15%, transparent),
     0 0 0 2px color-mix(in oklch, var(--project-accent) 15%, transparent),
     0 0 90px -18px color-mix(in oklch, var(--project-accent) 25%, transparent),
     0 0 160px 20px color-mix(in oklch, var(--project-accent) 12%, transparent);
@@ -1883,7 +1893,7 @@ button, a, input, textarea, select, summary,
 }
 
 .input-prompt::placeholder {
-  color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
 }
 
 .input-prompt:focus {
@@ -2119,7 +2129,7 @@ button, a, input, textarea, select, summary,
   font-size: 0.8rem;
   line-height: 1;
   border-radius: 0.375rem;
-  border: 1px solid color-mix(in oklab, var(--color-base-content) 25%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-base-content) 40%, transparent);
   background: color-mix(in oklab, var(--color-base-100) 85%, transparent);
   color: var(--color-base-content);
   outline: none;
