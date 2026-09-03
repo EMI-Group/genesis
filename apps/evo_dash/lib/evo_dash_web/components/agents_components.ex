@@ -29,6 +29,8 @@ defmodule EvoDashWeb.AgentsComponents do
           <!-- L-connector from parent's trunk to this node's folder icon -->
           <!-- Connects x=10px (parent trunk) to x=24px (left edge of this child's folder icon) -->
           <div class="absolute -left-3.5 top-0 w-3.5 h-[18px] border-l-2 border-b-2 border-base-content/20 rounded-bl-sm z-0 pointer-events-none"></div>
+          <!-- Accent node dot at the connector elbow — theme-token accent, visible in both themes -->
+          <div class="absolute -left-4 top-[15px] size-1.5 rounded-full bg-primary/60 z-0 pointer-events-none"></div>
           
           <!-- Continuation trunk for next siblings -->
           <%= if not is_last do %>
@@ -60,10 +62,11 @@ defmodule EvoDashWeb.AgentsComponents do
                 <div
                   id={"agent-card-#{agent.id}"}
                   class={[
-                    "flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter] duration-500 motion-reduce:transition-none cursor-pointer hover:shadow-md hover:brightness-95 min-w-[120px] sm:min-w-[140px]",
+                    "relative overflow-hidden flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow,filter,transform] duration-300 motion-reduce:transition-none motion-reduce:transform-none cursor-pointer hover:-translate-y-0.5 hover:shadow-md hover:brightness-95 min-w-[120px] sm:min-w-[140px]",
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
-                    @selected_id == agent.id && "ring-2 ring-primary ring-offset-1",
+                    @selected_id == agent.id && "ring-2 ring-primary ring-offset-1 ring-offset-base-100",
+                    @selected_id != agent.id && "hover:ring-1 hover:ring-primary/25",
                     agent.status == :running && "agent-card-running",
                     agent.status == :running && "animate-pulse-glow",
                     MapSet.member?(@new_agent_ids, agent.id) && "animate-agent-spawn"
@@ -71,7 +74,9 @@ defmodule EvoDashWeb.AgentsComponents do
                   phx-click="select_agent"
                   phx-value-id={agent.id}
                 >
-                  <div class="flex items-center gap-2 justify-between">
+                  <!-- Accent gradient top edge — theme-token wash (primary → accent) above the status-tinted fill -->
+                  <div class="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-primary/60 via-accent/40 to-transparent"></div>
+                  <div class="flex items-center justify-between gap-2 -mx-2 -mt-2 px-2 pt-2 pb-1 bg-gradient-to-r from-primary/10 to-transparent">
                     <div class="flex items-center gap-1.5">
                       <.icon
                         name={agent_status_icon(agent.status)}
