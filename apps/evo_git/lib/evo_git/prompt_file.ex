@@ -56,9 +56,6 @@ defmodule EvoGit.PromptFile do
         "File is not plain text#{suffix} — the core CLI supports plain text " <>
           "only; convert the file to text first or attach it via the dashboard"
 
-      reason when is_atom(reason) ->
-        "Failed to read file: #{path} (#{inspect(reason)})"
-
       reason ->
         "Failed to read file: #{path} (#{inspect(reason)})"
     end

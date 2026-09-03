@@ -6,8 +6,6 @@ defmodule EvoGit.Skills.CRUD do
 
   alias EvoGit.Skills
 
-  @skills_dir ".agents/skills"
-
   # ---------------------------------------------------------------------------
   # Validation
   # ---------------------------------------------------------------------------
@@ -84,7 +82,7 @@ defmodule EvoGit.Skills.CRUD do
   """
   @spec edit_skill(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def edit_skill(repo_root, name, new_content) do
-    skills_path = Path.join(repo_root, @skills_dir)
+    skills_path = Path.join(repo_root, Skills.skills_dir())
     file_path = find_skill_file(skills_path, name)
 
     case file_path do
@@ -117,7 +115,7 @@ defmodule EvoGit.Skills.CRUD do
   """
   @spec remove_skill(String.t(), String.t()) :: :ok | {:error, String.t()}
   def remove_skill(repo_root, name) do
-    skills_path = Path.join(repo_root, @skills_dir)
+    skills_path = Path.join(repo_root, Skills.skills_dir())
 
     case find_skill_file(skills_path, name) do
       nil ->
@@ -141,7 +139,7 @@ defmodule EvoGit.Skills.CRUD do
     skills = Skills.load_skills(repo_root)
 
     if Enum.empty?(skills) do
-      "No skills defined. Skills live in #{@skills_dir}/ as markdown files with YAML frontmatter."
+      "No skills defined. Skills live in #{Skills.skills_dir()}/ as markdown files with YAML frontmatter."
     else
       lines =
         Enum.map(skills, fn skill ->
@@ -161,7 +159,7 @@ defmodule EvoGit.Skills.CRUD do
           "* **#{skill.name}** — #{skill.description}#{param_str}"
         end)
 
-      "Available skills in #{@skills_dir}/:\n\n#{Enum.join(lines, "\n\n")}"
+      "Available skills in #{Skills.skills_dir()}/:\n\n#{Enum.join(lines, "\n\n")}"
     end
   end
 
@@ -172,7 +170,7 @@ defmodule EvoGit.Skills.CRUD do
   """
   @spec read_skill(String.t(), String.t()) :: String.t()
   def read_skill(repo_root, name) do
-    skills_path = Path.join(repo_root, @skills_dir)
+    skills_path = Path.join(repo_root, Skills.skills_dir())
 
     case find_skill_file(skills_path, name) do
       nil ->
@@ -195,7 +193,7 @@ defmodule EvoGit.Skills.CRUD do
   Creates it (and parent directories) if needed.
   """
   def ensure_skills_dir(repo_root) do
-    skills_path = Path.join(repo_root, @skills_dir)
+    skills_path = Path.join(repo_root, Skills.skills_dir())
     File.mkdir_p!(skills_path)
     skills_path
   end

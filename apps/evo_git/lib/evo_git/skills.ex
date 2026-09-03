@@ -57,7 +57,10 @@ defmodule EvoGit.Skills do
   alias EvoGit.Skills.Skill
   alias EvoGit.Skills.{Executor, CRUD, ContextIntegration}
 
-  @skills_dir ".agents/skills"
+  @doc false
+  # Single source of truth for the skills directory name, shared by the CRUD
+  # module (which builds filesystem paths and user-facing messages from it).
+  def skills_dir, do: ".agents/skills"
 
   # ---------------------------------------------------------------------------
   # Loading & Parsing
@@ -71,7 +74,7 @@ defmodule EvoGit.Skills do
   """
   @spec load_skills(String.t()) :: [Skill.t()]
   def load_skills(repo_root) do
-    skills_path = Path.join(repo_root, @skills_dir)
+    skills_path = Path.join(repo_root, skills_dir())
 
     case File.ls(skills_path) do
       {:ok, files} ->
@@ -202,25 +205,19 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.Executor.execute/4`.
   """
   @spec execute([Skill.t()], String.t(), map(), String.t()) :: String.t()
-  def execute(skills, skill_name, args, repo_path) do
-    Executor.execute(skills, skill_name, args, repo_path)
-  end
+  defdelegate execute(skills, skill_name, args, repo_path), to: Executor
 
   @doc """
   Extracts the first ```bash code block from markdown content.
   Delegates to `EvoGit.Skills.Executor.extract_bash_block/1`.
   """
-  def extract_bash_block(markdown) do
-    Executor.extract_bash_block(markdown)
-  end
+  defdelegate extract_bash_block(markdown), to: Executor
 
   @doc """
   Substitutes `{{param_name}}` placeholders in a script with actual argument values.
   Delegates to `EvoGit.Skills.Executor.substitute_params/3`.
   """
-  def substitute_params(script, parameters, args) do
-    Executor.substitute_params(script, parameters, args)
-  end
+  defdelegate substitute_params(script, parameters, args), to: Executor
 
   # ---------------------------------------------------------------------------
   # Delegation Wrappers — CRUD
@@ -233,9 +230,7 @@ defmodule EvoGit.Skills do
   """
   @spec add_skill(String.t(), String.t(), String.t(), String.t()) ::
           {:ok, String.t()} | {:error, String.t()}
-  def add_skill(repo_root, content, description, params) do
-    CRUD.add_skill(repo_root, content, description, params)
-  end
+  defdelegate add_skill(repo_root, content, description, params), to: CRUD
 
   @doc """
   Updates an existing skill file by name.
@@ -243,9 +238,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.CRUD.edit_skill/3`.
   """
   @spec edit_skill(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
-  def edit_skill(repo_root, name, new_content) do
-    CRUD.edit_skill(repo_root, name, new_content)
-  end
+  defdelegate edit_skill(repo_root, name, new_content), to: CRUD
 
   @doc """
   Removes a skill file by name.
@@ -253,9 +246,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.CRUD.remove_skill/2`.
   """
   @spec remove_skill(String.t(), String.t()) :: :ok | {:error, String.t()}
-  def remove_skill(repo_root, name) do
-    CRUD.remove_skill(repo_root, name)
-  end
+  defdelegate remove_skill(repo_root, name), to: CRUD
 
   @doc """
   Lists all available skills with their names and descriptions.
@@ -263,9 +254,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.CRUD.list_skills/1`.
   """
   @spec list_skills(String.t()) :: String.t()
-  def list_skills(repo_root) do
-    CRUD.list_skills(repo_root)
-  end
+  defdelegate list_skills(repo_root), to: CRUD
 
   @doc """
   Reads a skill file's full content by name.
@@ -273,18 +262,14 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.CRUD.read_skill/2`.
   """
   @spec read_skill(String.t(), String.t()) :: String.t()
-  def read_skill(repo_root, name) do
-    CRUD.read_skill(repo_root, name)
-  end
+  defdelegate read_skill(repo_root, name), to: CRUD
 
   @doc """
   Validates that a skill body text will produce a valid skill when parsed.
 
   Delegates to `EvoGit.Skills.CRUD.validate_skill_text/1`.
   """
-  def validate_skill_text(content) do
-    CRUD.validate_skill_text(content)
-  end
+  defdelegate validate_skill_text(content), to: CRUD
 
   # ---------------------------------------------------------------------------
   # Delegation Wrappers — ContextIntegration
@@ -296,9 +281,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.ContextIntegration.extract_context_skill_names/1`.
   """
   @spec extract_context_skill_names(String.t()) :: [String.t()]
-  def extract_context_skill_names(content) do
-    ContextIntegration.extract_context_skill_names(content)
-  end
+  defdelegate extract_context_skill_names(content), to: ContextIntegration
 
   @doc """
   Strips the YAML front matter from a CONTEXT.md content string.
@@ -306,9 +289,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.ContextIntegration.strip_front_matter/1`.
   """
   @spec strip_front_matter(String.t()) :: String.t()
-  def strip_front_matter(content) do
-    ContextIntegration.strip_front_matter(content)
-  end
+  defdelegate strip_front_matter(content), to: ContextIntegration
 
   @doc """
   Reads the CONTEXT.md file at the given absolute directory path and extracts
@@ -317,9 +298,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.ContextIntegration.skill_names_at_dir/1`.
   """
   @spec skill_names_at_dir(String.t()) :: [String.t()]
-  def skill_names_at_dir(abs_dir) do
-    ContextIntegration.skill_names_at_dir(abs_dir)
-  end
+  defdelegate skill_names_at_dir(abs_dir), to: ContextIntegration
 
   @doc """
   Walks the hierarchy from the repository root down to `relative_path` and
@@ -328,9 +307,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.ContextIntegration.hierarchical_skill_names/2`.
   """
   @spec hierarchical_skill_names(String.t(), String.t()) :: [String.t()]
-  def hierarchical_skill_names(relative_path, repo_path) do
-    ContextIntegration.hierarchical_skill_names(relative_path, repo_path)
-  end
+  defdelegate hierarchical_skill_names(relative_path, repo_path), to: ContextIntegration
 
   @doc """
   Filters a list of skills to only include those whose names appear in `names`.
@@ -338,9 +315,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.ContextIntegration.filter_skills/2`.
   """
   @spec filter_skills([Skill.t()], [String.t()]) :: [Skill.t()]
-  def filter_skills(skills, names) do
-    ContextIntegration.filter_skills(skills, names)
-  end
+  defdelegate filter_skills(skills, names), to: ContextIntegration
 
   @doc """
   Searches all CONTEXT.md files in the repository to find which nodes have a
@@ -349,9 +324,7 @@ defmodule EvoGit.Skills do
   Delegates to `EvoGit.Skills.ContextIntegration.where_enabled/2`.
   """
   @spec where_enabled(String.t(), String.t()) :: [String.t()]
-  def where_enabled(skill_name, repo_root) do
-    ContextIntegration.where_enabled(skill_name, repo_root)
-  end
+  defdelegate where_enabled(skill_name, repo_root), to: ContextIntegration
 
   @doc """
   Enables a skill at a specific node level by adding it to the CONTEXT.md
@@ -364,9 +337,7 @@ defmodule EvoGit.Skills do
           | {:ok, :already_enabled_above, String.t()}
           | {:ok, :enabled, String.t()}
           | {:error, String.t()}
-  def enable_skill(skill_name, node_path, repo_path) do
-    ContextIntegration.enable_skill(skill_name, node_path, repo_path)
-  end
+  defdelegate enable_skill(skill_name, node_path, repo_path), to: ContextIntegration
 
   @doc """
   Disables a skill at a specific node level by removing it from the CONTEXT.md
@@ -376,9 +347,7 @@ defmodule EvoGit.Skills do
   """
   @spec disable_skill(String.t(), String.t(), String.t()) ::
           {:ok, :disabled, String.t()} | {:ok, :not_enabled} | {:error, String.t()}
-  def disable_skill(skill_name, node_path, repo_path) do
-    ContextIntegration.disable_skill(skill_name, node_path, repo_path)
-  end
+  defdelegate disable_skill(skill_name, node_path, repo_path), to: ContextIntegration
 
   @doc """
   Removes all references to a skill name from all CONTEXT.md files in the
@@ -388,9 +357,7 @@ defmodule EvoGit.Skills do
   """
   @spec remove_skill_from_all_contexts(String.t(), String.t()) ::
           {:ok, non_neg_integer()} | {:error, String.t()}
-  def remove_skill_from_all_contexts(skill_name, repo_root) do
-    ContextIntegration.remove_skill_from_all_contexts(skill_name, repo_root)
-  end
+  defdelegate remove_skill_from_all_contexts(skill_name, repo_root), to: ContextIntegration
 
   # ---------------------------------------------------------------------------
   # YAML Frontmatter Parser

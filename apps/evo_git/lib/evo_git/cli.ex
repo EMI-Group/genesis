@@ -51,13 +51,7 @@ defmodule EvoGit.CLI do
 
               runtime_opts = EvoGit.CLI.Parser.maybe_put(runtime_opts, :agent, opts[:agent])
               runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
-
-              runtime_opts =
-                if opts[:model] do
-                  Keyword.put(runtime_opts, :model_id_locked, true)
-                else
-                  runtime_opts
-                end
+              runtime_opts = lock_model_id(runtime_opts, opts)
 
               foreign_repos = EvoGit.CLI.Parser.parse_foreign_repos(opts)
               runtime_opts = Keyword.put(runtime_opts, :foreign_repos, foreign_repos)
@@ -119,13 +113,7 @@ defmodule EvoGit.CLI do
 
               runtime_opts = EvoGit.CLI.Parser.maybe_put(runtime_opts, :agent, opts[:agent])
               runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
-
-              runtime_opts =
-                if opts[:model] do
-                  Keyword.put(runtime_opts, :model_id_locked, true)
-                else
-                  runtime_opts
-                end
+              runtime_opts = lock_model_id(runtime_opts, opts)
 
               Evolution.run(objective, runtime_opts)
 
@@ -153,15 +141,7 @@ defmodule EvoGit.CLI do
     if objective do
       runtime_opts = [objective: objective]
       runtime_opts = EvoGit.CLI.Parser.maybe_put_model_id(runtime_opts, opts[:model])
-
-      # The CLI's -m is a user-locked choice — mark it so the dispatch priority
-      # chain skips the model-selection script for this task.
-      runtime_opts =
-        if opts[:model] do
-          Keyword.put(runtime_opts, :model_id_locked, true)
-        else
-          runtime_opts
-        end
+      runtime_opts = lock_model_id(runtime_opts, opts)
 
       EvoGit.Runtime.SelfReflective.run(runtime_opts)
     else
@@ -332,6 +312,16 @@ defmodule EvoGit.CLI do
   defp unknown_agent_message(id) do
     agents_path = Path.join(EvoGit.Config.config_dir(), "agents.toml")
     "Unknown custom agent id '#{id}'. Define it in #{agents_path}."
+  end
+
+  # The CLI's -m is a user-locked choice — mark it so the dispatch priority
+  # chain skips the model-selection script for this task.
+  defp lock_model_id(runtime_opts, opts) do
+    if opts[:model] do
+      Keyword.put(runtime_opts, :model_id_locked, true)
+    else
+      runtime_opts
+    end
   end
 
   # ── Backward-compatible test-wrappers ──────────────────────────────────────

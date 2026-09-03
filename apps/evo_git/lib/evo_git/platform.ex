@@ -136,21 +136,7 @@ defmodule EvoGit.Platform do
   """
   @spec data_dir(String.t()) :: String.t()
   def data_dir(app_name) do
-    case os() do
-      os when os in [:linux, :unknown] ->
-        # XDG convention (Linux standard; fallback for unknown platforms)
-        xdg = System.get_env("XDG_DATA_HOME")
-        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".local/share")
-        Path.join(base, app_name)
-
-      :macos ->
-        Path.join([System.user_home!(), "Library", "Application Support", app_name])
-
-      :windows ->
-        appdata = System.get_env("APPDATA")
-        base = if appdata && appdata != "", do: appdata, else: System.user_home!()
-        Path.join(base, app_name)
-    end
+    base_dir(app_name, "XDG_DATA_HOME", ".local/share")
   end
 
   @doc """
@@ -171,11 +157,19 @@ defmodule EvoGit.Platform do
   """
   @spec config_dir(String.t()) :: String.t()
   def config_dir(app_name) do
+    base_dir(app_name, "XDG_CONFIG_HOME", ".config")
+  end
+
+  # Shared platform-directory resolution used by both `data_dir/1` and
+  # `config_dir/1` — the four arms differ only in the XDG env var (and its
+  # home-relative fallback subpath) on Linux/unknown platforms; macOS and
+  # Windows are identical.
+  defp base_dir(app_name, xdg_env, fallback_rel) do
     case os() do
       os when os in [:linux, :unknown] ->
         # XDG convention (Linux standard; fallback for unknown platforms)
-        xdg = System.get_env("XDG_CONFIG_HOME")
-        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), ".config")
+        xdg = System.get_env(xdg_env)
+        base = if xdg && xdg != "", do: xdg, else: Path.join(System.user_home!(), fallback_rel)
         Path.join(base, app_name)
 
       :macos ->
@@ -340,8 +334,8 @@ defmodule EvoGit.Platform do
   @spec path_under?(String.t(), String.t()) :: boolean()
   def path_under?(child_path, parent_path)
       when is_binary(child_path) and is_binary(parent_path) do
-    child = String.replace(child_path, "\\", "/")
-    parent = String.replace(parent_path, "\\", "/")
+    child = normalize_separators(child_path)
+    parent = normalize_separators(parent_path)
     child == parent or String.starts_with?(child, parent <> "/")
   end
 

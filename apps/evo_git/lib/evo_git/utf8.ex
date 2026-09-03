@@ -34,24 +34,10 @@ defmodule EvoGit.UTF8 do
 
       case :unicode.characters_to_binary(result, :utf8, :utf8) do
         {:error, valid, _} ->
-          warning = "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
-
-          {valid <> warning,
-           %{
-             reason: :invalid_utf8,
-             original_size: original_size,
-             truncated_size: byte_size(valid) + byte_size(warning)
-           }}
+          invalid_utf8_result(valid, original_size)
 
         {:incomplete, valid, _} ->
-          warning = "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
-
-          {valid <> warning,
-           %{
-             reason: :invalid_utf8,
-             original_size: original_size,
-             truncated_size: byte_size(valid) + byte_size(warning)
-           }}
+          invalid_utf8_result(valid, original_size)
 
         valid when is_binary(valid) ->
           {valid, nil}
@@ -60,4 +46,17 @@ defmodule EvoGit.UTF8 do
   end
 
   def ensure_utf8(result) when not is_binary(result), do: {result, nil}
+
+  # Both the `{:error, ...}` and `{:incomplete, ...}` repair outcomes append
+  # the same warning and produce the same truncation info map.
+  defp invalid_utf8_result(valid, original_size) do
+    warning = "\n[WARNING: Output truncated due to invalid UTF-8 binary data]"
+
+    {valid <> warning,
+     %{
+       reason: :invalid_utf8,
+       original_size: original_size,
+       truncated_size: byte_size(valid) + byte_size(warning)
+     }}
+  end
 end
