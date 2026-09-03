@@ -1090,14 +1090,14 @@ defmodule EvoDashWeb.SystemLiveTest do
       send(view.pid, {:system_sample, node(), 1, sample})
       assert await_chart_sample(view) == :ok
 
-      # Two model ids → the chip selector renders, and the default selection is
-      # the first SORTED id ("alpha"): alpha's legend last-values show
-      # (capacity 4 / waiting 1), beta's do not.
+      # Two model ids → the dropdown selector renders, and the default
+      # selection is the first SORTED id ("alpha"): alpha's legend last-values
+      # show (capacity 4 / waiting 1), beta's do not.
       html = render(view)
 
-      assert html =~ ~s(role="group" aria-label="Model")
-      assert html =~ ~s(phx-value-model="alpha")
-      assert html =~ ~s(phx-value-model="beta")
+      assert html =~ ~s(<select name="model" phx-change="select_llm_model")
+      assert html =~ ~s(<option value="alpha" selected)
+      assert html =~ ~s(<option value="beta">)
 
       legends = legend_last_values(html)
       assert {"Capacity", "4"} in legends
@@ -1105,15 +1105,13 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute {"Waiting", "3"} in legends
       assert assigns(view)[:selected_llm_model] == "alpha"
 
-      # Click the beta chip → the LLM chart plots beta's series only.
-      html =
-        view
-        |> element(~s(button[phx-click="select_llm_model"][phx-value-model="beta"]))
-        |> render_click()
+      # Pick beta in the dropdown → the LLM chart plots beta's series only.
+      html = render_change(view, "select_llm_model", %{"model" => "beta"})
 
       assert assigns(view)[:selected_llm_model] == "beta"
-      # The clicked chip is marked active.
-      assert html =~ ~s(aria-pressed="true")
+      # The beta option is now the preselected one.
+      assert html =~ ~s(<option value="beta" selected)
+      refute html =~ ~s(<option value="alpha" selected)
       # Beta's waiting (3) renders; alpha's values (capacity 4 / waiting 1)
       # are gone from the LLM card legends.
       legends = legend_last_values(html)
@@ -1136,12 +1134,12 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert await_view_assign(view, :selected_llm_model, "alpha", 6_000) == :ok
       assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
 
-      # Two ids → the in-card chip selector renders both models.
+      # Two ids → the in-card dropdown selector renders both models, with the
+      # resolved selection ("alpha") preselected.
       html = render(view)
-      assert html =~ ~s(role="group" aria-label="Model")
-      assert html =~ ~s(phx-value-model="alpha")
-      assert html =~ ~s(phx-value-model="beta")
-      assert html =~ ~s(aria-pressed="true")
+      assert html =~ ~s(<select name="model" phx-change="select_llm_model")
+      assert html =~ ~s(<option value="alpha" selected)
+      assert html =~ ~s(<option value="beta">)
     end
 
     test "the seed fill leaves the selection nil and renders no selector without llm_slots", %{
@@ -1157,12 +1155,12 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
 
       # No model ids are known → no selection and no selector markup (neither
-      # the chip group nor the single-model muted label).
+      # the dropdown nor the single-model muted label).
       assert assigns(view)[:selected_llm_model] == nil
 
       html = render(view)
-      refute html =~ ~s(role="group" aria-label="Model")
-      refute html =~ "phx-value-model="
+      refute html =~ "select_llm_model"
+      refute html =~ ~s(<select name="model")
       refute html =~ "alpha"
       # The LLM card still renders (its series are all zeros).
       assert html =~ "<svg"
@@ -1186,10 +1184,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert await_view_assign(view, :selected_llm_model, "alpha", 6_000) == :ok
       assert await_view_assign(view, :chart_samples, [remote_sample], 6_000) == :ok
 
-      # Pick beta.
-      view
-      |> element(~s(button[phx-click="select_llm_model"][phx-value-model="beta"]))
-      |> render_click()
+      # Pick beta in the dropdown.
+      render_change(view, "select_llm_model", %{"model" => "beta"})
 
       assert assigns(view)[:selected_llm_model] == "beta"
 
@@ -1220,8 +1216,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       html = render(view)
       assert html =~ "<svg"
       refute html =~ "Collecting data…"
-      refute html =~ ~s(role="group" aria-label="Model")
-      refute html =~ "phx-value-model="
+      refute html =~ "select_llm_model"
+      refute html =~ ~s(<select name="model")
       refute html =~ "alpha"
 
       # A subsequent two-model sample still works (no wedged state).
@@ -1243,10 +1239,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert await_chart_sample(view) == :ok
       assert assigns(view)[:selected_llm_model] == "alpha"
 
-      # Select beta.
-      view
-      |> element(~s(button[phx-click="select_llm_model"][phx-value-model="beta"]))
-      |> render_click()
+      # Select beta in the dropdown.
+      render_change(view, "select_llm_model", %{"model" => "beta"})
 
       assert assigns(view)[:selected_llm_model] == "beta"
 
