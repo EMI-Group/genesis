@@ -21,6 +21,11 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @complete_tool "complete_task"
 
+  # Extra per-call headroom (ms) granted on top of the approval window for
+  # level-2/3 `run_command` calls so the handler can execute AFTER the user
+  # approves, before the tool task is killed.
+  @approval_execution_buffer 30_000
+
   # Maximum consecutive "no tool calls" nudges before ending the turn gracefully.
   # When the LLM returns no tool calls, we append a user-role nudge message and
   # re-prompt. After this many consecutive nudges with still no tool calls, we
@@ -973,11 +978,45 @@ defmodule EvoGit.Agent.ToolDispatch do
     tool_timeout =
       Map.get(args, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
 
-    tool_timeout = min(tool_timeout, max_timeout)
+    tool_timeout =
+      if approval_window_tool_call?(name, args) do
+        # A level-2/3 `run_command` call BLOCKS inside the command shell while
+        # the user approves/denies it in the /help chat (EvoGit.CommandApproval,
+        # app-env `[:evo_git, :command_approval_timeout]`, default 120s). The
+        # 10s default per-call timeout would kill the task mid-wait, so give
+        # approval-requiring calls a per-call timeout that covers the approval
+        # window PLUS handler execution — still capped by the scheduler's
+        # `max_tool_timeout` (30 min). Level-1 `run_command` calls keep their
+        # exact current behavior.
+        approval_timeout = EvoGit.CommandApproval.timeout()
+        tool_timeout |> max(approval_timeout + @approval_execution_buffer) |> min(max_timeout)
+      else
+        min(tool_timeout, max_timeout)
+      end
 
     AgentScheduler.with_tool_slot(agent_id, fn ->
+      # run_command's approval gate reads the owning agent/task ids from the
+      # process dictionary (EvoGit.CommandShell.request_approval/3). Spawned
+      # tasks do NOT inherit the caller's process dictionary, so resolve and
+      # re-establish those two keys inside the task for run_command calls.
+      run_command_context =
+        if name == "run_command" do
+          {agent_id, AgentScheduler.task_id_for_agent(agent_id)}
+        else
+          nil
+        end
+
       task =
         Task.async(fn ->
+          case run_command_context do
+            {run_agent_id, run_task_id} ->
+              Process.put(:evogit_agent_id, run_agent_id)
+              Process.put(:evogit_task_id, run_task_id)
+
+            nil ->
+              :ok
+          end
+
           EvoGit.Agent.Tools.execute(
             name,
             args,
@@ -1009,6 +1048,20 @@ defmodule EvoGit.Agent.ToolDispatch do
       end
     end)
   end
+
+  # True when the tool call is a `run_command` whose command path has security
+  # level >= 2 (EvoGit.CommandShell.security_level/1) — i.e. the command will
+  # BLOCK awaiting interactive user approval inside the shell, so the per-call
+  # timeout must cover the approval window plus execution. Cheap peek: the
+  # command path is the first whitespace-delimited token of args["command"];
+  # unparsable/unknown paths report level 1 (they fail dispatch fast).
+  defp approval_window_tool_call?("run_command", %{"command" => command})
+       when is_binary(command) do
+    first_token = command |> String.trim() |> String.split(~r/\s+/, parts: 2) |> hd()
+    EvoGit.CommandShell.security_level(first_token) >= 2
+  end
+
+  defp approval_window_tool_call?(_name, _args), do: false
 
   # Appends the write-tool delegation hint when the write threshold is
   # exceeded (skipped during conflict resolution).

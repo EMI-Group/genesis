@@ -287,6 +287,26 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Approves or denies a pending command-approval request on this node via RPC.
+
+  Delegates to `EvoGit.CommandApproval.respond/2` (the human-in-the-loop gate
+  for the self-reflective agent's command shell). `decision` is `:approve` or
+  `:deny`. Returns `:ok` when a pending request was resolved, `{:error,
+  :not_found}` for an unknown/already-resolved id, or `{:error,
+  :approval_not_started}` if the approval service hasn't started yet.
+
+  Designed to be called via `:erpc.call/5` from a dashboard on another node.
+  """
+  @spec respond_approval(String.t(), :approve | :deny) :: :ok | {:error, term()}
+  def respond_approval(request_id, decision)
+      when is_binary(request_id) and decision in [:approve, :deny] do
+    case Process.whereis(EvoGit.CommandApproval) do
+      nil -> {:error, :approval_not_started}
+      _pid -> EvoGit.CommandApproval.respond(request_id, decision)
+    end
+  end
+
+  @doc """
   Lists all tasks from the TaskRegistry.
 
   Delegates to `EvoGit.TaskRegistry.list_tasks/0` (a `GenServer.call`). This

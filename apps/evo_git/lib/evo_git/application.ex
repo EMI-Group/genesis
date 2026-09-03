@@ -70,6 +70,11 @@ defmodule EvoGit.Application do
       {Phoenix.PubSub, name: EvoGit.PubSub},
       # PubSub broadcast throttle (coalesces rapid agent-update signals)
       {EvoGit.AgentScheduler.PubSub.Throttle, []},
+      # Human-in-the-loop approval gate for the self-reflective agent's command
+      # shell (level-2/3 commands). Starts AFTER EvoGit.PubSub — it subscribes
+      # to the "tasks" topic in init to auto-deny pending approvals when the
+      # owning task is cancelled/reaches a terminal state.
+      {EvoGit.CommandApproval, []},
       {Registry, keys: :unique, name: EvoGit.RemoteConnection.Registry},
       {DynamicSupervisor, name: EvoGit.RemoteConnection.Supervisor, strategy: :one_for_one},
       {EvoGit.Store,

@@ -116,6 +116,25 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @doc """
+  Returns the scheduler task_id owning the given agent, or `nil` when the
+  agent is unknown or the scheduler tables are not up.
+
+  A cheap public ETS read of the `:evogit_sched_meta` table (keyed by agent
+  id) — safe to call from any process, including spawned tool tasks. Used by
+  the tool-dispatch layer to attribute `run_command` approval requests to the
+  owning task (so a graceful task cancel auto-denies its pending approvals).
+  """
+  @spec task_id_for_agent(pos_integer()) :: String.t() | nil
+  def task_id_for_agent(agent_id) when is_integer(agent_id) do
+    case :ets.lookup(:evogit_sched_meta, agent_id) do
+      [{^agent_id, %SchedMeta{task_id: task_id}}] -> task_id
+      _ -> nil
+    end
+  end
+
+  def task_id_for_agent(_other), do: nil
+
+  @doc """
   Returns the current agent's call depth, or 0 if not in a scheduled agent.
   """
   def current_depth do

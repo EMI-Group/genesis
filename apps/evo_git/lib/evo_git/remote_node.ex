@@ -321,6 +321,27 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
+  Approves or denies a pending command-approval request on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.respond_approval/2` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`. `decision` is
+  `:approve` or `:deny`.
+
+  Returns `{:ok, result}` on success or `{:error, reason}` on failure
+  (including RPC failures such as node down or timeout).
+  """
+  @spec respond_approval(node(), String.t(), :approve | :deny) ::
+          {:ok, term()} | {:error, term()}
+  def respond_approval(node, request_id, decision) do
+    if node == node() do
+      {:ok, EvoGit.AgentScheduler.RemoteAPI.respond_approval(request_id, decision)}
+    else
+      call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :respond_approval, [request_id, decision])
+    end
+  end
+
+  @doc """
   Lists all tasks on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.list_tasks/0` directly.
