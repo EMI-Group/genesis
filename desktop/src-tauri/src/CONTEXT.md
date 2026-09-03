@@ -31,3 +31,13 @@ Rust side:
 - **Per-worktree gotcha — `resources/genesis-backend/` is gitignored** (root `.gitignore`), so it does NOT exist in fresh worktrees. tauri-build hard-fails at compile time without it (`resource path 'resources/genesis-backend' doesn't exist`). Create it locally before `cargo test`/`cargo check`: `mkdir -p desktop/src-tauri/resources/genesis-backend` (untracked, invisible to git, never committed; the Nix flake derivation symlinks a built release there in a preBuild hook).
 - `cargo check`/tests require the nix devShell toolchain on NixOS hosts (`nix develop` at repo root or crate dir).
 - Update commands' JSON contracts are pinned with the dashboard workstream — do not rename keys/statuses.
+
+## Design Decisions
+
+### Windows NSIS auto-update install race — hard exit + tree kill (backend_watchdog.rs)
+
+On Windows the update install closes two races that produced NSIS "file in use" failures (an immediate retry always succeeded once the old process was fully dead):
+
+1. **Hard synchronous exit after spawning the NSIS installer** (`install_and_relaunch`, Windows `Ok(())` arm): the watchdog now calls `std::process::exit(0)` immediately after `install_windows_nsis` spawns the installer — mirroring tauri-plugin-updater 2.10.1's `install_inner` (`ShellExecuteW` then hard exit). `app.exit(0)` is async (event-loop `ControlFlow::Exit`) and left the old `genesis-desktop.exe` + WebView2 children alive while NSIS replaced files. The Unix arm (relaunch detached + `app.exit(0)`) is unchanged. Because `std::process::exit` does not flush block-buffered piped stdout, stdout is flushed right before the exit so the final install log lines are not lost.
+
+2. **Windows force-kills are whole-tree** (`kill_current_child`, Windows arm): the tracked child is `cmd.exe` (std retries the `.bat` launcher via `cmd.exe /c`); the real BEAM (erl.exe/beam.smp) is cmd's CHILD, so `child.kill()` alone orphaned the BEAM — it kept `resources/genesis-backend/` files open until the EVOGIT_LIFETIME_PORT pipe closed. The watchdog now runs `taskkill /PID <pid> /T /F` FIRST (std `Command`, zero new deps — taskkill ships with every Windows install; `/T` enumerates the target's CURRENT descendants, so it must run while cmd.exe is still alive, never after `child.kill()`; `CREATE_NO_WINDOW` prevents a console flash), then reaps cmd.exe with `child.wait()`, falling back to the single-process kill only if taskkill itself could not be launched. Every force-kill site funnels through `kill_current_child` (15s graceful-stop fallback, post-spawn race, `kill_for_quit`, ready-timeout kill), so one change covers all. Non-Windows kill behavior is unchanged.

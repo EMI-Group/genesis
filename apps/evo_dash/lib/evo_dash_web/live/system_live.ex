@@ -124,12 +124,8 @@ defmodule EvoDashWeb.SystemLive do
                         version: @update_status.latest_version
                       )} <% # zh_CN: "发现新版本" %>
                     </span>
+                    <.changelog_link update_status={@update_status} />
                   </div>
-                  <%= if @update_status.notes do %>
-                    <p class="text-xs text-base-content/60 mt-1 whitespace-pre-wrap max-h-24 overflow-y-auto">
-                      {@update_status.notes}
-                    </p>
-                  <% end %>
                   <div class="mt-3">
                     <%= if @update_status.notify_only do %>
                       <!-- Linux deb/rpm/portable installs: no self-install per plan §3 -->
@@ -160,6 +156,7 @@ defmodule EvoDashWeb.SystemLive do
                         version: @update_status.latest_version
                       )} <% # zh_CN: "更新已就绪" %>
                     </span>
+                    <.changelog_link update_status={@update_status} />
                   </div>
                   <div class="mt-3">
                     <button
@@ -714,6 +711,39 @@ defmodule EvoDashWeb.SystemLive do
             </div>
           </div>
         <% end %>
+
+        <%= if @update_card_visible and @changelog_open and changelog_notes?(@update_status) do %>
+          <!-- Update changelog modal (release notes from the update feed) -->
+          <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              class="fixed inset-0 bg-black/50 backdrop-blur-sm"
+              phx-click="close_changelog"
+            >
+            </div>
+            <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-2xl w-full p-6 md:p-8">
+              <div class="flex items-center gap-3 mb-4">
+                <.icon name="hero-document-text" class="size-5 text-info" />
+                <h3 class="text-lg font-bold">
+                  {gettext("Update changelog")} <% # zh_CN: "更新日志" %>
+                </h3>
+              </div>
+
+              <div class="max-h-[70vh] overflow-y-auto text-sm text-base-content/80 whitespace-pre-wrap pr-1">
+                {@update_status.notes}
+              </div>
+
+              <div class="flex justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  class="btn btn-ghost rounded-md px-6"
+                  phx-click="close_changelog"
+                >
+                  {gettext("Close")} <% # zh_CN: "关闭" %>
+                </button>
+              </div>
+            </div>
+          </div>
+        <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """
@@ -776,6 +806,7 @@ defmodule EvoDashWeb.SystemLive do
         update_apply_busy_count: nil,
         update_force_kill_count: nil,
         update_winddown: false,
+        changelog_open: false,
         # Genesis Source card assigns (visibility is recomputed in
         # handle_params/3 after assign_node; local-only by design — a remote
         # genesis_remote daemon's self-reflective agent reads the REMOTE host's
@@ -885,6 +916,7 @@ defmodule EvoDashWeb.SystemLive do
         socket
         |> assign(:show_restart_confirm, false)
         |> assign(:show_stop_confirm, false)
+        |> assign(:changelog_open, false)
       else
         socket
       end
@@ -1192,6 +1224,25 @@ defmodule EvoDashWeb.SystemLive do
        socket
        |> assign(:update_force_kill_count, nil)
        |> assign(:update_winddown, false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("open_changelog", _params, socket) do
+    # Shows the update changelog modal (release notes from the update feed).
+    if update_card_visible?(socket) do
+      {:noreply, assign(socket, :changelog_open, true)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("close_changelog", _params, socket) do
+    if update_card_visible?(socket) do
+      {:noreply, assign(socket, :changelog_open, false)}
     else
       {:noreply, socket}
     end
@@ -1721,6 +1772,33 @@ defmodule EvoDashWeb.SystemLive do
     </div>
     """
   end
+
+  attr(:update_status, :map, required: true)
+
+  # Software Update "View changelog" link — shared by the `:available` and
+  # `:ready` card states. Renders only when the update feed carried release
+  # notes (nil or empty body → nothing). The notes themselves live in the
+  # changelog modal (see the `changelog_open` assign) rather than inline in
+  # the card, which keeps the card compact.
+  defp changelog_link(assigns) do
+    ~H"""
+    <%= if changelog_notes?(@update_status) do %>
+      <button
+        id="view-changelog"
+        type="button"
+        phx-click="open_changelog"
+        class="link link-hover text-xs text-base-content/60"
+      >
+        {gettext("View changelog")} <% # zh_CN: "查看更新日志" %>
+      </button>
+    <% end %>
+    """
+  end
+
+  # Changelog content is available only when the feed's `notes` (release body)
+  # is present and a non-empty string.
+  defp changelog_notes?(%{notes: notes}), do: is_binary(notes) and notes != ""
+  defp changelog_notes?(_status), do: false
 
   # --- Private Helper Functions ---
 

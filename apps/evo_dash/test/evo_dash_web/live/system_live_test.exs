@@ -1760,6 +1760,201 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert assigns(view)[:update_card_visible] == false
       refute html =~ "Software Update"
     end
+
+    # --- Changelog modal (release notes) ------------------------------------
+    # The update feed's release notes (the check-result payload "body" key)
+    # surface as a "View changelog" link in the :available/:ready card rows
+    # and render in a dedicated modal gated on the `changelog_open` assign —
+    # never inline in the card (which stays compact). Both the link and the
+    # modal appear only when the hub's `notes` field is a non-empty binary
+    # (nil or "" → neither renders).
+
+    test "available with notes renders the changelog link and keeps the notes out of the card",
+         %{
+           conn: conn
+         } do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_available()
+
+      {:ok, _view, html} = live(conn, ~p"/system")
+
+      assert html =~ ~s(id="view-changelog")
+      assert html =~ ~s(phx-click="open_changelog")
+      assert html =~ "View changelog"
+      # The notes live in the modal (closed on the initial render), so they
+      # must not be dumped inline in the card row.
+      refute html =~ "release notes"
+    end
+
+    test "available without notes renders no changelog link", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      # No "body" key → the hub's `notes` stays nil.
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "available",
+        "version" => "1.2.3",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:available)
+
+      {:ok, _view, html} = live(conn, ~p"/system")
+
+      refute html =~ ~s(id="view-changelog")
+      refute html =~ "View changelog"
+    end
+
+    test "available with empty-string notes renders no changelog link", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "available",
+        "version" => "1.2.3",
+        "body" => "",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:available)
+
+      {:ok, _view, html} = live(conn, ~p"/system")
+
+      refute html =~ ~s(id="view-changelog")
+      refute html =~ "View changelog"
+    end
+
+    test "clicking the changelog link opens the modal with the notes", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_available()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      # The modal is closed on the initial render.
+      refute render(view) =~ "Update changelog"
+
+      html = render_click(view, "open_changelog")
+
+      assert assigns(view)[:changelog_open] == true
+      assert html =~ "Update changelog"
+      assert html =~ "release notes"
+    end
+
+    test "the open modal closes via its backdrop or the Close button", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_available()
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html = render_click(view, "open_changelog")
+
+      assert assigns(view)[:changelog_open] == true
+      assert html =~ "Update changelog"
+
+      # While open, exactly two elements carry the close event: the backdrop
+      # div (first in DOM order) and the Close button. Pin the backdrop's
+      # class + click affordance.
+      [backdrop | rest] =
+        Floki.find(Floki.parse_document!(html), ~s([phx-click="close_changelog"]))
+
+      assert rest != []
+
+      assert Floki.attribute(backdrop, "class") == [
+               "fixed inset-0 bg-black/50 backdrop-blur-sm"
+             ]
+
+      # `render_click(view, "close_changelog")` dispatches to the handler —
+      # the same path the backdrop click (or the Close button) takes.
+      html = render_click(view, "close_changelog")
+
+      assert assigns(view)[:changelog_open] == false
+      refute html =~ "Update changelog"
+      refute html =~ "release notes"
+    end
+
+    test "ready with notes renders the changelog link and opens the modal", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+      drive_hub_to_ready()
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view).update_status.phase == :ready
+      assert html =~ ~s(id="view-changelog")
+      assert html =~ "View changelog"
+      refute html =~ "release notes"
+
+      html = render_click(view, "open_changelog")
+
+      assert assigns(view)[:changelog_open] == true
+      assert html =~ "Update changelog"
+      assert html =~ "release notes"
+    end
+
+    test "ready without notes renders no changelog link", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "available",
+        "version" => "1.2.3",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:available)
+      EvoDash.UpdateStatus.handle_download_result(%{"status" => "ready"})
+      await_hub_phase(:ready)
+
+      {:ok, _view, html} = live(conn, ~p"/system")
+
+      refute html =~ ~s(id="view-changelog")
+      refute html =~ "View changelog"
+    end
+
+    test "changelog notes are HTML-escaped inside the modal", %{conn: conn} do
+      reset_hub_to_idle()
+      set_desktop()
+
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "available",
+        "version" => "1.2.3",
+        "body" => "<script>alert(1)</script><b>bold</b>",
+        "current_version" => "0.1.0"
+      })
+
+      await_hub_phase(:available)
+
+      {:ok, view, _html} = live(conn, ~p"/system")
+
+      html = render_click(view, "open_changelog")
+
+      assert assigns(view)[:changelog_open] == true
+      # HEEx auto-escapes the `{@update_status.notes}` text node.
+      assert html =~ "&lt;script&gt;alert(1)&lt;/script&gt;"
+      assert html =~ "&lt;b&gt;bold&lt;/b&gt;"
+      refute html =~ "<script>alert(1)</script>"
+    end
+
+    test "changelog events are no-ops when the card is hidden", %{conn: conn} do
+      reset_hub_to_idle()
+      Application.delete_env(:evo_dash, :desktop_release)
+
+      {:ok, view, html} = live(conn, ~p"/system")
+
+      assert assigns(view)[:update_card_visible] == false
+      refute html =~ "Software Update"
+      refute html =~ ~s(id="view-changelog")
+
+      # No visible card → the events are guarded no-ops; `changelog_open`
+      # stays at its mount default (false) and nothing renders.
+      render_click(view, "open_changelog")
+      render_click(view, "close_changelog")
+
+      refute assigns(view)[:changelog_open]
+    end
   end
 
   describe "genesis source card" do

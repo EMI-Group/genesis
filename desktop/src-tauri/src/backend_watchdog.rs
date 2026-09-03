@@ -379,8 +379,52 @@ impl BackendManager {
     pub fn kill_current_child(&self) {
         let mut guard = self.lock_child();
         if let Some(mut child) = guard.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            #[cfg(windows)]
+            {
+                // On Windows the tracked child is `cmd.exe` (std retries the
+                // `.bat` launcher via `cmd.exe /c` — sidecar.rs), and the real
+                // BEAM (erl.exe/beam.smp) is cmd's CHILD. `child.kill()` on
+                // cmd.exe alone orphans the BEAM, which keeps
+                // `resources/genesis-backend/` files open until the
+                // EVOGIT_LIFETIME_PORT pipe closes (only once this Rust shell
+                // dies) — exactly what wedges the NSIS updater with "file in
+                // use". Force-kill the WHOLE tree instead:
+                // `taskkill /PID <pid> /T /F` — `/T` enumerates the target's
+                // CURRENT descendants, so taskkill must run while cmd.exe is
+                // still alive: never call `child.kill()` before it. Fall back
+                // to the legacy single-process kill only if taskkill itself
+                // could not be launched. `taskkill` ships with every Windows
+                // install (zero new dependencies). CREATE_NO_WINDOW
+                // (0x08000000) keeps taskkill from flashing a console window
+                // (this is a GUI-subsystem process — same flag the sidecar's
+                // `launcher_command` applies).
+                use std::os::windows::process::CommandExt;
+                let pid = child.id();
+                let mut taskkill = std::process::Command::new("taskkill");
+                taskkill
+                    .args(["/PID", &pid.to_string(), "/T", "/F"])
+                    .creation_flags(0x0800_0000)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                match taskkill.status() {
+                    Ok(_) => {
+                        // taskkill terminated cmd.exe and its descendants; reap
+                        // the direct child so no zombie is left behind.
+                        let _ = child.wait();
+                    }
+                    Err(_) => {
+                        // taskkill could not be launched (should not happen) —
+                        // fall back to the previous single-process kill.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
     }
 
@@ -482,15 +526,32 @@ impl BackendManager {
                 #[cfg(not(windows))]
                 {
                     // Unix: the payload is now in place — relaunch the new
-                    // bundle detached, then exit. Windows: the NSIS installer
-                    // (spawned by `install_payload`) relaunches the app
-                    // itself, so we only exit.
+                    // bundle detached, then exit.
                     if let Some(exe) = relaunch_executable(app) {
                         println!("[desktop] relaunching updated app: {}", exe.display());
                         spawn_detached(&exe);
                     }
+                    app.exit(0);
                 }
-                app.exit(0);
+                #[cfg(windows)]
+                {
+                    // Mirror tauri-plugin-updater's `install_inner`: after the
+                    // NSIS installer is spawned, exit HARD and synchronously so
+                    // the old process tree (this shell + its WebView2 children)
+                    // is fully gone before the installer replaces files.
+                    // `app.exit(0)` is async (event-loop `ControlFlow::Exit`)
+                    // and can leave the old exe / install-dir files locked
+                    // while NSIS writes → "file in use"; an immediate retry
+                    // succeeds because by then the process is dead.
+                    //
+                    // `std::process::exit` does NOT flush block-buffered stdout
+                    // when piped, so flush stdout first so the final NSIS
+                    // install log lines ("[desktop] NSIS installer spawned ...",
+                    // "[desktop] installing update ...") are not lost.
+                    use std::io::Write;
+                    let _ = std::io::stdout().flush();
+                    std::process::exit(0);
+                }
             }
             Err(err) => {
                 // The old bundle was restored where the platform's install
