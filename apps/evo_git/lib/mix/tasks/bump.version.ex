@@ -117,94 +117,66 @@ defmodule Mix.Tasks.Bump.Version do
   # --- Tauri manifest -----------------------------------------------------
 
   defp sync_tauri(version) do
-    if File.exists?(@tauri_conf) do
-      contents = File.read!(@tauri_conf)
-
-      # Use the function form of Regex.replace/replace to avoid the classic
-      # backreference-followed-by-digit pitfall: a replacement like "\\10.9.9\\2"
-      # is parsed as backreference #10 (which does not exist → empty string)
-      # instead of "\\1" followed by the literal "0.9.9", which corrupts the
-      # file (e.g. `"version": "0.9.9"` becomes `.9.9`). The function form
-      # inserts the value verbatim with no interpolation.
-      updated =
-        Regex.replace(
-          ~r/^(\s*"version"\s*:\s*")[^"]+(")/m,
-          contents,
-          fn _, prefix, suffix -> prefix <> version <> suffix end
-        )
-
-      File.write!(@tauri_conf, updated)
-      Mix.shell().info("  ✓ #{@tauri_conf}")
-      [@tauri_conf]
-    else
-      []
-    end
+    sync_file(
+      @tauri_conf,
+      ~r/^(\s*"version"\s*:\s*")[^"]+(")/m,
+      fn _, prefix, suffix -> prefix <> version <> suffix end
+    )
   end
 
   # --- Cargo manifest + lockfile ------------------------------------------
 
   defp sync_cargo(version) do
-    if File.exists?(@cargo_toml) do
-      contents = File.read!(@cargo_toml)
-
-      updated =
-        Regex.replace(
-          ~r/^(version\s*=\s*")[^"]+(")/m,
-          contents,
-          fn _, prefix, suffix -> prefix <> version <> suffix end
-        )
-
-      File.write!(@cargo_toml, updated)
-      Mix.shell().info("  ✓ #{@cargo_toml}")
-
+    case sync_file(
+           @cargo_toml,
+           ~r/^(version\s*=\s*")[^"]+(")/m,
+           fn _, prefix, suffix -> prefix <> version <> suffix end
+         ) do
       # The lockfile mirrors the package version. Update it in place so the
       # bump doesn't require a `cargo build` to stay consistent. We only touch
       # the genesis-desktop entry, leaving all dependency entries untouched.
-      [@cargo_toml | sync_cargo_lock(version)]
-    else
-      []
+      [] -> []
+      [path] -> [path | sync_cargo_lock(version)]
     end
   end
 
   defp sync_cargo_lock(version) do
-    if File.exists?(@cargo_lock) do
-      contents = File.read!(@cargo_lock)
-
-      updated =
-        Regex.replace(
-          ~r/(\[\[package\]\]\nname = "genesis-desktop"\nversion = ")[^"]+(")/,
-          contents,
-          fn _, prefix, suffix -> prefix <> version <> suffix end
-        )
-
-      File.write!(@cargo_lock, updated)
-      Mix.shell().info("  ✓ #{@cargo_lock}")
-      [@cargo_lock]
-    else
-      []
-    end
+    sync_file(
+      @cargo_lock,
+      ~r/(\[\[package\]\]\nname = "genesis-desktop"\nversion = ")[^"]+(")/,
+      fn _, prefix, suffix -> prefix <> version <> suffix end
+    )
   end
 
   # --- README badge -------------------------------------------------------
 
   defp sync_readme(version) do
-    if File.exists?(@readme) do
-      contents = File.read!(@readme)
+    # shields.io badge URLs use `--` to escape dashes in the version
+    # portion (e.g. 2.0.0-rc.1  →  version-2.0.0--rc.1-8b5cf6).
+    escaped = String.replace(version, "-", "--")
 
-      # shields.io badge URLs use `--` to escape dashes in the version
-      # portion (e.g. 2.0.0-rc.1  →  version-2.0.0--rc.1-8b5cf6).
-      escaped = String.replace(version, "-", "--")
+    sync_file(
+      @readme,
+      ~r/(version-)(.+)(-8b5cf6)/,
+      fn _, prefix, _old, suffix -> prefix <> escaped <> suffix end
+    )
+  end
 
-      updated =
-        Regex.replace(
-          ~r/(version-)(.+)(-8b5cf6)/,
-          contents,
-          fn _, prefix, _old, suffix -> prefix <> escaped <> suffix end
-        )
-
-      File.write!(@readme, updated)
-      Mix.shell().info("  ✓ #{@readme}")
-      [@readme]
+  # Shared sync: reads the file, rewrites the version via the function form of
+  # Regex.replace — which avoids the classic backreference-followed-by-digit
+  # pitfall: a replacement like "\\10.9.9\\2" is parsed as backreference #10
+  # (which does not exist → empty string) instead of "\\1" followed by the
+  # literal "0.9.9", which corrupts the file (e.g. `"version": "0.9.9"`
+  # becomes `.9.9`). The function form inserts the value verbatim with no
+  # interpolation. Returns `[path]` when the file exists, `[]` when it does
+  # not.
+  defp sync_file(path, regex, replace_fun) do
+    if File.exists?(path) do
+      contents = File.read!(path)
+      updated = Regex.replace(regex, contents, replace_fun)
+      File.write!(path, updated)
+      Mix.shell().info("  ✓ #{path}")
+      [path]
     else
       []
     end
