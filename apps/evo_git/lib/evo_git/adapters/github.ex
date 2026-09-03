@@ -144,13 +144,7 @@ defmodule EvoGit.Adapters.GitHub do
         @issue_list_fields
       ]
 
-      case System.cmd("gh", args, cd: repo_path, stderr_to_stdout: true) do
-        {output, 0} ->
-          decode_issue_array(output)
-
-        {output, code} ->
-          {:error, {:gh, code, String.trim(output)}}
-      end
+      run_gh(repo_path, args, &decode_json_shape(&1, :array))
     end)
   end
 
@@ -195,14 +189,23 @@ defmodule EvoGit.Adapters.GitHub do
         @issue_view_fields
       ]
 
-      case System.cmd("gh", args, cd: repo_path, stderr_to_stdout: true) do
-        {output, 0} ->
-          decode_issue_object(output)
-
-        {output, code} ->
-          {:error, {:gh, code, String.trim(output)}}
-      end
+      run_gh(repo_path, args, &decode_json_shape(&1, :object))
     end)
+  end
+
+  # Shared gh-run envelope: `System.cmd("gh", args, cd: repo_path,
+  # stderr_to_stdout: true)` — plain `"gh"`, no GitEnv. On exit 0 the raw
+  # output is handed to `decoder`; a non-zero exit maps to the pinned
+  # `{:error, {:gh, code, trimmed_output}}` shape (tests assert the exact
+  # trimmed stderr).
+  defp run_gh(repo_path, args, decoder) when is_function(decoder, 1) do
+    case System.cmd("gh", args, cd: repo_path, stderr_to_stdout: true) do
+      {output, 0} ->
+        decoder.(output)
+
+      {output, code} ->
+        {:error, {:gh, code, String.trim(output)}}
+    end
   end
 
   # Shared prelude with the pinned check order: dir exists → gh available →
@@ -238,30 +241,24 @@ defmodule EvoGit.Adapters.GitHub do
     end
   end
 
-  # Decodes gh `issue list` output (a JSON ARRAY of objects) into normalized
-  # issue maps. Never raises.
-  defp decode_issue_array(output) do
+  # Shared decoder for gh JSON output, preserving the pinned error shapes
+  # verbatim: `:array` decodes a JSON ARRAY of issue objects into normalized
+  # issue maps (`{:error, {:invalid_json, :not_an_array}}` for non-arrays);
+  # `:object` decodes a single JSON object into the pinned markdown string
+  # (`{:error, {:invalid_json, :not_an_object}}` for non-objects). Malformed
+  # JSON maps to `{:error, {:invalid_json, reason}}` with the raw `Jason`
+  # error term. Never raises.
+  defp decode_json_shape(output, shape) when shape in [:array, :object] do
     case Jason.decode(String.trim(output)) do
-      {:ok, issues} when is_list(issues) ->
-        {:ok, Enum.map(issues, &normalize_issue/1)}
+      {:ok, value} when shape == :array and is_list(value) ->
+        {:ok, Enum.map(value, &normalize_issue/1)}
+
+      {:ok, value} when shape == :object and is_map(value) ->
+        {:ok, compose_markdown(value)}
 
       {:ok, _other} ->
-        {:error, {:invalid_json, :not_an_array}}
-
-      {:error, reason} ->
-        {:error, {:invalid_json, reason}}
-    end
-  end
-
-  # Decodes gh `issue view` output (a single JSON object) into the pinned
-  # markdown string. Never raises.
-  defp decode_issue_object(output) do
-    case Jason.decode(String.trim(output)) do
-      {:ok, issue} when is_map(issue) ->
-        {:ok, compose_markdown(issue)}
-
-      {:ok, _other} ->
-        {:error, {:invalid_json, :not_an_object}}
+        not_shape = if shape == :array, do: :not_an_array, else: :not_an_object
+        {:error, {:invalid_json, not_shape}}
 
       {:error, reason} ->
         {:error, {:invalid_json, reason}}

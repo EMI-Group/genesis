@@ -185,7 +185,7 @@ defmodule EvoGit.Adapters.CowWorktree do
   defp create_empty_worktree(repo_root, worktree_path, target_commit, branch_name) do
     # Delete existing branch if present (ignore result)
     if Git.branch_exists?(repo_root, branch_name) do
-      Git.run(["branch", "-D", branch_name], repo_root)
+      Git.delete_branch(repo_root, branch_name)
     end
 
     case Git.run(
@@ -197,17 +197,11 @@ defmodule EvoGit.Adapters.CowWorktree do
 
       error ->
         # git creates the branch BEFORE validating the worktree path, so the
-        # FAILED add may have (re-)created the branch after the pre-delete above —
-        # delete it if it still exists so no free branch is left behind. `git
-        # branch -D` itself refuses to delete a branch checked out in a live
-        # worktree, so plain deletion is safe.
-        if Git.branch_exists?(repo_root, branch_name) do
-          Git.delete_branch(repo_root, branch_name)
-        end
-
-        # Remove any partial/plain dir left at the worktree path so the caller's
+        # FAILED add may have (re-)created the branch after the pre-delete above
+        # — cleanup_failed_worktree_add/3 removes it (if still present) plus any
+        # partial/plain dir left at the worktree path so the caller's
         # `Git.add_worktree` fallback (worktrees.ex) can succeed.
-        Git.remove_leftover_worktree_dir(worktree_path)
+        Git.cleanup_failed_worktree_add(repo_root, worktree_path, branch_name)
 
         Logger.warning("[CowWorktree] worktree add failed: #{inspect(error)}")
         {:fallback, :worktree_add_failed}
@@ -353,7 +347,7 @@ defmodule EvoGit.Adapters.CowWorktree do
     Git.run(["worktree", "remove", "--force", worktree_path], repo_root)
 
     # Delete the branch (ignore errors — best effort)
-    Git.run(["branch", "-D", branch_name], repo_root)
+    Git.delete_branch(repo_root, branch_name)
 
     :ok
   end
