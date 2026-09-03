@@ -31,11 +31,11 @@ defmodule EvoDashWeb.TaskCardComponents do
         <!-- Top row: Metatags & Status -->
         <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div class="flex flex-wrap items-center gap-2.5 mt-1">
-            <span class="text-xs font-bold tracking-widest uppercase text-base-content/50">{@task.type}</span>
+            <span class="text-xs font-bold tracking-widest uppercase text-base-content/70">{@task.type}</span>
             <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
-            <span class="text-xs font-mono font-medium text-base-content/50">{@task.opts[:mode]}</span>
+            <span class="text-xs font-mono font-medium text-base-content/70">{@task.opts[:mode]}</span>
             <span class="w-1 h-1 rounded-full bg-base-content/20"></span>
-            <span class="text-xs font-mono text-base-content/40">#{String.slice(@task.id, 0, 8)}</span>
+            <span class="text-xs font-mono text-base-content/60">#{String.slice(@task.id, 0, 8)}</span>
           </div>
 
           <div class="flex items-center gap-2 shrink-0">
@@ -121,7 +121,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
         <!-- Bottom row: Time, Actions, Menu -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-base-200/60">
-          <div class="flex items-center gap-4 text-xs font-medium text-base-content/50">
+          <div class="flex items-center gap-4 text-xs font-medium text-base-content/70">
             <span class="flex items-center gap-1.5">
               <.icon name="hero-play" class="size-4 opacity-60" />
               {gettext("Started")} {relative_time(@task.started_at)}
@@ -196,7 +196,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       <.icon name="hero-bolt" class="size-4 mr-2" /> {gettext("Force kill")}
                     </button>
                   </li>
-                  <li class="menu-title px-3 py-1 text-[10px] uppercase tracking-wide text-base-content/40">
+                  <li class="menu-title px-3 py-1 text-xs uppercase tracking-wide text-base-content/60">
                     {gettext("Danger zone")}
                   </li>
                 <% end %>
@@ -291,7 +291,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                   </h4>
                   <div class="grid grid-cols-3 gap-3">
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1">
+                      <div class="text-xs text-base-content/70 mb-1">
                         <%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}
                       </div>
                       <div class="text-sm font-semibold">
@@ -299,7 +299,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       </div>
                     </div>
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1">
+                      <div class="text-xs text-base-content/70 mb-1">
                         <%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}
                       </div>
                       <div class="text-sm font-semibold">
@@ -307,7 +307,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       </div>
                     </div>
                     <div>
-                      <div class="text-xs text-base-content/50 mb-1">
+                      <div class="text-xs text-base-content/70 mb-1">
                         <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
                       </div>
                       <div class="text-sm font-semibold">
@@ -319,7 +319,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     <div class="mt-4 pt-4 border-t border-base-200">
                       <div class="grid grid-cols-3 gap-3">
                         <div>
-                          <div class="text-xs text-base-content/50 mb-1">
+                          <div class="text-xs text-base-content/70 mb-1">
                             <%!-- zh_CN: Token → "词元" --%>{gettext("Cached Tokens")}
                           </div>
                           <div class="text-sm font-semibold">
@@ -327,7 +327,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                           </div>
                         </div>
                         <div>
-                          <div class="text-xs text-base-content/50 mb-1">
+                          <div class="text-xs text-base-content/70 mb-1">
                             {gettext("Cache Creation")}
                           </div>
                           <div class="text-sm font-semibold">
@@ -335,7 +335,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                           </div>
                         </div>
                         <div>
-                          <div class="text-xs text-base-content/50 mb-1">
+                          <div class="text-xs text-base-content/70 mb-1">
                             {gettext("Cache Hit Rate")}
                           </div>
                           <div class="text-sm font-semibold text-success">
@@ -364,19 +364,19 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <div class="mt-4 pt-4 border-t border-base-200">
                     <div class="grid grid-cols-3 gap-3">
                       <div>
-                        <div class="text-xs text-base-content/50 mb-1">{gettext("Input Cost")}</div>
+                        <div class="text-xs text-base-content/70 mb-1">{gettext("Input Cost")}</div>
                         <div class="text-sm font-semibold">
                           ${format_cost(@task.usage.input_cost)}
                         </div>
                       </div>
                       <div>
-                        <div class="text-xs text-base-content/50 mb-1">{gettext("Output Cost")}</div>
+                        <div class="text-xs text-base-content/70 mb-1">{gettext("Output Cost")}</div>
                         <div class="text-sm font-semibold">
                           ${format_cost(@task.usage.output_cost)}
                         </div>
                       </div>
                       <div>
-                        <div class="text-xs text-base-content/50 mb-1">{gettext("Total Cost")}</div>
+                        <div class="text-xs text-base-content/70 mb-1">{gettext("Total Cost")}</div>
                         <div class="text-sm font-semibold text-primary">
                           ${format_cost(@task.usage.total_cost)}
                         </div>
@@ -394,14 +394,14 @@ defmodule EvoDashWeb.TaskCardComponents do
                       <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
                     </span>
                     <%= if @task.model_id do %>
-                      <span class="text-xs font-medium text-base-content/50">
+                      <span class="text-xs font-medium text-base-content/70">
                         {gettext("Model")}: {@task.model_id}
                       </span>
                     <% end %>
                   </h4>
                   <div class="flex items-center gap-3">
                     <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
-                    <span class="text-xs text-base-content/50"><%!-- zh_CN: agent → "智能体" --%>{gettext(
+                    <span class="text-xs text-base-content/70"><%!-- zh_CN: agent → "智能体" --%>{gettext(
                       "total agents (incl. subagents)"
                     )}</span>
                   </div>
@@ -423,21 +423,21 @@ defmodule EvoDashWeb.TaskCardComponents do
                       class="size-4.5 text-base-content/70 group-hover/logs:text-primary transition-colors"
                     />
                     {gettext("Execution Logs")}
-                    <span class="text-xs font-medium text-base-content/50 bg-base-300 px-2 py-0.5 rounded-md ml-2">
+                    <span class="text-xs font-medium bg-base-200 text-base-content/70 px-2 py-0.5 rounded-md ml-2">
                       {if log_count > 20,
                         do: gettext("last 20 of %{count}", count: log_count),
                         else: gettext("%{count}", count: log_count)}
                     </span>
                   </summary>
-                  <div class="bg-neutral text-neutral-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
+                  <div class="bg-base-200 text-base-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
                     <%= for {log, idx} <- Enum.with_index(Enum.reverse(Map.get(@task, :logs, []))) do %>
                       <div class={[
                         "flex items-start gap-3 p-1.5 rounded transition-colors",
-                        rem(idx, 2) == 0 && "bg-black/10",
-                        log.level == :error && "text-error-content bg-error/20",
-                        log.level == :warn && "text-warning-content bg-warning/20"
+                        rem(idx, 2) == 0 && "bg-base-content/5",
+                        log.level == :error && "bg-error/15 text-error",
+                        log.level == :warn && "bg-warning/15 text-warning"
                       ]}>
-                        <span class="opacity-50 shrink-0 select-none">
+                        <span class="text-base-content/60 shrink-0 select-none">
                           [{format_datetime(log.timestamp, :time)}]
                         </span>
                         <span class={[
