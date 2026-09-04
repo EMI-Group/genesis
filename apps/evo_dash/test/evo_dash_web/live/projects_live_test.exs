@@ -11,7 +11,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
 
-  setup [:setup_temp_dir, :set_onboarding_completed]
+  setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
 
   defp setup_temp_dir(%{} = context) do
     tmp_dir =
@@ -66,6 +66,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end)
 
     {:ok, conn: Plug.Test.init_test_session(conn, %{})}
+  end
+
+  # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+  # terminated by the per-test isolation above — reset it so one test's
+  # sidebar snapshot never leaks into the next.
+  defp reset_active_tasks_hub(_context) do
+    EvoDash.ActiveTasks.reset()
+    :ok
   end
 
   # Clears all recent projects from the shared SQLite store so tests are
