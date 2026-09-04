@@ -10,6 +10,10 @@ defmodule EvoDashWeb.SettingsComponents.SearchResults do
 
   import EvoDashWeb.SettingsComponents.SettingCard, only: [setting_card: 1]
 
+  import EvoDashWeb.SettingsComponents.SectionHeader, only: [section_header: 1]
+
+  import EvoDashWeb.SettingsComponents.SaveBar, only: [save_bar: 1]
+
   # ───────────────────────────────────────────────────────────────────────────
   # search_results/1 — Search results across all categories
   # ───────────────────────────────────────────────────────────────────────────
@@ -25,31 +29,25 @@ defmodule EvoDashWeb.SettingsComponents.SearchResults do
       |> Enum.flat_map(fn {_cat, schemas} -> schemas end)
       |> Enum.count(&schema_matches?(&1, assigns.search_text))
 
-    assigns = assign(assigns, :total_matches, total_matches)
+    description =
+      if total_matches == 0 do
+        gettext("No settings found matching \"%{query}\"", query: assigns.search_text)
+      else
+        gettext("%{count} setting(s) matching \"%{query}\"",
+          count: total_matches,
+          query: assigns.search_text
+        )
+      end
+
+    assigns = assign(assigns, total_matches: total_matches, description: description)
 
     ~H"""
     <div class="flex-1 flex flex-col min-w-0 bg-base-100" id="search-results">
-      <%!-- Sticky Header --%>
-      <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
-        <div class="flex items-center gap-3 mb-1">
-          <div class="text-primary/60">
-            <.icon name="hero-magnifying-glass" class="size-5" />
-          </div>
-          <h2 class="text-lg font-bold tracking-tight text-base-content">
-            {gettext("Search Results")}
-          </h2>
-        </div>
-        <p class="text-sm font-medium text-base-content/80">
-          <%= if @total_matches == 0 do %>
-            {gettext("No settings found matching \"%{query}\"", query: @search_text)}
-          <% else %>
-            {gettext("%{count} setting(s) matching \"%{query}\"",
-              count: @total_matches,
-              query: @search_text
-            )}
-          <% end %>
-        </p>
-      </div>
+      <.section_header
+        icon="hero-magnifying-glass"
+        title={gettext("Search Results")}
+        description={@description}
+      />
 
       <%!-- Scrollable Content --%>
       <div class="flex-1 overflow-y-auto px-8 py-8">
@@ -92,13 +90,7 @@ defmodule EvoDashWeb.SettingsComponents.SearchResults do
         <% end %>
       </div>
 
-      <%!-- Sticky Footer --%>
-      <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
-        <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
-          <.icon name="hero-document-check" class="size-5 mr-1.5" />
-          {gettext("Save Changes")}
-        </button>
-      </div>
+      <.save_bar label={gettext("Save Changes")} />
     </div>
     """
   end

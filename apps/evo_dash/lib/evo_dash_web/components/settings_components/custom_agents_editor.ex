@@ -10,6 +10,10 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
 
   use EvoDashWeb, :html
 
+  import EvoDashWeb.SettingsComponents.CardShell, only: [card_shell: 1]
+
+  import EvoDashWeb.SettingsComponents.FormFooter, only: [form_footer: 1]
+
   # Built-in agent type names the custom agent may spawn (mirrors the
   # @subagent_type_modules map in EvoGit.Agents.Custom).
   defp subagent_names, do: ~w(executor investigator manager architect task_scheduler)
@@ -24,16 +28,15 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
 
   def custom_agents_editor(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 p-5">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h3 class="text-lg font-bold text-base-content mb-0.5">{gettext("Custom Agents")}</h3>
-          <p class="text-sm text-base-content/80">
-            <%!-- zh_CN: Subagent → "子智能体", Tool → "工具" --%>{gettext(
-              "Define custom agents with their own prompts, tools, and spawnable subagents."
-            )}
-          </p>
-        </div>
+    <%!-- zh_CN: Custom Agents → "自定义智能体", Add Agent → "添加智能体";
+         the description mentions subagents → "子智能体" and tools → "工具" --%>
+    <.card_shell
+      title={gettext("Custom Agents")}
+      description={
+        gettext("Define custom agents with their own prompts, tools, and spawnable subagents.")
+      }
+    >
+      <:actions>
         <button
           type="button"
           phx-click="add_custom_agent"
@@ -42,7 +45,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
           <.icon name="hero-plus" class="size-4" />
           {gettext("Add Agent")}
         </button>
-      </div>
+      </:actions>
 
       <%= if @agents == [] and @editing_agent_id != "new" do %>
         <div class="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-base-300 rounded-lg">
@@ -72,7 +75,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
           <.agent_edit_form agent={%{}} model_profiles={@model_profiles} />
         <% end %>
       </div>
-    </div>
+    </.card_shell>
     """
   end
 
@@ -354,16 +357,10 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
         </p>
       </div>
 
-      <%!-- Action buttons ── --%>
-      <div class="flex items-center justify-end gap-2 pt-2 border-t border-base-200">
-        <button type="button" phx-click="cancel_edit_custom_agent" class="btn btn-ghost btn-sm">
-          {gettext("Cancel")}
-        </button>
-        <button type="submit" class="btn btn-primary btn-sm gap-1">
-          <.icon name="hero-check" class="size-4" />
-          {gettext("Save Agent")}
-        </button>
-      </div>
+      <.form_footer
+        cancel_event="cancel_edit_custom_agent"
+        save_label={gettext("Save Agent")}
+      />
     </form>
     """
   end

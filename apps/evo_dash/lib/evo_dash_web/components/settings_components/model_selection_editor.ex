@@ -10,6 +10,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
 
   use EvoDashWeb, :html
 
+  import EvoDashWeb.SettingsComponents.CardShell, only: [card_shell: 1]
+
   # Example script shown in the UI (used via example_script/0 — a helper
   # function, because `@example_script` inside a ~H template would resolve to
   # an assign, not the module attribute).
@@ -36,20 +38,12 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
 
   def model_selection_editor(assigns) do
     ~H"""
-    <div class="rounded-lg border border-base-200 bg-base-100 p-5">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h3 class="text-lg font-bold text-base-content mb-0.5">
-            {gettext("Model Selection Script")}
-          </h3>
-          <p class="text-sm text-base-content/80">
-            <%!-- zh_CN: Elixir expression → "Elixir 表达式", spawn → "生成" --%>{gettext(
-              "An Elixir expression evaluated for each agent spawn to pick the model."
-            )}
-          </p>
-        </div>
-      </div>
-
+    <%!-- zh_CN: Model Selection Script → "模型选择脚本"; the description
+         mentions Elixir expression → "Elixir 表达式" and agent spawn → "生成" --%>
+    <.card_shell
+      title={gettext("Model Selection Script")}
+      description={gettext("An Elixir expression evaluated for each agent spawn to pick the model.")}
+    >
       <%= if compile_error = script_compile_error(@script_status) do %>
         <div class="mb-4 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
           <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
@@ -153,7 +147,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelSelectionEditor do
           </div>
         </div>
       <% end %>
-    </div>
+    </.card_shell>
     """
   end
 

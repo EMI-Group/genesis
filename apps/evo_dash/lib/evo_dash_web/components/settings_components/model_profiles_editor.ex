@@ -9,6 +9,10 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   import EvoDashWeb.SettingsComponents.SettingCard, only: [model_display: 1]
 
+  import EvoDashWeb.SettingsComponents.CardShell, only: [card_shell: 1]
+
+  import EvoDashWeb.SettingsComponents.FormFooter, only: [form_footer: 1]
+
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -21,16 +25,19 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   def model_profiles_editor(assigns) do
     ~H"""
-    <div class="mb-6 rounded-lg border border-base-200 bg-base-100 p-5">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h3 class="text-lg font-bold text-base-content mb-0.5">{gettext("Model Profiles")}</h3>
-          <p class="text-sm text-base-content/80">
-            <%!-- zh_CN: concurrency → "并发" --%>{gettext(
-              "Configure one or more LLM models. Each profile can have its own concurrency and generation parameters."
-            )}
-          </p>
-        </div>
+    <%!-- zh_CN: Model Profiles → "模型配置", Add Model → "添加模型";
+         the description mentions concurrency → "并发" and
+         generation parameters → "生成参数" --%>
+    <.card_shell
+      title={gettext("Model Profiles")}
+      description={
+        gettext(
+          "Configure one or more LLM models. Each profile can have its own concurrency and generation parameters."
+        )
+      }
+      class="mb-6"
+    >
+      <:actions>
         <button
           type="button"
           phx-click="add_model_profile"
@@ -39,7 +46,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <.icon name="hero-plus" class="size-4" />
           {gettext("Add Model")}
         </button>
-      </div>
+      </:actions>
 
       <%= if @profiles == [] do %>
         <div class="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-base-300 rounded-lg">
@@ -66,7 +73,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <% end %>
         </div>
       <% end %>
-    </div>
+    </.card_shell>
     """
   end
 
@@ -636,16 +643,10 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </p>
       </div>
 
-      <%!-- Action buttons ── --%>
-      <div class="flex items-center justify-end gap-2 pt-2 border-t border-base-200">
-        <button type="button" phx-click="cancel_edit_model_profile" class="btn btn-ghost btn-sm">
-          {gettext("Cancel")}
-        </button>
-        <button type="submit" class="btn btn-primary btn-sm gap-1">
-          <.icon name="hero-check" class="size-4" />
-          {gettext("Save Profile")}
-        </button>
-      </div>
+      <.form_footer
+        cancel_event="cancel_edit_model_profile"
+        save_label={gettext("Save Profile")}
+      />
     </form>
     """
   end
