@@ -6,7 +6,7 @@ Sub-component modules extracted from `EvoDashWeb.SettingsComponents` to keep eac
 
 ## Routing Table
 
-None — leaf directory (seven module files).
+None — leaf directory (eleven module files).
 
 ## API Surface
 
@@ -21,6 +21,10 @@ None — leaf directory (seven module files).
 | `ModelSelectionEditor` | Model-selection script editor (`model_selection_editor/1`): textarea form, collapsible contract help, copyable example, compile-error box, Test script results |
 | `Sidebar` | Settings sidebar with search filter and category navigation |
 | `SearchResults` | Search results grouped by category |
+| `SaveBar` | Shared sticky bottom save bar (`save_bar/1`, `attr :label`) — consumed by `category_section/1` (generic `:else` branch + LLM flat-cards form) and `SearchResults` |
+| `SectionHeader` | Shared sticky top section header (`section_header/1`, attrs `icon`/`title`/`description`) — consumed by `category_section/1` and `SearchResults` |
+| `CardShell` | Shared editor card wrapper (`card_shell/1`, attrs `title`/`description`/`class` + `:actions` slot + `:inner_block`) — consumed by `ModelProfilesEditor`/`CustomAgentsEditor`/`ModelSelectionEditor` |
+| `FormFooter` | Shared edit-form action footer (`form_footer/1`, attrs `cancel_event`/`save_label`: Cancel ghost btn + primary submit with `hero-check`) — consumed by the profile and custom-agent edit forms |
 
 ## Notes for Agents — Model Profiles Editor: Peak Hours (optional)
 
