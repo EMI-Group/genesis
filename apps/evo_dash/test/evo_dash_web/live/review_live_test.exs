@@ -113,6 +113,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       flush_review_load(view)
 
+      # Wait for the hub snapshot so the post-action invalidate assertion is
+      # non-vacuous (this orphaned-branch fixture is sidebar-visible too).
+      wait_hub_warm()
+
       # Click the ignore button — this triggers a navigation, so we assert the
       # LiveView process terminates and the browser is redirected to "/projects".
       view |> element("button[phx-click='ignore']") |> render_click()
@@ -122,6 +126,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # The cast runs async, but a synchronous get_task call guarantees all
       # prior casts to the registry have been processed.
       assert TaskRegistry.get_task(task_id).review_status == :ignored
+
+      # The ignore success path invalidates the hub snapshot before navigating
+      # away (review_live.ex invalidate_active_tasks/1) — the destination
+      # /projects mount must come up COLD and re-fetch.
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
     end
   end
 
@@ -608,6 +617,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # clobbered by the load's assigns map (which resets merge_status to nil).
       flush_review_load(view)
 
+      # Wait for the hub snapshot so the post-action invalidate assertion is
+      # non-vacuous (this orphaned-branch fixture is still sidebar-visible:
+      # completed + branch_name + review_status nil).
+      wait_hub_warm()
+
       send(
         view.pid,
         {:merge_check_result, task_id, node(), "primary", "main",
@@ -645,6 +659,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert new_task.opts[:mode] == "simple"
       assert new_task.opts[:path] == "/nonexistent/repo/path"
       assert new_task.opts[:starting_commit] == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+      # Auto-resolve invalidates the hub snapshot before navigating away
+      # (merge_check.ex handle_auto_resolve/1) — the destination /projects
+      # mount must come up COLD and re-fetch.
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
     end
 
     test "auto-resolve refuses when no conflict is detected (clean state)", %{
@@ -1209,6 +1228,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
+      # Wait for the connected-mount sidebar fetch to warm the ActiveTasks hub
+      # (the completed fixture is sidebar-visible: pending review) so the
+      # post-action invalidate assertion below is non-vacuous.
+      wait_hub_warm()
+
       # No repo_id param → the submitting repo defaults to the active repo
       # ("primary"); the foreign repo merges into its OWN default target.
       render_click(view, "merge", %{"target_branch" => "dev"})
@@ -1222,6 +1246,12 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert flash["success"] =~ "dev"
 
       assert TaskRegistry.get_task(task_id).review_status == :merged
+
+      # Full success invalidates the hub snapshot BEFORE navigating away
+      # (review_live.ex invalidate_active_tasks/1) — the destination /projects
+      # mount must come up COLD and re-fetch instead of seeding the stale
+      # pre-merge pending-review snapshot.
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
     end
 
     test "merging from the foreign tab targets the foreign repo's chosen branch", %{
@@ -1289,6 +1319,12 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
+      # Wait for the hub snapshot, then capture it: the partial-failure branch
+      # must NOT invalidate (the page stays mounted), so the snapshot has to
+      # survive the click byte-for-byte.
+      wait_hub_warm()
+      assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
+
       html = render_click(view, "merge", %{"target_branch" => "dev"})
 
       # The per-repo outcome panel renders a merged row for the primary and a
@@ -1311,6 +1347,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert foreign_outcome.status == :conflict
       assert foreign_outcome.target == "main"
       assert foreign_outcome.detail == ["foreign_conflict.txt"]
+
+      # Partial failure stays on the page — no invalidate ran, so the hub
+      # snapshot is unchanged (the task is still pending review in the
+      # sidebar's pending partition).
+      assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
     end
   end
 
@@ -1342,6 +1383,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
+      # Wait for the hub snapshot so the post-action invalidate assertion is
+      # non-vacuous (same mechanism as the merge full-success test).
+      wait_hub_warm()
+
       render_click(view, "reject")
 
       calls = for _ <- 1..2, do: assert_receive({:reject_call, _node, _path, _branch})
@@ -1355,6 +1400,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
                "Changes rejected. Branch task-branch, task-branch has been deleted."
 
       assert TaskRegistry.get_task(task_id).review_status == :rejected
+
+      # Full success invalidates the hub snapshot BEFORE navigating away — the
+      # destination /projects mount must come up COLD and re-fetch.
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
     end
 
     test "reports per-repo outcomes and stays when one repo fails to reject", %{
@@ -1379,6 +1428,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
+      # Wait for the hub snapshot, then capture it: the partial-failure branch
+      # must NOT invalidate (the page stays mounted).
+      wait_hub_warm()
+      assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
+
       html = render_click(view, "reject")
 
       # Any :rejected outcome switches the panel title to "Reject results".
@@ -1397,6 +1451,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       # Reject outcomes carry NO target key (only merge outcomes do).
       refute Enum.any?(outcomes, &Map.has_key?(&1, :target))
+
+      # Partial failure stays on the page — no invalidate ran, so the hub
+      # snapshot is unchanged.
+      assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
     end
   end
 
@@ -1962,6 +2020,40 @@ defmodule EvoDashWeb.ReviewLiveTest do
         "timed out waiting for the async review-data load to finish",
         timeout
       )
+
+  # Polls the LOCAL EvoDash.ActiveTasks hub key ({nil, node()}) until the
+  # connected-mount sidebar fetch has landed and written its snapshot (see
+  # LiveHooks.NodeAware.on_mount/4: the fetch fires ONLY when the key is cold —
+  # guaranteed by the per-test reset — and runs async on EvoDash.TaskSupervisor).
+  # The completed review fixtures (branch + review_status: nil) are
+  # sidebar-visible, so the snapshot warms with them in the pending partition
+  # shortly after mount. Once warm no further fetch fires (warm suppresses), so
+  # the hub is stable until the action under test runs. Fails loudly if it
+  # stays cold — the hub-cold/unchanged assertions below would be vacuous.
+  defp wait_hub_warm(timeout \\ 3000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    wait_loop = fn wait_loop ->
+      case EvoDash.ActiveTasks.get(nil, node()) do
+        {:ok, _snapshot} ->
+          :ok
+
+        :empty ->
+          if System.monotonic_time(:millisecond) >= deadline do
+            flunk(
+              "ActiveTasks hub never warmed for {nil, #{inspect(node())}} — the " <>
+                "connected-mount sidebar fetch did not write a snapshot; the " <>
+                "hub assertions in this test would be vacuous"
+            )
+          else
+            Process.sleep(20)
+            wait_loop.(wait_loop)
+          end
+      end
+    end
+
+    wait_loop.(wait_loop)
+  end
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
   # Used to synchronize on LiveView state changes that follow directly-sent

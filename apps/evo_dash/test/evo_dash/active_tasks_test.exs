@@ -3,8 +3,11 @@ defmodule EvoDash.ActiveTasksTest do
 
   alias EvoDash.ActiveTasks
 
-  # The hub is a shared global GenServer (supervised by the running app — do
-  # not start/stop it manually); reset it so tests are independent.
+  # The hub is a boot-created named public ETS table (:evo_dash_active_tasks,
+  # created idempotently at the top of EvoDash.Application.start/2 and owned by
+  # the long-lived application process). The module has NO process — tests must
+  # not reference a process/start_link. Reset the shared global hub state in
+  # setup so tests are independent.
   setup do
     ActiveTasks.reset()
     :ok
@@ -55,6 +58,31 @@ defmodule EvoDash.ActiveTasksTest do
     test "the same remote node atom under a different node_id is a distinct context" do
       ActiveTasks.put("some-target", :node@remote, [:a], [])
       assert ActiveTasks.get("other-target", :node@remote) == :empty
+    end
+  end
+
+  describe "invalidate/2" do
+    test "deletes one context's snapshot so get/2 returns :empty for it" do
+      ActiveTasks.put(nil, node(), [:running], [:pending])
+      assert ActiveTasks.get(nil, node()) == {:ok, {[:running], [:pending]}}
+
+      assert ActiveTasks.invalidate(nil, node()) == :ok
+      assert ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "leaves other contexts' snapshots untouched" do
+      ActiveTasks.put(nil, node(), [:local], [])
+      ActiveTasks.put("some-target", :node@remote, [:r1], [:r2])
+
+      assert ActiveTasks.invalidate("some-target", :node@remote) == :ok
+
+      assert ActiveTasks.get("some-target", :node@remote) == :empty
+      assert ActiveTasks.get(nil, node()) == {:ok, {[:local], []}}
+    end
+
+    test "is a harmless no-op on a never-written context" do
+      assert ActiveTasks.invalidate("never-written", :node@remote) == :ok
+      assert ActiveTasks.get("never-written", :node@remote) == :empty
     end
   end
 
