@@ -86,6 +86,7 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 ## Development Notes
 
 - `mix precommit` — format code and run tests before committing
+- **Umbrella-aware formatting** — the formatter config is umbrella-aware: the root `.formatter.exs` declares `subdirectories: ["apps/*"]` and its own `inputs` cover only root-level files (`{mix,.formatter}.exs`, `{config,lib,test}/**/*.{ex,exs}` — never files inside `apps/*`); each app carries its own `.formatter.exs` governing its subtree (`apps/evo_dash` with `import_deps: [:phoenix]` + `plugins: [Phoenix.LiveView.HTMLFormatter]` covering `.heex` and `~H` sigils, `apps/evo_git` a plain default). `mix format` / the CI format gate `mix format --check-formatted` run from the root therefore cover the whole umbrella.
 - `mix test` — execute the test suite
 - `mix deps.get` — fetch dependencies
 - `mix compile` — compile and check for errors
