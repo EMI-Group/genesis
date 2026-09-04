@@ -2,7 +2,7 @@
 
 ## Intent
 
-Sub-component modules extracted from `EvoDashWeb.SettingsComponents` to keep each component focused: `CategoryMetadata` (pure helpers for display names, icons, schema matching, API key hints), `SettingCard` (schema-driven form field component with type-dispatched input controls), `ModelProfilesEditor` (list editor for `[[llm.models]]` profiles with inline edit form), `CustomAgentsEditor` (list editor for `agents.toml` custom agents with inline edit form), `ModelSelectionEditor` (model-selection script editor with contract help + compile-error display), `Sidebar` (settings sidebar with search filter and category navigation), `SearchResults` (search results grouped by category).
+Sub-component modules extracted from `EvoDashWeb.SettingsComponents` to keep each component focused: `CategoryMetadata` (pure helpers for display names, icons, schema matching, API key hints), `SettingCard` (schema-driven form field component with type-dispatched input controls), `ModelProfilesEditor` (list editor for `[[llm.models]]` profiles with inline edit form), `CustomAgentsEditor` (list editor for `agents.toml` custom agents with inline edit form), `ModelSelectionEditor` (model-selection script editor with contract help + compile-error display), `Sidebar` (settings sidebar with search filter and category navigation), `SearchResults` (search results grouped by category). Four shared building blocks extracted from the duplicated section/editor markup are also here: `SaveBar` (sticky bottom save bar), `SectionHeader` (sticky top section header), `CardShell` (editor card wrapper: header row + optional actions slot + body), `FormFooter` (edit-form action footer: Cancel ghost + primary submit).
 
 ## Routing Table
 
