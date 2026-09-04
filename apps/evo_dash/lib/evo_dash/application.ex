@@ -21,6 +21,10 @@ defmodule EvoDash.Application do
       # update phase/versions/error state and broadcasts transitions on
       # EvoGit.PubSub's "updates" topic.
       EvoDash.UpdateStatus,
+      # In-memory per-node-context last-known-state hub for the sidebar Active
+      # Tasks list — instant cross-navigation rendering; written on applied
+      # fetch results, read on mount.
+      EvoDash.ActiveTasks,
       EvoDashWeb.Endpoint
     ]
 
