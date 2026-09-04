@@ -31,6 +31,16 @@ defmodule EvoDashWeb.NodeAwareTest do
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoGit.TaskInfo
 
+  setup do
+    # Reset the shared EvoDash.ActiveTasks hub (a supervised GenServer shared
+    # across all evo_dash tests in the OS process — same isolation pattern as
+    # home_live_test.exs's ChatHistory.reset and update_status_test.exs's
+    # UpdateStatus.reset) so an applied handle_tasks_result/2 from one test can
+    # never warm the hub for the next.
+    EvoDash.ActiveTasks.reset()
+    :ok
+  end
+
   # Build a minimal LiveView socket with the assigns the helper reads.
   # `redirected: nil` is required for push_patch to work (it raises if already
   # set). `assigns.__changed__` is required by Phoenix.LiveView.Socket's default.
