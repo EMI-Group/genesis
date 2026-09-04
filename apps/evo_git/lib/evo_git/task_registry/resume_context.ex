@@ -41,8 +41,7 @@ defmodule EvoGit.TaskRegistry.ResumeContext do
         foreign_repos when is_list(foreign_repos) ->
           repos =
             foreign_repos
-            |> Enum.map(&ForeignRepo.normalize/1)
-            |> Enum.reject(&is_nil/1)
+            |> PrevTaskRepos.normalize_foreign_repos()
             |> PrevTaskRepos.apply_starting_commits(prev_task)
 
           case repos do

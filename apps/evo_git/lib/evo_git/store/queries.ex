@@ -56,13 +56,6 @@ defmodule EvoGit.Store.Queries do
   def encode_column_value(:usage, value), do: Codec.encode_usage(value)
   def encode_column_value(:opts, value), do: Codec.encode_opts(value)
   def encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
-  def encode_column_value(:project_path, value), do: value
-  def encode_column_value(:branch_name, value), do: value
-  def encode_column_value(:agent_count, value), do: value
-  def encode_column_value(:lease_expires_at, value), do: value
-  def encode_column_value(:model_id, value), do: value
-  def encode_column_value(:base_sha, value), do: value
-  def encode_column_value(:commit_sha, value), do: value
   def encode_column_value(_col, value), do: value
 
   # ── Pagination clamping ──────────────────────────────────────────────
@@ -154,7 +147,9 @@ defmodule EvoGit.Store.Queries do
           c2 = "opts LIKE ?" <> Integer.to_string(idx + 1) <> " ESCAPE '\\'"
           c3 = "project_path LIKE ?" <> Integer.to_string(idx + 2) <> " ESCAPE '\\'"
           c4 = "result LIKE ?" <> Integer.to_string(idx + 3) <> " ESCAPE '\\'"
-          {clauses ++ ["(#{c1} OR #{c2} OR #{c3} OR #{c4})"], params ++ [pat, pat, pat, pat], idx + 4}
+
+          {clauses ++ ["(#{c1} OR #{c2} OR #{c3} OR #{c4})"], params ++ [pat, pat, pat, pat],
+           idx + 4}
       end
 
     case clauses do

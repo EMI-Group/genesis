@@ -15,6 +15,15 @@ defmodule EvoGit.Agent.SubagentSchemas do
   end
 
   @doc """
+  Looks up the agent module whose `subagent_tool_name/0` matches `tool_name`
+  among the given subagent module list. Returns `nil` when no declared
+  subagent module matches.
+  """
+  def subagent_module_for(tool_name, subagent_mods) do
+    Enum.find(subagent_mods, fn mod -> mod.subagent_tool_name() == tool_name end)
+  end
+
+  @doc """
   Generates ReqLLM tool schemas for each subagent module declared by the agent.
   """
   def schemas(agent_module) do

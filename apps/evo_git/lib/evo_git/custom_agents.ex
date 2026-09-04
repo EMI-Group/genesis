@@ -522,8 +522,10 @@ defmodule EvoGit.CustomAgents do
   end
 
   # Recursively converts atom keys to string keys and drops nil values.
-  # Modeled on `stringify_keys/1` in EvoGit.Config.
-  defp stringify_keys(map) when is_map(map) do
+  # Modeled on `stringify_keys/1` in EvoGit.Config. Shared with
+  # EvoGit.RemoteConnections (same body).
+  @doc false
+  def stringify_keys(map) when is_map(map) do
     Map.new(map, fn
       {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
       {key, value} -> {key, stringify_keys(value)}
@@ -532,10 +534,10 @@ defmodule EvoGit.CustomAgents do
     |> Map.new()
   end
 
-  defp stringify_keys(list) when is_list(list) do
+  def stringify_keys(list) when is_list(list) do
     Enum.map(list, &stringify_keys/1)
   end
 
-  defp stringify_keys(nil), do: nil
-  defp stringify_keys(value), do: value
+  def stringify_keys(nil), do: nil
+  def stringify_keys(value), do: value
 end

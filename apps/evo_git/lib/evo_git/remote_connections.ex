@@ -263,28 +263,10 @@ defmodule EvoGit.RemoteConnections do
     end)
   end
 
-  # Recursively converts atom keys to string keys and drops nil values.
-  # Modeled on `stringify_keys/1` in EvoGit.Config.
-  defp stringify_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), stringify_keys(value)}
-      {key, value} -> {key, stringify_keys(value)}
-    end)
-    |> Enum.reject(fn {_k, v} -> v == nil end)
-    |> Map.new()
-  end
-
-  defp stringify_keys(list) when is_list(list) do
-    Enum.map(list, &stringify_keys/1)
-  end
-
-  defp stringify_keys(nil), do: nil
-  defp stringify_keys(value), do: value
-
   # Serializes the connection list to TOML and writes it to disk.
   defp write_connections(connections) do
     dir = EvoGit.Config.config_dir()
-    data = %{"connections" => Enum.map(connections, &stringify_keys/1)}
+    data = %{"connections" => Enum.map(connections, &EvoGit.CustomAgents.stringify_keys/1)}
 
     with :ok <- File.mkdir_p(dir),
          {:ok, toml} <- TomlElixir.encode(data) do

@@ -57,6 +57,22 @@ defmodule EvoGit.TaskRegistry.PrevTaskRepos do
 
   def repo_commit_sha(_repos, _repo_id), do: nil
 
+  # Normalizes a list of foreign-repo entries (which may be %ForeignRepo{}
+  # structs or string-keyed maps from a Codec JSON round trip) back into
+  # %ForeignRepo{} structs, dropping unparseable entries. Shared by
+  # EvoGit.TaskRegistry.MergeContext and EvoGit.TaskRegistry.ResumeContext;
+  # callers that need per-repo starting commits chain apply_starting_commits/2
+  # after this.
+  @doc false
+  @spec normalize_foreign_repos([term()]) :: [ForeignRepo.t()]
+  def normalize_foreign_repos(foreign_repos) when is_list(foreign_repos) do
+    foreign_repos
+    |> Enum.map(&ForeignRepo.normalize/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  def normalize_foreign_repos(_), do: []
+
   @doc """
   Applies per-repo starting commits to a list of PRE-NORMALIZED `%ForeignRepo{}`
   structs: each repo's `base_sha` is overridden with the previous task's result

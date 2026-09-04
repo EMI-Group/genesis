@@ -42,13 +42,10 @@ defmodule EvoGit.Agent.Tools.CancelTask do
     end
   end
 
-  defp describe_error(:not_found), do: "task not found"
-
-  defp describe_error(:not_running),
-    do: "task is not in a cancellable state (already terminal or finalizing)"
-
-  defp describe_error({:registry_unavailable, reason}),
-    do: "task registry unavailable: #{inspect(reason)}"
-
-  defp describe_error(other), do: inspect(other)
+  defp describe_error(reason) do
+    Shared.describe_error(
+      reason,
+      "task is not in a cancellable state (already terminal or finalizing)"
+    )
+  end
 end

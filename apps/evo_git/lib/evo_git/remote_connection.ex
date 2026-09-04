@@ -131,8 +131,8 @@ defmodule EvoGit.RemoteConnection do
   @patch_timeout_ms 600_000
 
   # The remote daemon always binds loopback; the SSH tunnel forwards the dist
-  # port to loopback on both sides. The remote daemon listens on port 9000 by
-  # default (hardcoded in rel/genesis_remote/vm.args.eex, overridable via
+  # port to loopback on both sides. The remote daemon is hard-pinned to port
+  # 9000 (rel/genesis_remote/vm.args.eex — no code reads a
   # GENESIS_REMOTE_DIST_PORT env var). The local end of the tunnel uses a
   # dynamically-assigned free port to avoid conflicts with the local node's
   # own distribution port.
@@ -569,8 +569,7 @@ defmodule EvoGit.RemoteConnection do
               # :stopping_daemon stage, then stop the daemon, then stage a
               # fresh one with the current contract. A failed stop is
               # non-fatal — the start below surfaces any real failure.
-              state = %{state | phase: :bootstrapping, bootstrap_stage: :stopping_daemon}
-              broadcast_status(target, state)
+              state = set_stage(%{state | phase: :bootstrapping}, target, :stopping_daemon)
               stop_daemon(ssh_target, daemon_os, target)
               do_bootstrap_staging(state, target, daemon_os, platform)
           end
@@ -625,24 +624,18 @@ defmodule EvoGit.RemoteConnection do
   end
 
   defp do_bootstrap_with_tarball(%__MODULE__{} = state, target, local_path, daemon_os) do
-    ssh_target = target.ssh_target
-    remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
-
-    # The tarball is uploaded to a temp path, then extracted into remote_path's
-    # parent. The tarball contains a top-level genesis_remote/ directory.
-    remote_tarball = remote_tarball_path(remote_path)
-    remote_dir = Path.dirname(remote_path)
-    launcher_path = Path.join(remote_path, "bin/genesis_remote")
+    %{
+      ssh_target: ssh_target,
+      remote_tarball: remote_tarball,
+      remote_dir: remote_dir,
+      launcher_path: launcher_path
+    } = remote_paths(target)
 
     # :probing_platform stage — the pre-flight probe already resolved the OS,
     # but the stage is the visible "we probed" marker and keeps the two paths'
     # stage sequences aligned.
-    state = %{state | phase: :bootstrapping, bootstrap_stage: :probing_platform}
-    broadcast_status(target, state)
-
-    # :uploading stage
-    state = %{state | bootstrap_stage: :uploading}
-    broadcast_status(target, state)
+    state = set_stage(%{state | phase: :bootstrapping}, target, :probing_platform)
+    state = set_stage(state, target, :uploading)
 
     case scp_tarball(ssh_target, local_path, remote_tarball) do
       :ok ->
@@ -666,19 +659,18 @@ defmodule EvoGit.RemoteConnection do
   # tarball for the pre-flight-resolved platform (curl then wget on the remote,
   # local curl + scp fallback) → launch via the shared post-staging sequence.
   defp do_bootstrap_auto(%__MODULE__{} = state, target, daemon_os, platform) do
-    ssh_target = target.ssh_target
-    remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
-    remote_tarball = remote_tarball_path(remote_path)
-    remote_dir = Path.dirname(remote_path)
-    launcher_path = Path.join(remote_path, "bin/genesis_remote")
+    %{
+      ssh_target: ssh_target,
+      remote_tarball: remote_tarball,
+      remote_dir: remote_dir,
+      launcher_path: launcher_path
+    } = remote_paths(target)
 
-    # :probing_platform stage
-    state = %{state | phase: :bootstrapping, bootstrap_stage: :probing_platform}
-    broadcast_status(target, state)
-
-    # :downloading stage
-    state = %{state | bootstrap_stage: :downloading}
-    broadcast_status(target, state)
+    # :probing_platform stage — the pre-flight probe already resolved the OS,
+    # but the stage is the visible "we probed" marker and keeps the two paths'
+    # stage sequences aligned.
+    state = set_stage(%{state | phase: :bootstrapping}, target, :probing_platform)
+    state = set_stage(state, target, :downloading)
 
     case download_tarball(state, target, ssh_target, platform, remote_tarball) do
       {:ok, state} ->
@@ -767,8 +759,7 @@ defmodule EvoGit.RemoteConnection do
             "falling back to local download + scp."
         )
 
-        local_state = %{state | bootstrap_stage: :downloading_locally}
-        broadcast_status(target, local_state)
+        local_state = set_stage(state, target, :downloading_locally)
 
         case download_locally_and_scp(ssh_target, url, platform, version, remote_tarball) do
           :ok ->
@@ -862,61 +853,58 @@ defmodule EvoGit.RemoteConnection do
          remote_dir,
          remote_tarball
        ) do
-    # :extracting stage
-    state = %{state | bootstrap_stage: :extracting}
-    broadcast_status(target, state)
+    with {:ok, state} <-
+           run_stage(state, target, :extracting, fn ->
+             extract_tarball(ssh_target, remote_tarball, remote_dir)
+           end),
+         {:ok, state} <-
+           run_stage(state, target, :setting_permissions, fn ->
+             chmod_executable(ssh_target, launcher_path)
+           end),
+         {:ok, state} <-
+           run_stage(state, target, :copying_config, fn ->
+             copy_config_to_remote(ssh_target, os)
+           end) do
+      # :generating_cookie stage — the cookie is generated right after the
+      # stage broadcast so the resolved value reaches the launch steps below.
+      state = set_stage(state, target, :generating_cookie)
+      cookie = ensure_cookie!()
 
-    case extract_tarball(ssh_target, remote_tarball, remote_dir) do
-      :ok ->
-        # :setting_permissions stage
-        state = %{state | bootstrap_stage: :setting_permissions}
-        broadcast_status(target, state)
+      # NixOS on-the-fly patching (Linux only; skipped when the daemon is
+      # already running or the remote is not NixOS). Broadcasts
+      # :patching_binaries only when the patch actually runs.
+      case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
+        {:ok, state} ->
+          case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie, state) do
+            :ok ->
+              EvoGit.RemoteConnections.touch(target.id)
+              completed = %{state | phase: :disconnected, bootstrap_stage: nil}
+              broadcast_status(target, completed)
+              {:ok, completed}
 
-        case chmod_executable(ssh_target, launcher_path) do
-          :ok ->
-            # :copying_config stage (uses the resolved OS to compute the
-            # platform-specific remote config directory)
-            state = %{state | bootstrap_stage: :copying_config}
-            broadcast_status(target, state)
+            {:error, reason} ->
+              {:error, reason, error_state(state, target, reason)}
+          end
 
-            copy_config_to_remote(ssh_target, os)
+        {:error, reason} ->
+          {:error, reason, error_state(state, target, reason)}
+      end
+    else
+      {:error, reason, err_state} -> {:error, reason, err_state}
+    end
+  end
 
-            # :generating_cookie stage
-            state = %{state | bootstrap_stage: :generating_cookie}
-            broadcast_status(target, state)
+  # Runs a single staging step under its broadcast stage marker: sets +
+  # broadcasts the stage, runs the step fun, and returns {:ok, state} on
+  # success or {:error, reason, error_state} on failure (the error_state is
+  # built from the stage-set state, exactly like the original inline error
+  # arms).
+  defp run_stage(state, target, stage, fun) do
+    state = set_stage(state, target, stage)
 
-            cookie = ensure_cookie!()
-
-            # NixOS on-the-fly patching (Linux only; skipped when the daemon
-            # is already running or the remote is not NixOS). Broadcasts
-            # :patching_binaries only when the patch actually runs.
-            case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
-              {:ok, state} ->
-                case maybe_start_daemon(ssh_target, launcher_path, os, target, cookie, state) do
-                  :ok ->
-                    EvoGit.RemoteConnections.touch(target.id)
-                    completed = %{state | phase: :disconnected, bootstrap_stage: nil}
-                    broadcast_status(target, completed)
-                    {:ok, completed}
-
-                  {:error, reason} ->
-                    error_state = error_state(state, target, reason)
-                    {:error, reason, error_state}
-                end
-
-              {:error, reason} ->
-                error_state = error_state(state, target, reason)
-                {:error, reason, error_state}
-            end
-
-          {:error, reason} ->
-            error_state = error_state(state, target, reason)
-            {:error, reason, error_state}
-        end
-
-      {:error, reason} ->
-        error_state = error_state(state, target, reason)
-        {:error, reason, error_state}
+    case fun.() do
+      :ok -> {:ok, state}
+      {:error, reason} -> {:error, reason, error_state(state, target, reason)}
     end
   end
 
@@ -925,6 +913,24 @@ defmodule EvoGit.RemoteConnection do
     error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
     broadcast_status(target, error_state)
     error_state
+  end
+
+  # Resolves the remote paths shared by both staging paths. The tarball is
+  # uploaded to a temp path, then extracted into remote_path's parent (the
+  # tarball contains a top-level genesis_remote/ directory).
+  defp remote_paths(target) do
+    ssh_target = target.ssh_target
+    remote_path = Map.get(target, :remote_path) || "/tmp/genesis_remote"
+    remote_tarball = remote_tarball_path(remote_path)
+    remote_dir = Path.dirname(remote_path)
+    launcher_path = Path.join(remote_path, "bin/genesis_remote")
+
+    %{
+      ssh_target: ssh_target,
+      remote_tarball: remote_tarball,
+      remote_dir: remote_dir,
+      launcher_path: launcher_path
+    }
   end
 
   # Computes the temp tarball path on the remote from the remote_path.
@@ -1039,9 +1045,8 @@ defmodule EvoGit.RemoteConnection do
         {:error, _reason} = error -> error
       end
     else
-      # :starting_daemon stage
-      state = %{state | bootstrap_stage: :starting_daemon}
-      broadcast_status(target, state)
+      # :starting_daemon stage — broadcast only on the start path.
+      set_stage(state, target, :starting_daemon)
 
       case start_daemon(ssh_target, launcher_path, os, target, cookie) do
         :ok -> verify_daemon_healthy(ssh_target, os, target)
@@ -1070,8 +1075,7 @@ defmodule EvoGit.RemoteConnection do
         {:ok, output, 0} ->
           if nixos_detected?(output) do
             # :patching_binaries stage — broadcast only when the patch actually runs
-            state = %{state | bootstrap_stage: :patching_binaries}
-            broadcast_status(target, state)
+            state = set_stage(state, target, :patching_binaries)
             run_patch_script(state, ssh_target, launcher_path)
           else
             {:ok, state}
@@ -1477,38 +1481,32 @@ defmodule EvoGit.RemoteConnection do
 
   # ── State transitions / cleanup ────────────────────────────────────
 
-  defp transition_to_error(%__MODULE__{} = state, error_msg) do
+  # Shared teardown: cancels the heartbeat timer, disconnects the remote node,
+  # and closes the SSH tunnel port — in that order — returning the state with
+  # the teardown-tracked fields reset.
+  defp teardown(%__MODULE__{} = state) do
     cancel_heartbeat(state.heartbeat_ref)
     disconnect_node(state.node)
     close_port(state.ssh_tunnel_port)
 
-    new_state = %__MODULE__{
+    %__MODULE__{
       state
-      | phase: :error,
-        last_error: error_msg,
-        ssh_tunnel_port: nil,
+      | ssh_tunnel_port: nil,
         tunnel_local_port: nil,
         heartbeat_ref: nil
     }
+  end
 
+  defp transition_to_error(%__MODULE__{} = state, error_msg) do
+    new_state = %{teardown(state) | phase: :error, last_error: error_msg}
     broadcast_status(state.target, new_state)
     new_state
   end
 
   defp cleanup(%__MODULE__{} = state) do
-    cancel_heartbeat(state.heartbeat_ref)
-    disconnect_node(state.node)
-    close_port(state.ssh_tunnel_port)
-
-    broadcast_status(state.target, %{state | phase: :disconnected})
-
-    %__MODULE__{
-      state
-      | phase: :disconnected,
-        ssh_tunnel_port: nil,
-        tunnel_local_port: nil,
-        heartbeat_ref: nil
-    }
+    new_state = %{teardown(state) | phase: :disconnected}
+    broadcast_status(state.target, new_state)
+    new_state
   end
 
   # ── Command runner ─────────────────────────────────────────────────
@@ -1808,6 +1806,15 @@ defmodule EvoGit.RemoteConnection do
       @pubsub_topic,
       {:remote_connection_status, target.id, status_map(state)}
     )
+  end
+
+  # Updates the bootstrap stage and broadcasts the new status, returning the
+  # updated state. Every stage transition goes through here so the update +
+  # broadcast ordering stays consistent.
+  defp set_stage(state, target, stage) do
+    state = %{state | bootstrap_stage: stage}
+    broadcast_status(target, state)
+    state
   end
 
   defp schedule_heartbeat do

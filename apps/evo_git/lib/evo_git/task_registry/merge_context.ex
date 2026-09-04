@@ -12,7 +12,6 @@ defmodule EvoGit.TaskRegistry.MergeContext do
   in that repo (from its result `repos` map) when present.
   """
 
-  alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
   alias EvoGit.TaskRegistry.PrevTaskRepos
 
@@ -63,8 +62,7 @@ defmodule EvoGit.TaskRegistry.MergeContext do
               foreign_repos when is_list(foreign_repos) ->
                 repos =
                   foreign_repos
-                  |> Enum.map(&ForeignRepo.normalize/1)
-                  |> Enum.reject(&is_nil/1)
+                  |> PrevTaskRepos.normalize_foreign_repos()
                   |> PrevTaskRepos.apply_starting_commits(prev_task)
 
                 Keyword.put(opts, :foreign_repos, repos)
@@ -98,13 +96,8 @@ defmodule EvoGit.TaskRegistry.MergeContext do
       case prev_task.opts do
         opts when is_list(opts) ->
           case Keyword.get(opts, :foreign_repos) do
-            repos when is_list(repos) ->
-              repos
-              |> Enum.map(&ForeignRepo.normalize/1)
-              |> Enum.reject(&is_nil/1)
-
-            _ ->
-              []
+            repos when is_list(repos) -> PrevTaskRepos.normalize_foreign_repos(repos)
+            _ -> []
           end
 
         _ ->

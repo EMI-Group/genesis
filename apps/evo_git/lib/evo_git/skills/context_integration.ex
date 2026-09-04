@@ -63,6 +63,24 @@ defmodule EvoGit.Skills.ContextIntegration do
     end
   end
 
+  # Enumerates the Context-Tree nodes along the hierarchy from the repository
+  # root down to (and including) `relative_path` whose directories actually
+  # exist on disk. Shared ancestor walk used by `hierarchical_skill_names/2`
+  # and `find_skill_node/3`; the dir-name → skill-name mapping on top of it
+  # differs per caller.
+  defp existing_hierarchy_nodes(relative_path, repo_path) do
+    case EvoGit.Core.ContextNode.hierarchy_nodes(relative_path, repo_path) do
+      {:ok, nodes} ->
+        Enum.filter(nodes, fn node ->
+          abs_path = Platform.safe_expand(node.path, node.repo)
+          File.dir?(abs_path)
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
   @doc """
   Walks the hierarchy from the repository root down to `relative_path` and
   collects all skill names enabled at each level.
@@ -72,22 +90,13 @@ defmodule EvoGit.Skills.ContextIntegration do
   @spec hierarchical_skill_names(String.t(), String.t()) :: [String.t()]
   def hierarchical_skill_names(relative_path, repo_path)
       when is_binary(relative_path) and is_binary(repo_path) do
-    case EvoGit.Core.ContextNode.hierarchy_nodes(relative_path, repo_path) do
-      {:ok, nodes} ->
-        nodes
-        |> Enum.filter(fn node ->
-          abs_path = Platform.safe_expand(node.path, node.repo)
-          File.dir?(abs_path)
-        end)
-        |> Enum.flat_map(fn node ->
-          abs_path = Platform.safe_expand(node.path, node.repo)
-          skill_names_at_dir(abs_path)
-        end)
-        |> Enum.uniq()
-
-      {:error, _} ->
-        []
-    end
+    relative_path
+    |> existing_hierarchy_nodes(repo_path)
+    |> Enum.flat_map(fn node ->
+      abs_path = Platform.safe_expand(node.path, node.repo)
+      skill_names_at_dir(abs_path)
+    end)
+    |> Enum.uniq()
   end
 
   @doc """
@@ -278,24 +287,15 @@ defmodule EvoGit.Skills.ContextIntegration do
   Returns the relative path of the first matching ancestor, or nil.
   """
   def find_skill_node(skill_name, node_path, repo_path) do
-    case EvoGit.Core.ContextNode.hierarchy_nodes(node_path, repo_path) do
-      {:ok, nodes} ->
-        # Walk up from root to (but not including) node_path
-        nodes
-        |> Enum.filter(fn node ->
-          abs_path = Platform.safe_expand(node.path, node.repo)
-          File.dir?(abs_path)
-        end)
-        |> Enum.reject(fn node -> node.path == node_path end)
-        |> Enum.find_value(fn node ->
-          abs_path = Platform.safe_expand(node.path, node.repo)
-          skills = skill_names_at_dir(abs_path)
-          if skill_name in skills, do: node.path
-        end)
-
-      {:error, _} ->
-        nil
-    end
+    # Walk up from root to (but not including) node_path
+    node_path
+    |> existing_hierarchy_nodes(repo_path)
+    |> Enum.reject(fn node -> node.path == node_path end)
+    |> Enum.find_value(fn node ->
+      abs_path = Platform.safe_expand(node.path, node.repo)
+      skills = skill_names_at_dir(abs_path)
+      if skill_name in skills, do: node.path
+    end)
   end
 
   @doc """

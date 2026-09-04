@@ -48,6 +48,10 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 | **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0`, `writable_foreign_repo_clause/0` (Architect, ContextExtractor) |
 | **Objective scope** | `objective_not_in_node_prefix/0` (Executor, ContextExtractor) |
 
+### ReadOnlyTools — Shared Read-Only Tool Set
+
+`EvoGit.Agents.ReadOnlyTools` (`read_only_tools.ex`) exposes `available_tools/1` — the shared read-only tool set used by read-only agent implementations (currently `Investigator` and `ContextExtractor`), composing `read_only_schemas/0` + the agent's own subagent schemas + `complete_task`. Read-only agents that need the standard read-only tool list should reuse `ReadOnlyTools.available_tools/1` instead of re-listing tools locally.
+
 ## Notes for Agents (prompt composition)
 
 - **Architect foreign-repo role rule** (in `architect.ex` "Foreign Repository Integration"): the Architect must determine what each foreign repo is FOR (tests / reference implementation / dependency / docs) before designing, and treat foreign-repo test suites as given tests to design for (100% pass-rate target) that carry into Phase 2. Do not remove when editing the prompt — it fixes the real-world failure mode where tests were implicitly supplied as foreign repos and the Architect ignored them.

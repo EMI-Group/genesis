@@ -70,7 +70,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   Returns the path to the workers directory for a given repo root.
   """
   @spec workers_dir(String.t()) :: String.t()
-  def workers_dir(repo_root), do: Path.join(repo_root, ".genesis/workers")
+  def workers_dir(repo_root), do: Worktrees.workers_dir(repo_root)
 
   @doc """
   Creates (or recreates) a fresh worktree for an agent and prepares it.
@@ -549,7 +549,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         | agents:
             Map.put(state.agents, agent_id, %{
               worktree_path: worktree,
-              repo_root: repo_root || derive_repo_root(worktree),
+              repo_root: repo_root || Worktrees.repo_root_from_worktree(worktree),
               branch_name: Worktrees.branch_name(task_number, task_local_id),
               creating: false,
               monitor_ref: ref
@@ -559,16 +559,6 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     else
       _ ->
         state
-    end
-  end
-
-  # Derives the repo root from a worktree path (primary-repo layout), mirroring
-  # `Dispatch.resolve_agent_repo_root/2`'s worktree-suffix strip. Used only as
-  # a fallback when the AgentState `repo_root` is missing.
-  defp derive_repo_root(worktree_path) do
-    case String.split(worktree_path, "/.genesis/workers/", parts: 2) do
-      [root, _rest] -> root
-      [_] -> worktree_path
     end
   end
 end

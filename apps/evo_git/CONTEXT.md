@@ -217,7 +217,7 @@ Remote dashboard RPC (`EvoGit.RemoteNode` → `EvoGit.AgentScheduler.RemoteAPI` 
 
 - Part of an **umbrella project** — deps, build artifacts, and lockfile live at the repository root. Elixir ~> 1.18 required. **Git CLI only** (no libgit2 bindings). No source code at root — all code under `./apps/`.
 - All git operations must go through `EvoGit.Adapters.Git` — no direct `System.cmd("git", ...)` in domain modules (exceptions: `Shared.do_git_commit`'s raw `System.cmd` for `make_dir` commits, and GitEnv's own config reads).
-- `remote_api.ex` (~900 lines) and `remote_node.ex` (~1250 lines) are intentionally long cohesive RPC wrapper modules — do NOT split them; add new RPC functions to these modules.
+- `remote_api.ex` (~1090 lines) and `remote_node.ex` (~1150 lines) are intentionally long cohesive RPC wrapper modules — do NOT split them; add new RPC functions to these modules (identity-unwrap wrappers via the `defnode` macro from `EvoGit.RemoteNode.Defnode`; per-function-fallback wrappers stay hand-written).
 - Agents are transient modules using the `EvoGit.Agent` behaviour; framework state lives in ETS. Agent execution happens in **isolated git worktrees** managed by `AgentScheduler.WorktreeManager` (monitor-driven reclaim) — never on the main working copy. Agents commit before delegating subagents (auto-commit fallback enforced by scheduler).
 - Subdirectories follow Elixir convention: `./lib/evo_git/<subdir>/` maps to `EvoGit.<Subdir>` namespace.
 - **Three-level configuration** (`EvoGit.Config`): built-in defaults → user config (`~/.config/genesis/config.toml`) → runtime overrides. **No default model or username is hardcoded**; user config follows XDG conventions.

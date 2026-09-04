@@ -114,22 +114,13 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     # top. This covers subagents spawned in the cancel window, crash-retries,
     # and queued agents starting late. The check is a cheap ETS lookup keyed
     # by task_id. task_id may be nil for agents spawned without a task.
-    if is_binary(task_id) and cancelling_task?(task_id) do
+    if is_binary(task_id) and EvoGit.AgentScheduler.cancelling_task?(task_id) do
       Store.append_pending_user_message(id, EvoGit.AgentScheduler.cancel_message())
       Store.set_cancel_requested(id)
     end
 
     state = %{state | next_agent_id: id + 1}
     {id, state}
-  end
-
-  # Returns true when the task_id is registered in the :evogit_cancelling_tasks
-  # marker. Defensive against a missing table.
-  defp cancelling_task?(task_id) do
-    case :ets.whereis(:evogit_cancelling_tasks) do
-      :undefined -> false
-      _tid -> :ets.member(:evogit_cancelling_tasks, task_id)
-    end
   end
 
   @doc """
@@ -554,10 +545,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
       # - A repo root (e.g., "/home/bill/Source/evoclass") for top-level agents
       # - A worktree path (e.g., ".../.genesis/workers/worker_T1_A1") for subagents
       # Derive the repo root by stripping the worktree suffix if present.
-      case String.split(spec.phylo_node.repo, "/.genesis/workers/", parts: 2) do
-        [root, _rest] -> root
-        [_] -> spec.phylo_node.repo
-      end
+      Worktrees.repo_root_from_worktree(spec.phylo_node.repo)
     else
       # Foreign repo — resolve from the spec's foreign_repos list
       spec.foreign_repos

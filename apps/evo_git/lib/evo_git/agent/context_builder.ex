@@ -105,10 +105,6 @@ defmodule EvoGit.Agent.ContextBuilder do
     AgentScheduler.update_agent_context(agent_id, context)
   end
 
-  def sync_usage_to_ets(agent_id, usage) do
-    AgentScheduler.update_agent_usage(agent_id, usage)
-  end
-
   def sync_turn_to_ets(agent_id, turn) do
     AgentScheduler.update_agent_turn(agent_id, turn)
   end
@@ -144,7 +140,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   Tags the last message in a context with the given turn number.
   """
   def tag_context_tail_with_turn(%ReqLLM.Context{} = context, turn)
-       when is_integer(turn) do
+      when is_integer(turn) do
     case context.messages do
       [] ->
         context
@@ -160,7 +156,7 @@ defmodule EvoGit.Agent.ContextBuilder do
   Tags ALL messages in a context with the given turn number (for initial setup).
   """
   def tag_context_messages_with_turn(%ReqLLM.Context{} = context, turn)
-       when is_integer(turn) do
+      when is_integer(turn) do
     tagged_msgs = Enum.map(context.messages, &tag_message_turn(&1, turn))
     %{context | messages: tagged_msgs}
   end

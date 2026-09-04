@@ -120,8 +120,7 @@ defmodule EvoGit.Sandbox.MacOS do
 
       # Wrap in bash with stdin redirected from /dev/null so commands like rg
       # that read stdin on missing args get immediate EOF instead of hanging.
-      inner_cmd = Enum.map_join([exec | exec_args], " ", &Helpers.shell_escape/1)
-      wrapped_cmd = inner_cmd <> " < /dev/null"
+      wrapped_cmd = Helpers.build_shell_command(exec, exec_args) <> " < /dev/null"
 
       # sandbox-exec -p <profile> -- bash -c <wrapped_cmd>
       result = sandbox_exec(profile, "bash", ["-c", wrapped_cmd], cwd, resolved_tmpdir, git_env)
@@ -145,8 +144,7 @@ defmodule EvoGit.Sandbox.MacOS do
           do: EvoGit.GitEnv.git_env_list(cwd),
           else: []
 
-      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-      wrapped_cmd = inner_cmd <> " < /dev/null"
+      wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
 
       System.cmd("bash", ["-c", wrapped_cmd],
         cd: cwd,
@@ -222,11 +220,11 @@ defmodule EvoGit.Sandbox.MacOS do
 
     # Repo access: the worktree (cwd) plus the git metadata dir. cwd is
     # emitted here with the read allow; the write allow follows below. The
-    # metadata dir is resolved via `git_metadata_dir/2`, which follows
+    # metadata dir is resolved via `Helpers.git_metadata_dir/2`, which follows
     # linked-worktree `gitdir:` pointer files so the common git dir is
     # covered even when the caller passes a worktree root or nil repo_root.
     git_metadata_rule =
-      case git_metadata_dir(cwd, repo_root) do
+      case Helpers.git_metadata_dir(cwd, repo_root) do
         nil ->
           ""
 
@@ -442,76 +440,6 @@ defmodule EvoGit.Sandbox.MacOS do
     |> String.trim()
   end
 
-  # Resolves the git metadata directory the sandbox must grant read+write
-  # access to. Returns nil when no git metadata dir should be exposed.
-  #
-  # - `base = repo_root || cwd`; `literal = Path.join(base, ".git")`.
-  # - If `literal` is a FILE, it is a linked-worktree pointer (a
-  #   `gitdir: <path>` line as produced by `git worktree add`). The pointer
-  #   target is the per-worktree metadata dir (`<common>/worktrees/<name>`);
-  #   git also needs the COMMON dir (objects/refs/logs/packed-refs/config),
-  #   so the prefix before the LAST "/worktrees/" segment is returned (a
-  #   subpath rule on the common dir covers the per-worktree dir inside it).
-  #   A pointer without a "/worktrees/" segment resolves to itself.
-  # - Otherwise (`.git` is a real directory, or missing):
-  #   - repo_root given → the literal `<repo_root>/.git` (unchanged behavior).
-  #   - repo_root nil → nil, UNLESS the literal is an existing directory
-  #     (cwd IS a repo with a real `.git` — e.g. the skills executor passing
-  #     cwd = worktree and repo_root = nil).
-  defp git_metadata_dir(cwd, repo_root) do
-    base = repo_root || cwd
-    literal = Path.join(base, ".git")
-
-    case File.read(literal) do
-      {:ok, content} -> parse_gitdir_pointer(content, base, literal)
-      {:error, _} -> if repo_root || File.dir?(literal), do: literal, else: nil
-    end
-  end
-
-  # Parses a linked-worktree `.git` pointer file. Finds the first line
-  # starting with "gitdir:", strips the prefix, trims whitespace; empty or
-  # missing → unparseable → falls back to `literal`. The resolved target is
-  # expanded relative to `base` when not absolute, then reduced to the common
-  # git dir (prefix before the last "/worktrees/" segment — `binary_part` on
-  # the last match start, NOT `String.split` with parts: 2, which is wrong
-  # when the repo path itself contains "/worktrees/").
-  defp parse_gitdir_pointer(content, base, literal) do
-    target =
-      content
-      |> String.split("\n")
-      |> Enum.find(&String.starts_with?(&1, "gitdir:"))
-      |> case do
-        nil -> nil
-        line -> line |> String.replace_prefix("gitdir:", "") |> String.trim()
-      end
-
-    case target do
-      nil ->
-        literal
-
-      "" ->
-        literal
-
-      pointer ->
-        resolved = Path.expand(pointer, base)
-
-        case :binary.matches(resolved, "/worktrees/") do
-          [] ->
-            resolved
-
-          matches ->
-            {start, _len} = List.last(matches)
-
-            case :binary.part(resolved, 0, start) do
-              # Pathological: common dir at filesystem root — never emit a
-              # broken empty-subpath rule; use the resolved target itself.
-              "" -> resolved
-              common -> common
-            end
-        end
-    end
-  end
-
   # Removes the `(limit ...)` line from a generated SBPL profile, preserving
   # the rest verbatim. Used by the fail-safe retry: if `sandbox-exec` on
   # some macOS rejects the `(limit number N)` syntax, the whole profile
@@ -604,14 +532,9 @@ defmodule EvoGit.Sandbox.MacOS do
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
   def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil)
       when is_list(args) and is_integer(timeout) and timeout > 0 do
-    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
-    File.mkdir_p!(tmpdir)
+    tmpfile = Helpers.partial_output_tmpfile()
 
-    tmpfile =
-      Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
-
-    inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> Helpers.shell_escape(tmpfile) <> " 2>&1 < /dev/null"
+    wrapped_cmd = Helpers.build_redirected_command(executable, args, tmpfile)
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash)
     is_git = EvoGit.GitEnv.git_command?(executable)
@@ -663,24 +586,15 @@ defmodule EvoGit.Sandbox.MacOS do
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
       git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
-      task =
-        Task.async(fn ->
-          System.cmd("bash", ["-c", wrapped_cmd],
-            cd: cwd,
-            stderr_to_stdout: true,
-            env: git_env
-          )
-        end)
-
-      case Task.yield(task, timeout) || Task.shutdown(task) do
-        {:ok, {_output, exit_code}} ->
-          content = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:ok, content, exit_code}
-
-        nil ->
-          partial = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-      end
+      Helpers.run_task_with_partial(
+        "bash",
+        ["-c", wrapped_cmd],
+        cwd,
+        git_env,
+        timeout,
+        tmpfile,
+        max_bytes
+      )
     end
   end
 end

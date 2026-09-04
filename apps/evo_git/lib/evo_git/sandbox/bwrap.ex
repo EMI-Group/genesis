@@ -265,8 +265,7 @@ defmodule EvoGit.Sandbox.Bwrap do
       # Unix backends: bwrap inherits our stdin, and commands like rg that read
       # stdin on missing args must get immediate EOF instead of hanging.
       is_git = EvoGit.GitEnv.git_command?(executable)
-      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-      wrapped_cmd = inner_cmd <> " < /dev/null"
+      wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
       sandbox_args = args(cwd, "bash", ["-c", wrapped_cmd], repo_root)
       # args/4 can't detect git on the wrapped "bash", so inject the resolved
       # git identity explicitly — BEFORE the command (bwrap's GOption parser
@@ -275,8 +274,7 @@ defmodule EvoGit.Sandbox.Bwrap do
       System.cmd("bwrap", sandbox_args, stderr_to_stdout: true)
     else
       # Disabled path: identical to linux.ex — bash -c with stdin redirect.
-      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-      wrapped_cmd = inner_cmd <> " < /dev/null"
+      wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
 
       if EvoGit.GitEnv.git_command?(executable) do
         System.cmd("bash", ["-c", wrapped_cmd],
@@ -420,9 +418,9 @@ defmodule EvoGit.Sandbox.Bwrap do
       end
 
     # The git metadata dir is resolved through linked-worktree `gitdir:`
-    # pointers (see git_metadata_dir/2) so `git commit` works in worktrees
-    # whose `.git` is a pointer file into a common dir.
-    git_meta = git_metadata_dir(cwd, repo_root)
+    # pointers (see Helpers.git_metadata_dir/2) so `git commit` works in
+    # worktrees whose `.git` is a pointer file into a common dir.
+    git_meta = Helpers.git_metadata_dir(cwd, repo_root)
 
     writable_bind_args =
       ([cwd] ++ write_paths ++ nix_paths ++ List.wrap(git_meta))
@@ -522,14 +520,9 @@ defmodule EvoGit.Sandbox.Bwrap do
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
   def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil)
       when is_list(args) and is_integer(timeout) and timeout > 0 do
-    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
-    File.mkdir_p!(tmpdir)
+    tmpfile = Helpers.partial_output_tmpfile()
 
-    tmpfile =
-      Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
-
-    inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> Helpers.shell_escape(tmpfile) <> " 2>&1 < /dev/null"
+    wrapped_cmd = Helpers.build_redirected_command(executable, args, tmpfile)
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash), so the
     # resolved identity can be injected into the sandbox explicitly.
@@ -555,31 +548,22 @@ defmodule EvoGit.Sandbox.Bwrap do
           [:binary, :exit_status, :hide, :stderr_to_stdout] ++ [{:args, sandbox_args}]
         )
 
-      os_pid = wait_for_os_pid(port)
+      os_pid = Helpers.wait_for_os_pid(port)
       collect_output(port, timeout, max_bytes, os_pid, tmpfile)
     else
       # Disabled path: identical to linux.ex — Task + bash -c (no nix wrapping,
       # consistent with run/4's disabled path).
       git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
-      task =
-        Task.async(fn ->
-          System.cmd("bash", ["-c", wrapped_cmd],
-            cd: cwd,
-            stderr_to_stdout: true,
-            env: git_env
-          )
-        end)
-
-      case Task.yield(task, timeout) || Task.shutdown(task) do
-        {:ok, {_output, exit_code}} ->
-          content = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:ok, content, exit_code}
-
-        nil ->
-          partial = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-      end
+      Helpers.run_task_with_partial(
+        "bash",
+        ["-c", wrapped_cmd],
+        cwd,
+        git_env,
+        timeout,
+        tmpfile,
+        max_bytes
+      )
     end
   end
 
@@ -594,24 +578,6 @@ defmodule EvoGit.Sandbox.Bwrap do
     |> Enum.flat_map(fn {key, value} -> ["--setenv", key, value] end)
   end
 
-  # Waits for the OS PID of the spawned bwrap process. The PID is populated
-  # asynchronously after spawn; poll briefly. If it never materializes, fall
-  # back to :undefined and the timeout path degrades to closing the port (the
-  # group kill is skipped).
-  defp wait_for_os_pid(port, attempts \\ 10) do
-    case Port.info(port, :os_pid) do
-      pid when is_integer(pid) ->
-        pid
-
-      _ when attempts > 0 ->
-        Process.sleep(10)
-        wait_for_os_pid(port, attempts - 1)
-
-      _ ->
-        :undefined
-    end
-  end
-
   # Collects the exit status of the bwrap port, killing the whole sandbox
   # process group on timeout and recovering partial output from the temp file.
   defp collect_output(port, timeout, max_bytes, os_pid, tmpfile) do
@@ -623,7 +589,7 @@ defmodule EvoGit.Sandbox.Bwrap do
       timeout ->
         kill_process_group(os_pid)
         Port.close(port)
-        drain_port_messages(port)
+        Helpers.drain_port_messages(port)
 
         partial = Helpers.read_tempfile(tmpfile, max_bytes)
         {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
@@ -658,88 +624,4 @@ defmodule EvoGit.Sandbox.Bwrap do
   end
 
   defp kill_process_group(_), do: :ok
-
-  # After Port.close/1, messages already delivered stay in this process's
-  # mailbox; drain them so they can't be matched by later receives.
-  defp drain_port_messages(port) do
-    receive do
-      {^port, _message} -> drain_port_messages(port)
-    after
-      0 -> :ok
-    end
-  end
-
-  # Resolves the git metadata directory the sandbox must grant write access to.
-  # Returns nil when no git metadata dir should be exposed.
-  #
-  # - `base = repo_root || cwd`; `literal = Path.join(base, ".git")`.
-  # - If `literal` is a FILE, it is a linked-worktree pointer (a
-  #   `gitdir: <path>` line as produced by `git worktree add`). The pointer
-  #   target is the per-worktree metadata dir (`<common>/worktrees/<name>`);
-  #   git also needs the COMMON dir (objects/refs/logs/packed-refs/config),
-  #   so the prefix before the LAST "/worktrees/" segment is returned (a
-  #   writable bind on the common dir covers the per-worktree dir inside it).
-  #   A pointer without a "/worktrees/" segment resolves to itself.
-  # - Otherwise (`.git` is a real directory, or missing):
-  #   - repo_root given → the literal `<repo_root>/.git`.
-  #   - repo_root nil → nil, UNLESS the literal is an existing directory
-  #     (cwd IS a repo with a real `.git` — e.g. the skills executor passing
-  #     cwd = worktree and repo_root = nil).
-  #
-  # Mirrors the macOS backend's resolution (the Linux systemd backend uses the
-  # plain `Path.join(repo_root, ".git")` shape — left unchanged there; this
-  # backend resolves pointers because bwrap binds are per-path, not per-tree).
-  defp git_metadata_dir(cwd, repo_root) do
-    base = repo_root || cwd
-    literal = Path.join(base, ".git")
-
-    case File.read(literal) do
-      {:ok, content} -> parse_gitdir_pointer(content, base, literal)
-      {:error, _} -> if repo_root || File.dir?(literal), do: literal, else: nil
-    end
-  end
-
-  # Parses a linked-worktree `.git` pointer file. Finds the first line
-  # starting with "gitdir:", strips the prefix, trims whitespace; empty or
-  # missing → unparseable → falls back to `literal`. The resolved target is
-  # expanded relative to `base` when not absolute, then reduced to the common
-  # git dir (prefix before the last "/worktrees/" segment — `binary_part` on
-  # the last match start, NOT `String.split` with parts: 2, which is wrong
-  # when the repo path itself contains "/worktrees/").
-  defp parse_gitdir_pointer(content, base, literal) do
-    target =
-      content
-      |> String.split("\n")
-      |> Enum.find(&String.starts_with?(&1, "gitdir:"))
-      |> case do
-        nil -> nil
-        line -> line |> String.replace_prefix("gitdir:", "") |> String.trim()
-      end
-
-    case target do
-      nil ->
-        literal
-
-      "" ->
-        literal
-
-      pointer ->
-        resolved = Path.expand(pointer, base)
-
-        case :binary.matches(resolved, "/worktrees/") do
-          [] ->
-            resolved
-
-          matches ->
-            {start, _len} = List.last(matches)
-
-            case :binary.part(resolved, 0, start) do
-              # Pathological: common dir at filesystem root — never emit a
-              # broken empty path; use the resolved target itself.
-              "" -> resolved
-              common -> common
-            end
-        end
-    end
-  end
 end

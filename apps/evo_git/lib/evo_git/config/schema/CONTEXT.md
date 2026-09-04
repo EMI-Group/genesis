@@ -19,5 +19,6 @@ Extracts LLM generation parameters from config/model profiles. Accepts a model p
 - Schema definitions are the single source of truth for all config keys.
 
 ## Notes for Agents
-- `definitions.ex` is ~694 lines — legitimate (comprehensive data table of all config keys); do not split it.
+- `definitions.ex` is ~810 lines — legitimate (comprehensive data table of all config keys); do not split it.
+- In `definitions.ex`, the search-provider schemas (`[:tools, :search, <provider>, ...]`) are NOT hand-written literals — they are generated from the data-driven `@search_provider_defs` list (one `%{name:, label:, credential_key:, base_url:, optional model:}` map per search provider: `:tavily`/`:perplexity`/`:exa`/`:bing`/`:brave`), each entry expanded by `search_provider_schema_maps/1` into the repeated per-key schema maps (33 search schema maps in `schemas/0` in total incl. the fixed `:enabled`/`:provider`). Adding or extending a search provider means editing that list, not hand-writing repeated provider maps. `@search_providers`/`search_providers/0` remains the source of truth for the provider-ID list used by the `:provider` schema `in:` validation.
 - `EvoGit.Config.Schema` (validate + defaults + typespecs) lives in the PARENT node file `../schema.ex` — definitions here and the type-checking machinery there must stay in sync. New types require both a definition here AND a `type_errors/3` clause + `@type schema_type` union entry in the parent file.

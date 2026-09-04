@@ -130,7 +130,20 @@ defmodule EvoGit.Config.Schema do
 
       iex> schemas = EvoGit.Config.Schema.schemas_by_category()
       iex> Map.keys(schemas) |> MapSet.new()
-      MapSet.new([:nix, :scheduler, :llm, :user, :sandbox, :truncation, :task_history])
+      MapSet.new([
+        :nix,
+        :scheduler,
+        :llm,
+        :user,
+        :sandbox,
+        :truncation,
+        :task_history,
+        :git,
+        :server,
+        :tools,
+        :node,
+        :appearance
+      ])
   """
   @spec schemas_by_category() :: %{category() => [schema_map()]}
   def schemas_by_category do
@@ -274,7 +287,10 @@ defmodule EvoGit.Config.Schema do
   end
 
   # Accept tuple model specs (e.g. {:openai, [id: "gpt-5.6-sol", base_url: "..."]}).
-  # These are produced by normalize_model_map/1 when a model has override keys.
+  # Tuples are a legacy LLMDB-compatible model spec form passed by API callers
+  # (e.g. tests or direct Schema.validate/save_user_config invocations) — they
+  # are NOT produced by normalize_model_map/1 (config.ex), which yields
+  # "provider:id" strings or atom-keyed maps only.
   # Must be a 2-element tuple: {provider_atom, keyword_list}. The keyword list
   # must have at least :id with a non-empty string. :extra is optional but,
   # if present, must be a map.
@@ -433,6 +449,17 @@ defmodule EvoGit.Config.Schema do
 
   # ── Private: Rule Validation ────────────────────────────────────────
 
+  # Reads a profile field from an atom- or string-keyed map (TOML decoding
+  # may leave string keys). A `case Map.get` (not `||`) distinguishes
+  # "absent" from "present but nil" — nil means the optional field is
+  # unconfigured.
+  defp profile_field(profile, key) do
+    case Map.get(profile, key) do
+      nil -> Map.get(profile, Atom.to_string(key))
+      value -> value
+    end
+  end
+
   defp validate_model_profile(path, profile) when is_map(profile) do
     id = Map.get(profile, :id) || Map.get(profile, "id")
     model = Map.get(profile, :model) || Map.get(profile, "model")
@@ -484,13 +511,8 @@ defmodule EvoGit.Config.Schema do
       end
 
     # Optional peak-hour concurrency fields. Atom- and string-keyed maps are
-    # both possible (TOML decoding may leave string keys). A `case Map.get`
-    # (not `||`) distinguishes "absent" from "present but 0".
-    peak_concurrency =
-      case Map.get(profile, :peak_concurrency) do
-        nil -> Map.get(profile, "peak_concurrency")
-        value -> value
-      end
+    # both possible (TOML decoding may leave string keys).
+    peak_concurrency = profile_field(profile, :peak_concurrency)
 
     peak_concurrency_errors =
       if is_nil(peak_concurrency) do
@@ -499,11 +521,7 @@ defmodule EvoGit.Config.Schema do
         validate_peak_concurrency(path, peak_concurrency)
       end
 
-    peak_hours =
-      case Map.get(profile, :peak_hours) do
-        nil -> Map.get(profile, "peak_hours")
-        value -> value
-      end
+    peak_hours = profile_field(profile, :peak_hours)
 
     peak_hours_errors =
       if is_nil(peak_hours) do
@@ -512,15 +530,8 @@ defmodule EvoGit.Config.Schema do
         validate_peak_hours(path, peak_hours)
       end
 
-    # Optional IANA timezone name for the profile's peak-hour windows. Atom-
-    # and string-keyed maps are both possible (TOML decoding may leave string
-    # keys). A `case Map.get` (not `||`) distinguishes "absent" from
-    # "present but nil".
-    timezone =
-      case Map.get(profile, :timezone) do
-        nil -> Map.get(profile, "timezone")
-        value -> value
-      end
+    # Optional IANA timezone name for the profile's peak-hour windows.
+    timezone = profile_field(profile, :timezone)
 
     timezone_errors =
       if is_nil(timezone) do
@@ -530,15 +541,8 @@ defmodule EvoGit.Config.Schema do
       end
 
     # Optional list of days on which the profile is entirely off-peak (normal
-    # concurrency 24/7, every peak_hours window suppressed). Atom- and
-    # string-keyed maps are both possible (TOML decoding may leave string
-    # keys). A `case Map.get` (not `||`) distinguishes "absent" from
-    # "present but nil".
-    off_peak_days =
-      case Map.get(profile, :off_peak_days) do
-        nil -> Map.get(profile, "off_peak_days")
-        value -> value
-      end
+    # concurrency 24/7, every peak_hours window suppressed).
+    off_peak_days = profile_field(profile, :off_peak_days)
 
     off_peak_days_errors =
       if is_nil(off_peak_days) do
@@ -774,22 +778,23 @@ defmodule EvoGit.Config.Schema do
 
   # ── Private: Helpers ────────────────────────────────────────────────
 
+  @doc false
   # Safe nested-map accessor. Unlike Kernel.get_in/2 (which uses the Access
   # behaviour and raises ArgumentError on non-map intermediate values like
   # strings or integers), this traverses the path only through actual maps,
   # returning nil if any step is not a map. This is necessary because user
   # config may contain type-mismatched values (e.g. `scheduler = "x"` instead
   # of a `[scheduler]` table) and validation must not crash on them.
-  defp safe_get_in(map, []), do: map
+  def safe_get_in(map, []), do: map
 
-  defp safe_get_in(map, [key | rest]) when is_map(map) do
+  def safe_get_in(map, [key | rest]) when is_map(map) do
     case Map.fetch(map, key) do
       {:ok, value} -> safe_get_in(value, rest)
       :error -> nil
     end
   end
 
-  defp safe_get_in(_non_map, _path), do: nil
+  def safe_get_in(_non_map, _path), do: nil
 
   defp error(key_path, message, value, rule) do
     %ValidationError{

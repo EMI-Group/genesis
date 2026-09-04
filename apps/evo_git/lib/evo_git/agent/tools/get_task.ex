@@ -47,63 +47,28 @@ defmodule EvoGit.Agent.Tools.GetTask do
     Task #{task.id}
     - status: #{task.status}
     - type: #{task.type}
-    - objective: #{objective_snippet(task.opts)}
-    - started_at: #{format_datetime(task.started_at)}
-    - finished_at: #{format_datetime(task.finished_at)}
+    - objective: #{Shared.objective_snippet(task.opts, @truncate_length)}
+    - started_at: #{Shared.format_datetime(task.started_at)}
+    - finished_at: #{Shared.format_datetime(task.finished_at)}
     - result: #{format_result(task.result)}
     """
     |> String.trim_trailing()
   end
 
-  defp objective_snippet(opts) do
-    case objective_from_opts(opts) do
-      nil ->
-        "(no objective)"
-
-      obj when is_binary(obj) ->
-        case String.trim(obj) do
-          "" -> "(no objective)"
-          trimmed -> truncate(trimmed, @truncate_length)
-        end
-
-      obj ->
-        truncate(inspect(obj), @truncate_length)
-    end
-  end
-
-  # `opts` on %TaskInfo{} is a keyword list; a string-keyed map form is handled
-  # too. Checks both key shapes defensively.
-  defp objective_from_opts(opts) when is_map(opts),
-    do: Map.get(opts, "objective") || Map.get(opts, :objective)
-
-  defp objective_from_opts(opts) when is_list(opts), do: Keyword.get(opts, :objective)
-  defp objective_from_opts(_opts), do: nil
-
   # `result` may be nil, a plain string, or a map with a "result"/:result key
   # containing a string — format defensively and truncate long strings.
   defp format_result(nil), do: "none"
 
-  defp format_result(result) when is_binary(result), do: truncate(result, @truncate_length)
+  defp format_result(result) when is_binary(result),
+    do: Shared.truncate(result, @truncate_length)
 
   defp format_result(result) when is_map(result) do
     case Map.get(result, "result") || Map.get(result, :result) do
-      nil -> truncate(inspect(result), @truncate_length)
-      value when is_binary(value) -> truncate(value, @truncate_length)
-      value -> truncate(inspect(value), @truncate_length)
+      nil -> Shared.truncate(inspect(result), @truncate_length)
+      value when is_binary(value) -> Shared.truncate(value, @truncate_length)
+      value -> Shared.truncate(inspect(value), @truncate_length)
     end
   end
 
-  defp format_result(result), do: truncate(inspect(result), @truncate_length)
-
-  defp format_datetime(nil), do: "unknown"
-  defp format_datetime(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  defp format_datetime(other), do: to_string(other)
-
-  defp truncate(string, max) when is_binary(string) do
-    if String.length(string) <= max do
-      string
-    else
-      String.slice(string, 0, max) <> "...[truncated]"
-    end
-  end
+  defp format_result(result), do: Shared.truncate(inspect(result), @truncate_length)
 end

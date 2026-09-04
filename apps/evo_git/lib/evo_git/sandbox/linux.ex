@@ -60,11 +60,7 @@ defmodule EvoGit.Sandbox.Linux do
         false
 
       true ->
-        case EvoGit.Config.resolve([:sandbox, :mode]) do
-          :enabled -> true
-          :disabled -> false
-          :auto -> Platform.systemd_available?()
-        end
+        Helpers.sandbox_mode_enabled?(&Platform.systemd_available?/0)
     end
   end
 
@@ -102,8 +98,7 @@ defmodule EvoGit.Sandbox.Linux do
       # Wrap in bash with stdin redirect: systemd-run --pipe connects stdin as a
       # pipe (overriding StandardInput=null), so we redirect on our side.
       is_git = EvoGit.GitEnv.git_command?(executable)
-      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-      wrapped_cmd = inner_cmd <> " < /dev/null"
+      wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
       sandbox_args = inject_unit(args(cwd, "bash", ["-c", wrapped_cmd], repo_root), unit)
       # args/4 won't detect git on "bash", so append git env manually
       sandbox_args = maybe_append_git_env(sandbox_args, is_git, cwd)
@@ -112,8 +107,7 @@ defmodule EvoGit.Sandbox.Linux do
       result
     else
       # Disabled path: wrap in bash with stdin redirect from /dev/null.
-      inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-      wrapped_cmd = inner_cmd <> " < /dev/null"
+      wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
 
       if EvoGit.GitEnv.git_command?(executable) do
         System.cmd("bash", ["-c", wrapped_cmd],
@@ -401,14 +395,9 @@ defmodule EvoGit.Sandbox.Linux do
           {:ok, String.t(), non_neg_integer()} | {:timeout, String.t()}
   def run_with_partial(cwd, executable, args \\ [], repo_root \\ nil, timeout, max_bytes \\ nil)
       when is_list(args) and is_integer(timeout) and timeout > 0 do
-    tmpdir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
-    File.mkdir_p!(tmpdir)
+    tmpfile = Helpers.partial_output_tmpfile()
 
-    tmpfile =
-      Path.join(tmpdir, "#{System.monotonic_time()}_#{System.unique_integer([:positive])}")
-
-    inner_cmd = Enum.map_join([executable | args], " ", &Helpers.shell_escape/1)
-    wrapped_cmd = inner_cmd <> " > " <> Helpers.shell_escape(tmpfile) <> " 2>&1 < /dev/null"
+    wrapped_cmd = Helpers.build_redirected_command(executable, args, tmpfile)
 
     # Detect git on the ORIGINAL executable (before we wrap it in bash).
     # The sandbox args/4 won't detect git since it receives "bash", so we
@@ -445,24 +434,15 @@ defmodule EvoGit.Sandbox.Linux do
       # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
       git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
 
-      task =
-        Task.async(fn ->
-          System.cmd("bash", ["-c", wrapped_cmd],
-            cd: cwd,
-            stderr_to_stdout: true,
-            env: git_env
-          )
-        end)
-
-      case Task.yield(task, timeout) || Task.shutdown(task) do
-        {:ok, {_output, exit_code}} ->
-          content = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:ok, content, exit_code}
-
-        nil ->
-          partial = Helpers.read_tempfile(tmpfile, max_bytes)
-          {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
-      end
+      Helpers.run_task_with_partial(
+        "bash",
+        ["-c", wrapped_cmd],
+        cwd,
+        git_env,
+        timeout,
+        tmpfile,
+        max_bytes
+      )
     end
   end
 

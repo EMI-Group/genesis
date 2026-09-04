@@ -116,7 +116,7 @@ defmodule EvoGit.Config.VersionState do
 
     with :ok <- File.mkdir_p(dir),
          {:ok, toml} <- TomlElixir.encode(%{"version" => version}),
-         {:ok, contents} <- ensure_trailing_newline(toml),
+         {:ok, contents} <- EvoGit.Config.ensure_trailing_newline(toml),
          :ok <- File.write(file_path, contents) do
       refresh_cache()
       :ok
@@ -212,7 +212,9 @@ defmodule EvoGit.Config.VersionState do
       case File.read(file_path) do
         {:ok, contents} ->
           case TomlElixir.decode(contents) do
-            {:ok, data} when is_map(data) -> {:exists, data}
+            {:ok, data} when is_map(data) ->
+              {:exists, data}
+
             {:error, reason} ->
               Logger.warning("Failed to parse version state at #{file_path}: #{inspect(reason)}")
               {:exists, :unparseable}
@@ -232,9 +234,5 @@ defmodule EvoGit.Config.VersionState do
   # next read repopulates the cache.
   defp refresh_cache do
     :persistent_term.erase(@cache_key)
-  end
-
-  defp ensure_trailing_newline(content) when is_binary(content) do
-    {:ok, String.trim_trailing(content) <> "\n"}
   end
 end

@@ -120,8 +120,9 @@ defmodule EvoGit.PathSuggestions do
       EvoGit.Platform.safe_expand(trimmed)
     else
       # Windows-style path on a non-Windows host: use as-is, only stripping
-      # trailing separators so the `File.ls/1` base is clean.
-      case String.replace(trimmed, ~r/[\/\\]+$/, "") do
+      # trailing separators so the `File.ls/1` base is clean. A fully-stripped
+      # result keeps the original so the ls base is never the empty string.
+      case EvoGit.Platform.trim_trailing_separators(trimmed) do
         "" -> trimmed
         stripped -> stripped
       end
@@ -136,7 +137,7 @@ defmodule EvoGit.PathSuggestions do
   # `expanded` is home-anchored or absolute, so there is no cwd fallback —
   # relative input never reaches this point.
   defp split_dir_prefix(expanded, value) do
-    if String.ends_with?(value, "/") or String.ends_with?(value, "\\") do
+    if EvoGit.Platform.trailing_separator?(value) do
       {expanded, ""}
     else
       {Path.dirname(expanded), Path.basename(expanded)}

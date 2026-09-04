@@ -160,16 +160,7 @@ defmodule EvoGit.SystemCheck do
   """
   @spec llm_test(String.t() | map()) :: {:ok, map()} | {:error, String.t()}
   def llm_test(model) when is_binary(model) or is_map(model) do
-    if model == "" or model == %{} do
-      {:error, "No LLM model configured"}
-    else
-      do_llm_test(model)
-    end
-  rescue
-    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
-    e ->
-      Logger.warning("SystemCheck llm_test/1 failed: #{Exception.message(e)}")
-      {:error, Exception.message(e)}
+    guarded_llm_test(model, [], "llm_test/1")
   end
 
   @doc """
@@ -181,16 +172,7 @@ defmodule EvoGit.SystemCheck do
   """
   @spec llm_test(String.t() | map(), keyword()) :: {:ok, map()} | {:error, String.t()}
   def llm_test(model, opts) when (is_binary(model) or is_map(model)) and is_list(opts) do
-    if model == "" or model == %{} do
-      {:error, "No LLM model configured"}
-    else
-      do_llm_test(model, opts)
-    end
-  rescue
-    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
-    e ->
-      Logger.warning("SystemCheck llm_test/2 failed: #{Exception.message(e)}")
-      {:error, Exception.message(e)}
+    guarded_llm_test(model, opts, "llm_test/2")
   end
 
   @doc """
@@ -287,6 +269,22 @@ defmodule EvoGit.SystemCheck do
   # Private helpers
   # ---------------------------------------------------------------------------
 
+  # Shared empty-model guard + dispatch for llm_test/1 and llm_test/2. The
+  # `label` keeps the per-arity warning log line identical to the original
+  # public arities ("llm_test/1"/"llm_test/2").
+  defp guarded_llm_test(model, opts, label) do
+    if model == "" or model == %{} do
+      {:error, "No LLM model configured"}
+    else
+      do_llm_test(model, opts)
+    end
+  rescue
+    # Justified: diagnostics for the dashboard UI — must never crash the LiveView caller process.
+    e ->
+      Logger.warning("SystemCheck #{label} failed: #{Exception.message(e)}")
+      {:error, Exception.message(e)}
+  end
+
   defp check_tool(name) do
     resolved = EvoGit.Executable.resolve(name)
 
@@ -329,7 +327,7 @@ defmodule EvoGit.SystemCheck do
   defp classify_pid(pid) when is_pid(pid), do: {:running, pid}
   defp classify_pid(_other), do: {:error, nil}
 
-  defp do_llm_test(model, opts \\ []) do
+  defp do_llm_test(model, opts) do
     # Ensure API keys from credentials.toml are loaded into env vars before
     # the test request. This is a defensive measure so the test connection
     # is self-sufficient (doesn't rely on AgentScheduler.init having

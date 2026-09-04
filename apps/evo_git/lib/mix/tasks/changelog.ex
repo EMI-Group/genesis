@@ -132,11 +132,12 @@ defmodule Mix.Tasks.Changelog do
 
         case summarize(model, version, prs) do
           {:ok, entries} ->
-            section = build_section(version, entries)
+            grouped = group_by_category(entries)
+            section = build_section(version, grouped)
             content = upsert_changelog(file, version, section)
             File.write!(file, content)
             Mix.shell().info("✓ Changelog updated in #{file}")
-            print_summary(version, entries)
+            print_summary(version, grouped)
             maybe_commit_changelog(file, version)
 
           {:error, reason} ->
@@ -192,24 +193,13 @@ defmodule Mix.Tasks.Changelog do
 
   # git log --first-parent over the range, including merge commits so the
   # mainline walk is PR-shaped. Each record carries hash, parents (space-
-  # separated full SHAs), subject, and body. Records are trimmed per edge:
-  # git joins each record with a newline (`rec1\x1e\nrec2\x1e\n`), so
-  # `trim: true` on the split alone leaves a leading `\n` on every record
-  # after the first — which would corrupt hashes and break `<sha>^1..<sha>`
-  # ranges built from them.
+  # separated full SHAs), subject, and body.
   defp git_log_first_parent(range) do
     format = "%H%x1f%P%x1f%s%x1f%b%x1e"
 
     case git(["log", "--first-parent", "--pretty=format:#{format}", range]) do
       {:ok, output} ->
-        entries =
-          output
-          |> String.split(@record_sep)
-          |> Enum.map(&String.trim/1)
-          |> Enum.reject(&(&1 == ""))
-          |> Enum.flat_map(&parse_first_parent_record/1)
-
-        {:ok, entries}
+        {:ok, split_records(output, &parse_first_parent_record/1)}
 
       {:error, code, output} ->
         {:error, code, output}
@@ -218,26 +208,31 @@ defmodule Mix.Tasks.Changelog do
 
   # The branch commits a merge brought in: git log --no-merges <merge>^1..<merge>.
   # --no-merges skips nested agent merges; a GitHub-style single-commit merge
-  # yields exactly one commit. Records are trimmed per edge for the same
-  # inter-record-newline reason as git_log_first_parent/1 (a leading `\n` on a
-  # hash would make the `<hash>^1..<hash>` range passed in here ambiguous).
+  # yields exactly one commit.
   defp git_log_no_merges(range) do
     format = "%H%x1f%s%x1f%b%x1e"
 
     case git(["log", "--no-merges", "--pretty=format:#{format}", range]) do
       {:ok, output} ->
-        commits =
-          output
-          |> String.split(@record_sep)
-          |> Enum.map(&String.trim/1)
-          |> Enum.reject(&(&1 == ""))
-          |> Enum.flat_map(&parse_record/1)
-
-        {:ok, commits}
+        {:ok, split_records(output, &parse_record/1)}
 
       {:error, code, output} ->
         {:error, code, output}
     end
+  end
+
+  # Splits raw git-log output into records and maps each through the parser.
+  # git joins each record with a newline (`rec1\x1e\nrec2\x1e\n`), so
+  # `String.split(trim: true)` alone leaves a leading `\n` on every record
+  # after the first — which would corrupt hashes and break `<sha>^1..<sha>`
+  # ranges built from them. Each record is therefore trimmed per edge before
+  # parsing.
+  defp split_records(output, parser) do
+    output
+    |> String.split(@record_sep)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.flat_map(parser)
   end
 
   defp build_prs(entries) do
@@ -661,9 +656,8 @@ defmodule Mix.Tasks.Changelog do
     Enum.join(prefix ++ section_lines ++ suffix, "\n")
   end
 
-  defp build_section(version, entries) do
+  defp build_section(version, grouped) do
     date = Date.utc_today() |> to_string()
-    grouped = group_by_category(entries)
 
     category_blocks =
       @categories
@@ -696,9 +690,7 @@ defmodule Mix.Tasks.Changelog do
     end)
   end
 
-  defp print_summary(version, entries) do
-    grouped = group_by_category(entries)
-
+  defp print_summary(version, grouped) do
     Mix.shell().info("Generated changelog section for v#{version}:")
 
     @categories

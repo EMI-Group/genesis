@@ -506,10 +506,12 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_task, task_id}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, Queries.task_select_sql() <> " WHERE id = ?1", [task_id]) do
-        {:ok, %{rows: [row | _]}} -> Codec.decode_task(row)
-        {:ok, %{rows: []}} -> nil
-      end
+      fetch_single_row(
+        state.conn,
+        Queries.task_select_sql() <> " WHERE id = ?1",
+        [task_id],
+        &Codec.decode_task/1
+      )
 
     {:reply, reply, state}
   end
@@ -559,24 +561,14 @@ defmodule EvoGit.Store do
     # large decoded terms are allocated and discarded on that process's heap,
     # not this GenServer's (the known decode-retention hot spot — TaskRegistry
     # already offloads its side the same way; the decode itself still ran here).
-    # Cross-process xqlite use is safe: the connection resource is
-    # mutex-guarded inside the NIF (deps/xqlite connection.rs) — no owner
-    # constraint. The Task is LINKED to this process, so a decode/query raise
-    # (e.g. the `{:ok, %{rows: rows}}` bad match below on query failure)
-    # crashes the GenServer exactly like the old inline handler did. The
-    # caller's 30s @call_timeout still applies (it times out if the Task is
-    # slower — same as today's slow-NFS behavior).
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(from, do_select_all_tasks(state.conn))
-      end)
-
-    {:noreply, state}
+    # See offload/3 for the full rationale (link ⇒ decode/query raises still
+    # crash the Store; the caller's 30s @call_timeout still applies).
+    offload(from, state, fn -> do_select_all_tasks(state.conn) end)
   end
 
   @impl true
   def handle_call(:count_tasks, _from, state) do
-    {:ok, %{rows: [[count]]}} = XqliteNIF.query(state.conn, "SELECT COUNT(*) FROM tasks", [])
+    count = count_table(state.conn, "tasks")
     {:reply, count, state}
   end
 
@@ -584,16 +576,11 @@ defmodule EvoGit.Store do
   def handle_call({:safe_select_paginated_tasks, opts}, from, state) do
     # Offloaded (query + decode + reply on a linked short-lived Task): the
     # decoded task list is the largest term this store produces — it must not
-    # be allocated on this GenServer's heap. See select_all_tasks for the full
+    # be allocated on this GenServer's heap. See offload/3 for the full
     # rationale (linked Task ⇒ decode raises still crash the Store; the
     # skip-and-log decode boundary and the `_ -> []` query-failure arms run
     # inside the Task, preserving their exact behavior).
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(from, do_safe_select_paginated_tasks(state.conn, opts))
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn -> do_safe_select_paginated_tasks(state.conn, opts) end)
   end
 
   @impl true
@@ -739,10 +726,12 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:select_task_logs, task_id}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, "SELECT logs FROM tasks WHERE id = ?1", [task_id]) do
-        {:ok, %{rows: [row | _]}} -> Codec.decode_logs(hd(row))
-        {:ok, %{rows: []}} -> nil
-      end
+      fetch_single_row(
+        state.conn,
+        "SELECT logs FROM tasks WHERE id = ?1",
+        [task_id],
+        fn row -> Codec.decode_logs(hd(row)) end
+      )
 
     {:reply, reply, state}
   end
@@ -753,12 +742,11 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:select_task_update_info, task_id}, _from, state) do
     reply =
-      case XqliteNIF.query(
-             state.conn,
-             "SELECT status, opts, finished_at, lease_expires_at FROM tasks WHERE id = ?1",
-             [task_id]
-           ) do
-        {:ok, %{rows: [row | _]}} ->
+      fetch_single_row(
+        state.conn,
+        "SELECT status, opts, finished_at, lease_expires_at FROM tasks WHERE id = ?1",
+        [task_id],
+        fn row ->
           [status, opts, finished_at, lease_expires_at] = row
 
           %{
@@ -767,10 +755,8 @@ defmodule EvoGit.Store do
             finished_at: Codec.decode_datetime(finished_at),
             lease_expires_at: lease_expires_at
           }
-
-        {:ok, %{rows: []}} ->
-          nil
-      end
+        end
+      )
 
     {:reply, reply, state}
   end
@@ -841,12 +827,7 @@ defmodule EvoGit.Store do
   # behavior.
   @impl true
   def handle_call({:select_tasks_summary, statuses, since}, from, state) do
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(from, do_select_tasks_summary(state.conn, statuses, since))
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn -> do_select_tasks_summary(state.conn, statuses, since) end)
   end
 
   @impl true
@@ -854,15 +835,9 @@ defmodule EvoGit.Store do
     # Offloaded (query + decode + reply on a linked short-lived Task) — same
     # rationale as select_tasks_summary: the decoded summary list must not be
     # allocated on this GenServer's heap.
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(
-          from,
-          do_select_tasks_summary_by_path(state.conn, project_path, statuses, since)
-        )
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn ->
+      do_select_tasks_summary_by_path(state.conn, project_path, statuses, since)
+    end)
   end
 
   # Lightweight query: same 15-column summary projection as above, filtered by
@@ -873,12 +848,7 @@ defmodule EvoGit.Store do
   # rationale as select_tasks_summary.
   @impl true
   def handle_call({:select_tasks_changed_since, since_iso}, from, state) do
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(from, do_select_tasks_changed_since(state.conn, since_iso))
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn -> do_select_tasks_changed_since(state.conn, since_iso) end)
   end
 
   ## GenServer — Project handlers
@@ -907,10 +877,12 @@ defmodule EvoGit.Store do
   @impl true
   def handle_call({:get_project, path}, _from, state) do
     reply =
-      case XqliteNIF.query(state.conn, Queries.project_select_sql() <> " WHERE path = ?1", [path]) do
-        {:ok, %{rows: [row | _]}} -> Codec.decode_project(row)
-        {:ok, %{rows: []}} -> nil
-      end
+      fetch_single_row(
+        state.conn,
+        Queries.project_select_sql() <> " WHERE path = ?1",
+        [path],
+        &Codec.decode_project/1
+      )
 
     {:reply, reply, state}
   end
@@ -935,7 +907,7 @@ defmodule EvoGit.Store do
 
   @impl true
   def handle_call(:count_projects, _from, state) do
-    {:ok, %{rows: [[count]]}} = XqliteNIF.query(state.conn, "SELECT COUNT(*) FROM projects", [])
+    count = count_table(state.conn, "projects")
     {:reply, count, state}
   end
 
@@ -951,14 +923,9 @@ defmodule EvoGit.Store do
   def handle_call(:safe_select_all_tasks, from, state) do
     # Offloaded (query + decode + reply on a linked short-lived Task): full
     # table decode of every task row is the store's heaviest allocation — it
-    # must not run on this GenServer's heap. See select_all_tasks for the full
+    # must not run on this GenServer's heap. See offload/3 for the full
     # rationale (skip-and-log boundary and `_ -> []` arms run inside the Task).
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(from, do_safe_select_all_tasks(state.conn))
-      end)
-
-    {:noreply, state}
+    offload(from, state, fn -> do_safe_select_all_tasks(state.conn) end)
   end
 
   @impl true
@@ -979,16 +946,39 @@ defmodule EvoGit.Store do
 
   ## Private — Helpers
 
+  # ── Offload helper ───────────────────────────────────────────────────
+  #
+  # Shared shape for every offloaded read handler: spawns a short-lived Task
+  # running `fun` (the query AND the decode), replies to `from` with its
+  # result, and returns {:noreply, state}. Large decoded terms are allocated
+  # and discarded on the Task's heap, not this GenServer's. The Task is LINKED
+  # to this process, so a decode/query raise inside `fun` crashes the
+  # GenServer exactly like the old inline handler did. Cross-process xqlite
+  # use is safe: the connection resource is mutex-guarded inside the NIF
+  # (deps/xqlite connection.rs) — no owner constraint. `fun` closes over the
+  # CURRENT state (captured in the handler process before the Task runs);
+  # state itself is returned unchanged (offloaded handlers never mutate it).
+  # The caller's 30s @call_timeout still applies (it times out if the Task is
+  # slower — same as the historical slow-NFS behavior).
+  defp offload(from, state, fun) do
+    {:ok, _task_pid} =
+      Task.start(fn ->
+        GenServer.reply(from, fun.())
+      end)
+
+    {:noreply, state}
+  end
+
   # ── Offloaded read bodies ─────────────────────────────────────────────
   #
-  # These run inside a linked short-lived Task (see the offloaded handle_call
-  # clauses above): they perform the query AND the decode, then reply via
-  # GenServer.reply/2, so large decoded terms are allocated and discarded on
-  # the Task's heap instead of this GenServer's. Bodies are byte-for-byte the
-  # old inline handler logic — the skip-and-log decode boundary
-  # (decode_skipping_bad), the `_ -> []` query-failure arms, and even the
-  # crashing bad matches are preserved verbatim so behavior (including crash
-  # behavior via the Task link) is unchanged.
+  # These run inside a linked short-lived Task (see offload/3 above): they
+  # perform the query AND the decode, then reply via GenServer.reply/2, so
+  # large decoded terms are allocated and discarded on the Task's heap instead
+  # of this GenServer's. Bodies are byte-for-byte the old inline handler logic
+  # — the skip-and-log decode boundary (decode_skipping_bad), the `_ -> []`
+  # query-failure arms, and even the crashing bad matches are preserved
+  # verbatim so behavior (including crash behavior via the Task link) is
+  # unchanged.
 
   defp do_select_all_tasks(conn) do
     case XqliteNIF.query(conn, Queries.task_select_sql(), []) do
@@ -1239,16 +1229,29 @@ defmodule EvoGit.Store do
     }
   end
 
+  # Single-row fetch: runs the query and applies `decode_fun` to the first row
+  # (returning nil when no row matches). Deliberately NO catch-all `_` clause —
+  # a query failure (e.g. `{:error, _}`) falls through to a MatchError that
+  # crashes the GenServer, exactly like the historical inline `case`.
+  defp fetch_single_row(conn, sql, params, decode_fun) do
+    case XqliteNIF.query(conn, sql, params) do
+      {:ok, %{rows: [row | _]}} -> decode_fun.(row)
+      {:ok, %{rows: []}} -> nil
+    end
+  end
+
   # Reads only the status column for a task id. Returns the decoded atom status
-  # or nil if the row doesn't exist. Uses the same XqliteNIF.query pattern as
+  # or nil if the row doesn't exist. Uses the same single-row fetch pattern as
   # get_task; an absent row returns {:ok, %{rows: []}} so no rescue is needed.
   # The status is decoded via Codec.decode_atom/1 for consistency with the
   # existing decode pipeline.
   defp read_task_status(conn, task_id) do
-    case XqliteNIF.query(conn, "SELECT status FROM tasks WHERE id = ?1", [task_id]) do
-      {:ok, %{rows: [row | _]}} -> Codec.decode_atom(hd(row))
-      {:ok, %{rows: []}} -> nil
-    end
+    fetch_single_row(
+      conn,
+      "SELECT status FROM tasks WHERE id = ?1",
+      [task_id],
+      fn row -> Codec.decode_atom(hd(row)) end
+    )
   end
 
   # Diagnostic: logs a warning when a put_task is about to write :failed as a NEW
