@@ -17,8 +17,16 @@ defmodule EvoGit.Agent.Tools.SearchContextTest do
       # Create directories with CONTEXT.md files
       File.mkdir_p!(Path.join(tmp_dir, "lib"))
       File.mkdir_p!(Path.join(tmp_dir, "src"))
-      File.write!(Path.join(tmp_dir, "lib/CONTEXT.md"), "This is the library module.\nIt handles data processing.")
-      File.write!(Path.join(tmp_dir, "src/CONTEXT.md"), "This is the source module.\nIt handles UI rendering.")
+
+      File.write!(
+        Path.join(tmp_dir, "lib/CONTEXT.md"),
+        "This is the library module.\nIt handles data processing."
+      )
+
+      File.write!(
+        Path.join(tmp_dir, "src/CONTEXT.md"),
+        "This is the source module.\nIt handles UI rendering."
+      )
 
       result = Tools.execute("search_context", %{"pattern" => "data processing"}, tmp_dir)
 
@@ -42,7 +50,12 @@ defmodule EvoGit.Agent.Tools.SearchContextTest do
       File.write!(Path.join(tmp_dir, "lib/CONTEXT.md"), "library context with special_keyword")
       File.write!(Path.join(tmp_dir, "src/CONTEXT.md"), "source context without the keyword")
 
-      result = Tools.execute("search_context", %{"pattern" => "special_keyword", "path" => "lib"}, tmp_dir)
+      result =
+        Tools.execute(
+          "search_context",
+          %{"pattern" => "special_keyword", "path" => "lib"},
+          tmp_dir
+        )
 
       assert result =~ "Command executed successfully"
       assert result =~ "special_keyword"

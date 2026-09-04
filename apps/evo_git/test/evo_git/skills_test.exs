@@ -224,10 +224,12 @@ defmodule EvoGit.SkillsTest do
   describe "substitute_params/3" do
     test "substitutes parameter placeholders with provided values" do
       script = ~s(echo "{{name}} is {{status}}")
+
       params = [
         %{name: "name", type: "string", description: "Name", required: true},
         %{name: "status", type: "string", description: "Status", required: false, default: "ok"}
       ]
+
       args = %{"name" => "Alice", "status" => "ready"}
 
       result = Skills.substitute_params(script, params, args)
@@ -236,10 +238,12 @@ defmodule EvoGit.SkillsTest do
 
     test "uses default value when arg not provided" do
       script = ~s(echo "{{name}} is {{status}}")
+
       params = [
         %{name: "name", type: "string", description: "Name", required: true},
         %{name: "status", type: "string", description: "Status", required: false, default: "ok"}
       ]
+
       args = %{"name" => "Bob"}
 
       result = Skills.substitute_params(script, params, args)
@@ -248,10 +252,12 @@ defmodule EvoGit.SkillsTest do
 
     test "uses empty string when no arg and no default" do
       script = ~s(echo "{{greeting}} {{name}}")
+
       params = [
         %{name: "greeting", type: "string", description: "Greeting", required: false},
         %{name: "name", type: "string", description: "Name", required: true}
       ]
+
       args = %{"name" => "World"}
 
       result = Skills.substitute_params(script, params, args)
@@ -260,9 +266,17 @@ defmodule EvoGit.SkillsTest do
 
     test "converts boolean defaults to string" do
       script = ~s(DEBUG={{debug}})
+
       params = [
-        %{name: "debug", type: "boolean", description: "Debug flag", required: false, default: false}
+        %{
+          name: "debug",
+          type: "boolean",
+          description: "Debug flag",
+          required: false,
+          default: false
+        }
       ]
+
       args = %{}
 
       result = Skills.substitute_params(script, params, args)
@@ -374,11 +388,12 @@ defmodule EvoGit.SkillsTest do
       [tool] = Skills.to_tool_schemas([skill])
       assert tool.name == "no-params"
       assert tool.description == "A skill with no parameters"
+
       assert tool.parameter_schema == %{
-        "type" => "object",
-        "properties" => %{},
-        "required" => []
-      }
+               "type" => "object",
+               "properties" => %{},
+               "required" => []
+             }
     end
 
     test "converts skills with parameters" do
@@ -387,8 +402,13 @@ defmodule EvoGit.SkillsTest do
         description: "Has parameters",
         parameters: [
           %{name: "input", type: "string", description: "The input", required: true},
-          %{name: "verbose", type: "boolean", description: "Verbose output", required: false,
-            default: false}
+          %{
+            name: "verbose",
+            type: "boolean",
+            description: "Verbose output",
+            required: false,
+            default: false
+          }
         ],
         body: "body",
         file_path: "/some/path.md"
@@ -570,7 +590,9 @@ defmodule EvoGit.SkillsTest do
       assert names == ["my-skill", "simple-skill"]
     end
 
-    test "filters out files that fail to read, keeps those with recoverable content", %{tmp_dir: tmp_dir} do
+    test "filters out files that fail to read, keeps those with recoverable content", %{
+      tmp_dir: tmp_dir
+    } do
       skills_dir = Path.join(tmp_dir, ".agents/skills")
       File.mkdir_p!(skills_dir)
       File.write!(Path.join(skills_dir, "valid.md"), valid_skill_content())

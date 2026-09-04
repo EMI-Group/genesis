@@ -37,7 +37,8 @@ defmodule EvoGit.Agent.Tools.MakeDir do
           "paths" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
-            "description" => "List of directory paths to create. Paths are relative to git repo path. Example: ['./src/components', './lib/utils']."
+            "description" =>
+              "List of directory paths to create. Paths are relative to git repo path. Example: ['./src/components', './lib/utils']."
           },
           "keep_file" => %{
             "type" => "string",
@@ -83,9 +84,15 @@ defmodule EvoGit.Agent.Tools.MakeDir do
 
   defp fetch_keep_file(args) do
     case Map.get(args, "keep_file") do
-      nil -> {:ok, "CONTEXT.md"}
-      value when value in @keep_file_options -> {:ok, value}
-      other -> {:error, "Invalid keep_file value: #{other}. Must be one of: #{inspect(@keep_file_options)}"}
+      nil ->
+        {:ok, "CONTEXT.md"}
+
+      value when value in @keep_file_options ->
+        {:ok, value}
+
+      other ->
+        {:error,
+         "Invalid keep_file value: #{other}. Must be one of: #{inspect(@keep_file_options)}"}
     end
   end
 
@@ -162,6 +169,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
 
   defp create_keep_file(path, filename) do
     keep_path = Path.join(path, filename)
+
     case File.write(keep_path, "") do
       :ok -> :ok
       {:error, reason} -> {:error, reason}
@@ -178,7 +186,9 @@ defmodule EvoGit.Agent.Tools.MakeDir do
         end
       end)
 
-    commit_message = "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
+    commit_message =
+      "Create director#{if(length(paths) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
+
     Shared.do_git_commit(repo_path, files_to_add, commit_message)
   end
 end

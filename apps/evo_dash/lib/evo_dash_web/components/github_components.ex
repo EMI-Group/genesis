@@ -85,13 +85,11 @@ defmodule EvoDashWeb.GitHubComponents do
                 <span class="loading loading-spinner loading-lg text-info"></span>
                 <p class="text-sm text-base-content/60">{gettext("Loading issues…")}</p>
               </div>
-
             <% :error -> %>
               <div role="alert" class="alert alert-error">
                 <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
                 <p class="text-sm min-w-0 break-words">{error_message(@issues.error)}</p>
               </div>
-
             <% :ok -> %>
               <!-- State filter (open/closed/all) -->
               <div class="flex items-center gap-1 rounded-lg border border-base-200 bg-base-200/50 p-1 w-fit mb-3">
@@ -136,7 +134,10 @@ defmodule EvoDashWeb.GitHubComponents do
                             <span class="badge badge-outline badge-xs">{label}</span>
                           <% end %>
                           <span class="text-xs text-base-content/60 truncate">
-                            {issue.author}<%= if issue.author != "" and created_date(issue.created_at) != "" do %> · {created_date(issue.created_at)}<% end %>
+                            {issue.author}
+                            <%= if issue.author != "" and created_date(issue.created_at) != "" do %>
+                              · {created_date(issue.created_at)}
+                            <% end %>
                           </span>
                         </div>
                       </div>
@@ -161,14 +162,17 @@ defmodule EvoDashWeb.GitHubComponents do
                         title={gettext("Fix this issue")}
                       >
                         <span :if={@fixing == issue.number} class="loading loading-spinner loading-xs"></span>
-                        <.icon :if={@fixing != issue.number} name="hero-wrench-screwdriver" class="size-3.5" />
+                        <.icon
+                          :if={@fixing != issue.number}
+                          name="hero-wrench-screwdriver"
+                          class="size-3.5"
+                        />
                         {gettext("Fix")}
                       </button>
                     </li>
                   <% end %>
                 </ul>
               <% end %>
-
             <% _ -> %>
               <%!-- :idle is a transient state — the parent only renders this
                    modal with :loading assigned, so nothing to show. --%>

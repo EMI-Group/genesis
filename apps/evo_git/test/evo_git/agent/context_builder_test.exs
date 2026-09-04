@@ -164,7 +164,8 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     """
 
     test "returns the rendered text as-is (trimmed) when present" do
-      assert ContextBuilder.build_repo_notes_section(@rendered_notes) == String.trim(@rendered_notes)
+      assert ContextBuilder.build_repo_notes_section(@rendered_notes) ==
+               String.trim(@rendered_notes)
     end
 
     test "returns empty string for nil" do
@@ -180,8 +181,11 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       context_tree = "Current Repository: /tmp/repo"
 
       body =
-        [context_tree, ContextBuilder.build_foreign_repos_section([]),
-         ContextBuilder.build_repo_notes_section(nil)]
+        [
+          context_tree,
+          ContextBuilder.build_foreign_repos_section([]),
+          ContextBuilder.build_repo_notes_section(nil)
+        ]
         |> Enum.reject(&ContextBuilder.blank?/1)
         |> Enum.join("\n\n")
 
@@ -193,8 +197,11 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       context_tree = "Current Repository: /tmp/repo"
 
       body =
-        [context_tree, ContextBuilder.build_foreign_repos_section([]),
-         ContextBuilder.build_repo_notes_section(@rendered_notes)]
+        [
+          context_tree,
+          ContextBuilder.build_foreign_repos_section([]),
+          ContextBuilder.build_repo_notes_section(@rendered_notes)
+        ]
         |> Enum.reject(&ContextBuilder.blank?/1)
         |> Enum.join("\n\n")
 

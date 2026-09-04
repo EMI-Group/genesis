@@ -17,7 +17,8 @@ defmodule EvoGit.TaskRegistry.DiagnosticsTest do
     test "logs the greppable prefix, task_id, source, and prev_status" do
       log =
         capture_log(fn ->
-          assert Diagnostics.log_failed_transition("task-123", :result_handler, :running, []) == :ok
+          assert Diagnostics.log_failed_transition("task-123", :result_handler, :running, []) ==
+                   :ok
         end)
 
       assert log =~ "TaskRegistry: FAILED_TRANSITION"
@@ -29,7 +30,9 @@ defmodule EvoGit.TaskRegistry.DiagnosticsTest do
     test "includes the result value when provided via :result opt" do
       log =
         capture_log(fn ->
-          Diagnostics.log_failed_transition("task-1", :down_handler, :running, result: {:exit, :killed})
+          Diagnostics.log_failed_transition("task-1", :down_handler, :running,
+            result: {:exit, :killed}
+          )
         end)
 
       assert log =~ "result={:exit, :killed}"
@@ -84,9 +87,7 @@ defmodule EvoGit.TaskRegistry.DiagnosticsTest do
     test "marks caller as same-process when :caller_info is nil" do
       log =
         capture_log(fn ->
-          Diagnostics.log_failed_transition("task-7", :result_handler, :running,
-            caller_info: nil
-          )
+          Diagnostics.log_failed_transition("task-7", :result_handler, :running, caller_info: nil)
         end)
 
       assert log =~ "caller_pid=N/A (same-process transition)"
@@ -118,36 +119,36 @@ defmodule EvoGit.TaskRegistry.DiagnosticsTest do
       trace = Diagnostics.capture_stacktrace(5)
 
       refute Enum.any?(trace, fn
-        {EvoGit.TaskRegistry.Diagnostics, :capture_stacktrace, _, _} -> true
-        _ -> false
-      end)
+               {EvoGit.TaskRegistry.Diagnostics, :capture_stacktrace, _, _} -> true
+               _ -> false
+             end)
     end
 
     test "skips internal log_failed_transition frames" do
       trace = Diagnostics.capture_stacktrace(5)
 
       refute Enum.any?(trace, fn
-        {EvoGit.TaskRegistry.Diagnostics, :log_failed_transition, _, _} -> true
-        _ -> false
-      end)
+               {EvoGit.TaskRegistry.Diagnostics, :log_failed_transition, _, _} -> true
+               _ -> false
+             end)
     end
 
     test "skips Process.info frames" do
       trace = Diagnostics.capture_stacktrace(5)
 
       refute Enum.any?(trace, fn
-        {Process, :info, _, _} -> true
-        _ -> false
-      end)
+               {Process, :info, _, _} -> true
+               _ -> false
+             end)
     end
 
     test "skips gen_server frames" do
       trace = Diagnostics.capture_stacktrace(5)
 
       refute Enum.any?(trace, fn
-        {:gen_server, _, _, _} -> true
-        _ -> false
-      end)
+               {:gen_server, _, _, _} -> true
+               _ -> false
+             end)
     end
   end
 

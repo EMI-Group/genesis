@@ -24,204 +24,210 @@ defmodule EvoDashWeb.ReviewLive do
       accent_color={assigns[:accent_color] || "blue"}
     >
       <%= if EvoDashWeb.RemoteGateComponents.gate_active?(assigns) do %>
-        <%= EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns) %>
+        {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
-      <%= if @error do %>
-        <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
-          <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
-          <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
-          <p class="text-sm text-base-content/80 mb-4">{@error}</p>
-          <.link navigate={with_node_param(~p"/projects", @current_node_id)} class="btn btn-primary px-6 gap-2">
-            <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
-          </.link>
-        </div>
-      <% else %>
-        <div class="space-y-4">
-          <!-- Back button -->
-          <div class="flex items-center gap-3">
-            <%= if @live_action == :commit do %>
-              <.link
-                navigate={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
-                class="btn btn-ghost btn-sm gap-1 px-4"
-              >
-                <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
-              </.link>
-            <% else %>
-              <.link navigate={with_node_param(~p"/projects", @current_node_id)} class="btn btn-ghost btn-sm gap-1 px-4">
-                <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
-              </.link>
-            <% end %>
+        <%= if @error do %>
+          <div class="rounded-lg border border-error/30 bg-error/5 p-6 text-center">
+            <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
+            <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
+            <p class="text-sm text-base-content/80 mb-4">{@error}</p>
+            <.link
+              navigate={with_node_param(~p"/projects", @current_node_id)}
+              class="btn btn-primary px-6 gap-2"
+            >
+              <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
+            </.link>
           </div>
-
-          <!-- Loading state -->
-          <%= if @loading do %>
-            <div class="flex items-center justify-center py-20">
-              <span class="loading loading-spinner loading-lg text-primary"></span>
-              <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
+        <% else %>
+          <div class="space-y-4">
+            <!-- Back button -->
+            <div class="flex items-center gap-3">
+              <%= if @live_action == :commit do %>
+                <.link
+                  navigate={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
+                  class="btn btn-ghost btn-sm gap-1 px-4"
+                >
+                  <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
+                </.link>
+              <% else %>
+                <.link
+                  navigate={with_node_param(~p"/projects", @current_node_id)}
+                  class="btn btn-ghost btn-sm gap-1 px-4"
+                >
+                  <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
+                </.link>
+              <% end %>
             </div>
-          <% else %>
-            <%= if @live_action == :commit and @commit_data do %>
-              <!-- Commit detail view -->
-              <EvoDashWeb.ReviewComponents.commit_detail_header commit={@commit_header} />
-              <EvoDashWeb.ReviewComponents.commit_diff_layout
-                files={@commit_data.files}
-                expanded_files={@expanded_files}
-                selected_file={@selected_file}
-                file_context_levels={@file_context_levels}
-              />
-            <% else %>
-              <!-- Review Header (always at top) -->
-              <EvoDashWeb.ReviewComponents.review_header
-                title={@title}
-                task_type={@task_type}
-                branch_name={@branch_name}
-                commit_sha={@commit_sha}
-                status={@review_status}
-              />
 
-              <EvoDashWeb.ReviewComponents.task_summary
-                usage={@task_usage}
-                agent_count={@agent_count}
-                task_type={@task_type}
-                status={@task_status}
-                model_id={@model_id}
-                started_at={@started_at}
-                finished_at={@finished_at}
-              />
-
-              <!-- Unified review card: tab bar + content -->
-              <div class="review-card">
-                <%= if @merge_outcomes != [] do %>
-                  <EvoDashWeb.ReviewComponents.merge_outcomes_panel outcomes={@merge_outcomes} />
-                <% end %>
-                <%= if length(@review_repos) > 1 do %>
-                  <EvoDashWeb.ReviewComponents.repo_tabs
-                    repos={@review_repos}
-                    active_repo_id={@active_repo_id}
-                  />
-                <% end %>
-                <!-- Tab Bar (sticky header of the card) -->
-                <div class="review-card-tabs">
-                  <EvoDashWeb.ReviewComponents.review_tabs
-                    active_tab={@review_tab}
-                    files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
-                    commits_count={length(@commits)}
-                    show_archive={@archive_metadata not in [nil, []]}
-                    agents_count={if @archive_metadata, do: length(@archive_metadata), else: 0}
-                  />
-                </div>
-
-                <!-- Content area -->
-                <div class="review-card-content">
-                  <%= cond do %>
-                    <% @review_tab == :conversation -> %>
-                      <div class="space-y-4 p-4 sm:p-6 lg:p-8">
-                        <!-- Agent Summary -->
-                        <%= if @agent_summary do %>
-                          <EvoDashWeb.ReviewComponents.agent_summary
-                            summary={@agent_summary}
-                            summary_raw={@summary_raw}
-                          />
-                        <% end %>
-
-                        <!-- Diff Stats -->
-                        <%= if @review_data do %>
-                          <EvoDashWeb.ReviewComponents.diff_stats_bar
-                            files_count={@review_data.changed_files_count}
-                            additions={@review_data.total_additions}
-                            deletions={@review_data.total_deletions}
-                            commits_count={length(@commits)}
-                          />
-                        <% end %>
-
-                        <!-- Action Buttons -->
-                        <EvoDashWeb.ReviewComponents.action_buttons
-                          repo_id={@active_repo_id}
-                          branch_exists={@branch_exists}
-                          can_resume={@can_resume}
-                          has_pr={@has_pr}
-                          pr_url={@pr_url}
-                          loading={@action_loading}
-                          is_no_changes={@is_no_changes}
-                          merge_targets={@merge_targets}
-                          default_merge_target={@default_merge_target}
-                          merge_status={@merge_status}
-                        />
-                        <%= if @archive_metadata not in [nil, []] do %>
-                          <.link
-                            href={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
-                            class="btn btn-sm btn-outline btn-primary gap-2"
-                            download
-                          >
-                            <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext(
-                              "Export JSON"
-                            )}
-                          </.link>
-                        <% end %>
-                        <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
-                      </div>
-                    <% @review_tab == :objective -> %>
-                      <div class="p-4 sm:p-6 lg:p-8">
-                        <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
-                      </div>
-                    <% @review_tab == :commits -> %>
-                      <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-                    <% @review_tab == :files_changed -> %>
-                      <%= if @review_data do %>
-                        <EvoDashWeb.ReviewComponents.split_diff_layout
-                          files={@review_data.files}
-                          expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
-                          selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
-                          file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
-                        />
-                      <% else %>
-                        <div class="p-8 text-center">
-                          <.icon
-                            name="hero-document-magnifying-glass"
-                            class="size-10 text-base-content/50 mx-auto mb-3"
-                          />
-                          <p class="text-sm text-base-content/70">
-                            {gettext("No diff data available for this review.")}
-                          </p>
-                        </div>
-                      <% end %>
-                    <% @review_tab == :archive -> %>
-                      <%= if @archive_metadata not in [nil, []] do %>
-                        <div class="p-4 sm:p-6 lg:p-8">
-                          <EvoDashWeb.ReviewComponents.archive_review_section
-                            archive_metadata={@archive_metadata}
-                            task_id={@task_id}
-                          />
-                        </div>
-                      <% else %>
-                        <div class="p-8 text-center">
-                          <.icon
-                            name="hero-archive-box-x-mark"
-                            class="size-10 text-base-content/50 mx-auto mb-3"
-                          />
-                          <p class="text-sm text-base-content/70">
-                            {gettext("No archived agent data available for this task.")}
-                          </p>
-                        </div>
-                      <% end %>
-                  <% end %>
-                </div>
+            <!-- Loading state -->
+            <%= if @loading do %>
+              <div class="flex items-center justify-center py-20">
+                <span class="loading loading-spinner loading-lg text-primary"></span>
+                <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
               </div>
+            <% else %>
+              <%= if @live_action == :commit and @commit_data do %>
+                <!-- Commit detail view -->
+                <EvoDashWeb.ReviewComponents.commit_detail_header commit={@commit_header} />
+                <EvoDashWeb.ReviewComponents.commit_diff_layout
+                  files={@commit_data.files}
+                  expanded_files={@expanded_files}
+                  selected_file={@selected_file}
+                  file_context_levels={@file_context_levels}
+                />
+              <% else %>
+                <!-- Review Header (always at top) -->
+                <EvoDashWeb.ReviewComponents.review_header
+                  title={@title}
+                  task_type={@task_type}
+                  branch_name={@branch_name}
+                  commit_sha={@commit_sha}
+                  status={@review_status}
+                />
 
-              <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-                <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
-                  <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
-                  <p class="text-sm text-warning">
-                    {gettext(
-                      "Could not load diff data. The branch may have been modified externally."
-                    )}
-                  </p>
+                <EvoDashWeb.ReviewComponents.task_summary
+                  usage={@task_usage}
+                  agent_count={@agent_count}
+                  task_type={@task_type}
+                  status={@task_status}
+                  model_id={@model_id}
+                  started_at={@started_at}
+                  finished_at={@finished_at}
+                />
+
+                <!-- Unified review card: tab bar + content -->
+                <div class="review-card">
+                  <%= if @merge_outcomes != [] do %>
+                    <EvoDashWeb.ReviewComponents.merge_outcomes_panel outcomes={@merge_outcomes} />
+                  <% end %>
+                  <%= if length(@review_repos) > 1 do %>
+                    <EvoDashWeb.ReviewComponents.repo_tabs
+                      repos={@review_repos}
+                      active_repo_id={@active_repo_id}
+                    />
+                  <% end %>
+                  <!-- Tab Bar (sticky header of the card) -->
+                  <div class="review-card-tabs">
+                    <EvoDashWeb.ReviewComponents.review_tabs
+                      active_tab={@review_tab}
+                      files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
+                      commits_count={length(@commits)}
+                      show_archive={@archive_metadata not in [nil, []]}
+                      agents_count={if @archive_metadata, do: length(@archive_metadata), else: 0}
+                    />
+                  </div>
+
+                  <!-- Content area -->
+                  <div class="review-card-content">
+                    <%= cond do %>
+                      <% @review_tab == :conversation -> %>
+                        <div class="space-y-4 p-4 sm:p-6 lg:p-8">
+                          <!-- Agent Summary -->
+                          <%= if @agent_summary do %>
+                            <EvoDashWeb.ReviewComponents.agent_summary
+                              summary={@agent_summary}
+                              summary_raw={@summary_raw}
+                            />
+                          <% end %>
+
+                          <!-- Diff Stats -->
+                          <%= if @review_data do %>
+                            <EvoDashWeb.ReviewComponents.diff_stats_bar
+                              files_count={@review_data.changed_files_count}
+                              additions={@review_data.total_additions}
+                              deletions={@review_data.total_deletions}
+                              commits_count={length(@commits)}
+                            />
+                          <% end %>
+
+                          <!-- Action Buttons -->
+                          <EvoDashWeb.ReviewComponents.action_buttons
+                            repo_id={@active_repo_id}
+                            branch_exists={@branch_exists}
+                            can_resume={@can_resume}
+                            has_pr={@has_pr}
+                            pr_url={@pr_url}
+                            loading={@action_loading}
+                            is_no_changes={@is_no_changes}
+                            merge_targets={@merge_targets}
+                            default_merge_target={@default_merge_target}
+                            merge_status={@merge_status}
+                          />
+                          <%= if @archive_metadata not in [nil, []] do %>
+                            <.link
+                              href={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
+                              class="btn btn-sm btn-outline btn-primary gap-2"
+                              download
+                            >
+                              <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext(
+                                "Export JSON"
+                              )}
+                            </.link>
+                          <% end %>
+                          <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
+                        </div>
+                      <% @review_tab == :objective -> %>
+                        <div class="p-4 sm:p-6 lg:p-8">
+                          <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
+                        </div>
+                      <% @review_tab == :commits -> %>
+                        <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+                      <% @review_tab == :files_changed -> %>
+                        <%= if @review_data do %>
+                          <EvoDashWeb.ReviewComponents.split_diff_layout
+                            files={@review_data.files}
+                            expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
+                            selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
+                            file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
+                          />
+                        <% else %>
+                          <div class="p-8 text-center">
+                            <.icon
+                              name="hero-document-magnifying-glass"
+                              class="size-10 text-base-content/50 mx-auto mb-3"
+                            />
+                            <p class="text-sm text-base-content/70">
+                              {gettext("No diff data available for this review.")}
+                            </p>
+                          </div>
+                        <% end %>
+                      <% @review_tab == :archive -> %>
+                        <%= if @archive_metadata not in [nil, []] do %>
+                          <div class="p-4 sm:p-6 lg:p-8">
+                            <EvoDashWeb.ReviewComponents.archive_review_section
+                              archive_metadata={@archive_metadata}
+                              task_id={@task_id}
+                            />
+                          </div>
+                        <% else %>
+                          <div class="p-8 text-center">
+                            <.icon
+                              name="hero-archive-box-x-mark"
+                              class="size-10 text-base-content/50 mx-auto mb-3"
+                            />
+                            <p class="text-sm text-base-content/70">
+                              {gettext("No archived agent data available for this task.")}
+                            </p>
+                          </div>
+                        <% end %>
+                    <% end %>
+                  </div>
                 </div>
+
+                <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
+                  <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
+                    <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
+                    <p class="text-sm text-warning">
+                      {gettext(
+                        "Could not load diff data. The branch may have been modified externally."
+                      )}
+                    </p>
+                  </div>
+                <% end %>
               <% end %>
             <% end %>
-          <% end %>
-        </div>
-      <% end %>
+          </div>
+        <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
     """

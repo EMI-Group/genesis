@@ -53,7 +53,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalCard do
               <h3 class={title_class(@request)}>{title_text(@request)}</h3>
               <%= if level_value(@request) != nil do %>
                 <span class={badge_class(@request)}>
-                  <% # zh_CN: 安全级别徽标（1-3），数值来自请求的 level 字段 --%>
+                  <% # zh_CN: 安全级别徽标（1-3），数值来自请求的 level 字段 -- %>
                   {gettext("Level %{level}", level: level_value(@request))}
                 </span>
               <% end %>
@@ -79,7 +79,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalCard do
                 phx-value-decision="approve"
                 class={confirm_class(@request)}
               >
-                <% # zh_CN: 批准/确认 — 允许助手执行该命令；级别3为红色危险确认 --%>
+                <% # zh_CN: 批准/确认 — 允许助手执行该命令；级别3为红色危险确认 -- %>
                 {gettext("Confirm")}
               </button>
               <button
@@ -89,7 +89,7 @@ defmodule EvoDashWeb.HomeLive.ApprovalCard do
                 phx-value-decision="deny"
                 class="btn btn-ghost btn-sm"
               >
-                <% # zh_CN: 拒绝 — 不允许助手执行该命令 --%>
+                <% # zh_CN: 拒绝 — 不允许助手执行该命令 -- %>
                 {gettext("Deny")}
               </button>
             </div>

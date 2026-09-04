@@ -25,7 +25,9 @@ defmodule EvoGit.Store.QueriesTest do
 
     test "columns are comma-separated" do
       sql = Queries.task_select_sql()
-      columns_part = String.replace_prefix(sql, "SELECT ", "") |> String.replace_suffix(" FROM tasks", "")
+
+      columns_part =
+        String.replace_prefix(sql, "SELECT ", "") |> String.replace_suffix(" FROM tasks", "")
 
       parts = String.split(columns_part, ", ")
       assert length(parts) == length(Codec.task_columns())
@@ -228,7 +230,7 @@ defmodule EvoGit.Store.QueriesTest do
     end
 
     test "encodes :opts via Codec.encode_opts/1" do
-      encoded = Queries.encode_column_value(:opts, [path: "/repo"])
+      encoded = Queries.encode_column_value(:opts, path: "/repo")
       decoded = Jason.decode!(encoded)
       assert decoded["path"] == "/repo"
     end

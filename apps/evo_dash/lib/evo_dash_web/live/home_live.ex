@@ -476,7 +476,11 @@ defmodule EvoDashWeb.HomeLive do
     # :update_check_runner): tests inject `:approval_responder` to capture the
     # args deterministically while the backend responder lands.
     responder =
-      Application.get_env(:evo_dash, :approval_responder, &EvoDash.NodeContext.approval_response/3)
+      Application.get_env(
+        :evo_dash,
+        :approval_responder,
+        &EvoDash.NodeContext.approval_response/3
+      )
 
     socket = assign(socket, pending_approvals: drop_approval(pending, request_id))
 
@@ -737,7 +741,9 @@ defmodule EvoDashWeb.HomeLive do
         # :model_id_locked when the header selector pinned a profile, nothing
         # on Auto (the runtime's model-selection script or default decides).
         result =
-          EvoDash.NodeContext.start_task(socket.assigns[:current_node] || node(), :reflect,
+          EvoDash.NodeContext.start_task(
+            socket.assigns[:current_node] || node(),
+            :reflect,
             ModelSelect.task_opts(socket.assigns[:selected_model_id],
               mode: "reflect",
               objective: objective
@@ -1071,7 +1077,9 @@ defmodule EvoDashWeb.HomeLive do
   defp own_agent_request?(socket, request) do
     req_agent_id = Map.get(request, :agent_id)
     chat_agent_id = socket.assigns[:chat_agent_id]
-    req_agent_id != nil and chat_agent_id != nil and to_string(req_agent_id) == to_string(chat_agent_id)
+
+    req_agent_id != nil and chat_agent_id != nil and
+      to_string(req_agent_id) == to_string(chat_agent_id)
   end
 
   defp own_node_request?(socket, request) do

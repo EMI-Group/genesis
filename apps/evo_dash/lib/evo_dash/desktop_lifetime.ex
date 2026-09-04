@@ -94,7 +94,8 @@ defmodule EvoDash.DesktopLifetime do
       port_str ->
         case Integer.parse(port_str) do
           {port, ""} when port in 1..65_535 ->
-            stop_fun = Application.get_env(:evo_dash, :parent_stop_fun, &__MODULE__.default_stop/0)
+            stop_fun =
+              Application.get_env(:evo_dash, :parent_stop_fun, &__MODULE__.default_stop/0)
 
             state = %{
               enabled: true,

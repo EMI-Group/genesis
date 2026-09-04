@@ -4,20 +4,20 @@ defmodule EvoGit.Skills.Skill do
   """
 
   @type param :: %{
-    name: String.t(),
-    type: String.t(),
-    description: String.t(),
-    required: boolean(),
-    default: term()
-  }
+          name: String.t(),
+          type: String.t(),
+          description: String.t(),
+          required: boolean(),
+          default: term()
+        }
 
   @type t :: %__MODULE__{
-    name: String.t(),
-    description: String.t(),
-    parameters: [param()],
-    body: String.t(),
-    file_path: String.t()
-  }
+          name: String.t(),
+          description: String.t(),
+          parameters: [param()],
+          body: String.t(),
+          file_path: String.t()
+        }
 
   defstruct name: nil,
             description: nil,

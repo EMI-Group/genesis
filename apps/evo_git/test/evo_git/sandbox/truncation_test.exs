@@ -7,7 +7,10 @@ defmodule EvoGit.Sandbox.TruncationTest do
 
   setup do
     tmp_dir =
-      Path.join(System.tmp_dir!(), "evo_git_truncation_test_#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "evo_git_truncation_test_#{System.unique_integer([:positive])}"
+      )
 
     File.mkdir_p!(tmp_dir)
 
@@ -17,7 +20,9 @@ defmodule EvoGit.Sandbox.TruncationTest do
   end
 
   describe "run_with_partial/6 — small file within max_bytes" do
-    test "returns entire content with no truncation for a file well within max_bytes", %{tmp_dir: tmp_dir} do
+    test "returns entire content with no truncation for a file well within max_bytes", %{
+      tmp_dir: tmp_dir
+    } do
       file = Path.join(tmp_dir, "small.txt")
       content = "Line 1\nLine 2\nLine 3\n"
       File.write!(file, content)
@@ -47,7 +52,8 @@ defmodule EvoGit.Sandbox.TruncationTest do
       {:ok, output, 0} = None.run_with_partial(tmp_dir, "cat", [file], nil, 5000, max_bytes)
 
       # Verify the warning header is present
-      assert output =~ "[WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{@truncate_size} bytes]"
+      assert output =~
+               "[WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{@truncate_size} bytes]"
 
       # Verify omission marker with byte count
       omitted = 20_000 - @truncate_size
@@ -119,7 +125,9 @@ defmodule EvoGit.Sandbox.TruncationTest do
   end
 
   describe "run_with_partial/6 — small max_bytes, file just over max_bytes but under truncate_size" do
-    test "reads the entire file without crashing when file is under truncate_size", %{tmp_dir: tmp_dir} do
+    test "reads the entire file without crashing when file is under truncate_size", %{
+      tmp_dir: tmp_dir
+    } do
       file = Path.join(tmp_dir, "edge.txt")
       content = String.duplicate("E", 200)
       File.write!(file, content)

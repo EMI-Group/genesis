@@ -45,9 +45,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
         <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
       </p>
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-base-content">
-        <%!-- zh_CN: "今天有什么可以帮你的？" --%>{gettext(
-          "How can I help you today?"
-        )}
+        <%!-- zh_CN: "今天有什么可以帮你的？" --%>{gettext("How can I help you today?")}
       </h2>
       <p class="max-w-md text-sm text-base-content/80">
         <%!-- zh_CN: "与 Genesis 助手聊天：询问代码库、探索源码、控制任务，或获得仪表盘引导" --%>{gettext(

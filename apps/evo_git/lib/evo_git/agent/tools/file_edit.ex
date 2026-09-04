@@ -23,7 +23,11 @@ defmodule EvoGit.Agent.Tools.FileEdit do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
-          "file_path" => %{"type" => "string", "description" => "The path to the file to modify (relative to git repo path, e.g., './lib/app.ex')"},
+          "file_path" => %{
+            "type" => "string",
+            "description" =>
+              "The path to the file to modify (relative to git repo path, e.g., './lib/app.ex')"
+          },
           "old_string" => %{
             "type" => "string",
             "description" => "The exact text to replace"
@@ -60,7 +64,13 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   defp do_edit(file_path, display_path, old_string, new_string, replace_all, repo_path, node_path) do
     case Shared.validate_file_scope(file_path, node_path, repo_path) do
       :ok ->
-        Shared.perform_string_replace(file_path, display_path, old_string, new_string, replace_all)
+        Shared.perform_string_replace(
+          file_path,
+          display_path,
+          old_string,
+          new_string,
+          replace_all
+        )
 
       {:error, message} ->
         message

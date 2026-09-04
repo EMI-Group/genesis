@@ -589,6 +589,7 @@ defmodule EvoGit.PeakHourEngine do
   # and normalize to nil (skipped by `next_wakeup_ms_for/3`).
   defp normalize_wakeup_pair({[], _off_days, _tz}), do: nil
   defp normalize_wakeup_pair({[], _tz}), do: nil
+
   defp normalize_wakeup_pair({ws, off_days, tz}) when is_list(ws) and is_list(off_days),
     do: {ws, off_days, tz}
 

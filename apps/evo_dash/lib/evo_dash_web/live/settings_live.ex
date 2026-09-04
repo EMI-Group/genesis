@@ -38,69 +38,73 @@ defmodule EvoDashWeb.SettingsLive do
       <% else %>
         <div class="flex flex-col md:h-full">
           <%!-- Config Status Warning --%>
-        <%= if @config_status && not @config_status.ok? do %>
-          <div class="mb-4 shrink-0 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
-            <div>
-              <h3 class="font-bold text-sm text-warning mb-2">{gettext("Missing Configuration")}</h3>
-              <ul class="space-y-1.5 mb-3">
-                <%= for warning <- @config_status.warnings do %>
-                  <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
-                    <.icon name="hero-chevron-right" class="size-4 mt-0.5 shrink-0 opacity-70" />
-                    <span>{warning}</span>
-                  </li>
-                <% end %>
-              </ul>
-              <p class="text-sm font-semibold text-base-content/80">
-                {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
-              </p>
+          <%= if @config_status && not @config_status.ok? do %>
+            <div class="mb-4 shrink-0 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
+              <div>
+                <h3 class="font-bold text-sm text-warning mb-2">
+                  {gettext("Missing Configuration")}
+                </h3>
+                <ul class="space-y-1.5 mb-3">
+                  <%= for warning <- @config_status.warnings do %>
+                    <li class="text-sm font-medium text-warning/80 flex items-start gap-2">
+                      <.icon name="hero-chevron-right" class="size-4 mt-0.5 shrink-0 opacity-70" />
+                      <span>{warning}</span>
+                    </li>
+                  <% end %>
+                </ul>
+                <p class="text-sm font-semibold text-base-content/80">
+                  {gettext("Configure your LLM model in the LLM category to resolve these issues.")}
+                </p>
+              </div>
             </div>
-          </div>
-        <% end %>
+          <% end %>
 
-        <%!-- Remote config load error — the remote node's config could not be
+          <%!-- Remote config load error — the remote node's config could not be
            fetched (node unreachable, RPC failure, ...). Shown INSTEAD of the
            "No LLM Model Configured" warning below so the user sees the real
            problem rather than a bogus unconfigured-model message. --%>
-        <%= if @remote_config_error do %>
-          <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
-            <div>
-              <h3 class="font-bold text-sm text-error mb-2">
-                {gettext("Remote Configuration Unavailable")}
-              </h3>
-              <p class="text-sm font-medium text-error/80 leading-relaxed max-w-3xl">
-                {@remote_config_error}
-              </p>
-            </div>
-          </div>
-        <% end %>
-
-        <%!-- No LLM Model Warning (gated off while a remote config load error is
-           shown — otherwise "No LLM Model Configured" would render on top of
-           the real problem) --%>
-        <%= if @remote_config_error == nil and
-              (is_nil(get_in(@file_config, [:llm, :models])) or
-                 Enum.empty?(get_in(@file_config, [:llm, :models]) || [])) do %>
-          <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
-            <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
-            <div>
-              <h3 class="font-bold text-sm text-error mb-2">{gettext("No LLM Model Configured")}</h3>
-              <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
-                {gettext(
-                  "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
-                )}
-              </p>
-              <div class="flex items-center gap-3 flex-wrap">
-                <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext(
-                  "Example model names:"
-                )}</span>
-                <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
-                <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.5</span>
+          <%= if @remote_config_error do %>
+            <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
+              <div>
+                <h3 class="font-bold text-sm text-error mb-2">
+                  {gettext("Remote Configuration Unavailable")}
+                </h3>
+                <p class="text-sm font-medium text-error/80 leading-relaxed max-w-3xl">
+                  {@remote_config_error}
+                </p>
               </div>
             </div>
-          </div>
-        <% end %>
+          <% end %>
+
+          <%!-- No LLM Model Warning (gated off while a remote config load error is
+           shown — otherwise "No LLM Model Configured" would render on top of
+           the real problem) --%>
+          <%= if @remote_config_error == nil and
+              (is_nil(get_in(@file_config, [:llm, :models])) or
+                 Enum.empty?(get_in(@file_config, [:llm, :models]) || [])) do %>
+            <div class="mb-4 shrink-0 rounded-lg border border-error/30 bg-error/5 p-3 flex items-start gap-3">
+              <.icon name="hero-exclamation-triangle" class="size-5 text-error shrink-0 mt-0.5" />
+              <div>
+                <h3 class="font-bold text-sm text-error mb-2">
+                  {gettext("No LLM Model Configured")}
+                </h3>
+                <p class="text-sm font-medium text-error/80 mb-3 leading-relaxed max-w-3xl">
+                  {gettext(
+                    "Agents cannot run until you set a model. Go to the LLM category and fill in the Model field."
+                  )}
+                </p>
+                <div class="flex items-center gap-3 flex-wrap">
+                  <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext(
+                    "Example model names:"
+                  )}</span>
+                  <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
+                  <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.5</span>
+                </div>
+              </div>
+            </div>
+          <% end %>
 
           <%!-- Settings card: two-column sidebar + content layout.
 
@@ -354,7 +358,10 @@ defmodule EvoDashWeb.SettingsLive do
                     </div>
 
                     <div :if={@remote_targets == []} class="text-center py-10 text-base-content/70">
-                      <.icon name="hero-server-stack" class="size-12 mx-auto mb-3 text-base-content/40" />
+                      <.icon
+                        name="hero-server-stack"
+                        class="size-12 mx-auto mb-3 text-base-content/40"
+                      />
                       <p class="text-sm">{gettext("No remote connections configured.")}</p>
                     </div>
 

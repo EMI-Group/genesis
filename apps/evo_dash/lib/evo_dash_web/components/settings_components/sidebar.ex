@@ -17,7 +17,12 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
   use EvoDashWeb, :html
 
   import EvoDashWeb.SettingsComponents.CategoryMetadata,
-    only: [category_icon: 1, category_display_name: 1, sort_categories: 1, category_match_count: 3]
+    only: [
+      category_icon: 1,
+      category_display_name: 1,
+      sort_categories: 1,
+      category_match_count: 3
+    ]
 
   # ───────────────────────────────────────────────────────────────────────────
   # settings_sidebar/1 — Category sidebar

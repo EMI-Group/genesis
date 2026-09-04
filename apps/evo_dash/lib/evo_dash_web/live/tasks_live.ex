@@ -222,7 +222,10 @@ defmodule EvoDashWeb.TasksLive do
         <div class="space-y-4 lg:space-y-5">
           <%= if @tasks_loading do %>
             <div class="text-center py-12 sm:py-16 text-base-content/70">
-              <.icon name="hero-arrow-path" class="size-10 mx-auto mb-4 text-base-content/40 animate-spin" />
+              <.icon
+                name="hero-arrow-path"
+                class="size-10 mx-auto mb-4 text-base-content/40 animate-spin"
+              />
               <p class="text-lg font-medium">{gettext("Loading tasks...")}</p>
             </div>
           <% else %>

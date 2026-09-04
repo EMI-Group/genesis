@@ -138,7 +138,10 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           <%= if @thought_process != [] do %>
             <details class="group border-t border-base-300">
               <summary class="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content">
-                <.icon name="hero-chevron-down" class="size-3.5 transition-transform group-open:rotate-180" />
+                <.icon
+                  name="hero-chevron-down"
+                  class="size-3.5 transition-transform group-open:rotate-180"
+                />
                 <%!-- zh_CN: "思考过程" --%>{gettext("Thought process")}
                 <span class="font-mono text-xs text-base-content/70">({length(@thought_process)})</span>
               </summary>
@@ -205,13 +208,18 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
     <% tool_name = Map.get(data, :tool_name) %>
     <div class="rounded-md bg-base-200/50 px-2.5 py-1.5">
       <div class="flex items-center gap-2 text-xs">
-        <span class={["font-mono font-semibold uppercase tracking-wide", type_color(Map.get(@entry, :type))]}>
+        <span class={[
+          "font-mono font-semibold uppercase tracking-wide",
+          type_color(Map.get(@entry, :type))
+        ]}>
           {entry_type(Map.get(@entry, :type))}
         </span>
         <%= if is_integer(Map.get(@entry, :turn)) do %>
-          <span class="font-mono text-base-content/60">#<%= Map.get(@entry, :turn) %></span>
+          <span class="font-mono text-base-content/60">#{Map.get(@entry, :turn)}</span>
         <% end %>
-        <span class="ml-auto font-mono text-base-content/60">{tp_timestamp(Map.get(@entry, :timestamp))}</span>
+        <span class="ml-auto font-mono text-base-content/60">{tp_timestamp(
+          Map.get(@entry, :timestamp)
+        )}</span>
       </div>
       <%= if reasoning_details != [] do %>
         <% reasoning_text = reasoning_text(reasoning_details) %>
@@ -224,7 +232,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
       <%= if Map.get(@entry, :type) == "tool" do %>
         <%= if tool_name do %>
           <div class="mt-1 font-mono text-xs text-success">
-            <%= gettext("Tool Result: %{name}", name: tool_name) %>
+            {gettext("Tool Result: %{name}", name: tool_name)}
           </div>
         <% end %>
         <%= if content != "" do %>

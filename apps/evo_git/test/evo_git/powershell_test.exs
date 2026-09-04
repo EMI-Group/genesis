@@ -92,6 +92,7 @@ defmodule EvoGit.PowershellTest do
 
     test "encoded command matches encode_command/1" do
       cmd = "Get-Date"
+
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", b64] =
         Powershell.invoke_args(cmd)
 

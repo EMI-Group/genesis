@@ -211,7 +211,7 @@ defmodule EvoGit.CommandApprovalTest do
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "tasks",
-        {:task_updated, "T123", :cancelled, :"some_other_node@host"}
+        {:task_updated, "T123", :cancelled, :some_other_node@host}
       )
 
       refute_receive {:approval_resolved, ^request_id, _}, 200

@@ -43,12 +43,14 @@ defmodule EvoGit.Agent.TurnWarningTest do
   describe "current_positional_level/2 adaptive countdown" do
     test "64-turn budget uses same 10-turn end threshold" do
       # div(64, 6) = 10, so end_remaining = min(10, max(3, 10)) = 10
-      assert TurnWarning.current_positional_level(54, 64) == :end  # 10 remaining
+      # 10 remaining
+      assert TurnWarning.current_positional_level(54, 64) == :end
     end
 
     test "16-turn budget compresses end to 3 turns" do
       # div(16, 6) = 2, so end_remaining = min(10, max(3, 2)) = 3
-      assert TurnWarning.current_positional_level(13, 16) == :end  # 3 remaining
+      # 3 remaining
+      assert TurnWarning.current_positional_level(13, 16) == :end
     end
   end
 

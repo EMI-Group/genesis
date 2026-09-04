@@ -23,67 +23,79 @@ defmodule EvoDashWeb.NodeSelectorComponent do
     ~H"""
     <div id={@id}>
       <details class={["dropdown dropdown-start", @drop_up && "dropdown-top"]} id={"#{@id}-details"}>
-      <summary
-        class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-base-300 transition-colors"
-        title={gettext("Switch node")}
-      >
-        <span class={dot_color_class(@current_node_id, @connection_statuses)}></span>
-        <span class="text-sm font-medium text-base-content/70 sidebar-label">
-          {@current_node_name}
-        </span>
-      </summary>
-      <div class={["dropdown-content z-50 w-72 rounded-xl border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl p-2", (@drop_up && "mb-2") || "mt-2"]}>
-        <div class="flex flex-col gap-0.5">
-          <button
-            class={[
-              "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-              is_nil(@current_node_id) && "bg-primary/10 text-primary",
-              not is_nil(@current_node_id) && "hover:bg-base-200 text-base-content/70"
-            ]}
-            phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
-          >
-            <span class={dot_color_class(nil, @connection_statuses)}></span>
-            <span class="flex-1 text-left">{gettext("Local")}</span>
-            <.icon :if={is_nil(@current_node_id)} name="hero-check-solid" class="size-4 text-primary shrink-0" />
-          </button>
+        <summary
+          class="btn btn-sm btn-ghost gap-2 rounded-lg hover:bg-base-300 transition-colors"
+          title={gettext("Switch node")}
+        >
+          <span class={dot_color_class(@current_node_id, @connection_statuses)}></span>
+          <span class="text-sm font-medium text-base-content/70 sidebar-label">
+            {@current_node_name}
+          </span>
+        </summary>
+        <div class={[
+          "dropdown-content z-50 w-72 rounded-xl border border-base-300 bg-base-100/95 backdrop-blur-md shadow-xl p-2",
+          (@drop_up && "mb-2") || "mt-2"
+        ]}>
+          <div class="flex flex-col gap-0.5">
+            <button
+              class={[
+                "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                is_nil(@current_node_id) && "bg-primary/10 text-primary",
+                not is_nil(@current_node_id) && "hover:bg-base-200 text-base-content/70"
+              ]}
+              phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
+            >
+              <span class={dot_color_class(nil, @connection_statuses)}></span>
+              <span class="flex-1 text-left">{gettext("Local")}</span>
+              <.icon
+                :if={is_nil(@current_node_id)}
+                name="hero-check-solid"
+                class="size-4 text-primary shrink-0"
+              />
+            </button>
 
-          <div
-            :if={@remote_targets != []}
-            class="my-1 border-t border-base-300"
-          >
-          </div>
+            <div
+              :if={@remote_targets != []}
+              class="my-1 border-t border-base-300"
+            >
+            </div>
 
-          <button
-            :for={target <- @remote_targets}
-            class={[
-              "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-              @current_node_id == target.id && "bg-primary/10 text-primary",
-              @current_node_id != target.id && "hover:bg-base-200 text-base-content/70"
-            ]}
-            phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
-          >
-            <span class={dot_color_class(target.id, @connection_statuses)}></span>
-            <span class="flex-1 text-left">
-              <span class="block">{target.name}</span>
-              <span class="block text-xs text-base-content/70">
-                {target[:ssh_target] || "#{target[:user]}#{maybe_at()}#{target[:host]}#{if(target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: "")}"}
+            <button
+              :for={target <- @remote_targets}
+              class={[
+                "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
+                @current_node_id == target.id && "bg-primary/10 text-primary",
+                @current_node_id != target.id && "hover:bg-base-200 text-base-content/70"
+              ]}
+              phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
+            >
+              <span class={dot_color_class(target.id, @connection_statuses)}></span>
+              <span class="flex-1 text-left">
+                <span class="block">{target.name}</span>
+                <span class="block text-xs text-base-content/70">
+                  {target[:ssh_target] ||
+                    "#{target[:user]}#{maybe_at()}#{target[:host]}#{if(target[:port] && target[:port] != 22, do: ":#{target[:port]}", else: "")}"}
+                </span>
               </span>
-            </span>
-            <.icon :if={@current_node_id == target.id} name="hero-check-solid" class="size-4 text-primary shrink-0" />
-          </button>
+              <.icon
+                :if={@current_node_id == target.id}
+                name="hero-check-solid"
+                class="size-4 text-primary shrink-0"
+              />
+            </button>
 
-          <div class="my-1 border-t border-base-300"></div>
+            <div class="my-1 border-t border-base-300"></div>
 
-          <.link
-            navigate={~p"/settings?category=remote_connections" <> (if @current_node_id, do: "&node=#{@current_node_id}", else: "")}
-            class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/70"
-          >
-            <.icon name="hero-server-stack" class="size-4 shrink-0" />
-            <span class="flex-1 text-left"><%= gettext("Manage Connections...") %></span>
-          </.link>
+            <.link
+              navigate={~p"/settings?category=remote_connections" <> (if @current_node_id, do: "&node=#{@current_node_id}", else: "")}
+              class="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer hover:bg-base-200 text-base-content/70"
+            >
+              <.icon name="hero-server-stack" class="size-4 shrink-0" />
+              <span class="flex-1 text-left">{gettext("Manage Connections...")}</span>
+            </.link>
+          </div>
         </div>
-      </div>
-    </details>
+      </details>
     </div>
     """
   end

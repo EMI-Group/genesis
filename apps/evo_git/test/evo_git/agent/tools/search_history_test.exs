@@ -51,7 +51,13 @@ defmodule EvoGit.Agent.Tools.SearchHistoryTest do
     end
 
     test "returns no matches for non-existent pattern", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("search_history", %{"pattern" => "nonexistent_pattern_xyz"}, tmp_dir, tmp_dir)
+      result =
+        Tools.execute(
+          "search_history",
+          %{"pattern" => "nonexistent_pattern_xyz"},
+          tmp_dir,
+          tmp_dir
+        )
 
       assert result =~ "No commits found"
     end
@@ -70,7 +76,8 @@ defmodule EvoGit.Agent.Tools.SearchHistoryTest do
     test "respects max_count option", %{tmp_dir: tmp_dir} do
       # Search with max_count=1, should only search 1 commit (the most recent: "Fix: resolve crash on startup")
       # The pattern "Fix" matches the most recent commit
-      result = Tools.execute("search_history", %{"pattern" => "Fix", "max_count" => 1}, tmp_dir, tmp_dir)
+      result =
+        Tools.execute("search_history", %{"pattern" => "Fix", "max_count" => 1}, tmp_dir, tmp_dir)
 
       assert result =~ "Found 1 commit(s)"
       assert result =~ "Fix: resolve crash on startup"

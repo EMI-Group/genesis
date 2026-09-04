@@ -98,9 +98,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
           </span>
           <span class="badge badge-ghost badge-sm gap-1 font-mono text-xs">
             <.icon name="hero-arrows-right-left" class="size-3" />
-            <%= if agent_delegation_level(@agent) == :high,
+            {if agent_delegation_level(@agent) == :high,
               do: gettext("high delegation"),
-              else: gettext("low delegation") %>
+              else: gettext("low delegation")}
           </span>
           <%= if agent_model_id(@agent) do %>
             <span class="badge badge-primary badge-sm gap-1 font-mono text-xs">
@@ -154,9 +154,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
       <div class="flex items-center gap-2 mb-1">
         <.icon name="hero-pencil-square" class="size-5 text-primary" />
         <h4 class="font-bold text-sm text-base-content">
-          <%= if agent_id_string(@agent) == "",
+          {if agent_id_string(@agent) == "",
             do: gettext("New Agent"),
-            else: gettext("Edit Agent") %>
+            else: gettext("Edit Agent")}
         </h4>
       </div>
 
@@ -197,7 +197,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
 
       <div class="form-control">
         <label class="label pb-1">
-          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Prompt → "提示词" --%>{gettext("Prompt")}
+          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Prompt → "提示词" --%>{gettext(
+            "Prompt"
+          )}
           <span class="text-error">*</span></span>
         </label>
         <textarea
@@ -215,13 +217,17 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div class="form-control">
           <label class="label pb-1">
-            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Agent Type → "智能体类型" --%>{gettext("Agent Type")}</span>
+            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Agent Type → "智能体类型" --%>{gettext(
+              "Agent Type"
+            )}</span>
           </label>
           <select
             name="agent_type"
             class="select select-bordered select-sm rounded-md w-full font-mono text-sm"
           >
-            <option value="read_write" selected={agent_type(@agent) == :read_write}>read_write</option>
+            <option value="read_write" selected={agent_type(@agent) == :read_write}>
+              read_write
+            </option>
             <option value="read" selected={agent_type(@agent) == :read}>read</option>
           </select>
           <p class="text-xs text-base-content/70 mt-1">
@@ -232,7 +238,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
         </div>
         <div class="form-control">
           <label class="label pb-1">
-            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Delegation → "委派" --%>{gettext("Delegation Level")}</span>
+            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Delegation → "委派" --%>{gettext(
+              "Delegation Level"
+            )}</span>
           </label>
           <select
             name="delegation_level"
@@ -247,7 +255,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
         </div>
         <div class="form-control">
           <label class="label pb-1">
-            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Model → "模型" --%>{gettext("Model")}</span>
+            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Model → "模型" --%>{gettext(
+              "Model"
+            )}</span>
           </label>
           <select
             name="model_id"
@@ -271,7 +281,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
 
       <div class="form-control">
         <label class="label pb-1">
-          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Turn → "回合" --%>{gettext("Max Turns")}</span>
+          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Turn → "回合" --%>{gettext(
+            "Max Turns"
+          )}</span>
         </label>
         <input
           type="number"
@@ -289,7 +301,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
       <%!-- Tools ── --%>
       <div class="form-control">
         <label class="label pb-1">
-          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Tool → "工具" --%>{gettext("Tools")}</span>
+          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Tool → "工具" --%>{gettext(
+            "Tools"
+          )}</span>
         </label>
         <% tools = agent_tools(@agent) %>
         <div class="flex flex-wrap gap-2">
@@ -314,7 +328,9 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
       <%!-- Subagents ── --%>
       <div class="form-control">
         <label class="label pb-1">
-          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Subagent → "子智能体" --%>{gettext("Subagents")}</span>
+          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Subagent → "子智能体" --%>{gettext(
+            "Subagents"
+          )}</span>
         </label>
         <% subagents = agent_subagents(@agent) %>
         <div class="flex flex-wrap gap-2">

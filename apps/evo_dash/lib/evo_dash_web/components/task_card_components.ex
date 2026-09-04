@@ -658,7 +658,7 @@ defmodule EvoDashWeb.TaskCardComponents do
           <%= if repo.branch_name do %>
             <span class={branch_badge_class()}>
               <.icon name="hero-code-bracket-square" class="size-3 mr-1 shrink-0" />
-              <span class="truncate min-w-0"><%= repo.branch_name %></span>
+              <span class="truncate min-w-0">{repo.branch_name}</span>
             </span>
           <% else %>
             <%= if repo.id == "primary" do %>
@@ -828,7 +828,7 @@ defmodule EvoDashWeb.TaskCardComponents do
           <%= if @branch_name do %>
             <span class={[branch_badge_class(), "text-sm"]}>
               <.icon name="hero-code-bracket-square" class="size-4 mr-1 shrink-0" />
-              <span class="truncate min-w-0"><%= @branch_name %></span>
+              <span class="truncate min-w-0">{@branch_name}</span>
             </span>
           <% end %>
           <%= if @commit_sha do %>
@@ -901,7 +901,7 @@ defmodule EvoDashWeb.TaskCardComponents do
           <%= if @branch_name do %>
             <span class={branch_badge_class()}>
               <.icon name="hero-code-bracket-square" class="size-3 mr-1 shrink-0" />
-              <span class="truncate min-w-0"><%= @branch_name %></span>
+              <span class="truncate min-w-0">{@branch_name}</span>
             </span>
           <% end %>
           <%= if @pr_url do %>
@@ -1008,6 +1008,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   defp branch_badge_class do
     "badge badge-primary font-mono min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none"
   end
+
   defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
        when is_binary(branch) and branch != "", do: true
 

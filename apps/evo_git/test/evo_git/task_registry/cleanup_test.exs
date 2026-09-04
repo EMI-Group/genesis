@@ -24,6 +24,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
       # Insert an old finished task directly into the store.
       # Age is computed to exceed whatever max_age_days is configured locally.
       age = old_age_days()
+
       old_task = %TaskInfo{
         id: "test_old_#{unique}",
         type: :genesis,
@@ -73,6 +74,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
 
       # Insert a task within the configured max_age_days window.
       age = within_age_days()
+
       task = %TaskInfo{
         id: "test_5day_#{unique}",
         type: :genesis,
@@ -166,6 +168,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
 
       # Old task — age guaranteed to exceed the configured max_age_days window.
       age = old_age_days()
+
       old_task = %TaskInfo{
         id: "test_combined_old_#{unique}",
         type: :genesis,

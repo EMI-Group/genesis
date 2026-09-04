@@ -3,9 +3,14 @@ defmodule EvoGit.Agent.Usage do
   Cumulative token and cost usage tracking for agents.
   """
 
-  defstruct input_tokens: 0, output_tokens: 0, total_tokens: 0,
-            input_cost: 0.0, output_cost: 0.0, total_cost: 0.0,
-            cached_tokens: 0, cache_creation_tokens: 0
+  defstruct input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            input_cost: 0.0,
+            output_cost: 0.0,
+            total_cost: 0.0,
+            cached_tokens: 0,
+            cache_creation_tokens: 0
 
   @type t :: %__MODULE__{
           input_tokens: non_neg_integer(),

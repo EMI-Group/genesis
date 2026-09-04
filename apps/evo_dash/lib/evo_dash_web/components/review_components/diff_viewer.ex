@@ -473,7 +473,9 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           phx-value-path={@path}
         >
           <.icon
-            name={if @direction == :above, do: "hero-chevron-double-up", else: "hero-chevron-double-down"}
+            name={
+              if @direction == :above, do: "hero-chevron-double-up", else: "hero-chevron-double-down"
+            }
             class="size-3.5"
           />
         </button>

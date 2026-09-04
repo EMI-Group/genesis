@@ -634,7 +634,9 @@ defmodule EvoDashWeb.Helpers do
         <.icon name="hero-check-circle" class="size-5 text-success shrink-0" />
         <div>
           <p class="font-semibold text-success">{gettext("All configured")}</p>
-          <p class="text-xs text-success/90">{gettext("All critical configuration values are set")}</p>
+          <p class="text-xs text-success/90">
+            {gettext("All critical configuration values are set")}
+          </p>
         </div>
       </div>
     <% else %>
@@ -738,7 +740,10 @@ defmodule EvoDashWeb.Helpers do
 
     ~H"""
     <span class={["tooltip", @position_class, "cursor-help"]} data-tip={@text}>
-      <.icon name={@icon} class={"size-4 text-base-content/60 hover:text-base-content/70 transition-colors inline-block align-middle #{@class}"} />
+      <.icon
+        name={@icon}
+        class={"size-4 text-base-content/60 hover:text-base-content/70 transition-colors inline-block align-middle #{@class}"}
+      />
     </span>
     """
   end

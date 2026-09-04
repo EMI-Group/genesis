@@ -293,7 +293,9 @@ defmodule EvoDashWeb.ProjectsLive do
                   <div class="mt-2 mb-4 rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-2">
                     <.icon name="hero-server-stack" class="size-5 text-info shrink-0 mt-0.5" />
                     <p class="text-sm text-base-content/70">
-                      {gettext("You are viewing a remote node. Tasks launched here will run on the remote machine.")}
+                      {gettext(
+                        "You are viewing a remote node. Tasks launched here will run on the remote machine."
+                      )}
                     </p>
                   </div>
 

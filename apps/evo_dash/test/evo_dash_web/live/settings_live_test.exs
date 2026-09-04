@@ -3164,7 +3164,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
         root_classes = root |> Floki.attribute("class") |> Enum.join(" ")
         assert root_classes =~ "flex-1 flex flex-col min-w-0"
         refute root_classes =~ "h-full", "category root must not carry h-full"
-        assert root_classes =~ "min-h-0", "category root must carry min-h-0 (main-axis non-scroll flex intermediate chain)"
+
+        assert root_classes =~ "min-h-0",
+               "category root must carry min-h-0 (main-axis non-scroll flex intermediate chain)"
 
         # The save_category form fills the column and its inner scroll body
         # (flex-1 overflow-y-auto) owns the scrolling.
@@ -3172,7 +3174,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
         form_classes = form |> Floki.attribute("class") |> Enum.join(" ")
         assert form_classes =~ "flex-1 flex flex-col min-w-0"
         refute form_classes =~ "h-full"
-        assert form_classes =~ "min-h-0", "save_category form must carry min-h-0 so the inner overflow-y-auto body engages"
+
+        assert form_classes =~ "min-h-0",
+               "save_category form must carry min-h-0 so the inner overflow-y-auto body engages"
 
         assert Floki.find(doc, ~s(div[id="category-#{cat}"] .overflow-y-auto)) != [],
                "category section must keep an inner overflow-y-auto scroll body"

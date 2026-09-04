@@ -296,130 +296,130 @@ defmodule EvoDashWeb.TaskFormComponents do
                  hidden entirely — the empty state shows just the faded
                  textarea (wrapper opacity) + the centered hint overlay. --%>
             <%= unless @disabled do %>
-            <div class="input-controls flex-nowrap">
-              <!-- Mode switch -->
-              <select
-                name="mode"
-                phx-change="task_change"
-                class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
-                title={mode_description(@mode)}
-              >
-                <option value="genesis_existing" selected={@mode == "genesis_existing"}>
-                  <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
-                  {gettext("Initialize existing project")}
-                </option>
-                <option value="genesis_new" selected={@mode == "genesis_new"}>
-                  <%!-- zh_CN: Create new project → "新建空白项目" --%>
-                  {gettext("Create new project")}
-                </option>
-                <option value="evolve_simple" selected={@mode == "evolve_simple"}>
-                  <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
-                  {gettext("Evolve existing project")}
-                </option>
-                <option value="custom_agent" selected={@mode == "custom_agent"}>
-                  <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
-                  {gettext("Custom Agent")}
-                </option>
-              </select>
+              <div class="input-controls flex-nowrap">
+                <!-- Mode switch -->
+                <select
+                  name="mode"
+                  phx-change="task_change"
+                  class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
+                  title={mode_description(@mode)}
+                >
+                  <option value="genesis_existing" selected={@mode == "genesis_existing"}>
+                    <%!-- zh_CN: Initialize existing project → "初始化已有项目" --%>
+                    {gettext("Initialize existing project")}
+                  </option>
+                  <option value="genesis_new" selected={@mode == "genesis_new"}>
+                    <%!-- zh_CN: Create new project → "新建空白项目" --%>
+                    {gettext("Create new project")}
+                  </option>
+                  <option value="evolve_simple" selected={@mode == "evolve_simple"}>
+                    <%!-- zh_CN: Evolve existing project → "演进已有项目" --%>
+                    {gettext("Evolve existing project")}
+                  </option>
+                  <option value="custom_agent" selected={@mode == "custom_agent"}>
+                    <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                    {gettext("Custom Agent")}
+                  </option>
+                </select>
 
-              <%!-- Custom agent select — rendered only when custom agents
+                <%!-- Custom agent select — rendered only when custom agents
                    exist in agents.toml. "Auto (recommended)" (empty value)
                    lets the runtime spawn its default root agent; a custom
                    agent id is threaded as the task's :agent opt. In Custom
                    Agent mode the Auto option is hidden (an agent MUST be
                    chosen — the server auto-selects the first one on mode
                    switch and re-validates on submit). --%>
-              <%= if @custom_agents != [] do %>
-                <select
-                  name="agent"
-                  phx-change="select_agent"
-                  class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
-                >
-                  <%= if @mode != "custom_agent" do %>
-                    <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
-                    <option value="" selected={@selected_agent_id in [nil, ""]}>
-                      {gettext("Auto (recommended)")}
-                    </option>
-                  <% end %>
-                  <%= for agent <- @custom_agents do %>
-                    <option
-                      value={agent_attr(agent, :id)}
-                      selected={@selected_agent_id == agent_attr(agent, :id)}
-                    >
-                      {agent_attr(agent, :name)}
-                    </option>
-                  <% end %>
-                </select>
-              <% end %>
+                <%= if @custom_agents != [] do %>
+                  <select
+                    name="agent"
+                    phx-change="select_agent"
+                    class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
+                  >
+                    <%= if @mode != "custom_agent" do %>
+                      <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
+                      <option value="" selected={@selected_agent_id in [nil, ""]}>
+                        {gettext("Auto (recommended)")}
+                      </option>
+                    <% end %>
+                    <%= for agent <- @custom_agents do %>
+                      <option
+                        value={agent_attr(agent, :id)}
+                        selected={@selected_agent_id == agent_attr(agent, :id)}
+                      >
+                        {agent_attr(agent, :name)}
+                      </option>
+                    <% end %>
+                  </select>
+                <% end %>
 
-              <!-- Launch button — the focal point, centered in BOTH
+                <!-- Launch button — the focal point, centered in BOTH
                    layouts (order-2 + mx-auto; works with or without the
                    model select). data-mode drives the per-mode hover ring
                    color; data-resume drives the resume-ring variant (lighter
                    green when a resume task id is set — evolve only). Both
                    keyed in CSS in assets/css/app.css. -->
-              <button
-                type="submit"
-                class={["btn btn-primary gap-2 px-5 order-2 mx-auto"]}
-                data-mode={@mode}
-                data-resume={String.trim(@resume_from) != ""}
-                disabled={@disabled}
-              >
-                <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch")}
-              </button>
-
-              <!-- Model switch -->
-              <%= if @model_profiles != [] do %>
-                <select
-                  name="model_id"
-                  phx-change="select_model"
-                  class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-3"
+                <button
+                  type="submit"
+                  class={["btn btn-primary gap-2 px-5 order-2 mx-auto"]}
+                  data-mode={@mode}
+                  data-resume={String.trim(@resume_from) != ""}
+                  disabled={@disabled}
                 >
-                  <%!-- "Auto (by rules)" is offered when a model-selection
+                  <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch")}
+                </button>
+
+                <!-- Model switch -->
+                <%= if @model_profiles != [] do %>
+                  <select
+                    name="model_id"
+                    phx-change="select_model"
+                    class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-3"
+                  >
+                    <%!-- "Auto (by rules)" is offered when a model-selection
                        script is configured (show_auto_model_option) — and
                        ALWAYS when the current selection is nil/"" so the
                        select is never visually empty. Choosing it sets
                        neither :model_id nor :model_id_locked, leaving the
                        runtime script (or default model) to decide. --%>
-                  <%= if @show_auto_model_option or @selected_model_id in [nil, ""] do %>
-                    <%!-- zh_CN: Auto → "自动"（按模型选择规则/脚本自动选择模型） --%>
-                    <option value="" selected={@selected_model_id in [nil, ""]}>
-                      {gettext("Auto (by rules)")}
-                    </option>
-                  <% end %>
-                  <%= for profile <- @model_profiles do %>
-                    <option value={profile.id} selected={@selected_model_id == profile.id}>
-                      {profile.id}
-                    </option>
-                  <% end %>
-                </select>
-              <% end %>
-            </div>
+                    <%= if @show_auto_model_option or @selected_model_id in [nil, ""] do %>
+                      <%!-- zh_CN: Auto → "自动"（按模型选择规则/脚本自动选择模型） --%>
+                      <option value="" selected={@selected_model_id in [nil, ""]}>
+                        {gettext("Auto (by rules)")}
+                      </option>
+                    <% end %>
+                    <%= for profile <- @model_profiles do %>
+                      <option value={profile.id} selected={@selected_model_id == profile.id}>
+                        {profile.id}
+                      </option>
+                    <% end %>
+                  </select>
+                <% end %>
+              </div>
 
-            <%!-- Custom Agent mode hint — a single-line explanation under the
+              <%!-- Custom Agent mode hint — a single-line explanation under the
                  controls row (the row stays the card's last element only for
                  the OTHER modes; in custom mode the hint appends below it,
                  still inside .input-card normal flow). Two variants: with
                  agents defined it explains the mode; with none it points to
                  the Settings → Agents editor. The server also guards submit
                  (task_submit) so a missing agent can never launch a task. --%>
-            <%= if @mode == "custom_agent" do %>
-              <%= if @custom_agents == [] do %>
-                <p class="px-4 pb-3 text-xs text-warning/80 flex items-center gap-1.5">
-                  <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0" />
-                  <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
-                  {gettext(
-                    "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
-                  )}
-                </p>
-              <% else %>
-                <p class="px-4 pb-3 text-xs text-base-content/70 flex items-center gap-1.5">
-                  <.icon name="hero-user-circle" class="size-3.5 shrink-0" />
-                  <%!-- zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体" --%>
-                  {gettext("Runs the selected custom agent as the root agent of an evolution task.")}
-                </p>
+              <%= if @mode == "custom_agent" do %>
+                <%= if @custom_agents == [] do %>
+                  <p class="px-4 pb-3 text-xs text-warning/80 flex items-center gap-1.5">
+                    <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0" />
+                    <%!-- zh_CN: Custom Agent → "自定义智能体"（用户自定义的根智能体） --%>
+                    {gettext(
+                      "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
+                    )}
+                  </p>
+                <% else %>
+                  <p class="px-4 pb-3 text-xs text-base-content/70 flex items-center gap-1.5">
+                    <.icon name="hero-user-circle" class="size-3.5 shrink-0" />
+                    <%!-- zh_CN: Custom Agent → "自定义智能体", root agent → "根智能体" --%>
+                    {gettext("Runs the selected custom agent as the root agent of an evolution task.")}
+                  </p>
+                <% end %>
               <% end %>
-            <% end %>
             <% end %>
           </div>
 

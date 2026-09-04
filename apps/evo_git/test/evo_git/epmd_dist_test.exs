@@ -51,7 +51,9 @@ defmodule EvoGit.EpmdDistTest do
     test "returns registered port when VM passes the full node name as a charlist" do
       node_str = "test_full_charlist@127.0.0.1"
       assert :ok = EpmdDist.register_target(node_str, 12345)
-      assert {:port, 12345, 5} = EpmdDist.port_please(~c"test_full_charlist@127.0.0.1", "127.0.0.1")
+
+      assert {:port, 12345, 5} =
+               EpmdDist.port_please(~c"test_full_charlist@127.0.0.1", "127.0.0.1")
     after
       EpmdDist.unregister_target("test_full_charlist@127.0.0.1")
     end

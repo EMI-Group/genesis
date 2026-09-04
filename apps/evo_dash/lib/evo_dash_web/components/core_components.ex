@@ -74,10 +74,22 @@ defmodule EvoDashWeb.CoreComponents do
         @kind == :warning && "alert-warning"
       ]}>
         <div class="flex items-start gap-3">
-          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0 text-current" />
-          <.icon :if={@kind == :success} name="hero-check-circle" class="size-5 shrink-0 text-current" />
+          <.icon
+            :if={@kind == :info}
+            name="hero-information-circle"
+            class="size-5 shrink-0 text-current"
+          />
+          <.icon
+            :if={@kind == :success}
+            name="hero-check-circle"
+            class="size-5 shrink-0 text-current"
+          />
           <.icon :if={@kind == :error} name="hero-x-circle" class="size-5 shrink-0 text-current" />
-          <.icon :if={@kind == :warning} name="hero-exclamation-triangle" class="size-5 shrink-0 text-current" />
+          <.icon
+            :if={@kind == :warning}
+            name="hero-exclamation-triangle"
+            class="size-5 shrink-0 text-current"
+          />
           <div class="flex-1">
             <p :if={@title} class="text-sm font-semibold">{@title}</p>
             <p class="text-sm">{msg}</p>
@@ -456,7 +468,7 @@ defmodule EvoDashWeb.CoreComponents do
   def icon(%{name: "brand-" <> _} = assigns) do
     ~H"""
     <span class={["inline-block shrink-0 brand-icon", @class]}>
-      <%= raw(brand_svg_content(@name)) %>
+      {raw(brand_svg_content(@name))}
     </span>
     """
   end
@@ -543,7 +555,10 @@ defmodule EvoDashWeb.CoreComponents do
       <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors">
         <.icon :if={@icon} name={@icon} class="size-5 shrink-0 text-base-content/70" />
         <span class="font-semibold flex-1">{@title}</span>
-        <.icon name="hero-chevron-down" class="size-5 shrink-0 text-base-content/70 transition-transform duration-200 group-open:rotate-180" />
+        <.icon
+          name="hero-chevron-down"
+          class="size-5 shrink-0 text-base-content/70 transition-transform duration-200 group-open:rotate-180"
+        />
       </summary>
       <div class="p-4">
         {render_slot(@inner_block)}

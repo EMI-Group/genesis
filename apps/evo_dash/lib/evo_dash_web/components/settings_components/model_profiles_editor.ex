@@ -184,7 +184,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       <% model_id_val = draft_or_profile(@draft, "model_id", model_id_val) %>
       <% base_url_val = draft_or_profile(@draft, "base_url", base_url_val) %>
       <% extra_val = draft_or_profile(@draft, "extra", extra_val) %>
-      <% provider_options_val = draft_or_profile(@draft, "provider_options", profile_provider_options(@profile)) %>
+      <% provider_options_val =
+        draft_or_profile(@draft, "provider_options", profile_provider_options(@profile)) %>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="form-control">
           <label class="label pb-1">
@@ -205,7 +206,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </div>
         <div class="form-control">
           <label class="label pb-1">
-            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Provider → "服务商" --%>{gettext("Provider")}</span>
+            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Provider → "服务商" --%>{gettext(
+              "Provider"
+            )}</span>
           </label>
           <input
             type="text"
@@ -250,7 +253,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
           />
           <p class="text-xs text-base-content/70 mt-1">
-            <%!-- zh_CN: provider → "服务商" --%>{gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
+            <%!-- zh_CN: provider → "服务商" --%>{gettext(
+              "For proxy/aggregator endpoints; leave empty for standard providers."
+            )}
           </p>
         </div>
       </div>
@@ -258,7 +263,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       <%!-- concurrency ── --%>
       <div class="form-control">
         <label class="label pb-1">
-          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Concurrency → "并发" --%>{gettext("Concurrency")}</span>
+          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Concurrency → "并发" --%>{gettext(
+            "Concurrency"
+          )}</span>
         </label>
         <input
           type="number"
@@ -276,7 +283,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       <div class="form-control">
         <label class="label pb-1">
           <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Peak Concurrency → "高峰并发" --%>{gettext("Peak Concurrency (optional)")}
+            <%!-- zh_CN: Peak Concurrency → "高峰并发" --%>{gettext(
+              "Peak Concurrency (optional)"
+            )}
           </span>
         </label>
         <input
@@ -319,13 +328,15 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
            string from any source) is always coerced to the canonical day list
            before the chip membership test below. --%>
       <% off_peak_days =
-           ModelProfileHelpers.normalize_days(
-             draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile))
-           ) %>
+        ModelProfileHelpers.normalize_days(
+          draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile))
+        ) %>
       <div class="form-control">
         <label class="label pb-1">
           <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Off-peak days → "完全离峰的整天" --%>{gettext("Off-peak days (optional)")}
+            <%!-- zh_CN: Off-peak days → "完全离峰的整天" --%>{gettext(
+              "Off-peak days (optional)"
+            )}
           </span>
         </label>
         <input type="hidden" name="off_peak_days" value="" />
@@ -464,14 +475,30 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               >
                 <option
                   value=""
-                  selected={is_nil(draft_or_profile(@draft, "reasoning_effort", profile_param(@profile, :reasoning_effort)))}
+                  selected={
+                    is_nil(
+                      draft_or_profile(
+                        @draft,
+                        "reasoning_effort",
+                        profile_param(@profile, :reasoning_effort)
+                      )
+                    )
+                  }
                 >
                   {gettext("(provider default)")}
                 </option>
                 <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
                   <option
                     value={opt}
-                    selected={to_string(draft_or_profile(@draft, "reasoning_effort", profile_param(@profile, :reasoning_effort))) == opt}
+                    selected={
+                      to_string(
+                        draft_or_profile(
+                          @draft,
+                          "reasoning_effort",
+                          profile_param(@profile, :reasoning_effort)
+                        )
+                      ) == opt
+                    }
                   >
                     {opt}
                   </option>
@@ -485,7 +512,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <%!-- Max tokens ── --%>
           <div class="form-control">
             <label class="label pb-1">
-              <span class="label-text font-semibold text-xs"><%!-- zh_CN: Token → "词元" --%>{gettext("Max Tokens")}</span>
+              <span class="label-text font-semibold text-xs"><%!-- zh_CN: Token → "词元" --%>{gettext(
+                "Max Tokens"
+              )}</span>
             </label>
             <input
               type="number"
@@ -535,7 +564,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               type="number"
               step="0.01"
               name="frequency_penalty"
-              value={draft_or_profile(@draft, "frequency_penalty", profile_param(@profile, :frequency_penalty))}
+              value={
+                draft_or_profile(
+                  @draft,
+                  "frequency_penalty",
+                  profile_param(@profile, :frequency_penalty)
+                )
+              }
               min="-2"
               max="2"
               placeholder={gettext("empty")}
@@ -551,7 +586,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               type="number"
               step="0.01"
               name="presence_penalty"
-              value={draft_or_profile(@draft, "presence_penalty", profile_param(@profile, :presence_penalty))}
+              value={
+                draft_or_profile(
+                  @draft,
+                  "presence_penalty",
+                  profile_param(@profile, :presence_penalty)
+                )
+              }
               min="-2"
               max="2"
               placeholder={gettext("empty")}
@@ -589,7 +630,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           rows="3"
         ><%= provider_options_val %></textarea>
         <p class="text-xs text-base-content/70 mt-1">
-          {gettext("Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically.")}
+          {gettext(
+            "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
+          )}
         </p>
       </div>
 

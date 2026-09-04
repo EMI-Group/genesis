@@ -8,7 +8,10 @@ defmodule EvoGit.Agent.CoderTest2 do
     use Agent
 
     def test_build_dynamic_context(repo_path, node_path) do
-      EvoGit.Agent.ContextBuilder.build_dynamic_context(%{repo_path: repo_path, node_path: node_path})
+      EvoGit.Agent.ContextBuilder.build_dynamic_context(%{
+        repo_path: repo_path,
+        node_path: node_path
+      })
     end
   end
 

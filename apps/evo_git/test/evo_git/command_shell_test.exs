@@ -47,6 +47,7 @@ defmodule EvoGit.CommandShellTest do
     on_exit(fn -> Application.delete_env(:evo_git, :command_approval_timeout) end)
     :ok
   end
+
   describe "execute/1 - parsing" do
     test "positional tokens bind to declared positional args" do
       task = seed_task!()
@@ -288,6 +289,7 @@ defmodule EvoGit.CommandShellTest do
       assert CommandShell.security_level(%{}) == 1
     end
   end
+
   describe "execute/1 - ListTasks.list_tasks" do
     test "lists seeded tasks with id, status, type, project path, and objective" do
       task = seed_task!(opts: [path: "/tmp/test", objective: "hello"], project_path: "/tmp/test")

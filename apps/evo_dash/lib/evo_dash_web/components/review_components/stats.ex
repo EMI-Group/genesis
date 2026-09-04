@@ -58,7 +58,9 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
         <div class="flex items-center gap-3">
           <.icon name="hero-clock" class="size-5 text-base-content/60" />
           <span class="font-semibold text-base">
-            {ngettext("%{count} commit", "%{count} commits", length(@commits), count: length(@commits))}
+            {ngettext("%{count} commit", "%{count} commits", length(@commits),
+              count: length(@commits)
+            )}
           </span>
         </div>
       </div>

@@ -57,7 +57,8 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
     end
 
     test "creates multiple directories", %{tmp_dir: tmp_dir} do
-      result = MakeDir.execute(%{"paths" => ["lib", "test", "config"], "commit" => false}, tmp_dir, nil)
+      result =
+        MakeDir.execute(%{"paths" => ["lib", "test", "config"], "commit" => false}, tmp_dir, nil)
 
       assert result =~ "Successfully created 3 directories"
 
@@ -81,7 +82,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
 
     test "creates nested directories with parents: true explicitly", %{tmp_dir: tmp_dir} do
       result =
-        MakeDir.execute(%{"paths" => ["deep/nested/path"], "parents" => true, "commit" => false}, tmp_dir, nil)
+        MakeDir.execute(
+          %{"paths" => ["deep/nested/path"], "parents" => true, "commit" => false},
+          tmp_dir,
+          nil
+        )
 
       assert result =~ "Successfully created 1 directory"
 
@@ -104,7 +109,12 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
     end
 
     test "creates .gitkeep file when keep_file is .gitkeep", %{tmp_dir: tmp_dir} do
-      result = MakeDir.execute(%{"paths" => ["lib"], "keep_file" => ".gitkeep", "commit" => false}, tmp_dir, nil)
+      result =
+        MakeDir.execute(
+          %{"paths" => ["lib"], "keep_file" => ".gitkeep", "commit" => false},
+          tmp_dir,
+          nil
+        )
 
       assert result =~ "Successfully created 1 directory"
 
@@ -113,7 +123,12 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
     end
 
     test "creates no placeholder file when keep_file is none", %{tmp_dir: tmp_dir} do
-      result = MakeDir.execute(%{"paths" => ["lib"], "keep_file" => "none", "commit" => false}, tmp_dir, nil)
+      result =
+        MakeDir.execute(
+          %{"paths" => ["lib"], "keep_file" => "none", "commit" => false},
+          tmp_dir,
+          nil
+        )
 
       assert result =~ "Successfully created 1 directory"
 
@@ -124,7 +139,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
 
     test "creates CONTEXT.md when keep_file is CONTEXT.md explicitly", %{tmp_dir: tmp_dir} do
       result =
-        MakeDir.execute(%{"paths" => ["lib"], "keep_file" => "CONTEXT.md", "commit" => false}, tmp_dir, nil)
+        MakeDir.execute(
+          %{"paths" => ["lib"], "keep_file" => "CONTEXT.md", "commit" => false},
+          tmp_dir,
+          nil
+        )
 
       assert result =~ "Successfully created 1 directory"
       assert File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
@@ -141,7 +160,10 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
   describe "execute/3 - parents option" do
     setup do
       tmp_dir =
-        Path.join(System.tmp_dir!(), "make_dir_parents_test_" <> to_string(System.unique_integer()))
+        Path.join(
+          System.tmp_dir!(),
+          "make_dir_parents_test_" <> to_string(System.unique_integer())
+        )
 
       File.mkdir_p!(tmp_dir)
 
@@ -154,7 +176,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
 
     test "errors when parents is false and parent directory doesn't exist", %{tmp_dir: tmp_dir} do
       result =
-        MakeDir.execute(%{"paths" => ["missing/nested/path"], "parents" => false, "commit" => false}, tmp_dir, nil)
+        MakeDir.execute(
+          %{"paths" => ["missing/nested/path"], "parents" => false, "commit" => false},
+          tmp_dir,
+          nil
+        )
 
       assert result =~ "Errors:"
       assert result =~ "missing/nested/path"
@@ -164,7 +190,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       File.mkdir_p!(Path.join(tmp_dir, "existing"))
 
       result =
-        MakeDir.execute(%{"paths" => ["existing/child"], "parents" => false, "commit" => false}, tmp_dir, nil)
+        MakeDir.execute(
+          %{"paths" => ["existing/child"], "parents" => false, "commit" => false},
+          tmp_dir,
+          nil
+        )
 
       assert result =~ "Successfully created 1 directory"
       assert File.dir?(Path.join(tmp_dir, "existing/child"))
@@ -181,7 +211,10 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
   describe "execute/3 - commit option" do
     setup do
       tmp_dir =
-        Path.join(System.tmp_dir!(), "make_dir_commit_test_" <> to_string(System.unique_integer()))
+        Path.join(
+          System.tmp_dir!(),
+          "make_dir_commit_test_" <> to_string(System.unique_integer())
+        )
 
       File.mkdir_p!(tmp_dir)
 
@@ -251,7 +284,12 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
     end
 
     test "skips commit when keep_file is none", %{tmp_dir: tmp_dir} do
-      result = MakeDir.execute(%{"paths" => ["lib"], "keep_file" => "none", "commit" => true}, tmp_dir, tmp_dir)
+      result =
+        MakeDir.execute(
+          %{"paths" => ["lib"], "keep_file" => "none", "commit" => true},
+          tmp_dir,
+          tmp_dir
+        )
 
       assert result =~ "Successfully created 1 directory"
       # When keep_file is none, there's nothing to commit
@@ -281,7 +319,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       # Try to create multiple directories, one will fail due to parents: false
       result =
         MakeDir.execute(
-          %{"paths" => ["existing/child", "missing/nested", "another"], "parents" => false, "commit" => false},
+          %{
+            "paths" => ["existing/child", "missing/nested", "another"],
+            "parents" => false,
+            "commit" => false
+          },
           tmp_dir,
           nil
         )
@@ -298,7 +340,9 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       assert message =~ "must be an array"
     end
 
-    test "returns error string (not a crash) for absolute path with node_path set", %{tmp_dir: tmp_dir} do
+    test "returns error string (not a crash) for absolute path with node_path set", %{
+      tmp_dir: tmp_dir
+    } do
       result =
         MakeDir.execute(
           %{"paths" => ["/tmp/test_outside_dir"], "commit" => false},

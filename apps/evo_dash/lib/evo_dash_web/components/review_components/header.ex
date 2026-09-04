@@ -96,7 +96,8 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <%= if @usage do %>
           <div class="flex flex-col">
             <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
-              <.icon name="hero-cpu-chip" class="size-3.5" /> <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
+              <.icon name="hero-cpu-chip" class="size-3.5" />
+              <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">
               {format_number(Map.get(@usage, :total_tokens, 0))}
@@ -122,7 +123,8 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <%= if @agent_count do %>
           <div class="flex flex-col">
             <span class="text-xs font-medium text-base-content/70 uppercase tracking-wide flex items-center gap-1">
-              <.icon name="hero-user-group" class="size-3.5" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents")}
+              <.icon name="hero-user-group" class="size-3.5" />
+              <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents")}
             </span>
             <span class="text-sm font-semibold text-base-content mt-0.5">{@agent_count}</span>
           </div>
@@ -228,6 +230,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                       value={
                         input_tokens = Map.get(@usage, :input_tokens, 0)
                         cached = Map.get(@usage, :cached_tokens, 0)
+
                         if input_tokens > 0,
                           do: min(round(cached / input_tokens * 100), 100),
                           else: 0
@@ -266,9 +269,8 @@ defmodule EvoDashWeb.ReviewComponents.Header do
               <div class="mt-4 pt-4 border-t border-base-200 flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
                   <span class="text-xs text-base-content/70 flex items-center gap-1">
-                    <.icon name="hero-user-group" class="size-3.5" /> <%!-- zh_CN: Agent → "智能体" --%>{gettext(
-                      "Agents Spawned"
-                    )}
+                    <.icon name="hero-user-group" class="size-3.5" />
+                    <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
                   </span>
                   <span class="text-sm font-bold text-primary">{format_number(@agent_count)}</span>
                 </div>
@@ -318,7 +320,10 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <div class="absolute top-3 right-3 z-10 flex items-center gap-1">
           <div class="flex gap-0">
             <button
-              class={["btn btn-xs rounded-r-none border-base-300", !@summary_raw && "btn-active btn-primary"]}
+              class={[
+                "btn btn-xs rounded-r-none border-base-300",
+                !@summary_raw && "btn-active btn-primary"
+              ]}
               phx-click="toggle_summary_view"
               phx-value-mode="markdown"
               title={gettext("Rendered Markdown")}
@@ -327,7 +332,10 @@ defmodule EvoDashWeb.ReviewComponents.Header do
               {gettext("Markdown")}
             </button>
             <button
-              class={["btn btn-xs rounded-l-none border-base-300", @summary_raw && "btn-active btn-primary"]}
+              class={[
+                "btn btn-xs rounded-l-none border-base-300",
+                @summary_raw && "btn-active btn-primary"
+              ]}
               phx-click="toggle_summary_view"
               phx-value-mode="raw"
               title={gettext("Raw Text")}

@@ -116,14 +116,21 @@ defmodule EvoGit.ExecutableTest do
       # or hardcodes x64 on Windows.
       arch_segment =
         case :os.type() do
-          {:win32, _} -> "x64"
+          {:win32, _} ->
+            "x64"
+
           _ ->
             sys_arch = List.to_string(:erlang.system_info(:system_architecture))
 
             cond do
-              String.starts_with?(sys_arch, "aarch64") or String.starts_with?(sys_arch, "arm64") -> "arm64"
-              String.starts_with?(sys_arch, "x86_64") or String.starts_with?(sys_arch, "amd64") -> "x86_64"
-              true -> "unknown"
+              String.starts_with?(sys_arch, "aarch64") or String.starts_with?(sys_arch, "arm64") ->
+                "arm64"
+
+              String.starts_with?(sys_arch, "x86_64") or String.starts_with?(sys_arch, "amd64") ->
+                "x86_64"
+
+              true ->
+                "unknown"
             end
         end
 

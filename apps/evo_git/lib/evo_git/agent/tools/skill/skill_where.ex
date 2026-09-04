@@ -45,8 +45,9 @@ defmodule EvoGit.Agent.Tools.SkillWhere do
         if Enum.empty?(nodes) do
           "Skill '#{skill_name}' is not enabled at any node."
         else
-          "Skill '#{skill_name}' is enabled at the following nodes:\n" <>
-            Enum.map(nodes, fn p -> "  - #{p}" end) |> Enum.join("\n")
+          ("Skill '#{skill_name}' is enabled at the following nodes:\n" <>
+             Enum.map(nodes, fn p -> "  - #{p}" end))
+          |> Enum.join("\n")
         end
 
       {:error, message} ->

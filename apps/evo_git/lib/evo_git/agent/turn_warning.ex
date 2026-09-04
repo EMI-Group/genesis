@@ -40,7 +40,8 @@ defmodule EvoGit.Agent.TurnWarning do
   @critical_turns 3
   @critical_floor 1
   @middle_interval 15
-  @middle_interval_low 45   # for :low agents (3x less frequent)
+  # for :low agents (3x less frequent)
+  @middle_interval_low 45
 
   defstruct [:level, :turn, :turns_remaining, :max_turns, :percent_used, :turns_since_subagent]
 
@@ -73,7 +74,8 @@ defmodule EvoGit.Agent.TurnWarning do
       iex> EvoGit.Agent.TurnWarning.current_positional_level(125, 128)
       :critical
   """
-  @spec current_positional_level(non_neg_integer(), pos_integer(), :high | :low) :: level() | :none
+  @spec current_positional_level(non_neg_integer(), pos_integer(), :high | :low) ::
+          level() | :none
   def current_positional_level(turn, max_turns, delegation_level \\ :high)
       when is_integer(turn) and is_integer(max_turns) do
     turns_remaining = max_turns - turn
@@ -83,10 +85,17 @@ defmodule EvoGit.Agent.TurnWarning do
     critical_remaining = critical_remaining(max_turns)
 
     cond do
-      turns_remaining <= critical_remaining -> :critical
-      turns_remaining <= near_remaining -> :end
-      delegation_level == :high and percent_used >= 25 and turn >= @min_beginning_turn -> :beginning
-      true -> :none
+      turns_remaining <= critical_remaining ->
+        :critical
+
+      turns_remaining <= near_remaining ->
+        :end
+
+      delegation_level == :high and percent_used >= 25 and turn >= @min_beginning_turn ->
+        :beginning
+
+      true ->
+        :none
     end
   end
 
@@ -127,6 +136,7 @@ defmodule EvoGit.Agent.TurnWarning do
       :none
     else
       interval = middle_interval(delegation_level)
+
       if turns_since_subagent >= interval do
         {:ok, build_middle(turn, max_turns, turns_since_subagent)}
       else

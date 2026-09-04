@@ -107,7 +107,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       params = %{"sandbox.write_paths" => ["/tmp/a", "", "/tmp/b"]}
 
       config =
-        ConfigIO.build_config_from_category_params(params, :sandbox, [write_paths_schema()], file_config)
+        ConfigIO.build_config_from_category_params(
+          params,
+          :sandbox,
+          [write_paths_schema()],
+          file_config
+        )
 
       assert get_in(config, [:sandbox, :write_paths]) == ["/tmp/a", "/tmp/b"]
       assert get_in(config, [:sandbox, :mode]) == :auto
@@ -118,7 +123,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       params = %{"sandbox.write_paths" => []}
 
       config =
-        ConfigIO.build_config_from_category_params(params, :sandbox, [write_paths_schema()], file_config)
+        ConfigIO.build_config_from_category_params(
+          params,
+          :sandbox,
+          [write_paths_schema()],
+          file_config
+        )
 
       assert get_in(config, [:sandbox, :write_paths]) == []
     end
@@ -128,7 +138,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       params = %{"sandbox.write_paths" => ["", " "]}
 
       config =
-        ConfigIO.build_config_from_category_params(params, :sandbox, [write_paths_schema()], file_config)
+        ConfigIO.build_config_from_category_params(
+          params,
+          :sandbox,
+          [write_paths_schema()],
+          file_config
+        )
 
       assert get_in(config, [:sandbox, :write_paths]) == []
       assert get_in(config, [:sandbox, :mode]) == :auto
@@ -138,7 +153,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       file_config = %{sandbox: %{mode: :auto, write_paths: ["/old"]}}
 
       config =
-        ConfigIO.build_config_from_category_params(%{}, :sandbox, [write_paths_schema()], file_config)
+        ConfigIO.build_config_from_category_params(
+          %{},
+          :sandbox,
+          [write_paths_schema()],
+          file_config
+        )
 
       assert is_nil(get_in(config, [:sandbox, :write_paths]))
       assert get_in(config, [:sandbox, :mode]) == :auto
@@ -149,7 +169,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       params = %{"sandbox.write_paths" => "/not-a-list"}
 
       config =
-        ConfigIO.build_config_from_category_params(params, :sandbox, [write_paths_schema()], file_config)
+        ConfigIO.build_config_from_category_params(
+          params,
+          :sandbox,
+          [write_paths_schema()],
+          file_config
+        )
 
       refute Map.has_key?(get_in(config, [:sandbox]) || %{}, :write_paths)
       assert get_in(config, [:sandbox, :mode]) == :auto
@@ -160,7 +185,12 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       params = %{"sandbox.write_paths" => ["/tmp/a"]}
 
       config =
-        ConfigIO.build_config_from_category_params(params, :sandbox, [write_paths_schema()], file_config)
+        ConfigIO.build_config_from_category_params(
+          params,
+          :sandbox,
+          [write_paths_schema()],
+          file_config
+        )
 
       assert get_in(config, [:scheduler, :default_llm_max_concurrency]) == 4
       assert get_in(config, [:sandbox, :write_paths]) == ["/tmp/a"]
