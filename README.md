@@ -23,6 +23,8 @@
 
 From an implementation-empty repository, Genesis built a **248,989-line C compiler** in a **123.4-hour** run. Different foundation models then independently continued development from the same accepted software world.
 
+> As far as we can determine, Genesis is the first publicly known autonomous system to submit a result for the [Terminal-Bench WASM Render Challenge](https://github.com/BillHuang2001/tbench-wasm). The run cost just **$36**—far below Terminal-Bench's stated expectation of ~$1K+ per challenge.
+
 **EvoX Genesis is an AI system for long-horizon autonomous software evolution.**
 
 Its key idea is not to keep one agent—or one coding session—alive. Genesis maintains a persistent recursive software world. Finite-lived agents enter where needed, develop local parts, validate proposed changes, and carry only accepted results forward for later agents to inherit and extend. The approach is described in our paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450).
