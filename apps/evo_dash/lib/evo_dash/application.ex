@@ -7,6 +7,19 @@ defmodule EvoDash.Application do
 
   @impl true
   def start(_type, _args) do
+    # Create the ActiveTasks ETS table, owned by the long-lived application
+    # process (NOT a supervised child) so it survives child restarts and lives
+    # for the whole `mix test` run. Creation is idempotent — a no-op if the
+    # table already exists (e.g. on application restart after a soft crash).
+    # EvoDash.ActiveTasks is a pure ETS-helper module with no process (same
+    # pattern as EvoGit.AgentScheduler.Store).
+    ensure_ets_table(:evo_dash_active_tasks, [
+      :named_table,
+      :public,
+      :set,
+      read_concurrency: true
+    ])
+
     children = [
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},
@@ -21,10 +34,6 @@ defmodule EvoDash.Application do
       # update phase/versions/error state and broadcasts transitions on
       # EvoGit.PubSub's "updates" topic.
       EvoDash.UpdateStatus,
-      # In-memory per-node-context last-known-state hub for the sidebar Active
-      # Tasks list — instant cross-navigation rendering; written on applied
-      # fetch results, read on mount.
-      EvoDash.ActiveTasks,
       EvoDashWeb.Endpoint
     ]
 
@@ -52,6 +61,16 @@ defmodule EvoDash.Application do
     ]
 
     Supervisor.start_link(children, opts)
+  end
+
+  # Idempotent named-table creation (mirrors EvoGit.Application's
+  # ensure_ets_table/2): no-op when the table already exists (e.g. on
+  # application restart after a soft crash).
+  defp ensure_ets_table(name, opts) do
+    case :ets.whereis(name) do
+      :undefined -> :ets.new(name, opts)
+      _tid -> :ok
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration

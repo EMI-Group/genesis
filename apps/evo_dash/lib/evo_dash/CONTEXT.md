@@ -2,7 +2,7 @@
 
 ## Intent
 
-Domain layer for the EvoDash Phoenix application. Contains the OTP `Application` supervisor, the in-memory `ChatHistory` chat-history store, the `NodeContext` SSH remote-development thin client, the `DirectoryPicker` native dialog picker (with its `Wx` seam), the `UpdateStatus` auto-update state hub, the `ActiveTasks` sidebar last-known-state hub, the desktop-only `DesktopLifetime` Tauri-shell watcher, and small pure helpers (`AttachedFile`, `MarkdownRender`, `SettingsUtils`). The persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo`, `RecentProject`, `TaskRegistry` and the `task_registry/` helper submodules) live in `:evo_git` as `EvoGit.Store`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`, `EvoGit.TaskRegistry` (and friends). EvoDash owns no persistence or registry code.
+Domain layer for the EvoDash Phoenix application. Contains the OTP `Application` supervisor, the in-memory `ChatHistory` chat-history store, the `NodeContext` SSH remote-development thin client, the `DirectoryPicker` native dialog picker (with its `Wx` seam), the `UpdateStatus` auto-update state hub, the ETS-backed `ActiveTasks` sidebar last-known-state cache, the desktop-only `DesktopLifetime` Tauri-shell watcher, and small pure helpers (`AttachedFile`, `MarkdownRender`, `SettingsUtils`). The persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo`, `RecentProject`, `TaskRegistry` and the `task_registry/` helper submodules) live in `:evo_git` as `EvoGit.Store`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`, `EvoGit.TaskRegistry` (and friends). EvoDash owns no persistence or registry code.
 
 ## Routing Table
 
@@ -11,7 +11,7 @@ Domain layer for the EvoDash Phoenix application. Contains the OTP `Application`
 - `./node_context.ex` → `EvoDash.NodeContext` — SSH remote-development thin client
 - `./directory_picker.ex` + `./directory_picker/wx.ex` → `EvoDash.DirectoryPicker` (+ `EvoDash.DirectoryPicker.Wx` seam)
 - `./update_status.ex` → `EvoDash.UpdateStatus` — Tauri auto-update state hub
-- `./active_tasks.ex` → `EvoDash.ActiveTasks` — in-memory per-node-context last-known-state hub for the sidebar "Active Tasks" list
+- `./active_tasks.ex` → `EvoDash.ActiveTasks` — ETS-backed per-node-context last-known-state cache for the sidebar "Active Tasks" list (pure module over a boot-created named table, no process)
 - `./desktop_lifetime.ex` → `EvoDash.DesktopLifetime` — desktop Tauri-shell lifetime watcher (TCP pipe)
 - `./attached_file.ex` → `EvoDash.AttachedFile` — attached-objective-file reader (.txt/.md/.docx/.pdf)
 - `./markdown_render.ex` → `EvoDash.MarkdownRender` — MDEx markdown → safe HTML
@@ -29,9 +29,10 @@ OTP Application callback module. Supervision tree (`:one_for_one`, `max_restarts
 4. `EvoDash.ChatHistory` (in-memory chat-history store; LiveViews mount after app boot so it is always available)
 5. `EvoDash.DirectoryPicker`
 6. `EvoDash.UpdateStatus`
-7. `EvoDash.ActiveTasks` (in-memory per-node-context last-known-state hub for the sidebar "Active Tasks" list — see its section below)
-8. `EvoDashWeb.Endpoint`
-9. `{EvoDash.DesktopLifetime, []}` — appended only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (only the Tauri sidecar sets both); the module's `init/1` self-disable is belt-and-suspenders.
+7. `EvoDashWeb.Endpoint`
+8. `{EvoDash.DesktopLifetime, []}` — appended only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (only the Tauri sidecar sets both); the module's `init/1` self-disable is belt-and-suspenders.
+
+Before `Supervisor.start_link`, `start/2` creates the `:evo_dash_active_tasks` ETS table via the idempotent private `ensure_ets_table/2` helper — owned by the long-lived application process (NOT a supervised child) so it survives child restarts and lives for the whole `mix test` run; creation is a no-op when the table already exists (e.g. application restart after a soft crash). `EvoDash.ActiveTasks` is a pure ETS-helper module with no process, so it is deliberately absent from the children list.
 
 `EvoGit.Store`, the task-registry `Registry`, and `EvoGit.TaskRegistry` are children of `EvoGit.Application`'s supervision tree, not of this supervisor.
 
@@ -72,7 +73,7 @@ GenServer holding the single source of truth for the Tauri auto-update UI state 
 
 ### `EvoDash.ActiveTasks` (`active_tasks.ex`)
 
-In-memory per-node-context last-known-state hub (name-registered GenServer, supervised in `EvoDash.Application` between `EvoDash.UpdateStatus` and the Endpoint) holding the sidebar "Active Tasks" partitioned lists. Snapshots are keyed `{node_id, node}` so one node context can never leak into another view: `{nil, node()}` local, `{node_param, remote_node}` connected-remote, `{node_param, node()}` pending (the target id is preserved so a pending key never collides with the pure-local key). API: `get(node_id, node)` → `{:ok, {running, pending}} | :empty` (synchronous call — race-free mount reads; `{[], []}` is a valid stored snapshot), `put(node_id, node, running, pending)` (cast), `reset/0` (cast — test support). Passive cache only: shape-agnostic (stores whatever task-summary maps it is given verbatim) and broadcasts nothing — the existing `"tasks"` PubSub machinery keeps snapshots fresh. Consumers: `EvoDashWeb.LiveHooks.NodeAware.on_mount/4` seeds `:running_tasks`/`:pending_tasks` synchronously from it (`hub_snapshot/2`, empty hub → `[]`) for instant cross-navigation rendering (no sidebar collapse/re-pop blink), and every SUCCESSFULLY APPLIED async fetch result writes it via `handle_tasks_result/2` → `put/4` (keyed by the message's own node context); stale/dropped results never write.
+Pure ETS-helper module (no process, no `use GenServer`) over a boot-created named public `:set` table `:evo_dash_active_tasks` (created by `EvoDash.Application.start/2` via its idempotent `ensure_ets_table/2`, owned by the long-lived application process so it survives child-process restarts and lives for the whole `mix test` run). Holds the sidebar "Active Tasks" partitioned lists. Snapshots are `{running, pending}` 2-tuples keyed `{node_id, node}` so one node context can never leak into another view: `{nil, node()}` local, `{node_param, remote_node}` connected-remote, `{node_param, node()}` pending (the target id is preserved so a pending key never collides with the pure-local key). API: `get(node_id, node)` → `{:ok, {running, pending}} | :empty` (per-key `:ets.lookup`; `{[], []}` is a valid stored snapshot returning `{:ok, {[], []}}`; `:empty` when the context was never written OR the table does not exist), `put(node_id, node, running, pending)` (overwrite-on-reinsert via `:ets.insert`; shape-agnostic — lists stored verbatim), `invalidate(node_id, node)` (deletes that context's snapshot via `:ets.delete` so the next mount on that context is cold and re-fetches via the existing machinery — the refresh primitive called by review actions on completed tasks before navigating away), `reset/0` (`:ets.delete_all_objects` — clears every node context; test hygiene). Each single-object op is atomic (readers never see partial snapshots; no compound read-modify-write ops exist, so no locking is needed). Every function is `:ets.whereis`-guarded and degrades gracefully (`:empty` / no-op) if invoked before the app boots. Passive cache only: shape-agnostic (stores whatever task-summary lists it is given verbatim) and broadcasts nothing — the existing `"tasks"` PubSub machinery keeps snapshots fresh. Consumers: `EvoDashWeb.LiveHooks.NodeAware.on_mount/4` seeds `:running_tasks`/`:pending_tasks` synchronously from it (`hub_snapshot/2`, empty cache → `[]`) for instant cross-navigation rendering (no sidebar collapse/re-pop blink), and every SUCCESSFULLY APPLIED async fetch result writes it via `handle_tasks_result/2` → `put/4` (keyed by the message's own node context); stale/dropped results never write.
 
 ### `EvoDash.DesktopLifetime` (`desktop_lifetime.ex`)
 
