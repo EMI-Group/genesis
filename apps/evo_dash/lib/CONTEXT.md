@@ -10,7 +10,7 @@ The domain-layer persistence/registry modules (`Store`, `Store.Codec`, `TaskInfo
 
 ## Routing Table
 
-- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `NodeContext` (SSH remote-development thin client), `DirectoryPicker` (+ `Wx` seam), `UpdateStatus` (auto-update hub), `DesktopLifetime` (desktop shell watcher), `ChatHistory` (in-memory ETS-backed chat store), `AttachedFile`, `MarkdownRender`, `SettingsUtils`
+- `./evo_dash/` → Domain modules: `Application` (OTP supervisor), `NodeContext` (SSH remote-development thin client), `DirectoryPicker` (+ `Wx` seam), `UpdateStatus` (auto-update hub), `DesktopLifetime` (desktop shell watcher), `ChatHistory` (in-memory ETS-backed chat store), `ActiveTasks` (sidebar last-known-state hub — pure module over a boot-created ETS table, no process), `AttachedFile`, `MarkdownRender`, `SettingsUtils`
 - `./evo_dash_web/` → Web interface: LiveViews, components, router, endpoint, helpers
 - `./evo_dash_web.ex` → Web module macro (`use EvoDashWeb, :live_view` / `:html` / `:controller` etc.)
 
