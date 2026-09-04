@@ -45,6 +45,11 @@ defmodule EvoDashWeb.HomeLiveTest do
     # node_aware_test.exs / chat_history_test.exs convention).
     EvoDash.ChatHistory.reset()
 
+    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+    # terminated by the Store/TaskRegistry isolation above — reset it so one
+    # test's sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     # Onboarding (pattern from projects_live_test.set_onboarding_completed):
     # isolate XDG_CONFIG_HOME to a temp dir and mark onboarding complete so the
     # HomeLive dead render does NOT redirect first-time users to /welcome. The
@@ -1891,6 +1896,49 @@ defmodule EvoDashWeb.HomeLiveTest do
   end
 
   describe "sidebar robustness" do
+    test "warm ActiveTasks hub seeds the sidebar instantly on mount (no broadcast needed)", %{
+      conn: conn
+    } do
+      # Pre-warm the shared hub for the local context with a reflect-style
+      # :running summary map (the shape an applied fetch result writes — the
+      # 15-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). A warm hub
+      # makes the connected-mount fetch a no-op (see node_aware.ex on_mount),
+      # so the VERY FIRST render already carries the sidebar — no task_updated
+      # broadcast, no 300ms debounce sleep: the exact no-blink contract.
+      EvoDash.ActiveTasks.put(
+        nil,
+        node(),
+        [
+          %{
+            id: "reflect_instant",
+            type: :reflect,
+            status: :running,
+            review_status: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            project_path: nil,
+            opts: [mode: "reflect", objective: "New message: instant"],
+            branch_name: nil,
+            model_id: nil,
+            agent_count: 0,
+            base_sha: nil,
+            commit_sha: nil,
+            lease_expires_at: nil,
+            updated_at: nil
+          }
+        ],
+        []
+      )
+
+      # Both the dead render and the connected mount seed :running_tasks /
+      # :pending_tasks synchronously from the hub, so the mount html already
+      # contains the running reflect task's sidebar row.
+      {:ok, _view, html} = live(conn, "/help")
+
+      assert html =~ "Active Tasks"
+      assert html =~ "New message: instant"
+    end
+
     test "debounced reload after task_updated renders sidebar with a reflect task", %{conn: conn} do
       # A repo-less reflect row (nil project_path) must not break the sidebar.
       insert_task_fixture!(
