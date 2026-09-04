@@ -185,19 +185,13 @@ defmodule EvoDashWeb.SettingsLive do
                    `overflow-y-auto` (md+ bounded column) so the sticky header
                    below sticks within this column's own scroll. --%>
                 <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
-                  <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-300/70">
-                    <div class="flex items-center gap-3 mb-1">
-                      <.icon name="hero-globe-alt" class="size-5 text-base-content/70" />
-                      <h2 class="text-lg font-bold text-base-content">
-                        {gettext("Remote Connections")}
-                      </h2>
-                    </div>
-                    <p class="text-sm text-base-content/60">
-                      {gettext("Manage SSH connections to remote Genesis daemons.")}
-                    </p>
-                  </div>
+                  <EvoDashWeb.SettingsComponents.SectionHeader.section_header
+                    icon="hero-globe-alt"
+                    title={gettext("Remote Connections")}
+                    description={gettext("Manage SSH connections to remote Genesis daemons.")}
+                  />
 
-                  <div class="p-6 space-y-5">
+                  <div class="px-8 py-8 space-y-5">
                     <%!-- Note about separate TOML file --%>
                     <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
                       <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
@@ -604,21 +598,17 @@ defmodule EvoDashWeb.SettingsLive do
                    HTML). --%>
                 <%= if @active_category == :agents do %>
                   <div class="flex-1 flex flex-col min-w-0 overflow-y-auto">
-                    <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-md px-6 py-4 border-b border-base-300/70">
-                      <div class="flex items-center gap-3 mb-1">
-                        <.icon name="hero-user-group" class="size-5 text-base-content/70" />
-                        <h2 class="text-lg font-bold text-base-content">
-                          {gettext("Agents")}
-                        </h2>
-                      </div>
-                      <p class="text-sm text-base-content/60">
-                        {gettext(
+                    <EvoDashWeb.SettingsComponents.SectionHeader.section_header
+                      icon="hero-user-group"
+                      title={gettext("Agents")}
+                      description={
+                        gettext(
                           "Create custom agents and configure the per-agent model selection script."
-                        )}
-                      </p>
-                    </div>
+                        )
+                      }
+                    />
 
-                    <div class="p-6 space-y-5">
+                    <div class="px-8 py-8 space-y-5">
                       <%!-- Note about the separate TOML file --%>
                       <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
                         <.icon
