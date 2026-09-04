@@ -23,6 +23,10 @@ defmodule EvoDashWeb.SettingsComponents do
   import EvoDashWeb.SettingsComponents.ModelProfilesEditor,
     only: [model_profiles_editor: 1]
 
+  import EvoDashWeb.SettingsComponents.SectionHeader, only: [section_header: 1]
+
+  import EvoDashWeb.SettingsComponents.SaveBar, only: [save_bar: 1]
+
   # ── Delegates for public APIs NOT already imported above.
   #    Functions imported above (category_display_name, category_icon,
   #    category_description, api_key_prefix_hint, setting_card,
@@ -66,18 +70,11 @@ defmodule EvoDashWeb.SettingsComponents do
   def category_section(assigns) do
     ~H"""
     <div class="flex-1 flex flex-col min-w-0 min-h-0 bg-base-100" id={"category-#{@category}"}>
-      <%!-- Sticky Header --%>
-      <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
-        <div class="flex items-center gap-3 mb-1">
-          <div class="text-primary/60">
-            <.icon name={category_icon(@category)} class="size-5" />
-          </div>
-          <h2 class="text-lg font-bold tracking-tight text-base-content">
-            {category_display_name(@category)}
-          </h2>
-        </div>
-        <p class="text-sm font-medium text-base-content/80">{category_description(@category)}</p>
-      </div>
+      <.section_header
+        icon={category_icon(@category)}
+        title={category_display_name(@category)}
+        description={category_description(@category)}
+      />
 
       <%= if @category == :llm do %>
         <%!-- LLM category: the Quick Setup panel and Model Profiles editor
@@ -584,12 +581,9 @@ defmodule EvoDashWeb.SettingsComponents do
               <% end %>
 
               <%!-- Sticky Footer --%>
-              <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
-                <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
-                  <.icon name="hero-document-check" class="size-5 mr-1.5" />
-                  {gettext("Save %{category} Settings", category: category_display_name(@category))}
-                </button>
-              </div>
+              <.save_bar label={
+                gettext("Save %{category} Settings", category: category_display_name(@category))
+              } />
             </.form>
           </div>
         </div>
@@ -815,12 +809,9 @@ defmodule EvoDashWeb.SettingsComponents do
           </div>
 
           <%!-- Sticky Footer --%>
-          <div class="sticky bottom-0 z-10 bg-base-100/90 backdrop-blur-xl border-t border-base-200/60 p-4 flex justify-end">
-            <button type="submit" class="btn btn-primary rounded-md min-w-[200px] font-bold">
-              <.icon name="hero-document-check" class="size-5 mr-1.5" />
-              {gettext("Save %{category} Settings", category: category_display_name(@category))}
-            </button>
-          </div>
+          <.save_bar label={
+            gettext("Save %{category} Settings", category: category_display_name(@category))
+          } />
         </.form>
       <% end %>
     </div>
