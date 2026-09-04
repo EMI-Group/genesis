@@ -16,6 +16,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, :clean}
     end)
 
+    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+    # terminated by the per-test isolation above — reset it so one test's
+    # sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     on_exit(fn ->
       Application.delete_env(:evo_dash, :merge_check_runner)
     end)

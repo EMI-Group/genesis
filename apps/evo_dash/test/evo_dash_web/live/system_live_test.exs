@@ -29,6 +29,11 @@ defmodule EvoDashWeb.SystemLiveTest do
     Application.put_env(:evo_dash, :update_notify_only_override, false)
     EvoDash.UpdateStatus.reset()
 
+    # ActiveTasks is another shared global hub under EvoDash.Application (the
+    # sidebar seed on every LiveView mount) — reset it alongside UpdateStatus
+    # so one test's sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     on_exit(fn ->
       Enum.each(originals, fn {key, original} -> restore_env_value(key, original) end)
     end)

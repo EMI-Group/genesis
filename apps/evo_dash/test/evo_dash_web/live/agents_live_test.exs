@@ -20,6 +20,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
   @seeded_agent_ids [1]
 
   setup do
+    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+    # terminated by the per-test isolation above — reset it so one test's
+    # sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     on_exit(fn ->
       # Clean up only the rows this file seeds; the tables themselves are
       # owned by the :evo_git application process (survive the test process).

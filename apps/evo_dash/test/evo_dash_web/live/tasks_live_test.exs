@@ -21,6 +21,11 @@ defmodule EvoDashWeb.TasksLiveTest do
       {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
     )
 
+    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+    # terminated by the Store/TaskRegistry isolation above — reset it so one
+    # test's sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     on_exit(fn ->
       File.rm_rf(root)
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)

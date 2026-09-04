@@ -28,6 +28,11 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       File.rm_rf!(tmp_config)
     end)
 
+    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+    # terminated by the per-test isolation above — reset it so one test's
+    # sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     :ok
   end
 

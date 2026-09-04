@@ -20,6 +20,11 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       send(test_pid, :desktop_stopped)
     end)
 
+    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
+    # terminated by the per-test isolation above — reset it so one test's
+    # sidebar snapshot never leaks into the next.
+    EvoDash.ActiveTasks.reset()
+
     on_exit(fn ->
       Application.delete_env(:evo_dash, :desktop_quit_stop_fun)
     end)
