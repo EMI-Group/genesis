@@ -10,14 +10,39 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   The domain foundation lives in `EvoDash.NodeContext` — this module only calls
   it, never modifies it.
 
-  ## Unified sidebar "Active Tasks" loader (ASYNC)
+  ## Unified sidebar "Active Tasks" loader (ASYNC + hub-seeded)
 
   This module is the SINGLE implementation of the sidebar Active Tasks loading
   for the whole dashboard (ProjectsLive's old `Assigns.assign_running_and_pending_tasks/1`
   duplicate was removed). The load is ASYNC so a remote node's `:erpc`-routed
-  fetch (up to 30s) never blocks the LiveView process:
+  fetch (up to 30s) never blocks the LiveView process, and the in-memory
+  `EvoDash.ActiveTasks` hub (keyed `{node_id, node}` per node context) makes
+  page navigation blink-free: every remounting LiveView seeds
+  `:running_tasks`/`:pending_tasks` synchronously from the hub's last-known
+  snapshot for its node context instead of flashing empty.
 
-  `load_running_and_pending_tasks/1` / `assign_active_tasks/1` /
+  On mount (`on_mount/4`), the lists are seeded from the hub for the node
+  context the page WILL have once `handle_params` → `assign_node/2` runs
+  (on_mount runs BEFORE handle_params, so mount-time assigns would otherwise
+  default to the local context). The context is resolved from `params["node"]`
+  via `resolve_node_context/1` and keyed exactly like hub snapshots: local →
+  `{nil, node()}`, remote → `{node_param, remote_node}`, pending →
+  `{node_param, node()}`. A remote page therefore seeds the REMOTE hub key (or
+  `[]` when cold) — never the local key, so local tasks cannot leak into a
+  remote view.
+
+  The connected-mount fetch is CONDITIONAL: it fires only for a cold LOCAL
+  context (`{nil, node()}` with no hub snapshot). The mount-time fetch spawns
+  with the socket's default LOCAL assigns (`assign_node/2` hasn't run yet), so
+  it is only meaningful for local pages; remote/pending pages NEVER fetch on
+  mount — `assign_node/2`'s existing context-change reload (dedup-guard seeded
+  `{nil, node()}` on both mount paths) is guaranteed to fire the correct remote
+  fetch on the first `handle_params`, and a warm remote hub makes that first
+  render instant (the reload heals any gap). A warm local page skips the mount
+  query too — it renders last-known state and the push-based PubSub cycle keeps
+  it fresh.
+
+  The fetch machinery: `load_running_and_pending_tasks/1` / `assign_active_tasks/1` /
   `reload_tasks/1` capture the view pid, the node context, and the next
   `:tasks_load_seq` value, bump the `:tasks_load_seq` assign, and spawn a
   supervised fetch on `EvoDash.TaskSupervisor` — returning the socket
@@ -31,8 +56,12 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   the message through the stale-guard `handle_tasks_result/2`, which DROPS the
   result when the node context or the seq no longer matches (the user switched
   nodes mid-flight, or a newer load was spawned — only the latest request's
-  result is ever applied), and only then assigns `:running_tasks`/
-  `:pending_tasks`.
+  result is ever applied). Every APPLIED result also writes the hub
+  (`EvoDash.ActiveTasks.put/4`, keyed by the message's own node context — the
+  message values, not the socket assigns, are the authoritative context of the
+  fetch) before assigning `:running_tasks`/`:pending_tasks`; stale/dropped
+  results never write. The list stays push-based end to end: task PubSub events
+  → 300ms trailing-edge debounce → fetch → apply (→ hub write).
 
   `load_running_and_pending_tasks/1` is the delegating public entry point used
   by `on_mount/4`, `assign_node/2`, `reload_tasks/1`, and ProjectsLive's
@@ -54,19 +83,33 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   @active_statuses [:running, :pending, :finalizing, :cancelling, :completed]
 
   @doc """
-  On-mount hook — sets initial node-context assigns, attaches the async
-  sidebar-load `:handle_info` hook, and subscribes to connection-status
-  broadcasts when the LiveView socket is connected.
+  On-mount hook — sets initial node-context assigns, seeds the sidebar Active
+  Tasks lists synchronously from the `EvoDash.ActiveTasks` hub (keyed by the
+  node context the page will have after `assign_node/2` — see the moduledoc),
+  attaches the async sidebar-load `:handle_info` hook, and subscribes to
+  connection-status broadcasts when the LiveView socket is connected.
 
   The sidebar Active Tasks load is gated behind `connected?/1` (dead-render
-  skip): on the dead HTTP render the empty-list assigns seeded by `assign_new`
-  are kept and NO query fires; the connected mount's reload (or the first
-  `handle_params` → `assign_node/2`) fetches the real sidebar data. The load
-  itself is async — it spawns on `EvoDash.TaskSupervisor` and returns the
-  socket unchanged; the fresh result arrives later via the attached
+  skip): on the dead HTTP render the hub-seeded assigns are kept and NO query
+  fires; on the connected mount a fetch fires only when the resolved context
+  is a cold LOCAL one (`{nil, node()}` with no hub snapshot) — warm pages and
+  all remote/pending pages render the hub's last-known state and rely on
+  `assign_node/2`'s context-change reload + the push-based PubSub cycle to
+  refresh. The load itself is async — it spawns on `EvoDash.TaskSupervisor` and
+  returns the socket unchanged; the fresh result arrives later via the attached
   `:handle_info` hook (see `handle_info/2` + `handle_tasks_result/2`).
   """
-  def on_mount(:default, _params, _session, socket) do
+  def on_mount(:default, params, _session, socket) do
+    # Resolve the node context the page WILL have after the first `handle_params`
+    # → `assign_node/2` run (on_mount runs BEFORE handle_params, so mount-time
+    # assigns would otherwise default to the local context). The tuple is keyed
+    # exactly like `EvoDash.ActiveTasks` snapshots ({node_id, node}), so the
+    # seeds below read the SAME hub key that applied fetch results write for
+    # this page's context — a local page can never seed from a remote key (and
+    # vice versa).
+    {seed_node_id, seed_node} = node_context_from_params(params)
+    {seed_running, seed_pending} = hub_snapshot(seed_node_id, seed_node)
+
     socket =
       socket
       |> assign_new(:current_node, fn -> node() end)
@@ -75,8 +118,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       |> assign_new(:remote_status, fn -> nil end)
       |> assign_new(:remote_targets, fn -> EvoDash.NodeContext.list_targets() end)
       |> assign_new(:connection_statuses, fn -> EvoDash.NodeContext.connection_status() end)
-      |> assign_new(:running_tasks, fn -> [] end)
-      |> assign_new(:pending_tasks, fn -> [] end)
+      |> assign_new(:running_tasks, fn -> seed_running end)
+      |> assign_new(:pending_tasks, fn -> seed_pending end)
       |> assign_new(:tasks_reload_pending, fn -> false end)
       |> assign_new(:tasks_load_seq, fn -> 0 end)
       # Attached `:handle_info` hook — intercepts async sidebar-load results
@@ -91,11 +134,25 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, @remote_connections_topic)
         Phoenix.PubSub.subscribe(EvoGit.PubSub, @tasks_topic)
 
-        # Load initial running/pending tasks for all live views (connected mount
-        # only — see the dead-render skip note in the doc above). Async: the
-        # socket is returned unchanged and the result arrives via the attached
-        # `:handle_info` hook.
-        load_running_and_pending_tasks(socket)
+        # Connected-mount sidebar fetch — CONDITIONAL on a cold LOCAL context
+        # (see the dead-render skip note in the doc above). The mount fetch
+        # spawns with the socket's default LOCAL assigns (`assign_node/2`
+        # hasn't run yet — request_tasks_load reads `:current_node`/`:current_node_id`
+        # from the assigns seeded above), so it is only meaningful for local
+        # pages: for remote/pending pages it would fetch the WRONG node's data
+        # (the pre-assign_node local assigns) AND double-fetch, because
+        # `assign_node/2`'s existing context-change reload (guard seeded
+        # `{nil, node()}` below) is guaranteed to fire the correct remote fetch
+        # once `handle_params` runs. When the local hub already has a snapshot
+        # (seeded above), the page renders last-known state and the push-based
+        # PubSub cycle (task events → 300ms debounce → fetch → apply) keeps it
+        # fresh — no redundant mount query. Async: the socket is returned
+        # unchanged and the result arrives via the attached `:handle_info` hook.
+        if seed_node_id == nil and EvoDash.ActiveTasks.get(nil, node()) == :empty do
+          load_running_and_pending_tasks(socket)
+        else
+          socket
+        end
       else
         socket
       end
@@ -103,7 +160,10 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     # Seed the node-context dedup guard with the local context so the first
     # `handle_params` → `assign_node/2` call doesn't double-fetch the sidebar
     # (kills the mount double-fetch: on_mount already loaded local tasks on the
-    # connected mount, and on the dead render the skip keeps it query-free).
+    # connected mount when the local hub was cold, and on the dead render the
+    # skip keeps it query-free). For a REMOTE/pending page this guard seed
+    # differs from the resolved remote context, so `assign_node/2`'s existing
+    # context-change reload fires the page's one correct remote fetch.
     # Seeded on BOTH paths.
     socket = assign(socket, :tasks_node_loaded, {nil, node()})
 
@@ -255,7 +315,12 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     * `seq` != the current `:tasks_load_seq` assign (a newer load was spawned
       since — only the latest request's result is ever applied).
 
-  Otherwise assigns `:running_tasks`/`:pending_tasks` from the payload.
+  Otherwise assigns `:running_tasks`/`:pending_tasks` from the payload AND
+  records the lists in the `EvoDash.ActiveTasks` hub (keyed by the message's
+  own `node_id`/`node` — the authoritative context of the fetch, which matched
+  the socket assigns per the guard) so a remounting LiveView on that node
+  context renders last-known state instantly instead of flashing empty. Stale/
+  dropped results never write the hub.
   """
   def handle_tasks_result(
         socket,
@@ -264,9 +329,15 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
     if node_id != socket.assigns[:current_node_id] or
          node != socket.assigns[:current_node] or
          seq != Map.get(socket.assigns, :tasks_load_seq, 0) do
-      # Stale — a node switch or a newer load superseded this result.
+      # Stale — a node switch or a newer load superseded this result. Never
+      # writes the hub: only successfully applied results are last-known state.
       socket
     else
+      # Applied. Record the snapshot in the hub FIRST (keyed by the message's
+      # own node context — the authoritative context of the fetch) so a
+      # remounting LiveView for this node context seeds instantly; then assign.
+      EvoDash.ActiveTasks.put(node_id, node, running, pending)
+
       socket
       |> assign(:running_tasks, running)
       |> assign(:pending_tasks, pending)
@@ -410,6 +481,39 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
       {:error, :not_found} ->
         :local
+    end
+  end
+
+  # Resolves the node context (`{node_id, node}`) the page WILL have after
+  # `assign_node/2` runs for the given `?node=` params — mirrors the case in
+  # `assign_node/2` exactly and keys the tuple like `EvoDash.ActiveTasks`
+  # snapshots so mount-time seeds read the same hub key that applied fetch
+  # results write for this page's context:
+  #   * `:local` → `{nil, node()}`
+  #   * `{:remote, _target, remote_node}` → `{node_param, remote_node}`
+  #   * `{:pending, _target}` → `{node_param, node()}` (data comes from the
+  #     local node until the connection completes, but the target id is
+  #     preserved so the hub key never collides with the pure-local key)
+  defp node_context_from_params(params) do
+    node_param = params["node"]
+
+    case resolve_node_context(node_param) do
+      :local -> {nil, node()}
+      {:remote, _target, remote_node} -> {node_param, remote_node}
+      {:pending, _target} -> {node_param, node()}
+    end
+  end
+
+  # Reads the hub's last-known `{running, pending}` snapshot for a node
+  # context, defaulting to `{[], []}` when the context has never been written
+  # (`:empty`). Used by the mount seeds — synchronous GenServer.call, same
+  # precedent as `EvoDashWeb.LiveHooks.UpdateStatus`'s `initial_assign/2`
+  # (the hub is a supervised child of `EvoDash.Application`, always up in prod
+  # and under `mix test`).
+  defp hub_snapshot(node_id, node) do
+    case EvoDash.ActiveTasks.get(node_id, node) do
+      {:ok, {running, pending}} -> {running, pending}
+      :empty -> {[], []}
     end
   end
 
