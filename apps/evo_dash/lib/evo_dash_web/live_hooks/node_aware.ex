@@ -506,10 +506,9 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
 
   # Reads the hub's last-known `{running, pending}` snapshot for a node
   # context, defaulting to `{[], []}` when the context has never been written
-  # (`:empty`). Used by the mount seeds — synchronous GenServer.call, same
-  # precedent as `EvoDashWeb.LiveHooks.UpdateStatus`'s `initial_assign/2`
-  # (the hub is a supervised child of `EvoDash.Application`, always up in prod
-  # and under `mix test`).
+  # (`:empty`). Used by the mount seeds — a direct `:ets` read of the
+  # boot-created named public table (owned by the `EvoDash.Application`
+  # process, always up in prod and under `mix test`).
   defp hub_snapshot(node_id, node) do
     case EvoDash.ActiveTasks.get(node_id, node) do
       {:ok, {running, pending}} -> {running, pending}
