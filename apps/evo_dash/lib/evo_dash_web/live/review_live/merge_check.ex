@@ -99,6 +99,12 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
         # spawning the merge-resolution task.
         EvoDash.NodeContext.set_review_status(current_node, task_id, :continued)
 
+        # The continued task leaves the sidebar's pending-review partition —
+        # invalidate the acting node context's hub snapshot so the destination
+        # mount is COLD and re-fetches (same mechanism as ReviewLive's
+        # merge/reject/resume/ignore success paths).
+        EvoDash.ActiveTasks.invalidate(socket.assigns.current_node_id, current_node)
+
         opts = [
           path: repo_path,
           mode: "simple",

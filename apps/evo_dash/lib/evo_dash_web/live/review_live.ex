@@ -588,6 +588,11 @@ defmodule EvoDashWeb.ReviewLive do
     if Enum.all?(results, fn {_repo_id, _target, result} -> match?({:ok, _sha}, result) end) do
       EvoDash.NodeContext.set_review_status(node, task_id, :merged)
 
+      # The merged task leaves the sidebar's pending-review partition — make the
+      # destination mount COLD so it re-fetches instead of seeding the
+      # pre-action snapshot (see invalidate_active_tasks/1).
+      invalidate_active_tasks(socket)
+
       success_flash =
         if effective_target do
           gettext(
@@ -685,6 +690,11 @@ defmodule EvoDashWeb.ReviewLive do
     if Enum.all?(results, fn {_repo_id, result} -> result == :ok end) do
       EvoDash.NodeContext.set_review_status(node, task_id, :rejected)
 
+      # The rejected task leaves the sidebar's pending-review partition — make
+      # the destination mount COLD so it re-fetches (see
+      # invalidate_active_tasks/1).
+      invalidate_active_tasks(socket)
+
       branch_names =
         review_repos
         |> Enum.map(& &1.branch_name)
@@ -743,6 +753,10 @@ defmodule EvoDashWeb.ReviewLive do
 
     EvoDash.NodeContext.set_review_status(socket.assigns.current_node, task_id, :continued)
 
+    # The resumed task leaves the sidebar's pending-review partition — make the
+    # destination mount COLD so it re-fetches (see invalidate_active_tasks/1).
+    invalidate_active_tasks(socket)
+
     query = [resume_from: task_id]
     query = if commit_sha, do: Keyword.put(query, :starting_commit, commit_sha), else: query
     # Include project query param so the dashboard re-opens the correct project
@@ -780,6 +794,10 @@ defmodule EvoDashWeb.ReviewLive do
     task_id = socket.assigns.task_id
 
     EvoDash.NodeContext.set_review_status(socket.assigns.current_node, task_id, :ignored)
+
+    # The ignored task leaves the sidebar's pending-review partition — make the
+    # destination mount COLD so it re-fetches (see invalidate_active_tasks/1).
+    invalidate_active_tasks(socket)
 
     {:noreply,
      socket
@@ -1277,5 +1295,20 @@ defmodule EvoDashWeb.ReviewLive do
     path
     |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
     |> String.trim("-")
+  end
+
+  # Review actions on completed tasks (merge/reject/resume/ignore success
+  # paths) change the task's review status, which removes it from the sidebar's
+  # pending-review partition. Invalidate the `EvoDash.ActiveTasks` hub snapshot
+  # for the ACTING node context ({current_node_id, current_node} — the same key
+  # the hub keys on) right after the set_review_status call and before the
+  # push_navigate, so the destination mount is COLD and re-fetches via the
+  # existing machinery instead of seeding the pre-action snapshot (which would
+  # keep the acted-on task listed until some unrelated task event). Only ever
+  # called on status-change success paths that navigate away — partial-failure
+  # branches that stay on the page must NOT invalidate (a still-mounted page
+  # refreshes via the existing broadcast → 300ms debounce path).
+  defp invalidate_active_tasks(socket) do
+    EvoDash.ActiveTasks.invalidate(socket.assigns.current_node_id, socket.assigns.current_node)
   end
 end
