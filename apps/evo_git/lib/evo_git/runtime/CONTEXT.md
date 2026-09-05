@@ -24,7 +24,7 @@ None — leaf directory (modules: `runtime.ex` (parent dir `../runtime.ex`), `he
 
 ### `Genesis.run/2` — Steps
 
-1. Parse opts: `repo_path` (default `File.cwd!()`), `foreign_repos`; register foreign repos with `AgentScheduler`.
+1. Parse opts: `repo_path` (default `File.cwd!()`), `foreign_repos` (loaded + validated via `Helpers.load_foreign_repos/2` — no separate AgentScheduler registration; the validated list is threaded through AgentSpec opts `foreign_repos:` by `build_phase_spec/6`).
 2. `Runtime.ensure_repo/1` (`git init` if needed); HEAD via `PhyloGraphNode.current_head/1`.
 3. Detect mode via `new_codebase?/1` (files beyond `.git`, `README.md`, `.genesis`, `.gitignore`).
 4. Mode B only: read `build_system` opt (CLI `--build-system`), `WorktreeInitScript.scripts_for/1` → write `script.linux`/`script.macos`/`script.windows` to `genesis.toml` via `ProjectConfig.write_worktree_script/2`. Skipped when no build system or `:none`.
