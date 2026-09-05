@@ -445,6 +445,21 @@ defmodule EvoGit.RemoteConnection do
   end
 
   defp do_connect_distributed(%__MODULE__{} = state) do
+    # Outbound tunnel connects must resolve the remote daemon's port through
+    # EvoGit.EpmdDist's persistent-term registry (register_target below feeds
+    # exactly that registry). When the local node booted distributed via
+    # Distribution.maybe_enable/0 (or -sname/-name), the kernel `epmd_module`
+    # env is still the default erl_epmd — the node registered with the real
+    # epmd daemon and net_kernel's outbound port_please would ask that daemon
+    # for a name it never registered, failing with noport (no remote journal
+    # entry: the handshake never starts). net_kernel:epmd_module/0 reads the
+    # kernel env PER connection attempt (inet_tcp_dist fam_setup), so flipping
+    # it here — after boot — takes effect for this Node.connect. We
+    # deliberately do NOT change the boot path: the local node must keep its
+    # registration with the real epmd daemon for inbound discovery; only the
+    # outbound resolution of tunnel-registered names needs EpmdDist.
+    EvoGit.Distribution.ensure_epmd_module()
+
     target = state.target
     connecting = %{state | phase: :connecting}
 

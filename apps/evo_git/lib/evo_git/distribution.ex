@@ -65,10 +65,30 @@ defmodule EvoGit.Distribution do
   @spec enable_for_remote(map()) :: :ok | {:error, term()}
   def enable_for_remote(_target) do
     if distributed?() do
+      # Already-distributed nodes (booted via maybe_enable/0 or started with
+      # -sname/-name) registered themselves with the REAL epmd daemon, not
+      # with EvoGit.EpmdDist. Outbound SSH-tunnel connects resolve the remote
+      # daemon's port through EpmdDist's persistent-term registry (see
+      # EvoGit.RemoteConnection.do_connect_distributed/1), so ensure the
+      # kernel `epmd_module` env points at EpmdDist here too.
+      ensure_epmd_module()
       :ok
     else
       enable_for_connection()
     end
+  end
+
+  @doc false
+  # Ensures the kernel `epmd_module` env is EvoGit.EpmdDist so outbound
+  # distribution connection attempts (Node.connect/1) resolve remote ports
+  # through EpmdDist's persistent-term registry instead of the real epmd
+  # daemon. Idempotent; net_kernel:epmd_module/0 reads this env PER connection
+  # attempt (it is not cached at net_kernel init), so flipping it at runtime —
+  # after the local node already booted distributed with the default
+  # erl_epmd — takes effect for the next outbound connect without disturbing
+  # the local node's existing registration with the real epmd daemon.
+  def ensure_epmd_module do
+    Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
   end
 
   defp enable(node_config) do
@@ -111,7 +131,7 @@ defmodule EvoGit.Distribution do
     end
 
     # Always use our EPMD-less module when starting distribution on-demand.
-    Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
+    ensure_epmd_module()
 
     case start_net_kernel([:"genesis@127.0.0.1", :longnames]) do
       {:ok, _pid} ->
