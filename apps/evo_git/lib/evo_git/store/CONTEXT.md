@@ -82,7 +82,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 - No quarantine tables are created (`Schema.create_tables/1`); leftover quarantine tables in live DBs are ignored, never dropped.
 - Undecodable rows are SKIPPED + `Logger.warning` (no INSERT-into-quarantine + DELETE-from-live pair).
-- The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`, see root CONTEXT.md "Stuck-`:finalizing`-forever bug"). No whole-table integrity scrub at init.
+- The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub at init.
 
 ## Schema: `updated_at` column (store-internal bookkeeping)
 
