@@ -749,95 +749,9 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Diff Viewer (GitHub PR Style) === */
-
-/* Unified review card — tab bar + content as one visual box */
-.review-card {
-  @apply border-y border-base-200  bg-base-100;
-}
-
-/* Tab bar section — top portion of the card */
-.review-card-tabs {
-  @apply border-b border-base-200/60 bg-base-200/20 px-4 sm:px-6 lg:px-8;
-}
-
-.review-tab-bar {
-  /* Tab buttons container */
-}
-
-/* Content section — bottom portion of the card */
-.review-card-content {
-  /* Content area below tabs */
-}
-
-/* Full-screen diff layout — flex row on desktop, stacks on mobile */
-.diff-fullscreen-layout {
-  @apply flex flex-col md:flex-row;
-}
-
-/* Sticky sidebar in fullscreen mode — sticks to top of the scroll container (desktop only) */
-@media (min-width: 768px) {
-  .diff-fullscreen-layout .diff-file-sidebar {
-    position: sticky;
-    top: 0;
-    height: 100dvh;
-    overflow-y: auto;
-  }
-}
-
-/* Diff content flows with page in fullscreen — no inner scroll */
-.diff-fullscreen-layout .diff-main-content {
-  overflow: visible;
-}
-
-/* File headers stick to top of the scroll container in fullscreen */
-.diff-fullscreen-layout .diff-file-header {
-  top: 0;
-  z-index: 20;
-}
-
-/* Split layout: file tree sidebar + diff content (non-fullscreen) */
-.diff-split-layout {
-  @apply flex flex-col md:flex-row gap-0 md:h-[calc(100vh-280px)] min-h-[400px];
-}
-
-.diff-file-sidebar {
-  @apply w-full md:w-64 shrink-0 overflow-y-auto border-b md:border-b-0 md:border-r border-base-200 bg-base-100;
-}
-
-.diff-file-sidebar .file-item {
-  @apply px-3 py-2 text-left w-full hover:bg-base-200/50 transition-colors flex items-center gap-2 text-sm border-b border-base-200/50;
-}
-
-.diff-file-sidebar .file-item.file-selected {
-  @apply bg-primary/10 border-l-2 border-l-primary;
-}
-/* File tree directory groups */
-.diff-file-sidebar .dir-group {
-  border: none;
-  margin: 0;
-}
-.diff-file-sidebar .dir-group[open] .dir-group-header {
-  @apply bg-base-200/50;
-}
-.diff-file-sidebar .dir-group-header {
-  @apply py-1.5 cursor-pointer hover:bg-base-200/50 transition-colors flex items-center gap-1.5 text-xs;
-  list-style: none;
-}
-.diff-file-sidebar .dir-group summary::-webkit-details-marker {
-  display: none;
-}
-.diff-file-sidebar .dir-group-header .dir-icon {
-  @apply text-xs shrink-0;
-}
-.diff-file-sidebar .dir-group-header .dir-name {
-  @apply flex-1 text-base-content/70;
-}
-.diff-file-sidebar .dir-group-header .dir-stats {
-  @apply text-[10px] text-base-content/40 font-mono shrink-0 flex items-center gap-1;
-}
-.diff-file-sidebar .dir-files {
-  /* Files within a directory group are indented via inline style based on depth */
-}
+/* The review page's layout, tab bar, and file-tree sidebar are styled with
+   Tailwind utilities in the components; app.css carries only the shared
+   diff-* classes below (line grid, tints, split view, expand bars). */
 
 .diff-main-content {
   @apply flex-1 overflow-y-auto overflow-x-auto bg-base-100 min-w-0;
@@ -1151,47 +1065,6 @@ button, a, input, textarea, select, summary,
 [data-theme="dark"] .hljs-operator,
 [data-theme="dark"] .hljs-params {
   color: inherit; /* keep default text color */
-}
-
-/* Tab bar styling */
-.review-tab-bar {
-  @apply flex border-b border-base-200 bg-base-100;
-}
-
-.review-tab {
-  @apply px-4 py-3 text-sm font-medium text-base-content/60 hover:text-base-content transition-colors border-b-2 border-transparent -mb-px;
-}
-
-.review-tab.tab-active {
-  @apply text-primary border-primary;
-}
-
-/* Clickable commit rows */
-.commit-row {
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-.commit-row:hover {
-  background-color: color-mix(in oklch, var(--color-primary) 5%, transparent);
-}
-
-/* File tree scrollbar */
-.diff-file-sidebar {
-  scrollbar-width: thin;
-  scrollbar-color: oklch(0.7 0 0 / 0.2) transparent;
-}
-
-.diff-file-sidebar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.diff-file-sidebar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.diff-file-sidebar::-webkit-scrollbar-thumb {
-  background-color: oklch(0.7 0 0 / 0.2);
-  border-radius: 3px;
 }
 
 /* Fix DaisyUI tooltip z-index — appears below card backgrounds by default */
