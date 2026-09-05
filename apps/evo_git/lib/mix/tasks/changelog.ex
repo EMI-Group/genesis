@@ -37,7 +37,13 @@ defmodule Mix.Tasks.Changelog do
   The merge message itself is never used as the signal. Version-bump commits
   (subjects matching `^Bump version to`) and obvious mechanical noise
   (`^Update mix hash`, `^Update CONTEXT.md`) are filtered from every change's
-  commit list; a change left with no commits is dropped entirely.
+  commit list; a change left with no commits is dropped entirely. Docs-only
+  commits (README rewording, documentation / CONTEXT.md edits, comment-only
+  work) carry no user-facing code change; only commit subjects/bodies are
+  collected (never file paths), so their exclusion is PROMPT-driven: stage 1
+  summarizes code-relevant changes only and marks entirely non-user-facing
+  changes with a fixed docs-only marker that the pipeline drops before
+  stage 2 — such changes never become entries.
 
   Summarization is **two-stage (map-reduce)**: stage 1 produces one concise
   user-facing summary line per change (one LLM call per change, taking that
@@ -45,8 +51,13 @@ defmodule Mix.Tasks.Changelog do
   final Keep-a-Changelog entries in a single LLM call. Stage 2 also merges
   **related changes across PRs/merges**: separate merges that add, fix, and
   improve the same feature collapse into ONE entry describing the end / net
-  user-visible state (e.g. "Add feature xyz"). After writing the file the
-  task interactively asks whether to commit it; if confirmed only the
+  user-visible state (e.g. "Add feature xyz"). Stage 1 classifies by user
+  impact: a change mixing real code work with docs churn is summarized for
+  its code-relevant part only, and an entirely non-user-facing change
+  (docs-only) is summarized as the fixed marker dropped before stage 2; a
+  release whose changes are all non-user-facing short-circuits like the
+  empty-range path and leaves CHANGELOG.md untouched. After writing the file
+  the task interactively asks whether to commit it; if confirmed only the
   changelog file is staged and committed (never `git add -A`).
 
   ## Examples
@@ -94,6 +105,13 @@ defmodule Mix.Tasks.Changelog do
   @mechanical_noise_re ~r/^(Update mix hash|Update CONTEXT\.md)/
   @categories ~w(Added Changed Fixed Removed Security Deprecated)
 
+  # Stage-1 docs-only marker: a change whose commits carry no user-facing code
+  # work (docs-only, README rewording, comment-only, documentation/CONTEXT.md
+  # edits, ...) is summarized as EXACTLY this marker by build_pr_prompt/2, and
+  # summarize_prs/3 drops those summaries before stage 2 so such a change can
+  # never become a changelog entry.
+  @no_user_facing_marker "__NO_USER_FACING_CHANGES__"
+
   @impl Mix.Task
   def run(args) do
     {opts, remaining, _invalid} =
@@ -131,6 +149,14 @@ defmodule Mix.Tasks.Changelog do
         )
 
         case summarize(model, version, prs) do
+          {:ok, []} ->
+            # Every change was non-user-facing (docs-only, ...) and was dropped
+            # — nothing meaningful to write, mirroring the empty-range
+            # "No commits found" path above.
+            Mix.shell().info(
+              "No user-facing code changes found in the given range — #{file} was NOT modified."
+            )
+
           {:ok, entries} ->
             grouped = group_by_category(entries)
             section = build_section(version, grouped)
@@ -325,15 +351,26 @@ defmodule Mix.Tasks.Changelog do
 
   @doc false
   # The real pipeline: stage 1 maps each PR to one summary line, stage 2
-  # reduces the summaries into the final categorized entries.
+  # reduces the summaries into the final categorized entries. When every
+  # change was non-user-facing (docs-only etc.), stage 1 yields no summaries
+  # and the pipeline short-circuits with an empty entry list (mirroring the
+  # empty-range "No commits found" path) instead of running the stage-2
+  # aggregator over nothing.
   def summarize_pipeline(model, version, prs) do
     with {:ok, summaries} <- summarize_prs(model, version, prs) do
-      aggregate(model, version, summaries)
+      if summaries == [] do
+        {:ok, []}
+      else
+        aggregate(model, version, summaries)
+      end
     end
   end
 
   # Stage 1 (map) seam: one call per PR, returning a single concise
-  # user-facing summary line for that PR.
+  # user-facing summary line for that PR. Summaries the model marked as
+  # ignorable — empty, or the @no_user_facing_marker docs-only marker emitted
+  # per build_pr_prompt/2 — are dropped here, before stage 2, so a docs-only
+  # PR can never become a changelog entry.
   defp summarize_prs(model, version, prs) do
     summarizer =
       Application.get_env(
@@ -345,7 +382,13 @@ defmodule Mix.Tasks.Changelog do
     Enum.reduce_while(prs, {:ok, []}, fn pr, {:ok, acc} ->
       case summarizer.(model, version, pr) do
         {:ok, summary} when is_binary(summary) ->
-          {:cont, {:ok, acc ++ [String.trim(summary)]}}
+          summary = String.trim(summary)
+
+          if ignorable_summary?(summary) do
+            {:cont, {:ok, acc}}
+          else
+            {:cont, {:ok, acc ++ [summary]}}
+          end
 
         {:ok, _other} ->
           {:halt, {:error, {:invalid_pr_summary, pr.head_sha}}}
@@ -354,6 +397,13 @@ defmodule Mix.Tasks.Changelog do
           {:halt, {:error, reason}}
       end
     end)
+  end
+
+  # A stage-1 summary is ignorable when the model marked the change as
+  # carrying no user-facing code work: the fixed docs-only marker from
+  # build_pr_prompt/2, or an empty reply.
+  defp ignorable_summary?(summary) do
+    summary == "" or summary == @no_user_facing_marker
   end
 
   @doc false
@@ -445,7 +495,11 @@ defmodule Mix.Tasks.Changelog do
 
   # Stage-1 prompt: one PR's commits -> one concise user-facing summary line.
   # Nested per-commit grouping happens inside this call (a PR that "fixes the
-  # same bug twice" collapses to one summary).
+  # same bug twice" collapses to one summary). Only user-facing CODE changes
+  # belong in the summary: documentation churn (README rewording, docs /
+  # CONTEXT.md edits, comment-only commits) is ignored when it rides along
+  # with real code work, and an entirely non-user-facing change is marked
+  # with @no_user_facing_marker so the pipeline can drop it before stage 2.
   defp build_pr_prompt(version, pr) do
     commit_lines = format_commit_lines(pr.commits)
 
@@ -454,14 +508,25 @@ defmodule Mix.Tasks.Changelog do
 
     Below are the commits belonging to ONE pull request / merge included in
     this release (hash, subject, and optional body). Write a SINGLE concise,
-    user-facing summary line describing what this change does, as it would
-    appear in a changelog entry.
+    user-facing summary line describing the CODE change this does, as it
+    would appear in a changelog entry.
 
     Rules:
-    - The summary is ONE short user-facing sentence fragment (no commit
-      hashes, author names, or file paths).
+    - The summary is ONE short user-facing sentence fragment describing the
+      code-level change that affects users (no commit hashes, author names,
+      or file paths).
+    - Focus ONLY on user-facing code changes: features, bug fixes, behavior
+      or performance changes, dependency or API changes users can see. Never
+      summarize documentation work: README rewording, documentation or
+      CONTEXT.md edits, comment-only changes, docs/website updates.
+    - A change that MIXES real code work with docs churn: summarize ONLY the
+      code-relevant part and leave the documentation noise out of the summary.
     - Merge related commits into a single summary — a change that fixes the
       same bug twice collapses to one summary line.
+    - If the change is ENTIRELY non-user-facing (docs-only, README rewording,
+      comment-only, pure documentation/website updates — no code change users
+      can observe), reply with EXACTLY this single line and nothing else:
+      #{@no_user_facing_marker}
 
     Commits in this change:
     #{commit_lines}
@@ -473,7 +538,10 @@ defmodule Mix.Tasks.Changelog do
   # Multiple PRs/merges in the release may concern the same feature or bug
   # (e.g. one adds it, a later one fixes it, another improves it) — the
   # prompt instructs the LLM to collapse all such related changes into a
-  # single entry describing the net user-visible state.
+  # single entry describing the net user-visible state. Entries describing
+  # non-code / docs-only work (README updates, documentation rewording,
+  # CONTEXT.md edits, comment-only changes) are excluded entirely — only
+  # code-related changes that matter to users belong in the changelog.
   def build_aggregate_prompt(version, summaries) do
     summary_lines = Enum.map_join(summaries, "\n", &"- #{&1}")
 
@@ -496,6 +564,13 @@ defmodule Mix.Tasks.Changelog do
     user-visible state (e.g. "Add feature xyz" for the add -> fix -> improve
     sequence) — NOT one entry per PR. Choose the most representative category,
     usually the one of the primary / introducing change.
+
+    IMPORTANT — code changes only:
+    The changelog must contain ONLY code-related changes that matter to users.
+    Do NOT include entries describing non-code or docs-only work: README
+    updates, documentation rewording, CONTEXT.md or docs-file edits,
+    comment-only changes, website-only updates. If a summary line describes
+    nothing but documentation work, omit it entirely.
 
     Rules:
     - Each entry is a short user-facing sentence fragment (no commit hashes,
