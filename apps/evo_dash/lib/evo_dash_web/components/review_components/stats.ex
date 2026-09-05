@@ -16,31 +16,26 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
 
   def diff_stats_bar(assigns) do
     ~H"""
-    <div class="bg-base-100 border-b border-base-300 px-5 py-4 md:px-6 md:py-4">
-      <div class="flex items-center gap-4 flex-wrap text-sm">
-        <div class="flex items-center gap-2.5">
-          <.icon name="hero-document-text" class="size-4.5 text-base-content/70" />
-          <span class="font-medium text-base-content/80">
-            {gettext("%{count} files changed", count: @files_count)}
-          </span>
-        </div>
-        <div class="flex items-center gap-3 bg-base-200/50 rounded-full px-3 py-1">
-          <span class="text-success font-semibold flex items-center gap-1.5">
-            <.icon name="hero-plus" class="size-3.5" /> {@additions}
-          </span>
-          <span class="text-error font-semibold flex items-center gap-1.5">
-            <.icon name="hero-minus" class="size-3.5" /> {@deletions}
-          </span>
-        </div>
-        <span class="text-base-content/30 hidden sm:inline">·</span>
-        <div class="flex items-center gap-2.5">
-          <.icon name="hero-clock" class="size-4.5 text-base-content/70" />
-          <span class="font-medium text-base-content/80">
-            <%!-- zh_CN: commit → "提交" --%>
-            {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
-          </span>
-        </div>
-      </div>
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+      <span class="flex items-center gap-1.5">
+        <.icon name="hero-clock" class="size-4 text-base-content/70" />
+        <%!-- zh_CN: commit → "提交" --%>
+        {ngettext("%{count} commit", "%{count} commits", @commits_count, count: @commits_count)}
+      </span>
+      <span class="flex items-center gap-1.5">
+        <.icon name="hero-document-text" class="size-4 text-base-content/70" />
+        {gettext("%{count} files changed", count: @files_count)}
+      </span>
+      <span class="text-success font-semibold flex items-center gap-1">
+        <%!-- zh_CN: +新增行数 --%>
+        <.icon name="hero-arrow-up" class="size-3.5" />
+        {@additions}
+      </span>
+      <span class="text-error font-semibold flex items-center gap-1">
+        <%!-- zh_CN: −删除行数 --%>
+        <.icon name="hero-arrow-down" class="size-3.5" />
+        {@deletions}
+      </span>
     </div>
     """
   end
@@ -53,28 +48,28 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
 
   def commits_list(assigns) do
     ~H"""
-    <div>
-      <div class="p-5 md:p-6 border-b border-base-200/50 bg-base-200/20">
-        <div class="flex items-center gap-3">
-          <.icon name="hero-clock" class="size-5 text-base-content/60" />
-          <span class="font-semibold text-base">
+    <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
+      <div class="px-4 py-3 border-b border-base-300 bg-base-200/40">
+        <div class="flex items-center gap-2">
+          <.icon name="hero-clock" class="size-4 text-base-content/60" />
+          <span class="text-sm font-semibold text-base-content/85">
             {ngettext("%{count} commit", "%{count} commits", length(@commits),
               count: length(@commits)
             )}
           </span>
         </div>
       </div>
-      <div class="divide-y divide-base-200/50">
-        <%= for {commit, _i} <- Enum.with_index(@commits) do %>
+      <div>
+        <%= for commit <- @commits do %>
           <button
-            class="commit-row flex items-center gap-4 w-full px-5 md:px-6 py-4 text-left"
+            class="flex items-center gap-3 px-4 py-3 text-left w-full hover:bg-base-200/50 transition-colors border-b border-base-200/60 last:border-b-0"
             phx-click="inspect_commit"
             phx-value-sha={commit.sha}
           >
-            <span class="badge badge-sm badge-outline border-base-content/20 rounded-lg font-mono text-xs px-2.5 shrink-0">
+            <span class="badge badge-sm badge-outline border-base-content/20 font-mono rounded-md shrink-0">
               {commit.short_sha}
             </span>
-            <span class="text-sm font-medium flex-1 truncate" title={commit.message}>
+            <span class="text-sm font-medium truncate flex-1" title={commit.message}>
               {commit.message}
             </span>
             <span class="text-sm text-base-content/60 shrink-0 hidden sm:inline">
