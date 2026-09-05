@@ -13,6 +13,8 @@ defmodule Mix.Tasks.ChangelogTest do
     %{category: "Fixed", text: "Fixes a crash on empty results"}
   ]
 
+  @no_user_facing_marker "__NO_USER_FACING_CHANGES__"
+
   setup do
     tmp_dir =
       Path.join(
@@ -451,6 +453,120 @@ defmodule Mix.Tasks.ChangelogTest do
     # The example input summaries still appear verbatim.
     assert prompt =~ "- Add feature xyz"
     assert prompt =~ "- Improve feature xyz"
+  end
+
+  test "aggregate prompt explicitly excludes non-code / docs-only changes" do
+    prompt =
+      Changelog.build_aggregate_prompt("0.2.0", [
+        "Add feature xyz",
+        "Update README with the new benchmark results"
+      ])
+
+    # The code-changes-only exclusion is present and prominent.
+    assert prompt =~ "IMPORTANT — code changes only"
+    assert prompt =~ "ONLY code-related changes that matter to users"
+    assert prompt =~ "Do NOT include entries describing non-code or docs-only work"
+    assert prompt =~ "docs-only work: README"
+    assert prompt =~ "CONTEXT.md"
+    assert prompt =~ "comment-only"
+    assert prompt =~ "omit it entirely"
+
+    # The related-PR merging instruction is preserved alongside it.
+    assert prompt =~ "IMPORTANT — merge related changes across PRs"
+  end
+
+  test "drops docs-only stage-1 summaries before aggregation", %{tmp_dir: tmp_dir} do
+    # A merge that is ENTIRELY docs churn (summarized as the marker, dropped) ...
+    build_merge(tmp_dir, "feature-docs", [
+      "Update README badges",
+      "Fix typo in developer docs"
+    ])
+
+    # ... and a merge that MIXES docs churn with real code work (only the code
+    # part may surface as a summary).
+    build_merge(tmp_dir, "feature-widget", [
+      "Update README acknowledgements",
+      "add feature widget"
+    ])
+
+    docs_subject? = fn s -> s =~ ~r/readme|docs|documentation|CONTEXT|comment/i end
+
+    with_pr_summarizer(fn _model, _version, pr ->
+      send(self(), {:pr_summarized, pr})
+      subjects = Enum.map(pr.commits, & &1.subject)
+
+      cond do
+        Enum.all?(subjects, docs_subject?) ->
+          {:ok, @no_user_facing_marker}
+
+        true ->
+          {:ok, Enum.find(subjects, &(not docs_subject?.(&1)))}
+      end
+    end)
+
+    with_aggregator(fn _model, _version, summaries ->
+      send(self(), {:aggregated_summaries, summaries})
+      {:ok, Enum.map(summaries, &%{category: "Added", text: &1})}
+    end)
+
+    send(self(), {:mix_shell_input, :yes?, false})
+
+    File.cd!(tmp_dir, fn ->
+      Changelog.run([@new_version])
+    end)
+
+    # The docs-only merge still reached stage 1 (it IS a collected change) ...
+    doc_merge =
+      Enum.find(collect_pr_summaries(), fn pr ->
+        Enum.map(pr.commits, & &1.subject) == [
+          "Fix typo in developer docs",
+          "Update README badges"
+        ]
+      end)
+
+    assert doc_merge != nil
+
+    # ... but its marker summary was dropped before stage 2, while the code
+    # parts of the mixed merge and the baseline commits flowed through.
+    assert_received {:aggregated_summaries, summaries}
+    refute @no_user_facing_marker in summaries
+    refute Enum.any?(summaries, &(&1 =~ ~r/readme|docs|documentation|comment/i))
+    assert "add feature widget" in summaries
+    assert "add feature A" in summaries
+    assert "fix bug B" in summaries
+
+    # The written changelog carries only code-derived entries.
+    content = File.read!(Path.join(tmp_dir, "CHANGELOG.md"))
+    assert content =~ "- add feature widget"
+    refute content =~ ~r/README|documentation/i
+  end
+
+  test "skips the aggregator and leaves the changelog untouched when every change is non-user-facing",
+       %{
+         tmp_dir: tmp_dir
+       } do
+    # Stage 1 marks EVERY change as non-user-facing.
+    with_pr_summarizer(fn _model, _version, _pr -> {:ok, @no_user_facing_marker} end)
+
+    with_aggregator(fn _model, _version, summaries ->
+      send(self(), {:aggregated_summaries, summaries})
+      {:ok, @stub_entries}
+    end)
+
+    send(self(), {:mix_shell_input, :yes?, false})
+
+    File.cd!(tmp_dir, fn ->
+      Changelog.run([@new_version])
+    end)
+
+    # Stage 2 was never invoked over an empty summary list.
+    refute_received {:aggregated_summaries, _}
+
+    # No meaningless empty changelog section was written.
+    refute File.exists?(Path.join(tmp_dir, "CHANGELOG.md"))
+
+    infos = collect_infos()
+    assert Enum.any?(infos, &String.contains?(&1, "No user-facing code changes found"))
   end
 
   # Runs git in the given directory, raising on failure (test setup only).
