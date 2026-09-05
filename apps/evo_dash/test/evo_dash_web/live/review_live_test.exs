@@ -1169,10 +1169,16 @@ defmodule EvoDashWeb.ReviewLiveTest do
       refute Enum.any?(repos, &(&1.repo_id == "readonly"))
       refute Enum.any?(repos, &(&1.repo_id == "no_commits"))
 
-      # With more than one review repo, the per-repo tab bar renders.
-      html = render(view)
-      assert html =~ ~s(phx-click="switch_repo")
-      assert html =~ "original"
+      # Repo selection is GATED in the redesign: the merge box renders its
+      # <select phx-change="switch_repo"> only when the branch exists, and the
+      # Files-changed toolbar only alongside diff data. This orphaned fixture
+      # (nonexistent paths) opens NEITHER gate — switching to the Files-changed
+      # tab shows the empty-state panel and no selector. The positive
+      # multi-repo selector render is pinned in the per-repo merge-check
+      # describe below (real-repo fixture, branch_exists true).
+      html = render_click(view, "switch_tab", %{"tab" => "files_changed"})
+      assert html =~ "No diff data available for this review."
+      refute html =~ ~s(phx-change="switch_repo")
     end
 
     test "legacy tasks without a repos key yield exactly one primary entry", %{conn: conn} do
@@ -1186,8 +1192,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert length(repos) == 1
       assert hd(repos).repo_id == "primary"
 
-      # Single-repo pages render NO repo tab bar (pixel-identical to before).
-      refute render(view) =~ ~s(phx-click="switch_repo")
+      # Single-repo pages render NO repo selector (pixel-identical to before).
+      refute render(view) =~ ~s(phx-change="switch_repo")
     end
   end
 
@@ -1536,8 +1542,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
-      # The per-repo tab bar renders with a switch_repo button per repo.
-      assert render(view) =~ ~s(phx-click="switch_repo")
+      # The repo selector renders (merge box on the conversation tab; also in
+      # the Files-changed toolbar) — a <select> with phx-change="switch_repo".
+      assert render(view) =~ ~s(phx-change="switch_repo")
 
       # Inject a conflict for the foreign repo only.
       send(
@@ -1550,8 +1557,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       refute render(view) =~ "foreign.txt"
 
-      # Switch to the foreign repo tab.
-      html = render_click(view, "switch_repo", %{"repo_id" => "original"})
+      # Switch to the foreign repo via the selector (phx-change on the
+      # <select name="repo_id">).
+      html = render_change(view, "switch_repo", %{"repo_id" => "original"})
 
       assert assigns(view)[:active_repo_id] == "original"
 
@@ -1728,9 +1736,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
-      # Switch to the foreign repo tab — resume must NOT pick up the foreign
-      # repo's path/commit (PRIMARY-scoped by design).
-      render_click(view, "switch_repo", %{"repo_id" => "original"})
+      # Switch to the foreign repo via the selector — resume must NOT pick up
+      # the foreign repo's path/commit (PRIMARY-scoped by design).
+      render_change(view, "switch_repo", %{"repo_id" => "original"})
       assert assigns(view)[:active_repo_id] == "original"
 
       render_click(view, "resume")
