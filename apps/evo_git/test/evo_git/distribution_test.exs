@@ -43,6 +43,20 @@ defmodule EvoGit.DistributionTest do
     end
   end
 
+  describe "ensure_epmd_module/0" do
+    test "sets the kernel epmd_module env to EvoGit.EpmdDist (regression: 490958058)" do
+      original = Application.get_env(:kernel, :epmd_module)
+      on_exit(fn -> restore_env(:kernel, :epmd_module, original) end)
+
+      assert :ok = Distribution.ensure_epmd_module()
+      assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
+
+      # Idempotent — repeated calls leave the same value and never raise.
+      assert :ok = Distribution.ensure_epmd_module()
+      assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
+    end
+  end
+
   describe "maybe_enable/0" do
     test "returns :ok when distribution is disabled (default config)" do
       # By default, node.enabled is false, so maybe_enable should be a no-op.
@@ -59,6 +73,66 @@ defmodule EvoGit.DistributionTest do
     test "returns :ok when already distributed" do
       if Distribution.distributed?() do
         assert :ok = Distribution.enable_for_remote(%{})
+      end
+    end
+
+    test "already-distributed nodes get EpmdDist epmd_module (regression: 490958058)" do
+      original_epmd = Application.get_env(:kernel, :epmd_module)
+      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
+      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
+      was_distributed = Distribution.distributed?()
+
+      # The already-distributed branch of enable_for_remote/1 is only reachable
+      # when node() != :nonode@nohost. The test BEAM boots non-distributed and
+      # cannot start distribution with the default erl_epmd (no epmd daemon is
+      # running), so start an EPMD-less distribution exactly like
+      # enable_for_connection/0 does: set the listen range + epmd_module, then
+      # :net_kernel.start. `started` is true only when THIS test actually
+      # started distribution (a node already distributed on entry is not ours
+      # to stop).
+      started =
+        if was_distributed do
+          false
+        else
+          Application.put_env(:kernel, :inet_dist_listen_min, 9100)
+          Application.put_env(:kernel, :inet_dist_listen_max, 9200)
+          Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
+
+          case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
+            {:ok, _pid} -> true
+            # Environment cannot run distribution — the already-distributed
+            # branch is unreachable. Mirror the existing "returns :ok when
+            # already distributed" convention of tolerating a non-distributed
+            # test environment; the direct ensure_epmd_module/0 test above
+            # still pins the env flip itself.
+            _other -> false
+          end
+        end
+
+      on_exit(fn ->
+        if started and Distribution.distributed?() do
+          :net_kernel.stop()
+        end
+
+        # EpmdDist.register_node/3 persists the local name in its
+        # persistent-term registry at net_kernel start; erase the entry this
+        # test created (erase/1 raises on a missing key, hence the guard).
+        if started and :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
+          :persistent_term.erase({:evogit_epmd, :genesis})
+        end
+
+        restore_env(:kernel, :epmd_module, original_epmd)
+        restore_env(:kernel, :inet_dist_listen_min, original_min)
+        restore_env(:kernel, :inet_dist_listen_max, original_max)
+      end)
+
+      if Distribution.distributed?() do
+        # Deliberately reset the env first so the assertion proves
+        # enable_for_remote/1 — not our setup above — performed the flip.
+        Application.delete_env(:kernel, :epmd_module)
+
+        assert :ok = Distribution.enable_for_remote(%{})
+        assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
       end
     end
 

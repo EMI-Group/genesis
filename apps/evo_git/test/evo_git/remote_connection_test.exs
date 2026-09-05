@@ -209,6 +209,86 @@ defmodule EvoGit.RemoteConnectionTest do
 
       cleanup_connections()
     end
+
+    test "on an already-distributed node, flips epmd_module to EpmdDist before connecting (regression: 490958058)" do
+      ensure_registry_and_supervisor()
+
+      original_epmd = Application.get_env(:kernel, :epmd_module)
+      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
+      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
+      was_distributed = node() != :nonode@nohost
+
+      # The connect path that hit the bug — do_connect/1 taking the
+      # already-distributed branch straight into do_connect_distributed/1 —
+      # requires node() != :nonode@nohost. The test BEAM boots non-distributed
+      # and cannot start distribution with the default erl_epmd (no epmd
+      # daemon is running), so start an EPMD-less distribution the same way
+      # the app does: listen range + EpmdDist epmd_module, then
+      # :net_kernel.start. `started` is true only when THIS test actually
+      # started distribution (a node already distributed on entry is not ours
+      # to stop).
+      started =
+        if was_distributed do
+          false
+        else
+          Application.put_env(:kernel, :inet_dist_listen_min, 9100)
+          Application.put_env(:kernel, :inet_dist_listen_max, 9200)
+          Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
+
+          case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
+            {:ok, _pid} -> true
+            # Environment cannot run distribution — the distributed connect
+            # path is unreachable; skip the assertions below (mirrors the
+            # existing non-distributed connect test's tolerance).
+            _other -> false
+          end
+        end
+
+      on_exit(fn ->
+        if started and node() != :nonode@nohost do
+          :net_kernel.stop()
+        end
+
+        # EpmdDist.register_node/3 persists the local name in its
+        # persistent-term registry at net_kernel start; erase the entry this
+        # test created (erase/1 raises on a missing key, hence the guard).
+        if started and :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
+          :persistent_term.erase({:evogit_epmd, :genesis})
+        end
+
+        restore_env(:kernel, :epmd_module, original_epmd)
+        restore_env(:kernel, :inet_dist_listen_min, original_min)
+        restore_env(:kernel, :inet_dist_listen_max, original_max)
+      end)
+
+      if node() != :nonode@nohost and not match?({:win32, _}, :os.type()) do
+        # Deliberately reset the env to the default erl_epmd first, so the
+        # assertion below proves do_connect_distributed/1 (not our setup)
+        # performed the flip back to EpmdDist before the tunnel/Node.connect.
+        Application.put_env(:kernel, :epmd_module, :erl_epmd)
+
+        # Fake `ssh` exits immediately instead of hanging on a real network
+        # connect — the tunnel dies fast and deterministically (real ssh to
+        # example.com can hang for the full 10s tunnel budget offline).
+        with_fake_ssh_immediate_exit(fn ->
+          target_id = save_test_target()
+          result = EvoGit.RemoteConnection.connect(target_id)
+
+          # The fake ssh exits before the tunnel opens, so connect errors with
+          # {:tunnel_not_ready, {:ssh_exited, ...}} — but NOT with
+          # :distribution_failed (that would mean do_connect never reached the
+          # already-distributed branch).
+          refute match?({:error, {:distribution_failed, _}}, result)
+          assert match?({:error, _}, result)
+
+          # do_connect_distributed/1 runs ensure_epmd_module() before opening
+          # the tunnel, so even a failed connect must leave the env at EpmdDist.
+          assert Application.get_env(:kernel, :epmd_module) == EvoGit.EpmdDist
+        end)
+
+        cleanup_connections()
+      end
+    end
   end
 
   describe "find_free_port/0" do
@@ -950,5 +1030,44 @@ defmodule EvoGit.RemoteConnectionTest do
         end)
       end
     end
+  end
+
+  defp restore_env(app, key, nil), do: Application.delete_env(app, key)
+  defp restore_env(app, key, value), do: Application.put_env(app, key, value)
+
+  # Puts a fake `ssh` executable that exits immediately (no tunnel, no network)
+  # first on PATH, restoring both on exit. Used by the already-distributed
+  # connect test so the tunnel Port dies fast and deterministically — a real
+  # ssh to the fake target (example.com) can hang for the whole tunnel budget
+  # in offline environments. POSIX-only (`#!/bin/sh`); callers must gate on
+  # non-Windows.
+  defp with_fake_ssh_immediate_exit(fun) do
+    tmp =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-test-ssh-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp)
+
+    ssh_path = Path.join(tmp, "ssh")
+    File.write!(ssh_path, "#!/bin/sh\nexit 0\n")
+    File.chmod!(ssh_path, 0o755)
+
+    original_path = System.get_env("PATH")
+    new_path = if original_path, do: tmp <> ":" <> original_path, else: tmp
+    System.put_env("PATH", new_path)
+
+    on_exit(fn ->
+      if original_path do
+        System.put_env("PATH", original_path)
+      else
+        System.delete_env("PATH")
+      end
+
+      File.rm_rf!(tmp)
+    end)
+
+    fun.()
   end
 end
