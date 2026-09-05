@@ -25,7 +25,7 @@ defmodule EvoGit.MixProject do
 
   defp deps do
     [
-      {:req_llm, git: "https://github.com/BillHuang2001/req_llm.git"},
+      {:req_llm, "~> 1.22.0"},
       {:retry, "~> 0.19"},
       {:req, "~> 0.7.0"},
       {:phoenix_pubsub, "~> 2.2"},
