@@ -43,7 +43,7 @@ None — leaf directory (all modules at this level).
 
 **Resolution paths for `:finalizing`:** (a) startup — init reconciliation marks it `:failed`; (b) explicit user action — `clear_finished_tasks` uses `select_finished_task_ids` (SQL `status NOT IN ('running','pending','cancelling')` — includes `:finalizing`) and DELETEs them, or `delete_task`; (c) in-process — wrapper completion → `{ref, result}` (`{:ok,_}`→`:completed`, error/exit→`:failed`), wrapper crash → `:DOWN` (`:normal`→`:completed`, abnormal→`:failed` only if `Lease.sched_meta_has_active_agents?` is false), or public `update_task_status/4` cast (stale-guard blocks terminal→terminal except →`:completed`). `cancel_task` from `:finalizing` → `{:error, :not_running}` (graceful cancel works from `:pending`/`:running`). **Lease expiry plays NO role in resolving `:finalizing`** — a stuck wrapper stops getting renewals (heartbeat skips it) and stays `:finalizing` until the wrapper finishes/dies or the runtime restarts.
 
-**Unreachable code:** `Lease.lookup_sched_meta_result/1` is used only by `resolve_recheck_task/3` (task_registry.ex:1016), whose `{:recheck_task, _}` handler is never triggered.
+**Unreachable code:** `Lease.lookup_sched_meta_result/1` is used only by `resolve_recheck_task/3` (task_registry.ex:1034-1035), whose `{:recheck_task, _}` handler (task_registry.ex:1452-1471) is never triggered.
 
 **Cleanup semantics:** `Cleanup.cleanup_expired_tasks/1` never changes status — only DELETEs, with age cutoff (`finished_at < cutoff`) and count trim (`max_tasks` newest kept) both pushed into SQL via `Store.select_cleanup_info/3`; config defaults `max_tasks: 100, max_age_days: 14` (cleanup.ex:13).
 
