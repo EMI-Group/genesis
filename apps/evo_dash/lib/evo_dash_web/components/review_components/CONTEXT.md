@@ -37,7 +37,7 @@ Fires no events (pure report).
 
 #### Facade delegate list
 
-`page_header`, `task_summary`, `agent_summary`, `objective_section` → `Header`; `merge_box`, `extract_skills_modal`, `conflict_files_summary/1` (function, not component) → `Actions`; `diff_stats_bar`, `commits_list` → `Stats`; `file_tree_sidebar`, `diff_viewer`, `split_diff_layout`, `commit_detail_header`, `commit_diff_layout` → `DiffViewer`. (The facade's private `truncate_path/1` currently has no callers — dead code, superseded by the per-module path truncators.)
+`page_header`, `task_summary`, `agent_summary`, `objective_section` → `Header`; `merge_box`, `extract_skills_modal`, `conflict_files_summary/1` (function, not component) → `Actions`; `diff_stats_bar`, `commits_list` → `Stats`; `file_tree_sidebar`, `diff_viewer`, `split_diff_layout`, `commit_detail_header`, `commit_diff_layout` → `DiffViewer`.
 
 ### `Header` (`header.ex`)
 
