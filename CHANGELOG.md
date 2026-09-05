@@ -9,7 +9,6 @@ All notable changes to this project will be documented in this file.
 - Add a grace-period watchdog that resolves tasks stuck in :finalizing, along with observability logging for task terminal-status persistence and per-step git operations.
 - Add security levels and a human-in-the-loop approval gate for the command shell.
 - Add interactive command-approval cards to the chat UI, allowing users to confirm or deny security-level 2 and 3 tool actions directly in the interface, backed by agent handling for both local and remote node approval flows.
-- Add the Terminal-Bench WASM Render Challenge achievement to the README.
 
 ### Changed
 
@@ -23,8 +22,6 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - Fix an application startup crash in the command-approval module.
-- Fix Terminal-Bench challenge terminology in the README.
-- Fix stale EvoGit repository link in README acknowledgements.
 
 ## [0.12.0] - 2026-09-03
 
