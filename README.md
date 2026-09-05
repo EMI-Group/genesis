@@ -55,7 +55,7 @@ Genesis used **DeepSeek V4 Flash** to develop a Rust-based C compiler from a rep
 
 **Repository:** [github.com/EMI-Group/genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc)  
 **Scope:** implementation-empty repository → **248,989-line C compiler**  
-**Run:** **123.4 h · 1,019 archived agent episodes · US$44.38**  
+**Run:** **123.4 h · 1,019 archived agent episodes · US$44.38** (≈US$98 at DeepSeek's current pricing)
 **Validation:** **220/220** c-testsuite · **32/36** LLVM · **93/93** executed Csmith · **2,904** Rust tests · **106/106** internal cases  
 **Development:** observed recursive depth **5** · **327** first-parent commits
 
