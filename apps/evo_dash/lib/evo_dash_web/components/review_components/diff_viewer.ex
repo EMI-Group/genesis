@@ -3,79 +3,213 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
-  # file_tree_sidebar/1 — Sidebar file list for the split-pane layout
+  # file_tree_sidebar/1 — Sidebar file tree for the split-pane layout.
+  #
+  # The tree state is server-driven (no <details> elements): directory
+  # expansion comes from the LiveView via `expanded_dirs` (dir path => boolean,
+  # directories collapsed by default) and the flat filter mode via
+  # `file_filter` (non-blank => flat case-insensitive full-path match, no
+  # directory nodes).
   # ---------------------------------------------------------------------------
 
   attr(:files, :list, required: true)
   attr(:selected_file, :string, default: nil)
+  attr(:expanded_dirs, :map, default: %{})
+  attr(:file_filter, :string, default: "")
 
   def file_tree_sidebar(assigns) do
     ~H"""
-    <div class="diff-file-sidebar">
-      <div class="p-3 border-b border-base-300 bg-base-100 sticky top-0 z-10">
-        <h3 class="font-semibold text-xs text-base-content/60 uppercase tracking-wider">
-          {gettext("Changed Files")}
-        </h3>
+    <div class="w-full lg:w-72 shrink-0 lg:sticky lg:top-0 lg:max-h-[100dvh] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
+      <div class="p-3 border-b border-base-300 bg-base-200/40 sticky top-0 z-10">
+        <div class="flex items-center gap-2">
+          <%!-- zh_CN: "Files changed" → 变更文件（评审文件树侧栏标题） --%>
+          <h3 class="flex-1 min-w-0 truncate font-semibold text-xs text-base-content/60 uppercase tracking-wider">
+            {gettext("Files changed")}
+          </h3>
+          <span class="font-mono text-xs text-base-content/60 shrink-0">{length(@files)}</span>
+        </div>
+        <div class="relative mt-2">
+          <.icon
+            name="hero-magnifying-glass"
+            class="size-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-base-content/40 pointer-events-none"
+          />
+          <%!-- zh_CN: "Filter files…" → 按路径筛选文件…（文件过滤框占位符） --%>
+          <input
+            type="text"
+            name="filter"
+            phx-change="filter_files"
+            phx-debounce="200"
+            value={@file_filter}
+            placeholder={gettext("Filter files…")}
+            class="input input-sm input-bordered rounded-lg w-full pl-8"
+          />
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <%!-- zh_CN: "Collapse all" → 全部折叠（收起所有目录） --%>
+          <button
+            type="button"
+            phx-click="collapse_all_dirs"
+            class="btn btn-ghost btn-xs rounded-md gap-1"
+          >
+            <.icon name="hero-chevron-up-down" class="size-3" />
+            {gettext("Collapse all")}
+          </button>
+          <%!-- zh_CN: "Expand all" → 全部展开（展开所有目录） --%>
+          <button type="button" phx-click="expand_all_dirs" class="btn btn-ghost btn-xs rounded-md">
+            {gettext("Expand all")}
+          </button>
+        </div>
       </div>
-      <%= for node <- build_file_tree(@files) do %>
-        <.tree_node node={node} depth={0} selected_file={@selected_file} />
+      <div class="p-1.5">
+        <%= if String.trim(@file_filter) != "" do %>
+          <% filter = String.downcase(String.trim(@file_filter)) %>
+          <% matches = Enum.filter(@files, &String.contains?(String.downcase(&1.path), filter)) %>
+          <%= if matches == [] do %>
+            <%!-- zh_CN: "No matching files" → 没有匹配的文件（筛选无结果时的空状态） --%>
+            <p class="px-2 py-3 text-xs text-base-content/50">{gettext("No matching files")}</p>
+          <% else %>
+            <%= for file <- matches do %>
+              <.file_row
+                path={file.path}
+                name={Path.basename(file.path)}
+                status={file.status}
+                additions={file.additions}
+                deletions={file.deletions}
+                depth={0}
+                selected_file={@selected_file}
+              />
+            <% end %>
+          <% end %>
+        <% else %>
+          <%= for node <- build_file_tree(@files) do %>
+            <.tree_node
+              node={node}
+              depth={0}
+              selected_file={@selected_file}
+              expanded_dirs={@expanded_dirs}
+            />
+          <% end %>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # tree_node/1 — Recursive tree renderer.
+  #
+  # Directory nodes are plain buttons firing `toggle_dir` with the FULL dir
+  # path; children render only while the dir is open (server-driven state).
+  # File nodes delegate to the shared file_row/1 renderer.
+  # ---------------------------------------------------------------------------
+
+  attr(:node, :map, required: true)
+  attr(:depth, :integer, required: true)
+  attr(:selected_file, :string, default: nil)
+  attr(:expanded_dirs, :map, default: %{})
+
+  def tree_node(%{node: %{type: :dir}} = assigns) do
+    assigns =
+      assign(assigns, :open, Map.get(assigns.expanded_dirs, assigns.node.path, false))
+
+    ~H"""
+    <div>
+      <button
+        type="button"
+        phx-click="toggle_dir"
+        phx-value-dir={@node.path}
+        aria-expanded={if @open, do: "true", else: "false"}
+        class="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md hover:bg-base-200/60 text-xs transition-colors"
+        style={"padding-left: #{0.75 + @depth * 0.75}rem"}
+      >
+        <.icon
+          name="hero-chevron-right"
+          class={"size-3 shrink-0 text-base-content/50 transition-transform #{if @open, do: "rotate-90", else: ""}"}
+        />
+        <.icon
+          name={if @open, do: "hero-folder-open", else: "hero-folder"}
+          class="size-3.5 shrink-0 text-base-content/50"
+        />
+        <span class="font-mono truncate flex-1 min-w-0 text-left" title={@node.path}>
+          {@node.name}
+        </span>
+        <span class="shrink-0 flex items-center gap-1 font-mono text-[10px] leading-none text-base-content/60">
+          {ngettext("%{count} file", "%{count} files", @node.file_count, count: @node.file_count)}
+          <span class="text-success">+{@node.additions}</span>
+          <span class="text-error">-{@node.deletions}</span>
+        </span>
+      </button>
+      <%= if @open do %>
+        <%= for child <- @node.children do %>
+          <.tree_node
+            node={child}
+            depth={@depth + 1}
+            selected_file={@selected_file}
+            expanded_dirs={@expanded_dirs}
+          />
+        <% end %>
       <% end %>
     </div>
     """
   end
 
-  attr(:node, :map, required: true)
-  attr(:depth, :integer, required: true)
-  attr(:selected_file, :string, default: nil)
-
-  def tree_node(%{node: %{type: :dir}} = assigns) do
+  def tree_node(%{node: %{type: :file}} = assigns) do
     ~H"""
-    <details open class="dir-group">
-      <summary
-        class="dir-group-header"
-        style={"padding-left: #{0.75 + @depth * 0.75}rem"}
-      >
-        <span class="dir-icon">📁</span>
-        <span class="dir-name font-mono text-xs truncate">
-          {@node.name}/
-        </span>
-        <span class="dir-stats">
-          {ngettext("%{count} file", "%{count} files", @node.file_count, count: @node.file_count)}
-          <span class="text-success">+{@node.additions}</span>
-          <span class="text-error">-{@node.deletions}</span>
-        </span>
-      </summary>
-      <%= for child <- @node.children do %>
-        <.tree_node node={child} depth={@depth + 1} selected_file={@selected_file} />
-      <% end %>
-    </details>
+    <.file_row
+      path={@node.path}
+      name={@node.name}
+      status={@node.status}
+      additions={@node.additions}
+      deletions={@node.deletions}
+      depth={@depth}
+      selected_file={@selected_file}
+    />
     """
   end
 
-  def tree_node(%{node: %{type: :file}} = assigns) do
+  # Shared file-row renderer — used both by the tree (file nodes at any depth)
+  # and by the flat filtered list (depth 0).
+  attr(:path, :string, required: true)
+  attr(:name, :string, required: true)
+  attr(:status, :string, default: nil)
+  attr(:additions, :integer, default: 0)
+  attr(:deletions, :integer, default: 0)
+  attr(:depth, :integer, default: 0)
+  attr(:selected_file, :string, default: nil)
+
+  defp file_row(assigns) do
     ~H"""
     <button
+      type="button"
       phx-click="select_file"
-      phx-value-path={@node.path}
-      class={["file-item", @selected_file == @node.path && "file-selected"]}
+      phx-value-path={@path}
+      class={[
+        "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors",
+        (@selected_file == @path && "bg-primary/10 text-primary") || "hover:bg-base-200/60"
+      ]}
       style={"padding-left: #{0.75 + @depth * 0.75}rem"}
     >
       <.icon
-        name={file_status_icon(@node.status)}
-        class={"size-3.5 shrink-0 #{file_status_color(@node.status)}"}
+        name={file_status_icon(@status)}
+        class={"size-3.5 shrink-0 #{file_status_color(@status)}"}
       />
-      <span class="font-mono truncate flex-1 text-xs" title={@node.path}>
-        {@node.name}
+      <span class="font-mono truncate flex-1 min-w-0 text-left" title={@path}>
+        {@name}
       </span>
-      <span class="text-[10px] text-success font-mono leading-none">+{@node.additions}</span>
-      <span class="text-[10px] text-error font-mono leading-none">-{@node.deletions}</span>
+      <span class="shrink-0 font-mono text-[10px] leading-none text-success">+{@additions}</span>
+      <span class="shrink-0 font-mono text-[10px] leading-none text-error">-{@deletions}</span>
     </button>
     """
   end
 
   # ---------------------------------------------------------------------------
   # diff_viewer/1 — GitHub-style diff viewer (syntax highlighting is applied
-  # client-side by the DiffViewer JS hook)
+  # client-side by the DiffViewer JS hook).
+  #
+  # DOM/hook contract (do not break): #diff-viewer carries the single
+  # `DiffViewer` hook; each file renders a .diff-file-section with
+  # id="file-section-<sanitized path>" and an optional data-language; diff
+  # content is ESCAPED plain text only (highlighting is 100% client-side).
   # ---------------------------------------------------------------------------
 
   attr(:files, :list, required: true)
@@ -85,17 +219,17 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   def diff_viewer(assigns) do
     ~H"""
-    <div class="diff-main-content" id="diff-viewer" phx-hook="DiffViewer">
+    <div class="diff-main-content space-y-3" id="diff-viewer" phx-hook="DiffViewer">
       <%= for file <- @files do %>
         <div
-          class="diff-file-section"
+          class="diff-file-section rounded-xl border border-base-300 overflow-hidden bg-base-100"
           id={"file-section-#{file_path_to_id(file.path)}"}
           data-language={file.language}
         >
           <button
             phx-click="toggle_file_expansion"
             phx-value-path={file.path}
-            class="diff-file-header w-full text-left"
+            class="diff-file-header w-full text-left flex items-center gap-2 px-4 py-2.5 bg-base-200/70 backdrop-blur-sm text-sm"
           >
             <.icon
               name="hero-chevron-right"
@@ -103,11 +237,11 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
             />
             <.icon
               name={file_status_icon(file.status)}
-              class={"size-3.5 #{file_status_color(file.status)}"}
+              class={"size-3.5 shrink-0 #{file_status_color(file.status)}"}
             />
-            <span class="truncate flex-1">{file.path}</span>
-            <span class="text-[10px] text-success font-mono">+{file.additions}</span>
-            <span class="text-[10px] text-error font-mono">-{file.deletions}</span>
+            <span class="truncate flex-1 font-mono">{file.path}</span>
+            <span class="shrink-0 text-xs font-mono text-success">+{file.additions}</span>
+            <span class="shrink-0 text-xs font-mono text-error">-{file.deletions}</span>
           </button>
           <%= if Map.get(@expanded_files, file.path, false) do %>
             <div class="overflow-x-auto">
@@ -122,24 +256,71 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   end
 
   # ---------------------------------------------------------------------------
-  # split_diff_layout/1 — Full split layout with sidebar + diff
+  # split_diff_layout/1 — Full-width split layout: optional multi-repo
+  # toolbar + file-tree sidebar + diff column.
   # ---------------------------------------------------------------------------
 
   attr(:files, :list, required: true)
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
   attr(:file_context_levels, :map, default: %{})
+  attr(:expanded_dirs, :map, default: %{})
+  attr(:file_filter, :string, default: "")
+  attr(:repos, :list, default: [])
+  attr(:active_repo_id, :string, default: "primary")
 
   def split_diff_layout(assigns) do
+    assigns =
+      assigns
+      |> assign(:total_additions, sum_files(assigns.files, :additions))
+      |> assign(:total_deletions, sum_files(assigns.files, :deletions))
+
     ~H"""
-    <div class="diff-fullscreen-layout">
-      <.file_tree_sidebar files={@files} selected_file={@selected_file} />
-      <.diff_viewer
-        files={@files}
-        expanded_files={@expanded_files}
-        selected_file={@selected_file}
-        file_context_levels={@file_context_levels}
-      />
+    <div>
+      <%= if length(@repos) > 1 do %>
+        <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-base-300 bg-base-100 mb-3">
+          <%!-- heroicons has no folder-stack glyph; rectangle-stack is the closest stacked-repositories icon --%>
+          <.icon name="hero-rectangle-stack" class="size-4 shrink-0 text-base-content/50" />
+          <%!-- zh_CN: "Repository" → 仓库（切换评审仓库的标签，多仓库评审时选择当前查看的仓库） --%>
+          <label class="flex items-center gap-2 min-w-0">
+            <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Repository")}</span>
+            <select
+              name="repo_id"
+              phx-change="switch_repo"
+              aria-label={gettext("Repository")}
+              class="select select-sm select-bordered rounded-lg max-w-56"
+            >
+              <option
+                :for={repo <- @repos}
+                value={repo[:repo_id]}
+                selected={repo[:repo_id] == @active_repo_id}
+              >
+                {repo_option_label(repo)}
+              </option>
+            </select>
+          </label>
+          <div class="ml-auto shrink-0 flex items-center gap-2 font-mono text-xs">
+            <span class="text-success">+{@total_additions}</span>
+            <span class="text-error">-{@total_deletions}</span>
+          </div>
+        </div>
+      <% end %>
+      <div class="flex flex-col lg:flex-row gap-3 items-start">
+        <.file_tree_sidebar
+          files={@files}
+          selected_file={@selected_file}
+          expanded_dirs={@expanded_dirs}
+          file_filter={@file_filter}
+        />
+        <div class="flex-1 min-w-0 w-full space-y-3">
+          <.diff_viewer
+            files={@files}
+            expanded_files={@expanded_files}
+            selected_file={@selected_file}
+            file_context_levels={@file_context_levels}
+          />
+        </div>
+      </div>
     </div>
     """
   end
@@ -149,26 +330,37 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # ---------------------------------------------------------------------------
 
   attr(:commit, :map, required: true)
+  attr(:back_url, :string, required: true)
+  attr(:task_title, :string, default: nil)
 
   def commit_detail_header(assigns) do
     ~H"""
-    <div class="border-y border-base-300 bg-base-100 ">
-      <div class="p-4">
-        <div class="flex items-start gap-3">
-          <.icon name="hero-code-bracket-square" class="size-5 text-base-content/70 shrink-0 mt-0.5" />
-          <div class="flex-1 min-w-0">
-            <h1 class="text-lg font-bold leading-tight">{@commit.message}</h1>
-            <div class="flex flex-wrap items-center gap-2 mt-2">
-              <span class="badge badge-sm badge-ghost px-2 py-1.5 font-mono">
-                <.icon name="hero-code-bracket" class="size-3.5 mr-1.5" />
-                {String.slice(@commit.sha, 0..7)}
-              </span>
-              <span class="text-sm text-base-content/60">{@commit.author_name}</span>
-              <span class="text-sm text-base-content/30">·</span>
-              <span class="text-sm text-base-content/60">{relative_time(@commit.date)}</span>
-            </div>
-          </div>
-        </div>
+    <div class="rounded-xl border border-base-300 bg-base-100 p-4 mb-3">
+      <div class="flex items-center gap-2">
+        <%!-- zh_CN: "Back to review" → 返回评审页（提交详情页左上角的返回按钮） --%>
+        <a
+          href={@back_url}
+          title={gettext("Back to review")}
+          aria-label={gettext("Back to review")}
+          class="btn btn-ghost btn-sm btn-square rounded-lg shrink-0"
+        >
+          <.icon name="hero-arrow-left" class="size-4" />
+        </a>
+        <h1 class="text-base font-semibold truncate flex-1 min-w-0" title={@commit.message}>
+          {@commit.message}
+        </h1>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm min-w-0">
+        <span class="badge badge-sm badge-ghost font-mono shrink-0">
+          {String.slice(@commit.sha, 0..7)}
+        </span>
+        <span class="text-base-content/70 truncate min-w-0">{@commit.author_name}</span>
+        <span class="text-base-content/60 shrink-0">{relative_time(@commit.date)}</span>
+        <%= if @task_title do %>
+          <span class="text-base-content/60 truncate min-w-0" title={@task_title}>
+            {@task_title}
+          </span>
+        <% end %>
       </div>
     </div>
     """
@@ -182,17 +374,26 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   attr(:expanded_files, :map, default: %{})
   attr(:selected_file, :string, default: nil)
   attr(:file_context_levels, :map, default: %{})
+  attr(:expanded_dirs, :map, default: %{})
+  attr(:file_filter, :string, default: "")
 
   def commit_diff_layout(assigns) do
     ~H"""
-    <div class="diff-fullscreen-layout">
-      <.file_tree_sidebar files={@files} selected_file={@selected_file} />
-      <.diff_viewer
+    <div class="flex flex-col lg:flex-row gap-3 items-start">
+      <.file_tree_sidebar
         files={@files}
-        expanded_files={@expanded_files}
         selected_file={@selected_file}
-        file_context_levels={@file_context_levels}
+        expanded_dirs={@expanded_dirs}
+        file_filter={@file_filter}
       />
+      <div class="flex-1 min-w-0 w-full space-y-3">
+        <.diff_viewer
+          files={@files}
+          expanded_files={@expanded_files}
+          selected_file={@selected_file}
+          file_context_levels={@file_context_levels}
+        />
+      </div>
     </div>
     """
   end
@@ -200,6 +401,23 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------
+
+  # Sum one integer stat (:additions / :deletions) across the file list.
+  defp sum_files(files, key) do
+    Enum.reduce(files, 0, fn file, acc -> acc + (Map.get(file, key) || 0) end)
+  end
+
+  # Repo select option label: "<repo_id> — <truncated path>"; the path part is
+  # dropped entirely when the repo map carries no usable path.
+  defp repo_option_label(repo) do
+    path = repo |> Map.get(:repo_path) |> truncate_string(30)
+
+    if path == "" do
+      "#{repo[:repo_id]}"
+    else
+      "#{repo[:repo_id]} — #{path}"
+    end
+  end
 
   defp render_diff_content(file, file_path, context_level) do
     lines = if file.diff, do: parse_diff_lines(file), else: []
@@ -577,19 +795,21 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   # Build a recursive nested tree from file paths. Each node is either a
   # directory node (%{type: :dir, ...}) or a file node (%{type: :file, ...}).
-  # Directory nodes carry aggregate additions/deletions/file_count for the
-  # entire subtree. Children are sorted: directories first (alphabetically),
-  # then files (alphabetically) — matching GitHub's behavior.
+  # Directory nodes carry the FULL accumulated path (joined with "/", root
+  # dirs = the single segment — used as the `toggle_dir` phx-value) plus
+  # aggregate additions/deletions/file_count for the entire subtree.
+  # Children are sorted: directories first (alphabetically,
+  # case-insensitive), then files (alphabetically, case-insensitive).
   defp build_file_tree(files) do
     files
     |> Enum.reduce(%{}, fn file, tree ->
       segments = String.split(file.path, "/")
-      insert_into_tree(tree, segments, file)
+      insert_into_tree(tree, segments, "", file)
     end)
     |> children_to_sorted_list()
   end
 
-  defp insert_into_tree(tree, [segment], file) do
+  defp insert_into_tree(tree, [segment], _parent_path, file) do
     file_node = %{
       type: :file,
       path: file.path,
@@ -603,15 +823,17 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     Map.put(tree, segment, file_node)
   end
 
-  defp insert_into_tree(tree, [segment | rest], file) do
+  defp insert_into_tree(tree, [segment | rest], parent_path, file) do
+    path = if parent_path == "", do: segment, else: parent_path <> "/" <> segment
+
     raw_children =
       case Map.get(tree, segment) do
         %{children: children} -> children
         nil -> %{}
       end
 
-    updated_children = insert_into_tree(raw_children, rest, file)
-    Map.put(tree, segment, %{type: :dir, children: updated_children})
+    updated_children = insert_into_tree(raw_children, rest, path, file)
+    Map.put(tree, segment, %{type: :dir, path: path, children: updated_children})
   end
 
   # Convert a raw tree map (%{name => node}) into a sorted list of finalized
@@ -624,7 +846,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
 
   defp finalize_node(_name, %{type: :file} = node), do: node
 
-  defp finalize_node(name, %{type: :dir, children: raw_children}) do
+  defp finalize_node(name, %{type: :dir, path: path, children: raw_children}) do
     children = children_to_sorted_list(raw_children)
 
     {additions, deletions, file_count} =
@@ -635,6 +857,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     %{
       type: :dir,
       name: name,
+      path: path,
       children: children,
       additions: additions,
       deletions: deletions,
@@ -642,12 +865,13 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     }
   end
 
-  # Sort directories first (alphabetically by name), then files (alphabetically)
+  # Sort directories first (alphabetically by name, case-insensitive), then
+  # files (alphabetically, case-insensitive)
   defp sort_nodes(nodes) do
     Enum.sort_by(nodes, fn node ->
       case node.type do
-        :dir -> {0, node.name}
-        :file -> {1, node.name}
+        :dir -> {0, String.downcase(node.name)}
+        :file -> {1, String.downcase(node.name)}
       end
     end)
   end
