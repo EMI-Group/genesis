@@ -101,9 +101,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </button>
           <% end %>
 
-          <%= if @can_resume or @branch_exists do %>
-            <.continue_task_button loading={@loading} />
-          <% end %>
+          <.continue_task_button loading={@loading} />
 
           <.overflow_menu
             loading={@loading}
