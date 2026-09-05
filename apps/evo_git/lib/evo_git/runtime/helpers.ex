@@ -39,6 +39,8 @@ defmodule EvoGit.Runtime.Helpers do
       when is_binary(phase) and is_list(foreign_repos) and is_map(agent_output) do
     final_sha = agent_output.commit_sha
 
+    Logger.info("#{String.capitalize(phase)}: Finalizing repo '#{repo_path}': resolving HEAD")
+
     with {:ok, base_sha} <- Git.rev_parse(repo_path) do
       if final_sha && final_sha != base_sha do
         Logger.info(
@@ -47,6 +49,10 @@ defmodule EvoGit.Runtime.Helpers do
 
         branch_name = generate_branch_name(phase)
         foreign_entries = build_foreign_branch_entries(agent_output, foreign_repos, branch_name)
+
+        Logger.info(
+          "#{String.capitalize(phase)}: Creating branch '#{branch_name}' at #{binary_part(final_sha, 0, 7)}"
+        )
 
         case Git.create_branch(repo_path, branch_name, final_sha) do
           {:ok, _} ->
@@ -154,8 +160,14 @@ defmodule EvoGit.Runtime.Helpers do
   end
 
   defp create_foreign_branch(%ForeignRepo{} = repo, branch_name, sha) do
+    Logger.info("Creating branch '#{branch_name}' in foreign repo '#{repo.id}' at '#{repo.root}'")
+
     case Git.create_branch(repo.root, branch_name, sha) do
       {:ok, _} ->
+        Logger.info(
+          "Created branch '#{branch_name}' in foreign repo '#{repo.id}' at #{binary_part(sha, 0, 7)}"
+        )
+
         %{commit_sha: sha, branch_name: branch_name}
 
       error ->
