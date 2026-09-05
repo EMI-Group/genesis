@@ -293,10 +293,18 @@ defmodule EvoGit.CLI.TaskRoutingTest do
       {output, result} = run_cli(["--help"])
       assert result == :ok
 
-      refute output =~ "--concurrency"
-      refute output =~ "--tool-concurrency"
-      refute output =~ "--retries"
-      refute output =~ "--max-turns"
+      # The removed scheduler flags are gone from the Options listing — refute
+      # their old option-line shapes (with the <n> placeholder), NOT the bare
+      # flag names: the flags ARE still named in the removal note below.
+      refute output =~ "-c, --concurrency <n>"
+      refute output =~ "--tool-concurrency <n>"
+      refute output =~ "-r, --retries <n>"
+      refute output =~ "-t, --max-turns <n>"
+
+      # The removal note itself is present and points users at config.toml.
+      assert output =~ "were removed"
+      assert output =~ "config.toml"
+      assert output =~ "[scheduler]"
 
       # run is a command entry (its own line in the Commands section).
       assert output =~ ~r/^\s*run\b/m
@@ -377,8 +385,6 @@ defmodule EvoGit.CLI.TaskRoutingTest do
       :error -> task_opt_string(opts, Atom.to_string(key))
     end
   end
-
-  defp task_opt(opts, key) when is_binary(key), do: task_opt_string(opts, key)
 
   defp task_opt_string(nil, _key), do: nil
 
