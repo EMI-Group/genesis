@@ -87,6 +87,16 @@ defmodule EvoDashWeb.ReviewComponents.Header do
             </span>
           </span>
         <% end %>
+        <%= if @commit_sha do %>
+          <span class="flex items-center gap-1.5 min-w-0" title={@commit_sha}>
+            <.icon name="hero-code-bracket" class="size-4 shrink-0" />
+            <span class="font-mono bg-base-200 rounded-md px-1.5 py-0.5">{String.slice(
+              @commit_sha,
+              0,
+              7
+            )}</span>
+          </span>
+        <% end %>
         <%= if @task_type do %>
           <%!-- zh_CN: 任务类型（genesis/evolve） --%>
           <span>{String.capitalize(to_string(@task_type))}</span>
