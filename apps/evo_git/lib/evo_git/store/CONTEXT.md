@@ -11,6 +11,7 @@ Contains the `EvoGit.Store` GenServer and its support modules for the SQLite per
 - `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, timestamp normalization
 - `./queries.ex` → `EvoGit.Store.Queries` — SQL builder helpers (WHERE, SET, clamping, column encoding)
 - `./errors.ex` → `EvoGit.Store.Errors` — disk-full error classifier (pure; public `disk_full_error?/1` for testability)
+- `../task_registry/` → TaskRegistry lifecycle semantics that consume Store data — startup reconciliation (`:finalizing` → `:failed` / `:cancelling` → `:cancelled`), lease/heartbeat, stuck-task recovery ("Restart Recovery & Status Transitions" section)
 
 ## API Surface
 
@@ -82,7 +83,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 - No quarantine tables are created (`Schema.create_tables/1`); leftover quarantine tables in live DBs are ignored, never dropped.
 - Undecodable rows are SKIPPED + `Logger.warning` (no INSERT-into-quarantine + DELETE-from-live pair).
-- The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`, see root CONTEXT.md "Stuck-`:finalizing`-forever bug"). No whole-table integrity scrub at init.
+- The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub at init.
 
 ## Schema: `updated_at` column (store-internal bookkeeping)
 

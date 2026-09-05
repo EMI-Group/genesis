@@ -31,6 +31,9 @@ config :evo_git, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genes
 # SystemSampler tick disabled in tests (the sampler's own test suite manages its interval)
 config :evo_git, :system_sample_interval_ms, 86_400_000
 
+# Short stuck-finalizing watchdog grace (1 minute) so tests exercise the watchdog fast
+config :evo_git, :finalizing_watchdog_grace_minutes, 1
+
 # Never open a real wx directory dialog during tests (a modal native dialog
 # would block the suite). test_helper.exs sets the same flag as a
 # belt-and-suspenders fallback; the picker module short-circuits on it.

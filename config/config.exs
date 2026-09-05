@@ -63,7 +63,10 @@ config :phoenix, :json_library, Jason
 # EvoGit.Config (defaults + user config + runtime overrides).
 # Application env is only used for infrastructure-level settings.
 config :evo_git,
-  sandbox: :auto
+  sandbox: :auto,
+  # Minutes a task may remain in :finalizing before the stuck-finalizing
+  # watchdog (TaskRegistry) resolves it to :failed; false disables it.
+  finalizing_watchdog_grace_minutes: 60
 
 config :req_llm,
   # HTTP timeouts (all values in milliseconds)
