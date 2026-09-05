@@ -206,17 +206,6 @@ defmodule EvoDashWeb.ReviewComponents do
     """
   end
 
-  # Truncate a repo root path to the last ~40 chars with a leading "…".
-  defp truncate_path(path) when is_binary(path) do
-    if String.length(path) > 40 do
-      "…" <> String.slice(path, -39, 39)
-    else
-      path
-    end
-  end
-
-  defp truncate_path(_), do: ""
-
   # Error outcome details may be any inspected reason term — render binaries
   # as-is, everything else via inspect.
   defp format_outcome_detail(detail) when is_binary(detail), do: detail
