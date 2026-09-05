@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.1] - 2026-09-05
+
+### Added
+
+- Add a grace-period watchdog that resolves tasks stuck in :finalizing, along with observability logging for task terminal-status persistence and per-step git operations.
+- Add security levels and a human-in-the-loop approval gate for the command shell.
+- Add interactive command-approval cards to the chat UI, allowing users to confirm or deny security-level 2 and 3 tool actions directly in the interface, backed by agent handling for both local and remote node approval flows.
+- Add the Terminal-Bench WASM Render Challenge achievement to the README.
+
+### Changed
+
+- Teach the SelfReflective agent to proactively guide users to relevant pages using GuideUser page-path URLs and embedded route maps.
+- Update the auto-update feed and updater manifest URLs to use the genesis.evox.group proxy as the primary host for mainland-China reachability, with GitHub kept as a fallback.
+- Refresh review-action flows so destinations mount cold: rework ActiveTasks snapshot storage onto a shared ETS table and invalidate cached task state when merging, rejecting, or ignoring so destinations re-fetch fresh data after review actions.
+- Cache the last-known Active Tasks per node context so the sidebar renders instantly across navigations instead of blinking empty, with the initial mount fetch limited to cold local pages.
+- Prevent the SelfReflective agent from suggesting CLI usage in chat answers by default, guiding users to dashboard and in-app capabilities instead (unless explicitly asked about the CLI).
+- Updated translations.
+
+### Fixed
+
+- Fix an application startup crash in the command-approval module.
+- Fix Terminal-Bench challenge terminology in the README.
+- Fix stale EvoGit repository link in README acknowledgements.
+
 ## [0.12.0] - 2026-09-03
 
 ### Added
