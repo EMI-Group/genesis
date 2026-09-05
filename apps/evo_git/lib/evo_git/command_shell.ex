@@ -37,6 +37,22 @@ defmodule EvoGit.CommandShell do
     (denied, timed out, approval service unavailable) fails closed — the
     handler never runs. This is defense-in-depth: it gates the actual dispatch,
     not just LLM prompt guidance.
+
+  ## Approval modes
+
+  Every execution runs in one of two approval modes, selected per call through
+  `execute/2`'s `:approval` option:
+
+  - `:chat` (the default — also used when the option is absent or holds any
+    value other than `:auto`) — the classic behavior described above:
+    level-2/3 commands block on `EvoGit.CommandApproval` until the user
+    approves them in the /help chat; anything other than `:approved` fails
+    closed. This is what the self-reflective agent's `run_command` tool uses
+    (`execute/1` delegates to `execute(command, [])`, i.e. always `:chat`).
+  - `:auto` — the approval gate is bypassed entirely: level-1 AND level-2/3
+    commands all run immediately. For terminal/CLI usage where the typing
+    human IS the authorizer and no chat-approval surface exists. Level-1
+    read-only commands are unaffected (they never gated in either mode).
   """
 
   alias EvoGit.Agent.Tools.{
@@ -71,7 +87,7 @@ defmodule EvoGit.CommandShell do
   # shell parses and validates the command's tokens into the handler's
   # STRING-keyed argument map (e.g. `%{"task_type" => "evolve"}`). `level` is
   # the command's security level, enforced at the dispatch choke point
-  # (`run_command/3`): level 1 = safe read-only (executes immediately), level 2
+  # (`run_command/4`): level 1 = safe read-only (executes immediately), level 2
   # = needs the user's attention (a transient dashboard guide), level 3 = real
   # side effects (task start/cancel/force-kill/delete). Levels 2 and 3 do NOT
   # execute until the user approves them in the /help chat via
@@ -180,7 +196,13 @@ defmodule EvoGit.CommandShell do
   }
 
   @doc """
-  Parses `command_string` and dispatches it to the registered command handler.
+  Parses `command_string` and dispatches it to the registered command handler
+  using the default `:chat` approval mode — equivalent to
+  `execute(command, [])`. Level-2/3 commands (task start/cancel/force-kill/
+  delete, user guides) block on `EvoGit.CommandApproval` until the user
+  approves them in the /help chat; level-1 read-only commands execute
+  immediately. See `execute/2` for the `:approval` option (including the
+  `:auto` bypass mode for terminal callers).
 
   Returns `{:ok, output}` where `output` is the handler's result string, or
   `{:error, message}` for parse, validation, or registry errors. The handler
@@ -188,15 +210,43 @@ defmodule EvoGit.CommandShell do
   declared arg specs.
   """
   @spec execute(String.t()) :: {:ok, String.t()} | {:error, String.t()}
-  def execute(command) when is_binary(command) do
+  def execute(command) when is_binary(command), do: execute(command, [])
+
+  def execute(_other), do: {:error, "Command must be a string."}
+
+  @doc """
+  Parses `command_string` and dispatches it to the registered command handler.
+
+  `opts` is a keyword list accepting the `:approval` option — the execution's
+  approval mode, `:chat` or `:auto`:
+
+  - `:chat` (the default; also used when the option is absent or holds any
+    value other than `:auto`) — level-2/3 commands block on
+    `EvoGit.CommandApproval` until the user approves them in the /help chat;
+    denied or timed-out requests fail closed and the handler never runs.
+  - `:auto` — the approval gate is bypassed entirely: level-1 AND level-2/3
+    commands all run immediately. For terminal/CLI callers where the typing
+    human IS the authorizer and no chat-approval surface exists.
+
+  Level-1 read-only commands execute immediately in both modes.
+
+  Returns `{:ok, output}` where `output` is the handler's result string, or
+  `{:error, message}` for parse, validation, or registry errors. The handler
+  modules are only ever invoked with the parsed argument map built from their
+  declared arg specs.
+  """
+  @spec execute(String.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
+  def execute(command, opts) when is_binary(command) do
+    approval = approval_mode(Keyword.get(opts, :approval))
+
     with :ok <- check_command_length(command),
          {:ok, tokens} <- tokenize(command),
          :ok <- check_token_limits(tokens) do
-      dispatch(tokens)
+      dispatch(tokens, approval)
     end
   end
 
-  def execute(_other) do
+  def execute(_command, _opts) do
     {:error, "Command must be a string."}
   end
 
@@ -215,7 +265,7 @@ defmodule EvoGit.CommandShell do
 
   Levels 2 and 3 require interactive user confirmation via
   `EvoGit.CommandApproval` before the command's handler runs (enforced in
-  `run_command/3`). The built-in `help` command is level 1. Unknown paths
+  `run_command/4`). The built-in `help` command is level 1. Unknown paths
   report `1` (they fail dispatch fast with an error regardless).
 
   The tool-dispatch layer uses this to size the per-call timeout of
@@ -284,16 +334,17 @@ defmodule EvoGit.CommandShell do
 
   # --- Dispatch ---
 
-  defp dispatch([]), do: {:error, "Empty command. Run 'help' to list available commands."}
+  defp dispatch([], _approval),
+    do: {:error, "Empty command. Run 'help' to list available commands."}
 
-  defp dispatch([path | rest]) do
+  defp dispatch([path | rest], approval) do
     case path do
       "help" ->
         handle_help(rest)
 
       _ ->
         case Map.fetch(@registry, path) do
-          {:ok, entry} -> run_command(path, entry, rest)
+          {:ok, entry} -> run_command(path, entry, rest, approval)
           :error -> {:error, "Unknown command '#{path}'. Run 'help' to list available commands."}
         end
     end
@@ -309,9 +360,9 @@ defmodule EvoGit.CommandShell do
   # through EvoGit.CommandApproval and run ONLY on `:approved`. Denied, timed
   # out, or an unavailable approval service fail closed — the handler never
   # runs.
-  defp run_command(path, entry, tokens) do
+  defp run_command(path, entry, tokens, approval) do
     with {:ok, args_map} <- parse_args(path, entry.args, tokens),
-         :ok <- approval_gate(path, entry, args_map) do
+         :ok <- approval_gate(path, entry, args_map, approval) do
       # The module/function atoms come from the compile-time registry literal —
       # never derived from input. The handler returns a plain string and never
       # raises; wrap it defensively anyway.
@@ -327,8 +378,13 @@ defmodule EvoGit.CommandShell do
 
   # Security-level gate: level-1 commands (and entries without an explicit
   # level — default 1) never gate; zero behavioral change for the read-only
-  # inspection commands. Levels 2 and 3 block on user approval.
-  defp approval_gate(path, entry, args_map) when is_map(entry) do
+  # inspection commands. Levels 2 and 3 block on user approval — UNLESS the
+  # execution runs in `:auto` approval mode (terminal/CLI callers who are
+  # their own authorizers), which skips the gate for every level so the
+  # handler always runs.
+  defp approval_gate(_path, _entry, _args_map, :auto), do: :ok
+
+  defp approval_gate(path, entry, args_map, _approval) when is_map(entry) do
     level = Map.get(entry, :level, 1)
 
     if level >= 2 do
@@ -337,6 +393,14 @@ defmodule EvoGit.CommandShell do
       :ok
     end
   end
+
+  # Normalizes the `:approval` execute option to `:auto` or `:chat`. Only the
+  # literal `:auto` bypasses the approval gate; an absent option or any other
+  # value (unknown atoms, nil, strings) falls back to `:chat` — the classic
+  # gated behavior. Pattern-matches literal atoms only; no atoms are ever
+  # created from input.
+  defp approval_mode(:auto), do: :auto
+  defp approval_mode(_other), do: :chat
 
   # Blocks until the user approves/denies the command in the /help chat (or
   # the approval window expires). The requesting agent/task are read from the

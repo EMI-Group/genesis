@@ -46,13 +46,20 @@ The full design specification is documented across the CONTEXT.md tree.
 mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
 
 # Genesis — create a codebase from a prompt
-mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-c concurrency] [-p path] [-R <id:>path]
+mix run -e 'EvoGit.CLI.main(System.argv())' -- genesis "<prompt>" [-f file] [-p path] [-R <id:>path] [-m <model>]
 
 # Evolution — modify an existing codebase
-mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R <id:>path]
+mix run -e 'EvoGit.CLI.main(System.argv())' -- evolve "<objective>" [-p path] [-R <id:>path] [-m <model>]
+
+# Reflect — repo-less self-reflective Q&A (no repo, no merge)
+mix run -e 'EvoGit.CLI.main(System.argv())' -- reflect "<objective>" [-m <model>]
+
+# Run — execute command-shell commands (terminal access to the shared task-control data plane)
+mix run -e 'EvoGit.CLI.main(System.argv())' -- run 'ListTasks.list_tasks'
+mix run -e 'EvoGit.CLI.main(System.argv())' -- run 'StartTask.start_task evolve "Fix the bug"'
 ```
 
-Flags: `-c` / `--concurrency` for LLM slots, `--tool-concurrency` for tool slots, `-R <id:>path` for foreign repos (repeatable), `--agent <id>` to run a custom root agent (defined in `<config_dir>/agents.toml`), `--mode <mode>` (`new`/`existing` for genesis, `simple`/`custom` for evolve).
+**Task data plane — NO config overrides.** The CLI never mutates scheduler/config state. The session-level override flags (`-c/--concurrency`, `--tool-concurrency`, `-r/--retries`, `-t/--max-turns`, `--max-turns-root`) were REMOVED — concurrency/retries/turn caps are set persistently in config.toml; passing a removed flag prints a helpful pointer. `genesis`/`evolve`/`reflect` submit REGISTERED background tasks through the SAME data plane the dashboard (`NodeContext.start_task`) and the self-reflective shell's `StartTask.start_task` use — `EvoGit.TaskRegistry.start_task/2` → TaskExecutor → runtime phases — then wait on PubSub for the terminal status (foreground semantics; the CLI BEAM hosts the scheduler), printing `Task <id> started` / `Task <id> <status>.`. Task opts use the data-plane key contract: `:path` (resolved absolute pre-enqueue), `:mode` STRING (`new`/`existing` genesis, `simple`/`custom` evolve — RuntimeOpts raises on atoms), `:prompt`/`:objective`. Task-level flags: `-f/--file`, `-p/--path`, `-d/--mode`, `-b/--build-system` (genesis new), `--agent <id>` (custom root agent from `<config_dir>/agents.toml`), `-R <id:>path` foreign repos (repeatable, read-only), `-n/--node` + `--starting-commit` (evolve), `--archive`. `-m/--model` is pure TASK-LEVEL model selection (never a scheduler override): resolved pre-enqueue against configured `[[llm.models]]` profiles (exact profile id → `id:provider:model` id segment → a profile's `model` string; unknown → error listing profile ids) and passed as `model_id` + `model_id_locked: true`. `run '<command>'` executes the self-reflective agent's shell command language via `EvoGit.CommandShell.execute/2` with `approval: :auto` (the terminal user IS the human; the /help-chat approval gate applies only to agent-initiated commands). `evogit setup` remains the persistent-config wizard (file writes, not a session override). Details: `apps/evo_git/CONTEXT.md` + `apps/evo_git/lib/evo_git/CONTEXT.md`.
 
 ### Custom Agents & Custom Task Mode
 
@@ -60,7 +67,7 @@ Users define custom agents declaratively in `<config_dir>/agents.toml` (pure TOM
 
 The dashboard Settings page has a dedicated **Agents** category (custom-agents list editor + model-selection script editor, node-aware), and the task form has an Agent select plus a model "Auto (by rules)" option.
 
-**Custom task mode** (the entry point for custom root agents): a 4th dashboard task mode **"Custom Agent"** (combined-mode string `"custom_agent"`) maps to `{:evolve, mode: "custom", agent: <custom_agent_id>}` — task type stays `:evolve`, mode opt value `"custom"` (string; CLI passes atom `:custom`). `EvoGit.Runtime.Evolution.run/2` routes `"custom"` to a custom-root path with evolve semantics (reviewable `merge_and_report`); a missing/empty `:agent` raises a descriptive ArgumentError before any repo I/O (spec-error style, mirrors `Helpers.resolve_root_agent/2`'s unknown-id raise); unknown mode values warn + fall back to simple (legacy compatibility). CLI: `evolve --mode custom --agent <id>`; genesis rejects custom mode ("evolve-only"). Custom agents are root-only this version (not spawnable as subagents); `delegation_level` default `:low`. Details: `apps/evo_git/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
+**Custom task mode** (the entry point for custom root agents): a 4th dashboard task mode **"Custom Agent"** (combined-mode string `"custom_agent"`) maps to `{:evolve, mode: "custom", agent: <custom_agent_id>}` — task type stays `:evolve`, mode opt value `"custom"` (a STRING from every entry point — dashboard, CLI, and shell all pass the string through the task data plane; RuntimeOpts normalizes). `EvoGit.Runtime.Evolution.run/2` routes `"custom"` to a custom-root path with evolve semantics (reviewable `merge_and_report`); a missing/empty `:agent` raises a descriptive ArgumentError before any repo I/O (spec-error style, mirrors `Helpers.resolve_root_agent/2`'s unknown-id raise); unknown mode values warn + fall back to simple (legacy compatibility). CLI: `evolve --mode custom --agent <id>`; genesis rejects custom mode ("evolve-only"). Custom agents are root-only this version (not spawnable as subagents); `delegation_level` default `:low`. Details: `apps/evo_git/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 
 ## Constraints
 

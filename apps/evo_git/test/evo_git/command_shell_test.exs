@@ -361,6 +361,146 @@ defmodule EvoGit.CommandShellTest do
     end
   end
 
+  describe "execute/2 - approval: :auto bypasses the approval gate" do
+    test "level-3 commands run their handler with no approval responder involved" do
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
+
+      # The gate is bypassed: the handler itself runs and returns its own
+      # "not found"-style output — NOT an "Action denied"/"did not confirm"
+      # approval error (which is what :chat would produce with no responder,
+      # after the timeout window).
+      assert {:ok, output} = CommandShell.execute("CancelTask.cancel_task ghost", approval: :auto)
+      assert output == "Error cancelling task ghost: task not found"
+
+      # No approval request was ever opened.
+      refute_receive {:approval_requested, _}, 200
+    end
+
+    test "level-3 StartTask enqueues a reflect task without any approval" do
+      without_model_profiles(fn ->
+        assert {:ok, output} =
+                 CommandShell.execute(~s(StartTask.start_task reflect "hi"), approval: :auto)
+
+        assert output =~ "started (type: reflect)"
+        assert output =~ "Objective: hi"
+
+        [task_id] = Regex.run(~r/^Task (\S+) started/, output, capture: :all_but_first)
+        assert task_id != ""
+
+        task = TaskRegistry.get_task(task_id)
+        assert task != nil
+        assert task.type == :reflect
+        assert Keyword.get(task.opts, :objective) == "hi"
+      end)
+    end
+
+    test "level-2 GuideUser runs immediately under :auto and broadcasts the guide" do
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "guides")
+
+      assert {:ok, output} = CommandShell.execute("GuideUser.guide_user hello", approval: :auto)
+      assert output == "Guide shown to user: hello"
+
+      assert_receive {:guide_updated, _guide_id, guide_map, node}
+      assert guide_map.message == "hello"
+      assert node == node()
+    end
+
+    test "level-1 commands behave normally under :auto" do
+      assert {:ok, output} = CommandShell.execute("SystemInfo.system_info", approval: :auto)
+      assert output =~ "os:"
+
+      assert {:ok, output} = CommandShell.execute("ListTasks.list_tasks", approval: :auto)
+      assert output == "No tasks found."
+    end
+  end
+
+  describe "execute/2 - StartTask.start_task genesis prompt routing" do
+    test "genesis tasks carry the positional text under :prompt in the enqueued opts",
+         %{tmp_dir: tmp_dir} do
+      without_model_profiles(fn ->
+        assert {:ok, output} =
+                 CommandShell.execute(
+                   ~s(StartTask.start_task genesis "Create a project" path=#{tmp_dir}),
+                   approval: :auto
+                 )
+
+        assert output =~ "started (type: genesis)"
+        assert output =~ "Objective: Create a project"
+
+        [task_id] = Regex.run(~r/^Task (\S+) started/, output, capture: :all_but_first)
+        assert task_id != ""
+
+        task = TaskRegistry.get_task(task_id)
+        assert task != nil
+        assert task.type == :genesis
+
+        # The data-plane fix: TaskExecutor.execute_task(:genesis, ...) reads
+        # opts[:prompt] and hands it to Runtime.Genesis.run — the enqueued task
+        # must carry the text under :prompt or the genesis prompt would enqueue
+        # silently empty. The text is kept under :objective too (the shell's
+        # ListTasks/GetTask displays read that key).
+        assert Keyword.get(task.opts, :prompt) == "Create a project"
+        assert Keyword.get(task.opts, :objective) == "Create a project"
+        assert Keyword.get(task.opts, :path) == tmp_dir
+      end)
+    end
+  end
+
+  describe "execute/2 - approval: :chat and unknown values" do
+    test "explicit approval: :chat gates level-3 commands exactly like execute/1" do
+      # A denied request fails closed and the handler never runs.
+      task = seed_task!()
+
+      responder = start_approval_responder(:deny)
+
+      try do
+        assert {:error, message} =
+                 CommandShell.execute("CancelTask.cancel_task #{task.id}", approval: :chat)
+
+        assert message =~ "Action denied by the user"
+      after
+        Process.exit(responder, :kill)
+      end
+
+      assert TaskRegistry.get_task(task.id).status == :pending
+    end
+
+    test "execute/1 and execute(cmd, approval: :chat) run approved handlers identically" do
+      task_a = seed_task!()
+      task_b = seed_task!()
+
+      # execute/1 (default :chat) with an approving responder.
+      assert {:ok, output_a} = execute_approved!("CancelTask.cancel_task #{task_a.id}")
+      assert output_a == "Task #{task_a.id} cancellation requested (graceful)."
+
+      # Explicit approval: :chat — identical behavior.
+      assert {:ok, output_b} =
+               execute_approved!("CancelTask.cancel_task #{task_b.id}", approval: :chat)
+
+      assert output_b == "Task #{task_b.id} cancellation requested (graceful)."
+    end
+
+    test "unknown or nil :approval values fall back to :chat (still gated)" do
+      for approval <- [:bogus, nil] do
+        task = seed_task!()
+        responder = start_approval_responder(:deny)
+
+        try do
+          assert {:error, message} =
+                   CommandShell.execute("CancelTask.cancel_task #{task.id}",
+                     approval: approval
+                   )
+
+          assert message =~ "Action denied by the user"
+        after
+          Process.exit(responder, :kill)
+        end
+
+        assert TaskRegistry.get_task(task.id).status == :pending
+      end
+    end
+  end
+
   describe "execute/1 - CancelTask.cancel_task" do
     test "gracefully cancels a pending task and returns the confirmation" do
       task = seed_task!()
@@ -593,13 +733,15 @@ defmodule EvoGit.CommandShellTest do
   # that subscribes to the "approvals" topic and replies to every request it
   # observes.
 
-  # Runs CommandShell.execute/1 while a background responder APPROVES the
-  # approval request. Returns the shell result unchanged.
-  defp execute_approved!(command) do
+  # Runs CommandShell.execute/1 (or execute/2 with the given opts — the default
+  # `[]` reproduces execute/1's `:chat` behavior exactly) while a background
+  # responder APPROVES the approval request. Returns the shell result
+  # unchanged.
+  defp execute_approved!(command, opts \\ []) do
     responder = start_approval_responder(:approve)
 
     try do
-      CommandShell.execute(command)
+      CommandShell.execute(command, opts)
     after
       Process.exit(responder, :kill)
     end

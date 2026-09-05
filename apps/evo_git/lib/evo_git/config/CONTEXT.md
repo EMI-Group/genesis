@@ -100,7 +100,7 @@ description = "Legacy Project"
 ### Configuration Levels (priority low → high)
 1. **Application defaults** — `defaults/0` (no model, no username)
 2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
-3. **Runtime overrides** — `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`; set by CLI flags (`-c`, `-m`, `--retries`) or dashboard settings.
+3. **Runtime overrides** — `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`; set by dashboard settings / `RemoteAPI.reload_config` (the CLI makes NO scheduler overrides — concurrency/retry/turn values are config.toml-only, and `-m` is task-level model selection carried in task opts, not a scheduler override).
 
 ### config.toml Structure
 ```toml

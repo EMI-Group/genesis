@@ -408,4 +408,65 @@ defmodule EvoGit.CLITest do
       assert output =~ "custom mode is evolve-only"
     end
   end
+
+  describe "resolve_model_id/2" do
+    # NOTE: `resolve_model_id/2` is a NEW pure helper added by the CLI +
+    # task data-plane refactor. Per the shared contract it lands on
+    # `EvoGit.CLI` (the parallel CLI executor was told to put it there); if
+    # after the merge it ends up on `EvoGit.CLI.Parser` instead, adjust the
+    # module path below.
+    @resolve_profiles [
+      %{id: "fast", model: "anthropic:claude-haiku"},
+      %{id: "deep", model: "deepseek:deepseek-v4-pro"},
+      %{id: "mapy", model: %{provider: :openai, id: "gpt-5", base_url: "https://x/v1"}}
+    ]
+
+    test "exact profile id match resolves to that id" do
+      assert EvoGit.CLI.resolve_model_id("fast", @resolve_profiles) == {:ok, "fast"}
+      assert EvoGit.CLI.resolve_model_id("mapy", @resolve_profiles) == {:ok, "mapy"}
+    end
+
+    test "id:provider:model syntax resolves a configured id" do
+      assert EvoGit.CLI.resolve_model_id("deep:deepseek:deepseek-v4-pro", @resolve_profiles) ==
+               {:ok, "deep"}
+    end
+
+    test "id:provider:model with a configured id wins even when the model part matches nothing" do
+      assert EvoGit.CLI.resolve_model_id("fast:whatever:model", @resolve_profiles) ==
+               {:ok, "fast"}
+    end
+
+    test "bare provider:model matching a profile's binary model resolves to that profile id" do
+      assert EvoGit.CLI.resolve_model_id("anthropic:claude-haiku", @resolve_profiles) ==
+               {:ok, "fast"}
+    end
+
+    test "bare model string matching nothing returns an error" do
+      assert {:error, msg} = EvoGit.CLI.resolve_model_id("nope:no-such-model", @resolve_profiles)
+      assert is_binary(msg)
+      assert msg != ""
+    end
+
+    test "id:provider:model with an unconfigured id errors and lists available profile ids" do
+      assert {:error, msg} =
+               EvoGit.CLI.resolve_model_id("ghost:anthropic:claude", @resolve_profiles)
+
+      assert Enum.any?(["fast", "deep", "mapy"], &String.contains?(msg, &1))
+    end
+
+    test "no profiles configured returns an error mentioning that nothing is configured" do
+      assert {:error, msg} = EvoGit.CLI.resolve_model_id("fast", [])
+      assert msg =~ ~r/model/i or msg =~ ~r/profile/i
+    end
+
+    test "map-spec profile never matches by model-string but still matches by id" do
+      # The mapy profile's model is a map, so a bare provider:model or model
+      # string must NOT match it...
+      assert {:error, _} = EvoGit.CLI.resolve_model_id("openai:gpt-5", @resolve_profiles)
+
+      # ...but its id resolves, both bare and as an id:provider:model prefix.
+      assert EvoGit.CLI.resolve_model_id("mapy", @resolve_profiles) == {:ok, "mapy"}
+      assert EvoGit.CLI.resolve_model_id("mapy:openai:gpt-5", @resolve_profiles) == {:ok, "mapy"}
+    end
+  end
 end
