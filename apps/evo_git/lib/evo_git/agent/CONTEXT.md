@@ -146,7 +146,7 @@ A repo-less agent runs WITHOUT a git worktree (chatbot-style). It is marked via 
 
 ### Command-approval gate (run_command level-2/3, EvoGit.CommandApproval)
 
-The command shell's security levels are enforced INSIDE the `run_command` tool call — the tool task blocks until the user decides. Facts:
+The command shell's security levels are enforced INSIDE the `run_command` tool call (`EvoGit.CommandShell.execute/1` — the `:chat` approval mode) — the tool task blocks until the user decides. (`CommandShell.execute/2` also supports `approval: :auto`, used by the CLI `run` subcommand, which bypasses the gate for all levels — the terminal user is the human authorizer.) Facts:
 
 - **Levels**: `EvoGit.CommandShell.security_level/1` maps each command path to 1|2|3 (`"help"`/`"Help"` → 1; unknown/non-binary → 1). Level 1 executes immediately; levels 2 (`GuideUser.guide_user`) and 3 (`StartTask.start_task`, `CancelTask.cancel_task`, `ForceKillTask.force_kill_task`, `DeleteTask.delete_task`) do NOT run until the user approves. Parse/validation errors still surface BEFORE the gate (the args parse first).
 - **Gate mechanics**: at the shell choke point (`EvoGit.CommandShell.run_command/3`), level ≥ 2 calls `EvoGit.CommandApproval.request(path, human_args, level, Process.get(:evogit_agent_id), Process.get(:evogit_task_id))` — a blocking `GenServer.call(:infinity)`. `:approved` → the handler runs; `:denied` → `{:error, "Action denied by the user: ..."}`; `:timeout` → `{:error, "The user did not confirm ... in time ..."}` — the handler NEVER runs on anything but `:approved` (fails closed, including when the approval service is not running).
