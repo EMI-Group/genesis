@@ -134,7 +134,7 @@ The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short intege
 
 ## Phase Transitions
 
-No automatic transition between Genesis and Evolution — the CLI dispatches them as independent commands:
+No automatic transition between Genesis and Evolution — they are dispatched as independent task commands (each CLI/dashboard/shell invocation enqueues its own task):
 
 ```bash
 # Genesis — must be called first to bootstrap the Context Tree
