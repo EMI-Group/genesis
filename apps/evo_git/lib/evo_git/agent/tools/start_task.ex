@@ -34,6 +34,15 @@ defmodule EvoGit.Agent.Tools.StartTask do
       opts =
         []
         |> maybe_put(:objective, objective)
+        # Data-plane routing: TaskExecutor.execute_task(:genesis, ...) reads the
+        # genesis prompt from opts[:prompt] (Keyword.get(opts, :prompt, "") ->
+        # EvoGit.Runtime.Genesis.run) — NOT :objective — so a shell-started
+        # genesis task must carry its text under :prompt too, or the prompt
+        # would enqueue silently empty. The text is kept under BOTH keys for
+        # genesis (the shell's own ListTasks/GetTask displays read :objective);
+        # evolve/reflect/extract_skills forward :objective only (they never
+        # read :prompt).
+        |> maybe_put(:prompt, if(task_type == :genesis, do: objective))
         |> maybe_put(:path, path)
         |> maybe_put(:mode, mode)
         |> maybe_put(:resume_from, resume_from)
