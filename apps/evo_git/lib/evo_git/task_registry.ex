@@ -904,6 +904,15 @@ defmodule EvoGit.TaskRegistry do
                   )
                 end
 
+                # End-of-window marker: the terminal write is known to have hit
+                # the store (wrapper result, watchdog resolution, startup
+                # reconcile all flow through here).
+                if status in [:completed, :failed, :cancelled],
+                  do:
+                    Logger.info(
+                      "TaskRegistry: Task #{task_id} terminal status persisted: #{inspect(status)}"
+                    )
+
                 :ok
 
               {:error, :disk_full} ->
@@ -1341,11 +1350,24 @@ defmodule EvoGit.TaskRegistry do
         )
       end
 
+      Logger.info(
+        "TaskRegistry: Task #{task_id} wrapper returned — persisting terminal status #{inspect(status)}"
+      )
+
       update_task_status_with_caller(task_id, status, result,
         usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
         agent_count: result_field(result, :agent_count, &is_integer/1),
         commit_sha: result_field(result, :commit_sha, &is_binary/1),
         archive_records: result_field(result, :archive_records, &is_list/1)
+      )
+    else
+      # The result cannot be persisted — no matching in-memory task_refs entry
+      # (e.g. the registry restarted after the wrapper finished, wiping the
+      # refs, or the message is stale). Leave a trail so stranded tasks are
+      # attributable instead of failing silently.
+      Logger.warning(
+        "TaskRegistry: received task result for unknown ref #{inspect(ref)} — " <>
+          "no matching task_refs entry (registry restarted?); result dropped"
       )
     end
 
@@ -1401,6 +1423,14 @@ defmodule EvoGit.TaskRegistry do
             )
           end
       end
+    else
+      # No matching in-memory task_refs entry (e.g. the registry restarted after
+      # the wrapper exited, wiping the refs). Leave a trail so a lost result is
+      # attributable instead of being a silent no-op.
+      Logger.warning(
+        "TaskRegistry: received :DOWN for unknown ref #{inspect(ref)} (pid #{inspect(pid)}, " <>
+          "reason #{inspect(reason)}) — no matching task_refs entry; ignoring"
+      )
     end
 
     {:noreply, state}
