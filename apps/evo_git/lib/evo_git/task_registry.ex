@@ -41,6 +41,10 @@ defmodule EvoGit.TaskRegistry do
   # where the owner died right after a renewal.
   @sweep_after (@lease_duration + 30) * 1000
 
+  # Default grace (minutes) for the stuck-:finalizing watchdog — overridable via
+  # the app env :finalizing_watchdog_grace_minutes (see finalizing_watchdog_grace/0).
+  @finalizing_watchdog_default_minutes 60
+
   ## Client API
 
   def start_link(opts \\ []) do
@@ -1105,6 +1109,91 @@ defmodule EvoGit.TaskRegistry do
     {:noreply, state}
   end
 
+  # --- Stuck-:finalizing grace watchdog ---
+  #
+  # Hardens the :finalizing stage against a wrapper that stays ALIVE but blocks
+  # forever in an uninterruptible git call (e.g. merge_and_report/3 on an
+  # NFS-mounted home — no timeout, no in-process resolution while the BEAM stays
+  # up). When a task enters :finalizing we schedule a ONE-SHOT watchdog timer
+  # (reusing the {:recheck_task, task_id} message shape); when it fires while
+  # the task is STILL :finalizing, the task is resolved to :failed regardless of
+  # scheduler/agent state — the whole point is that the wrapper is
+  # alive-but-blocked, so the grace expiry resolves the task.
+
+  # Reads the app-env seam `Application.get_env(:evo_git,
+  # :finalizing_watchdog_grace_minutes)` and normalizes it to
+  # `:disabled | {:ok, minutes}`:
+  #   - false        -> :disabled (no timer scheduled; zero behavioral change)
+  #   - nil / unset  -> default 60 minutes
+  #   - numeric >= 0 -> that many minutes (0 = fire immediately; float/fractional
+  #                     values tolerated)
+  #   - any other    -> default 60 (defensive)
+  defp finalizing_watchdog_grace do
+    case Application.get_env(:evo_git, :finalizing_watchdog_grace_minutes) do
+      false -> :disabled
+      nil -> {:ok, @finalizing_watchdog_default_minutes}
+      minutes when is_number(minutes) and minutes >= 0 -> {:ok, minutes}
+      _ -> {:ok, @finalizing_watchdog_default_minutes}
+    end
+  end
+
+  # The minutes named in the watchdog's result message, re-read at RESOLUTION
+  # time so a mid-flight env change is reflected. :disabled here is only
+  # possible if the env flipped to false after scheduling (a fire implies it was
+  # enabled at schedule time) — fall back to the default.
+  defp finalizing_watchdog_result_minutes do
+    case finalizing_watchdog_grace() do
+      :disabled -> @finalizing_watchdog_default_minutes
+      {:ok, minutes} -> minutes
+    end
+  end
+
+  # Schedules the one-shot watchdog for a task that just entered :finalizing
+  # (called from the :ok arm of the :finalizing PubSub handler's put_task).
+  # Delay = trunc(minutes * 60_000) — always an INTEGER (Process.send_after
+  # rejects floats); minutes = 0 fires immediately. :disabled -> no timer.
+  defp schedule_finalizing_watchdog(task_id) do
+    case finalizing_watchdog_grace() do
+      :disabled ->
+        :ok
+
+      {:ok, minutes} ->
+        delay = trunc(minutes * 60_000)
+        Process.send_after(self(), {:recheck_task, task_id}, delay)
+
+        Logger.debug(
+          "TaskRegistry: scheduled :finalizing watchdog for task #{task_id} in #{delay}ms"
+        )
+
+        :ok
+    end
+  end
+
+  # Watchdog resolution: the task is STILL :finalizing past the grace period.
+  # Resolve to :failed via the shared handle_update_status/6 — mirroring the
+  # startup-reconcile call style ({:startup_reconcile, :finalizing}), which
+  # gives Diagnostics failed-transition logging, finished_at/lease handling, the
+  # {:task_updated, task_id, :failed, node()} broadcast (only on a successful
+  # write), clear_cancelling_marker, and the task_refs deletion. Deliberately
+  # does NOT check Lease.sched_meta_has_active_agents? and does NOT reschedule —
+  # the wrapper is alive-but-blocked; the grace expiry resolves the task. No git
+  # timeouts added, nothing killed (residual sched_meta/agent state is left
+  # untouched, mirroring startup reconciliation).
+  defp resolve_finalizing_watchdog(state, task_id, %TaskInfo{}) do
+    minutes = finalizing_watchdog_result_minutes()
+    result = "Finalization did not complete within #{minutes} minutes"
+
+    Logger.warning(
+      "TaskRegistry: :finalizing watchdog fired for task #{task_id} — " <>
+        "finalization did not complete within #{minutes} minutes; resolving to :failed"
+    )
+
+    state =
+      handle_update_status(state, task_id, :failed, result, [], {:finalizing_watchdog, task_id})
+
+    {:noreply, state}
+  end
+
   # --- Recent Projects ---
 
   defp trim_recent_projects(state) do
@@ -1184,6 +1273,11 @@ defmodule EvoGit.TaskRegistry do
             # continue.
             case EvoGit.Store.put_task(state.task_store, updated) do
               :ok ->
+                # The row is now :finalizing — schedule the ONE-SHOT stuck-
+                # :finalizing grace watchdog (only here, NOT on the disk-full
+                # path where the row never became :finalizing and the existing
+                # mechanisms stay as-is). :disabled -> no timer.
+                schedule_finalizing_watchdog(task_id)
                 :ok
 
               {:error, :disk_full} ->
@@ -1458,6 +1552,13 @@ defmodule EvoGit.TaskRegistry do
       %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
         # Task already resolved via another path (e.g. PubSub update) — stop rechecking.
         {:noreply, state}
+
+      %TaskInfo{status: :finalizing} = task ->
+        # Stuck-:finalizing grace watchdog fired while the task is STILL
+        # :finalizing — the wrapper is alive but blocked past the grace period
+        # (e.g. uninterruptible git I/O in merge_and_report/3). Resolve to
+        # :failed regardless of scheduler state; do NOT reschedule.
+        resolve_finalizing_watchdog(state, task_id, task)
 
       %TaskInfo{} = task ->
         if Lease.sched_meta_has_active_agents?(task_id) do
