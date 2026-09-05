@@ -144,9 +144,9 @@ evogit genesis "Create a web app" --mode new
 evogit evolve "Fix the login bug" --mode simple
 ```
 
-`EvoGit.Runtime` has no combined entry point; each phase is invoked directly:
-- `EvoGit.CLI.dispatch(["genesis", ...])` → `Genesis.run/2`
-- `EvoGit.CLI.dispatch(["evolve", ...])` → `Evolution.run/2`
+`EvoGit.Runtime` has no combined entry point; each phase is invoked by `TaskExecutor.execute_task/3` (the task data plane — CLI/dashboard/shell all enqueue via `TaskRegistry.start_task/2`):
+- `execute_task(:genesis, opts, task_id)` → `Genesis.run/2`
+- `execute_task(:evolve, opts, task_id)` → `Evolution.run/2`
 
 ## Key Dependencies
 
