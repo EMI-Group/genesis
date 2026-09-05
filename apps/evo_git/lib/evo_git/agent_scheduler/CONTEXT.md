@@ -157,6 +157,17 @@ Worktrees are **created fresh per agent run** — NO pool, NO persistent-worktre
 
 All blocking filesystem operations (rm_rf, prune_worktrees, delete_branch, mkdir_p) run inside `WorktreeManager` (create I/O offloaded to a spawned Task); the scheduler never touches worktree I/O.
 
+### Completion vs Reclaim timing (worktree cleanup is NOT in the `:finalizing` window)
+
+Ordering at top-level agent completion (useful for diagnosing a task stuck in `:finalizing` — the agent Task is spawned via `Task.Supervisor.async_nolink`, dispatch.ex:225-231, so its `{ref, result}` message is sent to the scheduler BEFORE the process exits, and per-sender signal ordering puts that message ahead of the scheduler's own `:DOWN`):
+
+1. Agent Task's Runner finishes → Task sends `{ref, result}` → scheduler `handle_info({ref, result})` (agent_scheduler.ex:1075-1077) → `Lifecycle.handle_task_result/3` (lifecycle.ex:222): root branch is ETS-only (put_sched_meta `result_sent` lifecycle.ex:230, archive collect/inject lifecycle.ex:247-248) then **`GenServer.reply(meta.from, result)`** (lifecycle.ex:259) — this reply unblocks the `run_agent` caller (agent_scheduler.ex:80-81).
+2. The runtime then broadcasts `:finalizing` + runs `merge_and_report` (runtime/evolution.ex:107-110) — pure Git-adapter `rev_parse`/`create_branch` on the MAIN repo (runtime/helpers.ex:38-91), no worktree ops, never blocks on WorktreeManager.
+3. Task process exits → scheduler's own `:DOWN` (agent_scheduler.ex:1081-1083) → `Lifecycle.handle_agent_down/4` → `recycle_agent/2` (ETS-only, lifecycle.ex:303/33-34) — AFTER the reply (step 1), not before.
+4. Task process exits → WorktreeManager's `:DOWN` (worktree_manager.ex:225-256) → `destroy_worktree/3` (worktree_manager.ex:241, 450-478: rm_rf → prune → `delete_branch_tolerant`) runs **in the WorktreeManager GenServer process**, concurrently with steps 1-3 and never on the reply/`:finalizing` path.
+
+Consequences: (a) **worktree cleanup (rm_rf/prune/branch delete) is never part of the task's `:finalizing` window** — it cannot delay the runtime's reply/merge; (b) a slow NFS `rm_rf` inside `destroy_worktree/3` blocks only the WorktreeManager GenServer message loop — delaying OTHER agents' `create_worktree_for_agent` calls and other `:DOWN` cleanups (their Runners/agents), never the scheduler or the completing task's runtime; (c) reclaim is triggered ONLY by actual process death — `Process.monitor` (worktree_manager.ex:389) delivers `:DOWN` solely on exit, so a hung-but-alive agent/wrapper never triggers reclaim.
+
 ### WorktreeRetry — transient filesystem failure retries
 
 `EvoGit.AgentScheduler.WorktreeRetry` is the single shared implementation of all retry logic for the worktree lifecycle. Purpose: Windows file lockers and anti-virus scanners transiently fail file operations with `:eacces`/`:eperm`/`:eexist` (and friends) — a single immediate failure is usually a false alarm; the operation succeeds on retry. (API details in the API Surface table above.) Transient-reason set: `:eacces`, `:eperm`, `:eexist`, `:enotempty`, `:ebusy`, `:again`, `:eintr`. `:enoent` deliberately absent: "not found" means the goal is already met (`rm_rf_retry/2` normalizes `{:error, :enoent, file}` to `{:ok, []}`). Git repo-gone outputs ("Repository path does not exist" / "not a git repository", `repo_gone_output?/1`) also fail fast. The moduledoc in `worktree_retry.ex` is the authoritative detail.
