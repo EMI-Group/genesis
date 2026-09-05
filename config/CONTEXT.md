@@ -43,6 +43,7 @@ None — leaf directory (Elixir config files only).
   - **Dynamic reconciliation**: `EvoGit.ReqLLMPool` (apps/evo_git) grow-only resizes the pool at runtime when (a) scheduler config changes (`AgentScheduler.update_config` — dashboard saves, `reload_config`, `save_user_config`) and (b) the Finch "excess queuing" RuntimeError is observed in the agent retry loop (`ToolDispatch.call_llm_with_retry`). Pools are materialized lazily per provider origin; new origins appear at the boot `count` until the next reconcile/error-bump.
   - **Single shared pool**: all providers/models share this one Finch pool — there is no per-model or per-provider pool. The pool is sized to the effective total concurrency (profile sum ∪ default bucket) so that all models can run at full concurrency simultaneously.
 - **`evo_git` sandbox** in `config.exs` (line 58): `sandbox: :auto` (can be overridden by TOML)
+- **`evo_git` stuck-`:finalizing` watchdog grace** in `config.exs` (`config :evo_git` block): `finalizing_watchdog_grace_minutes: 60` — minutes a task may remain `:finalizing` before `EvoGit.TaskRegistry` resolves it to `:failed`; `false` disables the watchdog. Overridden to `1` in `test.exs` (short grace so tests exercise the watchdog fast)
 - **No model, provider, or API key config** is set here — those come from TOML (see below)
 
 ### In TOML files (via `EvoGit.Config` at `apps/evo_git/lib/evo_git/config/config.ex`)
