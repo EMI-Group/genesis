@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "genesis-desktop"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "flate2",
  "reqwest 0.12.28",
