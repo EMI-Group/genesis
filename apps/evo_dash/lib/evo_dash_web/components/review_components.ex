@@ -31,7 +31,7 @@ defmodule EvoDashWeb.ReviewComponents do
 
   # ---------------------------------------------------------------------------
   # page_tabs/1 — GitHub-style underline tab bar
-  # (Conversation / Files changed / Commits / Archive)
+  # (Conversation / Objective / Files changed / Commits / Archive)
   # ---------------------------------------------------------------------------
 
   attr(:active_tab, :atom, required: true)
@@ -53,8 +53,21 @@ defmodule EvoDashWeb.ReviewComponents do
         ]}
       >
         <.icon name="hero-chat-bubble-left-right" class="size-4" />
-        <%!-- zh_CN: "Conversation" → 对话/总览（评审页首个标签页：智能体报告与目标总览） --%>
+        <%!-- zh_CN: "Conversation" → 对话/总览（评审页首个标签页：智能体报告总览） --%>
         {gettext("Conversation")}
+      </button>
+      <button
+        phx-click="switch_tab"
+        phx-value-tab="objective"
+        class={[
+          "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
+          (@active_tab == :objective && "border-primary text-base-content font-semibold") ||
+            "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
+        ]}
+      >
+        <.icon name="hero-bullseye" class="size-4" />
+        <%!-- zh_CN: 目标 — 提交给智能体的任务目标（本任务最初指令文本） --%>
+        {gettext("Objective")}
       </button>
       <button
         phx-click="switch_tab"

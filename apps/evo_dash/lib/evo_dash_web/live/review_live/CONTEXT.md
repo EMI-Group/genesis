@@ -2,7 +2,7 @@
 
 ## Intent
 
-`EvoDashWeb.ReviewLive` (`review_live.ex`, `GET /review/:task_id`) — GitHub-PR-inspired code review page. **Two-page model**: the `:show` route renders a `page_header` + `page_tabs` + one of FOUR tab bodies (`:conversation | :files_changed | :commits | :archive`); the `:commit` route (`/review/:task_id/commit/:sha`) renders a standalone commit-inspection page (`commit_detail_header` + `commit_diff_layout`, no page tabs, no separate back-button row — the back link lives inside `commit_detail_header`). The objective content is folded into the Conversation page (no separate `objective` tab). **Multi-repo review**: tasks with writable foreign repos expose repo selection in the Files-changed toolbar + the merge box (NOT a page-level tab bar); merge/reject broadcast across ALL review repos; single-repo (legacy) tasks render with no repo affordances. All page data loads ASYNC (off-process); per-file diffs are LAZY (per-event).
+`EvoDashWeb.ReviewLive` (`review_live.ex`, `GET /review/:task_id`) — GitHub-PR-inspired code review page. **Two-page model**: the `:show` route renders a `page_header` + `page_tabs` + one of FIVE tab bodies (`:conversation | :objective | :files_changed | :commits | :archive`); the `:commit` route (`/review/:task_id/commit/:sha`) renders a standalone commit-inspection page (`commit_detail_header` + `commit_diff_layout`, no page tabs, no separate back-button row — the back link lives inside `commit_detail_header`). The objective renders on its own dedicated **`:objective` tab** (a readability column hosting `objective_section`, with the `objective_raw` markdown/raw toggle + copy button) — it no longer lives in the conversation pane. **Multi-repo review**: tasks with writable foreign repos expose repo selection in the Files-changed toolbar + the merge box (NOT a page-level tab bar); merge/reject broadcast across ALL review repos; single-repo (legacy) tasks render with no repo affordances. All page data loads ASYNC (off-process); per-file diffs are LAZY (per-event).
 
 ## Routing Table
 
@@ -23,7 +23,8 @@ None — leaf directory (`load_data.ex`, `merge_check.ex`).
 
 - **`page_header`** — PRIMARY-scoped fields (`repo_path`/`branch_name`/`merge_target` = primary's `default_merge_target`/`commit_sha` from the `"primary"` entry explicitly, never the active-repo projection), `back_url = with_node_param(~p"/projects", @current_node_id)`, full `title`, task/review status + meta, `stats` (aggregate map, see below).
 - **`page_tabs`** — underline tab bar with count badges driven by the AGGREGATE stats (`files_count`, `commits_count`), `show_archive` (gates the archive tab), `agents_count` (= `@agent_count`).
-- **`:conversation`** — readability column `max-w-4xl mx-auto w-full space-y-4`, in order: `merge_outcomes_panel` (when `@merge_outcomes != []`) → `agent_summary` → `objective_section` (objective folded in here) → `diff_stats_bar` (aggregate) → `task_summary` → **`merge_box` AT THE BOTTOM** → `extract_skills_modal`.
+- **`:conversation`** — readability column `max-w-4xl mx-auto w-full space-y-4`, in order: `merge_outcomes_panel` (when `@merge_outcomes != []`) → `agent_summary` → `diff_stats_bar` (aggregate) → `task_summary` → **`merge_box` AT THE BOTTOM** → `extract_skills_modal`.
+- **`:objective`** — readability column `max-w-4xl mx-auto w-full space-y-4` hosting only `objective_section` (`objective:`, `objective_raw:`). The tab is ALWAYS rendered (no count badge); a nil/`""` objective shows the component's in-card empty state.
 - **`:files_changed`** — FULL WIDTH (no max-w): `split_diff_layout` reading the ACTIVE repo's repo-keyed submaps via inline `Map.get` (`expanded_files`/`selected_file`/`file_context_levels`/`tree_expanded_dirs` — same keying as the diff state), plus flat `file_filter`, `repos: @review_repos`, `active_repo_id:`. Repo selection lives in the layout's toolbar. nil `@review_data` → the empty-state icon panel.
 - **`:commits`** — `commits_list commits: @commits` (ACTIVE repo's commits — repo switching lives in the files toolbar / merge box).
 - **`:archive`** — `archive_review_section` (existing empty state when no metadata).
@@ -65,7 +66,7 @@ The core writes writable-foreign-repo results into the task result's top-level `
 
 | Event | Route branching | Notes |
 |-------|-----------------|-------|
-| `switch_tab` (`conversation`/`files_changed`/`commits`/`archive` + fallback no-op) | — | Pure assigns. The `objective` clause was REMOVED with the tab. |
+| `switch_tab` (`conversation`/`objective`/`files_changed`/`commits`/`archive` + fallback no-op) | — | Pure assigns. |
 | `switch_repo` %{"repo_id"} | — | Whitelist + set active + reset `file_filter` + re-project. |
 | `toggle_dir` %{"dir"} | SHOW repo-keyed / `:commit` flat | put/delete in the tree map. |
 | `collapse_all_dirs` | same | acting submap → `%{}`. |
@@ -85,6 +86,7 @@ The core writes writable-foreign-repo results into the task result's top-level `
 | `create_pr` | — | PRIMARY-scoped; synchronous under `@action_loading`. |
 | `extract_skills` / `cancel_extract_skills` / `confirm_extract_skills` | — | Modal flow; confirm is PRIMARY-scoped, starts an `:extract_skills` task. |
 | `toggle_summary_view` %{"mode"} | — | `summary_raw` toggle. |
+| `toggle_objective_view` %{"mode"} | — | `objective_raw` toggle (Objective tab's Markdown/Raw join). |
 | `copied` | — | clipboard flash. |
 | `retry_remote_connection` / `switch_to_local` | — | gate actions. |
 

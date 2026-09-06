@@ -1111,6 +1111,118 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "objective tab" do
+    # The objective moved OFF the conversation pane onto its own dedicated
+    # "Objective" tab (always rendered, no count badge). The card mirrors
+    # agent_summary's header contract: a Markdown/Raw join toggle
+    # (toggle_objective_view) + a ClipboardCopy button.
+    setup do
+      task_id = seed_orphaned_review_task!()
+      {:ok, task_id: task_id}
+    end
+
+    test "objective tab button exists and switching renders the objective pane", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      # The tab button is always present (no count badge on it).
+      assert has_element?(view, "button[phx-click='switch_tab'][phx-value-tab='objective']")
+      assert html =~ "Objective"
+
+      # Switching to it renders the objective card with the objective text.
+      html =
+        view
+        |> element("button[phx-click='switch_tab'][phx-value-tab='objective']")
+        |> render_click()
+
+      assert assigns(view)[:review_tab] == :objective
+      assert html =~ "Test objective"
+      assert html =~ ~s(id="objective-copy-btn")
+    end
+
+    test "objective pane has the markdown/raw toggle and the copy button", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      view
+      |> element("button[phx-click='switch_tab'][phx-value-tab='objective']")
+      |> render_click()
+
+      # The copy button carries the ClipboardCopy hook + the objective payload.
+      assert has_element?(view, "button[id='objective-copy-btn'][phx-hook='ClipboardCopy']")
+
+      # Markdown is the default view; raw renders the single-line <pre>.
+      assert has_element?(
+               view,
+               "button[phx-click='toggle_objective_view'][phx-value-mode='raw']"
+             )
+
+      html =
+        view
+        |> element("button[phx-click='toggle_objective_view'][phx-value-mode='raw']")
+        |> render_click()
+
+      assert assigns(view)[:objective_raw] == true
+      assert html =~ "<pre"
+
+      # Toggling back to markdown restores the rendered content container.
+      html =
+        view
+        |> element("button[phx-click='toggle_objective_view'][phx-value-mode='markdown']")
+        |> render_click()
+
+      assert assigns(view)[:objective_raw] == false
+      assert html =~ "md-content"
+    end
+
+    test "objective card is no longer rendered inside the conversation pane", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      # The conversation tab (the default) has the agent report but NOT the
+      # objective card — the copy button id is unique to the objective card.
+      assert html =~ ~s(id="summary-copy-btn")
+      refute html =~ ~s(id="objective-copy-btn")
+
+      # Sanity: the objective pane DOES render it (the button lives there).
+      html =
+        view
+        |> element("button[phx-click='switch_tab'][phx-value-tab='objective']")
+        |> render_click()
+
+      assert html =~ ~s(id="objective-copy-btn")
+    end
+
+    test "nil objective renders the in-card empty state", %{conn: conn} do
+      # A task with neither opts prompt nor objective → objective assign is "".
+      task_id = seed_review_task_no_objective!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      assert assigns(view)[:objective] == ""
+
+      html =
+        view
+        |> element("button[phx-click='switch_tab'][phx-value-tab='objective']")
+        |> render_click()
+
+      # The empty-state card renders; no toggle/copy controls (nil-safe hide).
+      assert html =~ "No objective recorded for this task."
+      refute html =~ ~s(id="objective-copy-btn")
+      refute html =~ ~s(phx-click="toggle_objective_view")
+    end
+  end
+
   describe "multi-repo review — repo list construction" do
     # The review page turns a task's writable-foreign-repo results (the
     # top-level `repos` map, STRING keys after the Store/Codec round trip)
@@ -2186,6 +2298,45 @@ defmodule EvoDashWeb.ReviewLiveTest do
       author_email: "test@example.com",
       date: DateTime.utc_now()
     }
+  end
+
+  # Seeds a completed orphaned-path review task with NO objective/prompt in
+  # its opts — the LoadData objective falls back to `to_string(nil) |> trim()`
+  # → "" (blank, never nil), which the objective card renders as the
+  # empty-state card. Returns the task id.
+  defp seed_review_task_no_objective! do
+    task_id = "review_test_noobj_#{System.unique_integer([:positive])}"
+
+    task = %TaskInfo{
+      id: task_id,
+      type: :evolve,
+      status: :completed,
+      opts: [path: "/nonexistent/repo/path"],
+      ref: nil,
+      started_at: DateTime.utc_now(),
+      finished_at: DateTime.utc_now(),
+      logs: [],
+      review_status: nil,
+      result:
+        {:ok,
+         %{
+           commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+           branch_name: "evogit/test-branch",
+           result: "Agent summary",
+           pr_url: nil,
+           pr_title: nil
+         }}
+    }
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      TaskRegistry.delete_task(task_id)
+      # Synchronize the deletion cast.
+      TaskRegistry.list_tasks()
+    end)
+
+    task_id
   end
 
   # Seeds a completed orphaned-path review task with a custom objective (for

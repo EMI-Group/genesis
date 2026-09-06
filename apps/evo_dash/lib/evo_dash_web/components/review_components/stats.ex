@@ -66,7 +66,7 @@ defmodule EvoDashWeb.ReviewComponents.Stats do
             phx-click="inspect_commit"
             phx-value-sha={commit.sha}
           >
-            <span class="badge badge-sm badge-outline border-base-content/20 font-mono rounded-md shrink-0">
+            <span class="badge badge-sm bg-base-200 border-0 font-mono rounded-md shrink-0">
               {commit.short_sha}
             </span>
             <span class="text-sm font-medium truncate flex-1" title={commit.message}>
