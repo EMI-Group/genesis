@@ -213,6 +213,103 @@ defmodule EvoGit.Runtime.HelpersTest do
       # Must be an error, never {:ok, _}
       refute match?({:ok, _}, result)
     end
+
+    test "with a non-existent 40-hex commit SHA returns the structured error", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+
+      ref = String.duplicate("0", 40)
+
+      assert {:error, {:invalid_starting_commit, ^ref, ^tmp_dir, output}} =
+               Helpers.resolve_starting_commit(tmp_dir, ref)
+
+      assert is_binary(output)
+      assert output != ""
+    end
+
+    test "with a non-existent branch or tag name returns the structured error", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+
+      for ref <- ["no-such-branch", "no-such-tag"] do
+        assert {:error, {:invalid_starting_commit, ^ref, ^tmp_dir, output}} =
+                 Helpers.resolve_starting_commit(tmp_dir, ref)
+
+        assert is_binary(output)
+        assert output != ""
+      end
+    end
+
+    test "resolves a full SHA, a branch name, and a lightweight tag to the commit sha", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+      {:ok, head_sha} = Git.rev_parse(tmp_dir)
+
+      {:ok, _} = Git.create_branch(tmp_dir, "feature-branch", head_sha)
+      {:ok, _} = Git.tag(tmp_dir, "lightweight", head_sha)
+
+      for ref <- [head_sha, "feature-branch", "lightweight"] do
+        assert {:ok, ^head_sha} = Helpers.resolve_starting_commit(tmp_dir, ref)
+      end
+    end
+
+    test "resolves an annotated tag to its peeled commit sha", %{tmp_dir: tmp_dir} do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+      {:ok, head_sha} = Git.rev_parse(tmp_dir)
+
+      {:ok, _} = Git.run(["tag", "-a", "annotated", "-m", "annotated message"], tmp_dir)
+
+      assert {:ok, ^head_sha} = Helpers.resolve_starting_commit(tmp_dir, "annotated")
+    end
+
+    test "rejects refs pointing at non-commit objects (tree/blob) with the structured error", %{
+      tmp_dir: tmp_dir
+    } do
+      File.write!(Path.join(tmp_dir, "test.txt"), "initial")
+      {:ok, _} = Git.add(tmp_dir, "test.txt")
+      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+
+      # A tree object ref: git rejects the ^{commit} peel with "expected commit type".
+      assert {:error, {:invalid_starting_commit, "HEAD^{tree}", ^tmp_dir, tree_output}} =
+               Helpers.resolve_starting_commit(tmp_dir, "HEAD^{tree}")
+
+      assert is_binary(tree_output)
+      assert tree_output =~ "expected commit type"
+
+      # A blob ref: git parses the ^{commit} peel as part of the path, so the
+      # failure text differs across git versions — but the shape must still be
+      # the structured error, never the raw git tuple.
+      assert {:error, {:invalid_starting_commit, "HEAD:test.txt", ^tmp_dir, blob_output}} =
+               Helpers.resolve_starting_commit(tmp_dir, "HEAD:test.txt")
+
+      assert is_binary(blob_output)
+      assert blob_output != ""
+    end
+
+    test "empty repo (unborn HEAD): nil and \"HEAD\" both fail with ref \"HEAD\"", %{
+      tmp_dir: tmp_dir
+    } do
+      # The setup fixture tmp_dir is a git-init'ed repo with no commits yet.
+      assert {:error, {:invalid_starting_commit, "HEAD", ^tmp_dir, nil_output}} =
+               Helpers.resolve_starting_commit(tmp_dir, nil)
+
+      assert {:error, {:invalid_starting_commit, "HEAD", ^tmp_dir, head_output}} =
+               Helpers.resolve_starting_commit(tmp_dir, "HEAD")
+
+      assert is_binary(nil_output)
+      assert is_binary(head_output)
+    end
   end
 
   # ==========================================================================
@@ -851,6 +948,19 @@ defmodule EvoGit.Runtime.HelpersTest do
       entry = %ForeignRepo{id: "f", root: root}
 
       assert {:ok, ^head} = Helpers.resolve_foreign_repo_starting_commit(entry, root)
+    end
+
+    test "returns the structured error for a non-resolving base_sha", %{tmp_dir: _tmp_dir} do
+      root = make_git_repo!("resolve_bad_base")
+      ref = "definitely-not-a-ref"
+
+      entry = %ForeignRepo{id: "f", root: root, base_sha: ref}
+
+      assert {:error, {:invalid_starting_commit, ^ref, ^root, output}} =
+               Helpers.resolve_foreign_repo_starting_commit(entry, root)
+
+      assert is_binary(output)
+      assert output != ""
     end
   end
 

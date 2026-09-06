@@ -111,6 +111,41 @@ defmodule EvoGit.Runtime.EvolutionTest do
     end
   end
 
+  describe "invalid starting commit" do
+    test "returns a readable {:error, message} for a non-resolving starting_commit" do
+      repo = create_git_repo!()
+
+      # A bad starting-commit ref fails PRE-scheduler (in the run/2 with-chain),
+      # so no scheduler wrapper is needed.
+      {result, _log} =
+        with_log(fn ->
+          Evolution.run("obj", repo_path: repo, starting_commit: "definitely-not-a-ref")
+        end)
+
+      assert {:error, msg} = result
+      assert is_binary(msg)
+      assert msg =~ "definitely-not-a-ref"
+      assert msg =~ repo
+      assert msg =~ "does not resolve"
+    end
+
+    test "returns a readable {:error, message} for a git-init-only repo (unborn HEAD)" do
+      repo_path =
+        Path.join(System.tmp_dir!(), "evogit-empty-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(repo_path)
+      Git.init(repo_path)
+      on_exit(fn -> File.rm_rf!(repo_path) end)
+
+      {result, _log} = with_log(fn -> Evolution.run("obj", repo_path: repo_path) end)
+
+      assert {:error, msg} = result
+      assert is_binary(msg)
+      assert msg =~ "no commits yet"
+      assert msg =~ repo_path
+    end
+  end
+
   describe "UNC repo path guard" do
     test "raises ArgumentError for a UNC repo_path before any repo I/O" do
       repo_path =
