@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.3] - 2026-09-06
+
+### Added
+
+- Add a data directory config key to relocate the runtime data directory, with a corresponding Settings page category.
+
+### Fixed
+
+- Fix config_status reporting valid map-form LLM models (custom-endpoint provider/id models) as missing, so custom-endpoint profiles stored as map model specs no longer incorrectly trigger the "LLM model is not configured" warning.
+- Improve error messages for invalid starting-commit references so failures return human-readable errors instead of raw git output.
+
 ## [0.12.2] - 2026-09-06
 
 ### Added
