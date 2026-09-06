@@ -103,6 +103,7 @@ description = "Legacy Project"
 3. **Runtime overrides** — `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`; set by dashboard settings / `RemoteAPI.reload_config` (the CLI makes NO scheduler overrides — concurrency/retry/turn values are config.toml-only, and `-m` is task-level model selection carried in task opts, not a scheduler override).
 
 ### config.toml Structure
+**No data/state-dir key exists** — config.toml CANNOT relocate the runtime data dir (which holds `tasks.sqlite`, logs, remote binaries, nix cache, `genesis-source`). Data dir = `EvoGit.Platform.data_dir/0` (platform.ex:129-183, pure OS + env vars). The ONLY overrides: Elixir app env `config :evo_git, :data_dir` (honored ONLY where `Application.get_env(:evo_git, :data_dir, ...)` is read — Store child spec application.ex:83, TaskRegistry.init task_registry.ex:241, migrate.store.ex:27,80; set only in `config/test.exs:29`) and env vars `XDG_DATA_HOME` (Linux) / `APPDATA` (Windows) / `HOME` (fallbacks) / `XDG_CONFIG_HOME` (config dir). Consumers calling `Platform.data_dir()` DIRECTLY ignore the app-env override: desktop log (`config/runtime.exs:190`), `SelfReflectiveSource` genesis-source clone, `RemoteBootstrap` remote_binaries cache, `Sandbox.Nix` cache. Per-repo `.genesis` artifacts (agent worktrees at `<repo_root>/.genesis/workers`, worktrees.ex:26) are repo-root-fixed and not config.toml-settable either.
 ```toml
 [scheduler]
 default_llm_max_concurrency = 3   # Per-LLM concurrency when a model profile has none
