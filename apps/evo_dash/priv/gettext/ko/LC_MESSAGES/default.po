@@ -39,22 +39,24 @@ msgid_plural "%{count} children"
 msgstr[0] "자식 %{count}개"
 msgstr[1] "자식 %{count}개"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:40
-#: lib/evo_dash_web/components/review_components/stats.ex:61
+#: lib/evo_dash_web/components/review_components/header.ex:143
+#: lib/evo_dash_web/components/review_components/stats.ex:23
+#: lib/evo_dash_web/components/review_components/stats.ex:56
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
 msgid_plural "%{count} commits"
 msgstr[0] "%{count}개 커밋"
 msgstr[1] "%{count}개 커밋"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:137
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
 msgstr[0] "%{count}개 파일"
 msgstr[1] "%{count}개 파일"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:24
+#: lib/evo_dash_web/components/review_components/header.ex:147
+#: lib/evo_dash_web/components/review_components/stats.ex:27
 #, elixir-autogen, elixir-format
 msgid "%{count} files changed"
 msgstr "%{count}개 파일 변경됨"
@@ -188,11 +190,6 @@ msgstr "API 키가 성공적으로 저장되었습니다."
 msgid "Absolute path to the repository root on this machine"
 msgstr "이 컴퓨터에서 저장소 루트의 절대 경로"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:25
-#, elixir-autogen, elixir-format
-msgid "Actions"
-msgstr "액션"
-
 #: lib/evo_dash_web/components/layouts.ex:182
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
@@ -247,11 +244,6 @@ msgstr "에이전트 메시지"
 msgid "Agent Module"
 msgstr "에이전트 모듈"
 
-#: lib/evo_dash_web/components/review_components/header.ex:307
-#, elixir-autogen, elixir-format
-msgid "Agent Summary"
-msgstr "에이전트 요약"
-
 #: lib/evo_dash_web/live/agents_live.html.heex:25
 #, elixir-autogen, elixir-format
 msgid "Agent Tree"
@@ -273,7 +265,7 @@ msgid "Agent not found"
 msgstr "에이전트를 찾을 수 없음"
 
 #: lib/evo_dash_web/components/layouts.ex:155
-#: lib/evo_dash_web/components/review_components/header.ex:127
+#: lib/evo_dash_web/components/review_components/header.ex:426
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/projects_live.ex:355
 #: lib/evo_dash_web/live/settings_live.ex:603
@@ -282,7 +274,6 @@ msgstr "에이전트를 찾을 수 없음"
 msgid "Agents"
 msgstr "에이전트"
 
-#: lib/evo_dash_web/components/review_components/header.ex:273
 #: lib/evo_dash_web/components/task_card_components.ex:394
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
@@ -329,7 +320,7 @@ msgstr "모든 주요 구성 값이 설정되었습니다"
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "모든 인메모리 런타임 상태(실행 중인 작업, 스케줄러 상태, 진행 중인 에이전트)가 손실됩니다. 이 작업은 되돌릴 수 없습니다."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:269
+#: lib/evo_dash_web/components/review_components/actions.ex:379
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "이 PR의 변경 사항을 분석하여 재사용 가능한 지식을 EvoGit 스킬로 추출합니다. 에이전트가 diff를 검토하고, 유용한 패턴을 식별하여 .agents/skills/ 디렉토리에 스킬 파일을 생성합니다."
@@ -339,12 +330,12 @@ msgstr "이 PR의 변경 사항을 분석하여 재사용 가능한 지식을 Ev
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "기존 코드베이스를 분석하고 CONTEXT.md 공간 계약을 생성합니다."
 
-#: lib/evo_dash_web/components/review_components.ex:101
+#: lib/evo_dash_web/components/review_components.ex:115
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr "아카이브"
 
-#: lib/evo_dash_web/components/review_components.ex:384
+#: lib/evo_dash_web/components/review_components.ex:351
 #, elixir-autogen, elixir-format
 msgid "Archive End"
 msgstr "아카이브 종료"
@@ -354,7 +345,7 @@ msgstr "아카이브 종료"
 msgid "Archive Final Ref"
 msgstr "최종 참조 아카이브"
 
-#: lib/evo_dash_web/components/review_components.ex:373
+#: lib/evo_dash_web/components/review_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Archive Start"
 msgstr "아카이브 시작"
@@ -370,7 +361,7 @@ msgid "Archive agent details"
 msgstr "에이전트 세부 정보 보관"
 
 #: lib/evo_dash_web/components/archive_components.ex:26
-#: lib/evo_dash_web/components/review_components.ex:279
+#: lib/evo_dash_web/components/review_components.ex:246
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "아카이브된 에이전트 상세"
@@ -381,7 +372,6 @@ msgstr "아카이브된 에이전트 상세"
 msgid "Attempting to reconnect"
 msgstr "재연결 시도 중"
 
-#: lib/evo_dash_web/live/review_live.ex:57
 #: lib/evo_dash_web/live/welcome_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Back"
@@ -391,11 +381,6 @@ msgstr "뒤로"
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "대시보드로 돌아가기"
-
-#: lib/evo_dash_web/live/review_live.ex:50
-#, elixir-autogen, elixir-format
-msgid "Back to Review"
-msgstr "검토로 돌아가기"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:251
 #, elixir-autogen, elixir-format
@@ -455,21 +440,20 @@ msgstr "찾아보기"
 msgid "Build System"
 msgstr "빌드 시스템"
 
-#: lib/evo_dash_web/components/review_components/header.ex:215
+#: lib/evo_dash_web/components/review_components/header.ex:496
 #: lib/evo_dash_web/components/task_card_components.ex:331
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "캐시 생성"
 
-#: lib/evo_dash_web/components/review_components/header.ex:116
-#: lib/evo_dash_web/components/review_components/header.ex:223
+#: lib/evo_dash_web/components/review_components/header.ex:505
 #: lib/evo_dash_web/components/task_card_components.ex:339
 #: lib/evo_dash_web/live/agents_live.html.heex:383
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "캐시 적중률"
 
-#: lib/evo_dash_web/components/review_components/header.ex:207
+#: lib/evo_dash_web/components/review_components/header.ex:487
 #: lib/evo_dash_web/components/task_card_components.ex:323
 #: lib/evo_dash_web/live/agents_live.html.heex:375
 #, elixir-autogen, elixir-format
@@ -479,7 +463,7 @@ msgstr "캐시된 토큰"
 #: lib/evo_dash_web/components/layouts.ex:361
 #: lib/evo_dash_web/components/project_components.ex:688
 #: lib/evo_dash_web/components/project_components.ex:816
-#: lib/evo_dash_web/components/review_components/actions.ex:303
+#: lib/evo_dash_web/components/review_components/actions.ex:413
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
 #: lib/evo_dash_web/components/task_card_components.ex:152
 #: lib/evo_dash_web/live/agents_live.html.heex:886
@@ -508,17 +492,12 @@ msgstr "기본 저장소는 제거할 수 없습니다."
 msgid "Change language"
 msgstr "언어 변경"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:17
-#, elixir-autogen, elixir-format
-msgid "Changed Files"
-msgstr "변경된 파일"
-
-#: lib/evo_dash_web/live/review_live.ex:604
+#: lib/evo_dash_web/live/review_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "변경 사항이 병합되었습니다. %{branch} 브랜치가 삭제되었습니다."
 
-#: lib/evo_dash_web/live/review_live.ex:708
+#: lib/evo_dash_web/live/review_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "변경 사항이 거부되었습니다. %{branch} 브랜치가 삭제되었습니다."
@@ -584,13 +563,13 @@ msgstr "명령을 찾을 수 없음: %{command}"
 msgid "Commit details"
 msgstr "커밋 상세"
 
-#: lib/evo_dash_web/components/review_components.ex:74
+#: lib/evo_dash_web/components/review_components.ex:98
 #, elixir-autogen, elixir-format
 msgid "Commits"
 msgstr "커밋"
 
 #: lib/evo_dash_web/components/archive_components.ex:189
-#: lib/evo_dash_web/components/review_components.ex:449
+#: lib/evo_dash_web/components/review_components.ex:416
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:295
 #: lib/evo_dash_web/live/tasks_live.ex:62
 #, elixir-autogen, elixir-format
@@ -739,12 +718,12 @@ msgstr "컨텍스트 트리 감지 — 진화 모드 선택됨"
 msgid "Continued"
 msgstr "계속됨"
 
-#: lib/evo_dash_web/live/review_live.ex:776
+#: lib/evo_dash_web/live/review_live.ex:865
 #, elixir-autogen, elixir-format
 msgid "Resuming from branch %{branch} at %{sha}"
 msgstr "%{sha}의 %{branch} 브랜치에서 재개 중"
 
-#: lib/evo_dash_web/live/review_live.ex:781
+#: lib/evo_dash_web/live/review_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr "조사 작업에서 재개 중입니다. 새로운 진화 작업 양식이 준비되었습니다."
@@ -754,7 +733,7 @@ msgstr "조사 작업에서 재개 중입니다. 새로운 진화 작업 양식�
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "에이전트 동시성, 재시도 동작 및 깊이 제한을 제어합니다."
 
-#: lib/evo_dash_web/components/review_components/header.ex:352
+#: lib/evo_dash_web/components/review_components/header.ex:249
 #, elixir-autogen, elixir-format
 msgid "Copy agent summary"
 msgstr "에이전트 요약 복사"
@@ -765,7 +744,7 @@ msgid "Copy path"
 msgstr "경로 복사"
 
 #: lib/evo_dash_web/components/archive_components.ex:172
-#: lib/evo_dash_web/components/review_components.ex:428
+#: lib/evo_dash_web/components/review_components.ex:395
 #, elixir-autogen, elixir-format
 msgid "Cost"
 msgstr "비용"
@@ -834,7 +813,7 @@ msgid "Delete this task?"
 msgstr "이 작업을 삭제하시겠습니까?"
 
 #: lib/evo_dash_web/components/archive_components.ex:78
-#: lib/evo_dash_web/components/review_components.ex:314
+#: lib/evo_dash_web/components/review_components.ex:281
 #: lib/evo_dash_web/live/agents_live.html.heex:236
 #, elixir-autogen, elixir-format
 msgid "Depth"
@@ -934,7 +913,7 @@ msgid "Enabled"
 msgstr "활성화"
 
 #: lib/evo_dash_web/components/archive_components.ex:114
-#: lib/evo_dash_web/components/review_components.ex:358
+#: lib/evo_dash_web/components/review_components.ex:325
 #, elixir-autogen, elixir-format
 msgid "End Commit"
 msgstr "종료 커밋"
@@ -983,15 +962,15 @@ msgid "Execution Logs"
 msgstr "실행 로그"
 
 #: lib/evo_dash_web/components/archive_components.ex:34
-#: lib/evo_dash_web/components/review_components.ex:288
-#: lib/evo_dash_web/live/review_live.ex:162
+#: lib/evo_dash_web/components/review_components.ex:255
+#: lib/evo_dash_web/components/review_components/actions.ex:312
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "JSON 내보내기"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:125
-#: lib/evo_dash_web/components/review_components/actions.ex:265
-#: lib/evo_dash_web/components/review_components/actions.ex:307
+#: lib/evo_dash_web/components/review_components/actions.ex:299
+#: lib/evo_dash_web/components/review_components/actions.ex:375
+#: lib/evo_dash_web/components/review_components/actions.ex:417
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "스킬 추출"
@@ -1008,18 +987,18 @@ msgstr "실패"
 msgid "Failed to cancel task: %{reason}"
 msgstr "작업 취소 실패: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:844
+#: lib/evo_dash_web/live/review_live.ex:933
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "풀 리퀘스트를 생성하지 못했습니다. 'gh' CLI가 설치되고 인증되었는지 확인하세요."
 
-#: lib/evo_dash_web/live/review_live.ex:492
+#: lib/evo_dash_web/live/review_live.ex:581
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "컨텍스트 확장 실패: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1128
-#: lib/evo_dash_web/live/review_live.ex:1156
+#: lib/evo_dash_web/live/review_live.ex:1217
+#: lib/evo_dash_web/live/review_live.ex:1245
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "%{path}의 diff를 불러오지 못했습니다: %{reason}"
@@ -1049,7 +1028,7 @@ msgstr "설정 저장 실패: %{reason}"
 msgid "Failed to save: %{reason}"
 msgstr "저장 실패: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:915
+#: lib/evo_dash_web/live/review_live.ex:1004
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "스킬 추출 시작 실패: %{reason}"
@@ -1064,11 +1043,6 @@ msgstr "작업 시작 실패: %{reason}"
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "파일이 아직 존재하지 않습니다"
-
-#: lib/evo_dash_web/components/review_components.ex:87
-#, elixir-autogen, elixir-format
-msgid "Files Changed"
-msgstr "변경된 파일"
 
 #: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
@@ -1085,7 +1059,7 @@ msgstr "파일시스템 격리가 활성화되었습니다. 참고: 리소스 �
 msgid "Filter settings..."
 msgstr "설정 검색..."
 
-#: lib/evo_dash_web/components/review_components/header.ex:159
+#: lib/evo_dash_web/components/review_components/header.ex:439
 #: lib/evo_dash_web/components/task_card_components.ex:132
 #, elixir-autogen, elixir-format
 msgid "Finished"
@@ -1179,12 +1153,12 @@ msgstr "Erlang VM을 정상 재시작하거나 중지합니다. 재시작은 모
 msgid "Hide Details"
 msgstr "상세 숨기기"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:175
+#: lib/evo_dash_web/components/review_components/actions.ex:325
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "무시"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:171
+#: lib/evo_dash_web/components/review_components/actions.ex:320
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "이 리뷰를 무시하시겠습니까? 대기 중인 리뷰 목록에서 제거됩니다."
@@ -1194,7 +1168,7 @@ msgstr "이 리뷰를 무시하시겠습니까? 대기 중인 리뷰 목록에�
 msgid "Ignored"
 msgstr "무시됨"
 
-#: lib/evo_dash_web/components/review_components/header.ex:248
+#: lib/evo_dash_web/components/review_components/header.ex:532
 #: lib/evo_dash_web/components/task_card_components.ex:367
 #: lib/evo_dash_web/live/agents_live.html.heex:422
 #, elixir-autogen, elixir-format
@@ -1202,8 +1176,8 @@ msgid "Input Cost"
 msgstr "입력 비용"
 
 #: lib/evo_dash_web/components/archive_components.ex:152
-#: lib/evo_dash_web/components/review_components.ex:402
-#: lib/evo_dash_web/components/review_components/header.ex:178
+#: lib/evo_dash_web/components/review_components.ex:369
+#: lib/evo_dash_web/components/review_components/header.ex:456
 #: lib/evo_dash_web/components/task_card_components.ex:295
 #: lib/evo_dash_web/live/agents_live.html.heex:348
 #, elixir-autogen, elixir-format
@@ -1267,12 +1241,12 @@ msgstr "Linux 보안"
 msgid "Linux security features are only available on Linux with systemd-run."
 msgstr "Linux 보안 기능은 systemd-run이 있는 Linux에서만 사용할 수 있습니다."
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:223
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:441
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "차이(diff) 로딩 중..."
 
-#: lib/evo_dash_web/live/review_live.ex:66
+#: lib/evo_dash_web/live/review_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "검토 데이터를 불러오는 중..."
@@ -1313,12 +1287,12 @@ msgstr "샌드박스 격리, 리소스 제한 및 프로세스 제약을 관리�
 msgid "Max Tokens"
 msgstr "최대 토큰"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:69
+#: lib/evo_dash_web/components/review_components/actions.ex:96
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "이 변경 사항을 현재 브랜치에 병합하시겠습니까?"
 
-#: lib/evo_dash_web/components/review_components.ex:186
+#: lib/evo_dash_web/components/review_components.ex:164
 #: lib/evo_dash_web/helpers.ex:215
 #: lib/evo_dash_web/live/tasks_live.ex:105
 #: lib/evo_dash_web/live/tasks_live.ex:191
@@ -1339,7 +1313,7 @@ msgstr "설정 누락"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "모드: %{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/review_components/header.ex:279
+#: lib/evo_dash_web/components/review_components/header.ex:417
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:261
 #: lib/evo_dash_web/components/task_card_components.ex:398
 #: lib/evo_dash_web/live/agents_live.html.heex:180
@@ -1450,7 +1424,7 @@ msgstr "현재 등록된 에이전트가 없습니다"
 msgid "No archive data available for this task"
 msgstr "이 작업에 사용 가능한 아카이브 데이터가 없습니다"
 
-#: lib/evo_dash_web/live/review_live.ex:209
+#: lib/evo_dash_web/live/review_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "이 태스크에 대한 보관된 에이전트 데이터가 없습니다."
@@ -1543,9 +1517,9 @@ msgid "Number of parallel LLM request slots"
 msgstr "병렬 LLM 요청 슬롯 수"
 
 #: lib/evo_dash_web/components/archive_components.ex:85
-#: lib/evo_dash_web/components/review_components.ex:62
-#: lib/evo_dash_web/components/review_components.ex:328
-#: lib/evo_dash_web/components/review_components/header.ex:68
+#: lib/evo_dash_web/components/review_components.ex:70
+#: lib/evo_dash_web/components/review_components.ex:295
+#: lib/evo_dash_web/components/review_components/header.ex:291
 #: lib/evo_dash_web/components/task_card_components.ex:227
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:56
@@ -1567,12 +1541,12 @@ msgstr "열기"
 msgid "Open a project to get started"
 msgstr "시작하려면 프로젝트를 여세요"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:278
+#: lib/evo_dash_web/components/review_components/actions.ex:388
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "선택 사항: 스킬 추출 에이전트를 위한 메모"
 
-#: lib/evo_dash_web/components/review_components/header.ex:254
+#: lib/evo_dash_web/components/review_components/header.ex:541
 #: lib/evo_dash_web/components/task_card_components.ex:373
 #: lib/evo_dash_web/live/agents_live.html.heex:430
 #, elixir-autogen, elixir-format
@@ -1580,8 +1554,8 @@ msgid "Output Cost"
 msgstr "출력 비용"
 
 #: lib/evo_dash_web/components/archive_components.ex:159
-#: lib/evo_dash_web/components/review_components.ex:411
-#: lib/evo_dash_web/components/review_components/header.ex:186
+#: lib/evo_dash_web/components/review_components.ex:378
+#: lib/evo_dash_web/components/review_components/header.ex:465
 #: lib/evo_dash_web/components/task_card_components.ex:303
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #, elixir-autogen, elixir-format
@@ -1685,7 +1659,7 @@ msgstr "프로젝트가 생성되었습니다: %{path}"
 msgid "Projects"
 msgstr "프로젝트"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:291
+#: lib/evo_dash_web/components/review_components/actions.ex:401
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "어떤 지식을 스킬로 캡처해야 할지에 대한 구체적인 지침을 제공하세요."
@@ -1695,7 +1669,7 @@ msgstr "어떤 지식을 스킬로 캡처해야 할지에 대한 구체적인 �
 msgid "Provider"
 msgstr "제공자"
 
-#: lib/evo_dash_web/live/review_live.ex:835
+#: lib/evo_dash_web/live/review_live.ex:924
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "풀 리퀘스트 생성됨: %{title}"
@@ -1725,7 +1699,7 @@ msgstr "재확인"
 msgid "Reasoning Effort"
 msgstr "추론 노력"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:79
+#: lib/evo_dash_web/components/review_components/actions.ex:263
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "이 변경 사항을 거절하고 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
@@ -1843,7 +1817,7 @@ msgid "Restart System?"
 msgstr "시스템을 재시작할까요?"
 
 #: lib/evo_dash_web/components/archive_components.ex:95
-#: lib/evo_dash_web/components/review_components.ex:338
+#: lib/evo_dash_web/components/review_components.ex:305
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "결과"
@@ -1904,7 +1878,7 @@ msgstr "변경 사항 검토"
 msgid "Review Not Available"
 msgstr "검토 불가"
 
-#: lib/evo_dash_web/live/review_live.ex:804
+#: lib/evo_dash_web/live/review_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "검토가 무시되고 종료되었습니다."
@@ -2061,7 +2035,7 @@ msgstr "이 저장소가做什么 작업을 하는지에 대한 간단한 설명
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "%{total}개 작업 중 %{start}–%{end}개 표시"
 
-#: lib/evo_dash_web/live/review_live.ex:905
+#: lib/evo_dash_web/live/review_live.ex:994
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "스킬 추출 태스크가 시작되었습니다. 대시보드에서 진행 상황을 확인할 수 있습니다."
@@ -2077,7 +2051,7 @@ msgid "Something went wrong!"
 msgstr "문제가 발생했습니다!"
 
 #: lib/evo_dash_web/components/archive_components.ex:106
-#: lib/evo_dash_web/components/review_components.ex:348
+#: lib/evo_dash_web/components/review_components.ex:315
 #, elixir-autogen, elixir-format
 msgid "Start Commit"
 msgstr "시작 커밋"
@@ -2088,8 +2062,8 @@ msgid "Start a task from the dashboard to see agents here."
 msgstr "대시보드에서 작업을 시작하면 여기에 에이전트가 표시됩니다."
 
 #: lib/evo_dash_web/components/archive_components.ex:183
-#: lib/evo_dash_web/components/review_components.ex:443
-#: lib/evo_dash_web/components/review_components/header.ex:151
+#: lib/evo_dash_web/components/review_components.ex:410
+#: lib/evo_dash_web/components/review_components/header.ex:433
 #: lib/evo_dash_web/components/task_card_components.ex:127
 #, elixir-autogen, elixir-format
 msgid "Started"
@@ -2114,7 +2088,7 @@ msgstr "시작 노드"
 msgid "Starting daemon"
 msgstr "데몬 시작 중"
 
-#: lib/evo_dash_web/components/review_components/header.ex:135
+#: lib/evo_dash_web/components/review_components/header.ex:392
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "상태"
@@ -2196,11 +2170,6 @@ msgstr "작업 ID"
 msgid "Task Result"
 msgstr "작업 결과"
 
-#: lib/evo_dash_web/components/review_components/header.ex:143
-#, elixir-autogen, elixir-format
-msgid "Task Type"
-msgstr "작업 유형"
-
 #: lib/evo_dash_web/controllers/task_export_controller.ex:10
 #, elixir-autogen, elixir-format
 msgid "Task not found"
@@ -2266,7 +2235,7 @@ msgstr "VM이 중지되며 수동으로 다시 시작해야 합니다. 모든 �
 msgid "The agent completed without making any changes to the codebase."
 msgstr "에이전트가 코드베이스에 변경사항 없이 작업을 완료했습니다."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:148
+#: lib/evo_dash_web/components/review_components/actions.ex:136
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
 msgstr "에이전트가 코드 변경 없이 완료되었습니다. 이 조사에서 재개하거나 닫을 수 있습니다."
@@ -2293,7 +2262,7 @@ msgstr "이 원격 노드에서 실행 중인 에이전트가 없습니다."
 msgid "Thinking"
 msgstr "사고 중"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:152
+#: lib/evo_dash_web/components/review_components/actions.ex:140
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "이 브랜치가 더 이상 존재하지 않습니다. 무시 버튼으로 해제할 수 있습니다."
@@ -2309,7 +2278,7 @@ msgstr "Erlang VM이 정상 재시작됩니다. 모든 애플리케이션이 종
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "Erlang VM이 정상 종료됩니다. 모든 애플리케이션이 순서대로 중지됩니다."
 
-#: lib/evo_dash_web/components/review_components/header.ex:171
+#: lib/evo_dash_web/components/review_components/header.ex:449
 #: lib/evo_dash_web/components/task_card_components.ex:290
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
@@ -2358,8 +2327,7 @@ msgstr "Top K"
 msgid "Top P"
 msgstr "Top P"
 
-#: lib/evo_dash_web/components/review_components/header.ex:108
-#: lib/evo_dash_web/components/review_components/header.ex:260
+#: lib/evo_dash_web/components/review_components/header.ex:550
 #: lib/evo_dash_web/components/task_card_components.ex:379
 #: lib/evo_dash_web/live/agents_live.html.heex:438
 #, elixir-autogen, elixir-format
@@ -2367,9 +2335,8 @@ msgid "Total Cost"
 msgstr "총 비용"
 
 #: lib/evo_dash_web/components/archive_components.ex:166
-#: lib/evo_dash_web/components/review_components.ex:420
-#: lib/evo_dash_web/components/review_components/header.ex:100
-#: lib/evo_dash_web/components/review_components/header.ex:194
+#: lib/evo_dash_web/components/review_components.ex:387
+#: lib/evo_dash_web/components/review_components/header.ex:474
 #: lib/evo_dash_web/components/task_card_components.ex:311
 #: lib/evo_dash_web/live/agents_live.html.heex:364
 #, elixir-autogen, elixir-format
@@ -2460,7 +2427,7 @@ msgstr "전체 메시지 보기"
 msgid "View Full Objective"
 msgstr "전체 목표 보기"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:113
+#: lib/evo_dash_web/components/review_components/actions.ex:290
 #: lib/evo_dash_web/components/task_card_components.ex:853
 #: lib/evo_dash_web/components/task_card_components.ex:914
 #, elixir-autogen, elixir-format
@@ -2550,7 +2517,7 @@ msgstr "예: gpt-4o 또는 anthropic/claude-3.5-sonnet"
 msgid "e.g., ./src/components"
 msgstr "예: ./src/components"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:285
+#: lib/evo_dash_web/components/review_components/actions.ex:395
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "예시: 이 PR에서 발견된 배포 워크플로우와 데이터베이스 마이그레이션 패턴에 집중하세요."
@@ -3146,14 +3113,14 @@ msgstr "여기에 메시지를 입력하세요..."
 msgid "Your message will be added to the agent's context on its next turn."
 msgstr "보낸 메시지는 에이전트의 다음 턴에 컨텍스트에 추가됩니다."
 
-#: lib/evo_dash_web/components/review_components.ex:50
+#: lib/evo_dash_web/components/review_components/header.ex:207
 #, elixir-autogen, elixir-format
 msgid "Agent Report"
 msgstr "에이전트 리포트"
 
 #: lib/evo_dash_web/live/home_live.ex:406
 #: lib/evo_dash_web/live/projects_live.ex:1045
-#: lib/evo_dash_web/live/review_live.ex:372
+#: lib/evo_dash_web/live/review_live.ex:461
 #: lib/evo_dash_web/live/settings_live.ex:1016
 #: lib/evo_dash_web/live/tasks_live.ex:782
 #: lib/evo_dash_web/live/welcome_complete_live.ex:90
@@ -3161,22 +3128,26 @@ msgstr "에이전트 리포트"
 msgid "Copied to clipboard"
 msgstr "클립보드에 복사됨"
 
-#: lib/evo_dash_web/components/review_components/header.ex:332
+#: lib/evo_dash_web/components/review_components/header.ex:232
+#: lib/evo_dash_web/components/review_components/header.ex:304
 #, elixir-autogen, elixir-format
 msgid "Markdown"
 msgstr "마크다운"
 
-#: lib/evo_dash_web/components/review_components/header.ex:344
+#: lib/evo_dash_web/components/review_components/header.ex:241
+#: lib/evo_dash_web/components/review_components/header.ex:313
 #, elixir-autogen, elixir-format
 msgid "Raw"
 msgstr "원본"
 
-#: lib/evo_dash_web/components/review_components/header.ex:341
+#: lib/evo_dash_web/components/review_components/header.ex:238
+#: lib/evo_dash_web/components/review_components/header.ex:310
 #, elixir-autogen, elixir-format
 msgid "Raw Text"
 msgstr "원본 텍스트"
 
-#: lib/evo_dash_web/components/review_components/header.ex:329
+#: lib/evo_dash_web/components/review_components/header.ex:229
+#: lib/evo_dash_web/components/review_components/header.ex:301
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "렌더링된 마크다운"
@@ -3422,7 +3393,7 @@ msgstr "용량"
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "용량: max_tool_concurrency. 사용 중: 실행 중인 에이전트(슬롯 사용 대리 지표 — 슬롯 보유자는 노출되지 않음)."
 
-#: lib/evo_dash_web/live/review_live.ex:598
+#: lib/evo_dash_web/live/review_live.ex:687
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully into %{target}! Branch %{branch} has been deleted."
 msgstr "%{target}에 변경 사항이 성공적으로 병합되었습니다! %{branch} 브랜치가 삭제되었습니다."
@@ -3547,17 +3518,17 @@ msgstr "지난 3분"
 msgid "Manage Connections"
 msgstr "연결 관리"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:36
+#: lib/evo_dash_web/components/review_components/actions.ex:63
 #, elixir-autogen, elixir-format
 msgid "Merge into"
 msgstr "병합 대상"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:40
+#: lib/evo_dash_web/components/review_components/actions.ex:67
 #, elixir-autogen, elixir-format
 msgid "Merge into branch"
 msgstr "병합할 브랜치"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:56
+#: lib/evo_dash_web/components/review_components/actions.ex:83
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into %{target}?"
 msgstr "이 변경 사항을 %{target}에 병합하시겠습니까?"
@@ -3806,24 +3777,13 @@ msgstr "Genesis에서는 최종 목표, 원하는 기능, 사용할 프레임워
 msgid "Write high-level prompts, not code"
 msgstr "코드 대신 고수준 프롬프트를 작성하세요"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:91
-#: lib/evo_dash_web/components/review_components/actions.ex:165
-#, elixir-autogen, elixir-format
-msgid "Resume"
-msgstr "재개"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:103
-#, elixir-autogen, elixir-format
-msgid "Create PR"
-msgstr "PR 생성"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:61
-#: lib/evo_dash_web/components/review_components/actions.ex:73
+#: lib/evo_dash_web/components/review_components/actions.ex:88
+#: lib/evo_dash_web/components/review_components/actions.ex:100
 #, elixir-autogen, elixir-format
 msgid "Merge"
 msgstr "병합"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:268
 #, elixir-autogen, elixir-format
 msgid "Reject"
 msgstr "거부"
@@ -3927,7 +3887,7 @@ msgstr "원격 노드에서 구성을 불러올 수 없습니다: %{reason} — 
 msgid "Remote Configuration Unavailable"
 msgstr "원격 구성 사용 불가"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:228
+#: lib/evo_dash_web/components/review_components/actions.ex:209
 #, elixir-autogen, elixir-format
 msgid "Auto-resolve conflict"
 msgstr "충돌 자동 해결"
@@ -3942,7 +3902,7 @@ msgstr "자동 해결 작업이 시작되었습니다. 변경 사항을 병합�
 msgid "Auto-resolve unavailable — no merge conflict detected."
 msgstr "자동 해결을 사용할 수 없습니다 — 병합 충돌이 감지되지 않았습니다."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:195
+#: lib/evo_dash_web/components/review_components/actions.ex:175
 #, elixir-autogen, elixir-format
 msgid "Checking if merge is clean…"
 msgstr "병합이 깨끗한지 확인 중…"
@@ -3952,19 +3912,19 @@ msgstr "병합이 깨끗한지 확인 중…"
 msgid "Failed to start auto-resolve: %{reason}"
 msgstr "자동 해결 시작 실패: %{reason}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:200
+#: lib/evo_dash_web/components/review_components/actions.ex:180
 #, elixir-autogen, elixir-format
 msgid "Merge check passed — clean merge."
 msgstr "병합 검사 통과 — 깨끗한 병합입니다."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:208
+#: lib/evo_dash_web/components/review_components/actions.ex:188
 #, elixir-autogen, elixir-format
 msgid "Merge conflict detected in %{count} file: %{files}"
 msgid_plural "Merge conflict detected in %{count} files: %{files}"
 msgstr[0] "%{count}개 파일에서 병합 충돌이 감지되었습니다: %{files}"
 msgstr[1] "%{count}개 파일에서 병합 충돌이 감지되었습니다: %{files}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:221
+#: lib/evo_dash_web/components/review_components/actions.ex:201
 #, elixir-autogen, elixir-format
 msgid "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
 msgstr "이렇게 하면 변경 사항을 병합하고 충돌을 해결하는 새 에이전트 작업이 시작됩니다. 현재 작업은 계속된 것으로 표시됩니다."
@@ -4292,7 +4252,7 @@ msgstr "예시"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "사용자 지정 에이전트 삭제 실패: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1084
+#: lib/evo_dash_web/live/review_live.ex:1173
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "리뷰 데이터를 불러오지 못했습니다."
@@ -4921,17 +4881,12 @@ msgstr "베이스 커밋 %{base_sha}이(가) 저장소에서 발견되지 않았
 msgid "Branch name or commit SHA, blank = HEAD"
 msgstr "브랜치 이름 또는 커밋 SHA, 비워두면 HEAD"
 
-#: lib/evo_dash_web/components/review_components.ex:134
-#, elixir-autogen, elixir-format
-msgid "Clean merge"
-msgstr "깨끗한 병합"
-
-#: lib/evo_dash_web/live/review_live.ex:733
+#: lib/evo_dash_web/live/review_live.ex:822
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes in %{count} of %{total} repositories. See the merge results below."
 msgstr "%{total}개 저장소 중 %{count}개에서 변경 사항 거부에 실패했습니다. 아래 병합 결과를 확인하세요."
 
-#: lib/evo_dash_web/components/review_components.ex:231
+#: lib/evo_dash_web/components/review_components.ex:209
 #, elixir-autogen, elixir-format
 msgid "Failed: %{detail}"
 msgstr "실패: %{detail}"
@@ -4951,23 +4906,22 @@ msgstr "외부 저장소 경로가 존재하지 않습니다: %{path}"
 msgid "Help"
 msgstr "도움말"
 
-#: lib/evo_dash_web/components/review_components.ex:137
-#: lib/evo_dash_web/components/review_components.ex:217
+#: lib/evo_dash_web/components/review_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "Merge conflict"
 msgstr "병합 충돌"
 
-#: lib/evo_dash_web/live/review_live.ex:644
+#: lib/evo_dash_web/live/review_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "Merge failed in %{count} of %{total} repositories. See the merge results below."
 msgstr "%{total}개 저장소 중 %{count}개에서 병합에 실패했습니다. 아래 병합 결과를 확인하세요."
 
-#: lib/evo_dash_web/components/review_components.ex:168
+#: lib/evo_dash_web/components/review_components.ex:146
 #, elixir-autogen, elixir-format
 msgid "Merge results"
 msgstr "병합 결과"
 
-#: lib/evo_dash_web/components/review_components.ex:183
+#: lib/evo_dash_web/components/review_components.ex:161
 #, elixir-autogen, elixir-format
 msgid "Merged into %{target}"
 msgstr "%{target}에 병합됨"
@@ -4977,12 +4931,12 @@ msgstr "%{target}에 병합됨"
 msgid "Path is not a git repository: %{path}"
 msgstr "경로가 git 저장소가 아닙니다: %{path}"
 
-#: lib/evo_dash_web/components/review_components.ex:165
+#: lib/evo_dash_web/components/review_components.ex:143
 #, elixir-autogen, elixir-format
 msgid "Reject results"
 msgstr "거부 결과"
 
-#: lib/evo_dash_web/components/review_components.ex:201
+#: lib/evo_dash_web/components/review_components.ex:179
 #, elixir-autogen, elixir-format
 msgid "Rejected — branch deleted"
 msgstr "거부됨 — 브랜치 삭제됨"
@@ -5329,3 +5283,83 @@ msgstr "어시스턴트가 사용자의 주의를 요청합니다"
 #, elixir-autogen, elixir-format
 msgid "This action has real side effects — the assistant is starting, cancelling, force-killing, or deleting a task."
 msgstr "이 작업은 실제 부작용이 있습니다 — 어시스턴트가 작업을 시작, 취소, 강제 종료하거나 삭제하고 있습니다."
+
+#: lib/evo_dash_web/components/review_components/header.ex:38
+#: lib/evo_dash_web/components/review_components/header.ex:39
+#, elixir-autogen, elixir-format
+msgid "Back to projects"
+msgstr "프로젝트로 돌아가기"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:343
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:344
+#, elixir-autogen, elixir-format
+msgid "Back to review"
+msgstr "검토로 돌아가기"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:55
+#, elixir-autogen, elixir-format
+msgid "Collapse all"
+msgstr "모두 접기"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:232
+#, elixir-autogen, elixir-format
+msgid "Continue task"
+msgstr "작업 계속"
+
+#: lib/evo_dash_web/components/review_components.ex:57
+#, elixir-autogen, elixir-format
+msgid "Conversation"
+msgstr "대화"
+
+#: lib/evo_dash_web/components/review_components/header.ex:322
+#, elixir-autogen, elixir-format
+msgid "Copy objective"
+msgstr "목표 복사"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:276
+#, elixir-autogen, elixir-format
+msgid "Create GitHub PR"
+msgstr "GitHub PR 만들기"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:59
+#, elixir-autogen, elixir-format
+msgid "Expand all"
+msgstr "모두 펼치기"
+
+#: lib/evo_dash_web/components/review_components.ex:82
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:27
+#, elixir-autogen, elixir-format
+msgid "Files changed"
+msgstr "변경된 파일"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#, elixir-autogen, elixir-format
+msgid "Filter files…"
+msgstr "파일 필터링…"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:69
+#, elixir-autogen, elixir-format
+msgid "No matching files"
+msgstr "일치하는 파일 없음"
+
+#: lib/evo_dash_web/components/review_components/header.ex:340
+#, elixir-autogen, elixir-format
+msgid "No objective recorded for this task."
+msgstr "이 작업에 대해 기록된 목표가 없습니다."
+
+#: lib/evo_dash_web/components/review_components/actions.ex:46
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:286
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:290
+#, elixir-autogen, elixir-format
+msgid "Repository"
+msgstr "저장소"
+
+#: lib/evo_dash_web/components/review_components/header.ex:379
+#, elixir-autogen, elixir-format
+msgid "Task Details"
+msgstr "작업 세부 정보"
+
+#: lib/evo_dash_web/components/review_components/header.ex:408
+#, elixir-autogen, elixir-format
+msgid "Type"
+msgstr "유형"

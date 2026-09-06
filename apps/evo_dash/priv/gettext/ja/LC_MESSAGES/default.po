@@ -39,22 +39,24 @@ msgid_plural "%{count} children"
 msgstr[0] "%{count}子要素"
 msgstr[1] "%{count}子要素"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:40
-#: lib/evo_dash_web/components/review_components/stats.ex:61
+#: lib/evo_dash_web/components/review_components/header.ex:143
+#: lib/evo_dash_web/components/review_components/stats.ex:23
+#: lib/evo_dash_web/components/review_components/stats.ex:56
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
 msgid_plural "%{count} commits"
 msgstr[0] "%{count} コミット"
 msgstr[1] "%{count} コミット"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:137
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
 msgstr[0] "%{count}個のファイル"
 msgstr[1] "%{count}個のファイル"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:24
+#: lib/evo_dash_web/components/review_components/header.ex:147
+#: lib/evo_dash_web/components/review_components/stats.ex:27
 #, elixir-autogen, elixir-format
 msgid "%{count} files changed"
 msgstr "%{count} ファイル変更"
@@ -188,11 +190,6 @@ msgstr "APIキーが保存されました。"
 msgid "Absolute path to the repository root on this machine"
 msgstr "このマシン上のリポジトリルートへの絶対パス"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:25
-#, elixir-autogen, elixir-format
-msgid "Actions"
-msgstr "アクション"
-
 #: lib/evo_dash_web/components/layouts.ex:182
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
@@ -247,11 +244,6 @@ msgstr "エージェントメッセージ"
 msgid "Agent Module"
 msgstr "エージェントモジュール"
 
-#: lib/evo_dash_web/components/review_components/header.ex:307
-#, elixir-autogen, elixir-format
-msgid "Agent Summary"
-msgstr "エージェントサマリー"
-
 #: lib/evo_dash_web/live/agents_live.html.heex:25
 #, elixir-autogen, elixir-format
 msgid "Agent Tree"
@@ -273,7 +265,7 @@ msgid "Agent not found"
 msgstr "エージェントが見つかりません"
 
 #: lib/evo_dash_web/components/layouts.ex:155
-#: lib/evo_dash_web/components/review_components/header.ex:127
+#: lib/evo_dash_web/components/review_components/header.ex:426
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/projects_live.ex:355
 #: lib/evo_dash_web/live/settings_live.ex:603
@@ -282,7 +274,6 @@ msgstr "エージェントが見つかりません"
 msgid "Agents"
 msgstr "エージェント"
 
-#: lib/evo_dash_web/components/review_components/header.ex:273
 #: lib/evo_dash_web/components/task_card_components.ex:394
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
@@ -329,7 +320,7 @@ msgstr "すべての重要な設定値が設定されています"
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "メモリ内のすべてのランタイム状態（実行中のタスク、スケジューラーの状態、進行中のエージェント）が失われます。この操作は元に戻せません。"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:269
+#: lib/evo_dash_web/components/review_components/actions.ex:379
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "このPRの変更を分析し、再利用可能な知識をEvoGitスキルとして抽出します。エージェントが差分を確認し、有用なパターンを特定して、.agents/skills/ にスキルファイルを作成します。"
@@ -339,12 +330,12 @@ msgstr "このPRの変更を分析し、再利用可能な知識をEvoGitスキ�
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "既存のコードベースを分析し、そのためのCONTEXT.md空間契約を生成します。"
 
-#: lib/evo_dash_web/components/review_components.ex:101
+#: lib/evo_dash_web/components/review_components.ex:115
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr "アーカイブ"
 
-#: lib/evo_dash_web/components/review_components.ex:384
+#: lib/evo_dash_web/components/review_components.ex:351
 #, elixir-autogen, elixir-format
 msgid "Archive End"
 msgstr "アーカイブ終了"
@@ -354,7 +345,7 @@ msgstr "アーカイブ終了"
 msgid "Archive Final Ref"
 msgstr "アーカイブ最終リファレンス"
 
-#: lib/evo_dash_web/components/review_components.ex:373
+#: lib/evo_dash_web/components/review_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Archive Start"
 msgstr "アーカイブ開始"
@@ -370,7 +361,7 @@ msgid "Archive agent details"
 msgstr "エージェントの詳細をアーカイブ"
 
 #: lib/evo_dash_web/components/archive_components.ex:26
-#: lib/evo_dash_web/components/review_components.ex:279
+#: lib/evo_dash_web/components/review_components.ex:246
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "アーカイブ済みエージェントの詳細"
@@ -381,7 +372,6 @@ msgstr "アーカイブ済みエージェントの詳細"
 msgid "Attempting to reconnect"
 msgstr "再接続を試みています"
 
-#: lib/evo_dash_web/live/review_live.ex:57
 #: lib/evo_dash_web/live/welcome_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Back"
@@ -391,11 +381,6 @@ msgstr "戻る"
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "ダッシュボードに戻る"
-
-#: lib/evo_dash_web/live/review_live.ex:50
-#, elixir-autogen, elixir-format
-msgid "Back to Review"
-msgstr "レビューに戻る"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:251
 #, elixir-autogen, elixir-format
@@ -455,21 +440,20 @@ msgstr "参照"
 msgid "Build System"
 msgstr "ビルドシステム"
 
-#: lib/evo_dash_web/components/review_components/header.ex:215
+#: lib/evo_dash_web/components/review_components/header.ex:496
 #: lib/evo_dash_web/components/task_card_components.ex:331
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "キャッシュ作成"
 
-#: lib/evo_dash_web/components/review_components/header.ex:116
-#: lib/evo_dash_web/components/review_components/header.ex:223
+#: lib/evo_dash_web/components/review_components/header.ex:505
 #: lib/evo_dash_web/components/task_card_components.ex:339
 #: lib/evo_dash_web/live/agents_live.html.heex:383
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "キャッシュヒット率"
 
-#: lib/evo_dash_web/components/review_components/header.ex:207
+#: lib/evo_dash_web/components/review_components/header.ex:487
 #: lib/evo_dash_web/components/task_card_components.ex:323
 #: lib/evo_dash_web/live/agents_live.html.heex:375
 #, elixir-autogen, elixir-format
@@ -479,7 +463,7 @@ msgstr "キャッシュ済みトークン"
 #: lib/evo_dash_web/components/layouts.ex:361
 #: lib/evo_dash_web/components/project_components.ex:688
 #: lib/evo_dash_web/components/project_components.ex:816
-#: lib/evo_dash_web/components/review_components/actions.ex:303
+#: lib/evo_dash_web/components/review_components/actions.ex:413
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
 #: lib/evo_dash_web/components/task_card_components.ex:152
 #: lib/evo_dash_web/live/agents_live.html.heex:886
@@ -508,17 +492,12 @@ msgstr "プライマリリポジトリは削除できません。"
 msgid "Change language"
 msgstr "言語を変更"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:17
-#, elixir-autogen, elixir-format
-msgid "Changed Files"
-msgstr "変更されたファイル"
-
-#: lib/evo_dash_web/live/review_live.ex:604
+#: lib/evo_dash_web/live/review_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "変更をマージしました。ブランチ %{branch} は削除されました。"
 
-#: lib/evo_dash_web/live/review_live.ex:708
+#: lib/evo_dash_web/live/review_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "変更を却下しました。ブランチ %{branch} は削除されました。"
@@ -584,13 +563,13 @@ msgstr "コマンドが見つかりません：%{command}"
 msgid "Commit details"
 msgstr "コミット詳細"
 
-#: lib/evo_dash_web/components/review_components.ex:74
+#: lib/evo_dash_web/components/review_components.ex:98
 #, elixir-autogen, elixir-format
 msgid "Commits"
 msgstr "コミット"
 
 #: lib/evo_dash_web/components/archive_components.ex:189
-#: lib/evo_dash_web/components/review_components.ex:449
+#: lib/evo_dash_web/components/review_components.ex:416
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:295
 #: lib/evo_dash_web/live/tasks_live.ex:62
 #, elixir-autogen, elixir-format
@@ -739,12 +718,12 @@ msgstr "コンテキストツリーを検出 — 進化モード選択"
 msgid "Continued"
 msgstr "継続"
 
-#: lib/evo_dash_web/live/review_live.ex:776
+#: lib/evo_dash_web/live/review_live.ex:865
 #, elixir-autogen, elixir-format
 msgid "Resuming from branch %{branch} at %{sha}"
 msgstr "ブランチ %{branch} の %{sha} から再開しています"
 
-#: lib/evo_dash_web/live/review_live.ex:781
+#: lib/evo_dash_web/live/review_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr "調査タスクから再開しています。新しい進化タスクのフォームを準備しました。"
@@ -754,7 +733,7 @@ msgstr "調査タスクから再開しています。新しい進化タスクの
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "エージェントの並行性、再試行動作、深さの制限を制御します。"
 
-#: lib/evo_dash_web/components/review_components/header.ex:352
+#: lib/evo_dash_web/components/review_components/header.ex:249
 #, elixir-autogen, elixir-format
 msgid "Copy agent summary"
 msgstr "エージェントサマリーをコピー"
@@ -765,7 +744,7 @@ msgid "Copy path"
 msgstr "パスをコピー"
 
 #: lib/evo_dash_web/components/archive_components.ex:172
-#: lib/evo_dash_web/components/review_components.ex:428
+#: lib/evo_dash_web/components/review_components.ex:395
 #, elixir-autogen, elixir-format
 msgid "Cost"
 msgstr "コスト"
@@ -834,7 +813,7 @@ msgid "Delete this task?"
 msgstr "このタスクを削除しますか？"
 
 #: lib/evo_dash_web/components/archive_components.ex:78
-#: lib/evo_dash_web/components/review_components.ex:314
+#: lib/evo_dash_web/components/review_components.ex:281
 #: lib/evo_dash_web/live/agents_live.html.heex:236
 #, elixir-autogen, elixir-format
 msgid "Depth"
@@ -934,7 +913,7 @@ msgid "Enabled"
 msgstr "有効"
 
 #: lib/evo_dash_web/components/archive_components.ex:114
-#: lib/evo_dash_web/components/review_components.ex:358
+#: lib/evo_dash_web/components/review_components.ex:325
 #, elixir-autogen, elixir-format
 msgid "End Commit"
 msgstr "終了コミット"
@@ -983,15 +962,15 @@ msgid "Execution Logs"
 msgstr "実行ログ"
 
 #: lib/evo_dash_web/components/archive_components.ex:34
-#: lib/evo_dash_web/components/review_components.ex:288
-#: lib/evo_dash_web/live/review_live.ex:162
+#: lib/evo_dash_web/components/review_components.ex:255
+#: lib/evo_dash_web/components/review_components/actions.ex:312
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "JSONをエクスポート"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:125
-#: lib/evo_dash_web/components/review_components/actions.ex:265
-#: lib/evo_dash_web/components/review_components/actions.ex:307
+#: lib/evo_dash_web/components/review_components/actions.ex:299
+#: lib/evo_dash_web/components/review_components/actions.ex:375
+#: lib/evo_dash_web/components/review_components/actions.ex:417
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "スキルを抽出"
@@ -1008,18 +987,18 @@ msgstr "失敗"
 msgid "Failed to cancel task: %{reason}"
 msgstr "タスクのキャンセルに失敗しました：%{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:844
+#: lib/evo_dash_web/live/review_live.ex:933
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "プルリクエストの作成に失敗しました。「gh」CLI がインストールされ、認証されていることを確認してください。"
 
-#: lib/evo_dash_web/live/review_live.ex:492
+#: lib/evo_dash_web/live/review_live.ex:581
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "コンテキストの展開に失敗しました: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1128
-#: lib/evo_dash_web/live/review_live.ex:1156
+#: lib/evo_dash_web/live/review_live.ex:1217
+#: lib/evo_dash_web/live/review_live.ex:1245
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "%{path} の差分の読み込みに失敗しました: %{reason}"
@@ -1049,7 +1028,7 @@ msgstr "設定の保存に失敗しました: %{reason}"
 msgid "Failed to save: %{reason}"
 msgstr "保存に失敗しました: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:915
+#: lib/evo_dash_web/live/review_live.ex:1004
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "スキル抽出の開始に失敗しました: %{reason}"
@@ -1064,11 +1043,6 @@ msgstr "タスクの開始に失敗しました：%{reason}"
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "ファイルはまだ存在しません"
-
-#: lib/evo_dash_web/components/review_components.ex:87
-#, elixir-autogen, elixir-format
-msgid "Files Changed"
-msgstr "変更されたファイル"
 
 #: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
@@ -1085,7 +1059,7 @@ msgstr "ファイルシステム分離が有効です。注意：リソース制
 msgid "Filter settings..."
 msgstr "設定をフィルター..."
 
-#: lib/evo_dash_web/components/review_components/header.ex:159
+#: lib/evo_dash_web/components/review_components/header.ex:439
 #: lib/evo_dash_web/components/task_card_components.ex:132
 #, elixir-autogen, elixir-format
 msgid "Finished"
@@ -1179,12 +1153,12 @@ msgstr "Erlang VM をグレースフルリスタートまたは停止します�
 msgid "Hide Details"
 msgstr "詳細を隠す"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:175
+#: lib/evo_dash_web/components/review_components/actions.ex:325
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "無視"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:171
+#: lib/evo_dash_web/components/review_components/actions.ex:320
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "このレビューを無視しますか？保留中のレビューから削除されます。"
@@ -1194,7 +1168,7 @@ msgstr "このレビューを無視しますか？保留中のレビューから
 msgid "Ignored"
 msgstr "無視"
 
-#: lib/evo_dash_web/components/review_components/header.ex:248
+#: lib/evo_dash_web/components/review_components/header.ex:532
 #: lib/evo_dash_web/components/task_card_components.ex:367
 #: lib/evo_dash_web/live/agents_live.html.heex:422
 #, elixir-autogen, elixir-format
@@ -1202,8 +1176,8 @@ msgid "Input Cost"
 msgstr "入力コスト"
 
 #: lib/evo_dash_web/components/archive_components.ex:152
-#: lib/evo_dash_web/components/review_components.ex:402
-#: lib/evo_dash_web/components/review_components/header.ex:178
+#: lib/evo_dash_web/components/review_components.ex:369
+#: lib/evo_dash_web/components/review_components/header.ex:456
 #: lib/evo_dash_web/components/task_card_components.ex:295
 #: lib/evo_dash_web/live/agents_live.html.heex:348
 #, elixir-autogen, elixir-format
@@ -1267,12 +1241,12 @@ msgstr "Linuxセキュリティ"
 msgid "Linux security features are only available on Linux with systemd-run."
 msgstr "Linuxセキュリティ機能は、systemd-runを使用するLinuxでのみ利用可能です。"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:223
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:441
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "差分を読み込み中..."
 
-#: lib/evo_dash_web/live/review_live.ex:66
+#: lib/evo_dash_web/live/review_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "レビューデータを読み込み中..."
@@ -1313,12 +1287,12 @@ msgstr "サンドボックスの分離、リソース制限、プロセス制約
 msgid "Max Tokens"
 msgstr "最大トークン数"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:69
+#: lib/evo_dash_web/components/review_components/actions.ex:96
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "これらの変更を現在のブランチにマージしますか？"
 
-#: lib/evo_dash_web/components/review_components.ex:186
+#: lib/evo_dash_web/components/review_components.ex:164
 #: lib/evo_dash_web/helpers.ex:215
 #: lib/evo_dash_web/live/tasks_live.ex:105
 #: lib/evo_dash_web/live/tasks_live.ex:191
@@ -1339,7 +1313,7 @@ msgstr "設定が不足しています"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "モード: %{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/review_components/header.ex:279
+#: lib/evo_dash_web/components/review_components/header.ex:417
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:261
 #: lib/evo_dash_web/components/task_card_components.ex:398
 #: lib/evo_dash_web/live/agents_live.html.heex:180
@@ -1450,7 +1424,7 @@ msgstr "現在登録されているエージェントはありません"
 msgid "No archive data available for this task"
 msgstr "このタスクに利用可能なアーカイブデータはありません"
 
-#: lib/evo_dash_web/live/review_live.ex:209
+#: lib/evo_dash_web/live/review_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "このタスクのアーカイブ済みエージェントデータはありません。"
@@ -1543,9 +1517,9 @@ msgid "Number of parallel LLM request slots"
 msgstr "並行LLMリクエストスロット数"
 
 #: lib/evo_dash_web/components/archive_components.ex:85
-#: lib/evo_dash_web/components/review_components.ex:62
-#: lib/evo_dash_web/components/review_components.ex:328
-#: lib/evo_dash_web/components/review_components/header.ex:68
+#: lib/evo_dash_web/components/review_components.ex:70
+#: lib/evo_dash_web/components/review_components.ex:295
+#: lib/evo_dash_web/components/review_components/header.ex:291
 #: lib/evo_dash_web/components/task_card_components.ex:227
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:56
@@ -1567,12 +1541,12 @@ msgstr "開く"
 msgid "Open a project to get started"
 msgstr "プロジェクトを開いて始めましょう"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:278
+#: lib/evo_dash_web/components/review_components/actions.ex:388
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "オプション：スキル抽出エージェントへの指示"
 
-#: lib/evo_dash_web/components/review_components/header.ex:254
+#: lib/evo_dash_web/components/review_components/header.ex:541
 #: lib/evo_dash_web/components/task_card_components.ex:373
 #: lib/evo_dash_web/live/agents_live.html.heex:430
 #, elixir-autogen, elixir-format
@@ -1580,8 +1554,8 @@ msgid "Output Cost"
 msgstr "出力コスト"
 
 #: lib/evo_dash_web/components/archive_components.ex:159
-#: lib/evo_dash_web/components/review_components.ex:411
-#: lib/evo_dash_web/components/review_components/header.ex:186
+#: lib/evo_dash_web/components/review_components.ex:378
+#: lib/evo_dash_web/components/review_components/header.ex:465
 #: lib/evo_dash_web/components/task_card_components.ex:303
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #, elixir-autogen, elixir-format
@@ -1685,7 +1659,7 @@ msgstr "プロジェクトを作成しました：%{path}"
 msgid "Projects"
 msgstr "プロジェクト"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:291
+#: lib/evo_dash_web/components/review_components/actions.ex:401
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "どのような知識をスキルとして記録すべきか、具体的な指示を入力してください。"
@@ -1695,7 +1669,7 @@ msgstr "どのような知識をスキルとして記録すべきか、具体的
 msgid "Provider"
 msgstr "プロバイダー"
 
-#: lib/evo_dash_web/live/review_live.ex:835
+#: lib/evo_dash_web/live/review_live.ex:924
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "プルリクエストを作成しました: %{title}"
@@ -1725,7 +1699,7 @@ msgstr "再確認"
 msgid "Reasoning Effort"
 msgstr "思考の度合い"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:79
+#: lib/evo_dash_web/components/review_components/actions.ex:263
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "これらの変更を却下して削除しますか？この操作は元に戻せません。"
@@ -1843,7 +1817,7 @@ msgid "Restart System?"
 msgstr "システムを再起動しますか？"
 
 #: lib/evo_dash_web/components/archive_components.ex:95
-#: lib/evo_dash_web/components/review_components.ex:338
+#: lib/evo_dash_web/components/review_components.ex:305
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "結果"
@@ -1904,7 +1878,7 @@ msgstr "変更をレビュー"
 msgid "Review Not Available"
 msgstr "レビューを利用できません"
 
-#: lib/evo_dash_web/live/review_live.ex:804
+#: lib/evo_dash_web/live/review_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "レビューは無視され、却下されました。"
@@ -2061,7 +2035,7 @@ msgstr "このリポジトリの簡単な説明"
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "%{total}件中 %{start}～%{end}件を表示"
 
-#: lib/evo_dash_web/live/review_live.ex:905
+#: lib/evo_dash_web/live/review_live.ex:994
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "スキル抽出タスクを開始しました。ダッシュボードで進捗を確認できます。"
@@ -2077,7 +2051,7 @@ msgid "Something went wrong!"
 msgstr "問題が発生しました"
 
 #: lib/evo_dash_web/components/archive_components.ex:106
-#: lib/evo_dash_web/components/review_components.ex:348
+#: lib/evo_dash_web/components/review_components.ex:315
 #, elixir-autogen, elixir-format
 msgid "Start Commit"
 msgstr "開始コミット"
@@ -2088,8 +2062,8 @@ msgid "Start a task from the dashboard to see agents here."
 msgstr "ダッシュボードからタスクを開始すると、ここにエージェントが表示されます。"
 
 #: lib/evo_dash_web/components/archive_components.ex:183
-#: lib/evo_dash_web/components/review_components.ex:443
-#: lib/evo_dash_web/components/review_components/header.ex:151
+#: lib/evo_dash_web/components/review_components.ex:410
+#: lib/evo_dash_web/components/review_components/header.ex:433
 #: lib/evo_dash_web/components/task_card_components.ex:127
 #, elixir-autogen, elixir-format
 msgid "Started"
@@ -2114,7 +2088,7 @@ msgstr "開始ノード"
 msgid "Starting daemon"
 msgstr "デーモンを起動中"
 
-#: lib/evo_dash_web/components/review_components/header.ex:135
+#: lib/evo_dash_web/components/review_components/header.ex:392
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "ステータス"
@@ -2196,11 +2170,6 @@ msgstr "タスクID"
 msgid "Task Result"
 msgstr "タスク結果"
 
-#: lib/evo_dash_web/components/review_components/header.ex:143
-#, elixir-autogen, elixir-format
-msgid "Task Type"
-msgstr "タスクタイプ"
-
 #: lib/evo_dash_web/controllers/task_export_controller.ex:10
 #, elixir-autogen, elixir-format
 msgid "Task not found"
@@ -2266,7 +2235,7 @@ msgstr "VMは停止し、手動で再起動する必要があります。メモ�
 msgid "The agent completed without making any changes to the codebase."
 msgstr "エージェントはコードベースに変更を加えずに完了しました。"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:148
+#: lib/evo_dash_web/components/review_components/actions.ex:136
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
 msgstr "エージェントはコード変更を行わずに完了しました。この調査から再開するか、閉じることができます。"
@@ -2293,7 +2262,7 @@ msgstr "このリモートノードで実行中のエージェントはありま
 msgid "Thinking"
 msgstr "思考中"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:152
+#: lib/evo_dash_web/components/review_components/actions.ex:140
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "このブランチはもう存在しません。「無視」で却下できます。"
@@ -2309,7 +2278,7 @@ msgstr "Erlang VM をグレースフルリスタートします。すべての�
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "Erlang VM を正常にシャットダウンします。すべてのアプリケーションが順に停止されます。"
 
-#: lib/evo_dash_web/components/review_components/header.ex:171
+#: lib/evo_dash_web/components/review_components/header.ex:449
 #: lib/evo_dash_web/components/task_card_components.ex:290
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
@@ -2358,8 +2327,7 @@ msgstr "Top K"
 msgid "Top P"
 msgstr "Top P"
 
-#: lib/evo_dash_web/components/review_components/header.ex:108
-#: lib/evo_dash_web/components/review_components/header.ex:260
+#: lib/evo_dash_web/components/review_components/header.ex:550
 #: lib/evo_dash_web/components/task_card_components.ex:379
 #: lib/evo_dash_web/live/agents_live.html.heex:438
 #, elixir-autogen, elixir-format
@@ -2367,9 +2335,8 @@ msgid "Total Cost"
 msgstr "総コスト"
 
 #: lib/evo_dash_web/components/archive_components.ex:166
-#: lib/evo_dash_web/components/review_components.ex:420
-#: lib/evo_dash_web/components/review_components/header.ex:100
-#: lib/evo_dash_web/components/review_components/header.ex:194
+#: lib/evo_dash_web/components/review_components.ex:387
+#: lib/evo_dash_web/components/review_components/header.ex:474
 #: lib/evo_dash_web/components/task_card_components.ex:311
 #: lib/evo_dash_web/live/agents_live.html.heex:364
 #, elixir-autogen, elixir-format
@@ -2460,7 +2427,7 @@ msgstr "メッセージ全文を表示"
 msgid "View Full Objective"
 msgstr "全体目標を表示"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:113
+#: lib/evo_dash_web/components/review_components/actions.ex:290
 #: lib/evo_dash_web/components/task_card_components.ex:853
 #: lib/evo_dash_web/components/task_card_components.ex:914
 #, elixir-autogen, elixir-format
@@ -2550,7 +2517,7 @@ msgstr "例：gpt-4o または anthropic/claude-3.5-sonnet"
 msgid "e.g., ./src/components"
 msgstr "例: ./src/components"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:285
+#: lib/evo_dash_web/components/review_components/actions.ex:395
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "例：このPRで見つかったデプロイワークフローとデータベースマイグレーションパターンに焦点を当ててください。"
@@ -3146,14 +3113,14 @@ msgstr "ここにメッセージを入力..."
 msgid "Your message will be added to the agent's context on its next turn."
 msgstr "送信したメッセージは、エージェントの次のターンでコンテキストに追加されます。"
 
-#: lib/evo_dash_web/components/review_components.ex:50
+#: lib/evo_dash_web/components/review_components/header.ex:207
 #, elixir-autogen, elixir-format
 msgid "Agent Report"
 msgstr "エージェントレポート"
 
 #: lib/evo_dash_web/live/home_live.ex:406
 #: lib/evo_dash_web/live/projects_live.ex:1045
-#: lib/evo_dash_web/live/review_live.ex:372
+#: lib/evo_dash_web/live/review_live.ex:461
 #: lib/evo_dash_web/live/settings_live.ex:1016
 #: lib/evo_dash_web/live/tasks_live.ex:782
 #: lib/evo_dash_web/live/welcome_complete_live.ex:90
@@ -3161,22 +3128,26 @@ msgstr "エージェントレポート"
 msgid "Copied to clipboard"
 msgstr "クリップボードにコピーしました"
 
-#: lib/evo_dash_web/components/review_components/header.ex:332
+#: lib/evo_dash_web/components/review_components/header.ex:232
+#: lib/evo_dash_web/components/review_components/header.ex:304
 #, elixir-autogen, elixir-format
 msgid "Markdown"
 msgstr "マークダウン"
 
-#: lib/evo_dash_web/components/review_components/header.ex:344
+#: lib/evo_dash_web/components/review_components/header.ex:241
+#: lib/evo_dash_web/components/review_components/header.ex:313
 #, elixir-autogen, elixir-format
 msgid "Raw"
 msgstr "生データ"
 
-#: lib/evo_dash_web/components/review_components/header.ex:341
+#: lib/evo_dash_web/components/review_components/header.ex:238
+#: lib/evo_dash_web/components/review_components/header.ex:310
 #, elixir-autogen, elixir-format
 msgid "Raw Text"
 msgstr "生テキスト"
 
-#: lib/evo_dash_web/components/review_components/header.ex:329
+#: lib/evo_dash_web/components/review_components/header.ex:229
+#: lib/evo_dash_web/components/review_components/header.ex:301
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "レンダリング済みマークダウン"
@@ -3422,7 +3393,7 @@ msgstr "容量"
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "容量: max_tool_concurrency。使用中: 実行中のエージェント（スロット使用の代替指標 — スロット保持者は公開されません）。"
 
-#: lib/evo_dash_web/live/review_live.ex:598
+#: lib/evo_dash_web/live/review_live.ex:687
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully into %{target}! Branch %{branch} has been deleted."
 msgstr "%{target} へのマージが完了しました！ブランチ %{branch} は削除されました。"
@@ -3547,17 +3518,17 @@ msgstr "直近3分"
 msgid "Manage Connections"
 msgstr "接続を管理"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:36
+#: lib/evo_dash_web/components/review_components/actions.ex:63
 #, elixir-autogen, elixir-format
 msgid "Merge into"
 msgstr "マージ先"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:40
+#: lib/evo_dash_web/components/review_components/actions.ex:67
 #, elixir-autogen, elixir-format
 msgid "Merge into branch"
 msgstr "マージ先ブランチ"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:56
+#: lib/evo_dash_web/components/review_components/actions.ex:83
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into %{target}?"
 msgstr "これらの変更を%{target}にマージしますか？"
@@ -3806,24 +3777,13 @@ msgstr "Genesisでは、高水準のプロンプトだけを書きます。最�
 msgid "Write high-level prompts, not code"
 msgstr "コードではなく、高水準のプロンプトを書く"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:91
-#: lib/evo_dash_web/components/review_components/actions.ex:165
-#, elixir-autogen, elixir-format
-msgid "Resume"
-msgstr "再開"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:103
-#, elixir-autogen, elixir-format
-msgid "Create PR"
-msgstr "PRを作成"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:61
-#: lib/evo_dash_web/components/review_components/actions.ex:73
+#: lib/evo_dash_web/components/review_components/actions.ex:88
+#: lib/evo_dash_web/components/review_components/actions.ex:100
 #, elixir-autogen, elixir-format
 msgid "Merge"
 msgstr "マージ"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:268
 #, elixir-autogen, elixir-format
 msgid "Reject"
 msgstr "拒否"
@@ -3927,7 +3887,7 @@ msgstr "リモートノードから設定を読み込めませんでした：%{r
 msgid "Remote Configuration Unavailable"
 msgstr "リモート設定を利用できません"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:228
+#: lib/evo_dash_web/components/review_components/actions.ex:209
 #, elixir-autogen, elixir-format
 msgid "Auto-resolve conflict"
 msgstr "競合を自動解決"
@@ -3942,7 +3902,7 @@ msgstr "自動解決タスクを開始しました。変更をマージして競
 msgid "Auto-resolve unavailable — no merge conflict detected."
 msgstr "自動解決を利用できません — マージ競合が検出されませんでした。"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:195
+#: lib/evo_dash_web/components/review_components/actions.ex:175
 #, elixir-autogen, elixir-format
 msgid "Checking if merge is clean…"
 msgstr "マージがクリーンか確認中…"
@@ -3952,19 +3912,19 @@ msgstr "マージがクリーンか確認中…"
 msgid "Failed to start auto-resolve: %{reason}"
 msgstr "自動解決を開始できませんでした: %{reason}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:200
+#: lib/evo_dash_web/components/review_components/actions.ex:180
 #, elixir-autogen, elixir-format
 msgid "Merge check passed — clean merge."
 msgstr "マージチェックに合格しました — クリーンマージです。"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:208
+#: lib/evo_dash_web/components/review_components/actions.ex:188
 #, elixir-autogen, elixir-format
 msgid "Merge conflict detected in %{count} file: %{files}"
 msgid_plural "Merge conflict detected in %{count} files: %{files}"
 msgstr[0] "%{count} ファイルでマージ競合が検出されました: %{files}"
 msgstr[1] "%{count} ファイルでマージ競合が検出されました: %{files}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:221
+#: lib/evo_dash_web/components/review_components/actions.ex:201
 #, elixir-autogen, elixir-format
 msgid "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
 msgstr "これにより、変更をマージして競合を解決する新しいエージェントタスクが開始されます。現在のタスクは継続中としてマークされます。"
@@ -4292,7 +4252,7 @@ msgstr "例"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "カスタムエージェントの削除に失敗しました: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1084
+#: lib/evo_dash_web/live/review_live.ex:1173
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "レビューデータの読み込みに失敗しました。"
@@ -4921,17 +4881,12 @@ msgstr "ベースコミット %{base_sha} がリポジトリに見つかりま�
 msgid "Branch name or commit SHA, blank = HEAD"
 msgstr "ブランチ名またはコミットSHA（空欄 = HEAD）"
 
-#: lib/evo_dash_web/components/review_components.ex:134
-#, elixir-autogen, elixir-format
-msgid "Clean merge"
-msgstr "クリーンマージ"
-
-#: lib/evo_dash_web/live/review_live.ex:733
+#: lib/evo_dash_web/live/review_live.ex:822
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes in %{count} of %{total} repositories. See the merge results below."
 msgstr "%{total}件中%{count}件のリポジトリで変更の却下に失敗しました。以下のマージ結果を確認してください。"
 
-#: lib/evo_dash_web/components/review_components.ex:231
+#: lib/evo_dash_web/components/review_components.ex:209
 #, elixir-autogen, elixir-format
 msgid "Failed: %{detail}"
 msgstr "失敗: %{detail}"
@@ -4951,23 +4906,22 @@ msgstr "外部リポジトリのパスが存在しません: %{path}"
 msgid "Help"
 msgstr "ヘルプ"
 
-#: lib/evo_dash_web/components/review_components.ex:137
-#: lib/evo_dash_web/components/review_components.ex:217
+#: lib/evo_dash_web/components/review_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "Merge conflict"
 msgstr "マージ競合"
 
-#: lib/evo_dash_web/live/review_live.ex:644
+#: lib/evo_dash_web/live/review_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "Merge failed in %{count} of %{total} repositories. See the merge results below."
 msgstr "%{total}件中%{count}件のリポジトリでマージに失敗しました。以下のマージ結果を確認してください。"
 
-#: lib/evo_dash_web/components/review_components.ex:168
+#: lib/evo_dash_web/components/review_components.ex:146
 #, elixir-autogen, elixir-format
 msgid "Merge results"
 msgstr "マージ結果"
 
-#: lib/evo_dash_web/components/review_components.ex:183
+#: lib/evo_dash_web/components/review_components.ex:161
 #, elixir-autogen, elixir-format
 msgid "Merged into %{target}"
 msgstr "%{target} にマージされました"
@@ -4977,12 +4931,12 @@ msgstr "%{target} にマージされました"
 msgid "Path is not a git repository: %{path}"
 msgstr "パスはgitリポジトリではありません: %{path}"
 
-#: lib/evo_dash_web/components/review_components.ex:165
+#: lib/evo_dash_web/components/review_components.ex:143
 #, elixir-autogen, elixir-format
 msgid "Reject results"
 msgstr "拒否結果"
 
-#: lib/evo_dash_web/components/review_components.ex:201
+#: lib/evo_dash_web/components/review_components.ex:179
 #, elixir-autogen, elixir-format
 msgid "Rejected — branch deleted"
 msgstr "拒否されました — ブランチが削除されました"
@@ -5329,3 +5283,83 @@ msgstr "アシスタントがあなたの確認を求めています"
 #, elixir-autogen, elixir-format
 msgid "This action has real side effects — the assistant is starting, cancelling, force-killing, or deleting a task."
 msgstr "この操作には実際の副作用があります — アシスタントがタスクを開始、キャンセル、強制終了、または削除しようとしています。"
+
+#: lib/evo_dash_web/components/review_components/header.ex:38
+#: lib/evo_dash_web/components/review_components/header.ex:39
+#, elixir-autogen, elixir-format
+msgid "Back to projects"
+msgstr "プロジェクトに戻る"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:343
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:344
+#, elixir-autogen, elixir-format
+msgid "Back to review"
+msgstr "レビューに戻る"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:55
+#, elixir-autogen, elixir-format
+msgid "Collapse all"
+msgstr "全部折りたたむ"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:232
+#, elixir-autogen, elixir-format
+msgid "Continue task"
+msgstr "タスクを続行"
+
+#: lib/evo_dash_web/components/review_components.ex:57
+#, elixir-autogen, elixir-format
+msgid "Conversation"
+msgstr "会話"
+
+#: lib/evo_dash_web/components/review_components/header.ex:322
+#, elixir-autogen, elixir-format
+msgid "Copy objective"
+msgstr "目標をコピー"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:276
+#, elixir-autogen, elixir-format
+msgid "Create GitHub PR"
+msgstr "GitHub PRを作成"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:59
+#, elixir-autogen, elixir-format
+msgid "Expand all"
+msgstr "全部展開"
+
+#: lib/evo_dash_web/components/review_components.ex:82
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:27
+#, elixir-autogen, elixir-format
+msgid "Files changed"
+msgstr "変更ファイル"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#, elixir-autogen, elixir-format
+msgid "Filter files…"
+msgstr "ファイルを絞り込む…"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:69
+#, elixir-autogen, elixir-format
+msgid "No matching files"
+msgstr "一致するファイルがありません"
+
+#: lib/evo_dash_web/components/review_components/header.ex:340
+#, elixir-autogen, elixir-format
+msgid "No objective recorded for this task."
+msgstr "このタスクの目標は記録されていません。"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:46
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:286
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:290
+#, elixir-autogen, elixir-format
+msgid "Repository"
+msgstr "リポジトリ"
+
+#: lib/evo_dash_web/components/review_components/header.ex:379
+#, elixir-autogen, elixir-format
+msgid "Task Details"
+msgstr "タスク詳細"
+
+#: lib/evo_dash_web/components/review_components/header.ex:408
+#, elixir-autogen, elixir-format
+msgid "Type"
+msgstr "タイプ"

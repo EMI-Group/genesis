@@ -43,8 +43,9 @@ msgstr[3] "%{count} أطفال"
 msgstr[4] "%{count} طفلاً"
 msgstr[5] "%{count} طفل"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:40
-#: lib/evo_dash_web/components/review_components/stats.ex:61
+#: lib/evo_dash_web/components/review_components/header.ex:143
+#: lib/evo_dash_web/components/review_components/stats.ex:23
+#: lib/evo_dash_web/components/review_components/stats.ex:56
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
 msgid_plural "%{count} commits"
@@ -55,7 +56,7 @@ msgstr[3] "%{count} إيداعات"
 msgstr[4] "%{count} إيداعاً"
 msgstr[5] "%{count} إيداع"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:137
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
@@ -66,7 +67,8 @@ msgstr[3] "%{count} ملفات"
 msgstr[4] "%{count} ملفاً"
 msgstr[5] "%{count} ملف"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:24
+#: lib/evo_dash_web/components/review_components/header.ex:147
+#: lib/evo_dash_web/components/review_components/stats.ex:27
 #, elixir-autogen, elixir-format
 msgid "%{count} files changed"
 msgstr "تم تغيير %{count} ملف"
@@ -208,11 +210,6 @@ msgstr "تم حفظ مفتاح API بنجاح."
 msgid "Absolute path to the repository root on this machine"
 msgstr "المسار المطلق لجذر المستودع على هذا الجهاز"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:25
-#, elixir-autogen, elixir-format
-msgid "Actions"
-msgstr "إجراءات"
-
 #: lib/evo_dash_web/components/layouts.ex:182
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
@@ -267,11 +264,6 @@ msgstr "رسالة الوكيل"
 msgid "Agent Module"
 msgstr "وحدة الوكيل"
 
-#: lib/evo_dash_web/components/review_components/header.ex:307
-#, elixir-autogen, elixir-format
-msgid "Agent Summary"
-msgstr "ملخص الوكيل"
-
 #: lib/evo_dash_web/live/agents_live.html.heex:25
 #, elixir-autogen, elixir-format
 msgid "Agent Tree"
@@ -293,7 +285,7 @@ msgid "Agent not found"
 msgstr "الوكيل غير موجود"
 
 #: lib/evo_dash_web/components/layouts.ex:155
-#: lib/evo_dash_web/components/review_components/header.ex:127
+#: lib/evo_dash_web/components/review_components/header.ex:426
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/projects_live.ex:355
 #: lib/evo_dash_web/live/settings_live.ex:603
@@ -302,7 +294,6 @@ msgstr "الوكيل غير موجود"
 msgid "Agents"
 msgstr "العملاء"
 
-#: lib/evo_dash_web/components/review_components/header.ex:273
 #: lib/evo_dash_web/components/task_card_components.ex:394
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
@@ -349,7 +340,7 @@ msgstr "تم تعيين جميع قيم التهيئة الحرجة"
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "سيتم فقدان جميع حالات وقت التشغيل في الذاكرة (المهام الجارية، حالة المجدول، الوكلاء قيد التنفيذ). لا يمكن التراجع عن هذا."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:269
+#: lib/evo_dash_web/components/review_components/actions.ex:379
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "حلّل التغييرات في طلب السحب هذا واستخلص المعرفة القابلة لإعادة الاستخدام في مهارات EvoGit. سيفحص الوكيل الفروق، ويحدد الأنماط القيّمة، وينشئ ملفات مهارات في .agents/skills/."
@@ -359,12 +350,12 @@ msgstr "حلّل التغييرات في طلب السحب هذا واستخلص
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "يحلل قاعدة الشفرة الحالية ويُنشئ عقود CONTEXT.md المكانية لها."
 
-#: lib/evo_dash_web/components/review_components.ex:101
+#: lib/evo_dash_web/components/review_components.ex:115
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr "أرشيف"
 
-#: lib/evo_dash_web/components/review_components.ex:384
+#: lib/evo_dash_web/components/review_components.ex:351
 #, elixir-autogen, elixir-format
 msgid "Archive End"
 msgstr "نهاية الأرشيف"
@@ -374,7 +365,7 @@ msgstr "نهاية الأرشيف"
 msgid "Archive Final Ref"
 msgstr "المرجع النهائي للأرشيف"
 
-#: lib/evo_dash_web/components/review_components.ex:373
+#: lib/evo_dash_web/components/review_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Archive Start"
 msgstr "بداية الأرشيف"
@@ -390,7 +381,7 @@ msgid "Archive agent details"
 msgstr "أرشفة تفاصيل الوكيل"
 
 #: lib/evo_dash_web/components/archive_components.ex:26
-#: lib/evo_dash_web/components/review_components.ex:279
+#: lib/evo_dash_web/components/review_components.ex:246
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "تفاصيل الوكيل المؤرشفة"
@@ -401,7 +392,6 @@ msgstr "تفاصيل الوكيل المؤرشفة"
 msgid "Attempting to reconnect"
 msgstr "محاولة إعادة الاتصال"
 
-#: lib/evo_dash_web/live/review_live.ex:57
 #: lib/evo_dash_web/live/welcome_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Back"
@@ -411,11 +401,6 @@ msgstr "رجوع"
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "العودة إلى لوحة التحكم"
-
-#: lib/evo_dash_web/live/review_live.ex:50
-#, elixir-autogen, elixir-format
-msgid "Back to Review"
-msgstr "العودة إلى المراجعة"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:251
 #, elixir-autogen, elixir-format
@@ -475,21 +460,20 @@ msgstr "تصفّح"
 msgid "Build System"
 msgstr "نظام البناء"
 
-#: lib/evo_dash_web/components/review_components/header.ex:215
+#: lib/evo_dash_web/components/review_components/header.ex:496
 #: lib/evo_dash_web/components/task_card_components.ex:331
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "إنشاء الخبيئة"
 
-#: lib/evo_dash_web/components/review_components/header.ex:116
-#: lib/evo_dash_web/components/review_components/header.ex:223
+#: lib/evo_dash_web/components/review_components/header.ex:505
 #: lib/evo_dash_web/components/task_card_components.ex:339
 #: lib/evo_dash_web/live/agents_live.html.heex:383
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "معدل إصابة التخزين المؤقت"
 
-#: lib/evo_dash_web/components/review_components/header.ex:207
+#: lib/evo_dash_web/components/review_components/header.ex:487
 #: lib/evo_dash_web/components/task_card_components.ex:323
 #: lib/evo_dash_web/live/agents_live.html.heex:375
 #, elixir-autogen, elixir-format
@@ -499,7 +483,7 @@ msgstr "الوحدات المخبأة"
 #: lib/evo_dash_web/components/layouts.ex:361
 #: lib/evo_dash_web/components/project_components.ex:688
 #: lib/evo_dash_web/components/project_components.ex:816
-#: lib/evo_dash_web/components/review_components/actions.ex:303
+#: lib/evo_dash_web/components/review_components/actions.ex:413
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
 #: lib/evo_dash_web/components/task_card_components.ex:152
 #: lib/evo_dash_web/live/agents_live.html.heex:886
@@ -528,17 +512,12 @@ msgstr "لا يمكن إزالة المستودع الرئيسي."
 msgid "Change language"
 msgstr "تغيير اللغة"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:17
-#, elixir-autogen, elixir-format
-msgid "Changed Files"
-msgstr "الملفات المعدلة"
-
-#: lib/evo_dash_web/live/review_live.ex:604
+#: lib/evo_dash_web/live/review_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "تم دمج التغييرات بنجاح! تم حذف الفرع %{branch}."
 
-#: lib/evo_dash_web/live/review_live.ex:708
+#: lib/evo_dash_web/live/review_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "تم رفض التغييرات. تم حذف الفرع %{branch}."
@@ -604,13 +583,13 @@ msgstr "الأمر غير موجود: %{command}"
 msgid "Commit details"
 msgstr "تفاصيل الإيداع"
 
-#: lib/evo_dash_web/components/review_components.ex:74
+#: lib/evo_dash_web/components/review_components.ex:98
 #, elixir-autogen, elixir-format
 msgid "Commits"
 msgstr "الإيداعات"
 
 #: lib/evo_dash_web/components/archive_components.ex:189
-#: lib/evo_dash_web/components/review_components.ex:449
+#: lib/evo_dash_web/components/review_components.ex:416
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:295
 #: lib/evo_dash_web/live/tasks_live.ex:62
 #, elixir-autogen, elixir-format
@@ -759,12 +738,12 @@ msgstr "تم اكتشاف شجرة سياق — تم اختيار وضع الت�
 msgid "Continued"
 msgstr "مستمر"
 
-#: lib/evo_dash_web/live/review_live.ex:776
+#: lib/evo_dash_web/live/review_live.ex:865
 #, elixir-autogen, elixir-format
 msgid "Resuming from branch %{branch} at %{sha}"
 msgstr "استئناف من الفرع %{branch} عند %{sha}"
 
-#: lib/evo_dash_web/live/review_live.ex:781
+#: lib/evo_dash_web/live/review_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr "استئناف من مهمة التحقيق. تم إعداد نموذج مهمة تطوّر جديد لك."
@@ -774,7 +753,7 @@ msgstr "استئناف من مهمة التحقيق. تم إعداد نموذج 
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "التحكم في تزامن الوكيل وسلوك إعادة المحاولة وحدود العمق."
 
-#: lib/evo_dash_web/components/review_components/header.ex:352
+#: lib/evo_dash_web/components/review_components/header.ex:249
 #, elixir-autogen, elixir-format
 msgid "Copy agent summary"
 msgstr "نسخ ملخص الوكيل"
@@ -785,7 +764,7 @@ msgid "Copy path"
 msgstr "نسخ المسار"
 
 #: lib/evo_dash_web/components/archive_components.ex:172
-#: lib/evo_dash_web/components/review_components.ex:428
+#: lib/evo_dash_web/components/review_components.ex:395
 #, elixir-autogen, elixir-format
 msgid "Cost"
 msgstr "التكلفة"
@@ -854,7 +833,7 @@ msgid "Delete this task?"
 msgstr "حذف هذه المهمة؟"
 
 #: lib/evo_dash_web/components/archive_components.ex:78
-#: lib/evo_dash_web/components/review_components.ex:314
+#: lib/evo_dash_web/components/review_components.ex:281
 #: lib/evo_dash_web/live/agents_live.html.heex:236
 #, elixir-autogen, elixir-format
 msgid "Depth"
@@ -954,7 +933,7 @@ msgid "Enabled"
 msgstr "مفعّل"
 
 #: lib/evo_dash_web/components/archive_components.ex:114
-#: lib/evo_dash_web/components/review_components.ex:358
+#: lib/evo_dash_web/components/review_components.ex:325
 #, elixir-autogen, elixir-format
 msgid "End Commit"
 msgstr "الإيداع النهائي"
@@ -1003,15 +982,15 @@ msgid "Execution Logs"
 msgstr "سجلات التنفيذ"
 
 #: lib/evo_dash_web/components/archive_components.ex:34
-#: lib/evo_dash_web/components/review_components.ex:288
-#: lib/evo_dash_web/live/review_live.ex:162
+#: lib/evo_dash_web/components/review_components.ex:255
+#: lib/evo_dash_web/components/review_components/actions.ex:312
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "تصدير JSON"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:125
-#: lib/evo_dash_web/components/review_components/actions.ex:265
-#: lib/evo_dash_web/components/review_components/actions.ex:307
+#: lib/evo_dash_web/components/review_components/actions.ex:299
+#: lib/evo_dash_web/components/review_components/actions.ex:375
+#: lib/evo_dash_web/components/review_components/actions.ex:417
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "استخراج المهارات"
@@ -1028,18 +1007,18 @@ msgstr "فشل"
 msgid "Failed to cancel task: %{reason}"
 msgstr "فشل إلغاء المهمة: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:844
+#: lib/evo_dash_web/live/review_live.ex:933
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "فشل إنشاء طلب سحب. تأكد من تثبيت واجهة سطر الأوامر 'gh' وتسجيل الدخول بها."
 
-#: lib/evo_dash_web/live/review_live.ex:492
+#: lib/evo_dash_web/live/review_live.ex:581
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "فشل توسيع السياق: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1128
-#: lib/evo_dash_web/live/review_live.ex:1156
+#: lib/evo_dash_web/live/review_live.ex:1217
+#: lib/evo_dash_web/live/review_live.ex:1245
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "فشل تحميل الفرق للمسار %{path}: %{reason}"
@@ -1069,7 +1048,7 @@ msgstr "فشل حفظ الإعدادات: %{reason}"
 msgid "Failed to save: %{reason}"
 msgstr "فشل الحفظ: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:915
+#: lib/evo_dash_web/live/review_live.ex:1004
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "فشل بدء استخراج المهارة: %{reason}"
@@ -1084,11 +1063,6 @@ msgstr "فشل بدء المهمة: %{reason}"
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "الملف غير موجود بعد"
-
-#: lib/evo_dash_web/components/review_components.ex:87
-#, elixir-autogen, elixir-format
-msgid "Files Changed"
-msgstr "الملفات المعدّلة"
 
 #: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
@@ -1105,7 +1079,7 @@ msgstr "عزل نظام الملفات نشط. ملاحظة: حدود الموا
 msgid "Filter settings..."
 msgstr "تصفية الإعدادات..."
 
-#: lib/evo_dash_web/components/review_components/header.ex:159
+#: lib/evo_dash_web/components/review_components/header.ex:439
 #: lib/evo_dash_web/components/task_card_components.ex:132
 #, elixir-autogen, elixir-format
 msgid "Finished"
@@ -1199,12 +1173,12 @@ msgstr "إعادة تشغيل سلسة أو إيقاف آلة Erlang الافت�
 msgid "Hide Details"
 msgstr "إخفاء التفاصيل"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:175
+#: lib/evo_dash_web/components/review_components/actions.ex:325
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "تجاهل"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:171
+#: lib/evo_dash_web/components/review_components/actions.ex:320
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "تجاهل هذه المراجعة؟ سيتم استبعادها من المراجعات المعلقة."
@@ -1214,7 +1188,7 @@ msgstr "تجاهل هذه المراجعة؟ سيتم استبعادها من ا
 msgid "Ignored"
 msgstr "تم التجاهل"
 
-#: lib/evo_dash_web/components/review_components/header.ex:248
+#: lib/evo_dash_web/components/review_components/header.ex:532
 #: lib/evo_dash_web/components/task_card_components.ex:367
 #: lib/evo_dash_web/live/agents_live.html.heex:422
 #, elixir-autogen, elixir-format
@@ -1222,8 +1196,8 @@ msgid "Input Cost"
 msgstr "تكلفة الإدخال"
 
 #: lib/evo_dash_web/components/archive_components.ex:152
-#: lib/evo_dash_web/components/review_components.ex:402
-#: lib/evo_dash_web/components/review_components/header.ex:178
+#: lib/evo_dash_web/components/review_components.ex:369
+#: lib/evo_dash_web/components/review_components/header.ex:456
 #: lib/evo_dash_web/components/task_card_components.ex:295
 #: lib/evo_dash_web/live/agents_live.html.heex:348
 #, elixir-autogen, elixir-format
@@ -1287,12 +1261,12 @@ msgstr "أمان لينكس"
 msgid "Linux security features are only available on Linux with systemd-run."
 msgstr "ميزات أمان لينكس متوفرة فقط على لينكس مع systemd-run."
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:223
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:441
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "جارٍ تحميل الفروقات..."
 
-#: lib/evo_dash_web/live/review_live.ex:66
+#: lib/evo_dash_web/live/review_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "جارٍ تحميل بيانات المراجعة..."
@@ -1333,12 +1307,12 @@ msgstr "إدارة عزل صندوق الرمل وحدود الموارد وقي
 msgid "Max Tokens"
 msgstr "الحد الأقصى للوحدات"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:69
+#: lib/evo_dash_web/components/review_components/actions.ex:96
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "دمج هذه التغييرات في الفرع الحالي؟"
 
-#: lib/evo_dash_web/components/review_components.ex:186
+#: lib/evo_dash_web/components/review_components.ex:164
 #: lib/evo_dash_web/helpers.ex:215
 #: lib/evo_dash_web/live/tasks_live.ex:105
 #: lib/evo_dash_web/live/tasks_live.ex:191
@@ -1359,7 +1333,7 @@ msgstr "تكوين مفقود"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "الوضع: %{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/review_components/header.ex:279
+#: lib/evo_dash_web/components/review_components/header.ex:417
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:261
 #: lib/evo_dash_web/components/task_card_components.ex:398
 #: lib/evo_dash_web/live/agents_live.html.heex:180
@@ -1470,7 +1444,7 @@ msgstr "لا يوجد وكلاء مسجلون حالياً"
 msgid "No archive data available for this task"
 msgstr "لا توجد بيانات أرشيف متاحة لهذه المهمة"
 
-#: lib/evo_dash_web/live/review_live.ex:209
+#: lib/evo_dash_web/live/review_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "لا تتوفر بيانات وكيل مؤرشفة لهذه المهمة."
@@ -1563,9 +1537,9 @@ msgid "Number of parallel LLM request slots"
 msgstr "عدد فتحات طلبات LLM المتوازية"
 
 #: lib/evo_dash_web/components/archive_components.ex:85
-#: lib/evo_dash_web/components/review_components.ex:62
-#: lib/evo_dash_web/components/review_components.ex:328
-#: lib/evo_dash_web/components/review_components/header.ex:68
+#: lib/evo_dash_web/components/review_components.ex:70
+#: lib/evo_dash_web/components/review_components.ex:295
+#: lib/evo_dash_web/components/review_components/header.ex:291
 #: lib/evo_dash_web/components/task_card_components.ex:227
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:56
@@ -1587,12 +1561,12 @@ msgstr "فتح"
 msgid "Open a project to get started"
 msgstr "افتح مشروعاً لتبدأ"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:278
+#: lib/evo_dash_web/components/review_components/actions.ex:388
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "اختياري: ملاحظة للوكيل المستخرِج للمهارات"
 
-#: lib/evo_dash_web/components/review_components/header.ex:254
+#: lib/evo_dash_web/components/review_components/header.ex:541
 #: lib/evo_dash_web/components/task_card_components.ex:373
 #: lib/evo_dash_web/live/agents_live.html.heex:430
 #, elixir-autogen, elixir-format
@@ -1600,8 +1574,8 @@ msgid "Output Cost"
 msgstr "تكلفة الإخراج"
 
 #: lib/evo_dash_web/components/archive_components.ex:159
-#: lib/evo_dash_web/components/review_components.ex:411
-#: lib/evo_dash_web/components/review_components/header.ex:186
+#: lib/evo_dash_web/components/review_components.ex:378
+#: lib/evo_dash_web/components/review_components/header.ex:465
 #: lib/evo_dash_web/components/task_card_components.ex:303
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #, elixir-autogen, elixir-format
@@ -1705,7 +1679,7 @@ msgstr "تم إنشاء المشروع: %{path}"
 msgid "Projects"
 msgstr "المشاريع"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:291
+#: lib/evo_dash_web/components/review_components/actions.ex:401
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "قدّم تعليمات محددة حول المعرفة التي ينبغي التقاطها كمهارات."
@@ -1715,7 +1689,7 @@ msgstr "قدّم تعليمات محددة حول المعرفة التي ينب
 msgid "Provider"
 msgstr "مزوّد"
 
-#: lib/evo_dash_web/live/review_live.ex:835
+#: lib/evo_dash_web/live/review_live.ex:924
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "تم إنشاء طلب السحب: %{title}"
@@ -1745,7 +1719,7 @@ msgstr "إعادة التحقق"
 msgid "Reasoning Effort"
 msgstr "جهد الاستدلال"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:79
+#: lib/evo_dash_web/components/review_components/actions.ex:263
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "رفض وحذف هذه التغييرات؟ لا يمكن التراجع عن ذلك."
@@ -1863,7 +1837,7 @@ msgid "Restart System?"
 msgstr "إعادة تشغيل النظام؟"
 
 #: lib/evo_dash_web/components/archive_components.ex:95
-#: lib/evo_dash_web/components/review_components.ex:338
+#: lib/evo_dash_web/components/review_components.ex:305
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "النتيجة"
@@ -1924,7 +1898,7 @@ msgstr "مراجعة التغييرات"
 msgid "Review Not Available"
 msgstr "المراجعة غير متاحة"
 
-#: lib/evo_dash_web/live/review_live.ex:804
+#: lib/evo_dash_web/live/review_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "تم تجاهل المراجعة ورفضها."
@@ -2081,7 +2055,7 @@ msgstr "وصف مختصر لما يفعله هذا المستودع"
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "عرض المهام %{start}–%{end} من أصل %{total}"
 
-#: lib/evo_dash_web/live/review_live.ex:905
+#: lib/evo_dash_web/live/review_live.ex:994
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "بدأت مهمة استخراج المهارة. يمكنك متابعة تقدمها من لوحة التحكم."
@@ -2097,7 +2071,7 @@ msgid "Something went wrong!"
 msgstr "حدث خطأ ما!"
 
 #: lib/evo_dash_web/components/archive_components.ex:106
-#: lib/evo_dash_web/components/review_components.ex:348
+#: lib/evo_dash_web/components/review_components.ex:315
 #, elixir-autogen, elixir-format
 msgid "Start Commit"
 msgstr "الإيداع الابتدائي"
@@ -2108,8 +2082,8 @@ msgid "Start a task from the dashboard to see agents here."
 msgstr "ابدأ مهمة من لوحة التحكم لرؤية الوكلاء هنا."
 
 #: lib/evo_dash_web/components/archive_components.ex:183
-#: lib/evo_dash_web/components/review_components.ex:443
-#: lib/evo_dash_web/components/review_components/header.ex:151
+#: lib/evo_dash_web/components/review_components.ex:410
+#: lib/evo_dash_web/components/review_components/header.ex:433
 #: lib/evo_dash_web/components/task_card_components.ex:127
 #, elixir-autogen, elixir-format
 msgid "Started"
@@ -2134,7 +2108,7 @@ msgstr "العقدة الابتدائية"
 msgid "Starting daemon"
 msgstr "جارٍ بدء الخفي"
 
-#: lib/evo_dash_web/components/review_components/header.ex:135
+#: lib/evo_dash_web/components/review_components/header.ex:392
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "الحالة"
@@ -2216,11 +2190,6 @@ msgstr "معرّف المهمة"
 msgid "Task Result"
 msgstr "نتيجة المهمة"
 
-#: lib/evo_dash_web/components/review_components/header.ex:143
-#, elixir-autogen, elixir-format
-msgid "Task Type"
-msgstr "نوع المهمة"
-
 #: lib/evo_dash_web/controllers/task_export_controller.ex:10
 #, elixir-autogen, elixir-format
 msgid "Task not found"
@@ -2286,7 +2255,7 @@ msgstr "ستتوقف الآلة الافتراضية ويجب إعادة تشغ�
 msgid "The agent completed without making any changes to the codebase."
 msgstr "أكمل الوكيل المهمة دون إجراء أي تغييرات على قاعدة الكود."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:148
+#: lib/evo_dash_web/components/review_components/actions.ex:136
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
 msgstr "أكمل الوكيل عمله دون إجراء أي تغييرات على الكود. يمكنك استئناف هذا التحقيق أو تجاهله."
@@ -2313,7 +2282,7 @@ msgstr "لا توجد وكلاء قيد التشغيل على هذه العقد�
 msgid "Thinking"
 msgstr "تفكير"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:152
+#: lib/evo_dash_web/components/review_components/actions.ex:140
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "هذا الفرع لم يعد موجوداً. يمكنك استبعاده باستخدام \"تجاهل\"."
@@ -2329,7 +2298,7 @@ msgstr "سيؤدي هذا إلى إعادة تشغيل سلسة لآلة Erlang 
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "سيؤدي هذا إلى إيقاف تشغيل سلس لآلة Erlang الافتراضية. سيتم إيقاف جميع التطبيقات بالترتيب."
 
-#: lib/evo_dash_web/components/review_components/header.ex:171
+#: lib/evo_dash_web/components/review_components/header.ex:449
 #: lib/evo_dash_web/components/task_card_components.ex:290
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
@@ -2378,8 +2347,7 @@ msgstr "Top K"
 msgid "Top P"
 msgstr "Top P"
 
-#: lib/evo_dash_web/components/review_components/header.ex:108
-#: lib/evo_dash_web/components/review_components/header.ex:260
+#: lib/evo_dash_web/components/review_components/header.ex:550
 #: lib/evo_dash_web/components/task_card_components.ex:379
 #: lib/evo_dash_web/live/agents_live.html.heex:438
 #, elixir-autogen, elixir-format
@@ -2387,9 +2355,8 @@ msgid "Total Cost"
 msgstr "التكلفة الإجمالية"
 
 #: lib/evo_dash_web/components/archive_components.ex:166
-#: lib/evo_dash_web/components/review_components.ex:420
-#: lib/evo_dash_web/components/review_components/header.ex:100
-#: lib/evo_dash_web/components/review_components/header.ex:194
+#: lib/evo_dash_web/components/review_components.ex:387
+#: lib/evo_dash_web/components/review_components/header.ex:474
 #: lib/evo_dash_web/components/task_card_components.ex:311
 #: lib/evo_dash_web/live/agents_live.html.heex:364
 #, elixir-autogen, elixir-format
@@ -2480,7 +2447,7 @@ msgstr "عرض الرسالة كاملة"
 msgid "View Full Objective"
 msgstr "عرض الهدف الكامل"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:113
+#: lib/evo_dash_web/components/review_components/actions.ex:290
 #: lib/evo_dash_web/components/task_card_components.ex:853
 #: lib/evo_dash_web/components/task_card_components.ex:914
 #, elixir-autogen, elixir-format
@@ -2570,7 +2537,7 @@ msgstr "مثال: gpt-4o أو anthropic/claude-3.5-sonnet"
 msgid "e.g., ./src/components"
 msgstr "مثال: ./src/components"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:285
+#: lib/evo_dash_web/components/review_components/actions.ex:395
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "مثال: ركّز على سير عمل النشر وأنماط ترحيل قاعدة البيانات المكتشفة في طلب السحب هذا."
@@ -3166,14 +3133,14 @@ msgstr "اكتب رسالتك هنا..."
 msgid "Your message will be added to the agent's context on its next turn."
 msgstr "ستُضاف رسالتك إلى سياق الوكيل في دورته القادمة."
 
-#: lib/evo_dash_web/components/review_components.ex:50
+#: lib/evo_dash_web/components/review_components/header.ex:207
 #, elixir-autogen, elixir-format
 msgid "Agent Report"
 msgstr "تقرير الوكيل"
 
 #: lib/evo_dash_web/live/home_live.ex:406
 #: lib/evo_dash_web/live/projects_live.ex:1045
-#: lib/evo_dash_web/live/review_live.ex:372
+#: lib/evo_dash_web/live/review_live.ex:461
 #: lib/evo_dash_web/live/settings_live.ex:1016
 #: lib/evo_dash_web/live/tasks_live.ex:782
 #: lib/evo_dash_web/live/welcome_complete_live.ex:90
@@ -3181,22 +3148,26 @@ msgstr "تقرير الوكيل"
 msgid "Copied to clipboard"
 msgstr "تم النسخ إلى الحافظة"
 
-#: lib/evo_dash_web/components/review_components/header.ex:332
+#: lib/evo_dash_web/components/review_components/header.ex:232
+#: lib/evo_dash_web/components/review_components/header.ex:304
 #, elixir-autogen, elixir-format
 msgid "Markdown"
 msgstr "ماركدون"
 
-#: lib/evo_dash_web/components/review_components/header.ex:344
+#: lib/evo_dash_web/components/review_components/header.ex:241
+#: lib/evo_dash_web/components/review_components/header.ex:313
 #, elixir-autogen, elixir-format
 msgid "Raw"
 msgstr "خام"
 
-#: lib/evo_dash_web/components/review_components/header.ex:341
+#: lib/evo_dash_web/components/review_components/header.ex:238
+#: lib/evo_dash_web/components/review_components/header.ex:310
 #, elixir-autogen, elixir-format
 msgid "Raw Text"
 msgstr "نص خام"
 
-#: lib/evo_dash_web/components/review_components/header.ex:329
+#: lib/evo_dash_web/components/review_components/header.ex:229
+#: lib/evo_dash_web/components/review_components/header.ex:301
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "ماركدون معروض"
@@ -3442,7 +3413,7 @@ msgstr "السعة"
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "السعة: max_tool_concurrency. قيد الاستخدام: الوكلاء قيد التشغيل (وكيل استخدام الفتحات — لا يتم كشف حاملي الفتحات)."
 
-#: lib/evo_dash_web/live/review_live.ex:598
+#: lib/evo_dash_web/live/review_live.ex:687
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully into %{target}! Branch %{branch} has been deleted."
 msgstr "تم دمج التغييرات بنجاح في %{target}! تم حذف فرع %{branch}."
@@ -3567,17 +3538,17 @@ msgstr "آخر 3 دقائق"
 msgid "Manage Connections"
 msgstr "إدارة الاتصالات"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:36
+#: lib/evo_dash_web/components/review_components/actions.ex:63
 #, elixir-autogen, elixir-format
 msgid "Merge into"
 msgstr "دمج في"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:40
+#: lib/evo_dash_web/components/review_components/actions.ex:67
 #, elixir-autogen, elixir-format
 msgid "Merge into branch"
 msgstr "الدمج في الفرع"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:56
+#: lib/evo_dash_web/components/review_components/actions.ex:83
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into %{target}?"
 msgstr "دمج هذه التغييرات في %{target}؟"
@@ -3826,24 +3797,13 @@ msgstr "في جينيسيس تكتب موجّهات عالية المستوى ف
 msgid "Write high-level prompts, not code"
 msgstr "اكتب موجّهات عالية المستوى، وليس كودًا"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:91
-#: lib/evo_dash_web/components/review_components/actions.ex:165
-#, elixir-autogen, elixir-format
-msgid "Resume"
-msgstr "استئناف"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:103
-#, elixir-autogen, elixir-format
-msgid "Create PR"
-msgstr "إنشاء طلب سحب"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:61
-#: lib/evo_dash_web/components/review_components/actions.ex:73
+#: lib/evo_dash_web/components/review_components/actions.ex:88
+#: lib/evo_dash_web/components/review_components/actions.ex:100
 #, elixir-autogen, elixir-format
 msgid "Merge"
 msgstr "دمج"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:268
 #, elixir-autogen, elixir-format
 msgid "Reject"
 msgstr "رفض"
@@ -3947,7 +3907,7 @@ msgstr "تعذّر تحميل الإعدادات من العقدة البعيد�
 msgid "Remote Configuration Unavailable"
 msgstr "الإعدادات البعيدة غير متاحة"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:228
+#: lib/evo_dash_web/components/review_components/actions.ex:209
 #, elixir-autogen, elixir-format
 msgid "Auto-resolve conflict"
 msgstr "حل التعارض تلقائيًا"
@@ -3962,7 +3922,7 @@ msgstr "بدأت مهمة الحل التلقائي. ستقوم بدمج الت�
 msgid "Auto-resolve unavailable — no merge conflict detected."
 msgstr "الحل التلقائي غير متاح — لم يتم اكتشاف أي تعارض في الدمج."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:195
+#: lib/evo_dash_web/components/review_components/actions.ex:175
 #, elixir-autogen, elixir-format
 msgid "Checking if merge is clean…"
 msgstr "جارٍ التحقق من سلامة الدمج…"
@@ -3972,12 +3932,12 @@ msgstr "جارٍ التحقق من سلامة الدمج…"
 msgid "Failed to start auto-resolve: %{reason}"
 msgstr "فشل بدء الحل التلقائي: %{reason}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:200
+#: lib/evo_dash_web/components/review_components/actions.ex:180
 #, elixir-autogen, elixir-format
 msgid "Merge check passed — clean merge."
 msgstr "نجح فحص الدمج — الدمج نظيف."
 
-#: lib/evo_dash_web/components/review_components/actions.ex:208
+#: lib/evo_dash_web/components/review_components/actions.ex:188
 #, elixir-autogen, elixir-format
 msgid "Merge conflict detected in %{count} file: %{files}"
 msgid_plural "Merge conflict detected in %{count} files: %{files}"
@@ -3988,7 +3948,7 @@ msgstr[3] "تم اكتشاف تعارض في الدمج في %{count} ملفات
 msgstr[4] "تم اكتشاف تعارض في الدمج في %{count} ملفًا: %{files}"
 msgstr[5] "تم اكتشاف تعارض في الدمج في %{count} ملفًا: %{files}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:221
+#: lib/evo_dash_web/components/review_components/actions.ex:201
 #, elixir-autogen, elixir-format
 msgid "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
 msgstr "سيبدأ هذا مهمة وكيل جديدة لدمج التغييرات وحل التعارضات. سيتم وضع علامة على المهمة الحالية كمستمرة."
@@ -4316,7 +4276,7 @@ msgstr "مثال"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "فشل حذف الوكيل المخصص: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1084
+#: lib/evo_dash_web/live/review_live.ex:1173
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "تعذّر تحميل بيانات المراجعة."
@@ -4945,17 +4905,12 @@ msgstr "الإيداع الأساسي %{base_sha} غير موجود في الم�
 msgid "Branch name or commit SHA, blank = HEAD"
 msgstr "اسم الفرع أو SHA للإيداع، فارغ = HEAD"
 
-#: lib/evo_dash_web/components/review_components.ex:134
-#, elixir-autogen, elixir-format
-msgid "Clean merge"
-msgstr "دمج نظيف"
-
-#: lib/evo_dash_web/live/review_live.ex:733
+#: lib/evo_dash_web/live/review_live.ex:822
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes in %{count} of %{total} repositories. See the merge results below."
 msgstr "فشل رفض التغييرات في %{count} من أصل %{total} مستودعًا. انظر نتائج الدمج أدناه."
 
-#: lib/evo_dash_web/components/review_components.ex:231
+#: lib/evo_dash_web/components/review_components.ex:209
 #, elixir-autogen, elixir-format
 msgid "Failed: %{detail}"
 msgstr "فشل: %{detail}"
@@ -4975,23 +4930,22 @@ msgstr "مسار المستودع الخارجي غير موجود: %{path}"
 msgid "Help"
 msgstr "مساعدة"
 
-#: lib/evo_dash_web/components/review_components.ex:137
-#: lib/evo_dash_web/components/review_components.ex:217
+#: lib/evo_dash_web/components/review_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "Merge conflict"
 msgstr "تعارض في الدمج"
 
-#: lib/evo_dash_web/live/review_live.ex:644
+#: lib/evo_dash_web/live/review_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "Merge failed in %{count} of %{total} repositories. See the merge results below."
 msgstr "فشل الدمج في %{count} من أصل %{total} مستودعًا. انظر نتائج الدمج أدناه."
 
-#: lib/evo_dash_web/components/review_components.ex:168
+#: lib/evo_dash_web/components/review_components.ex:146
 #, elixir-autogen, elixir-format
 msgid "Merge results"
 msgstr "نتائج الدمج"
 
-#: lib/evo_dash_web/components/review_components.ex:183
+#: lib/evo_dash_web/components/review_components.ex:161
 #, elixir-autogen, elixir-format
 msgid "Merged into %{target}"
 msgstr "تم الدمج في %{target}"
@@ -5001,12 +4955,12 @@ msgstr "تم الدمج في %{target}"
 msgid "Path is not a git repository: %{path}"
 msgstr "المسار ليس مستودع git: %{path}"
 
-#: lib/evo_dash_web/components/review_components.ex:165
+#: lib/evo_dash_web/components/review_components.ex:143
 #, elixir-autogen, elixir-format
 msgid "Reject results"
 msgstr "نتائج الرفض"
 
-#: lib/evo_dash_web/components/review_components.ex:201
+#: lib/evo_dash_web/components/review_components.ex:179
 #, elixir-autogen, elixir-format
 msgid "Rejected — branch deleted"
 msgstr "مرفوض — تم حذف الفرع"
@@ -5353,3 +5307,83 @@ msgstr "المساعد يطلب انتباهك"
 #, elixir-autogen, elixir-format
 msgid "This action has real side effects — the assistant is starting, cancelling, force-killing, or deleting a task."
 msgstr "يترتب على هذا الإجراء تأثيرات جانبية حقيقية — المساعد يبدأ أو يلغي أو يوقف قسريًا أو يحذف مهمة."
+
+#: lib/evo_dash_web/components/review_components/header.ex:38
+#: lib/evo_dash_web/components/review_components/header.ex:39
+#, elixir-autogen, elixir-format
+msgid "Back to projects"
+msgstr "العودة إلى المشاريع"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:343
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:344
+#, elixir-autogen, elixir-format
+msgid "Back to review"
+msgstr "العودة إلى المراجعة"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:55
+#, elixir-autogen, elixir-format
+msgid "Collapse all"
+msgstr "طي الكل"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:232
+#, elixir-autogen, elixir-format
+msgid "Continue task"
+msgstr "متابعة المهمة"
+
+#: lib/evo_dash_web/components/review_components.ex:57
+#, elixir-autogen, elixir-format
+msgid "Conversation"
+msgstr "المحادثة"
+
+#: lib/evo_dash_web/components/review_components/header.ex:322
+#, elixir-autogen, elixir-format
+msgid "Copy objective"
+msgstr "نسخ الهدف"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:276
+#, elixir-autogen, elixir-format
+msgid "Create GitHub PR"
+msgstr "إنشاء طلب سحب GitHub"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:59
+#, elixir-autogen, elixir-format
+msgid "Expand all"
+msgstr "توسيع الكل"
+
+#: lib/evo_dash_web/components/review_components.ex:82
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:27
+#, elixir-autogen, elixir-format
+msgid "Files changed"
+msgstr "الملفات المعدّلة"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#, elixir-autogen, elixir-format
+msgid "Filter files…"
+msgstr "تصفية الملفات…"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:69
+#, elixir-autogen, elixir-format
+msgid "No matching files"
+msgstr "لا توجد ملفات مطابقة"
+
+#: lib/evo_dash_web/components/review_components/header.ex:340
+#, elixir-autogen, elixir-format
+msgid "No objective recorded for this task."
+msgstr "لا يوجد هدف مسجّل لهذه المهمة."
+
+#: lib/evo_dash_web/components/review_components/actions.ex:46
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:286
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:290
+#, elixir-autogen, elixir-format
+msgid "Repository"
+msgstr "المستودع"
+
+#: lib/evo_dash_web/components/review_components/header.ex:379
+#, elixir-autogen, elixir-format
+msgid "Task Details"
+msgstr "تفاصيل المهمة"
+
+#: lib/evo_dash_web/components/review_components/header.ex:408
+#, elixir-autogen, elixir-format
+msgid "Type"
+msgstr "النوع"

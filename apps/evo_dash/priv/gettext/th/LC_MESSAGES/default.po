@@ -39,22 +39,24 @@ msgid_plural "%{count} children"
 msgstr[0] "ลูก %{count} คน"
 msgstr[1] "ลูก %{count} คน"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:40
-#: lib/evo_dash_web/components/review_components/stats.ex:61
+#: lib/evo_dash_web/components/review_components/header.ex:143
+#: lib/evo_dash_web/components/review_components/stats.ex:23
+#: lib/evo_dash_web/components/review_components/stats.ex:56
 #, elixir-autogen, elixir-format
 msgid "%{count} commit"
 msgid_plural "%{count} commits"
 msgstr[0] "%{count} คอมมิต"
 msgstr[1] "%{count} คอมมิต"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:137
 #, elixir-autogen, elixir-format
 msgid "%{count} file"
 msgid_plural "%{count} files"
 msgstr[0] "%{count} ไฟล์"
 msgstr[1] "%{count} ไฟล์"
 
-#: lib/evo_dash_web/components/review_components/stats.ex:24
+#: lib/evo_dash_web/components/review_components/header.ex:147
+#: lib/evo_dash_web/components/review_components/stats.ex:27
 #, elixir-autogen, elixir-format
 msgid "%{count} files changed"
 msgstr "แก้ไข %{count} ไฟล์"
@@ -188,11 +190,6 @@ msgstr "บันทึกคีย์ API สำเร็จแล้ว"
 msgid "Absolute path to the repository root on this machine"
 msgstr "พาธแบบสัมบูรณ์ไปยังโฟลเดอร์รากของพื้นที่เก็บข้อมูลบนเครื่องนี้"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:25
-#, elixir-autogen, elixir-format
-msgid "Actions"
-msgstr "การดำเนินการ"
-
 #: lib/evo_dash_web/components/layouts.ex:182
 #, elixir-autogen, elixir-format
 msgid "Active Tasks"
@@ -247,11 +244,6 @@ msgstr "ข้อความจากเอเจนต์"
 msgid "Agent Module"
 msgstr "โมดูลเอเจนต์"
 
-#: lib/evo_dash_web/components/review_components/header.ex:307
-#, elixir-autogen, elixir-format
-msgid "Agent Summary"
-msgstr "สรุปเอเจนต์"
-
 #: lib/evo_dash_web/live/agents_live.html.heex:25
 #, elixir-autogen, elixir-format
 msgid "Agent Tree"
@@ -273,7 +265,7 @@ msgid "Agent not found"
 msgstr "ไม่พบเอเจนต์"
 
 #: lib/evo_dash_web/components/layouts.ex:155
-#: lib/evo_dash_web/components/review_components/header.ex:127
+#: lib/evo_dash_web/components/review_components/header.ex:426
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:22
 #: lib/evo_dash_web/live/projects_live.ex:355
 #: lib/evo_dash_web/live/settings_live.ex:603
@@ -282,7 +274,6 @@ msgstr "ไม่พบเอเจนต์"
 msgid "Agents"
 msgstr "เอเจนต์"
 
-#: lib/evo_dash_web/components/review_components/header.ex:273
 #: lib/evo_dash_web/components/task_card_components.ex:394
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
@@ -329,7 +320,7 @@ msgstr "ค่ากำหนดสำคัญทั้งหมดได้ร
 msgid "All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "สถานะรันไทม์ในหน่วยความจำทั้งหมด (งานที่กำลังทำงาน สถานะตัวจัดตาราง เอเจนต์ที่กำลังดำเนินการ) จะสูญหาย การกระทำนี้ไม่สามารถย้อนกลับได้"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:269
+#: lib/evo_dash_web/components/review_components/actions.ex:379
 #, elixir-autogen, elixir-format
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "วิเคราะห์การเปลี่ยนแปลงใน PR นี้และกลั่นกรองความรู้ที่นำกลับมาใช้ใหม่เป็นสกิล EvoGit เอเจนต์จะตรวจสอบ diff ระบุรูปแบบที่มีคุณค่า และสร้างไฟล์สกิลใน .agents/skills/"
@@ -339,12 +330,12 @@ msgstr "วิเคราะห์การเปลี่ยนแปลงใ
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "วิเคราะห์โค้ดเบสที่มีอยู่และสร้างสัญญาเชิงพื้นที่ CONTEXT.md สำหรับโค้ดเบสนั้น"
 
-#: lib/evo_dash_web/components/review_components.ex:101
+#: lib/evo_dash_web/components/review_components.ex:115
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr "คลังเก็บ"
 
-#: lib/evo_dash_web/components/review_components.ex:384
+#: lib/evo_dash_web/components/review_components.ex:351
 #, elixir-autogen, elixir-format
 msgid "Archive End"
 msgstr "สิ้นสุดคลังเก็บ"
@@ -354,7 +345,7 @@ msgstr "สิ้นสุดคลังเก็บ"
 msgid "Archive Final Ref"
 msgstr "คอมมิตอ้างอิงสุดท้ายของคลัง"
 
-#: lib/evo_dash_web/components/review_components.ex:373
+#: lib/evo_dash_web/components/review_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Archive Start"
 msgstr "เริ่มคลังเก็บ"
@@ -370,7 +361,7 @@ msgid "Archive agent details"
 msgstr "เก็บรายละเอียดเอเจนต์"
 
 #: lib/evo_dash_web/components/archive_components.ex:26
-#: lib/evo_dash_web/components/review_components.ex:279
+#: lib/evo_dash_web/components/review_components.ex:246
 #, elixir-autogen, elixir-format
 msgid "Archived Agent Details"
 msgstr "รายละเอียดเอเจนต์ที่เก็บไว้"
@@ -381,7 +372,6 @@ msgstr "รายละเอียดเอเจนต์ที่เก็บ
 msgid "Attempting to reconnect"
 msgstr "กำลังพยายามเชื่อมต่อใหม่"
 
-#: lib/evo_dash_web/live/review_live.ex:57
 #: lib/evo_dash_web/live/welcome_live.ex:42
 #, elixir-autogen, elixir-format
 msgid "Back"
@@ -391,11 +381,6 @@ msgstr "กลับ"
 #, elixir-autogen, elixir-format
 msgid "Back to Dashboard"
 msgstr "กลับไปหน้าแดชบอร์ด"
-
-#: lib/evo_dash_web/live/review_live.ex:50
-#, elixir-autogen, elixir-format
-msgid "Back to Review"
-msgstr "กลับไปตรวจสอบ"
 
 #: lib/evo_dash_web/live/agents_live.html.heex:251
 #, elixir-autogen, elixir-format
@@ -455,21 +440,20 @@ msgstr "เรียกดู"
 msgid "Build System"
 msgstr "ระบบบิลด์"
 
-#: lib/evo_dash_web/components/review_components/header.ex:215
+#: lib/evo_dash_web/components/review_components/header.ex:496
 #: lib/evo_dash_web/components/task_card_components.ex:331
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "การสร้างแคช"
 
-#: lib/evo_dash_web/components/review_components/header.ex:116
-#: lib/evo_dash_web/components/review_components/header.ex:223
+#: lib/evo_dash_web/components/review_components/header.ex:505
 #: lib/evo_dash_web/components/task_card_components.ex:339
 #: lib/evo_dash_web/live/agents_live.html.heex:383
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "อัตราการชนแคช"
 
-#: lib/evo_dash_web/components/review_components/header.ex:207
+#: lib/evo_dash_web/components/review_components/header.ex:487
 #: lib/evo_dash_web/components/task_card_components.ex:323
 #: lib/evo_dash_web/live/agents_live.html.heex:375
 #, elixir-autogen, elixir-format
@@ -479,7 +463,7 @@ msgstr "โทเค็นที่แคชไว้"
 #: lib/evo_dash_web/components/layouts.ex:361
 #: lib/evo_dash_web/components/project_components.ex:688
 #: lib/evo_dash_web/components/project_components.ex:816
-#: lib/evo_dash_web/components/review_components/actions.ex:303
+#: lib/evo_dash_web/components/review_components/actions.ex:413
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
 #: lib/evo_dash_web/components/task_card_components.ex:152
 #: lib/evo_dash_web/live/agents_live.html.heex:886
@@ -508,17 +492,12 @@ msgstr "ไม่สามารถลบที่เก็บหลักได
 msgid "Change language"
 msgstr "เปลี่ยนภาษา"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:17
-#, elixir-autogen, elixir-format
-msgid "Changed Files"
-msgstr "ไฟล์ที่เปลี่ยนแปลง"
-
-#: lib/evo_dash_web/live/review_live.ex:604
+#: lib/evo_dash_web/live/review_live.ex:693
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully! Branch %{branch} has been deleted."
 msgstr "รวมการเปลี่ยนแปลงเรียบร้อยแล้ว! แบรนช์ %{branch} ถูกลบแล้ว"
 
-#: lib/evo_dash_web/live/review_live.ex:708
+#: lib/evo_dash_web/live/review_live.ex:797
 #, elixir-autogen, elixir-format
 msgid "Changes rejected. Branch %{branch} has been deleted."
 msgstr "ปฏิเสธการเปลี่ยนแปลงแล้ว แบรนช์ %{branch} ถูกลบแล้ว"
@@ -584,13 +563,13 @@ msgstr "ไม่พบคำสั่ง: %{command}"
 msgid "Commit details"
 msgstr "รายละเอียดคอมมิต"
 
-#: lib/evo_dash_web/components/review_components.ex:74
+#: lib/evo_dash_web/components/review_components.ex:98
 #, elixir-autogen, elixir-format
 msgid "Commits"
 msgstr "คอมมิต"
 
 #: lib/evo_dash_web/components/archive_components.ex:189
-#: lib/evo_dash_web/components/review_components.ex:449
+#: lib/evo_dash_web/components/review_components.ex:416
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:295
 #: lib/evo_dash_web/live/tasks_live.ex:62
 #, elixir-autogen, elixir-format
@@ -739,12 +718,12 @@ msgstr "ตรวจพบต้นไม้บริบท — เลือก�
 msgid "Continued"
 msgstr "ต่อเนื่อง"
 
-#: lib/evo_dash_web/live/review_live.ex:776
+#: lib/evo_dash_web/live/review_live.ex:865
 #, elixir-autogen, elixir-format
 msgid "Resuming from branch %{branch} at %{sha}"
 msgstr "กำลังดำเนินการต่อจากแบรนช์ %{branch} ที่ %{sha}"
 
-#: lib/evo_dash_web/live/review_live.ex:781
+#: lib/evo_dash_web/live/review_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "Resuming from investigation task. A new evolve task form has been prepared for you."
 msgstr "กำลังดำเนินการต่อจากงานตรวจสอบ มีแบบฟอร์มงานวิวัฒนาการใหม่เตรียมไว้ให้คุณแล้ว"
@@ -754,7 +733,7 @@ msgstr "กำลังดำเนินการต่อจากงานต
 msgid "Control agent concurrency, retry behavior, and depth limits."
 msgstr "ควบคุมภาวะพร้อมกันของเอเจนต์ พฤติกรรมการลองใหม่ และขีดจำกัดความลึก"
 
-#: lib/evo_dash_web/components/review_components/header.ex:352
+#: lib/evo_dash_web/components/review_components/header.ex:249
 #, elixir-autogen, elixir-format
 msgid "Copy agent summary"
 msgstr "คัดลอกสรุปเอเจนต์"
@@ -765,7 +744,7 @@ msgid "Copy path"
 msgstr "คัดลอกพาธ"
 
 #: lib/evo_dash_web/components/archive_components.ex:172
-#: lib/evo_dash_web/components/review_components.ex:428
+#: lib/evo_dash_web/components/review_components.ex:395
 #, elixir-autogen, elixir-format
 msgid "Cost"
 msgstr "ต้นทุน"
@@ -834,7 +813,7 @@ msgid "Delete this task?"
 msgstr "ลบงานนี้หรือไม่"
 
 #: lib/evo_dash_web/components/archive_components.ex:78
-#: lib/evo_dash_web/components/review_components.ex:314
+#: lib/evo_dash_web/components/review_components.ex:281
 #: lib/evo_dash_web/live/agents_live.html.heex:236
 #, elixir-autogen, elixir-format
 msgid "Depth"
@@ -934,7 +913,7 @@ msgid "Enabled"
 msgstr "เปิดใช้งาน"
 
 #: lib/evo_dash_web/components/archive_components.ex:114
-#: lib/evo_dash_web/components/review_components.ex:358
+#: lib/evo_dash_web/components/review_components.ex:325
 #, elixir-autogen, elixir-format
 msgid "End Commit"
 msgstr "คอมมิตสิ้นสุด"
@@ -983,15 +962,15 @@ msgid "Execution Logs"
 msgstr "บันทึกการประมวลผล"
 
 #: lib/evo_dash_web/components/archive_components.ex:34
-#: lib/evo_dash_web/components/review_components.ex:288
-#: lib/evo_dash_web/live/review_live.ex:162
+#: lib/evo_dash_web/components/review_components.ex:255
+#: lib/evo_dash_web/components/review_components/actions.ex:312
 #, elixir-autogen, elixir-format
 msgid "Export JSON"
 msgstr "ส่งออก JSON"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:125
-#: lib/evo_dash_web/components/review_components/actions.ex:265
-#: lib/evo_dash_web/components/review_components/actions.ex:307
+#: lib/evo_dash_web/components/review_components/actions.ex:299
+#: lib/evo_dash_web/components/review_components/actions.ex:375
+#: lib/evo_dash_web/components/review_components/actions.ex:417
 #, elixir-autogen, elixir-format
 msgid "Extract Skills"
 msgstr "แยกสกิล"
@@ -1008,18 +987,18 @@ msgstr "ล้มเหลว"
 msgid "Failed to cancel task: %{reason}"
 msgstr "ยกเลิกงานไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:844
+#: lib/evo_dash_web/live/review_live.ex:933
 #, elixir-autogen, elixir-format
 msgid "Failed to create pull request. Make sure 'gh' CLI is installed and authenticated."
 msgstr "สร้าง pull request ไม่สำเร็จ ตรวจสอบให้แน่ใจว่าได้ติดตั้งและยืนยันตัวตน 'gh' CLI แล้ว"
 
-#: lib/evo_dash_web/live/review_live.ex:492
+#: lib/evo_dash_web/live/review_live.ex:581
 #, elixir-autogen, elixir-format
 msgid "Failed to expand context: %{reason}"
 msgstr "ขยายบริบทไม่สำเร็จ: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1128
-#: lib/evo_dash_web/live/review_live.ex:1156
+#: lib/evo_dash_web/live/review_live.ex:1217
+#: lib/evo_dash_web/live/review_live.ex:1245
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "โหลด diff สำหรับ %{path} ไม่สำเร็จ: %{reason}"
@@ -1049,7 +1028,7 @@ msgstr "บันทึกการกำหนดค่าล้มเหลว
 msgid "Failed to save: %{reason}"
 msgstr "บันทึกล้มเหลว: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:915
+#: lib/evo_dash_web/live/review_live.ex:1004
 #, elixir-autogen, elixir-format
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "เริ่มต้นการสกัดทักษะไม่สำเร็จ: %{reason}"
@@ -1064,11 +1043,6 @@ msgstr "เริ่มงานไม่สำเร็จ: %{reason}"
 #, elixir-autogen, elixir-format
 msgid "File does not exist yet"
 msgstr "ไฟล์ยังไม่มีอยู่"
-
-#: lib/evo_dash_web/components/review_components.ex:87
-#, elixir-autogen, elixir-format
-msgid "Files Changed"
-msgstr "ไฟล์ที่เปลี่ยนแปลง"
 
 #: lib/evo_dash_web/live/system_live.ex:405
 #, elixir-autogen, elixir-format
@@ -1085,7 +1059,7 @@ msgstr "การแยกระบบไฟล์ทำงานอยู่ �
 msgid "Filter settings..."
 msgstr "ค้นหาการตั้งค่า..."
 
-#: lib/evo_dash_web/components/review_components/header.ex:159
+#: lib/evo_dash_web/components/review_components/header.ex:439
 #: lib/evo_dash_web/components/task_card_components.ex:132
 #, elixir-autogen, elixir-format
 msgid "Finished"
@@ -1179,12 +1153,12 @@ msgstr "รีสตาร์ทแบบนุ่มนวลหรือหย
 msgid "Hide Details"
 msgstr "ซ่อนรายละเอียด"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:175
+#: lib/evo_dash_web/components/review_components/actions.ex:325
 #, elixir-autogen, elixir-format
 msgid "Ignore"
 msgstr "ละเว้น"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:171
+#: lib/evo_dash_web/components/review_components/actions.ex:320
 #, elixir-autogen, elixir-format
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "ละเว้นรีวิวนี้? รีวิวจะถูกยกเลิกจากรายการรีวิวที่รอดำเนินการ"
@@ -1194,7 +1168,7 @@ msgstr "ละเว้นรีวิวนี้? รีวิวจะถู�
 msgid "Ignored"
 msgstr "ไม่สนใจ"
 
-#: lib/evo_dash_web/components/review_components/header.ex:248
+#: lib/evo_dash_web/components/review_components/header.ex:532
 #: lib/evo_dash_web/components/task_card_components.ex:367
 #: lib/evo_dash_web/live/agents_live.html.heex:422
 #, elixir-autogen, elixir-format
@@ -1202,8 +1176,8 @@ msgid "Input Cost"
 msgstr "ต้นทุนอินพุต"
 
 #: lib/evo_dash_web/components/archive_components.ex:152
-#: lib/evo_dash_web/components/review_components.ex:402
-#: lib/evo_dash_web/components/review_components/header.ex:178
+#: lib/evo_dash_web/components/review_components.ex:369
+#: lib/evo_dash_web/components/review_components/header.ex:456
 #: lib/evo_dash_web/components/task_card_components.ex:295
 #: lib/evo_dash_web/live/agents_live.html.heex:348
 #, elixir-autogen, elixir-format
@@ -1267,12 +1241,12 @@ msgstr "ความปลอดภัยบน Linux"
 msgid "Linux security features are only available on Linux with systemd-run."
 msgstr "ฟีเจอร์ความปลอดภัยของ Linux มีให้ใช้งานเฉพาะบน Linux ที่มี systemd-run เท่านั้น"
 
-#: lib/evo_dash_web/components/review_components/diff_viewer.ex:223
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:441
 #, elixir-autogen, elixir-format
 msgid "Loading diff..."
 msgstr "กำลังโหลดดิฟ..."
 
-#: lib/evo_dash_web/live/review_live.ex:66
+#: lib/evo_dash_web/live/review_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Loading review data..."
 msgstr "กำลังโหลดข้อมูลการตรวจสอบ..."
@@ -1313,12 +1287,12 @@ msgstr "จัดการการแยกแซนด์บ็อกซ์ �
 msgid "Max Tokens"
 msgstr "โทเค็นสูงสุด"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:69
+#: lib/evo_dash_web/components/review_components/actions.ex:96
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into the current branch?"
 msgstr "รวมการเปลี่ยนแปลงเหล่านี้เข้าสู่แบรนช์ปัจจุบัน?"
 
-#: lib/evo_dash_web/components/review_components.ex:186
+#: lib/evo_dash_web/components/review_components.ex:164
 #: lib/evo_dash_web/helpers.ex:215
 #: lib/evo_dash_web/live/tasks_live.ex:105
 #: lib/evo_dash_web/live/tasks_live.ex:191
@@ -1339,7 +1313,7 @@ msgstr "ไม่ได้กำหนดค่า"
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "โหมด: %{mode} | %{prompt}"
 
-#: lib/evo_dash_web/components/review_components/header.ex:279
+#: lib/evo_dash_web/components/review_components/header.ex:417
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:261
 #: lib/evo_dash_web/components/task_card_components.ex:398
 #: lib/evo_dash_web/live/agents_live.html.heex:180
@@ -1450,7 +1424,7 @@ msgstr "ไม่มีเอเจนต์ที่ลงทะเบียน
 msgid "No archive data available for this task"
 msgstr "ไม่มีข้อมูลไฟล์เก็บถาวรสำหรับงานนี้"
 
-#: lib/evo_dash_web/live/review_live.ex:209
+#: lib/evo_dash_web/live/review_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "No archived agent data available for this task."
 msgstr "ไม่มีข้อมูลเอเจนต์ที่เก็บถาวรสำหรับงานนี้"
@@ -1543,9 +1517,9 @@ msgid "Number of parallel LLM request slots"
 msgstr "จำนวนช่องคำขอ LLM แบบขนาน"
 
 #: lib/evo_dash_web/components/archive_components.ex:85
-#: lib/evo_dash_web/components/review_components.ex:62
-#: lib/evo_dash_web/components/review_components.ex:328
-#: lib/evo_dash_web/components/review_components/header.ex:68
+#: lib/evo_dash_web/components/review_components.ex:70
+#: lib/evo_dash_web/components/review_components.ex:295
+#: lib/evo_dash_web/components/review_components/header.ex:291
 #: lib/evo_dash_web/components/task_card_components.ex:227
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:56
@@ -1567,12 +1541,12 @@ msgstr "เปิด"
 msgid "Open a project to get started"
 msgstr "เปิดโปรเจกต์เพื่อเริ่มต้นใช้งาน"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:278
+#: lib/evo_dash_web/components/review_components/actions.ex:388
 #, elixir-autogen, elixir-format
 msgid "Optional: Note for the skill extraction agent"
 msgstr "ตัวเลือก: หมายเหตุสำหรับเอเจนต์แยกสกิล"
 
-#: lib/evo_dash_web/components/review_components/header.ex:254
+#: lib/evo_dash_web/components/review_components/header.ex:541
 #: lib/evo_dash_web/components/task_card_components.ex:373
 #: lib/evo_dash_web/live/agents_live.html.heex:430
 #, elixir-autogen, elixir-format
@@ -1580,8 +1554,8 @@ msgid "Output Cost"
 msgstr "ต้นทุนเอาต์พุต"
 
 #: lib/evo_dash_web/components/archive_components.ex:159
-#: lib/evo_dash_web/components/review_components.ex:411
-#: lib/evo_dash_web/components/review_components/header.ex:186
+#: lib/evo_dash_web/components/review_components.ex:378
+#: lib/evo_dash_web/components/review_components/header.ex:465
 #: lib/evo_dash_web/components/task_card_components.ex:303
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #, elixir-autogen, elixir-format
@@ -1685,7 +1659,7 @@ msgstr "สร้างโปรเจกต์แล้ว: %{path}"
 msgid "Projects"
 msgstr "โปรเจกต์"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:291
+#: lib/evo_dash_web/components/review_components/actions.ex:401
 #, elixir-autogen, elixir-format
 msgid "Provide specific instructions on what knowledge should be captured as skills."
 msgstr "ระบุคำแนะนำเฉพาะเจาะจงว่าความรู้ใดควรถูกบันทึกเป็นสกิล"
@@ -1695,7 +1669,7 @@ msgstr "ระบุคำแนะนำเฉพาะเจาะจงว่
 msgid "Provider"
 msgstr "ผู้ให้บริการ"
 
-#: lib/evo_dash_web/live/review_live.ex:835
+#: lib/evo_dash_web/live/review_live.ex:924
 #, elixir-autogen, elixir-format
 msgid "Pull request created: %{title}"
 msgstr "สร้าง pull request แล้ว: %{title}"
@@ -1725,7 +1699,7 @@ msgstr "ตรวจสอบอีกครั้ง"
 msgid "Reasoning Effort"
 msgstr "ระดับการใช้เหตุผล"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:79
+#: lib/evo_dash_web/components/review_components/actions.ex:263
 #, elixir-autogen, elixir-format
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "ปฏิเสธและลบการเปลี่ยนแปลงเหล่านี้? การดำเนินการนี้ไม่สามารถยกเลิกได้"
@@ -1843,7 +1817,7 @@ msgid "Restart System?"
 msgstr "รีสตาร์ทระบบ?"
 
 #: lib/evo_dash_web/components/archive_components.ex:95
-#: lib/evo_dash_web/components/review_components.ex:338
+#: lib/evo_dash_web/components/review_components.ex:305
 #, elixir-autogen, elixir-format
 msgid "Result"
 msgstr "ผลลัพธ์"
@@ -1904,7 +1878,7 @@ msgstr "ตรวจสอบการเปลี่ยนแปลง"
 msgid "Review Not Available"
 msgstr "ไม่สามารถตรวจสอบได้"
 
-#: lib/evo_dash_web/live/review_live.ex:804
+#: lib/evo_dash_web/live/review_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Review ignored and dismissed."
 msgstr "การตรวจสอบถูกเพิกเฉยและยกเลิกแล้ว"
@@ -2061,7 +2035,7 @@ msgstr "คำอธิบายสั้น ๆ ว่าพื้นที่�
 msgid "Showing %{start}–%{end} of %{total} tasks"
 msgstr "กำลังแสดงงานที่ %{start}–%{end} จากทั้งหมด %{total} งาน"
 
-#: lib/evo_dash_web/live/review_live.ex:905
+#: lib/evo_dash_web/live/review_live.ex:994
 #, elixir-autogen, elixir-format
 msgid "Skill extraction task started. You can monitor its progress on the dashboard."
 msgstr "เริ่มต้นงานสกัดทักษะแล้ว คุณสามารถติดตามความคืบหน้าได้บนแดชบอร์ด"
@@ -2077,7 +2051,7 @@ msgid "Something went wrong!"
 msgstr "เกิดข้อผิดพลาด!"
 
 #: lib/evo_dash_web/components/archive_components.ex:106
-#: lib/evo_dash_web/components/review_components.ex:348
+#: lib/evo_dash_web/components/review_components.ex:315
 #, elixir-autogen, elixir-format
 msgid "Start Commit"
 msgstr "คอมมิตเริ่มต้น"
@@ -2088,8 +2062,8 @@ msgid "Start a task from the dashboard to see agents here."
 msgstr "เริ่มงานจากแดชบอร์ดเพื่อดูเอเจนต์ที่นี่"
 
 #: lib/evo_dash_web/components/archive_components.ex:183
-#: lib/evo_dash_web/components/review_components.ex:443
-#: lib/evo_dash_web/components/review_components/header.ex:151
+#: lib/evo_dash_web/components/review_components.ex:410
+#: lib/evo_dash_web/components/review_components/header.ex:433
 #: lib/evo_dash_web/components/task_card_components.ex:127
 #, elixir-autogen, elixir-format
 msgid "Started"
@@ -2114,7 +2088,7 @@ msgstr "โหนดเริ่มต้น"
 msgid "Starting daemon"
 msgstr "กำลังเริ่มเดมอน"
 
-#: lib/evo_dash_web/components/review_components/header.ex:135
+#: lib/evo_dash_web/components/review_components/header.ex:392
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr "สถานะ"
@@ -2196,11 +2170,6 @@ msgstr "รหัสงาน"
 msgid "Task Result"
 msgstr "ผลลัพธ์ของงาน"
 
-#: lib/evo_dash_web/components/review_components/header.ex:143
-#, elixir-autogen, elixir-format
-msgid "Task Type"
-msgstr "ประเภทงาน"
-
 #: lib/evo_dash_web/controllers/task_export_controller.ex:10
 #, elixir-autogen, elixir-format
 msgid "Task not found"
@@ -2266,7 +2235,7 @@ msgstr "VM จะหยุดและต้องรีสตาร์ทด้
 msgid "The agent completed without making any changes to the codebase."
 msgstr "เอเจนต์ทำงานเสร็จโดยไม่ได้เปลี่ยนแปลงโค้ดเบสแต่อย่างใด"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:148
+#: lib/evo_dash_web/components/review_components/actions.ex:136
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
 msgstr "เอเจนต์ทำงานเสร็จสิ้นโดยไม่มีการเปลี่ยนแปลงโค้ดใดๆ คุณสามารถดำเนินการต่อจากการตรวจสอบนี้หรือปิดทิ้งได้"
@@ -2293,7 +2262,7 @@ msgstr "ไม่มีเอเจนต์ที่กำลังทำงา
 msgid "Thinking"
 msgstr "กำลังคิด"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:152
+#: lib/evo_dash_web/components/review_components/actions.ex:140
 #, elixir-autogen, elixir-format
 msgid "This branch no longer exists. You can dismiss it with Ignore."
 msgstr "แบรนช์นี้ไม่มีอยู่อีกต่อไป คุณสามารถยกเลิกได้ด้วยปุ่มละเว้น"
@@ -2309,7 +2278,7 @@ msgstr "การดำเนินการนี้จะรีสตาร์
 msgid "This will gracefully shut down the Erlang VM. All applications will be stopped in order."
 msgstr "การดำเนินการนี้จะปิด Erlang VM อย่างนุ่มนวล แอปพลิเคชันทั้งหมดจะถูกหยุดตามลำดับ"
 
-#: lib/evo_dash_web/components/review_components/header.ex:171
+#: lib/evo_dash_web/components/review_components/header.ex:449
 #: lib/evo_dash_web/components/task_card_components.ex:290
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
@@ -2358,8 +2327,7 @@ msgstr "Top K"
 msgid "Top P"
 msgstr "Top P"
 
-#: lib/evo_dash_web/components/review_components/header.ex:108
-#: lib/evo_dash_web/components/review_components/header.ex:260
+#: lib/evo_dash_web/components/review_components/header.ex:550
 #: lib/evo_dash_web/components/task_card_components.ex:379
 #: lib/evo_dash_web/live/agents_live.html.heex:438
 #, elixir-autogen, elixir-format
@@ -2367,9 +2335,8 @@ msgid "Total Cost"
 msgstr "ต้นทุนรวม"
 
 #: lib/evo_dash_web/components/archive_components.ex:166
-#: lib/evo_dash_web/components/review_components.ex:420
-#: lib/evo_dash_web/components/review_components/header.ex:100
-#: lib/evo_dash_web/components/review_components/header.ex:194
+#: lib/evo_dash_web/components/review_components.ex:387
+#: lib/evo_dash_web/components/review_components/header.ex:474
 #: lib/evo_dash_web/components/task_card_components.ex:311
 #: lib/evo_dash_web/live/agents_live.html.heex:364
 #, elixir-autogen, elixir-format
@@ -2460,7 +2427,7 @@ msgstr "ดูข้อความเต็ม"
 msgid "View Full Objective"
 msgstr "ดูวัตถุประสงค์เต็ม"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:113
+#: lib/evo_dash_web/components/review_components/actions.ex:290
 #: lib/evo_dash_web/components/task_card_components.ex:853
 #: lib/evo_dash_web/components/task_card_components.ex:914
 #, elixir-autogen, elixir-format
@@ -2550,7 +2517,7 @@ msgstr "เช่น gpt-4o หรือ anthropic/claude-3.5-sonnet"
 msgid "e.g., ./src/components"
 msgstr "เช่น ./src/components"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:285
+#: lib/evo_dash_web/components/review_components/actions.ex:395
 #, elixir-autogen, elixir-format
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "เช่น เน้นที่เวิร์กโฟลว์การปรับใช้และรูปแบบการย้ายฐานข้อมูลที่ค้นพบใน PR นี้"
@@ -3146,14 +3113,14 @@ msgstr "พิมพ์ข้อความของคุณที่นี่
 msgid "Your message will be added to the agent's context on its next turn."
 msgstr "ข้อความของคุณจะถูกเพิ่มเข้าไปในบริบทของเอเจนต์ในรอบถัดไป"
 
-#: lib/evo_dash_web/components/review_components.ex:50
+#: lib/evo_dash_web/components/review_components/header.ex:207
 #, elixir-autogen, elixir-format
 msgid "Agent Report"
 msgstr "รายงานเอเจนต์"
 
 #: lib/evo_dash_web/live/home_live.ex:406
 #: lib/evo_dash_web/live/projects_live.ex:1045
-#: lib/evo_dash_web/live/review_live.ex:372
+#: lib/evo_dash_web/live/review_live.ex:461
 #: lib/evo_dash_web/live/settings_live.ex:1016
 #: lib/evo_dash_web/live/tasks_live.ex:782
 #: lib/evo_dash_web/live/welcome_complete_live.ex:90
@@ -3161,22 +3128,26 @@ msgstr "รายงานเอเจนต์"
 msgid "Copied to clipboard"
 msgstr "คัดลอกไปยังคลิปบอร์ดแล้ว"
 
-#: lib/evo_dash_web/components/review_components/header.ex:332
+#: lib/evo_dash_web/components/review_components/header.ex:232
+#: lib/evo_dash_web/components/review_components/header.ex:304
 #, elixir-autogen, elixir-format
 msgid "Markdown"
 msgstr "มาร์กดาวน์"
 
-#: lib/evo_dash_web/components/review_components/header.ex:344
+#: lib/evo_dash_web/components/review_components/header.ex:241
+#: lib/evo_dash_web/components/review_components/header.ex:313
 #, elixir-autogen, elixir-format
 msgid "Raw"
 msgstr "ดิบ"
 
-#: lib/evo_dash_web/components/review_components/header.ex:341
+#: lib/evo_dash_web/components/review_components/header.ex:238
+#: lib/evo_dash_web/components/review_components/header.ex:310
 #, elixir-autogen, elixir-format
 msgid "Raw Text"
 msgstr "ข้อความดิบ"
 
-#: lib/evo_dash_web/components/review_components/header.ex:329
+#: lib/evo_dash_web/components/review_components/header.ex:229
+#: lib/evo_dash_web/components/review_components/header.ex:301
 #, elixir-autogen, elixir-format
 msgid "Rendered Markdown"
 msgstr "มาร์กดาวน์ที่แสดงผล"
@@ -3422,7 +3393,7 @@ msgstr "ความจุ"
 msgid "Capacity: max_tool_concurrency. In use: running agents (slot-use proxy — slot holders are not exposed)."
 msgstr "ความจุ: max_tool_concurrency. ใช้งานอยู่: เอเจนต์ที่กำลังทำงาน (ตัวแทนการใช้สล็อต — ผู้ถือสล็อตไม่เปิดเผย)"
 
-#: lib/evo_dash_web/live/review_live.ex:598
+#: lib/evo_dash_web/live/review_live.ex:687
 #, elixir-autogen, elixir-format
 msgid "Changes merged successfully into %{target}! Branch %{branch} has been deleted."
 msgstr "รวมการเปลี่ยนแปลงเข้ากับ %{target} สำเร็จแล้ว! แบรนช์ %{branch} ถูกลบแล้ว"
@@ -3547,17 +3518,17 @@ msgstr "3 นาทีที่ผ่านมา"
 msgid "Manage Connections"
 msgstr "จัดการการเชื่อมต่อ"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:36
+#: lib/evo_dash_web/components/review_components/actions.ex:63
 #, elixir-autogen, elixir-format
 msgid "Merge into"
 msgstr "รวมเข้ากับ"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:40
+#: lib/evo_dash_web/components/review_components/actions.ex:67
 #, elixir-autogen, elixir-format
 msgid "Merge into branch"
 msgstr "รวมเข้ากับแบรนช์"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:56
+#: lib/evo_dash_web/components/review_components/actions.ex:83
 #, elixir-autogen, elixir-format
 msgid "Merge these changes into %{target}?"
 msgstr "รวมการเปลี่ยนแปลงเหล่านี้เข้ากับ %{target}?"
@@ -3806,24 +3777,13 @@ msgstr "ใน Genesis คุณเพียงแค่เขียนพรอ
 msgid "Write high-level prompts, not code"
 msgstr "เขียนพรอมต์ระดับสูง ไม่ใช่โค้ด"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:91
-#: lib/evo_dash_web/components/review_components/actions.ex:165
-#, elixir-autogen, elixir-format
-msgid "Resume"
-msgstr "ดำเนินการต่อ"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:103
-#, elixir-autogen, elixir-format
-msgid "Create PR"
-msgstr "สร้าง PR"
-
-#: lib/evo_dash_web/components/review_components/actions.ex:61
-#: lib/evo_dash_web/components/review_components/actions.ex:73
+#: lib/evo_dash_web/components/review_components/actions.ex:88
+#: lib/evo_dash_web/components/review_components/actions.ex:100
 #, elixir-autogen, elixir-format
 msgid "Merge"
 msgstr "รวม"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:83
+#: lib/evo_dash_web/components/review_components/actions.ex:268
 #, elixir-autogen, elixir-format
 msgid "Reject"
 msgstr "ปฏิเสธ"
@@ -3927,7 +3887,7 @@ msgstr "ไม่สามารถโหลดการตั้งค่าจ
 msgid "Remote Configuration Unavailable"
 msgstr "การตั้งค่าระยะไกลไม่พร้อมใช้งาน"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:228
+#: lib/evo_dash_web/components/review_components/actions.ex:209
 #, elixir-autogen, elixir-format
 msgid "Auto-resolve conflict"
 msgstr "แก้ไขความขัดแย้งอัตโนมัติ"
@@ -3942,7 +3902,7 @@ msgstr "เริ่มงานแก้ไขอัตโนมัติแล
 msgid "Auto-resolve unavailable — no merge conflict detected."
 msgstr "ไม่สามารถแก้ไขอัตโนมัติได้ — ตรวจไม่พบข้อขัดแย้งในการรวมแบรนช์"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:195
+#: lib/evo_dash_web/components/review_components/actions.ex:175
 #, elixir-autogen, elixir-format
 msgid "Checking if merge is clean…"
 msgstr "กำลังตรวจสอบว่าการรวมแบรนช์สะอาดหรือไม่…"
@@ -3952,19 +3912,19 @@ msgstr "กำลังตรวจสอบว่าการรวมแบร
 msgid "Failed to start auto-resolve: %{reason}"
 msgstr "ไม่สามารถเริ่มการแก้ไขอัตโนมัติได้: %{reason}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:200
+#: lib/evo_dash_web/components/review_components/actions.ex:180
 #, elixir-autogen, elixir-format
 msgid "Merge check passed — clean merge."
 msgstr "การตรวจสอบการรวมแบรนช์ผ่าน — การรวมแบรนช์สะอาดดี"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:208
+#: lib/evo_dash_web/components/review_components/actions.ex:188
 #, elixir-autogen, elixir-format
 msgid "Merge conflict detected in %{count} file: %{files}"
 msgid_plural "Merge conflict detected in %{count} files: %{files}"
 msgstr[0] "ตรวจพบความขัดแย้งในการรวมแบรนช์ใน %{count} ไฟล์: %{files}"
 msgstr[1] "ตรวจพบความขัดแย้งในการรวมแบรนช์ใน %{count} ไฟล์: %{files}"
 
-#: lib/evo_dash_web/components/review_components/actions.ex:221
+#: lib/evo_dash_web/components/review_components/actions.ex:201
 #, elixir-autogen, elixir-format
 msgid "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
 msgstr "การดำเนินการนี้จะเริ่มงานเอเจนต์ใหม่ที่จะรวมการเปลี่ยนแปลงและแก้ไขความขัดแย้ง งานปัจจุบันจะถูกทำเครื่องหมายว่าดำเนินการต่อ"
@@ -4292,7 +4252,7 @@ msgstr "ตัวอย่าง"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "ไม่สามารถลบเอเจนต์แบบกำหนดเองได้: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1084
+#: lib/evo_dash_web/live/review_live.ex:1173
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "ไม่สามารถโหลดข้อมูลรีวิวได้"
@@ -4921,17 +4881,12 @@ msgstr "ไม่พบคอมมิตพื้นฐาน %{base_sha} ใ�
 msgid "Branch name or commit SHA, blank = HEAD"
 msgstr "ชื่อแบรนช์หรือ SHA ของคอมมิต เว้นว่าง = HEAD"
 
-#: lib/evo_dash_web/components/review_components.ex:134
-#, elixir-autogen, elixir-format
-msgid "Clean merge"
-msgstr "ผสานอย่างสะอาด"
-
-#: lib/evo_dash_web/live/review_live.ex:733
+#: lib/evo_dash_web/live/review_live.ex:822
 #, elixir-autogen, elixir-format
 msgid "Failed to reject changes in %{count} of %{total} repositories. See the merge results below."
 msgstr "ไม่สามารถปฏิเสธการเปลี่ยนแปลงใน %{count} จากทั้งหมด %{total} รีพอสิทอรีได้ โปรดดูผลการรวมโค้ดด้านล่าง"
 
-#: lib/evo_dash_web/components/review_components.ex:231
+#: lib/evo_dash_web/components/review_components.ex:209
 #, elixir-autogen, elixir-format
 msgid "Failed: %{detail}"
 msgstr "ล้มเหลว: %{detail}"
@@ -4951,23 +4906,22 @@ msgstr "ไม่มีเส้นทางของที่เก็บภา
 msgid "Help"
 msgstr "ช่วยเหลือ"
 
-#: lib/evo_dash_web/components/review_components.ex:137
-#: lib/evo_dash_web/components/review_components.ex:217
+#: lib/evo_dash_web/components/review_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "Merge conflict"
 msgstr "ความขัดแย้งในการผสาน"
 
-#: lib/evo_dash_web/live/review_live.ex:644
+#: lib/evo_dash_web/live/review_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "Merge failed in %{count} of %{total} repositories. See the merge results below."
 msgstr "การรวมโค้ดล้มเหลวใน %{count} จากทั้งหมด %{total} รีพอสิทอรี โปรดดูผลการรวมโค้ดด้านล่าง"
 
-#: lib/evo_dash_web/components/review_components.ex:168
+#: lib/evo_dash_web/components/review_components.ex:146
 #, elixir-autogen, elixir-format
 msgid "Merge results"
 msgstr "ผลการผสาน"
 
-#: lib/evo_dash_web/components/review_components.ex:183
+#: lib/evo_dash_web/components/review_components.ex:161
 #, elixir-autogen, elixir-format
 msgid "Merged into %{target}"
 msgstr "ผสานเข้ากับ %{target}"
@@ -4977,12 +4931,12 @@ msgstr "ผสานเข้ากับ %{target}"
 msgid "Path is not a git repository: %{path}"
 msgstr "เส้นทางไม่ใช่ที่เก็บ git: %{path}"
 
-#: lib/evo_dash_web/components/review_components.ex:165
+#: lib/evo_dash_web/components/review_components.ex:143
 #, elixir-autogen, elixir-format
 msgid "Reject results"
 msgstr "ผลการปฏิเสธ"
 
-#: lib/evo_dash_web/components/review_components.ex:201
+#: lib/evo_dash_web/components/review_components.ex:179
 #, elixir-autogen, elixir-format
 msgid "Rejected — branch deleted"
 msgstr "ถูกปฏิเสธ — ลบแบรนช์แล้ว"
@@ -5329,3 +5283,83 @@ msgstr "เอเจนต์ต้องการให้คุณให้ค
 #, elixir-autogen, elixir-format
 msgid "This action has real side effects — the assistant is starting, cancelling, force-killing, or deleting a task."
 msgstr "การดำเนินการนี้มีผลข้างเคียงจริง — เอเจนต์กำลังเริ่มต้น ยกเลิก บังคับหยุด หรือลบงาน"
+
+#: lib/evo_dash_web/components/review_components/header.ex:38
+#: lib/evo_dash_web/components/review_components/header.ex:39
+#, elixir-autogen, elixir-format
+msgid "Back to projects"
+msgstr "กลับไปยังโปรเจกต์"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:343
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:344
+#, elixir-autogen, elixir-format
+msgid "Back to review"
+msgstr "กลับสู่การรีวิว"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:55
+#, elixir-autogen, elixir-format
+msgid "Collapse all"
+msgstr "ยุบทั้งหมด"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:232
+#, elixir-autogen, elixir-format
+msgid "Continue task"
+msgstr "ทำงานต่อ"
+
+#: lib/evo_dash_web/components/review_components.ex:57
+#, elixir-autogen, elixir-format
+msgid "Conversation"
+msgstr "บทสนทนา"
+
+#: lib/evo_dash_web/components/review_components/header.ex:322
+#, elixir-autogen, elixir-format
+msgid "Copy objective"
+msgstr "คัดลอกวัตถุประสงค์"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:276
+#, elixir-autogen, elixir-format
+msgid "Create GitHub PR"
+msgstr "สร้าง PR บน GitHub"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:59
+#, elixir-autogen, elixir-format
+msgid "Expand all"
+msgstr "ขยายทั้งหมด"
+
+#: lib/evo_dash_web/components/review_components.ex:82
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:27
+#, elixir-autogen, elixir-format
+msgid "Files changed"
+msgstr "ไฟล์ที่เปลี่ยนแปลง"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:43
+#, elixir-autogen, elixir-format
+msgid "Filter files…"
+msgstr "กรองไฟล์ตามเส้นทาง…"
+
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:69
+#, elixir-autogen, elixir-format
+msgid "No matching files"
+msgstr "ไม่มีไฟล์ที่ตรงกัน"
+
+#: lib/evo_dash_web/components/review_components/header.ex:340
+#, elixir-autogen, elixir-format
+msgid "No objective recorded for this task."
+msgstr "ไม่มีการบันทึกวัตถุประสงค์สำหรับงานนี้"
+
+#: lib/evo_dash_web/components/review_components/actions.ex:46
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:286
+#: lib/evo_dash_web/components/review_components/diff_viewer.ex:290
+#, elixir-autogen, elixir-format
+msgid "Repository"
+msgstr "ที่เก็บโค้ด"
+
+#: lib/evo_dash_web/components/review_components/header.ex:379
+#, elixir-autogen, elixir-format
+msgid "Task Details"
+msgstr "รายละเอียดงาน"
+
+#: lib/evo_dash_web/components/review_components/header.ex:408
+#, elixir-autogen, elixir-format
+msgid "Type"
+msgstr "ประเภท"
