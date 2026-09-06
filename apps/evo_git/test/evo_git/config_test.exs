@@ -245,6 +245,58 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "[data] dir save/load round-trip" do
+    # Isolates XDG_CONFIG_HOME so save_user_config/1 writes to a temp dir,
+    # never the developer's real ~/.config/genesis/config.toml.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-config-data-dir-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "defaults to nil when no [data] dir key is set" do
+      # Isolated XDG_CONFIG_HOME points at an empty tmp dir — no config.toml,
+      # so resolve([:data, :dir]) must return the schema default (nil).
+      assert Config.resolve([:data, :dir]) == nil
+    end
+
+    test "saving an absolute [data] dir writes it to config.toml and resolves back" do
+      data_dir =
+        Path.join(System.tmp_dir!(), "evogit-relocated-#{System.unique_integer([:positive])}")
+
+      config =
+        Config.defaults()
+        |> put_in([:data, :dir], data_dir)
+
+      assert :ok = Config.save_user_config(config)
+
+      contents = File.read!(Config.config_path())
+      assert contents =~ ~s(dir = "#{data_dir}")
+
+      # resolve/0 merges defaults + user config and round-trips the string
+      assert Config.resolve([:data, :dir]) == data_dir
+    end
+  end
+
   describe "config_status/0 validation_errors" do
     test "returns validation_errors key" do
       status = Config.config_status()
