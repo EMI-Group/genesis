@@ -249,7 +249,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
   defp overflow_menu(assigns) do
     ~H"""
-    <details class="dropdown dropdown-end ml-auto">
+    <details class="dropdown dropdown-end dropdown-top ml-auto">
       <summary class="btn btn-sm btn-ghost btn-square rounded-lg">
         <.icon name="hero-ellipsis-vertical" class="size-4" />
       </summary>
