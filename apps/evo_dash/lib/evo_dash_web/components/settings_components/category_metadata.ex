@@ -26,6 +26,8 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_display_name(:sandbox), do: gettext("Sandbox")
   def category_display_name(:truncation), do: gettext("Truncation")
   def category_display_name(:task_history), do: gettext("Task History")
+  # zh_CN: Data → "数据"
+  def category_display_name(:data), do: gettext("Data")
   def category_display_name(:tools), do: gettext("Tools")
   def category_display_name(:server), do: gettext("Server")
   def category_display_name(:nix), do: gettext("Nix")
@@ -43,6 +45,9 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
   def category_icon(:sandbox), do: "hero-shield-check"
   def category_icon(:truncation), do: "hero-scissors"
   def category_icon(:task_history), do: "hero-clock"
+
+  # zh_CN: Data → "数据" (hero-circle-stack = 数据库堆叠图标, represents the runtime data directory)
+  def category_icon(:data), do: "hero-circle-stack"
   def category_icon(:tools), do: "hero-wrench-screwdriver"
   def category_icon(:server), do: "hero-server"
   def category_icon(:nix), do: "brand-nix"
@@ -80,6 +85,12 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
 
   def category_description(:task_history),
     do: gettext("Manage how many past tasks are retained and for how long.")
+
+  # zh_CN: runtime data → "运行时数据", tasks.sqlite → "任务数据库",
+  # logs → "日志", caches → "缓存"
+  def category_description(:data),
+    do:
+      gettext("Configure the directory where Genesis stores its runtime data, logs, and caches.")
 
   def category_description(:tools),
     do: gettext("Configure external tool integrations such as web search.")
@@ -136,6 +147,10 @@ defmodule EvoDashWeb.SettingsComponents.CategoryMetadata do
       :sandbox,
       :truncation,
       :task_history,
+      # :data sits after :task_history — both concern the runtime store:
+      # retention policy for past tasks, and the data directory where those
+      # tasks (tasks.sqlite), logs, and caches live.
+      :data,
       :server,
       :tools,
       :nix,
