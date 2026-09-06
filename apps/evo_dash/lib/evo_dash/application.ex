@@ -7,13 +7,21 @@ defmodule EvoDash.Application do
 
   @impl true
   def start(_type, _args) do
-    # Create the ActiveTasks ETS table, owned by the long-lived application
-    # process (NOT a supervised child) so it survives child restarts and lives
-    # for the whole `mix test` run. Creation is idempotent — a no-op if the
-    # table already exists (e.g. on application restart after a soft crash).
-    # EvoDash.ActiveTasks is a pure ETS-helper module with no process (same
-    # pattern as EvoGit.AgentScheduler.Store).
+    # Create the ActiveTasks + AccentCache ETS tables, owned by the long-lived
+    # application process (NOT a supervised child) so they survive child
+    # restarts and live for the whole `mix test` run. Creation is idempotent —
+    # a no-op if a table already exists (e.g. on application restart after a
+    # soft crash). EvoDash.ActiveTasks and EvoDash.AccentCache are pure
+    # ETS-helper modules with no process (same pattern as
+    # EvoGit.AgentScheduler.Store).
     ensure_ets_table(:evo_dash_active_tasks, [
+      :named_table,
+      :public,
+      :set,
+      read_concurrency: true
+    ])
+
+    ensure_ets_table(:evo_dash_accent_cache, [
       :named_table,
       :public,
       :set,
