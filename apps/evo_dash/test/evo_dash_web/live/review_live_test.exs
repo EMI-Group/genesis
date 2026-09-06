@@ -1169,10 +1169,16 @@ defmodule EvoDashWeb.ReviewLiveTest do
       refute Enum.any?(repos, &(&1.repo_id == "readonly"))
       refute Enum.any?(repos, &(&1.repo_id == "no_commits"))
 
-      # With more than one review repo, the per-repo tab bar renders.
-      html = render(view)
-      assert html =~ ~s(phx-click="switch_repo")
-      assert html =~ "original"
+      # Repo selection is GATED in the redesign: the merge box renders its
+      # <select phx-change="switch_repo"> only when the branch exists, and the
+      # Files-changed toolbar only alongside diff data. This orphaned fixture
+      # (nonexistent paths) opens NEITHER gate — switching to the Files-changed
+      # tab shows the empty-state panel and no selector. The positive
+      # multi-repo selector render is pinned in the per-repo merge-check
+      # describe below (real-repo fixture, branch_exists true).
+      html = render_click(view, "switch_tab", %{"tab" => "files_changed"})
+      assert html =~ "No diff data available for this review."
+      refute html =~ ~s(phx-change="switch_repo")
     end
 
     test "legacy tasks without a repos key yield exactly one primary entry", %{conn: conn} do
@@ -1186,8 +1192,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert length(repos) == 1
       assert hd(repos).repo_id == "primary"
 
-      # Single-repo pages render NO repo tab bar (pixel-identical to before).
-      refute render(view) =~ ~s(phx-click="switch_repo")
+      # Single-repo pages render NO repo selector (pixel-identical to before).
+      refute render(view) =~ ~s(phx-change="switch_repo")
     end
   end
 
@@ -1536,8 +1542,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
-      # The per-repo tab bar renders with a switch_repo button per repo.
-      assert render(view) =~ ~s(phx-click="switch_repo")
+      # The repo selector renders (merge box on the conversation tab; also in
+      # the Files-changed toolbar) — a <select> with phx-change="switch_repo".
+      assert render(view) =~ ~s(phx-change="switch_repo")
 
       # Inject a conflict for the foreign repo only.
       send(
@@ -1550,8 +1557,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       refute render(view) =~ "foreign.txt"
 
-      # Switch to the foreign repo tab.
-      html = render_click(view, "switch_repo", %{"repo_id" => "original"})
+      # Switch to the foreign repo via the selector (phx-change on the
+      # <select name="repo_id">).
+      html = render_change(view, "switch_repo", %{"repo_id" => "original"})
 
       assert assigns(view)[:active_repo_id] == "original"
 
@@ -1728,9 +1736,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
-      # Switch to the foreign repo tab — resume must NOT pick up the foreign
-      # repo's path/commit (PRIMARY-scoped by design).
-      render_click(view, "switch_repo", %{"repo_id" => "original"})
+      # Switch to the foreign repo via the selector — resume must NOT pick up
+      # the foreign repo's path/commit (PRIMARY-scoped by design).
+      render_change(view, "switch_repo", %{"repo_id" => "original"})
       assert assigns(view)[:active_repo_id] == "original"
 
       render_click(view, "resume")
@@ -1749,7 +1757,473 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "files-changed tree and filter" do
+    # LiveView-level wiring for the redesigned Files-changed tab: the
+    # server-driven file tree (dirs collapsed by default; toggle_dir /
+    # collapse_all_dirs / expand_all_dirs) and the flat filter mode
+    # (filter_files, switch_repo resetting it). Component-internal markup
+    # (tree_node rendering, aggregate dir stats) is covered by
+    # diff_viewer_test.exs — these tests assert the EVENT wiring only.
+    # select_file / toggle_dir buttons exist ONLY inside the sidebar (the
+    # diff column's own phx-value-path buttons fire toggle_file_expansion),
+    # so the unscoped selectors below are inherently sidebar-scoped.
+    #
+    # Fixture: the orphaned-path task (repo_path points nowhere) + a
+    # generation-current injection of a full review-data assigns map. The
+    # injected repos use branch_exists: false and merge_targets: [] so
+    # MergeCheck.maybe_start never spawns (fully deterministic), and the
+    # file paths deliberately live under directories ("lib/foo/bar.ex") —
+    # the deep file is hidden until its dir chain is expanded.
+    setup do
+      task_id = seed_orphaned_review_task!()
+      {:ok, task_id: task_id}
+    end
+
+    test "deep files are hidden until their directory chain is expanded", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [
+            file_info("lib/foo/bar.ex", 10, 4),
+            file_info("README.md")
+          ])
+        ])
+
+      open_files_tab(view)
+
+      deep_file = "button[phx-click='select_file'][phx-value-path='lib/foo/bar.ex']"
+
+      # Collapsed by default: the root-level file is visible, the deep file
+      # is hidden, and the root dir's toggle carries the FULL dir path.
+      assert has_element?(view, "button[phx-click='select_file'][phx-value-path='README.md']")
+      refute has_element?(view, deep_file)
+      assert has_element?(view, "button[phx-click='toggle_dir'][phx-value-dir='lib']")
+
+      # Expanding "lib" reveals the nested "lib/foo" dir row — but the file
+      # under it stays hidden (nested dirs stay collapsed).
+      render_click(view, "toggle_dir", %{"dir" => "lib"})
+
+      assert has_element?(view, "button[phx-click='toggle_dir'][phx-value-dir='lib/foo']")
+      refute has_element?(view, deep_file)
+
+      # Expanding the nested dir reveals the file row.
+      render_click(view, "toggle_dir", %{"dir" => "lib/foo"})
+      assert has_element?(view, deep_file)
+
+      # Toggling the nested dir again collapses it (delete path). The
+      # expansion state is repo-keyed on the show route.
+      render_click(view, "toggle_dir", %{"dir" => "lib/foo"})
+
+      refute has_element?(view, deep_file)
+      assert assigns(view)[:tree_expanded_dirs] == %{"primary" => %{"lib" => true}}
+    end
+
+    test "expand_all_dirs / collapse_all_dirs open and close the whole tree", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/foo/bar.ex", 10, 4)])
+        ])
+
+      open_files_tab(view)
+
+      deep_file = "button[phx-click='select_file'][phx-value-path='lib/foo/bar.ex']"
+      refute has_element?(view, deep_file)
+
+      # Expand all marks every ancestor dir chain segment of every file true.
+      render_click(view, "expand_all_dirs")
+
+      assert has_element?(view, deep_file)
+      assert assigns(view)[:tree_expanded_dirs]["primary"] == %{"lib" => true, "lib/foo" => true}
+
+      # Collapse all empties the active repo's submap.
+      render_click(view, "collapse_all_dirs")
+
+      refute has_element?(view, deep_file)
+      assert assigns(view)[:tree_expanded_dirs] == %{"primary" => %{}}
+    end
+
+    test "filter_files switches to the flat list and back to the tree", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [
+            file_info("lib/foo/bar.ex", 10, 4),
+            file_info("README.md")
+          ])
+        ])
+
+      open_files_tab(view)
+
+      # A matching (case-insensitive) filter renders the flat list: the
+      # matching file is directly visible with NO dir toggle buttons.
+      render_change(view, "filter_files", %{"filter" => "readme"})
+
+      assert has_element?(view, "button[phx-click='select_file'][phx-value-path='README.md']")
+      refute has_element?(view, "button[phx-click='toggle_dir']")
+      # The deep file does not match the filter → absent from the flat list.
+      refute has_element?(
+               view,
+               "button[phx-click='select_file'][phx-value-path='lib/foo/bar.ex']"
+             )
+
+      # A bogus filter renders the empty state (unique sidebar string).
+      html = render_change(view, "filter_files", %{"filter" => "no-such-file"})
+      assert html =~ "No matching files"
+
+      # Clearing the filter returns the normal tree (dir toggles back).
+      html = render_change(view, "filter_files", %{"filter" => ""})
+
+      assert has_element?(view, "button[phx-click='toggle_dir'][phx-value-dir='lib']")
+      refute html =~ "No matching files"
+    end
+
+    test "switch_repo resets the file filter", %{conn: conn, task_id: task_id} do
+      # Multi-repo fixture so the repo selector renders in the Files-changed
+      # toolbar; the foreign repo needs its own files so the reset is
+      # observable on the rendered file list.
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/foo/bar.ex", 10, 4)]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/baz.rs", 2, 0)])
+        ])
+
+      open_files_tab(view)
+
+      # Set a filter, then switch repos — the filter must reset to "".
+      render_change(view, "filter_files", %{"filter" => "lib"})
+      assert assigns(view)[:file_filter] == "lib"
+
+      html = render_change(view, "switch_repo", %{"repo_id" => "original"})
+
+      assert assigns(view)[:active_repo_id] == "original"
+      assert assigns(view)[:file_filter] == ""
+
+      # The filter input's value attribute reflects the reset.
+      [input] =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find("input[name='filter'][phx-change='filter_files']")
+
+      assert Floki.attribute(input, "value") == [""]
+    end
+  end
+
+  describe "merge box — overflow menu and Continue button" do
+    # branch_exists: true (real repo) so the merge form + the full overflow
+    # menu render. The merge-check stub is already the fast :clean one from
+    # the module setup — with merge_targets present it spawns and resolves
+    # immediately, so the page is deterministic.
+    setup do
+      archive = [
+        %{"agent_id" => "agent-1", "parent_id" => nil, "objective" => "Root agent", "depth" => 0}
+      ]
+
+      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil, archive)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "Continue task button fires resume", %{conn: conn, task_id: task_id} do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      # The secondary Continue button (conversation tab's merge box) fires
+      # resume — presence + event attr only (the navigation itself is covered
+      # by the multi-repo resume describe).
+      assert has_element?(view, "button[phx-click='resume']")
+      assert html =~ "Continue task"
+    end
+
+    test "overflow menu carries the full action set with the danger zone last", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      menu = overflow_menu(html)
+
+      # branch_exists: true entries.
+      assert menu =~ ~s(phx-click="reject")
+      assert menu =~ "Reject"
+      assert menu =~ ~s(phx-click="create_pr")
+      assert menu =~ "Create GitHub PR"
+      assert menu =~ ~s(phx-click="extract_skills")
+      assert menu =~ "Extract Skills"
+
+      # Export JSON renders because the fixture task has archive_metadata —
+      # a plain download link to the export URL (local node → no ?node=).
+      assert menu =~ ~s(href="/tasks/#{task_id}/export")
+      assert menu =~ "Export JSON"
+
+      # Danger-zone divider, then Ignore (always available) after it.
+      assert menu =~ "Danger zone"
+      assert menu =~ ~s(phx-click="ignore")
+
+      assert {export_idx, _} = :binary.match(menu, "Export JSON")
+      assert {zone_idx, _} = :binary.match(menu, "Danger zone")
+      assert {ignore_idx, _} = :binary.match(menu, ~s(phx-click="ignore"))
+      assert export_idx < zone_idx
+      assert zone_idx < ignore_idx
+    end
+
+    test "Export JSON is hidden without archive metadata", %{conn: conn} do
+      # A second task WITHOUT archive_metadata — the export entry must not
+      # render, while Ignore still does (always-available escape hatch).
+      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      menu = overflow_menu(html)
+
+      refute menu =~ "Export JSON"
+      assert menu =~ ~s(phx-click="ignore")
+    end
+  end
+
+  describe "aggregate stats across repos" do
+    # aggregate_stats/1 sums files_count/additions/deletions/commits across
+    # ALL review repos — the page header's stat row, the page-tabs count
+    # badges, and the conversation tab's diff-stats bar read the SUMS, never
+    # the active repo alone. Injected multi-repo fixture with DISTINCT
+    # per-repo numbers so a primary-only read would fail.
+    setup do
+      task_id = seed_orphaned_review_task!()
+      {:ok, task_id: task_id}
+    end
+
+    test "header stats row, diff stats bar, and tab badges show the sums", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      # changed_files_count deliberately differs from length(files) per repo,
+      # so the assertions prove the COUNT fields (not the file lists) drive
+      # the numbers.
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)], [
+            commit_info("a", "Primary commit"),
+            commit_info("b", "Primary commit 2")
+          ])
+          |> put_in([:review_data, :changed_files_count], 3),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)], [
+            commit_info("c", "Foreign commit")
+          ])
+          |> put_in([:review_data, :changed_files_count], 2)
+        ])
+
+      html = render(view)
+
+      # Expected sums: 3+2=5 files, 30+12=42 additions, 10+5=15 deletions,
+      # 2+1=3 commits.
+      assert html =~ "5 files changed"
+      assert html =~ "3 commits"
+
+      # The conversation tab's diff-stats bar (the unique gap-x-4 stats
+      # container on this page) shows the summed additions/deletions — never
+      # the primary's alone. A primary-only read ("3 files changed") must
+      # not appear anywhere.
+      bar_text = stats_bar_text(html)
+      assert bar_text =~ "42"
+      assert bar_text =~ "15"
+      refute html =~ "3 files changed"
+
+      # The page-tabs count badges reflect the same sums.
+      assert badge_text(html, "files_changed") == "5"
+      assert badge_text(html, "commits") == "3"
+
+      # The sums are ACTIVE-REPO-INDEPENDENT: switching to the foreign repo
+      # must not change the badges.
+      render_change(view, "switch_repo", %{"repo_id" => "original"})
+      assert assigns(view)[:active_repo_id] == "original"
+      assert badge_text(render(view), "files_changed") == "5"
+    end
+  end
+
+  describe "page header title truncation" do
+    test "long first-line objective is truncated with an ellipsis, full text in title attr", %{
+      conn: conn
+    } do
+      # 120-char first line → short_title shows the first 100 chars + "…",
+      # while the h1's title attribute carries the FULL text.
+      first_line = String.duplicate("a", 120)
+      second_line = "second line"
+      long_objective = first_line <> "\n" <> second_line
+
+      task_id = seed_review_task_with_objective!(long_objective)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      # The page header's h1 (text-lg) is the only h1 on the show page.
+      [h1] =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find("h1.text-lg")
+
+      assert Floki.attribute(h1, "title") == [long_objective]
+
+      assert Floki.text(h1) |> String.trim() == String.slice(first_line, 0, 100) <> "…"
+
+      # The truncated display never shows the second line (the tail beyond
+      # char 100 is all "a"s, covered by the exact-equality assert above).
+      refute Floki.text(h1) =~ second_line
+    end
+  end
+
   # --- Helpers for the merge-target selector tests ---
+
+  # Extracts the review page's "…" overflow menu — the ONLY
+  # <details class="dropdown dropdown-end ml-auto"> on the page (the layout's
+  # theme-toggle dropdowns build their class list dynamically and carry no
+  # ml-auto). Fails loudly when absent (the caller's assertions would
+  # otherwise be vacuous on "").
+  defp overflow_menu(html) do
+    case Regex.run(~r{<details class="dropdown dropdown-end ml-auto">.*?</details>}s, html) do
+      [menu] -> menu
+      nil -> flunk("expected the overflow menu <details> to be rendered")
+    end
+  end
+
+  # Mounts the review page for `task_id`, flushes the real async load, then
+  # injects a review-data result at the CURRENT generation carrying the given
+  # hand-built review_repos list (see review_repo/4). The injected repos keep
+  # whatever branch_exists/merge_targets the caller sets — build them with
+  # branch_exists: false + merge_targets: [] for fully deterministic mounts
+  # (no async merge check ever spawns). Returns the view.
+  defp mount_with_repos(conn, task_id, repos) do
+    {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+    flush_review_load(view)
+
+    gen = assigns(view)[:load_generation]
+
+    send(
+      view.pid,
+      {:review_data_loaded, task_id, node(), gen,
+       {:ok, %{review_repos: repos, active_repo_id: "primary", loading: false, error: nil}}}
+    )
+
+    render(view)
+    view
+  end
+
+  # A hand-built review-repo entry for injected assigns maps: no real
+  # repository, no merge targets (merge check never spawns), review_data
+  # whose aggregate counts default to the file list's sums.
+  defp review_repo(repo_id, repo_path, files, commits \\ []) do
+    %{
+      repo_id: repo_id,
+      repo_path: repo_path,
+      branch_name: "evogit/test-branch",
+      commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      base_sha: nil,
+      branch_exists: false,
+      review_data: %{
+        files: files,
+        changed_files_count: length(files),
+        total_additions: Enum.sum(Enum.map(files, & &1.additions)),
+        total_deletions: Enum.sum(Enum.map(files, & &1.deletions))
+      },
+      commits: commits,
+      merge_targets: [],
+      default_merge_target: nil,
+      merge_status: nil
+    }
+  end
+
+  defp file_info(path, additions \\ 0, deletions \\ 0) do
+    %EvoGit.Review.FileInfo{
+      path: path,
+      status: "modified",
+      additions: additions,
+      deletions: deletions
+    }
+  end
+
+  # Switches the review page to the Files-changed tab (returns the html).
+  defp open_files_tab(view) do
+    view
+    |> element("button[phx-click='switch_tab'][phx-value-tab='files_changed']")
+    |> render_click()
+  end
+
+  # Extracts the conversation tab's diff-stats bar text (the unique gap-x-4
+  # stats container on the review page) so summed additions/deletions are
+  # asserted within the bar, not anywhere in the page.
+  defp stats_bar_text(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("div.flex.flex-wrap.items-center.gap-x-4")
+    |> Floki.text()
+    |> String.replace(~r/\s+/, " ")
+  end
+
+  # Extracts a page-tabs count badge's text ("files_changed" | "commits").
+  defp badge_text(html, tab) do
+    [badge] =
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("button[phx-click='switch_tab'][phx-value-tab='#{tab}'] span.badge")
+
+    badge |> Floki.text() |> String.trim()
+  end
+
+  # A hand-built CommitInfo with a distinct sha per `prefix`.
+  defp commit_info(prefix, message) do
+    %EvoGit.Review.CommitInfo{
+      sha: prefix <> String.duplicate("0", 39),
+      short_sha: prefix <> String.duplicate("0", 7),
+      message: message,
+      author_name: "Test User",
+      author_email: "test@example.com",
+      date: DateTime.utc_now()
+    }
+  end
+
+  # Seeds a completed orphaned-path review task with a custom objective (for
+  # page-header title assertions). Returns the task id.
+  defp seed_review_task_with_objective!(objective) do
+    task_id = "review_test_title_#{System.unique_integer([:positive])}"
+
+    task = %TaskInfo{
+      id: task_id,
+      type: :evolve,
+      status: :completed,
+      opts: [path: "/nonexistent/repo/path", objective: objective],
+      ref: nil,
+      started_at: DateTime.utc_now(),
+      finished_at: DateTime.utc_now(),
+      logs: [],
+      review_status: nil,
+      result:
+        {:ok,
+         %{
+           commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+           branch_name: "evogit/test-branch",
+           result: "Agent summary",
+           pr_url: nil,
+           pr_title: nil
+         }}
+    }
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      TaskRegistry.delete_task(task_id)
+      # Synchronize the deletion cast.
+      TaskRegistry.list_tasks()
+    end)
+
+    task_id
+  end
 
   # Reads the LiveView's socket assigns (same pattern as projects_live_test).
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
@@ -1780,9 +2254,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # Creates a temp git repo with the given primary branch (plus an optional
   # secondary branch pointing at the base commit), an agent `task-branch` with
   # a change commit on top of the primary branch, and a completed review task
-  # pointing at it. Returns {repo_path, task_id, change_sha} and registers
+  # pointing at it. The optional `archive_metadata` seeds the archive-export
+  # affordances. Returns {repo_path, task_id, change_sha} and registers
   # on_exit cleanup.
-  defp create_review_task_with_repo!(primary, secondary) do
+  defp create_review_task_with_repo!(primary, secondary, archive_metadata \\ nil) do
     tmp_dir =
       Path.join(
         System.tmp_dir!(),
@@ -1790,7 +2265,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       )
 
     {change_sha, _primary} = build_repo_with_task_branch!(tmp_dir, primary, secondary)
-    task_id = seed_review_task!(tmp_dir, change_sha)
+    task_id = seed_review_task!(tmp_dir, change_sha, archive_metadata)
 
     on_exit(fn ->
       rm_rf_retry(tmp_dir)
@@ -1936,8 +2411,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # Seeds a completed review task pointing at `repo_path` with the agent
-  # branch `task-branch` (which must exist in the repo).
-  defp seed_review_task!(repo_path, change_sha) do
+  # branch `task-branch` (which must exist in the repo). The optional
+  # `archive_metadata` seeds the archive-export affordances.
+  defp seed_review_task!(repo_path, change_sha, archive_metadata) do
     task_id = "review_test_merge_#{System.unique_integer([:positive])}"
 
     task = %TaskInfo{
@@ -1950,6 +2426,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       finished_at: DateTime.utc_now(),
       logs: [],
       review_status: nil,
+      archive_metadata: archive_metadata,
       result:
         {:ok,
          %{

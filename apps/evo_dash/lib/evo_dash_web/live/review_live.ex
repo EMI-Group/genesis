@@ -39,183 +39,173 @@ defmodule EvoDashWeb.ReviewLive do
             </.link>
           </div>
         <% else %>
-          <div class="space-y-4">
-            <!-- Back button -->
-            <div class="flex items-center gap-3">
-              <%= if @live_action == :commit do %>
-                <.link
-                  navigate={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
-                  class="btn btn-ghost btn-sm gap-1 px-4"
-                >
-                  <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Review")}
-                </.link>
-              <% else %>
-                <.link
-                  navigate={with_node_param(~p"/projects", @current_node_id)}
-                  class="btn btn-ghost btn-sm gap-1 px-4"
-                >
-                  <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back")}
-                </.link>
-              <% end %>
-            </div>
-
+          <%= if @loading do %>
             <!-- Loading state -->
-            <%= if @loading do %>
-              <div class="flex items-center justify-center py-20">
-                <span class="loading loading-spinner loading-lg text-primary"></span>
-                <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
-              </div>
+            <div class="flex items-center justify-center py-20">
+              <span class="loading loading-spinner loading-lg text-primary"></span>
+              <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
+            </div>
+          <% else %>
+            <%= if @live_action == :commit and @commit_data do %>
+              <!-- Commit detail view: no page tabs, no separate back-button row
+                   (the back link lives inside commit_detail_header). The
+                   :commit route keeps the legacy FLAT path-keyed diff state —
+                   the tree map is read directly, same convention. -->
+              <EvoDashWeb.ReviewComponents.commit_detail_header
+                commit={@commit_header}
+                back_url={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
+                task_title={@title}
+              />
+              <EvoDashWeb.ReviewComponents.commit_diff_layout
+                files={@commit_data.files}
+                expanded_files={@expanded_files}
+                selected_file={@selected_file}
+                file_context_levels={@file_context_levels}
+                expanded_dirs={@tree_expanded_dirs}
+                file_filter={@file_filter}
+              />
             <% else %>
-              <%= if @live_action == :commit and @commit_data do %>
-                <!-- Commit detail view -->
-                <EvoDashWeb.ReviewComponents.commit_detail_header commit={@commit_header} />
-                <EvoDashWeb.ReviewComponents.commit_diff_layout
-                  files={@commit_data.files}
-                  expanded_files={@expanded_files}
-                  selected_file={@selected_file}
-                  file_context_levels={@file_context_levels}
-                />
-              <% else %>
-                <!-- Review Header (always at top) -->
-                <EvoDashWeb.ReviewComponents.review_header
-                  title={@title}
-                  task_type={@task_type}
-                  branch_name={@branch_name}
-                  commit_sha={@commit_sha}
-                  status={@review_status}
-                />
+              <%!-- Aggregate stats across ALL review repos (primary + foreign):
+                   the header stat row, the tab count badges, and the
+                   conversation diff-stats bar read the SUMS, never the active
+                   repo alone. Header repo fields are PRIMARY-scoped (resolved
+                   explicitly, never the active-repo projection). --%>
+              <% stats = aggregate_stats(@review_repos) %>
+              <% primary = Enum.find(@review_repos, &(&1.repo_id == "primary")) %>
 
-                <EvoDashWeb.ReviewComponents.task_summary
-                  usage={@task_usage}
-                  agent_count={@agent_count}
+              <div class="space-y-4">
+                <EvoDashWeb.ReviewComponents.page_header
+                  back_url={with_node_param(~p"/projects", @current_node_id)}
+                  title={@title}
+                  status={@review_status}
+                  task_status={@task_status}
                   task_type={@task_type}
-                  status={@task_status}
+                  task_id={@task_id}
+                  repo_path={primary && primary.repo_path}
+                  branch_name={primary && primary.branch_name}
+                  merge_target={primary && primary.default_merge_target}
+                  commit_sha={primary && primary.commit_sha}
                   model_id={@model_id}
+                  agent_count={@agent_count}
                   started_at={@started_at}
                   finished_at={@finished_at}
+                  stats={stats}
                 />
 
-                <!-- Unified review card: tab bar + content -->
-                <div class="review-card">
-                  <%= if @merge_outcomes != [] do %>
-                    <EvoDashWeb.ReviewComponents.merge_outcomes_panel outcomes={@merge_outcomes} />
-                  <% end %>
-                  <%= if length(@review_repos) > 1 do %>
-                    <EvoDashWeb.ReviewComponents.repo_tabs
-                      repos={@review_repos}
-                      active_repo_id={@active_repo_id}
-                    />
-                  <% end %>
-                  <!-- Tab Bar (sticky header of the card) -->
-                  <div class="review-card-tabs">
-                    <EvoDashWeb.ReviewComponents.review_tabs
-                      active_tab={@review_tab}
-                      files_count={if @review_data, do: @review_data.changed_files_count, else: 0}
-                      commits_count={length(@commits)}
-                      show_archive={@archive_metadata not in [nil, []]}
-                      agents_count={if @archive_metadata, do: length(@archive_metadata), else: 0}
-                    />
-                  </div>
+                <!-- Page tabs (underline bar with count badges) -->
+                <EvoDashWeb.ReviewComponents.page_tabs
+                  active_tab={@review_tab}
+                  files_count={stats.files_count}
+                  commits_count={stats.commits_count}
+                  show_archive={@archive_metadata not in [nil, []]}
+                  agents_count={@agent_count}
+                />
 
-                  <!-- Content area -->
-                  <div class="review-card-content">
-                    <%= cond do %>
-                      <% @review_tab == :conversation -> %>
-                        <div class="space-y-4 p-4 sm:p-6 lg:p-8">
-                          <!-- Agent Summary -->
-                          <%= if @agent_summary do %>
-                            <EvoDashWeb.ReviewComponents.agent_summary
-                              summary={@agent_summary}
-                              summary_raw={@summary_raw}
-                            />
-                          <% end %>
+                <%= cond do %>
+                  <% @review_tab == :conversation -> %>
+                    <!-- Readability column (GitHub conversation style); the
+                         merge box sits at the BOTTOM of the column. -->
+                    <div class="max-w-4xl mx-auto w-full space-y-4">
+                      <%= if @merge_outcomes != [] do %>
+                        <EvoDashWeb.ReviewComponents.merge_outcomes_panel outcomes={@merge_outcomes} />
+                      <% end %>
 
-                          <!-- Diff Stats -->
-                          <%= if @review_data do %>
-                            <EvoDashWeb.ReviewComponents.diff_stats_bar
-                              files_count={@review_data.changed_files_count}
-                              additions={@review_data.total_additions}
-                              deletions={@review_data.total_deletions}
-                              commits_count={length(@commits)}
-                            />
-                          <% end %>
+                      <EvoDashWeb.ReviewComponents.agent_summary
+                        summary={@agent_summary}
+                        summary_raw={@summary_raw}
+                        model_id={@model_id}
+                        finished_at={@finished_at}
+                      />
 
-                          <!-- Action Buttons -->
-                          <EvoDashWeb.ReviewComponents.action_buttons
-                            repo_id={@active_repo_id}
-                            branch_exists={@branch_exists}
-                            can_resume={@can_resume}
-                            has_pr={@has_pr}
-                            pr_url={@pr_url}
-                            loading={@action_loading}
-                            is_no_changes={@is_no_changes}
-                            merge_targets={@merge_targets}
-                            default_merge_target={@default_merge_target}
-                            merge_status={@merge_status}
-                          />
-                          <%= if @archive_metadata not in [nil, []] do %>
-                            <.link
-                              href={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
-                              class="btn btn-sm btn-outline btn-primary gap-2"
-                              download
-                            >
-                              <.icon name="hero-arrow-down-tray" class="size-4" /> {gettext(
-                                "Export JSON"
-                              )}
-                            </.link>
-                          <% end %>
-                          <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
-                        </div>
-                      <% @review_tab == :objective -> %>
-                        <div class="p-4 sm:p-6 lg:p-8">
-                          <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
-                        </div>
-                      <% @review_tab == :commits -> %>
-                        <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
-                      <% @review_tab == :files_changed -> %>
-                        <%= if @review_data do %>
-                          <EvoDashWeb.ReviewComponents.split_diff_layout
-                            files={@review_data.files}
-                            expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
-                            selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
-                            file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
-                          />
-                        <% else %>
-                          <div class="p-8 text-center">
-                            <.icon
-                              name="hero-document-magnifying-glass"
-                              class="size-10 text-base-content/50 mx-auto mb-3"
-                            />
-                            <p class="text-sm text-base-content/70">
-                              {gettext("No diff data available for this review.")}
-                            </p>
-                          </div>
-                        <% end %>
-                      <% @review_tab == :archive -> %>
-                        <%= if @archive_metadata not in [nil, []] do %>
-                          <div class="p-4 sm:p-6 lg:p-8">
-                            <EvoDashWeb.ReviewComponents.archive_review_section
-                              archive_metadata={@archive_metadata}
-                              task_id={@task_id}
-                            />
-                          </div>
-                        <% else %>
-                          <div class="p-8 text-center">
-                            <.icon
-                              name="hero-archive-box-x-mark"
-                              class="size-10 text-base-content/50 mx-auto mb-3"
-                            />
-                            <p class="text-sm text-base-content/70">
-                              {gettext("No archived agent data available for this task.")}
-                            </p>
-                          </div>
-                        <% end %>
+                      <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
+
+                      <EvoDashWeb.ReviewComponents.diff_stats_bar
+                        files_count={stats.files_count}
+                        additions={stats.additions}
+                        deletions={stats.deletions}
+                        commits_count={stats.commits_count}
+                      />
+
+                      <EvoDashWeb.ReviewComponents.task_summary
+                        usage={@task_usage}
+                        agent_count={@agent_count}
+                        task_type={@task_type}
+                        status={@task_status}
+                        model_id={@model_id}
+                        started_at={@started_at}
+                        finished_at={@finished_at}
+                      />
+
+                      <EvoDashWeb.ReviewComponents.merge_box
+                        repo_id={@active_repo_id}
+                        branch_exists={@branch_exists}
+                        can_resume={@can_resume}
+                        has_pr={@has_pr}
+                        pr_url={@pr_url}
+                        loading={@action_loading}
+                        is_no_changes={@is_no_changes}
+                        merge_targets={@merge_targets}
+                        default_merge_target={@default_merge_target}
+                        merge_status={@merge_status}
+                        repos={@review_repos}
+                        active_repo_id={@active_repo_id}
+                        show_export={@archive_metadata not in [nil, []]}
+                        export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
+                      />
+                      <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
+                    </div>
+                  <% @review_tab == :files_changed -> %>
+                    <!-- FULL WIDTH (no max-w): the split layout owns the row;
+                         repo selection lives in its toolbar. The diff + tree
+                         state maps are repo-keyed — read the ACTIVE repo's
+                         submap via inline Map.Get. -->
+                    <%= if @review_data do %>
+                      <EvoDashWeb.ReviewComponents.split_diff_layout
+                        files={@review_data.files}
+                        expanded_files={Map.get(@expanded_files, @active_repo_id, %{})}
+                        selected_file={Map.get(@selected_file || %{}, @active_repo_id)}
+                        file_context_levels={Map.get(@file_context_levels, @active_repo_id, %{})}
+                        expanded_dirs={Map.get(@tree_expanded_dirs, @active_repo_id, %{})}
+                        file_filter={@file_filter}
+                        repos={@review_repos}
+                        active_repo_id={@active_repo_id}
+                      />
+                    <% else %>
+                      <div class="p-8 text-center">
+                        <.icon
+                          name="hero-document-magnifying-glass"
+                          class="size-10 text-base-content/50 mx-auto mb-3"
+                        />
+                        <p class="text-sm text-base-content/70">
+                          {gettext("No diff data available for this review.")}
+                        </p>
+                      </div>
                     <% end %>
-                  </div>
-                </div>
+                  <% @review_tab == :commits -> %>
+                    <%!-- Lists the ACTIVE repo's commits (repo switching lives
+                         in the files toolbar / merge box, not here). --%>
+                    <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+                  <% @review_tab == :archive -> %>
+                    <%= if @archive_metadata not in [nil, []] do %>
+                      <EvoDashWeb.ReviewComponents.archive_review_section
+                        archive_metadata={@archive_metadata}
+                        task_id={@task_id}
+                      />
+                    <% else %>
+                      <div class="p-8 text-center">
+                        <.icon
+                          name="hero-archive-box-x-mark"
+                          class="size-10 text-base-content/50 mx-auto mb-3"
+                        />
+                        <p class="text-sm text-base-content/70">
+                          {gettext("No archived agent data available for this task.")}
+                        </p>
+                      </div>
+                    <% end %>
+                <% end %>
 
                 <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
-                  <div class="rounded-lg border border-warning/30 bg-warning/5 p-4 text-center">
+                  <div class="rounded-xl border border-warning/30 bg-warning/10 p-4 text-center">
                     <.icon name="hero-exclamation-triangle" class="size-6 text-warning mx-auto mb-3" />
                     <p class="text-sm text-warning">
                       {gettext(
@@ -224,9 +214,9 @@ defmodule EvoDashWeb.ReviewLive do
                     </p>
                   </div>
                 <% end %>
-              <% end %>
+              </div>
             <% end %>
-          </div>
+          <% end %>
         <% end %>
       <% end %>
     </EvoDashWeb.Layouts.app>
@@ -252,6 +242,12 @@ defmodule EvoDashWeb.ReviewLive do
         selected_file: nil,
         expanded_files: %{},
         file_context_levels: %{},
+        # Files-toolbar tree + filter state. NOT in the load-result map
+        # (LoadData resets the three legacy diff maps but never these), so
+        # they survive the debounced review-data reloads. On SHOW the tree
+        # map is repo-keyed (like the diff-state maps); flat on :commit.
+        tree_expanded_dirs: %{},
+        file_filter: "",
         review_tab: :conversation,
         review_data: nil,
         title: "",
@@ -329,10 +325,6 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply, assign(socket, :review_tab, :conversation)}
   end
 
-  def handle_event("switch_tab", %{"tab" => "objective"}, socket) do
-    {:noreply, assign(socket, :review_tab, :objective)}
-  end
-
   def handle_event("switch_tab", %{"tab" => "files_changed"}, socket) do
     {:noreply, assign(socket, :review_tab, :files_changed)}
   end
@@ -353,13 +345,90 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("switch_repo", %{"repo_id" => repo_id}, socket) do
     # Whitelist-validate the submitted repo id against the known review repos
     # (never String.to_atom on client input). Per-repo diff state is keyed by
-    # repo_id and persists across switches — only the active id and the flat
-    # projections change.
+    # repo_id and persists across switches — only the active id, the flat
+    # projections, and the shared file filter change.
     if repo_id in Enum.map(socket.assigns.review_repos, & &1.repo_id) do
-      {:noreply, socket |> assign(:active_repo_id, repo_id) |> project_active_repo()}
+      {:noreply,
+       socket
+       |> assign(:active_repo_id, repo_id)
+       # The filter string is shared across repos — reset it so switching
+       # never leaves the new repo's file list filtered by stale text.
+       |> assign(:file_filter, "")
+       |> project_active_repo()}
     else
       {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("toggle_dir", %{"dir" => dir}, socket) do
+    # Tree-expansion state lives in @tree_expanded_dirs, keyed by repo_id on
+    # the SHOW route (mirroring the repo-keyed diff-state maps — a dir toggle
+    # in one repo must not clobber another repo's tree) and flat on the
+    # :commit route (legacy convention). No re-projection needed: the template
+    # reads the ACTIVE repo's submap via inline Map.get, same as the diff maps.
+    tree = socket.assigns.tree_expanded_dirs || %{}
+
+    tree =
+      if socket.assigns.live_action == :commit do
+        if Map.get(tree, dir), do: Map.delete(tree, dir), else: Map.put(tree, dir, true)
+      else
+        sub = Map.get(tree, socket.assigns.active_repo_id, %{})
+
+        sub = if Map.get(sub, dir), do: Map.delete(sub, dir), else: Map.put(sub, dir, true)
+        Map.put(tree, socket.assigns.active_repo_id, sub)
+      end
+
+    {:noreply, assign(socket, :tree_expanded_dirs, tree)}
+  end
+
+  @impl true
+  def handle_event("collapse_all_dirs", _params, socket) do
+    # Collapse the whole tree for the acting context: empty submap on SHOW,
+    # empty flat map on :commit.
+    tree = socket.assigns.tree_expanded_dirs || %{}
+
+    tree =
+      if socket.assigns.live_action == :commit do
+        %{}
+      else
+        Map.put(tree, socket.assigns.active_repo_id, %{})
+      end
+
+    {:noreply, assign(socket, :tree_expanded_dirs, tree)}
+  end
+
+  @impl true
+  def handle_event("expand_all_dirs", _params, socket) do
+    # Expand every directory: ALL ancestor path segments of every file path
+    # (except the "." root) are marked true. On SHOW the expansion applies to
+    # the ACTIVE repo's file list; on :commit to the commit's files.
+    files =
+      if socket.assigns.live_action == :commit do
+        (socket.assigns.commit_data && socket.assigns.commit_data.files) || []
+      else
+        (socket.assigns.review_data && socket.assigns.review_data.files) || []
+      end
+
+    all_dirs = all_dir_paths(files)
+    tree = socket.assigns.tree_expanded_dirs || %{}
+
+    tree =
+      if socket.assigns.live_action == :commit do
+        Map.merge(tree, all_dirs)
+      else
+        sub = Map.get(tree, socket.assigns.active_repo_id, %{})
+        Map.put(tree, socket.assigns.active_repo_id, Map.merge(sub, all_dirs))
+      end
+
+    {:noreply, assign(socket, :tree_expanded_dirs, tree)}
+  end
+
+  @impl true
+  def handle_event("filter_files", %{"filter" => value}, socket) do
+    # The files-changed toolbar's filter input (debounced on the client).
+    # The filter string is shared across repos and cleared on switch_repo.
+    {:noreply, assign(socket, :file_filter, value || "")}
   end
 
   @impl true
@@ -654,7 +723,7 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("merge_target_change", params, socket) do
     # The merge form's target-branch select changed: the support module
     # updates the changed repo's default target and re-runs its async dry-run
-    # merge check. Re-project afterwards so action_buttons reads the ACTIVE
+    # merge check. Re-project afterwards so merge_box reads the ACTIVE
     # repo's flat @merge_status / @default_merge_target.
     socket = EvoDashWeb.ReviewLive.MergeCheck.handle_target_change(socket, params)
     {:noreply, project_active_repo(socket)}
@@ -1027,7 +1096,7 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_info({:merge_check_result, task_id, node, repo_id, target, result}, socket) do
     # Async dry-run merge check finished (tagged per repo). Result-shape
     # validation and stale-message guarding live in the support module;
-    # re-project afterwards so action_buttons reads the ACTIVE repo's flat
+    # re-project afterwards so merge_box reads the ACTIVE repo's flat
     # @merge_status.
     {:noreply,
      socket
@@ -1296,6 +1365,59 @@ defmodule EvoDashWeb.ReviewLive do
     |> String.replace(~r{[^a-zA-Z0-9_-]}, "-")
     |> String.trim("-")
   end
+
+  # Aggregate diff statistics across ALL review repos (primary + foreign) —
+  # the page header's stat row, the tab count badges, and the conversation
+  # tab's diff-stats bar read these SUMS (never the active repo alone, so the
+  # numbers stay stable while the user switches repos). Repos with nil
+  # review_data contribute only their commit count. All four counters default
+  # to 0 for an empty/legacy-empty repo list.
+  defp aggregate_stats(review_repos) do
+    review_repos
+    |> Enum.reduce(%{files_count: 0, additions: 0, deletions: 0, commits_count: 0}, fn repo,
+                                                                                       acc ->
+      {files_count, additions, deletions} =
+        case repo.review_data do
+          nil ->
+            {0, 0, 0}
+
+          data ->
+            {data.changed_files_count || 0, data.total_additions || 0, data.total_deletions || 0}
+        end
+
+      %{
+        files_count: acc.files_count + files_count,
+        additions: acc.additions + additions,
+        deletions: acc.deletions + deletions,
+        commits_count: acc.commits_count + length(repo.commits || [])
+      }
+    end)
+  end
+
+  # Every ancestor directory path of every file path (each `Path.dirname`
+  # chain segment), excluding the "." root — e.g. "a/b/c.ex" yields
+  # ["a", "a/b"]. Drives expand_all_dirs: marking all ancestors true fully
+  # opens the tree so every file is visible.
+  defp all_dir_paths(files) do
+    files
+    |> Enum.reduce(MapSet.new(), fn file, acc ->
+      file.path
+      |> dir_chain()
+      |> Enum.reduce(acc, fn dir, acc -> MapSet.put(acc, dir) end)
+    end)
+    |> MapSet.to_list()
+    |> Map.new(fn dir -> {dir, true} end)
+  end
+
+  defp dir_chain(path) do
+    path
+    |> Path.dirname()
+    |> dir_chain([])
+  end
+
+  defp dir_chain(".", acc), do: acc
+
+  defp dir_chain(dir, acc), do: dir_chain(Path.dirname(dir), [dir | acc])
 
   # Review actions on completed tasks (merge/reject/resume/ignore success
   # paths) change the task's review status, which removes it from the sidebar's
