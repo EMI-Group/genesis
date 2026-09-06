@@ -236,8 +236,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
   # ---------------------------------------------------------------------------
   # overflow_menu/1 — "…" dropdown pinned right. When branch_exists it carries
-  # Reject / Create-View PR / Extract Skills; Export JSON + the danger-zone
-  # Ignore entry are always available (Export only when show_export).
+  # Reject / Create-View PR / Extract Skills; Export JSON renders when
+  # show_export; Ignore is always available as a plain item at the end — no
+  # danger-zone divider.
   # ---------------------------------------------------------------------------
 
   attr(:loading, :boolean, default: false)
@@ -312,13 +313,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </a>
           </li>
         <% end %>
-        <%!-- zh_CN: 危险操作区（不可逆操作的分组标题） --%>
-        <li class="menu-title px-3 py-1 text-xs uppercase tracking-wide text-base-content/60">
-          {gettext("Danger zone")}
-        </li>
         <li>
           <button
-            class="text-error hover:bg-error/10 hover:text-error rounded-md"
+            class="rounded-md"
             phx-click="ignore"
             phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
             disabled={@loading}
