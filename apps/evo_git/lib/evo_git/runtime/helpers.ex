@@ -399,32 +399,94 @@ defmodule EvoGit.Runtime.Helpers do
     """
   end
 
-  def resolve_starting_commit(repo_path, nil) do
-    EvoGit.Core.PhyloGraphNode.current_head(repo_path)
-  end
+  @doc """
+  Resolves the starting commit for a phase run — the single choke point for
+  starting-commit resolution.
 
-  def resolve_starting_commit(repo_path, ref) do
-    case Git.rev_parse(repo_path, ref) do
+  `nil` resolves the repository's current HEAD via
+  `EvoGit.Core.PhyloGraphNode.current_head/1` (fails on an empty/unborn-HEAD
+  repo). A ref (commit SHA, branch name, or tag name) is resolved via
+  `Git.rev_parse/2` with the `^{commit}` peel suffix, which guarantees the
+  result IS a commit: a valid annotated tag peels to its commit, a ref pointing
+  at a non-commit object (tree/blob) is rejected by git, and an unknown ref
+  fails here. All downstream consumers (worktree add, phylo node,
+  merge_and_report, resume contexts) work on real commit SHAs.
+
+  Returns `{:ok, sha}` or the structured
+  `{:error, {:invalid_starting_commit, ref, repo_path, git_output}}` — never the
+  raw git `{:error, {code, output}}` tuple.
+  """
+  @spec resolve_starting_commit(String.t(), String.t() | nil) ::
+          {:ok, String.t()}
+          | {:error, {:invalid_starting_commit, String.t(), String.t(), String.t()}}
+  def resolve_starting_commit(repo_path, nil) do
+    case EvoGit.Core.PhyloGraphNode.current_head(repo_path) do
       {:ok, sha} ->
         {:ok, sha}
 
       error ->
-        Logger.error("Invalid starting commit '#{ref}': #{inspect(error)}")
-        error
+        output = git_error_output(error)
+        Logger.error("Invalid starting commit 'HEAD': #{inspect(error)}")
+        {:error, {:invalid_starting_commit, "HEAD", repo_path, output}}
     end
   end
+
+  def resolve_starting_commit(repo_path, ref) do
+    case Git.rev_parse(repo_path, ref <> "^{commit}") do
+      {:ok, sha} ->
+        {:ok, sha}
+
+      {:error, {_code, output}} = error when is_binary(output) ->
+        Logger.error("Invalid starting commit '#{ref}': #{inspect(error)}")
+        {:error, {:invalid_starting_commit, ref, repo_path, output}}
+
+      error ->
+        Logger.error("Invalid starting commit '#{ref}': #{inspect(error)}")
+        {:error, {:invalid_starting_commit, ref, repo_path, inspect(error)}}
+    end
+  end
+
+  @doc false
+  # Builds the human-readable phase-level failure message for a
+  # `{:invalid_starting_commit, ref, repo_path, git_output}` resolver error.
+  # Shared by the genesis/evolution phase else-arms. The raw git output never
+  # reaches the user message — it stays in the struct/logs and only selects the
+  # reason wording (a non-commit-object error vs. an unresolvable ref).
+  @spec format_invalid_starting_commit_error(String.t(), String.t(), String.t()) :: String.t()
+  def format_invalid_starting_commit_error("HEAD", repo_path, _git_output) do
+    "Invalid starting commit 'HEAD': repository '#{repo_path}' has no commits yet (HEAD is unborn). " <>
+      "Make an initial commit first, or pass an existing commit SHA, branch name, or tag name as the starting commit."
+  end
+
+  def format_invalid_starting_commit_error(ref, repo_path, git_output) do
+    reason =
+      if is_binary(git_output) and String.contains?(git_output, "expected commit type") do
+        "'#{ref}' points to a non-commit object (e.g. a tree or blob), not a commit"
+      else
+        "'#{ref}' does not resolve to any commit"
+      end
+
+    "Invalid starting commit '#{ref}': #{reason} in repository '#{repo_path}'. " <>
+      "Valid inputs are an existing commit SHA, branch name, or tag name."
+  end
+
+  # Extracts the git stderr binary from a Git.run-style `{:error, {tag, output}}`
+  # tuple; any other unexpected shape falls back to `inspect/1` (never crashes).
+  defp git_error_output({:error, {_tag, output}}) when is_binary(output), do: output
+  defp git_error_output(error), do: inspect(error)
 
   @doc """
   Resolves the per-repo starting commit for a foreign repo entry.
 
   Returns `{:ok, sha}` where `sha` is:
-  - the commit `entry.base_sha` resolves to (`Git.rev_parse`) when `base_sha` is
-    set — up-front validation in `load_foreign_repos/2` guarantees it exists; or
+  - the commit `entry.base_sha` resolves to when `base_sha` is set — up-front
+    validation in `load_foreign_repos/2` guarantees it exists; or
   - the repo's HEAD (`EvoGit.Core.PhyloGraphNode.current_head/1`) when
     `base_sha` is `nil` (default — start from the foreign repo's current tip).
 
-  Mirrors `resolve_starting_commit/2`: errors pass through unchanged (with a
-  `Logger.error` for the ref-resolve path) instead of raising.
+  Delegates to `resolve_starting_commit/2`: a non-resolving `base_sha` or an
+  unborn HEAD yields the structured `{:error, {:invalid_starting_commit, ref,
+  repo_root, git_output}}` instead of the raw git tuple.
   """
   @spec resolve_foreign_repo_starting_commit(EvoGit.Core.ForeignRepo.t(), String.t()) ::
           {:ok, String.t()} | {:error, term()}

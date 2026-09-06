@@ -19,7 +19,7 @@ defmodule EvoGit.Runtime.Genesis do
     repo_path = Keyword.get(opts, :repo_path, File.cwd!()) |> EvoGit.Platform.safe_expand()
 
     with :ok <- Runtime.ensure_repo(repo_path),
-         {:ok, head_sha} <- PhyloGraphNode.current_head(repo_path) do
+         {:ok, head_sha} <- Helpers.resolve_starting_commit(repo_path, nil) do
       mode = resolve_mode(repo_path, opts)
 
       if mode == :new do
@@ -28,6 +28,11 @@ defmodule EvoGit.Runtime.Genesis do
         run_existing_codebase(objective, repo_path, head_sha, opts)
       end
     else
+      {:error, {:invalid_starting_commit, ref, repo_path, git_output}} ->
+        message = Helpers.format_invalid_starting_commit_error(ref, repo_path, git_output)
+        Logger.error("Genesis: #{message}")
+        {:error, message}
+
       error ->
         Logger.error("Genesis failed to initialize: #{inspect(error)}")
         error
