@@ -84,7 +84,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <span class="flex items-center gap-1.5 min-w-0">
             <.icon name="hero-arrow-right" class="size-3.5 shrink-0 text-base-content/50" />
             <span
-              class="font-mono leading-none truncate max-w-[16rem] text-base-content/60"
+              class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 leading-none truncate max-w-[16rem]"
               title={@merge_target}
             >
               {@merge_target}
@@ -284,7 +284,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
       <%!-- header strip --%>
       <div class="flex items-center gap-3 px-4 py-3 border-b border-base-300 bg-base-200/40 min-w-0">
         <div class="size-8 rounded-lg bg-base-content/5 text-base-content/60 flex items-center justify-center shrink-0">
-          <.icon name="hero-bullseye" class="size-4" />
+          <.icon name="hero-chat-bubble-bottom-center-text" class="size-4" />
         </div>
         <span class="font-semibold text-base-content/85 shrink-0">
           <%!-- zh_CN: 目标 — 提交给智能体的任务目标 --%>
@@ -331,7 +331,10 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <%!-- LoadData normalizes a missing objective to "" (never nil) — the
              empty state covers both. --%>
         <%= if @objective in [nil, ""] do %>
-          <.icon name="hero-bullseye" class="size-10 text-base-content/50 mx-auto mb-3" />
+          <.icon
+            name="hero-chat-bubble-bottom-center-text"
+            class="size-10 text-base-content/50 mx-auto mb-3"
+          />
           <p class="text-sm text-base-content/70 text-center">
             <%!-- zh_CN: 该任务没有记录目标文本 --%>
             {gettext("No objective recorded for this task.")}

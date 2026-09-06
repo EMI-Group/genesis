@@ -28,9 +28,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
   def merge_box(assigns) do
     ~H"""
-    <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
+    <div class="rounded-xl border border-base-300 bg-base-100">
       <%= if @merge_status do %>
-        <div class="p-3 sm:p-4 border-b border-base-300 bg-base-200/30">
+        <div class="p-3 sm:p-4 border-b border-base-300 bg-base-200/30 rounded-t-xl">
           <.merge_status_block status={@merge_status} loading={@loading} />
         </div>
       <% end %>
