@@ -60,6 +60,11 @@ defmodule EvoGit.Runtime.Evolution do
         Logger.error("Evolution: Invalid node path: #{message}")
         {:error, {:invalid_node_path, message}}
 
+      {:error, {:invalid_starting_commit, ref, repo_path, git_output}} ->
+        message = Helpers.format_invalid_starting_commit_error(ref, repo_path, git_output)
+        Logger.error("Evolution: #{message}")
+        {:error, message}
+
       error ->
         Logger.error("Evolution failed to initialize: #{inspect(error)}")
         error
