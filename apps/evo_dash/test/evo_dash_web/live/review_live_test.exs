@@ -2053,10 +2053,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "Continue task"
     end
 
-    test "overflow menu carries the full action set with the danger zone last", %{
-      conn: conn,
-      task_id: task_id
-    } do
+    test "overflow menu carries the full action set with ignore as a plain always-available item last",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       html = flush_review_load(view)
 
@@ -2075,15 +2076,27 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert menu =~ ~s(href="/tasks/#{task_id}/export")
       assert menu =~ "Export JSON"
 
-      # Danger-zone divider, then Ignore (always available) after it.
-      assert menu =~ "Danger zone"
+      # Ignore is a plain, always-available menu item rendered LAST — there is
+      # no danger-zone divider anymore.
+      refute menu =~ "Danger zone"
       assert menu =~ ~s(phx-click="ignore")
 
+      # Ignore no longer carries the danger red styling (Reject legitimately
+      # does — scope to the ignore button element only).
+      [ignore_btn] =
+        menu
+        |> Floki.parse_document!()
+        |> Floki.find("button[phx-click='ignore']")
+
+      refute ignore_btn
+             |> Floki.attribute("class")
+             |> Enum.any?(&String.contains?(&1, "text-error"))
+
+      # Ordering: Export JSON comes before Ignore, and Ignore is the last menu
+      # entry.
       assert {export_idx, _} = :binary.match(menu, "Export JSON")
-      assert {zone_idx, _} = :binary.match(menu, "Danger zone")
       assert {ignore_idx, _} = :binary.match(menu, ~s(phx-click="ignore"))
-      assert export_idx < zone_idx
-      assert zone_idx < ignore_idx
+      assert export_idx < ignore_idx
     end
 
     test "Export JSON is hidden without archive metadata", %{conn: conn} do
