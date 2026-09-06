@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.2] - 2026-09-06
+
+### Added
+
+- Add syntax highlighting and language stamping for 16 additional languages (Nix, Erlang, Haskell, Clojure, Scala, Julia, Nim, Crystal, Elm, Groovy, PowerShell, OCaml, F#, Lisp, Scheme, Zig) in the in-app diff viewer.
+- Add a dedicated Objective tab to the code review page with Markdown/Raw toggle, copy button, and empty state.
+- Add a new 'run' subcommand and an auto-approval mode for CommandShell.
+- Add syntax highlighting styles for markdown grammar token classes so highlighted code and markdown are visible in the diff viewer.
+
+### Changed
+
+- Redesign the GitHub-PR review page into a two-page model with new page header/tabs components, a server-driven file-tree sidebar with directory collapse/expand and file filtering, a GitHub-style merge box with overflow menu, multi-repo toolbar, and short-sha chip on the header.
+- Refactor the CLI to route genesis/evolve/reflect through the task data plane, make -m/--model task-level, and remove session-level scheduler overrides.
+- Move the 'Ignore' action out of the Danger zone in the review overflow menu, rendering it as a plain, always-available item, and make the overflow menu open upward so it no longer clips below the browser window.
+- Cache per-node remote accents in the Appearance hook to eliminate accent flashing.
+
+### Fixed
+
+- Fix SSH remote connections to already-distributed nodes by ensuring the epmd_module is set to EpmdDist so outbound Node.connect uses the tunnel registry instead of the real epmd daemon.
+
 ## [0.12.1] - 2026-09-05
 
 ### Added
