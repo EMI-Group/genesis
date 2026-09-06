@@ -628,8 +628,16 @@ defmodule EvoGit.Config do
          has_model =
            Enum.any?(profiles, fn profile ->
              case Map.get(profile, :model) do
-               model when is_binary(model) and model != "" -> true
-               _ -> false
+               model when is_binary(model) and model != "" ->
+                 true
+
+               model when is_map(model) ->
+                 map_size(model) > 0 and
+                   Map.get(model, :provider) != nil and
+                   is_binary(Map.get(model, :id)) and Map.get(model, :id) != ""
+
+               _ ->
+                 false
              end
            end)
 
