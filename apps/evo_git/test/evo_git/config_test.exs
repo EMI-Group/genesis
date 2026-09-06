@@ -946,6 +946,135 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "config_status/0 llm_model gate (map-form model health)" do
+    # Regression tests for the config-health fix: config_status/0's has_model
+    # predicate now counts a profile whose :model is a valid map spec
+    # (%{provider: ..., id: ..., base_url: ...} — kept as a map by
+    # normalize_model_map/1 whenever override keys like :base_url are present)
+    # as configured. Previously such custom-endpoint map models were wrongly
+    # reported as missing (false positive: "LLM model is not configured").
+    # Each test writes a real config.toml into an isolated XDG_CONFIG_HOME so
+    # the REAL Config.config_status/0 gate (which resolves from disk) is
+    # exercised — no inline re-implementation of the has_model logic.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-config-status-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+      # config.toml lives at <xdg>/genesis/config.toml — create the parent dir
+      # since these tests write raw TOML (no save_user_config mkdir).
+      File.mkdir_p!(Config.config_dir())
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+        # Remove the ReqLLM key this describe sets so later tests see a clean store.
+        Application.delete_env(:req_llm, :openai_api_key)
+      end)
+
+      :ok
+    end
+
+    test "map-form model with provider/id/base_url passes the gate (ok?: true)" do
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "neo"
+      model = { provider = "openai_compatible", id = "neo-coder-max", base_url = "http://127.0.0.1:11434/v1" }
+      """)
+
+      # The map model survives the resolve pipeline as a map (provider atomized,
+      # base_url override kept) — what normalize_model_map/1 produces for
+      # custom-endpoint models. This is the shape that previously failed the
+      # health predicate.
+      [profile] = EvoGit.Config.Schema.model_profiles(Config.resolve())
+      assert profile.id == "neo"
+
+      assert profile.model == %{
+               provider: :openai_compatible,
+               id: "neo-coder-max",
+               base_url: "http://127.0.0.1:11434/v1"
+             }
+
+      # Satisfy the :api_key check so the whole config_status gate is green.
+      ReqLLM.put_key(:openai_api_key, "sk-test")
+
+      status = Config.config_status()
+      assert status.ok? == true
+      assert :llm_model not in status.missing
+      assert status.warnings == []
+    end
+
+    test "binary-string model still passes the gate (unchanged behavior)" do
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "default"
+      model = "openai:gpt-4.1"
+      """)
+
+      ReqLLM.put_key(:openai_api_key, "sk-test")
+
+      status = Config.config_status()
+      assert status.ok? == true
+      assert :llm_model not in status.missing
+      assert status.warnings == []
+    end
+
+    @tag capture_log: true
+    test "profile with no model still reports :llm_model missing" do
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "no-model"
+      """)
+
+      status = Config.config_status()
+      assert :llm_model in status.missing
+    end
+
+    test "profile with empty-string model still reports :llm_model missing" do
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "empty-model"
+      model = ""
+      """)
+
+      status = Config.config_status()
+      assert :llm_model in status.missing
+    end
+
+    @tag capture_log: true
+    test "profile with empty-map model still reports :llm_model missing" do
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "empty-map-model"
+      model = {}
+      """)
+
+      status = Config.config_status()
+      assert :llm_model in status.missing
+    end
+  end
+
   describe "model spec normalization (LLMDB-compatible output)" do
     # Model specs are now normalized to LLMDB-compatible formats instead of
     # plain maps. String model specs pass through as-is (ReqLLM resolves them
