@@ -119,6 +119,9 @@ defmodule EvoGit.Config.SchemaTest do
 
       # Appearance
       assert [:appearance, :accent_color] in paths
+
+      # Data / State Directory
+      assert [:data, :dir] in paths
     end
 
     test "every schema has required fields" do
@@ -148,8 +151,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 94 schemas" do
-      assert length(Schema.all_schemas()) == 94
+    test "has exactly 95 schemas" do
+      assert length(Schema.all_schemas()) == 95
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -281,6 +284,10 @@ defmodule EvoGit.Config.SchemaTest do
 
       # Appearance
       assert defaults.appearance.accent_color == "blue"
+
+      # Data / State Directory
+      assert Map.has_key?(defaults.data, :dir)
+      assert defaults.data.dir == nil
     end
 
     test "llm model has nil default" do
@@ -300,6 +307,15 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(defaults.sandbox, :write_paths)
       assert defaults.sandbox.write_paths == nil
     end
+
+    test "data dir schema is a string key with nil default" do
+      schema = Enum.find(Schema.all_schemas(), &(&1.key_path == [:data, :dir]))
+      assert schema.type == :string
+      assert schema.default == nil
+      assert schema.category == :data
+      assert schema.sub_category == nil
+      assert schema.validation == []
+    end
   end
 
   describe "schemas_by_category/0" do
@@ -317,6 +333,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert Map.has_key?(grouped, :tools)
       assert Map.has_key?(grouped, :node)
       assert Map.has_key?(grouped, :appearance)
+      assert Map.has_key?(grouped, :data)
     end
 
     test "each category has expected count" do
@@ -333,6 +350,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:tools]) == 34
       assert length(grouped[:node]) == 6
       assert length(grouped[:appearance]) == 1
+      assert length(grouped[:data]) == 1
     end
 
     test "sandbox schemas include sub_category metadata" do

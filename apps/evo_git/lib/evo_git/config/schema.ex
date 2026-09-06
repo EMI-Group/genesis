@@ -48,6 +48,7 @@ defmodule EvoGit.Config.Schema do
           | :tools
           | :node
           | :appearance
+          | :data
 
   @typedoc "Sub-category for sandbox keys; nil for all other categories"
   @type sub_category :: :resources | :process | :linux | nil
@@ -142,7 +143,8 @@ defmodule EvoGit.Config.Schema do
         :server,
         :tools,
         :node,
-        :appearance
+        :appearance,
+        :data
       ])
   """
   @spec schemas_by_category() :: %{category() => [schema_map()]}
