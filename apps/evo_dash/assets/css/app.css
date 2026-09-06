@@ -1011,8 +1011,11 @@ button, a, input, textarea, select, summary,
 .hljs-number,
 .hljs-literal,
 .hljs-built_in,
-.hljs-type {
-  color: #0550ae; /* blue */
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-attr {
+  color: #0550ae; /* blue — numbers/types, css class/id/attr selectors */
 }
 .hljs-title,
 .hljs-title.function_,
@@ -1021,15 +1024,53 @@ button, a, input, textarea, select, summary,
   color: #8250df; /* purple */
 }
 .hljs-attr,
+.hljs-attribute,
 .hljs-symbol,
 .hljs-variable,
 .hljs-section,
 .hljs-doctag {
-  color: #953800; /* brown */
+  color: #953800; /* brown — attrs (html/markdown), css properties, symbols, headings */
 }
 .hljs-operator,
-.hljs-params {
+.hljs-params,
+.hljs-tag,
+.hljs-punctuation,
+.hljs-class,
+.hljs-function {
   color: inherit; /* keep default text color */
+}
+
+/* Markdown + diff token classes — emitted by the markdown/diff/yaml/html
+   grammars; see assets/CONTEXT.md "CSS palette" for the color map */
+.hljs-code,
+.hljs-quote {
+  color: #6e7781; /* gray — inline code/fence markers, blockquote text */
+}
+.hljs-strong {
+  font-weight: 700; /* bold — GitHub markup-bold (keeps row text color) */
+}
+.hljs-emphasis {
+  font-style: italic; /* italic — GitHub markup-italic (keeps row text color) */
+}
+.hljs-link {
+  color: #0969da; /* blue — link URL text (GitHub link color) */
+}
+.hljs-bullet {
+  color: #735c0f; /* olive — list markers (GitHub markup-list) */
+}
+.hljs-name,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: #116329; /* green — html/xml tag names, css element/pseudo selectors */
+}
+.hljs-subst {
+  color: #24292e; /* default code text — template-literal interpolation */
+}
+.hljs-addition {
+  color: #22863a; /* green — diff added lines (GitHub markup-inserted) */
+}
+.hljs-deletion {
+  color: #b31d28; /* red — diff deleted lines (GitHub markup-deleted) */
 }
 
 /* Dark theme — the <html> element carries data-theme="dark" */
@@ -1046,8 +1087,11 @@ button, a, input, textarea, select, summary,
 [data-theme="dark"] .hljs-number,
 [data-theme="dark"] .hljs-literal,
 [data-theme="dark"] .hljs-built_in,
-[data-theme="dark"] .hljs-type {
-  color: #79c0ff; /* blue */
+[data-theme="dark"] .hljs-type,
+[data-theme="dark"] .hljs-selector-class,
+[data-theme="dark"] .hljs-selector-id,
+[data-theme="dark"] .hljs-selector-attr {
+  color: #79c0ff; /* blue — numbers/types, css class/id/attr selectors */
 }
 [data-theme="dark"] .hljs-title,
 [data-theme="dark"] .hljs-title.function_,
@@ -1056,15 +1100,52 @@ button, a, input, textarea, select, summary,
   color: #d2a8ff; /* purple */
 }
 [data-theme="dark"] .hljs-attr,
+[data-theme="dark"] .hljs-attribute,
 [data-theme="dark"] .hljs-symbol,
 [data-theme="dark"] .hljs-variable,
 [data-theme="dark"] .hljs-section,
 [data-theme="dark"] .hljs-doctag {
-  color: #ffa657; /* orange */
+  color: #ffa657; /* orange — attrs (html/markdown), css properties, symbols, headings */
 }
 [data-theme="dark"] .hljs-operator,
-[data-theme="dark"] .hljs-params {
+[data-theme="dark"] .hljs-params,
+[data-theme="dark"] .hljs-tag,
+[data-theme="dark"] .hljs-punctuation,
+[data-theme="dark"] .hljs-class,
+[data-theme="dark"] .hljs-function {
   color: inherit; /* keep default text color */
+}
+
+/* Markdown + diff token classes — dark-theme mirror of the light block above */
+[data-theme="dark"] .hljs-code,
+[data-theme="dark"] .hljs-quote {
+  color: #8b949e; /* gray — inline code/fence markers, blockquote text */
+}
+[data-theme="dark"] .hljs-strong {
+  font-weight: 700; /* bold — GitHub markup-bold (keeps row text color) */
+}
+[data-theme="dark"] .hljs-emphasis {
+  font-style: italic; /* italic — GitHub markup-italic (keeps row text color) */
+}
+[data-theme="dark"] .hljs-link {
+  color: #58a6ff; /* blue — link URL text (GitHub link color) */
+}
+[data-theme="dark"] .hljs-bullet {
+  color: #f2cc60; /* yellow — list markers (GitHub markup-list) */
+}
+[data-theme="dark"] .hljs-name,
+[data-theme="dark"] .hljs-selector-tag,
+[data-theme="dark"] .hljs-selector-pseudo {
+  color: #7ee787; /* green — html/xml tag names, css element/pseudo selectors */
+}
+[data-theme="dark"] .hljs-subst {
+  color: #c9d1d9; /* default code text — template-literal interpolation */
+}
+[data-theme="dark"] .hljs-addition {
+  color: #aff5b4; /* pale green — diff added lines (GitHub markup-inserted) */
+}
+[data-theme="dark"] .hljs-deletion {
+  color: #ffdcd7; /* pale red — diff deleted lines (GitHub markup-deleted) */
 }
 
 /* Fix DaisyUI tooltip z-index — appears below card backgrounds by default */

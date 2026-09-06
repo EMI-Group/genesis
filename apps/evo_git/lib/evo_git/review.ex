@@ -499,8 +499,9 @@ defmodule EvoGit.Review do
   Detects the syntax-highlighting language name for a file (consumed by the
   dashboard's frontend highlighter). Covers popular languages plus a second
   tier of languages (Nix, Erlang, Haskell, Clojure, Scala, Julia, Nim,
-  Crystal, Elm, Groovy, PowerShell, OCaml, F#, Lisp, Scheme); unknown
-  extensions fall back to "text".
+  Crystal, Elm, Groovy, PowerShell, OCaml, F#, Lisp, Scheme), and the
+  markdown family of extensions (.md, .markdown, .mdx, .mkd, and the
+  uppercase .MD variant); unknown extensions fall back to "text".
   """
   def language_for_file(path) do
     case Path.extname(path) do
@@ -521,6 +522,10 @@ defmodule EvoGit.Review do
       ".scss" -> "scss"
       ".json" -> "json"
       ".md" -> "markdown"
+      ".markdown" -> "markdown"
+      ".mdx" -> "markdown"
+      ".mkd" -> "markdown"
+      ".MD" -> "markdown"
       ".toml" -> "toml"
       ".yaml" -> "yaml"
       ".yml" -> "yaml"
