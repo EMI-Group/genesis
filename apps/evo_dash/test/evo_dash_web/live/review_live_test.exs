@@ -2194,12 +2194,13 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # --- Helpers for the merge-target selector tests ---
 
   # Extracts the review page's "…" overflow menu — the ONLY
-  # <details class="dropdown dropdown-end ml-auto"> on the page (the layout's
-  # theme-toggle dropdowns build their class list dynamically and carry no
-  # ml-auto). Fails loudly when absent (the caller's assertions would
-  # otherwise be vacuous on "").
+  # <details class="dropdown dropdown-end dropdown-top ml-auto"> on the page
+  # (the layout's theme-toggle dropdowns build their class list dynamically
+  # and carry no ml-auto; dropdown-top opens the menu upward since it sits at
+  # the bottom of the page). Fails loudly when absent (the caller's assertions
+  # would otherwise be vacuous on "").
   defp overflow_menu(html) do
-    case Regex.run(~r{<details class="dropdown dropdown-end ml-auto">.*?</details>}s, html) do
+    case Regex.run(~r{<details class="dropdown dropdown-end dropdown-top ml-auto">.*?</details>}s, html) do
       [menu] -> menu
       nil -> flunk("expected the overflow menu <details> to be rendered")
     end
