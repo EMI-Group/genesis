@@ -57,19 +57,23 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
       </div>
 
-      <%!-- Row 2: meta line (repo path, branch → merge target, task facts) --%>
+      <%!-- Row 2: meta line (repo path, branch → merge target, task facts).
+           Vertical rhythm: every text span shares `leading-none` so the boxed
+           chips (symmetric py-0.5) and the bare mono/sans spans all center on
+           the same optical line. Machine-ish values are `font-mono`; only the
+           human words (task type label, relative times) stay sans. --%>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm text-base-content/70">
         <%= if @repo_path do %>
           <span class="flex items-center gap-1.5 min-w-0" title={@repo_path}>
             <.icon name="hero-folder" class="size-4 shrink-0" />
-            <span class="font-mono truncate">{@repo_path}</span>
+            <span class="font-mono truncate leading-none">{@repo_path}</span>
           </span>
         <% end %>
         <%= if @branch_name do %>
           <span class="flex items-center gap-1.5 min-w-0">
             <.icon name="hero-code-bracket-square" class="size-4 shrink-0" />
             <span
-              class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 truncate max-w-[10rem]"
+              class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 leading-none truncate max-w-[16rem]"
               title={@branch_name}
             >
               {@branch_name}
@@ -80,7 +84,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <span class="flex items-center gap-1.5 min-w-0">
             <.icon name="hero-arrow-right" class="size-3.5 shrink-0 text-base-content/50" />
             <span
-              class="font-mono truncate max-w-[10rem] text-base-content/60"
+              class="font-mono leading-none truncate max-w-[16rem] text-base-content/60"
               title={@merge_target}
             >
               {@merge_target}
@@ -90,7 +94,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <%= if @commit_sha do %>
           <span class="flex items-center gap-1.5 min-w-0" title={@commit_sha}>
             <.icon name="hero-code-bracket" class="size-4 shrink-0" />
-            <span class="font-mono bg-base-200 rounded-md px-1.5 py-0.5">{String.slice(
+            <span class="font-mono bg-base-200 rounded-md px-1.5 py-0.5 leading-none">{String.slice(
               @commit_sha,
               0,
               7
@@ -99,30 +103,30 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @task_type do %>
           <%!-- zh_CN: 任务类型（genesis/evolve） --%>
-          <span>{String.capitalize(to_string(@task_type))}</span>
+          <span class="leading-none">{String.capitalize(to_string(@task_type))}</span>
         <% end %>
         <%= if @task_id do %>
-          <span class="font-mono" title={@task_id}>{@task_id}</span>
+          <span class="font-mono leading-none" title={@task_id}>{@task_id}</span>
         <% end %>
         <%= if @model_id do %>
           <%!-- zh_CN: LLM 模型配置 id --%>
-          <span class="font-mono" title={@model_id}>{@model_id}</span>
+          <span class="font-mono leading-none" title={@model_id}>{@model_id}</span>
         <% end %>
         <%= if @agent_count do %>
-          <span class="flex items-center gap-1.5">
+          <span class="flex items-center gap-1.5 leading-none">
             <.icon name="hero-user-group" class="size-4 shrink-0" />
             <%!-- zh_CN: 智能体数量 --%>
             {format_number(@agent_count)}
           </span>
         <% end %>
         <%= if @started_at do %>
-          <span>{relative_time(@started_at)}</span>
+          <span class="leading-none">{relative_time(@started_at)}</span>
         <% end %>
         <%= if @started_at && @finished_at do %>
           <.icon name="hero-arrow-right" class="size-3.5 shrink-0 text-base-content/50" />
         <% end %>
         <%= if @finished_at do %>
-          <span>{relative_time(@finished_at)}</span>
+          <span class="leading-none">{relative_time(@finished_at)}</span>
         <% end %>
       </div>
 
@@ -204,12 +208,15 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         </span>
         <div class="ml-auto flex items-center gap-2 shrink-0 min-w-0">
           <%= if @model_id || @finished_at do %>
+            <%!-- Meta strip: model id and relative time share font-mono +
+                 leading-none so they sit on one optical line (no baseline
+                 drift between mono metrics and sans text). --%>
             <div class="hidden sm:flex items-center gap-2 text-xs text-base-content/60 min-w-0">
               <%= if @model_id do %>
-                <span class="font-mono truncate" title={@model_id}>{@model_id}</span>
+                <span class="font-mono truncate leading-none" title={@model_id}>{@model_id}</span>
               <% end %>
               <%= if @finished_at do %>
-                <span>{relative_time(@finished_at)}</span>
+                <span class="font-mono leading-none">{relative_time(@finished_at)}</span>
               <% end %>
             </div>
           <% end %>
@@ -263,33 +270,87 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   end
 
   # ---------------------------------------------------------------------------
-  # objective_section/1 — Subdued card showing the original objective/prompt
+  # objective_section/1 — The task's original objective as a dedicated card
+  # (rendered on its own "Objective" tab). Same header contract as
+  # agent_summary: Markdown/Raw join toggle + ClipboardCopy button.
   # ---------------------------------------------------------------------------
 
   attr(:objective, :string, default: nil)
+  attr(:objective_raw, :boolean, default: false)
 
   def objective_section(assigns) do
     ~H"""
-    <%= if @objective do %>
-      <div class="rounded-xl border border-base-300 bg-base-200/30 p-4">
-        <div class="flex items-start gap-3">
-          <div class="size-8 rounded-lg bg-base-content/5 text-base-content/60 flex items-center justify-center shrink-0">
-            <.icon name="hero-bullseye" class="size-4" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <h3 class="text-xs uppercase tracking-wide text-base-content/60 mb-1">
-              <%!-- zh_CN: 目标 — 提交给智能体的任务目标 --%>
-              {gettext("Objective")}
-            </h3>
-            <div class="max-h-72 overflow-y-auto">
-              <p class="text-sm text-base-content/85 whitespace-pre-wrap break-words">
-                {@objective}
-              </p>
+    <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
+      <%!-- header strip --%>
+      <div class="flex items-center gap-3 px-4 py-3 border-b border-base-300 bg-base-200/40 min-w-0">
+        <div class="size-8 rounded-lg bg-base-content/5 text-base-content/60 flex items-center justify-center shrink-0">
+          <.icon name="hero-bullseye" class="size-4" />
+        </div>
+        <span class="font-semibold text-base-content/85 shrink-0">
+          <%!-- zh_CN: 目标 — 提交给智能体的任务目标 --%>
+          {gettext("Objective")}
+        </span>
+        <div class="ml-auto flex items-center gap-1 shrink-0">
+          <%!-- Controls render only when there is something to show/copy. --%>
+          <%= if @objective not in [nil, ""] do %>
+            <div class="join">
+              <button
+                class={["join-item btn btn-xs", !@objective_raw && "btn-active btn-primary"]}
+                phx-click="toggle_objective_view"
+                phx-value-mode="markdown"
+                title={gettext("Rendered Markdown")}
+              >
+                <.icon name="hero-document-text" class="size-3.5" />
+                {gettext("Markdown")}
+              </button>
+              <button
+                class={["join-item btn btn-xs", @objective_raw && "btn-active btn-primary"]}
+                phx-click="toggle_objective_view"
+                phx-value-mode="raw"
+                title={gettext("Raw Text")}
+              >
+                <.icon name="hero-code-bracket" class="size-3.5" />
+                {gettext("Raw")}
+              </button>
             </div>
-          </div>
+            <%!-- zh_CN: 复制目标文本 --%>
+            <button
+              id="objective-copy-btn"
+              class="btn btn-ghost btn-xs btn-square"
+              phx-hook="ClipboardCopy"
+              data-content={@objective}
+              title={gettext("Copy objective")}
+            >
+              <.icon name="hero-clipboard" class="size-3.5" />
+            </button>
+          <% end %>
         </div>
       </div>
-    <% end %>
+      <%!-- body --%>
+      <div class="px-4 py-4 sm:px-5">
+        <%!-- LoadData normalizes a missing objective to "" (never nil) — the
+             empty state covers both. --%>
+        <%= if @objective in [nil, ""] do %>
+          <.icon name="hero-bullseye" class="size-10 text-base-content/50 mx-auto mb-3" />
+          <p class="text-sm text-base-content/70 text-center">
+            <%!-- zh_CN: 该任务没有记录目标文本 --%>
+            {gettext("No objective recorded for this task.")}
+          </p>
+        <% else %>
+          <%= if @objective_raw do %>
+            <%!-- The <pre> must stay single-line: whitespace-pre-wrap renders any
+                 leading indentation from a formatter-wrapped line as visible text. --%>
+            <pre class="text-xs sm:text-sm whitespace-pre-wrap break-words font-mono bg-base-200/30 p-4 rounded-lg border border-base-200">{@objective}</pre>
+          <% else %>
+            <div class="max-h-[32rem] overflow-y-auto">
+              <div class="md-content text-sm leading-relaxed">
+                {raw(EvoDash.MarkdownRender.render(@objective))}
+              </div>
+            </div>
+          <% end %>
+        <% end %>
+      </div>
+    </div>
     """
   end
 

@@ -117,8 +117,6 @@ defmodule EvoDashWeb.ReviewLive do
                         finished_at={@finished_at}
                       />
 
-                      <EvoDashWeb.ReviewComponents.objective_section objective={@objective} />
-
                       <EvoDashWeb.ReviewComponents.diff_stats_bar
                         files_count={stats.files_count}
                         additions={stats.additions}
@@ -153,6 +151,16 @@ defmodule EvoDashWeb.ReviewLive do
                         export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
                       />
                       <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
+                    </div>
+                  <% @review_tab == :objective -> %>
+                    <%!-- Readability column hosting the objective card
+                         (moved off the conversation pane; markdown/raw toggle
+                         + copy live inside the component header). --%>
+                    <div class="max-w-4xl mx-auto w-full space-y-4">
+                      <EvoDashWeb.ReviewComponents.objective_section
+                        objective={@objective}
+                        objective_raw={@objective_raw}
+                      />
                     </div>
                   <% @review_tab == :files_changed -> %>
                     <!-- FULL WIDTH (no max-w): the split layout owns the row;
@@ -274,6 +282,7 @@ defmodule EvoDashWeb.ReviewLive do
         task_status: nil,
         model_id: nil,
         summary_raw: false,
+        objective_raw: false,
         started_at: nil,
         finished_at: nil,
         merge_targets: [],
@@ -327,6 +336,10 @@ defmodule EvoDashWeb.ReviewLive do
 
   def handle_event("switch_tab", %{"tab" => "files_changed"}, socket) do
     {:noreply, assign(socket, :review_tab, :files_changed)}
+  end
+
+  def handle_event("switch_tab", %{"tab" => "objective"}, socket) do
+    {:noreply, assign(socket, :review_tab, :objective)}
   end
 
   def handle_event("switch_tab", %{"tab" => "commits"}, socket) do
@@ -434,6 +447,11 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("toggle_summary_view", %{"mode" => mode}, socket) do
     {:noreply, assign(socket, :summary_raw, mode == "raw")}
+  end
+
+  @impl true
+  def handle_event("toggle_objective_view", %{"mode" => mode}, socket) do
+    {:noreply, assign(socket, :objective_raw, mode == "raw")}
   end
 
   @impl true

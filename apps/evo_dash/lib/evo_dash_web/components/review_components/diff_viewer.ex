@@ -288,7 +288,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
               name="repo_id"
               phx-change="switch_repo"
               aria-label={gettext("Repository")}
-              class="select select-sm select-bordered rounded-lg max-w-56"
+              class="select select-sm rounded-lg border-base-300 max-w-56"
             >
               <option
                 :for={repo <- @repos}

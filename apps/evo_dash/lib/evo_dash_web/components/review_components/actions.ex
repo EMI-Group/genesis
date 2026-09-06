@@ -42,7 +42,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             <select
               name="repo_id"
               phx-change="switch_repo"
-              class="select select-sm select-bordered rounded-lg max-w-56"
+              class="select select-sm rounded-lg border-base-300 max-w-56"
               aria-label={gettext("Repository")}
             >
               <option
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
                 <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Merge into")}</span>
                 <select
                   name="target_branch"
-                  class="select select-sm select-bordered rounded-lg"
+                  class="select select-sm rounded-lg border-base-300"
                   aria-label={gettext("Merge into branch")}
                   phx-value-repo_id={@repo_id}
                 >
@@ -223,7 +223,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   defp continue_task_button(assigns) do
     ~H"""
     <button
-      class="btn btn-sm btn-outline rounded-lg gap-1.5"
+      class="btn btn-sm rounded-lg gap-1.5 bg-base-200/60 hover:bg-base-200 border-0"
       phx-click="resume"
       disabled={@loading}
     >
