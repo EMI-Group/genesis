@@ -8,7 +8,7 @@ Client-side JavaScript for the EvoDash dashboard: the main entry (`app.js`, Live
 
 - `./hooks/` → Standalone LiveView hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`) + `hooks/CONTEXT.md`
 - `app.js` → Main entry — LiveSocket, inline hooks (`TauriDetect`, `DesktopQuit`, `DesktopQuitConfirm`, `UpdateStatus`, `PlatformDetect`, `PathAutocomplete`, `DirectoryPicker`, `FilePicker`, `Guide`, `StatePersistence`, `BrowserNotifications`, `AutoClearFlash`, `ClipboardCopy`, `AgentHistoryAutoScroll`, `DialogModal`, `FocusInput`, `PaletteList`), topbar wiring, guide-client-id sessionStorage
-- `highlight_setup.js` → Exposes the vendored highlight.js instance as `window.hljs` (module side effect — must evaluate BEFORE the cdnjs language-pack IIFE imports; load-order contract in `../assets/CONTEXT.md`)
+- `highlight_setup.js` → Exposes the vendored highlight.js instance as `window.hljs` (module side effect — must evaluate BEFORE the cdnjs language-pack IIFE imports in `app.js`; load-order contract + pack list in `../assets/CONTEXT.md`)
 
 ## Constraints
 

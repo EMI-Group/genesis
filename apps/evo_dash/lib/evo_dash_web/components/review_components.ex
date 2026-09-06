@@ -65,7 +65,7 @@ defmodule EvoDashWeb.ReviewComponents do
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
       >
-        <.icon name="hero-bullseye" class="size-4" />
+        <.icon name="hero-chat-bubble-bottom-center-text" class="size-4" />
         <%!-- zh_CN: 目标 — 提交给智能体的任务目标（本任务最初指令文本） --%>
         {gettext("Objective")}
       </button>

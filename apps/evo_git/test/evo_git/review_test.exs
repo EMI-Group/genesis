@@ -81,6 +81,54 @@ defmodule EvoGit.ReviewTest do
     assert file.language == "elixir"
   end
 
+  test "language_for_file/1 stamps tier-2 languages and falls back to text" do
+    # Tier-2 languages — at least one representative extension per language.
+    assert Review.language_for_file("default.nix") == "nix"
+    assert Review.language_for_file("mod.erl") == "erlang"
+    assert Review.language_for_file("mod.hrl") == "erlang"
+    assert Review.language_for_file("Main.hs") == "haskell"
+    assert Review.language_for_file("Main.lhs") == "haskell"
+    assert Review.language_for_file("core.clj") == "clojure"
+    assert Review.language_for_file("core.cljs") == "clojure"
+    assert Review.language_for_file("core.cljc") == "clojure"
+    assert Review.language_for_file("data.edn") == "clojure"
+    assert Review.language_for_file("App.scala") == "scala"
+    assert Review.language_for_file("main.jl") == "julia"
+    assert Review.language_for_file("main.nim") == "nim"
+    assert Review.language_for_file("main.cr") == "crystal"
+    assert Review.language_for_file("Main.elm") == "elm"
+    assert Review.language_for_file("build.gradle") == "groovy"
+    assert Review.language_for_file("script.groovy") == "groovy"
+    assert Review.language_for_file("deploy.ps1") == "powershell"
+    assert Review.language_for_file("module.psm1") == "powershell"
+    assert Review.language_for_file("manifest.psd1") == "powershell"
+    assert Review.language_for_file("main.ml") == "ocaml"
+    assert Review.language_for_file("main.mli") == "ocaml"
+    assert Review.language_for_file("Program.fs") == "fsharp"
+    assert Review.language_for_file("Program.fsi") == "fsharp"
+    assert Review.language_for_file("Script.fsx") == "fsharp"
+    assert Review.language_for_file("init.lisp") == "lisp"
+    assert Review.language_for_file("init.lsp") == "lisp"
+    assert Review.language_for_file("init.cl") == "lisp"
+    assert Review.language_for_file("init.scm") == "scheme"
+    assert Review.language_for_file("init.ss") == "scheme"
+  end
+
+  test "language_for_file/1 keeps existing tier-1 stamps and falls back to text" do
+    assert Review.language_for_file("app.ex") == "elixir"
+    assert Review.language_for_file("app.js") == "javascript"
+    assert Review.language_for_file("app.tsx") == "tsx"
+    assert Review.language_for_file("app.py") == "python"
+    assert Review.language_for_file("app.rs") == "rust"
+    assert Review.language_for_file("app.zig") == "zig"
+
+    # Ambiguous / unmapped extensions fall through to text.
+    assert Review.language_for_file("README") == "text"
+    assert Review.language_for_file("notes.txt") == "text"
+    assert Review.language_for_file("sound.sc") == "text"
+    assert Review.language_for_file("objc.m") == "text"
+  end
+
   test "load_review_metadata/2 handles added and deleted files", %{tmp_dir: tmp_dir} do
     {:ok, base_sha} = commit_file(tmp_dir, "keep.txt", "keep\n", "Initial commit")
 

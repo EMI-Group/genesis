@@ -51,19 +51,21 @@ defmodule EvoDashWeb.ReviewLive do
                    (the back link lives inside commit_detail_header). The
                    :commit route keeps the legacy FLAT path-keyed diff state —
                    the tree map is read directly, same convention. -->
-              <EvoDashWeb.ReviewComponents.commit_detail_header
-                commit={@commit_header}
-                back_url={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
-                task_title={@title}
-              />
-              <EvoDashWeb.ReviewComponents.commit_diff_layout
-                files={@commit_data.files}
-                expanded_files={@expanded_files}
-                selected_file={@selected_file}
-                file_context_levels={@file_context_levels}
-                expanded_dirs={@tree_expanded_dirs}
-                file_filter={@file_filter}
-              />
+              <div class="pb-8">
+                <EvoDashWeb.ReviewComponents.commit_detail_header
+                  commit={@commit_header}
+                  back_url={with_node_param(~p"/review/#{@task_id}", @current_node_id)}
+                  task_title={@title}
+                />
+                <EvoDashWeb.ReviewComponents.commit_diff_layout
+                  files={@commit_data.files}
+                  expanded_files={@expanded_files}
+                  selected_file={@selected_file}
+                  file_context_levels={@file_context_levels}
+                  expanded_dirs={@tree_expanded_dirs}
+                  file_filter={@file_filter}
+                />
+              </div>
             <% else %>
               <%!-- Aggregate stats across ALL review repos (primary + foreign):
                    the header stat row, the tab count badges, and the
@@ -73,7 +75,7 @@ defmodule EvoDashWeb.ReviewLive do
               <% stats = aggregate_stats(@review_repos) %>
               <% primary = Enum.find(@review_repos, &(&1.repo_id == "primary")) %>
 
-              <div class="space-y-4">
+              <div class="space-y-4 pb-8">
                 <EvoDashWeb.ReviewComponents.page_header
                   back_url={with_node_param(~p"/projects", @current_node_id)}
                   title={@title}

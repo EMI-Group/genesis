@@ -24,15 +24,42 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/evo_dash"
 import topbar from "../vendor/topbar"
-// highlight.js + language packs. The cdnjs language packs are IIFEs that
-// self-register on the GLOBAL `hljs` (no ES exports), so highlight_setup.js
-// must evaluate BEFORE the pack import below (ESM evaluation is depth-first
-// in import order) — it exposes the imported instance as `window.hljs`.
-// The pack then registers "elixir" on that same instance, which the
-// DiffViewer hook also imports (bundler dedup → one shared instance).
+// highlight.js + language packs. The vendored core is the FULL 11.11.1
+// default build, which bundles the ~35-language common set. The cdnjs
+// language packs below are IIFEs that self-register on the GLOBAL `hljs`
+// (no ES exports), so highlight_setup.js must evaluate BEFORE the pack
+// imports (ESM evaluation is depth-first in import order) — it exposes the
+// imported instance as `window.hljs`. The packs then register their
+// languages on that same instance, which the DiffViewer hook also imports
+// (bundler dedup → one shared instance).
+//
+// Tier-2 set (16 languages) covers the "second tier" of server-stamped lumis
+// names: 15 official cdnjs 11.11.1 packs (nix, erlang, haskell, clojure,
+// scala, julia, nim, crystal, elm, groovy, powershell, ocaml, fsharp, lisp,
+// scheme) + zig from the third-party highlightjs-zig grammar adapted to the
+// same self-registering IIFE form (no official zig grammar exists). All stay
+// after ./highlight_setup.js; order among them is irrelevant.
 import hljs from "../vendor/highlight.min.js"
 import "./highlight_setup.js"
 import "../vendor/highlight-elixir.min.js"
+import "../vendor/highlight-dart.min.js"
+import "../vendor/highlight-dockerfile.min.js"
+import "../vendor/highlight-nix.min.js"
+import "../vendor/highlight-zig.min.js"
+import "../vendor/highlight-erlang.min.js"
+import "../vendor/highlight-haskell.min.js"
+import "../vendor/highlight-clojure.min.js"
+import "../vendor/highlight-scala.min.js"
+import "../vendor/highlight-julia.min.js"
+import "../vendor/highlight-nim.min.js"
+import "../vendor/highlight-crystal.min.js"
+import "../vendor/highlight-elm.min.js"
+import "../vendor/highlight-groovy.min.js"
+import "../vendor/highlight-powershell.min.js"
+import "../vendor/highlight-ocaml.min.js"
+import "../vendor/highlight-fsharp.min.js"
+import "../vendor/highlight-lisp.min.js"
+import "../vendor/highlight-scheme.min.js"
 import SidebarCollapse from "./hooks/sidebar_collapse.js"
 import NodeSwitchFade from "./hooks/node_switch_fade.js"
 import AdaptiveInput from "./hooks/adaptive_input.js"
