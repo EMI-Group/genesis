@@ -677,6 +677,17 @@ defmodule EvoGit.Config.Schema.Definitions do
           sub_category: nil,
           description:
             "Dashboard UI accent color (GNOME/libadwaita palette): blue, teal, green, yellow, orange, red, pink, purple, brown, or slate."
+        },
+        # ── Data / State Directory ─────────────────────────────────────────
+        %{
+          key_path: [:data, :dir],
+          type: :string,
+          default: nil,
+          validation: [],
+          category: :data,
+          sub_category: nil,
+          description:
+            "Optional absolute path override for the runtime data/state directory (tasks.sqlite, logs, caches). Empty/nil = platform default ($XDG_DATA_HOME/genesis or equivalent). Takes effect at next boot."
         }
       ]
   end

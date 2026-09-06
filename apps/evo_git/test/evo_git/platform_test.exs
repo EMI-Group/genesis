@@ -1,5 +1,6 @@
 defmodule EvoGit.PlatformTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+  import ExUnit.CaptureLog
   alias EvoGit.Platform
 
   describe "absolute_path?/1" do
@@ -389,6 +390,148 @@ defmodule EvoGit.PlatformTest do
         Platform.sandbox_exec_available?() -> assert backend == :sandbox_exec
         true -> assert backend == :none
       end
+    end
+  end
+
+  describe "data_dir/0 with [data] dir config" do
+    # These tests flip XDG_CONFIG_HOME / XDG_DATA_HOME and write tmp
+    # config.toml files, so this module is async: false. Each tmp dir is
+    # unique, and the Config file cache is keyed per path, so env flips
+    # isolate cleanly.
+
+    # Points XDG_CONFIG_HOME at a fresh tmp dir and (optionally) writes a
+    # config.toml there; restores the environment and cleans up afterwards.
+    defp with_tmp_config(nil, fun), do: with_tmp_config("", fun)
+
+    defp with_tmp_config(contents, fun) when is_binary(contents) do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-platform-config-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(Path.join(tmp_xdg, "genesis"))
+
+      if contents != "" do
+        File.write!(Path.join([tmp_xdg, "genesis", "config.toml"]), contents)
+      end
+
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      try do
+        fun.()
+      after
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end
+    end
+
+    # Temporarily points XDG_DATA_HOME at a fresh tmp dir (the fallback
+    # default's source on Linux) and restores it afterwards.
+    defp with_tmp_data_home(fun) do
+      original_data = System.get_env("XDG_DATA_HOME")
+
+      tmp_data =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-platform-data-#{System.unique_integer([:positive])}"
+        )
+
+      System.put_env("XDG_DATA_HOME", tmp_data)
+
+      try do
+        fun.(tmp_data)
+      after
+        if original_data do
+          System.put_env("XDG_DATA_HOME", original_data)
+        else
+          System.delete_env("XDG_DATA_HOME")
+        end
+      end
+    end
+
+    # The platform-default data dir formula for the CURRENT OS, mirroring
+    # `base_dir/3` semantics (data_dir("genesis") is pure OS + env).
+    defp default_data_dir do
+      case Platform.os() do
+        os when os in [:linux, :unknown] ->
+          Path.join(
+            System.get_env("XDG_DATA_HOME", Path.join(System.user_home!(), ".local/share")),
+            "genesis"
+          )
+
+        :macos ->
+          Path.join([System.user_home!(), "Library", "Application Support", "genesis"])
+
+        :windows ->
+          appdata = System.get_env("APPDATA")
+          base = if appdata && appdata != "", do: appdata, else: System.user_home!()
+          Path.join(base, "genesis")
+      end
+    end
+
+    test "returns the configured [data] dir absolute path" do
+      target =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-relocated-#{System.unique_integer([:positive])}"
+        )
+
+      # Forward slashes keep the TOML basic string valid on every OS
+      # (a Windows backslash would be an invalid escape).
+      toml_dir = String.replace(target, "\\", "/")
+
+      with_tmp_config("[data]\ndir = \"#{toml_dir}\"\n", fn ->
+        assert Platform.data_dir() == Path.expand(target)
+      end)
+    end
+
+    test "returns the platform default when no [data] dir key is set" do
+      # A config.toml exists but carries no [data] section.
+      with_tmp_config("[user]\ngithub_username = \"test\"\n", fn ->
+        with_tmp_data_home(fn _tmp_data ->
+          # XDG_DATA_HOME must not influence macOS/Windows defaults; the
+          # formula below mirrors base_dir/3 per OS.
+          assert Platform.data_dir() == default_data_dir()
+        end)
+      end)
+    end
+
+    test "expands a ~/ home-relative [data] dir" do
+      with_tmp_config("[data]\ndir = \"~/some/subdir\"\n", fn ->
+        dir = Platform.data_dir()
+        normalized = String.replace(dir, "\\", "/")
+        assert String.ends_with?(normalized, "/some/subdir")
+        refute String.starts_with?(normalized, "~")
+      end)
+    end
+
+    test "ignores an invalid relative [data] dir, logs a warning, and falls back" do
+      with_tmp_config("[data]\ndir = \"relative/path\"\n", fn ->
+        with_tmp_data_home(fn _tmp_data ->
+          log =
+            capture_log(fn ->
+              assert Platform.data_dir() == default_data_dir()
+            end)
+
+          assert log =~ "[data] dir"
+        end)
+      end)
+    end
+
+    test "treats an empty-string [data] dir as unset (platform default)" do
+      with_tmp_config("[data]\ndir = \"\"\n", fn ->
+        with_tmp_data_home(fn _tmp_data ->
+          assert Platform.data_dir() == default_data_dir()
+        end)
+      end)
     end
   end
 end

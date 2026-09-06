@@ -6,6 +6,8 @@ defmodule EvoGit.Platform do
   platform-specific behavior throughout EvoGit.
   """
 
+  require Logger
+
   @type os :: :linux | :macos | :windows | :unknown
 
   @doc """
@@ -121,12 +123,46 @@ defmodule EvoGit.Platform do
   @doc """
   Returns the platform-appropriate data directory for EvoGit.
 
+  Honors the `[:data, :dir]` config.toml override (see `EvoGit.Config`) when
+  set to a non-empty absolute path — that path relocates the runtime
+  data/state directory (tasks.sqlite, logs, caches). A leading `~` is
+  expanded against the user's home directory. Invalid values (nil, empty
+  string, non-binary, or a non-absolute path after `~` handling) log a
+  warning and fall back to the platform default:
+
   - **Linux**: `$XDG_DATA_HOME/genesis` (defaults to `~/.local/share/genesis`)
   - **macOS**: `~/Library/Application Support/genesis`
   - **Windows**: `%APPDATA%/genesis` (defaults to `~/genesis` if APPDATA not set)
   """
   @spec data_dir() :: String.t()
-  def data_dir, do: data_dir("genesis")
+  def data_dir do
+    case EvoGit.Config.resolve([:data, :dir]) do
+      dir when is_binary(dir) and dir != "" ->
+        if data_dir_override?(dir) do
+          safe_expand(dir)
+        else
+          Logger.warning(
+            "Ignoring invalid [data] dir config value #{inspect(dir)}: expected an absolute " <>
+              "path (or a ~/ home-relative path). Falling back to the platform default data " <>
+              "directory."
+          )
+
+          data_dir("genesis")
+        end
+
+      _ ->
+        data_dir("genesis")
+    end
+  end
+
+  # A [data] dir override is acceptable only when it is an absolute path or a
+  # `~`-prefixed home-relative path (`Path.expand/1`-style, via `safe_expand/1`).
+  # Relative paths are rejected up front — expanding them against the process
+  # CWD would silently relocate the data dir to an arbitrary location.
+  defp data_dir_override?(dir) do
+    absolute_path?(dir) or dir == "~" or String.starts_with?(dir, "~/") or
+      String.starts_with?(dir, "~\\")
+  end
 
   @doc """
   Returns the platform-appropriate data directory for the given application name.

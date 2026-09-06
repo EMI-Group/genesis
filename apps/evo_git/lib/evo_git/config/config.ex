@@ -88,6 +88,13 @@ defmodule EvoGit.Config do
       # Port the web dashboard listens on. Must be between 1024 and 65535.
       listen_port = 9999
 
+      [data]
+      # Optional: relocate the runtime data/state directory (tasks.sqlite,
+      # logs, caches) to an absolute path (or ~/ home-relative path).
+      # Absent/nil = platform default ($XDG_DATA_HOME/genesis or equivalent).
+      # Takes effect at next boot.
+      dir = "/abs/path/to/data"
+
       [tools.search]
       enabled = false   # Enable web search tool for agents
       # provider = "tavily"           # Search service provider
