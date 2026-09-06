@@ -122,6 +122,14 @@ defmodule EvoGit.ReviewTest do
     assert Review.language_for_file("app.rs") == "rust"
     assert Review.language_for_file("app.zig") == "zig"
 
+    # Markdown family — the canonical extension plus common alternatives and
+    # the uppercase case-variant all stamp "markdown".
+    assert Review.language_for_file("README.md") == "markdown"
+    assert Review.language_for_file("README.markdown") == "markdown"
+    assert Review.language_for_file("guide.mdx") == "markdown"
+    assert Review.language_for_file("notes.mkd") == "markdown"
+    assert Review.language_for_file("README.MD") == "markdown"
+
     # Ambiguous / unmapped extensions fall through to text.
     assert Review.language_for_file("README") == "text"
     assert Review.language_for_file("notes.txt") == "text"
