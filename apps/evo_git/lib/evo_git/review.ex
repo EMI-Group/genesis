@@ -497,7 +497,10 @@ defmodule EvoGit.Review do
 
   @doc """
   Detects the syntax-highlighting language name for a file (consumed by the
-  dashboard's frontend highlighter).
+  dashboard's frontend highlighter). Covers popular languages plus a second
+  tier of languages (Nix, Erlang, Haskell, Clojure, Scala, Julia, Nim,
+  Crystal, Elm, Groovy, PowerShell, OCaml, F#, Lisp, Scheme); unknown
+  extensions fall back to "text".
   """
   def language_for_file(path) do
     case Path.extname(path) do
@@ -541,6 +544,35 @@ defmodule EvoGit.Review do
       ".heex" -> "html"
       ".leex" -> "html"
       ".eex" -> "html"
+      ".nix" -> "nix"
+      ".erl" -> "erlang"
+      ".hrl" -> "erlang"
+      ".hs" -> "haskell"
+      ".lhs" -> "haskell"
+      ".clj" -> "clojure"
+      ".cljs" -> "clojure"
+      ".cljc" -> "clojure"
+      ".edn" -> "clojure"
+      ".scala" -> "scala"
+      ".jl" -> "julia"
+      ".nim" -> "nim"
+      ".cr" -> "crystal"
+      ".elm" -> "elm"
+      ".groovy" -> "groovy"
+      ".gradle" -> "groovy"
+      ".ps1" -> "powershell"
+      ".psm1" -> "powershell"
+      ".psd1" -> "powershell"
+      ".ml" -> "ocaml"
+      ".mli" -> "ocaml"
+      ".fs" -> "fsharp"
+      ".fsi" -> "fsharp"
+      ".fsx" -> "fsharp"
+      ".lisp" -> "lisp"
+      ".lsp" -> "lisp"
+      ".cl" -> "lisp"
+      ".scm" -> "scheme"
+      ".ss" -> "scheme"
       _ -> "text"
     end
   end
