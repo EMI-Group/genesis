@@ -474,6 +474,66 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlowTest do
     end
   end
 
+  describe "repos_from_task_data/2 — node-aware conversion of persisted task repos" do
+    # repos_from_task_data/2 converts `task.opts[:foreign_repos]` (the shape it
+    # takes after a Store/Codec round trip or when read from a remote task via
+    # NodeContext.get_task/2: %ForeignRepo{} structs and/or string-/atom-keyed
+    # maps) into structs, node-aware via build_foreign_repo/4. Unlike a RAW
+    # build_foreign_repo remote call (which keeps a string "true" writable
+    # verbatim), repos_from_task_data itself normalizes "true" → true BEFORE
+    # delegating, so both tolerant inputs land as boolean writable.
+    test "remote node keeps roots verbatim (incl. Windows) and threads writable/base_sha" do
+      repos =
+        ProjectFlow.repos_from_task_data(@remote_node, [
+          %{
+            "id" => "win",
+            "root" => "D:\\stuff\\repo",
+            "description" => "w",
+            "writable" => "true",
+            "base_sha" => "abc123"
+          },
+          %{"id" => "posix", "path" => "/srv/repo2", "writable" => true}
+        ])
+
+      # Sorted primary-first-then-id: posix < win.
+      assert [
+               %ForeignRepo{
+                 id: "posix",
+                 root: "/srv/repo2",
+                 writable: true,
+                 base_sha: nil,
+                 description: nil
+               },
+               %ForeignRepo{
+                 id: "win",
+                 root: "D:\\stuff\\repo",
+                 writable: true,
+                 base_sha: "abc123",
+                 description: "w"
+               }
+             ] = repos
+    end
+
+    test "sorts primary first, passes structs through, drops unparseable entries" do
+      struct_repo = %ForeignRepo{id: "primary", root: "/a/b", description: "p"}
+      assert ProjectFlow.repos_from_task_data(@remote_node, [struct_repo]) == [struct_repo]
+
+      assert ProjectFlow.repos_from_task_data(@remote_node, [
+               %{"id" => "b", "root" => "/b"},
+               %{"id" => "primary", "root" => "/p"}
+             ])
+             |> Enum.map(& &1.id) == ["primary", "b"]
+
+      assert ProjectFlow.repos_from_task_data(@remote_node, [
+               %{"id" => "x", "root" => 42},
+               "junk",
+               %{}
+             ]) == []
+
+      assert ProjectFlow.repos_from_task_data(@remote_node, []) == []
+    end
+  end
+
   describe "Project.load_foreign_repos/3 — node-aware genesis.toml loading" do
     test "remote node keeps the POSIX root verbatim (host-OS independent)" do
       config = %{

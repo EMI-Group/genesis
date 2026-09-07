@@ -889,6 +889,89 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "Review Not Available"
       assert html =~ "Task not found"
     end
+
+    test "resume on a remote review navigates to /projects with project + node (URL-driven landing)",
+         %{
+           conn: conn
+         } do
+      # The task does not exist on the (unreachable) remote node, so the real
+      # async load fails fast with :nodedown. Inject a VALID load result
+      # carrying a primary review-repo entry (branch_exists: false,
+      # merge_targets: [] so MergeCheck.maybe_start does NOT spawn an async
+      # check — fully deterministic), then click Continue task: the resume
+      # handler must still navigate to /projects with the project/commit/resume
+      # query params PLUS a manual `&node=` suffix (URL-driven landing whose
+      # activation is covered by projects_live_test).
+      id = "review-test-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Review Test Target"
+        })
+
+      start_supervised!(
+        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+
+      # Flush the real async load (nodedown → error state) so the injected
+      # load result cannot be clobbered by a racing message.
+      flush_review_load(view)
+
+      remote_node = assigns(view)[:current_node]
+      assert remote_node != node()
+
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, "some-remote-task-id", remote_node, gen,
+         {:ok,
+          %{
+            review_repos: [
+              %{
+                repo_id: "primary",
+                repo_path: "/remote/repo/path",
+                branch_name: "evogit/test-branch",
+                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                base_sha: nil,
+                branch_exists: false,
+                review_data: nil,
+                commits: [],
+                merge_targets: [],
+                default_merge_target: nil,
+                merge_status: nil
+              }
+            ],
+            can_resume: true,
+            active_repo_id: "primary",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
+
+      # The resume handler builds the query with Keyword.put/3 (project FIRST —
+      # same key order as the local multi-repo resume tests) and appends the
+      # manual `&node=` suffix because current_node_id is non-nil.
+      render_click(view, "resume")
+
+      expected =
+        "/projects?" <>
+          Plug.Conn.Query.encode(
+            project: "/remote/repo/path",
+            starting_commit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            resume_from: "some-remote-task-id"
+          ) <>
+          "&node=" <> id
+
+      assert_redirect(view, expected)
+    end
   end
 
   describe "async review-data load" do
