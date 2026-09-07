@@ -1,7 +1,8 @@
 defmodule EvoGit.Agent.ContextBuilderTest do
   @moduledoc """
   Pure-function unit tests for `EvoGit.Agent.ContextBuilder`'s turn-tagging and
-  creation-time timestamp stamping helpers.
+  creation-time timestamp stamping helpers, plus its prompt section builders
+  (foreign-repos, repo-notes, and delegation-authority sections).
 
   Timestamps are Unix seconds (`System.system_time(:second)`). Idempotence
   assertions use deterministic pre-stamped values so they never race with `now`.
@@ -10,6 +11,7 @@ defmodule EvoGit.Agent.ContextBuilderTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ContextBuilder
+  alias EvoGit.Core.ForeignRepo
 
   # Distinctive past Unix-seconds value — far from any real `now`.
   @old_ts 1_600_000_000
@@ -208,6 +210,76 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       assert body =~ "## Git Submodules"
       assert body =~ "- `vendor/Sub`"
       assert body =~ "git submodule update --init"
+    end
+  end
+
+  describe "build_authority_section/1" do
+    test "repo_less: true always returns an empty string, even with a writable non-primary foreign repo" do
+      foreign_repos = [ForeignRepo.new("ref", "/tmp/ref", writable: true)]
+
+      assert ContextBuilder.build_authority_section(%{
+               parent_id: nil,
+               repo_less: true,
+               foreign_repos: foreign_repos
+             }) == ""
+    end
+
+    test "returns an empty string when there are no non-primary foreign repos" do
+      assert ContextBuilder.build_authority_section(%{
+               parent_id: nil,
+               repo_less: false,
+               foreign_repos: []
+             }) == ""
+
+      primary_only = [ForeignRepo.new("primary", "/tmp/primary")]
+
+      assert ContextBuilder.build_authority_section(%{
+               parent_id: nil,
+               repo_less: false,
+               foreign_repos: primary_only
+             }) == ""
+    end
+
+    test "root agent (nil parent_id) with non-primary foreign repos gets the ROOT block" do
+      # Primary-only + non-primary mixed list still yields the ROOT block.
+      foreign_repos = [
+        ForeignRepo.new("primary", "/tmp/primary"),
+        ForeignRepo.new("ref", "/tmp/ref", writable: true)
+      ]
+
+      section =
+        ContextBuilder.build_authority_section(%{
+          parent_id: nil,
+          repo_less: false,
+          foreign_repos: foreign_repos
+        })
+
+      assert section != ""
+      assert section =~ "ROOT agent"
+      assert section =~ "You MAY spawn write-capable"
+      assert section =~ "one at a time"
+      refute section =~ "NESTED"
+    end
+
+    test "nested agent (integer parent_id) with a non-primary foreign repo gets the NESTED block" do
+      foreign_repos = [
+        ForeignRepo.new("primary", "/tmp/primary"),
+        ForeignRepo.new("ref", "/tmp/ref", writable: true)
+      ]
+
+      section =
+        ContextBuilder.build_authority_section(%{
+          parent_id: 7,
+          repo_less: false,
+          foreign_repos: foreign_repos
+        })
+
+      assert section != ""
+      assert section =~ "NESTED agent"
+      assert section =~ "NOT the root agent"
+      assert section =~ "may NOT spawn write-capable"
+      assert section =~ "report the need back up to your parent agent"
+      refute section =~ "You MAY spawn write-capable"
     end
   end
 end
