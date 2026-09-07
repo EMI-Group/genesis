@@ -1683,6 +1683,190 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "multi-repo review — repo selector presence and switch semantics" do
+    # Pins the repo-selector fix: every repo <select name="repo_id"
+    # phx-change="switch_repo"> (merge box, Files-changed toolbar, Commits
+    # tab) is wrapped in its own <form phx-change="switch_repo"> so the event
+    # actually reaches ReviewLive.handle_event — a form-less input-level
+    # phx-change throws in phoenix_live_view's JS ("form events require the
+    # input to be inside a form"). These LiveView-level tests pin the
+    # server-side gating + handling: selector presence per tab, the
+    # %{"value" => repo_id} legacy form-less shape, and the @commits
+    # projection tracking active_repo_id.
+    setup do
+      task_id = seed_orphaned_review_task!()
+      {:ok, task_id: task_id}
+    end
+
+    test "multi-repo reviews render a repo selector on BOTH the Files-changed and Commits tabs",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)], [
+            commit_info("a", "Primary only commit")
+          ]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)], [
+            commit_info("c", "Foreign only commit")
+          ])
+        ])
+
+      # Files-changed tab: split_diff_layout renders its repo-selector toolbar
+      # (a <select name="repo_id"> inside <form phx-change="switch_repo">)
+      # whenever more than one review repo exists — one option per repo, the
+      # active repo's option preselected.
+      html = open_files_tab(view)
+      assert repo_select_state(html) == %{values: ["primary", "original"], selected: ["primary"]}
+
+      # Commits tab: commits_list renders the SAME gated selector above the
+      # commit card — the new multi-repo affordance on this tab.
+      html = open_commits_tab(view)
+      assert repo_select_state(html) == %{values: ["primary", "original"], selected: ["primary"]}
+    end
+
+    test "single-repo reviews render no repo selector on either tab even with diff/commit data",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
+      # Data present (files + commits) so the length gate is the ONLY thing
+      # suppressing the toolbar — 1 review repo → no selector anywhere.
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)], [
+            commit_info("a", "Primary only commit")
+          ])
+        ])
+
+      html = open_files_tab(view)
+      assert repo_select_state(html) == %{values: [], selected: []}
+      refute html =~ ~s(phx-change="switch_repo")
+
+      html = open_commits_tab(view)
+      assert repo_select_state(html) == %{values: [], selected: []}
+      refute html =~ ~s(phx-change="switch_repo")
+    end
+
+    test "legacy tasks (no repos key) render no repo selector on either tab", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      # The orphaned-path task is a legacy single-repo review (no `repos`
+      # key in its result → exactly one primary review repo) — the commits
+      # tab must stay selector-free too, not just the Files-changed toolbar.
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      assert length(assigns(view)[:review_repos]) == 1
+
+      html = open_commits_tab(view)
+      assert repo_select_state(html) == %{values: [], selected: []}
+      refute html =~ ~s(phx-change="switch_repo")
+
+      html = open_files_tab(view)
+      assert html =~ "No diff data available for this review."
+      assert repo_select_state(html) == %{values: [], selected: []}
+      refute html =~ ~s(phx-change="switch_repo")
+    end
+
+    test "switch_repo with the form-less %{\"value\" => repo_id} shape switches repos and resets the file filter",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)], [
+            commit_info("a", "Primary only commit")
+          ]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)], [
+            commit_info("c", "Foreign only commit")
+          ])
+        ])
+
+      open_files_tab(view)
+
+      # Set a non-empty filter, then switch via the legacy shape.
+      render_change(view, "filter_files", %{"filter" => "one"})
+      assert assigns(view)[:file_filter] == "one"
+      assert assigns(view)[:active_repo_id] == "primary"
+
+      html = render_change(view, "switch_repo", %{"value" => "original"})
+
+      # Same semantics as the %{"repo_id" => ...} form shape: active id
+      # updated, file filter reset, and the flat projections re-pointed at
+      # the newly active repo.
+      assert assigns(view)[:active_repo_id] == "original"
+      assert assigns(view)[:file_filter] == ""
+      assert Enum.map(assigns(view)[:review_data].files, & &1.path) == ["src/two.rs"]
+      assert Enum.map(assigns(view)[:commits], & &1.message) == ["Foreign only commit"]
+
+      # The rendered selector reflects the new active repo.
+      assert repo_select_state(html) == %{values: ["primary", "original"], selected: ["original"]}
+    end
+
+    test "switch_repo with an unknown repo id in the %{\"value\" => ...} shape is a harmless no-op",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)])
+        ])
+
+      assert assigns(view)[:active_repo_id] == "primary"
+
+      # The Files-changed tab is where the toolbar <select> renders with the
+      # branch_exists: false fixture (the merge box gates on branch_exists).
+      open_files_tab(view)
+
+      # "ghost" is not whitelisted against review_repos — the handler returns
+      # the socket unchanged (no crash, no state mutation).
+      html = render_change(view, "switch_repo", %{"value" => "ghost"})
+
+      assert assigns(view)[:active_repo_id] == "primary"
+      assert Enum.map(assigns(view)[:review_data].files, & &1.path) == ["lib/one.ex"]
+      assert repo_select_state(html) == %{values: ["primary", "original"], selected: ["primary"]}
+    end
+
+    test "commits tab lists the ACTIVE repo's commits after switching via both shapes", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)], [
+            commit_info("a", "Primary only commit")
+          ]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)], [
+            commit_info("c", "Foreign only commit")
+          ])
+        ])
+
+      # Default active repo (primary): its commit is the one listed.
+      html = open_commits_tab(view)
+      assert html =~ "Primary only commit"
+      refute html =~ "Foreign only commit"
+      assert Enum.map(assigns(view)[:commits], & &1.message) == ["Primary only commit"]
+
+      # Form-wrapped %{"repo_id"} shape → the foreign repo's commit replaces it.
+      html = render_change(view, "switch_repo", %{"repo_id" => "original"})
+      assert html =~ "Foreign only commit"
+      refute html =~ "Primary only commit"
+      assert Enum.map(assigns(view)[:commits], & &1.message) == ["Foreign only commit"]
+
+      # Legacy %{"value"} shape → back to the primary repo's commit.
+      html = render_change(view, "switch_repo", %{"value" => "primary"})
+      assert html =~ "Primary only commit"
+      refute html =~ "Foreign only commit"
+      assert Enum.map(assigns(view)[:commits], & &1.message) == ["Primary only commit"]
+    end
+  end
+
   describe "auto merge conflict resolution — foreign repos carried from the previous task" do
     # Same NONEXISTENT-path pattern as the "auto merge conflict resolution"
     # describe: no async check starts on mount (branch_exists false), so the
@@ -2213,7 +2397,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # the bottom of the page). Fails loudly when absent (the caller's assertions
   # would otherwise be vacuous on "").
   defp overflow_menu(html) do
-    case Regex.run(~r{<details class="dropdown dropdown-end dropdown-top ml-auto">.*?</details>}s, html) do
+    case Regex.run(
+           ~r{<details class="dropdown dropdown-end dropdown-top ml-auto">.*?</details>}s,
+           html
+         ) do
       [menu] -> menu
       nil -> flunk("expected the overflow menu <details> to be rendered")
     end
@@ -2279,6 +2466,44 @@ defmodule EvoDashWeb.ReviewLiveTest do
     view
     |> element("button[phx-click='switch_tab'][phx-value-tab='files_changed']")
     |> render_click()
+  end
+
+  # Switches the review page to the Commits tab (returns the html).
+  defp open_commits_tab(view) do
+    view
+    |> element("button[phx-click='switch_tab'][phx-value-tab='commits']")
+    |> render_click()
+  end
+
+  # Extracts the repo selector's state from a rendered page: %{values: [...]}
+  # (the option values in DOM order) + %{selected: [...]} (the preselected
+  # option value(s)) — or %{values: [], selected: []} when no repo selector
+  # renders. Every repo <select> shares name="repo_id" + the "selected" boolean
+  # attr across the merge box, Files-changed toolbar, and Commits tab, and only
+  # the ACTIVE tab's content is in the DOM at any time, so an unscoped find is
+  # unambiguous.
+  defp repo_select_state(html) do
+    case Floki.find(Floki.parse_document!(html), "select[name='repo_id']") do
+      [] ->
+        %{values: [], selected: []}
+
+      [select | _] ->
+        options = Floki.find(select, "option")
+
+        values =
+          Enum.map(options, fn option ->
+            option |> Floki.attribute("value") |> List.first()
+          end)
+
+        selected =
+          options
+          |> Enum.filter(&(Floki.attribute(&1, "selected") != []))
+          |> Enum.map(fn option ->
+            option |> Floki.attribute("value") |> List.first()
+          end)
+
+        %{values: values, selected: selected}
+    end
   end
 
   # Extracts the conversation tab's diff-stats bar text (the unique gap-x-4

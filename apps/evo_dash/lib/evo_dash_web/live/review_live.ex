@@ -192,9 +192,15 @@ defmodule EvoDashWeb.ReviewLive do
                       </div>
                     <% end %>
                   <% @review_tab == :commits -> %>
-                    <%!-- Lists the ACTIVE repo's commits (repo switching lives
-                         in the files toolbar / merge box, not here). --%>
-                    <EvoDashWeb.ReviewComponents.commits_list commits={@commits} />
+                    <%!-- Lists the ACTIVE repo's commits (projected by
+                         project_active_repo/1). Multi-repo reviews show a repo
+                         selector inside commits_list (rendered only when more
+                         than one repo) — active_repo_id drives the projection. --%>
+                    <EvoDashWeb.ReviewComponents.commits_list
+                      commits={@commits}
+                      repos={@review_repos}
+                      active_repo_id={@active_repo_id}
+                    />
                   <% @review_tab == :archive -> %>
                     <%= if @archive_metadata not in [nil, []] do %>
                       <EvoDashWeb.ReviewComponents.archive_review_section
@@ -356,23 +362,17 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply, socket}
   end
 
+  # Repo <select>s live inside components; each is wrapped in its own
+  # <form phx-change="switch_repo">, so the payload arrives as
+  # %{"repo_id" => repo_id}. A form-less select (legacy shape) delivers the
+  # generic "value" key instead of the field name — accept both defensively.
   @impl true
   def handle_event("switch_repo", %{"repo_id" => repo_id}, socket) do
-    # Whitelist-validate the submitted repo id against the known review repos
-    # (never String.to_atom on client input). Per-repo diff state is keyed by
-    # repo_id and persists across switches — only the active id, the flat
-    # projections, and the shared file filter change.
-    if repo_id in Enum.map(socket.assigns.review_repos, & &1.repo_id) do
-      {:noreply,
-       socket
-       |> assign(:active_repo_id, repo_id)
-       # The filter string is shared across repos — reset it so switching
-       # never leaves the new repo's file list filtered by stale text.
-       |> assign(:file_filter, "")
-       |> project_active_repo()}
-    else
-      {:noreply, socket}
-    end
+    switch_repo(socket, repo_id)
+  end
+
+  def handle_event("switch_repo", %{"value" => repo_id}, socket) do
+    switch_repo(socket, repo_id)
   end
 
   @impl true
@@ -1377,6 +1377,26 @@ defmodule EvoDashWeb.ReviewLive do
         default_merge_target: repo && repo.default_merge_target,
         merge_status: repo && repo.merge_status
       )
+    end
+  end
+
+  # Whitelist-validate the submitted repo id against the known review repos
+  # (never String.to_atom on client input). Per-repo diff state is keyed by
+  # repo_id and persists across switches — only the active id, the flat
+  # projections, and the shared file filter change. Shared by both switch_repo
+  # handler clauses (%{"repo_id" => id} from form-wrapped selects and the
+  # form-less %{"value" => id} legacy shape).
+  defp switch_repo(socket, repo_id) do
+    if repo_id in Enum.map(socket.assigns.review_repos, & &1.repo_id) do
+      {:noreply,
+       socket
+       |> assign(:active_repo_id, repo_id)
+       # The filter string is shared across repos — reset it so switching
+       # never leaves the new repo's file list filtered by stale text.
+       |> assign(:file_filter, "")
+       |> project_active_repo()}
+    else
+      {:noreply, socket}
     end
   end
 
