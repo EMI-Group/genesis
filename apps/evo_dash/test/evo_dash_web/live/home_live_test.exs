@@ -1901,10 +1901,13 @@ defmodule EvoDashWeb.HomeLiveTest do
     } do
       # Pre-warm the shared hub for the local context with a reflect-style
       # :running summary map (the shape an applied fetch result writes — the
-      # 15-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). A warm hub
-      # makes the connected-mount fetch a no-op (see node_aware.ex on_mount),
-      # so the VERY FIRST render already carries the sidebar — no task_updated
-      # broadcast, no 300ms debounce sleep: the exact no-blink contract.
+      # 15-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). The hub
+      # seed is SYNCHRONOUS (node_aware.ex on_mount), so the VERY FIRST render
+      # already carries the sidebar — no task_updated broadcast, no 300ms
+      # debounce sleep: the exact no-blink contract. (The connected-mount
+      # staleness-catch-up fetch still fires afterwards and is stale-guarded;
+      # it lands after this html assertion and does not affect the first
+      # paint.)
       EvoDash.ActiveTasks.put(
         nil,
         node(),

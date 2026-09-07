@@ -26,10 +26,12 @@ defmodule EvoDashWeb.NodeAwareTest do
   # (dead render, transport_pid nil) and `connected_mount_socket/1` (a non-nil
   # transport_pid makes Phoenix.LiveView.connected?/1 true — see
   # deps/phoenix_live_view/lib/phoenix_live_view.ex) — and pin the sidebar
-  # no-blink / no-leak / no-redundant-fetch contract: synchronous hub seeding
-  # per node context, the connected-mount fetch firing ONLY for a cold LOCAL
-  # context, applied `handle_tasks_result/2` results writing the hub (stale
-  # ones never), and node switches to unseen remote contexts still fetching.
+  # no-blink / no-leak / staleness-catch-up contract: synchronous hub seeding
+  # per node context, the connected-mount LOCAL fetch firing UNCONDITIONALLY
+  # (it is the catch-up that heals a warm-but-stale hub after a missed one-shot
+  # terminal task broadcast), remote/pending pages never fetching on mount,
+  # applied `handle_tasks_result/2` results writing the hub (stale ones never),
+  # and node switches to unseen remote contexts still fetching via assign_node.
   #
   # async: false — the assign_node remote-target tests mutate the global
   # XDG_CONFIG_HOME env var (to isolate EvoGit.RemoteConnections, same pattern
@@ -988,7 +990,7 @@ defmodule EvoDashWeb.NodeAwareTest do
     end
   end
 
-  describe "on_mount/4 — hub-seeded sidebar: no-blink / no-leak / no-redundant-fetch" do
+  describe "on_mount/4 — hub-seeded sidebar: no-blink / no-leak / no-remote-mount-fetch" do
     # Regression coverage for the hub-seeded sidebar design (see node_aware.ex
     # moduledoc): on_mount seeds :running_tasks/:pending_tasks SYNCHRONOUSLY
     # from the EvoDash.ActiveTasks hub, keyed by the node context the page will
@@ -999,9 +1001,11 @@ defmodule EvoDashWeb.NodeAwareTest do
     #   very first render (dead OR connected), before any async fetch result.
     # * no-leak: a page seeds ONLY its own context's hub key — a local snapshot
     #   can never appear on a remote/pending page (and vice versa).
-    # * no-redundant-fetch: a WARM hub context never spawns the mount fetch
-    #   (dead renders never query at all; the connected fetch fires only for a
-    #   cold LOCAL context — covered in the next describe).
+    # * remote/pending pages NEVER fetch on mount (a mount fetch would query
+    #   the pre-assign_node LOCAL assigns; assign_node/2's context-change
+    #   reload fires their one correct fetch), and dead renders never query
+    #   at all. LOCAL pages DO fetch on every connected mount — the
+    #   staleness catch-up covered in the next describe.
     #
     # on_mount also calls EvoDash.NodeContext.list_targets() (reads
     # remote_connections.toml), so the config dir is isolated per test (same
@@ -1032,7 +1036,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       # A pending-remote context whose last fetch applied {[], []} (the
       # pending-remote guard's empty result). Stored-empty IS a real snapshot
       # — get/3 returns {:ok, {[], []}} — so a remount seeds [] rather than
-      # crashing, leaking another context's data, or re-fetching.
+      # crashing, leaking another context's data, or re-fetching (pending
+      # pages never fetch on mount — assign_node/2's context-change reload
+      # is their one correct fetch).
       save_target!("target-empty")
       EvoDash.ActiveTasks.put("target-empty", node(), [], [])
 
@@ -1048,7 +1054,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.pending_tasks == []
       assert EvoDash.ActiveTasks.get("target-empty", node()) == {:ok, {[], []}}
 
-      # Stored-empty is still a snapshot → no redundant fetch on the connected mount.
+      # Pending context → no mount fetch.
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
     end
 
@@ -1082,8 +1088,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.pending_tasks == remote_pending
       refute Enum.any?(socket.assigns.running_tasks, &(&1.id == "local-running"))
 
-      # Warm remote → no mount fetch (assign_node/2's context-change reload is
-      # the single source of remote fetches).
+      # Remote context → no mount fetch (assign_node/2's context-change reload
+      # is the single source of remote fetches).
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
     end
 
@@ -1123,14 +1129,17 @@ defmodule EvoDashWeb.NodeAwareTest do
     end
   end
 
-  describe "on_mount/4 — connected-mount conditional fetch (cold LOCAL fetches; warm does not)" do
-    # The connected-mount fetch is CONDITIONAL on a cold LOCAL context
-    # ({nil, node()} with no hub snapshot): a cold start still queries the
-    # registry so the sidebar populates, while a warm local hub renders
-    # last-known state instead (the push-based PubSub cycle keeps it fresh) —
-    # no redundant mount query. Remote/pending pages NEVER fetch on mount (the
-    # fetch would target the pre-assign_node LOCAL assigns; assign_node/2's
-    # context-change reload is guaranteed to fire the correct remote fetch).
+  describe "on_mount/4 — connected-mount LOCAL fetch is unconditional (staleness catch-up)" do
+    # The connected-mount fetch fires on EVERY connected LOCAL mount,
+    # warm hub or not. Terminal task broadcasts are one-shot fire-and-forget
+    # (no replay, no polling backstop), so a LiveView generation that missed
+    # the terminal event leaves the hub warm-but-stale — the mount fetch is
+    # the catch-up that heals it (stale-guarded apply + hub write-back).
+    # The sync hub seed still paints the first render blink-free; the fresh
+    # result lands via the attached :handle_info hook. Remote/pending pages
+    # NEVER fetch on mount (the fetch would target the pre-assign_node LOCAL
+    # assigns; assign_node/2's context-change reload is guaranteed to fire the
+    # correct remote fetch).
 
     setup :setup_isolated_registry
     setup :isolate_config_dir
@@ -1152,7 +1161,45 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert pending == []
     end
 
-    test "warm LOCAL hub on a CONNECTED mount seeds synchronously and does NOT re-fetch" do
+    test "WARM but STALE hub on a connected LOCAL mount still fetches and the fresh result heals the sidebar" do
+      # THE BUG REGRESSION: the hub's last snapshot shows a task as :running,
+      # but the task actually ENDED and its one-shot terminal broadcast was
+      # missed (tab refresh / suspended WebView during the run). The old
+      # cold-only gate skipped the mount fetch on a warm hub, so every local
+      # mount rendered the ended task as "running" forever. Now the mount
+      # fetch runs unconditionally and its applied result corrects the lists
+      # (via the attached :handle_info hook) AND the hub.
+      stale_running = [%{id: "ended-task", status: :running}]
+      EvoDash.ActiveTasks.put(nil, node(), stale_running, [])
+
+      # The isolated registry holds no tasks — the task is really gone.
+      assert {:cont, socket} = NodeAware.on_mount(:default, %{}, %{}, connected_mount_socket())
+
+      # The first render is still blink-free: the stale snapshot seeds
+      # synchronously, before the fresh result lands.
+      assert socket.assigns.running_tasks == stale_running
+
+      # The fetch is spawned despite the warm hub, and the fresh (empty)
+      # result heals the sidebar and the hub.
+      local_node = node()
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {running, pending}}, 1000
+      assert running == []
+      assert pending == []
+
+      assert {:halt, healed} =
+               NodeAware.handle_info(
+                 {:node_aware_active_tasks, 1, nil, local_node, {[], []}},
+                 socket
+               )
+
+      assert healed.assigns.running_tasks == []
+      assert healed.assigns.pending_tasks == []
+      assert EvoDash.ActiveTasks.get(nil, node()) == {:ok, {[], []}}
+    end
+
+    test "WARM hub with fresh data on a connected LOCAL mount still re-fetches (refresh, not just heal)" do
+      # The fetch is unconditional, not freshness-aware: even a warm-and-correct
+      # hub is re-verified. The seed still paints the warm snapshot first.
       running = [%{id: "warm-running", status: :running}]
       pending = [%{id: "warm-pending", status: :completed, branch_name: "warm-b"}]
       EvoDash.ActiveTasks.put(nil, node(), running, pending)
@@ -1162,7 +1209,62 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.running_tasks == running
       assert socket.assigns.pending_tasks == pending
 
-      # Warm → no redundant mount query.
+      local_node = node()
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, _}, 1000
+    end
+
+    test "WARM REMOTE hub on a connected REMOTE mount does NOT fetch (assign_node owns remote fetches)" do
+      save_target!("target-warm")
+      remote_node = :"genesis_remote_warm@127.0.0.1"
+
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {"target-warm",
+          %{phase: :connected, node: "genesis_remote_warm@127.0.0.1", last_error: nil}}}
+      )
+
+      EvoDash.ActiveTasks.put(
+        "target-warm",
+        remote_node,
+        [%{id: "remote-only", status: :running}],
+        []
+      )
+
+      assert {:cont, _socket} =
+               NodeAware.on_mount(
+                 :default,
+                 %{"node" => "target-warm"},
+                 %{},
+                 connected_mount_socket()
+               )
+
+      # Remote context → no mount fetch, warm or cold.
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+    end
+
+    test "warm PENDING hub on a connected PENDING mount does NOT fetch (assign_node owns pending fetches)" do
+      save_target!("target-pending-warm")
+
+      EvoDash.ActiveTasks.put(
+        "target-pending-warm",
+        node(),
+        [%{id: "pending-seed", status: :running}],
+        []
+      )
+
+      assert {:cont, socket} =
+               NodeAware.on_mount(
+                 :default,
+                 %{"node" => "target-pending-warm"},
+                 %{},
+                 connected_mount_socket()
+               )
+
+      # The pending key's snapshot seeds synchronously (target id ≠ nil →
+      # never the local key).
+      assert socket.assigns.running_tasks == [%{id: "pending-seed", status: :running}]
+
+      # Pending context → no mount fetch.
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
     end
   end
