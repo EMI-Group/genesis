@@ -67,7 +67,7 @@ The core writes writable-foreign-repo results into the task result's top-level `
 | Event | Route branching | Notes |
 |-------|-----------------|-------|
 | `switch_tab` (`conversation`/`objective`/`files_changed`/`commits`/`archive` + fallback no-op) | — | Pure assigns. |
-| `switch_repo` %{"repo_id"} | — | Whitelist + set active + reset `file_filter` + re-project. |
+| `switch_repo` %{"repo_id"} or %{"value"} | — | Whitelist + set active + reset `file_filter` + re-project; unknown id → no-op. |
 | `toggle_dir` %{"dir"} | SHOW repo-keyed / `:commit` flat | put/delete in the tree map. |
 | `collapse_all_dirs` | same | acting submap → `%{}`. |
 | `expand_all_dirs` | same | merge `all_dir_paths(files)` into the acting submap. |
