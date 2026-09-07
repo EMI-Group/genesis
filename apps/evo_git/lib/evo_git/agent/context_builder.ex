@@ -52,6 +52,40 @@ defmodule EvoGit.Agent.ContextBuilder do
   end
 
   @doc """
+  Builds the delegation-authority markdown section for the first user prompt.
+
+  Authoritatively tells THIS agent whether it is the ROOT agent of the task
+  (`parent_id` nil == depth 0) or a NESTED agent, and which foreign-repo spawn
+  authority that role carries. Pinned wording — do not paraphrase.
+
+  Input: a plain map `%{parent_id: integer | nil, repo_less: boolean,
+  foreign_repos: [ForeignRepo.t()]}` — pure function, never reads the process
+  dictionary. Returns `""` when the agent is repo-less (the chat persona must
+  not read a task-role statement) or when the task has no non-primary foreign
+  repos (single-repo tasks stay token-neutral), mirroring
+  `build_foreign_repos_section/1`'s empty-string convention so the runner's
+  existing blank-filter drops the section.
+  """
+  def build_authority_section(%{repo_less: true}), do: ""
+
+  def build_authority_section(%{parent_id: parent_id, foreign_repos: foreign_repos}) do
+    repos =
+      foreign_repos
+      |> Enum.reject(&ForeignRepo.primary?(&1.id))
+
+    cond do
+      repos == [] ->
+        ""
+
+      is_nil(parent_id) ->
+        "- **Delegation authority**: You are the **ROOT agent** of this task (depth 0 — you were not spawned by a parent). You MAY spawn write-capable (`:read_write`) subagents into writable foreign repos, one at a time (serialized: spawn one, wait for it to complete, then spawn the next — never parallel writable foreign-repo subagents). Read-only foreign-repo spawns (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) are unrestricted for any agent at any depth."
+
+      true ->
+        "- **Delegation authority**: You are a **NESTED agent** (spawned by a parent agent — you are NOT the root agent of this task). You may spawn read-only agents (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) into foreign repos freely, but you may NOT spawn write-capable (`:read_write`) subagents into a foreign repo. If the task needs writable changes in a foreign repo, report the need back up to your parent agent (the higher level in the delegation chain), which will handle it."
+    end
+  end
+
+  @doc """
   Builds the git-submodules note section for the first user prompt.
 
   `repo_notes` is the ALREADY-RENDERED markdown block (produced by

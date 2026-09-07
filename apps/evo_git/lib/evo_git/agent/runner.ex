@@ -96,6 +96,21 @@ defmodule EvoGit.Agent.Runner do
       foreign_repos_section =
         EvoGit.Agent.ContextBuilder.build_foreign_repos_section(agent_state.foreign_repos)
 
+      # Delegation-authority statement: authoritatively tells THIS agent whether
+      # it is the ROOT agent (parent_id nil == depth 0) or a NESTED agent, and
+      # which foreign-repo spawn authority that role carries. Root signal =
+      # `agent_state.parent_id == nil` (exactly equivalent to SchedMeta depth 0
+      # by construction in Dispatch.register_agent/7) — never the process-dict
+      # depth, which may not be populated at assembly time. Skipped for
+      # repo-less agents (chat persona) and single-repo tasks (returns "" →
+      # dropped by the blank-filter below).
+      authority_section =
+        EvoGit.Agent.ContextBuilder.build_authority_section(%{
+          parent_id: agent_state.parent_id,
+          repo_less: Process.get(:repo_less) == true,
+          foreign_repos: agent_state.foreign_repos
+        })
+
       # Rendered repo-notes block (git-submodules awareness) — "" when the repo
       # has no gitlinks (or detection failed), so the blank-filter drops it and
       # prompts for repos without submodules stay noise-free.
@@ -103,7 +118,7 @@ defmodule EvoGit.Agent.Runner do
         EvoGit.Agent.ContextBuilder.build_repo_notes_section(agent_state.repo_notes)
 
       context_body =
-        [context_tree, foreign_repos_section, repo_notes_section]
+        [context_tree, authority_section, foreign_repos_section, repo_notes_section]
         |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
         |> Enum.join("\n\n")
 
