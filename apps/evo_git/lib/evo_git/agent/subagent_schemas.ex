@@ -58,7 +58,9 @@ defmodule EvoGit.Agent.SubagentSchemas do
                   "Include any relevant context since it starts with a fresh context. " <>
                   "IMPORTANT: The subagent's working directory is automatically set correctly. " <>
                   "Do NOT include worktree paths or `cd` commands in the objective — just describe what to do (e.g., 'run `mix test`'). " <>
-                  "Include all relevant context, findings, and file paths so the subagent can start working immediately without re-investigating."
+                  "Include all relevant context, findings, and file paths so the subagent can start working immediately without re-investigating. " <>
+                  "Exception: when `path` points INTO a foreign repository, do NOT include that repo's structure or layout in the objective — " <>
+                  "the subagent runs inside that repo, inherits its own CONTEXT.md routing table, and knows that repo better than you do."
             },
             "commit_id" => %{
               "type" => "string",
