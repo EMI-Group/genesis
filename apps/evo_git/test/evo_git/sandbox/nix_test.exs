@@ -3,6 +3,20 @@ defmodule EvoGit.NixTest do
 
   alias EvoGit.Nix
 
+  # Byte-exact epilogue block emitted by nix's own bash printer
+  # (`makeRcScript` in nix's src/nix/develop.cc) at the tail of every
+  # `nix print-dev-env` output, after all derivation content. The mktemp line
+  # rotates the tmp dir on EVERY source; the four TMP* exports that follow
+  # reference `$NIX_BUILD_TOP` and follow it automatically.
+  @raw_nix_epilogue ~S"""
+  export NIX_BUILD_TOP="$(mktemp -d -t nix-shell.XXXXXX)"
+  export TMP="$NIX_BUILD_TOP"
+  export TMPDIR="$NIX_BUILD_TOP"
+  export TEMP="$NIX_BUILD_TOP"
+  export TEMPDIR="$NIX_BUILD_TOP"
+  eval "${shellHook:-}"
+  """
+
   setup do
     Nix.reset_state()
     original = Application.get_env(:evo_git, :nix_enabled)
@@ -150,6 +164,49 @@ defmodule EvoGit.NixTest do
         assert is_binary(value)
         assert String.starts_with?(key, "NIX") or key == "SSL_CERT_FILE"
       end
+    end
+  end
+
+  describe "sanitize_dev_env_output/1" do
+    test "replaces the rotating mktemp NIX_BUILD_TOP line with the constant TMPDIR fallback" do
+      sanitized = Nix.sanitize_dev_env_output(@raw_nix_epilogue)
+
+      # The per-source tmp rotation is gone entirely — no mktemp, no fresh
+      # /tmp/nix-shell.<rand> dir per source.
+      refute String.contains?(sanitized, "mktemp")
+      refute String.contains?(sanitized, "nix-shell.")
+
+      # NIX_BUILD_TOP now resolves to the constant backend-injected TMPDIR
+      # (fallback /tmp, matching EvoGit.Sandbox.resolve_tmpdir/0 semantics).
+      assert String.contains?(sanitized, "export NIX_BUILD_TOP=\"${TMPDIR:-/tmp}\"")
+
+      # Exactly one NIX_BUILD_TOP export remains — the four TMP* lines only
+      # reference $NIX_BUILD_TOP, they never re-export it.
+      assert length(Regex.scan(~r/export NIX_BUILD_TOP=/, sanitized)) == 1
+
+      # The TMP*/TEMPDIR exports that follow are preserved verbatim and still
+      # reference $NIX_BUILD_TOP, so they pick up the new value automatically.
+      assert String.contains?(sanitized, "export TMP=\"$NIX_BUILD_TOP\"")
+      assert String.contains?(sanitized, "export TMPDIR=\"$NIX_BUILD_TOP\"")
+      assert String.contains?(sanitized, "export TEMP=\"$NIX_BUILD_TOP\"")
+      assert String.contains?(sanitized, "export TEMPDIR=\"$NIX_BUILD_TOP\"")
+
+      # Everything else in the epilogue (e.g. the shellHook eval) survives.
+      assert String.contains?(sanitized, "eval \"${shellHook:-}\"")
+    end
+
+    test "passes output without the marker through byte-identical" do
+      input = "export PATH=/nix/store/abc/bin:$PATH\nexport FOO=bar\n"
+
+      assert Nix.sanitize_dev_env_output(input) == input
+    end
+
+    test "is a literal substitution, not a pattern match (near-misses pass through)" do
+      # A future nix version that stops emitting the exact double-quoted
+      # literal (e.g. single-quoted) must pass through unchanged.
+      near_miss = ~S|export NIX_BUILD_TOP='$(mktemp -d -t nix-shell.XXXXXX)'|
+
+      assert Nix.sanitize_dev_env_output(near_miss) == near_miss
     end
   end
 end
