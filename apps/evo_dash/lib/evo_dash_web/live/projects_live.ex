@@ -634,7 +634,7 @@ defmodule EvoDashWeb.ProjectsLive do
         # runs; the node-switch clear above is what resets it.
         cond do
           not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) and
-              is_binary(project_path) and project_path != "" and
+            is_binary(project_path) and project_path != "" and
               project_path != socket.assigns[:active_project_path] ->
             case ProjectFlow.normalize_remote_project_path(
                    socket.assigns[:current_node],
