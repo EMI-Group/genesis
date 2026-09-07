@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.4] - 2026-09-07
+
+### Added
+
+- Redesigned the task form with a ChatGPT/Gemini-style bottom toolbar, moving attach, mode, agent, and model controls into one row and replacing the Launch button with a compact circular send button.
+- Added a per-agent delegation-authority statement to the first user prompt that informs each agent whether it is the root or a nested agent and the foreign-repo spawn authority that role carries.
+
+### Changed
+
+- Right-aligned the task-form toolbar cluster and removed its divider, moving the auto margin to the mode select.
+
+### Fixed
+
+- Fixed the Active Tasks sidebar showing a stale snapshot indefinitely by making the local connected-mount fetch unconditional, so a warm-but-stale hub is refreshed when a terminal task broadcast was missed.
+- Closed sidebar dropdowns on outside click and when the sidebar collapses.
+- Fixed the review-page repo selector so repo-switching works on both the Files-changed and Commits tabs for multi-repo reviews, adding a repo selector to the Commits tab.
+- Increased top padding so typed text clears the attach-file button and doubled the compact-to-expanded layout thresholds for the task objective box.
+- Stabilized the nix dev-environment TMPDIR across calls by sanitizing the built environment output.
+
 ## [0.12.3] - 2026-09-06
 
 ### Added
