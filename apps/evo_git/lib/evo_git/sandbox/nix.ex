@@ -239,6 +239,41 @@ defmodule EvoGit.Nix do
     end)
   end
 
+  @doc """
+  Sanitizes `nix print-dev-env` output before it is cached.
+
+  Nix's own bash printer (`makeRcScript` in nix's `src/nix/develop.cc`)
+  emits an epilogue that rotates the tmp dir on EVERY source:
+
+      export NIX_BUILD_TOP="$(mktemp -d -t nix-shell.XXXXXX)"
+
+  followed by `export TMP="$NIX_BUILD_TOP"` / `TMPDIR` / `TEMP` / `TEMPDIR`.
+  Sourcing the unsanitized script would override the constant TMPDIR that the
+  sandbox backend injected (`EvoGit.Sandbox.resolve_tmpdir/0`) with a fresh
+  `/tmp/nix-shell.<rand>` dir per call and leak one empty 0700 dir forever.
+
+  This function replaces that one literal with
+
+      export NIX_BUILD_TOP="${TMPDIR:-/tmp}"
+
+  so `NIX_BUILD_TOP`/`TMP`/`TMPDIR`/`TEMP`/`TEMPDIR` resolve to the constant
+  backend-injected TMPDIR (fallback `/tmp`, matching
+  `EvoGit.Sandbox.resolve_tmpdir/0` semantics). The four `TMP*` exports that
+  follow reference `$NIX_BUILD_TOP` and follow automatically.
+
+  Pure string manipulation — never raises. If a future nix version stops
+  emitting the marker, `String.replace/3` silently no-ops and the output
+  passes through unchanged (graceful degradation).
+  """
+  @spec sanitize_dev_env_output(String.t()) :: String.t()
+  def sanitize_dev_env_output(output) do
+    String.replace(
+      output,
+      "export NIX_BUILD_TOP=\"$(mktemp -d -t nix-shell.XXXXXX)\"",
+      "export NIX_BUILD_TOP=\"${TMPDIR:-/tmp}\""
+    )
+  end
+
   # --- Private: dev-env cache management ---
 
   defp do_build_dev_env do
@@ -248,6 +283,7 @@ defmodule EvoGit.Nix do
 
     if exit_code == 0 do
       path = cache_path()
+      output = sanitize_dev_env_output(output)
 
       with :ok <- File.mkdir_p(Platform.data_dir()),
            :ok <- File.write(path, output),
