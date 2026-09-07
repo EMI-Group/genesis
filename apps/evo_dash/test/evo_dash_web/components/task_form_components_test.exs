@@ -6,8 +6,8 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   alias EvoDashWeb.TaskFormComponents
 
   # Unit tests for the server-driven layout decision behind the single-card
-  # two-layout task form. Threshold: objective length > 600 graphemes OR
-  # > 16 explicit lines → :expanded (Layout B), otherwise :compact (Layout A).
+  # two-layout task form. Threshold: objective length > 1200 graphemes OR
+  # > 32 explicit lines → :expanded (Layout B), otherwise :compact (Layout A).
   describe "layout_for/1" do
     test "empty string is compact" do
       assert TaskFormComponents.layout_for("") == :compact
@@ -23,21 +23,21 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert TaskFormComponents.layout_for("Fix the login bug") == :compact
     end
 
-    test "exactly at the 600-char boundary is compact" do
-      assert TaskFormComponents.layout_for(String.duplicate("a", 600)) == :compact
+    test "exactly at the 1200-char boundary is compact" do
+      assert TaskFormComponents.layout_for(String.duplicate("a", 1200)) == :compact
     end
 
-    test "above the 600-char boundary is expanded" do
-      assert TaskFormComponents.layout_for(String.duplicate("a", 601)) == :expanded
+    test "above the 1200-char boundary is expanded" do
+      assert TaskFormComponents.layout_for(String.duplicate("a", 1201)) == :expanded
     end
 
-    test "exactly 16 lines is compact" do
-      prompt = Enum.join(1..16, "\n")
+    test "exactly 32 lines is compact" do
+      prompt = Enum.join(1..32, "\n")
       assert TaskFormComponents.layout_for(prompt) == :compact
     end
 
-    test "17 or more lines is expanded" do
-      prompt = Enum.join(1..17, "\n")
+    test "33 or more lines is expanded" do
+      prompt = Enum.join(1..33, "\n")
       assert TaskFormComponents.layout_for(prompt) == :expanded
     end
 
@@ -46,7 +46,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
 
     test "long single-line string is expanded" do
-      assert TaskFormComponents.layout_for(String.duplicate("x", 700)) == :expanded
+      assert TaskFormComponents.layout_for(String.duplicate("x", 1300)) == :expanded
     end
   end
 
@@ -67,7 +67,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     test "expanded layout for a long objective" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: String.duplicate("a", 700)
+          prompt: String.duplicate("a", 1300)
         )
 
       assert html =~ ~s(data-layout="expanded")
@@ -168,7 +168,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     test "Layout B (expanded): Launch order-2 centered (mx-auto), model order-3" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: String.duplicate("a", 700),
+          prompt: String.duplicate("a", 1300),
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 

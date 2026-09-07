@@ -31,7 +31,7 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 
 ### task_form_components_test.exs (3 describes, 31 tests)
 
-- `layout_for/1` (9 tests): 600-grapheme / 16-line thresholds (`:compact` at boundary, `:expanded` above), non-binary fallback to `:compact`.
+- `layout_for/1` (9 tests): 1200-grapheme / 32-line thresholds (`:compact` at boundary, `:expanded` above), non-binary fallback to `:compact`.
 - `task_form/1 rendering` (20 tests): `data-layout` attr; unified control DOM order mode(order-1) | Launch(order-2, mx-auto) | model(order-3) pinned via Floki children; model select label = bare id, "Auto (by rules)" first; disabled state overlay; `flex-nowrap` one-line contract; mode select 4 options (`genesis_existing`/`genesis_new`/`evolve_simple`/`custom_agent`; reflect removed); `data-mode` on Launch; custom_agent agent-select behaviors (Auto hidden, no-agents warning, evolve placeholder); AdaptiveInput + `phx-update="ignore"`, no per-keystroke event; attach-file button (`FilePicker` hook, `data-picker-id="objective_file"`, `type="button"`, NOT inside `.input-controls`, hidden when disabled).
 - `task_options_tab/1 rendering` (2 tests): custom_agent shows evolve-family options, hides Build System; genesis_new inverse.
 

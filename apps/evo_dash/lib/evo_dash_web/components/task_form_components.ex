@@ -19,7 +19,7 @@ defmodule EvoDashWeb.TaskFormComponents do
 
     * Layout A (`data-layout="compact"`) — unified objective box: the controls
       row is the card's last line. The compact textarea keeps its own
-      max-height cap (~8 wrapped lines) — load-bearing for the AdaptiveInput
+      max-height cap (~16 wrapped lines) — load-bearing for the AdaptiveInput
       hook's flip-to-expanded decision.
     * Layout B (`data-layout="expanded"`) — the input card fills the available
       page height (flex column): `.input-card` is `flex: 1; min-height: 0;
@@ -38,7 +38,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   There is NO per-keystroke server round trip: the textarea sends no
   `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
   switches `data-layout` between compact/expanded client-side, flipping to
-  expanded when the content would exceed the compact max-height cap (~8
+  expanded when the content would exceed the compact max-height cap (~16
   wrapped lines) OR on `layout_for/1`'s thresholds (@short_objective_threshold
   / line count), with hysteresis when flipping back to compact. It
   re-asserts the layout not only while typing but also whenever the server
@@ -59,18 +59,18 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   use EvoDashWeb, :html
 
-  @short_objective_threshold 600
+  @short_objective_threshold 1200
 
   @doc """
   Layout decision for the task form: `:compact` (Layout A — unified box) vs
-  `:expanded` (Layout B — split). Threshold: objective length > 600 graphemes
-  OR > 16 explicit lines.
+  `:expanded` (Layout B — split). Threshold: objective length > 1200 graphemes
+  OR > 32 explicit lines.
 
   This seeds the initial `data-layout` attribute at render time (SSR first
   paint + after restore/submit) — after that the client is authoritative.
   While typing, the AdaptiveInput JS hook switches the layout client-side —
   flipping to expanded when the content would exceed the compact max-height
-  cap (~8 wrapped lines) OR on these thresholds, with hysteresis when
+  cap (~16 wrapped lines) OR on these thresholds, with hysteresis when
   flipping back — and it also re-asserts the computed layout
   whenever the server re-seeds the attribute from its possibly-stale
   `@task_prompt` (a MutationObserver on `.input-layout` catches any server
@@ -79,7 +79,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   network events) — there is no per-keystroke server event.
   """
   def layout_for(prompt) when is_binary(prompt) do
-    if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 16,
+    if String.length(prompt) > @short_objective_threshold or line_count(prompt) > 32,
       do: :expanded,
       else: :compact
   end
@@ -96,7 +96,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   # compact/expanded layout is server-seeded at render via layout_for/1
   # (data-layout) and client-driven by the AdaptiveInput hook (adds a
   # height-based trigger — flips to expanded when the content exceeds the
-  # compact max-height cap ~8 wrapped lines or the char/line thresholds,
+  # compact max-height cap ~16 wrapped lines or the char/line thresholds,
   # with hysteresis): it re-asserts the layout while typing AND whenever the
   # server re-seeds the attribute
   # from its possibly-stale @task_prompt (a MutationObserver on .input-layout
@@ -139,9 +139,9 @@ defmodule EvoDashWeb.TaskFormComponents do
         <% layout = layout_for(@prompt) %>
         <!-- Single-card, two-layout objective editor.
              data-layout is server-seeded at render time via layout_for/1
-             (threshold: @short_objective_threshold chars or 16+ lines) and
+             (threshold: @short_objective_threshold chars or 32+ lines) and
              client-driven by the AdaptiveInput JS hook (flips to expanded
-             when the content exceeds the compact max-height cap ~8 wrapped
+             when the content exceeds the compact max-height cap ~16 wrapped
              lines or the char/line thresholds, with hysteresis — no
              per-keystroke server event): the hook re-asserts the computed
              layout while typing AND whenever the server
@@ -166,7 +166,7 @@ defmodule EvoDashWeb.TaskFormComponents do
               id="prompt"
               phx-update="ignore"
               phx-hook="AdaptiveInput"
-              class="input-prompt w-full p-4 text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/45 transition-colors"
+              class="input-prompt w-full text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/45 transition-colors"
               placeholder={
                 cond do
                   @mode == "genesis_existing" ->
