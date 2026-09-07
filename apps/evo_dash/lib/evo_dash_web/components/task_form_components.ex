@@ -175,6 +175,9 @@ defmodule EvoDashWeb.TaskFormComponents do
               class="input-prompt w-full text-base bg-transparent border-0 focus:outline-none resize-none placeholder:text-base-content/45 transition-colors"
               placeholder={
                 cond do
+                  @disabled ->
+                    ""
+
                   @mode == "genesis_existing" ->
                     gettext(
                       "Optional — leave empty and click Launch to initialize an existing codebase"
@@ -211,8 +214,10 @@ defmodule EvoDashWeb.TaskFormComponents do
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
-                 hidden entirely — the empty state shows just the faded
-                 textarea (wrapper opacity) + the centered hint overlay. --%>
+                 hidden entirely — the textarea's task-launch placeholder is
+                 suppressed too (@disabled → ""), so the empty state shows just
+                 the faded textarea (wrapper opacity) + the centered "Open a
+                 project to get started" hint overlay. --%>
             <%= unless @disabled do %>
               <div class="input-controls flex-nowrap">
                 <%!-- Attach-file "+" button — bottom-LEFT of the toolbar. The
