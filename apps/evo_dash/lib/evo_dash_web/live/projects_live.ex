@@ -335,83 +335,6 @@ defmodule EvoDashWeb.ProjectsLive do
                     selected_build_system={@task_build_system}
                   />
                 </div>
-
-                <%= if @remote_agents == [] do %>
-                  <div class="mt-6 text-center py-10 text-base-content/70 animate-fade-in-up">
-                    <div class="animate-float">
-                      <.icon name="hero-inbox" class="size-14 mx-auto mb-3 text-base-content/40" />
-                    </div>
-                    <p class="text-base font-medium">{gettext("No active agents")}</p>
-                    <p class="text-sm mt-1">
-                      {gettext("There are no running agents on this remote node.")}
-                    </p>
-                  </div>
-                <% else %>
-                  <div class="mt-6 animate-fade-in-up">
-                    <div class="flex items-center gap-2 mb-4">
-                      <div class="bg-success/15 text-success p-2 rounded-lg">
-                        <.icon name="hero-play-circle" class="size-5" />
-                      </div>
-                      <h2 class="text-lg font-semibold text-base-content/80">
-                        {gettext("Agents")}
-                      </h2>
-                      <span class="badge badge-success">{length(@remote_agents)}</span>
-                    </div>
-                    <div class="space-y-3">
-                      <%= for agent <- Enum.sort_by(@remote_agents, &{Map.get(&1, :depth, 0), Map.get(&1, :id, 0)}) do %>
-                        <div class="rounded-lg border border-base-300 bg-base-100 p-4">
-                          <div class="flex items-center justify-between gap-3 mb-2">
-                            <div class="flex items-center gap-2 min-w-0">
-                              <span class="badge badge-ghost badge-sm font-mono shrink-0">
-                                #{Map.get(agent, :id, "?")}
-                              </span>
-                              <code class="text-xs text-base-content/70 truncate">
-                                {Map.get(agent, :agent_module, "")}
-                              </code>
-                            </div>
-                            <span class={[
-                              "badge badge-sm shrink-0",
-                              case Map.get(agent, :status) do
-                                :running -> "badge-success"
-                                :pending -> "badge-warning"
-                                :blocked -> "badge-warning"
-                                :waiting -> "badge-info"
-                                :ready -> "badge-info"
-                                _ -> "badge-ghost"
-                              end
-                            ]}>
-                              {case Map.get(agent, :status) do
-                                s when is_atom(s) ->
-                                  agent_status_label(s)
-
-                                _ ->
-                                  gettext("Unknown")
-                              end}
-                            </span>
-                          </div>
-                          <% objective = Map.get(agent, :objective) %>
-                          <%= if objective do %>
-                            <p class="text-sm text-base-content/70 line-clamp-2">{objective}</p>
-                          <% end %>
-                          <div class="flex flex-wrap gap-3 mt-2 text-xs text-base-content/70">
-                            <%= if Map.get(agent, :model_id) do %>
-                              <span class="badge badge-ghost badge-sm">{Map.get(agent, :model_id)}</span>
-                            <% end %>
-                            <%= if Map.get(agent, :repo_id) do %>
-                              <span>{gettext("Repo")}: {Map.get(agent, :repo_id)}</span>
-                            <% end %>
-                            <% usage = Map.get(agent, :usage) || %{} %>
-                            <% total =
-                              Map.get(usage, :total_tokens) || Map.get(agent, :total_tokens) || 0 %>
-                            <%= if total > 0 do %>
-                              <span>{gettext("Tokens")}: {total}</span>
-                            <% end %>
-                          </div>
-                        </div>
-                      <% end %>
-                    </div>
-                  </div>
-                <% end %>
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
                 <!-- Pending remote context: connecting chrome only — no
                      project data, no task form, no local recents (the
@@ -617,8 +540,7 @@ defmodule EvoDashWeb.ProjectsLive do
           task_build_system: nil,
           config_status: config_status,
           config_tab: "task_options",
-          remote?: false,
-          remote_agents: []
+          remote?: false
         )
 
       {:ok, socket}
@@ -639,7 +561,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
     # Node-aware refresh (custom agents + model-selection script state, model
     # profiles + the node-switch `selected_model_id` validation, remote
-    # agents / remote project config, and recent projects) now runs in ONE
+    # project config, and recent projects) now runs in ONE
     # async task so the LiveView process never blocks on cross-node RPCs —
     # see EvoDashWeb.ProjectsLive.AsyncLoad. The spawn sits after the
     # node-switch clearing and the project-activation block below so it
@@ -752,14 +674,14 @@ defmodule EvoDashWeb.ProjectsLive do
       end
 
     # Spawn the grouped async node-aware load (custom agents, model profiles,
-    # remote agents / remote project config, recent projects — see the
-    # comment above and EvoDashWeb.ProjectsLive.AsyncLoad). The spawn runs
+    # remote project config, recent projects — see the comment above and
+    # EvoDashWeb.ProjectsLive.AsyncLoad). The spawn runs
     # AFTER the node-switch state clearing AND the project-activation block
     # above, so it captures the post-clear, post-activation active project
     # path — the identity the AsyncLoad stale-guard compares against, so a
     # result spawned for the very activation that just happened is never
     # dropped as "stale" (and a remote→local switch can never keep a remote
-    # node's agents/model profiles/recents after a local project activates).
+    # node's model profiles/recents after a local project activates).
     socket = AsyncLoad.maybe_spawn(socket, prev_node_id)
 
     # Preserve starting_commit from URL query param (e.g. ?starting_commit=abc123)
@@ -1856,7 +1778,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Async node-aware loads spawned by AsyncLoad.maybe_spawn/2 in
   # handle_params/3 (custom agents, model profiles + the selected_model_id
-  # switch validation, remote agents / remote project config, recent
+  # switch validation, remote project config, recent
   # projects). The handler drops stale results (wrong node or active project)
   # in AsyncLoad.handle_result/5, then re-runs GitHub.maybe_check/1: the
   # remote task_mode now arrives via this continuation (it used to be

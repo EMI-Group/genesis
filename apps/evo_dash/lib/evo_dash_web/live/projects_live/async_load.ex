@@ -4,7 +4,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
 
   Coordinator for the node-aware loads that used to run synchronously in
   `handle_params/3` (custom agents, model profiles + the `selected_model_id`
-  switch validation, remote agents, remote project config/mode, recent
+  switch validation, remote project config/mode, recent
   projects). All loads run in ONE supervised `EvoDash.TaskSupervisor` task per
   handle_params run so the LiveView process never blocks on cross-node RPCs —
   the remote path would otherwise serialize up to 6-8 `:erpc` round-trips on
@@ -96,7 +96,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
         )
 
       # Apply every remaining key the task included. Remote-only keys
-      # (`remote_agents`, `project_config`, `worktree_script`, `commands`,
+      # (`project_config`, `worktree_script`, `commands`,
       # `foreign_repos`, `task_mode`, `task_mode_info`) are absent from the
       # results map for local nodes and are skipped here — the local
       # activate_project flow owns those assigns.
@@ -173,13 +173,11 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     end
   end
 
-  # Remote-only extras: the remote node's active agents, plus — when a remote
-  # project is active — its genesis.toml config / worktree script / commands /
-  # foreign repos and the auto-detected task mode + info message. Omitted
-  # entirely for local nodes so the continuation never touches those assigns.
+  # Remote-only extras: when a remote project is active — its genesis.toml
+  # config / worktree script / commands / foreign repos and the auto-detected
+  # task mode + info message. Omitted entirely for local nodes so the
+  # continuation never touches those assigns.
   defp remote_extras(node, true, path) do
-    extras = %{remote_agents: NodeContext.list_agents(node)}
-
     if is_binary(path) do
       config = NodeContext.read_project_config(node, path)
 
@@ -189,16 +187,16 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       foreign_repos = Project.load_foreign_repos(node, path, config)
       mode = Project.detect_mode(node, path)
 
-      Map.merge(extras, %{
+      %{
         project_config: project_config,
         worktree_script: worktree_script,
         commands: commands,
         foreign_repos: foreign_repos,
         task_mode: mode,
         task_mode_info: EvoDashWeb.Helpers.mode_info_message(mode)
-      })
+      }
     else
-      extras
+      %{}
     end
   end
 
