@@ -475,12 +475,16 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   Spawns the ASYNC remote project activation for `expanded` and returns the
   socket with the loading flag set and the palette closed.
 
-  Shared by the open-project/select-project events and the command-palette
-  Enter path (`activate_remote_palette_project/2`). Re-trigger guard: an
-  activation already in flight for the SAME path is a no-op; a DIFFERENT path
-  supersedes it (the in-flight flag is replaced, so the older task's result is
-  dropped by the stale-guard in `ProjectsLive.handle_info/2`). The RPC-heavy
-  sequence runs OUTSIDE the LiveView process in a supervised
+  Shared by the open-project/select-project events, the command-palette Enter
+  path (`activate_remote_palette_project/2`), and the URL-driven remote
+  activation in `ProjectsLive.handle_params/3` (a `?project=` param naming a
+  remote path, incl. the Review-page "continue task" resume landing). The
+  arity-3 variant `spawn_remote_project_activation/3` additionally restores
+  the previous task's foreign repos when given a resume task id. Re-trigger
+  guard: an activation already in flight for the SAME path is a no-op; a
+  DIFFERENT path supersedes it (the in-flight flag is replaced, so the older
+  task's result is dropped by the stale-guard in `ProjectsLive.handle_info/2`).
+  The RPC-heavy sequence runs OUTSIDE the LiveView process in a supervised
   `EvoDash.TaskSupervisor` task and reports back as
   `{:async_remote_project, node, expanded, result}` where `result` is
   `{:ok, results_map}` — the assigns the sync flow applied today — or
@@ -489,6 +493,23 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   result applies a frame later via the continuation.
   """
   def spawn_remote_project_activation(socket, expanded) do
+    spawn_remote_project_activation(socket, expanded, nil)
+  end
+
+  @doc """
+  Resume-aware remote project activation: like `spawn_remote_project_activation/2`,
+  but when `resume_task_id` is a non-empty binary the spawned task overrides
+  the project-load result's `foreign_repos` with the resumed task's repos
+  (converted node-aware via `repos_from_task_data/2`) BEFORE sending
+  `{:async_remote_project, ...}`. The override runs INSIDE the supervised task
+  because for a genuine remote node `NodeContext.get_task/2` is an `:erpc`
+  round-trip that must never block the LiveView process — and it lands after
+  the genesis.toml `foreign_repos` load, so the async continuation can never
+  clobber the task-derived repos (the local flow's task-repos-win precedence,
+  see `ProjectsLive.maybe_restore_foreign_repos_from_task/2`). A missing task
+  or a task without foreign repos leaves the loaded repos unchanged.
+  """
+  def spawn_remote_project_activation(socket, expanded, resume_task_id) do
     if socket.assigns[:remote_project_loading] == expanded do
       # Same path already loading (e.g. double Enter) — no re-spawn.
       socket
@@ -499,13 +520,119 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
       view_pid = self()
 
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        result = remote_project_load(node, expanded)
+        result =
+          case remote_project_load(node, expanded) do
+            {:ok, results} ->
+              case task_foreign_repos_for_resume(node, resume_task_id) do
+                nil -> {:ok, results}
+                task_repos -> {:ok, Map.put(results, :foreign_repos, task_repos)}
+              end
+
+            error ->
+              error
+          end
+
         send(view_pid, {:async_remote_project, node, expanded, result})
       end)
 
       socket
       |> assign(:project_palette_open, false)
       |> assign(:palette_mode, :menu)
+    end
+  end
+
+  @doc """
+  Converts persisted/in-memory foreign-repo data into `%EvoGit.Core.ForeignRepo{}`
+  structs, built node-aware via `build_foreign_repo/4` so a REMOTE node's roots
+  stay verbatim (no local `Path.expand` — the remote node's own OS understands
+  its paths) while LOCAL nodes keep `ForeignRepo.new/3`'s exact semantics.
+
+  `repos` is a list of `%ForeignRepo{}` structs and/or maps (string- OR
+  atom-keyed) — the shape `task.opts[:foreign_repos]` takes after a DB
+  round-trip or when read from a remote task via `EvoDash.NodeContext.get_task/2`.
+  Extraction mirrors the tolerant semantics of
+  `ProjectsLive.maybe_restore_foreign_repos_from_task/2`: id falls back to
+  `"primary"`, root may be `"root"`/`"path"`-keyed, `writable` accepts the
+  literal `true` OR the string `"true"`, and `base_sha` is threaded only when a
+  non-empty binary. Unparseable entries (non-binary/missing root) are dropped.
+  Results are sorted primary-first (then by id).
+  """
+  @spec repos_from_task_data(node() | nil, list()) :: [EvoGit.Core.ForeignRepo.t()]
+  def repos_from_task_data(node, repos) when is_list(repos) do
+    repos
+    |> Enum.map(fn
+      %ForeignRepo{} = repo ->
+        repo
+
+      repo when is_map(repo) ->
+        id = Map.get(repo, "id") || Map.get(repo, :id) || "primary"
+        root = Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root)
+        desc = Map.get(repo, "description") || Map.get(repo, :description)
+
+        # Tolerant writable check for string-keyed persisted shapes.
+        writable = Map.get(repo, "writable", Map.get(repo, :writable, false))
+        base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
+
+        if is_binary(id) and is_binary(root) do
+          opts =
+            if is_binary(desc) and desc != "" do
+              [description: desc]
+            else
+              []
+            end
+            |> Keyword.put(:writable, writable == true or writable == "true")
+            |> then(fn o ->
+              if is_binary(base_sha) and base_sha != "" do
+                Keyword.put(o, :base_sha, base_sha)
+              else
+                o
+              end
+            end)
+
+          build_foreign_repo(node, id, root, opts)
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort_by(fn repo ->
+      {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
+    end)
+  end
+
+  def repos_from_task_data(_node, _repos), do: []
+
+  # Node-aware foreign-repo restore for the resume-aware activation task:
+  # fetches the previous task (on the activation task's OWN node — for a
+  # genuine remote node this is an `:erpc` round-trip that must run here, in
+  # the supervised task, never in the LiveView process) and converts its
+  # `opts[:foreign_repos]` via `repos_from_task_data/2`. Returns `nil` when
+  # there is no resume task id, the task is missing/unknown, or it carries no
+  # (parseable) foreign repos — the caller then keeps the genesis.toml repos
+  # the project load produced.
+  defp task_foreign_repos_for_resume(node, resume_task_id) do
+    if is_binary(resume_task_id) and resume_task_id != "" do
+      case NodeContext.get_task(node, resume_task_id) do
+        nil ->
+          nil
+
+        task ->
+          case task.opts[:foreign_repos] do
+            repos when is_list(repos) and repos != [] ->
+              case repos_from_task_data(node, repos) do
+                [] -> nil
+                converted -> converted
+              end
+
+            _ ->
+              nil
+          end
+      end
+    else
+      nil
     end
   end
 
