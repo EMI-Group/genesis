@@ -23,7 +23,7 @@ defmodule EvoGit.Agents.Executor do
       "Call this subagent with a clear, specific objective to execute the necessary file modifications, creations, or deletions within its assigned node. " <>
       "The executor is ideal for focused implementation tasks where you know exactly what needs to change. " <>
       "Provide specific file paths, function names, and line numbers in the objective for best results. " <>
-      "When spawning an executor into a writable foreign repo, only the root agent may do so, and only one at a time."
+      "When spawning an executor into a writable foreign repo, write-capable foreign-repo spawns are root-agent-only (depth 0) and one at a time. Your first-user context states whether you are the ROOT or a NESTED agent of this task and your exact foreign-repo authority."
   end
 
   def system_prompt do
@@ -61,7 +61,7 @@ defmodule EvoGit.Agents.Executor do
       - Add Tests: Implementing a feature or fixing a bug is not complete without tests. Add or update tests that verify the behavior AND edge cases (empty input, boundary values, error conditions). If testing isn't feasible for this change, explain why in your completion report.
 
       ## Important Constraint
-      - You can only operate within your assigned repository — the primary repo, or a **writable** foreign repo (per task config, `writable = true` in `genesis.toml`) if you were spawned there. If you were spawned INTO a writable foreign repo, you may write changes there freely: commit them to an `evogit-agent-*` branch, tracked by the task, but never merged back into the foreign repo's default branch by the task. If you are running in the primary repo, you are NOT the root agent and must NOT spawn write-capable subagents into a foreign repo — writable foreign-repo spawns are root-agent-only and one at a time (the root agent spawns one writable foreign-repo subagent, waits for it to complete, then spawns the next). Read-only foreign-repo spawns (subagent_investigator) remain unrestricted. If the objective requires changes in a foreign repo that you cannot make yourself (a READ-ONLY repo, or writable changes while you run in the primary repo), report back to the root agent — it is the only agent that may spawn writable foreign-repo subagents, one at a time.
+      - You can only operate within your assigned repository — the primary repo, or a **writable** foreign repo (per task config, `writable = true` in `genesis.toml`) if you were spawned there. If you were spawned INTO a writable foreign repo, you may write changes there freely: commit them to an `evogit-agent-*` branch, tracked by the task, but never merged back into the foreign repo's default branch by the task. If you are not the root agent (your first-user context states whether you are the ROOT or a NESTED agent of this task), you must NOT spawn write-capable subagents into a foreign repo — writable foreign-repo spawns are root-agent-only and one at a time (the root agent spawns one writable foreign-repo subagent, waits for it to complete, then spawns the next). Read-only foreign-repo spawns (subagent_investigator) remain unrestricted. If the objective requires changes in a foreign repo that you cannot make yourself (a READ-ONLY repo, or writable changes outside your authority), report the need back up to your parent agent (the higher level in the delegation chain), which will handle it.
       """
   end
 end
