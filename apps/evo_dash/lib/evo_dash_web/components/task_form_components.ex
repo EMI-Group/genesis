@@ -192,18 +192,22 @@ defmodule EvoDashWeb.TaskFormComponents do
             <%!-- Bottom toolbar (.input-controls) — the card's LAST element, in
                  normal document flow (never position: fixed). ChatGPT/Gemini
                  input-box style: ALL controls live in ONE toolbar row pinned to
-                 the card's bottom — attach "+" (bottom-left) → mode select →
-                 (custom-agent select) → model select → circular icon-only send
-                 button (FAR RIGHT, pushed there by ml-auto). DOM order ==
-                 visual order (no order-* overrides). The attach button and its
-                 hidden manual-fallback panel are DIRECT children of the
-                 toolbar; .file-manual is positioned absolutely ABOVE the
-                 toolbar's left corner (see app.css), so it never takes part in
-                 the flex row. The row is guaranteed ONE LINE (flex-nowrap —
-                 never wraps): the selects use min-w-0 + truncate + max-w so
-                 long labels (agent names, mode names, model profile ids) are
-                 clipped with an ellipsis instead of forcing the row wider than
-                 its container. --%>
+                 the card's bottom — attach "+" (bottom-left), then free space,
+                 then a RIGHT-ALIGNED cluster: mode select → (custom-agent
+                 select) → model select → circular icon-only send button (the
+                 cluster's LAST element = the row's far right, no auto margin of
+                 its own). The row's auto-margin lives on the MODE select's
+                 ml-auto — it absorbs the free space, packing the cluster at the
+                 right edge with the uniform flex gap between members. DOM order
+                 == visual order (no order-* overrides). The attach button and
+                 its hidden manual-fallback panel are DIRECT children of the
+                 toolbar; .file-manual is positioned absolutely just above the
+                 toolbar's left side, near the "+" button (see app.css), so it
+                 never takes part in the flex row. The row is guaranteed ONE
+                 LINE (flex-nowrap — never wraps): the selects use min-w-0 +
+                 truncate + max-w so long labels (agent names, mode names, model
+                 profile ids) are clipped with an ellipsis instead of forcing
+                 the row wider than its container. --%>
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
@@ -237,8 +241,10 @@ defmodule EvoDashWeb.TaskFormComponents do
                      rendered hidden; the FilePicker JS hook reveals it when the
                      native picker is unavailable (headless server, remote node,
                      picker disabled) and submits the typed path via the
-                     "file_pick_manual" event. Anchored ABOVE the toolbar's
-                     bottom-left corner (position: absolute in app.css).
+                     "file_pick_manual" event. Anchored just above the toolbar's
+                     left side, near the "+" button (position: absolute in
+                     app.css — the exact pixel offset lives there, not in
+                     markup).
                      phx-update="ignore" is CRITICAL (same contract as the
                      textarea): visibility / typed value / inline error are
                      client-owned, so a server re-render (e.g. task broadcasts,
@@ -303,11 +309,14 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <span class="file-manual-error" role="alert" hidden></span>
                 </div>
 
-                <!-- Mode switch -->
+                <!-- Mode switch — carries the row's auto-margin (ml-auto):
+                     it leads the toolbar's RIGHT-ALIGNED cluster [mode | agent |
+                     model | send], absorbing the free space after the attach
+                     "+" button so the cluster packs at the right edge. -->
                 <select
                   name="mode"
                   phx-change="task_change"
-                  class="select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]"
+                  class="select select-ghost select-sm text-sm bg-transparent font-medium ml-auto min-w-0 truncate max-w-[11rem]"
                   title={mode_description(@mode)}
                 >
                   <option value="genesis_existing" selected={@mode == "genesis_existing"}>
@@ -386,17 +395,18 @@ defmodule EvoDashWeb.TaskFormComponents do
                 <% end %>
 
                 <!-- Launch button — circular icon-only send (ChatGPT/Gemini
-                   style), FAR RIGHT of the toolbar (ml-auto pushes it to the
-                   row's right edge regardless of how many selects render).
-                   data-mode drives the per-mode hover ring color; data-resume
-                   drives the resume-ring variant (lighter green when a resume
-                   task id is set — evolve only). Both keyed in CSS in
-                   assets/css/app.css. id="task-launch-button" is a stable
-                   test/UI marker that survives icon swaps. -->
+                   style): the LAST element of the toolbar's right-aligned
+                   cluster = the row's far right. It carries NO auto margin of
+                   its own — the cluster is packed right by the MODE select's
+                   ml-auto. data-mode drives the per-mode hover ring color;
+                   data-resume drives the resume-ring variant (lighter green
+                   when a resume task id is set — evolve only). Both keyed in
+                   CSS in assets/css/app.css. id="task-launch-button" is a
+                   stable test/UI marker that survives icon swaps. -->
                 <button
                   type="submit"
                   id="task-launch-button"
-                  class="btn btn-primary btn-circle btn-sm shrink-0 ml-auto"
+                  class="btn btn-primary btn-circle btn-sm shrink-0"
                   data-mode={@mode}
                   data-resume={String.trim(@resume_from) != ""}
                   disabled={@disabled}

@@ -52,10 +52,13 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
 
   # Render smoke tests: data-layout is server-driven. The bottom toolbar
   # (.input-controls) is IDENTICAL in both layouts — DOM order AND visual
-  # order are attach "+" (bottom-left) → mode select → (custom-agent select) →
-  # model select → circular icon-only send button (FAR RIGHT, pushed there by
-  # ml-auto). Only the textarea size differs per layout, so the tests assert
-  # the unified classes via Floki.
+  # order are attach "+" (bottom-left) → free space → a RIGHT-ALIGNED cluster:
+  # mode select → (custom-agent select) → model select → circular icon-only
+  # send button (the cluster's LAST element = the row's far right, with NO
+  # auto margin of its own). The row's auto margin (ml-auto) lives on the MODE
+  # select — it absorbs the free space so the cluster packs at the right edge.
+  # Only the textarea size differs per layout, so the tests assert the unified
+  # classes via Floki.
   describe "task_form/1 rendering" do
     test "compact layout renders data-layout=compact with the circular send button" do
       html =
@@ -78,7 +81,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ ~s(data-layout="expanded")
     end
 
-    test "Layout A (compact): compact selects + circular send button pushed far right" do
+    test "Layout A (compact): compact selects + right-aligned cluster (mode select ml-auto)" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
@@ -86,15 +89,20 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
         )
 
       # Compact controls: the selects are select-sm scale (no select-md), the
-      # send button is a small filled circle pushed far right by ml-auto (no
-      # order-* / mx-auto centering trick).
+      # send button is a small filled circle at the row's far right. The
+      # right-aligned cluster [mode | model | send] is packed right by the MODE
+      # select's ml-auto — the launch button carries NO auto margin (no order-*
+      # / mx-auto centering trick anywhere).
       assert mode_class(html) =~ "select-sm"
       refute mode_class(html) =~ "select-md"
       assert model_class(html) =~ "select-sm"
       refute model_class(html) =~ "select-md"
       assert button_class(html) =~ "btn-circle"
       assert button_class(html) =~ "btn-sm"
-      assert button_class(html) =~ "ml-auto"
+      assert mode_class(html) =~ "ml-auto"
+      refute button_class(html) =~ "ml-auto"
+      refute mode_class(html) =~ "order-"
+      refute mode_class(html) =~ "mx-auto"
       refute button_class(html) =~ "order-"
       refute button_class(html) =~ "mx-auto"
     end
@@ -110,9 +118,9 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       [controls] = Floki.find(doc, ".input-controls")
 
       # Interactive controls in document order: attach "+" first (bottom-left),
-      # mode select, model select, circular send button LAST (far right). The
-      # hidden .file-manual fallback div is a sibling in the same row but is
-      # not an interactive control.
+      # mode select, model select, circular send button LAST (rightmost member
+      # of the right-aligned cluster). The hidden .file-manual fallback div is
+      # a sibling in the same row but is not an interactive control.
       found =
         Floki.find(
           controls,
@@ -132,9 +140,13 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert {"id", "task-launch-button"} in launch_attrs
       assert {"type", "submit"} in launch_attrs
 
-      # The send button carries the classes that push it to the row's far right.
+      # Free-space placement: the row's auto margin lives on the MODE select
+      # (ml-auto — the cluster lead), NOT on the launch button, so the free
+      # space sits before the cluster [mode | model | send] rather than
+      # between model and launch.
+      assert mode_class(html) =~ "ml-auto"
       assert {"class", launch_class} = List.keyfind(launch_attrs, "class", 0)
-      assert launch_class =~ "ml-auto"
+      refute launch_class =~ "ml-auto"
     end
 
     test "model option shows only the profile id as its label" do
@@ -171,7 +183,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert pro |> Floki.attribute("value") |> List.first() == "pro"
     end
 
-    test "Layout B (expanded): identical toolbar — send button far right" do
+    test "Layout B (expanded): identical toolbar — right-aligned cluster: mode select ml-auto, send button last" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: String.duplicate("a", 1300),
@@ -181,21 +193,27 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ ~s(data-layout="expanded")
 
       # The bottom toolbar is identical in both layouts (only the textarea
-      # size differs): compact selects + circular send button with ml-auto.
+      # size differs): compact selects in a right-aligned cluster — the MODE
+      # select carries the row's ml-auto (cluster lead), the circular send
+      # button is the cluster's last element with no auto margin.
       assert mode_class(html) =~ "select-sm"
       assert model_class(html) =~ "select-sm"
       assert button_class(html) =~ "btn-circle"
-      assert button_class(html) =~ "ml-auto"
+      assert mode_class(html) =~ "ml-auto"
+      refute button_class(html) =~ "ml-auto"
+      refute mode_class(html) =~ "mx-auto"
       refute button_class(html) =~ "mx-auto"
     end
 
-    test "send button stays far right (ml-auto) when no model profiles exist" do
+    test "right-aligned cluster holds when no model profiles exist (mode select ml-auto)" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
-      # No order-* / mx-auto centering: ml-auto pins the send button to the
-      # row's right edge even in the 2-control edge case (no model select).
-      assert button_class(html) =~ "ml-auto"
+      # No order-* / mx-auto centering: the MODE select's ml-auto still packs
+      # the cluster at the row's right edge even in the 2-control edge case
+      # (no model select); the circular send button carries no auto margin.
+      assert mode_class(html) =~ "ml-auto"
       assert button_class(html) =~ "btn-circle"
+      refute button_class(html) =~ "ml-auto"
       refute html =~ ~s(name="model_id")
     end
 

@@ -1934,10 +1934,15 @@ button, a, input, textarea, select, summary,
    ChatGPT/Gemini input-box style — one toolbar row holds ALL controls: the
    attach "+" button first (bottom-LEFT), then the compact mode select, the
    (custom-agent select), the model select, and the circular icon-only send
-   button LAST — pushed to the FAR RIGHT by ml-auto on the button (plain DOM
-   order, no order-* overrides; the auto margin absorbs all free space, so
-   the default justify-content below never applies). A hairline border-top
-   separates the toolbar from the textarea (base-300 grade, faint).
+   button LAST. There is NO drawn divider between the textarea and this row —
+   the toolbar sits directly under the textarea. The row's auto margin
+   (ml-auto, markup in task_form_components.ex) lives on the MODE select, so
+   mode | (custom-agent select) | (model select) | circular send button form
+   a right-aligned cluster packed at the right edge with uniform gaps; the
+   send button is the cluster's LAST element = the row's far right, carrying
+   NO auto margin of its own (plain DOM order, no order-* overrides; the
+   auto margin on the mode select absorbs all free space, so the default
+   justify-content below never applies).
    .input-controls is position: relative so the hidden .file-manual fallback
    panel (a child of this row, see below) anchors itself ABOVE the toolbar's
    bottom-left corner, overlapping the textarea like a popover. Only the
@@ -1956,7 +1961,6 @@ button, a, input, textarea, select, summary,
   align-items: center;
   gap: 0.75rem;
   padding: 0.625rem 1rem;
-  border-top: 1px solid color-mix(in oklab, var(--color-base-300) 55%, transparent);
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -2066,18 +2070,20 @@ button, a, input, textarea, select, summary,
    picker disabled), the FilePicker hook (js/app.js) reveals this inline path
    input as a popover anchored ABOVE the bottom toolbar's left corner — the
    "+" attach button is the toolbar's FIRST child, so the panel (bottom:
-   calc(100% + 0.4rem); left: 0 against .input-controls, which is position:
-   relative) reads as extending upward from the "+" button over the textarea.
-   The widget is `phx-update="ignore"` (task_form_components.ex) — visibility
-   / typed value / inline error are client-owned. The inner wrap expands
-   rightward with a subtle pop/slide on open (@keyframes file-manual-expand
-   restarts whenever the widget becomes visible again). Uses only the
-   --color-base-* / --color-warning / --color-success / --color-error theme
-   variables via color-mix (never oklch(var(--x) / a) — Known Issue (i)). */
+   calc(100% + 0.4rem); left: 0.75rem against .input-controls, which is
+   position: relative — nudged off the container's left edge, no longer
+   flush with the box) reads as extending upward from the "+" button over
+   the textarea. The widget is `phx-update="ignore"` (task_form_components.ex)
+   — visibility / typed value / inline error are client-owned. The inner wrap
+   expands rightward with a subtle pop/slide on open (@keyframes
+   file-manual-expand restarts whenever the widget becomes visible again).
+   Uses only the --color-base-* / --color-warning / --color-success /
+   --color-error theme variables via color-mix (never oklch(var(--x) / a) —
+   Known Issue (i)). */
 .file-manual {
   position: absolute;
   bottom: calc(100% + 0.4rem);
-  left: 0;
+  left: 0.75rem;
   z-index: 20;
 }
 
