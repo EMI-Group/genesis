@@ -39,20 +39,23 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
         <div class="p-4 sm:p-5 flex flex-wrap items-center gap-3">
           <%= if length(@repos) > 1 do %>
             <%!-- zh_CN: 切换评审仓库（多仓库任务的下拉切换器） --%>
-            <select
-              name="repo_id"
-              phx-change="switch_repo"
-              class="select select-sm rounded-lg border-base-300 max-w-56"
-              aria-label={gettext("Repository")}
-            >
-              <option
-                :for={repo <- @repos}
-                value={repo[:repo_id]}
-                selected={repo[:repo_id] == @active_repo_id}
+            <%!-- Form-level phx-change (sibling of #merge-form; class="contents" keeps the parent flex-wrap row layout): a form-less input-level phx-change never delivers its event — pushInput throws "form events require the input to be inside a form". --%>
+            <form id="repo-switch-form" phx-change="switch_repo" class="contents">
+              <select
+                name="repo_id"
+                phx-change="switch_repo"
+                class="select select-sm rounded-lg border-base-300 max-w-56"
+                aria-label={gettext("Repository")}
               >
-                {repo[:repo_id]} — {truncate_repo_path(Map.get(repo, :repo_path))}
-              </option>
-            </select>
+                <option
+                  :for={repo <- @repos}
+                  value={repo[:repo_id]}
+                  selected={repo[:repo_id] == @active_repo_id}
+                >
+                  {repo[:repo_id]} — {truncate_repo_path(Map.get(repo, :repo_path))}
+                </option>
+              </select>
+            </form>
           <% end %>
 
           <%= if @merge_targets != [] do %>

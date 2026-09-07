@@ -282,7 +282,12 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
           <%!-- heroicons has no folder-stack glyph; rectangle-stack is the closest stacked-repositories icon --%>
           <.icon name="hero-rectangle-stack" class="size-4 shrink-0 text-base-content/50" />
           <%!-- zh_CN: "Repository" → 仓库（切换评审仓库的标签，多仓库评审时选择当前查看的仓库） --%>
-          <label class="flex items-center gap-2 min-w-0">
+          <%!-- Form-level phx-change: an input-level phx-change with no owning form never delivers its event (phoenix_live_view pushInput throws "form events require the input to be inside a form"); the select serializes by its name=repo_id into %{"repo_id" => ...}. --%>
+          <form
+            id="diff-repo-switch-form"
+            phx-change="switch_repo"
+            class="flex items-center gap-2 min-w-0"
+          >
             <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Repository")}</span>
             <select
               name="repo_id"
@@ -298,7 +303,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                 {repo_option_label(repo)}
               </option>
             </select>
-          </label>
+          </form>
           <div class="ml-auto shrink-0 flex items-center gap-2 font-mono text-xs">
             <span class="text-success">+{@total_additions}</span>
             <span class="text-error">-{@total_deletions}</span>
@@ -407,9 +412,14 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
     Enum.reduce(files, 0, fn file, acc -> acc + (Map.get(file, key) || 0) end)
   end
 
-  # Repo select option label: "<repo_id> — <truncated path>"; the path part is
-  # dropped entirely when the repo map carries no usable path.
-  defp repo_option_label(repo) do
+  @doc """
+  Repo select option label: "<repo_id> — <truncated path>"; the path part is
+  dropped entirely when the repo map carries no usable path.
+
+  Public so sibling review components (e.g. Stats.commits_list' repo selector)
+  reuse the same option-label rendering as this module's own selectors.
+  """
+  def repo_option_label(repo) do
     path = repo |> Map.get(:repo_path) |> truncate_string(30)
 
     if path == "" do
