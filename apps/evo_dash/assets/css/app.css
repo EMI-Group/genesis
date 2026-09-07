@@ -1732,21 +1732,22 @@ button, a, input, textarea, select, summary,
    attribute from EvoDashWeb.TaskFormComponents.layout_for/1 for first paint
    (and re-seeds it from its possibly-stale @task_prompt on server re-renders,
    which the hook re-asserts via a MutationObserver — converging with no loop):
-     "compact"  → Layout A: unified objective box — the controls row is the
-                  card's last line; Launch button bottom-right. The box grows
-                  120px → ~16 lines and flips to expanded the INSTANT the
-                  content would exceed the 16-line cap, so it never shows an
-                  internal scrollbar while growing (overflow-y: auto on the
-                  compact textarea is a safety net only).
-     "expanded" → Layout B: large objective area with an in-flow launch panel
-                  below the textarea; Launch button in the middle. The card is
-                  a flex column that fills the viewport (flex: 1; min-height:
+     "compact"  → Layout A: unified objective box — the bottom toolbar
+                  (.input-controls) is the card's last line; the circular send
+                  button sits far right. The box grows 120px → ~16 lines and
+                  flips to expanded the INSTANT the content would exceed the
+                  16-line cap, so it never shows an internal scrollbar while
+                  growing (overflow-y: auto on the compact textarea is a
+                  safety net only).
+     "expanded" → Layout B: large objective area with an in-flow bottom
+                  toolbar below the textarea; send button far right. The card
+                  is a flex column that fills the viewport (flex: 1; min-height:
                   0; overflow: hidden on .input-card), so it is naturally
                   constrained to its flex-allocated height — no fragile
                   viewport-derived offset and NO max-height cap on the
                   textarea. The textarea absorbs ALL remaining card space
                   (flex: 1) and scrolls INTERNALLY (overflow-y: auto), so the
-                  in-flow launch panel (.input-controls) always stays pinned
+                  in-flow bottom toolbar (.input-controls) always stays pinned
                   at the bottom of the card on any viewport height, regardless
                   of prompt length.
    Flip semantics: compact → expanded when the natural content height exceeds
@@ -1854,10 +1855,12 @@ button, a, input, textarea, select, summary,
   border: none;
   background: transparent;
   color: var(--color-base-content);
-  /* Top 3rem reserves space so typed text never sits under the top-right
-     attach-file "+" button (absolute top-2 right-2, ~40px tall); right/left
-     1.25rem match the card edges; bottom 1.5rem balances the top reserve. */
-  padding: 3rem 1.25rem 1.5rem;
+  /* Uniform small padding — there is no floating button over the textarea
+     anymore (the attach "+" button lives in the bottom toolbar below it, so
+     no top "clearance" is reserved): 1.25rem top/left/right match the card
+     edges; bottom 0.75rem meets the toolbar's own padding above the
+     hairline separator. */
+  padding: 1.25rem 1.25rem 0.75rem;
   outline: none;
   line-height: 1.6;
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1925,29 +1928,35 @@ button, a, input, textarea, select, summary,
   scrollbar-gutter: stable;
 }
 
-/* --- The controls row (mode / launch / model) ---
-   Now the LAST element INSIDE .input-card (in normal document flow — never
+/* --- The bottom toolbar (attach "+" | mode | (agent) | model | send) ---
+   The LAST element INSIDE .input-card (in normal document flow — never
    position: fixed; no --input-layout-center, no [dir="rtl"] transform).
-   Control order is IDENTICAL in both layouts (server-side classes in
-   task_form_components.ex): mode (order-1) | Launch (order-2, centered via
-   mx-auto) | model (order-3). mx-auto centers Launch even when the model
-   select is absent (2-item row); justify-content: space-between is
-   neutralized for the auto-margin button. Only the textarea size differs
-   between compact and expanded layouts.
+   ChatGPT/Gemini input-box style — one toolbar row holds ALL controls: the
+   attach "+" button first (bottom-LEFT), then the compact mode select, the
+   (custom-agent select), the model select, and the circular icon-only send
+   button LAST — pushed to the FAR RIGHT by ml-auto on the button (plain DOM
+   order, no order-* overrides; the auto margin absorbs all free space, so
+   the default justify-content below never applies). A hairline border-top
+   separates the toolbar from the textarea (base-300 grade, faint).
+   .input-controls is position: relative so the hidden .file-manual fallback
+   panel (a child of this row, see below) anchors itself ABOVE the toolbar's
+   bottom-left corner, overlapping the textarea like a popover. Only the
+   textarea size differs between compact and expanded layouts.
 
-   ONE-LINE CONTRACT: the row NEVER wraps (flex-nowrap). The two selects
-   carry min-w-0 + truncate so long labels (mode names, model profile ids)
-   shrink and clip with an ellipsis instead of forcing the row wider than
-   its container. flex-wrap: nowrap below is belt-and-braces so the
-   contract survives markup refactors; the Tailwind flex-nowrap class on
-   .input-controls is the testable source. */
+   ONE-LINE CONTRACT: the row NEVER wraps (flex-nowrap). The selects carry
+   min-w-0 + truncate + max-w so long labels (mode names, agent names,
+   model profile ids) shrink and clip with an ellipsis instead of forcing
+   the row wider than its container. flex-wrap: nowrap below is
+   belt-and-braces so the contract survives markup refactors; the Tailwind
+   flex-nowrap class on .input-controls is the testable source. */
 .input-controls {
+  position: relative;
   display: flex;
   flex-wrap: nowrap; /* one-line contract: controls never wrap */
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
   padding: 0.625rem 1rem;
+  border-top: 1px solid color-mix(in oklab, var(--color-base-300) 55%, transparent);
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -2055,18 +2064,20 @@ button, a, input, textarea, select, summary,
 /* --- FilePicker manual-entry fallback (attach-file "+" button) ---
    When the native file dialog is unavailable (headless server, remote node,
    picker disabled), the FilePicker hook (js/app.js) reveals this inline path
-   input to the LEFT of the "+" attach button (absolute top-right;
-   `right: 2.75rem` clears the ~2rem square button plus a gap). The widget is
-   `phx-update="ignore"` (task_form_components.ex) — visibility / typed value /
-   inline error are client-owned. The inner wrap expands leftward with a
-   subtle pop/slide on open (@keyframes file-manual-expand restarts whenever
-   the widget becomes visible again). Uses only the --color-base-* /
-   --color-warning / --color-success / --color-error theme variables via
-   color-mix (never oklch(var(--x) / a) — Known Issue (i)). */
+   input as a popover anchored ABOVE the bottom toolbar's left corner — the
+   "+" attach button is the toolbar's FIRST child, so the panel (bottom:
+   calc(100% + 0.4rem); left: 0 against .input-controls, which is position:
+   relative) reads as extending upward from the "+" button over the textarea.
+   The widget is `phx-update="ignore"` (task_form_components.ex) — visibility
+   / typed value / inline error are client-owned. The inner wrap expands
+   rightward with a subtle pop/slide on open (@keyframes file-manual-expand
+   restarts whenever the widget becomes visible again). Uses only the
+   --color-base-* / --color-warning / --color-success / --color-error theme
+   variables via color-mix (never oklch(var(--x) / a) — Known Issue (i)). */
 .file-manual {
   position: absolute;
-  top: 0.5rem;
-  right: 2.75rem;
+  bottom: calc(100% + 0.4rem);
+  left: 0;
   z-index: 20;
 }
 
@@ -2143,12 +2154,15 @@ button, a, input, textarea, select, summary,
   height: 0.9rem;
 }
 
-/* Inline error below the manual input — mirrors the DirectoryPicker
-   data-picker-error="manual" hint (below the row, warning-colored). The hook
-   fills it from the server's `reason` (gettext'd) on %{error: true}. */
+/* Inline error for the manual input — the fallback panel pops UP from the
+   bottom toolbar, so the error hint extends FURTHER UP (away from the
+   toolbar row), mirroring the DirectoryPicker data-picker-error="manual"
+   hint. The hook fills it from the server's `reason` (gettext'd) on
+   %{error: true}. */
 .file-manual-error {
   position: absolute;
-  top: calc(100% + 0.25rem);
+  top: auto;
+  bottom: calc(100% + 0.25rem);
   left: 0;
   z-index: 10;
   max-width: 20rem;

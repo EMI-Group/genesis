@@ -3,9 +3,11 @@ defmodule EvoDashWeb.TaskFormComponents do
   Task form component for the dashboard — a single-card, two-layout
   "pageless editor".
 
-  One card contains the objective textarea AND the controls row (agent + mode
-  selects, Launch button, model select) as its last element. The layout is
-  server-seeded at render time via `layout_for/1` and client-driven by the
+  One card contains the objective textarea AND a bottom toolbar
+  (`.input-controls` — attach "+" | mode select | (custom-agent select) |
+  model select | circular icon-only send button) as its last element. The
+  layout is server-seeded at render time via `layout_for/1` and client-driven
+  by the
   AdaptiveInput JS hook (which adds a height-based trigger on top of the
   server thresholds): the hook
   re-asserts the client-computed layout (a) while typing, on mount/updates,
@@ -29,11 +31,13 @@ defmodule EvoDashWeb.TaskFormComponents do
       flexbox — the card's overflow containment bounds the textarea on any
       viewport height.
 
-  Both layouts share the same control order — agent + mode (order-1) | Launch
-  (order-2, centered via mx-auto) | model (order-3); only the textarea size
-  differs. The accent decorations (accent border-color, layered box-shadow
-  glow, top-edge gradient) are defined on the base `.input-card` CSS rule
-  and are shared by both layouts.
+  Both layouts share the same bottom toolbar (`.input-controls`) — the card's
+  last element, ChatGPT/Gemini input-box style: attach "+" (bottom-left) →
+  mode select → (custom-agent select) → model select → circular icon-only
+  send button (far right). Only the textarea size differs. The accent
+  decorations (accent border-color, layered box-shadow glow, top-edge
+  gradient) are defined on the base `.input-card` CSS rule and are shared by
+  both layouts.
 
   There is NO per-keystroke server round trip: the textarea sends no
   `phx-change` event. The AdaptiveInput JS hook autogrows the textarea AND
@@ -89,10 +93,11 @@ defmodule EvoDashWeb.TaskFormComponents do
   defp line_count(prompt), do: prompt |> String.split("\n") |> length()
 
   # ---------------------------------------------------------------------------
-  # task_form/1 — Single-card objective editor (textarea + in-flow controls row)
+  # task_form/1 — Single-card objective editor (textarea + in-flow bottom toolbar)
   #
   # The <.form id="task-form"> wraps the whole card: the textarea AND the
-  # controls row (mode / Launch / model) as the card's last element. The
+  # bottom toolbar (attach "+" | mode | (agent) | model | send button) as the
+  # card's last element. The
   # compact/expanded layout is server-seeded at render via layout_for/1
   # (data-layout) and client-driven by the AdaptiveInput hook (adds a
   # height-based trigger — flips to expanded when the content exceeds the
@@ -148,13 +153,14 @@ defmodule EvoDashWeb.TaskFormComponents do
              re-seeds the attribute from its stale @task_prompt (a
              MutationObserver on .input-layout catches any server re-render,
              e.g. toggling mode/model, converging with no loop):
-               "compact"  → Layout A — unified box: controls row is the card's
-                            last line (agent+mode | Launch | model, launch centered).
+               "compact"  → Layout A — unified box: the bottom toolbar is the
+                            card's last line (attach "+" | mode | model | send).
                "expanded" → Layout B — large objective area with an in-flow
-                            launch panel below (agent+mode | Launch | model).
-             Both layouts share the same visual order — agent + mode (order-1) |
-             Launch (order-2, centered via mx-auto) | model (order-3); only
-             the textarea size differs. -->
+                            bottom toolbar (attach "+" | mode | model | send).
+             Both layouts share the same bottom toolbar — attach "+"
+             (bottom-left) → mode select → (custom-agent select) → model
+             select → circular icon-only send button (far right); only the
+             textarea size differs. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
           data-layout={layout}
@@ -183,113 +189,21 @@ defmodule EvoDashWeb.TaskFormComponents do
               }
             ><%= @prompt %></textarea>
 
-            <%!-- Attach-file button — floats at the card's top-right corner
-                 (absolute, requires `relative` on .input-card). Rendered only
-                 when a project is open (@disabled == false), same gate as the
-                 controls row. The FilePicker JS hook owns the click: it pushes
-                 a "file_pick" event to the server (ProjectsLive runs the
-                 native file dialog and appends the picked file's text to the
-                 objective) and writes the returned prompt back into the
-                 textarea — the server cannot do it, because the textarea is
-                 phx-update="ignore" (the DOM is authoritative). type="button"
-                 is CRITICAL: inside the task form, a button without it would
-                 submit. --%>
-            <%= unless @disabled do %>
-              <%!-- Manual path fallback for the attach-file "+" button —
-                   rendered hidden; the FilePicker JS hook reveals it when the
-                   native picker is unavailable (headless server, remote node,
-                   picker disabled) and submits the typed path via the
-                   "file_pick_manual" event. Positioned to the LEFT of the "+"
-                   button (absolute top-right, .file-manual in app.css).
-                   phx-update="ignore" is CRITICAL (same contract as the
-                   textarea): visibility / typed value / inline error are
-                   client-owned, so a server re-render (e.g. task broadcasts,
-                   mode toggles) must never reset the open input. All
-                   user-facing strings are gettext-wrapped here (the JS hook
-                   only toggles visibility and reads payload.reason). --%>
-              <div
-                id="objective-file-manual"
-                class="file-manual"
-                phx-update="ignore"
-                hidden
-              >
-                <div class="file-manual-input-wrap">
-                  <%!-- zh_CN: 手动输入完整文件路径的占位提示 → "输入完整文件路径…" --%>
-                  <input
-                    type="text"
-                    class="file-manual-input"
-                    placeholder={gettext("Type a full file path…")}
-                    aria-label={gettext("File path to attach")}
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                  <%!-- zh_CN: 确认输入的文件路径 → "确认附加文件路径" --%>
-                  <button
-                    type="button"
-                    class="file-manual-confirm"
-                    aria-label={gettext("Confirm attach file path")}
-                    title={gettext("Confirm attach file path")}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M5 13l4 4L19 7" />
-                    </svg>
-                  </button>
-                  <%!-- zh_CN: 取消手动附加文件 → "取消附加文件路径" --%>
-                  <button
-                    type="button"
-                    class="file-manual-cancel"
-                    aria-label={gettext("Cancel attach file path")}
-                    title={gettext("Cancel attach file path")}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-                <span class="file-manual-error" role="alert" hidden></span>
-              </div>
-
-              <%!-- zh_CN: Attach file → "附加文件" --%>
-              <button
-                type="button"
-                id="objective-file-button"
-                phx-hook="FilePicker"
-                data-picker-id="objective_file"
-                aria-label={gettext("Attach file")}
-                title={gettext("Attach file")}
-                class="btn btn-ghost btn-sm btn-square absolute top-2 right-2 bg-base-100/80 z-10"
-              >
-                <.icon name="hero-paper-clip" class="size-4" />
-              </button>
-            <% end %>
-
-            <%!-- Controls row — the card's LAST element, in normal document flow
-                 (never position: fixed). DOM order AND visual order are
-                 identical in both layouts: agent + mode (order-1) | Launch
-                 (order-2, centered via mx-auto) | model (order-3). The Launch
-                 button carries mx-auto so it stays centered even when the
-                 agent/model selects are absent (2-item row: space-between
-                 would otherwise push it to the right edge). The row is
-                 guaranteed ONE LINE (flex-nowrap — never wraps): the selects
-                 use min-w-0 + truncate, so long labels (agent names, mode
-                 names, model profile ids) are clipped with an ellipsis
-                 instead of forcing the row wider than its container. --%>
+            <%!-- Bottom toolbar (.input-controls) — the card's LAST element, in
+                 normal document flow (never position: fixed). ChatGPT/Gemini
+                 input-box style: ALL controls live in ONE toolbar row pinned to
+                 the card's bottom — attach "+" (bottom-left) → mode select →
+                 (custom-agent select) → model select → circular icon-only send
+                 button (FAR RIGHT, pushed there by ml-auto). DOM order ==
+                 visual order (no order-* overrides). The attach button and its
+                 hidden manual-fallback panel are DIRECT children of the
+                 toolbar; .file-manual is positioned absolutely ABOVE the
+                 toolbar's left corner (see app.css), so it never takes part in
+                 the flex row. The row is guaranteed ONE LINE (flex-nowrap —
+                 never wraps): the selects use min-w-0 + truncate + max-w so
+                 long labels (agent names, mode names, model profile ids) are
+                 clipped with an ellipsis instead of forcing the row wider than
+                 its container. --%>
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
@@ -297,11 +211,103 @@ defmodule EvoDashWeb.TaskFormComponents do
                  textarea (wrapper opacity) + the centered hint overlay. --%>
             <%= unless @disabled do %>
               <div class="input-controls flex-nowrap">
+                <%!-- Attach-file "+" button — bottom-LEFT of the toolbar. The
+                     FilePicker JS hook owns the click: it pushes a "file_pick"
+                     event to the server (ProjectsLive runs the native file
+                     dialog and appends the picked file's text to the objective)
+                     and writes the returned prompt back into the textarea — the
+                     server cannot do it, because the textarea is
+                     phx-update="ignore" (the DOM is authoritative). type="button"
+                     is CRITICAL: inside the task form, a button without it
+                     would submit. --%>
+                <%!-- zh_CN: Attach file → "附加文件" --%>
+                <button
+                  type="button"
+                  id="objective-file-button"
+                  phx-hook="FilePicker"
+                  data-picker-id="objective_file"
+                  aria-label={gettext("Attach file")}
+                  title={gettext("Attach file")}
+                  class="btn btn-ghost btn-sm btn-square shrink-0"
+                >
+                  <.icon name="hero-plus" class="size-4" />
+                </button>
+
+                <%!-- Manual path fallback for the attach-file "+" button —
+                     rendered hidden; the FilePicker JS hook reveals it when the
+                     native picker is unavailable (headless server, remote node,
+                     picker disabled) and submits the typed path via the
+                     "file_pick_manual" event. Anchored ABOVE the toolbar's
+                     bottom-left corner (position: absolute in app.css).
+                     phx-update="ignore" is CRITICAL (same contract as the
+                     textarea): visibility / typed value / inline error are
+                     client-owned, so a server re-render (e.g. task broadcasts,
+                     mode toggles) must never reset the open input. All
+                     user-facing strings are gettext-wrapped here (the JS hook
+                     only toggles visibility and reads payload.reason). --%>
+                <div
+                  id="objective-file-manual"
+                  class="file-manual"
+                  phx-update="ignore"
+                  hidden
+                >
+                  <div class="file-manual-input-wrap">
+                    <%!-- zh_CN: 手动输入完整文件路径的占位提示 → "输入完整文件路径…" --%>
+                    <input
+                      type="text"
+                      class="file-manual-input"
+                      placeholder={gettext("Type a full file path…")}
+                      aria-label={gettext("File path to attach")}
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                    <%!-- zh_CN: 确认输入的文件路径 → "确认附加文件路径" --%>
+                    <button
+                      type="button"
+                      class="file-manual-confirm"
+                      aria-label={gettext("Confirm attach file path")}
+                      title={gettext("Confirm attach file path")}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                    <%!-- zh_CN: 取消手动附加文件 → "取消附加文件路径" --%>
+                    <button
+                      type="button"
+                      class="file-manual-cancel"
+                      aria-label={gettext("Cancel attach file path")}
+                      title={gettext("Cancel attach file path")}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <span class="file-manual-error" role="alert" hidden></span>
+                </div>
+
                 <!-- Mode switch -->
                 <select
                   name="mode"
                   phx-change="task_change"
-                  class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
+                  class="select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]"
                   title={mode_description(@mode)}
                 >
                   <option value="genesis_existing" selected={@mode == "genesis_existing"}>
@@ -333,7 +339,7 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <select
                     name="agent"
                     phx-change="select_agent"
-                    class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-1"
+                    class="select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[10rem]"
                   >
                     <%= if @mode != "custom_agent" do %>
                       <%!-- zh_CN: Auto → "自动"（推荐：由运行时选择默认智能体） --%>
@@ -352,28 +358,12 @@ defmodule EvoDashWeb.TaskFormComponents do
                   </select>
                 <% end %>
 
-                <!-- Launch button — the focal point, centered in BOTH
-                   layouts (order-2 + mx-auto; works with or without the
-                   model select). data-mode drives the per-mode hover ring
-                   color; data-resume drives the resume-ring variant (lighter
-                   green when a resume task id is set — evolve only). Both
-                   keyed in CSS in assets/css/app.css. -->
-                <button
-                  type="submit"
-                  class={["btn btn-primary gap-2 px-5 order-2 mx-auto"]}
-                  data-mode={@mode}
-                  data-resume={String.trim(@resume_from) != ""}
-                  disabled={@disabled}
-                >
-                  <.icon name="hero-rocket-launch" class="size-4" /> {gettext("Launch")}
-                </button>
-
                 <!-- Model switch -->
                 <%= if @model_profiles != [] do %>
                   <select
                     name="model_id"
                     phx-change="select_model"
-                    class="select select-ghost select-md text-base bg-transparent font-medium min-w-0 truncate order-3"
+                    class="select select-ghost select-sm text-sm bg-transparent font-medium min-w-0 truncate max-w-[11rem]"
                   >
                     <%!-- "Auto (by rules)" is offered when a model-selection
                        script is configured (show_auto_model_option) — and
@@ -394,6 +384,27 @@ defmodule EvoDashWeb.TaskFormComponents do
                     <% end %>
                   </select>
                 <% end %>
+
+                <!-- Launch button — circular icon-only send (ChatGPT/Gemini
+                   style), FAR RIGHT of the toolbar (ml-auto pushes it to the
+                   row's right edge regardless of how many selects render).
+                   data-mode drives the per-mode hover ring color; data-resume
+                   drives the resume-ring variant (lighter green when a resume
+                   task id is set — evolve only). Both keyed in CSS in
+                   assets/css/app.css. id="task-launch-button" is a stable
+                   test/UI marker that survives icon swaps. -->
+                <button
+                  type="submit"
+                  id="task-launch-button"
+                  class="btn btn-primary btn-circle btn-sm shrink-0 ml-auto"
+                  data-mode={@mode}
+                  data-resume={String.trim(@resume_from) != ""}
+                  disabled={@disabled}
+                  aria-label={gettext("Launch")}
+                  title={gettext("Launch")}
+                >
+                  <.icon name="hero-arrow-up" class="size-4" />
+                </button>
               </div>
 
               <%!-- Custom Agent mode hint — a single-line explanation under the
