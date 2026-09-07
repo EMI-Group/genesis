@@ -149,7 +149,12 @@ All pure logic lives in `EvoGit.Powershell` (lib/evo_git/powershell.ex), applied
 - 3-level configuration: `EvoGit.Config` merges defaults → user TOML → runtime overrides.
 
 ## First User Prompt Assembly
-The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two XML-delimited blocks separated by a `---` rule — `<context>` (context_tree + `{foreign_repos_section}`, omitted when blank), then `<objective>` (`{objective}`, omitted when there is no objective). **`build_dynamic_context/1`** + **`build_foreign_repos_section/1`** produce the section bodies. Blank sections are dropped entirely — no dangling rules, empty headers, or empty XML blocks; `---` appears only between two non-blank blocks.
+The `run/1` callback (injected by `use EvoGit.Agent`) assembles the agent's first user message as two XML-delimited blocks separated by a `---` rule — `<context>` (context_tree + `{authority_section}` + `{foreign_repos_section}` + `{repo_notes_section}`, each omitted when blank), then `<objective>` (`{objective}`, omitted when there is no objective).
+Section bodies are produced by **`build_dynamic_context/1`**, **`build_authority_section/1`** (delegation-authority role line), **`build_foreign_repos_section/1`** and **`build_repo_notes_section/1`**.
+Blank sections are dropped entirely — no dangling rules, empty headers, or empty XML blocks; `---` appears only between two non-blank blocks.
+**Delegation-authority section** (`ContextBuilder.build_authority_section/1`, wired in `Runner.do_run/2` only — never inside `build_dynamic_context/1`): authoritatively states whether THIS agent is the **ROOT agent** (`AgentState.parent_id == nil` ⇔ `SchedMeta` depth 0 — exact by construction in `Dispatch.register_agent/7`; never the process-dict depth, which may not be populated at assembly time) or a **NESTED agent**, plus the foreign-repo spawn authority that role carries (ROOT may spawn write-capable `:read_write` foreign-repo subagents one at a time; NESTED may not and reports needed foreign-repo changes up to its parent).
+Returns `""` for repo-less agents (the self-reflective chat persona must not read a task-role statement) and for tasks with no non-primary foreign repos (single-repo prompts stay token-neutral; mirrors `build_foreign_repos_section/1`'s empty-string convention, so the blank-filter drops it).
+Static system prompts are role-agnostic by design and point to this dynamic statement ("Your first-user context states whether you are the ROOT or a NESTED agent...") — system prompts must NOT contain dynamic state, and only the first user message (built with the live `%AgentState{}` in hand) can truthfully state the agent's own role.
 
 ## ReqLLM Finch Pool Reconciliation (`EvoGit.ReqLLMPool`)
 
