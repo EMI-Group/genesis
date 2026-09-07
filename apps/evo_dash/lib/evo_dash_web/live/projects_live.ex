@@ -195,8 +195,9 @@ defmodule EvoDashWeb.ProjectsLive do
                          The prefill button sets the prompt textarea's .value
                          (never innerHTML) and dispatches a bubbling `input`
                          event, which drives the AdaptiveInput hook (autogrow
-                         + client-side layout switch — the example exceeds the
-                         600-grapheme threshold, so the layout flips to
+                         + client-side layout switch — the example (1554
+                         chars) crosses the layout thresholds (char count and
+                         the compact height cap), so the layout flips to
                          expanded; the flip can also be height-driven). No
                          server event is involved; @task_prompt
                          is only updated by restore_state / task_submit. --%>

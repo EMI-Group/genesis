@@ -4,7 +4,7 @@
 //
 // AUTOGROW — measure the textarea's content height (scrollHeight) and set
 // its height so the box grows smoothly with its content. In compact layout
-// the CSS caps the box at ~8 lines (max-height: calc(1.6em * 8)); the height
+// the CSS caps the box at ~16 lines (max-height: calc(1.6em * 16)); the height
 // trigger in applyLayout flips the layout to expanded the INSTANT the natural
 // content height would exceed that cap (synchronously, before paint), so the
 // compact box NEVER shows an internal scrollbar while growing — overflow-y:
@@ -22,7 +22,7 @@
 // LAYOUT — the compact/expanded layout decision is CLIENT-DRIVEN: this hook
 // computes `data-layout` on the closest `.input-layout` ancestor from the
 // textarea value AND its measured content height, on every input and on
-// mount/updates. The value thresholds (>600 code points or >16 lines →
+// mount/updates. The value thresholds (>1200 code points or >32 lines →
 // expanded) mirror EvoDashWeb.TaskFormComponents.layout_for/1 so the SSR
 // seed and the client converge; the height threshold (natural content height
 // exceeds the compact max-height cap → expanded) is client-only — the server
@@ -141,7 +141,7 @@ const AdaptiveInput = {
 
   // Compute the compact/expanded layout from the input value AND the measured
   // natural content height. The value thresholds mirror the server's
-  // layout_for/1 (>600 code points or >16 lines → expanded) so the SSR-seeded
+  // layout_for/1 (>1200 code points or >32 lines → expanded) so the SSR-seeded
   // attribute and the client converge; the height threshold is client-only:
   // compact flips to expanded the instant the natural height would exceed the
   // compact max-height cap (the box would otherwise start scrolling
@@ -154,7 +154,7 @@ const AdaptiveInput = {
   // containment bounds the textarea; see css/app.css "Adaptive Input
   // Layout"), and no expanded-mode height value may be fed into applyLayout
   // (it never gates the compact flip, which fires only when content drops
-  // ~1 line below the 8-line cap). The
+  // ~1 line below the 16-line cap). The
   // server only seeds the initial data-layout attribute; from then on the DOM
   // value + measurement are the source of truth (no per-keystroke server
   // round-trip). Array.from counts code points — an acceptable stand-in for
@@ -167,17 +167,17 @@ const AdaptiveInput = {
     const lineCount = value.split('\n').length;
     // Cap + line-height come from the measurement. measureAndApply caches the
     // compact cap — the only mode where the CSS max-height resolves to px;
-    // lineHeight * 8 is the fallback for a cold cache (e.g. first measurement
+    // lineHeight * 16 is the fallback for a cold cache (e.g. first measurement
     // in an SSR-seeded expanded state). With box-sizing: border-box and a
     // zero border, the computed maxHeight and the neutralized scrollHeight
     // (content + padding) compare 1:1, so naturalHeight > cap fires exactly
     // when the box would need an internal scrollbar.
     const lineHeight = this._lineHeight || 0;
-    const cap = this._compactMaxHeight || (lineHeight > 0 ? lineHeight * 8 : 0);
+    const cap = this._compactMaxHeight || (lineHeight > 0 ? lineHeight * 16 : 0);
     const naturalHeight = this._measuredScrollHeight || 0;
     const capKnown = cap > 0;
-    const exceedsChars = charCount > 600;
-    const exceedsLines = lineCount > 16;
+    const exceedsChars = charCount > 1200;
+    const exceedsLines = lineCount > 32;
     // Flip up at height > cap; the dead band (cap - lineHeight, cap] keeps
     // whichever layout is current, so the flip-down needs a full line of
     // retreat below the cap.
@@ -212,7 +212,7 @@ const AdaptiveInput = {
     // Layout"). The layout-gated guard below keeps it out of the compact-cap
     // cache. The layout spends most of its
     // life in compact mode while typing, so the cache is warm; applyLayout's
-    // lineHeight * 8 fallback covers a cold cache. Note Tailwind preflight
+    // lineHeight * 16 fallback covers a cold cache. Note Tailwind preflight
     // sets box-sizing: border-box, so the computed maxHeight is a border-box
     // cap; the textarea border is 0 (border: none), so the neutralized
     // scrollHeight (content + padding) compares 1:1 with it — scrollHeight >
@@ -225,7 +225,7 @@ const AdaptiveInput = {
     // no expanded-mode value can ever corrupt _compactMaxHeight or leak
     // into applyLayout's hysteresis (a premature
     // flip back to compact with an internal scrollbar while the content is
-    // still far above the 8-line cap). The lineHeight * 8 fallback in
+    // still far above the 16-line cap). The lineHeight * 16 fallback in
     // applyLayout covers a cold cache (e.g. the first measurement in an
     // SSR-seeded expanded state).
     if (!Number.isNaN(computedMaxHeight)) {

@@ -1734,8 +1734,8 @@ button, a, input, textarea, select, summary,
    which the hook re-asserts via a MutationObserver — converging with no loop):
      "compact"  → Layout A: unified objective box — the controls row is the
                   card's last line; Launch button bottom-right. The box grows
-                  120px → ~8 lines and flips to expanded the INSTANT the
-                  content would exceed the 8-line cap, so it never shows an
+                  120px → ~16 lines and flips to expanded the INSTANT the
+                  content would exceed the 16-line cap, so it never shows an
                   internal scrollbar while growing (overflow-y: auto on the
                   compact textarea is a safety net only).
      "expanded" → Layout B: large objective area with an in-flow launch panel
@@ -1750,7 +1750,7 @@ button, a, input, textarea, select, summary,
                   at the bottom of the card on any viewport height, regardless
                   of prompt length.
    Flip semantics: compact → expanded when the natural content height exceeds
-   the compact max-height cap (or >600 code points / >16 lines, mirroring
+   the compact max-height cap (or >1200 code points / >32 lines, mirroring
    layout_for/1 for SSR-seed convergence); expanded → compact only after the
    height drops ~1 line-height below the cap (hysteresis against boundary
    flicker while deleting) AND the char/line thresholds are under. The
@@ -1854,7 +1854,10 @@ button, a, input, textarea, select, summary,
   border: none;
   background: transparent;
   color: var(--color-base-content);
-  padding: 1rem 1.25rem;
+  /* Top 3rem reserves space so typed text never sits under the top-right
+     attach-file "+" button (absolute top-2 right-2, ~40px tall); right/left
+     1.25rem match the card edges; bottom 1.5rem balances the top reserve. */
+  padding: 3rem 1.25rem 1.5rem;
   outline: none;
   line-height: 1.6;
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1868,14 +1871,14 @@ button, a, input, textarea, select, summary,
   outline: none;
 }
 
-/* Layout A (compact): starts ~4 lines (120px), auto-grows up to ~8 lines.
+/* Layout A (compact): starts ~4 lines (120px), auto-grows up to ~16 lines.
    overflow-y: auto is a SAFETY NET only — the AdaptiveInput hook flips the
    layout to expanded the instant the natural content height would exceed
    this max-height (synchronously, before paint), so the box never renders
    with an internal scrollbar while growing. */
 .input-layout[data-layout="compact"] .input-prompt {
   min-height: 120px;
-  max-height: calc(1.6em * 8);
+  max-height: calc(1.6em * 16);
   overflow-y: auto;
 }
 
