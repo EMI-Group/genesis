@@ -96,19 +96,19 @@ defmodule EvoDashWeb.Layouts do
       </div>
 
       <!-- Sidebar
-        NOTE: `overflow-visible!` (important) is deliberate. The SidebarCollapse
-        hook (assets/js/hooks/sidebar_collapse.js) re-applies `overflow-hidden`
-        in the EXPANDED state on every mount/update, which clips the SSH
-        node-selector dropdown (w-72 = 288px) at the expanded sidebar's edge
-        (w-60 = 240px) — the main body then appears to cover the SSH switch.
-        (The node selector now lives in the sidebar's bottom bar, leftmost,
-        with its dropdown opening upward — the w-72 vs w-60 clipping concern
-        is unchanged.) The !important modifier pins overflow to visible so
-        dropdown menus (node selector, language, theme) are never clipped.
-        The sidebar is a z-50 stacking context above the main content (z-0),
-        so overflowing menus paint above the main body. If the hook is fixed
-        at the source (stop toggling overflow-hidden on expand), revert this
-        to plain `overflow-visible`. -->
+        NOTE: `overflow-visible!` (important) is deliberate defense-in-depth so
+        the sidebar's overflowing <details> dropdown panels (SSH node selector
+        w-72 = 288px, language, theme) are never clipped at the sidebar edge
+        (w-60 = 240px expanded / w-16 = 64px collapsed). The !important
+        modifier pins overflow to visible regardless of any other class
+        changes. The SidebarCollapse hook (assets/js/hooks/sidebar_collapse.js)
+        keeps overflow visible in BOTH collapsed and expanded states — it no
+        longer re-applies `overflow-hidden` on expand (since commit 37cbed215)
+        — so the pin is belt-and-braces rather than load-bearing against a
+        hook regression. The sidebar is a z-50 stacking context above the main
+        content (z-0), so overflowing menus paint above the main body. The
+        node selector lives in the sidebar's bottom bar, leftmost, with its
+        dropdown opening upward. -->
       <aside
         id="sidebar"
         data-sidebar-collapsed="false"
