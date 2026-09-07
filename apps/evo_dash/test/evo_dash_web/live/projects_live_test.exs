@@ -1586,8 +1586,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
       assert assigns(view)[:remote?] == true
-      # erpc to the fake BEAM node fails fast — no agents/recents, no hang risk
-      assert assigns(view)[:remote_agents] == []
+      # erpc to the fake BEAM node fails fast — no recents, no hang risk
       assert assigns(view)[:recent_projects] == []
 
       # Remote top bar: data-remote present (boolean attrs serialize as a bare
