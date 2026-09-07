@@ -227,6 +227,58 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ "Open a project to get started"
     end
 
+    test "disabled state suppresses the task-launch placeholder (genesis_new default)" do
+      # Regression: with no project open (@disabled) the mode-dependent
+      # task-launch hint is an empty placeholder — the centered welcome overlay
+      # is the only hint. Covers the genesis_new branch's creation hint.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          disabled: true
+        )
+
+      refute html =~ ~s(placeholder="Describe what you want to change or improve...")
+      refute html =~ ~s(placeholder="Describe the codebase you want to create...")
+
+      refute html =~
+               ~s(placeholder="Optional — leave empty and click Launch to initialize an existing codebase")
+
+      assert html =~ "Open a project to get started"
+    end
+
+    test "disabled state suppresses the evolve placeholder (evolve_simple)" do
+      # Regression for the reported bug: the evolve-family placeholder
+      # ("Describe what you want to change or improve...") must NOT leak into
+      # the disabled (no-project) state either.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          disabled: true,
+          mode: "evolve_simple"
+        )
+
+      refute html =~ ~s(placeholder="Describe what you want to change or improve...")
+      refute html =~ ~s(placeholder="Describe the codebase you want to create...")
+
+      refute html =~
+               ~s(placeholder="Optional — leave empty and click Launch to initialize an existing codebase")
+
+      assert html =~ "Open a project to get started"
+    end
+
+    test "evolve_simple placeholder renders when a project is open (not disabled)" do
+      # Control: with a project open (@disabled == false) the evolve-family
+      # task-launch hint is unchanged.
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          disabled: false,
+          mode: "evolve_simple"
+        )
+
+      assert html =~ ~s(placeholder="Describe what you want to change or improve...")
+    end
+
     test "controls row stays on one line (flex-nowrap)" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
