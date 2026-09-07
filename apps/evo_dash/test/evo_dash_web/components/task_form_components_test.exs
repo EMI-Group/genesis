@@ -50,18 +50,23 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
   end
 
-  # Render smoke tests: data-layout is server-driven. Control ORDER is now
-  # IDENTICAL in both layouts — DOM order AND visual order are mode (order-1) |
-  # Launch (order-2, centered via mx-auto) | model (order-3). Only the textarea
-  # size differs per layout, so the tests assert the unified classes via Floki.
+  # Render smoke tests: data-layout is server-driven. The bottom toolbar
+  # (.input-controls) is IDENTICAL in both layouts — DOM order AND visual
+  # order are attach "+" (bottom-left) → mode select → (custom-agent select) →
+  # model select → circular icon-only send button (FAR RIGHT, pushed there by
+  # ml-auto). Only the textarea size differs per layout, so the tests assert
+  # the unified classes via Floki.
   describe "task_form/1 rendering" do
-    test "compact layout renders data-layout=compact with the rocket Launch button" do
+    test "compact layout renders data-layout=compact with the circular send button" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "Short objective")
 
       assert html =~ ~s(data-layout="compact")
-      assert html =~ "hero-rocket-launch"
-      assert button_text(html) == "Launch"
+      assert html =~ "hero-arrow-up"
+      refute html =~ "hero-rocket-launch"
+      assert button_attr(html, "aria-label") == "Launch"
+      # Icon-only: no visible text label inside the button.
+      assert button_text(html) == ""
     end
 
     test "expanded layout for a long objective" do
@@ -73,20 +78,28 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert html =~ ~s(data-layout="expanded")
     end
 
-    test "Layout A (compact): Launch order-2 centered (mx-auto), model order-3" do
+    test "Layout A (compact): compact selects + circular send button pushed far right" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 
-      # Visual order: mode (order-1) | Launch (order-2, mx-auto) | model (order-3).
-      assert button_class(html) =~ "order-2"
-      assert button_class(html) =~ "mx-auto"
-      assert model_class(html) =~ "order-3"
+      # Compact controls: the selects are select-sm scale (no select-md), the
+      # send button is a small filled circle pushed far right by ml-auto (no
+      # order-* / mx-auto centering trick).
+      assert mode_class(html) =~ "select-sm"
+      refute mode_class(html) =~ "select-md"
+      assert model_class(html) =~ "select-sm"
+      refute model_class(html) =~ "select-md"
+      assert button_class(html) =~ "btn-circle"
+      assert button_class(html) =~ "btn-sm"
+      assert button_class(html) =~ "ml-auto"
+      refute button_class(html) =~ "order-"
+      refute button_class(html) =~ "mx-auto"
     end
 
-    test "DOM order of the controls row is mode | Launch | model (pins real order)" do
+    test "toolbar DOM order is attach + | mode | model | send (pins real order)" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
@@ -96,39 +109,32 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       doc = parse(html)
       [controls] = Floki.find(doc, ".input-controls")
 
-      children =
-        controls
-        |> Floki.children()
-        |> Enum.filter(fn
-          {tag, _, _} when is_binary(tag) -> true
-          _ -> false
-        end)
+      # Interactive controls in document order: attach "+" first (bottom-left),
+      # mode select, model select, circular send button LAST (far right). The
+      # hidden .file-manual fallback div is a sibling in the same row but is
+      # not an interactive control.
+      found =
+        Floki.find(
+          controls,
+          "button#objective-file-button, select[name=mode], select[name=model_id], button#task-launch-button"
+        )
 
-      # Exactly three element children, in document order: mode select, Launch
-      # button, model select.
-      assert [mode_el, button_el, model_el] = children
+      assert [
+               {"button", attach_attrs, _},
+               {"select", mode_attrs, _},
+               {"select", model_attrs, _},
+               {"button", launch_attrs, _}
+             ] = found
 
-      # Mode select comes FIRST and carries order-1.
-      assert {tag, mode_attrs, _} = mode_el
-      assert tag == "select"
+      assert {"id", "objective-file-button"} in attach_attrs
       assert {"name", "mode"} in mode_attrs
-      assert {"class", mode_class} = List.keyfind(mode_attrs, "class", 0)
-      assert mode_class =~ "order-1"
-
-      # Launch button is SECOND, carries order-2 + mx-auto.
-      assert {tag, button_attrs, _} = button_el
-      assert tag == "button"
-      assert {"type", "submit"} in button_attrs
-      assert {"class", button_class} = List.keyfind(button_attrs, "class", 0)
-      assert button_class =~ "order-2"
-      assert button_class =~ "mx-auto"
-
-      # Model select comes THIRD and carries order-3.
-      assert {tag, model_attrs, _} = model_el
-      assert tag == "select"
       assert {"name", "model_id"} in model_attrs
-      assert {"class", model_class} = List.keyfind(model_attrs, "class", 0)
-      assert model_class =~ "order-3"
+      assert {"id", "task-launch-button"} in launch_attrs
+      assert {"type", "submit"} in launch_attrs
+
+      # The send button carries the classes that push it to the row's far right.
+      assert {"class", launch_class} = List.keyfind(launch_attrs, "class", 0)
+      assert launch_class =~ "ml-auto"
     end
 
     test "model option shows only the profile id as its label" do
@@ -165,23 +171,31 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert pro |> Floki.attribute("value") |> List.first() == "pro"
     end
 
-    test "Layout B (expanded): Launch order-2 centered (mx-auto), model order-3" do
+    test "Layout B (expanded): identical toolbar — send button far right" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: String.duplicate("a", 1300),
           model_profiles: [%{id: "pro", model: "gpt-x"}]
         )
 
-      # Visual order: mode (order-1) | Launch (order-2, mx-auto) | model (order-3).
-      assert button_class(html) =~ "order-2"
-      assert button_class(html) =~ "mx-auto"
-      assert model_class(html) =~ "order-3"
+      assert html =~ ~s(data-layout="expanded")
+
+      # The bottom toolbar is identical in both layouts (only the textarea
+      # size differs): compact selects + circular send button with ml-auto.
+      assert mode_class(html) =~ "select-sm"
+      assert model_class(html) =~ "select-sm"
+      assert button_class(html) =~ "btn-circle"
+      assert button_class(html) =~ "ml-auto"
+      refute button_class(html) =~ "mx-auto"
     end
 
-    test "Launch stays centered (mx-auto) when no model profiles exist" do
+    test "send button stays far right (ml-auto) when no model profiles exist" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
-      assert button_class(html) =~ "mx-auto"
+      # No order-* / mx-auto centering: ml-auto pins the send button to the
+      # row's right edge even in the 2-control edge case (no model select).
+      assert button_class(html) =~ "ml-auto"
+      assert button_class(html) =~ "btn-circle"
       refute html =~ ~s(name="model_id")
     end
 
@@ -350,26 +364,39 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       assert btn |> Floki.attribute("aria-label") |> List.first() == "Attach file"
       assert btn |> Floki.attribute("title") |> List.first() == "Attach file"
 
-      # Floats at the card's top-right corner (absolute, requires `relative`
-      # on .input-card), square ghost button.
+      # Bottom-toolbar "+" button (bottom-LEFT of the row): square ghost
+      # button — no absolute top-right floating over the textarea anymore.
       assert btn_class = btn |> Floki.attribute("class") |> List.first() |> to_string()
-      assert btn_class =~ "absolute top-2 right-2"
+      refute btn_class =~ "absolute"
+      refute btn_class =~ "top-2"
       assert btn_class =~ "btn-square"
 
-      # Paper-clip icon inside the button.
-      assert html =~ "hero-paper-clip"
+      # "+" icon inside the button (the paper-clip was the old top-right design).
+      assert html =~ "hero-plus"
+      refute html =~ "hero-paper-clip"
     end
 
-    test "attach-file button is NOT inside the controls row" do
+    test "attach-file button is the first element inside the controls row" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
       doc = parse(html)
       [controls] = Floki.find(doc, ".input-controls")
 
-      # Placement contract: the attach-file button sits between the textarea
-      # and .input-controls — NOT inside the row — so the DOM-order test
-      # (exactly 3 children: mode | Launch | model) stays valid.
-      assert Floki.find(controls, "button#objective-file-button") == []
+      # Placement contract (INVERTED vs the old top-right design): the attach
+      # "+" button now lives INSIDE .input-controls as its FIRST element child
+      # (bottom-left of the toolbar), followed by the hidden .file-manual
+      # fallback div — both direct children of the toolbar row.
+      element_children =
+        controls
+        |> Floki.children()
+        |> Enum.filter(fn
+          {tag, _, _} when is_binary(tag) -> true
+          _ -> false
+        end)
+
+      assert [{"button", first_attrs, _}, {"div", manual_attrs, _} | _] = element_children
+      assert {"id", "objective-file-button"} in first_attrs
+      assert {"id", "objective-file-manual"} in manual_attrs
     end
 
     test "attach-file button is not rendered in the disabled (no-project) state" do

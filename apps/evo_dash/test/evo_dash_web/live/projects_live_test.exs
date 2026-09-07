@@ -304,7 +304,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # Task form is always visible, but the launch panel is hidden
       # without an active project
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
       # Empty-state hint overlay is shown when the launch panel is hidden
       assert html =~ "Open a project to get started"
       # Command palette trigger shows the placeholder when no project is active
@@ -326,7 +326,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # The launch panel (mode select + launch button + model select) is
       # hidden entirely without an active project
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
       # The empty-state hint overlay is shown instead
       assert html =~ "Open a project to get started"
     end
@@ -362,7 +362,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # Projects page UI (empty state), not the chat page
       assert html =~ "Open a project to get started"
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
       refute html =~ "chat-form"
       assert html =~ "project-omnibox"
 
@@ -406,7 +406,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       html = render(view)
 
       # Project should be active — task form enabled
-      assert html =~ "hero-rocket-launch"
+      assert html =~ "task-launch-button"
       # Project settings should show config info
       assert html =~ "Foreign Repositories"
       # Example-task help block hides once a project is open
@@ -526,7 +526,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # Project should be active
       assert html =~ Path.basename(tmp_dir)
       # Task form should be present
-      assert html =~ "hero-rocket-launch"
+      assert html =~ "task-launch-button"
       # Project settings should be shown
       assert html =~ "Project Settings"
     end
@@ -1295,7 +1295,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # No crash; the page renders in the no-project empty state
       assert html =~ "Open a project to get started"
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
 
       # No project becomes active
       assert assigns(view)[:active_project] == nil
@@ -1381,7 +1381,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute_push_event(view, "task_notification", %{})
       # No active project in this describe (recent projects cleared, fixture
       # inserted directly into the store), so the launch panel is hidden
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
     end
 
     test "notification fires only for newly-terminal ids with matching content", %{conn: conn} do
@@ -1564,7 +1564,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(class="loading loading-spinner loading-lg text-info")
       assert html =~ "Connecting to Test Target"
       refute html =~ ~s(id="prompt")
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
       refute html =~ "Recent Projects"
     end
 
@@ -1665,7 +1665,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # No local project data / task form leaks into the error state
       refute html =~ ~s(id="prompt")
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
       refute html =~ "Recent Projects"
 
       # Retry calls the (fake) connection manager and deliberately ignores the
@@ -1687,7 +1687,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ "Connection lost or failed"
       assert html =~ ~s(phx-click="switch_to_local")
       refute html =~ ~s(id="prompt")
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
     end
 
     test "switch to local patches back to the local UI without the ?node= param", %{
@@ -1735,7 +1735,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # No local data / task form during the pending gate
       refute html =~ ~s(id="prompt")
-      refute html =~ "hero-rocket-launch"
+      refute html =~ "task-launch-button"
       refute html =~ "Recent Projects"
     end
 
