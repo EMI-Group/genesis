@@ -48,6 +48,26 @@ const SidebarCollapse = {
       if (e.target.closest('a')) this.closeMobile();
     };
     this.el.addEventListener('click', this._sidebarNavHandler);
+
+    // --- Outside-click dismissal of open <details> dropdowns ---
+    // The sidebar dropdowns (theme, language, node selector) are native
+    // <details> elements, which only toggle on their own <summary>. A
+    // document-level listener closes every open <details> descendant of the
+    // sidebar when the click lands outside it — anywhere else on the page,
+    // other sidebar chrome (nav links, collapse toggle), or another dropdown
+    // (opening one dismisses the rest). Clicks inside an open dropdown's
+    // content are left alone so they register before anything closes.
+    this._documentClickHandler = (e) => {
+      const target = e.target;
+      if (this.el.contains(target)) {
+        this.el.querySelectorAll('details[open]').forEach((d) => {
+          if (!d.contains(target)) d.removeAttribute('open');
+        });
+      } else {
+        this.closeOpenDropdowns();
+      }
+    };
+    document.addEventListener('click', this._documentClickHandler);
   },
 
   updated() {
@@ -64,6 +84,7 @@ const SidebarCollapse = {
       this.mobileToggle.removeEventListener('click', this._mobileToggleHandler);
     if (this.overlay && this._overlayHandler)
       this.overlay.removeEventListener('click', this._overlayHandler);
+    document.removeEventListener('click', this._documentClickHandler);
     this.el.removeEventListener('click', this._sidebarNavHandler);
   },
 
@@ -104,6 +125,13 @@ const SidebarCollapse = {
     }
   },
 
+  // Closes every open <details> dropdown inside the sidebar (theme, language,
+  // node selector) by removing the open attribute — DaisyUI's close mechanism.
+  // Scoped to this.el so dropdowns elsewhere on the page are never touched.
+  closeOpenDropdowns() {
+    this.el.querySelectorAll('details[open]').forEach((d) => d.removeAttribute('open'));
+  },
+
   applyCollapsed(collapsed) {
     const sidebar = this.el;
     // Stable selectors using data attributes — work in both collapsed and expanded states
@@ -112,6 +140,9 @@ const SidebarCollapse = {
     const taskLinks = sidebar.querySelectorAll('[data-sidebar-task-link]');
     
     if (collapsed) {
+      // Collapsing to the 64px sidebar hides the dropdown summaries' context;
+      // close any open dropdown so its floating panel is not left detached.
+      this.closeOpenDropdowns();
       sidebar.classList.add('w-16');
       sidebar.classList.remove('w-60');
       // Allow dropdown menus to extend beyond the collapsed 64px sidebar
