@@ -187,7 +187,7 @@ The file-tree sidebar's interactivity is **100% server-driven — no `<details>`
 
 ## Removed components
 
-The GitHub-PR redesign replaced the previous top-level surfaces; the facade delegate list reflects only the new names: `review_header/1` → **`page_header/1`** (compact header + meta line + diff-stat row), `action_buttons/1` → **`merge_box/1`** (merge-check strip + actions row + overflow menu), `review_tabs/1` + `repo_tabs/1` → **`page_tabs/1`** (the per-repo switcher now lives inside `merge_box` and the `split_diff_layout` toolbar instead of a separate tab strip).
+The GitHub-PR redesign replaced the previous top-level surfaces; the facade delegate list reflects only the new names: `review_header/1` → **`page_header/1`** (compact header + meta line + diff-stat row), `action_buttons/1` → **`merge_box/1`** (merge-check strip + actions row + overflow menu), `review_tabs/1` + `repo_tabs/1` → **`page_tabs/1`** (the per-repo switcher now lives inside `merge_box`, the `split_diff_layout` toolbar, and the `commits_list` toolbar instead of a separate tab strip).
 
 ## Field-consumption audit
 
