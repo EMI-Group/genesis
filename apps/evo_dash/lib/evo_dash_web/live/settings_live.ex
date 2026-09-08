@@ -192,6 +192,16 @@ defmodule EvoDashWeb.SettingsLive do
                   />
 
                   <div class="px-8 py-8 space-y-5">
+                    <%!-- 远程运行 Genesis 分两步：先在服务器上安装远程守护进程（Install），再连接（Connect）；连接后任务在服务器上运行，即使本地应用关闭也会继续 --%>
+                    <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
+                      <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
+                      <p class="text-sm text-base-content/80">
+                        {gettext(
+                          "Running Genesis on a remote server takes two steps: first install the remote daemon on the server, then connect to it. Once connected, tasks run on the server and keep running even when you close this app."
+                        )}
+                      </p>
+                    </div>
+
                     <%!-- Note about separate TOML file --%>
                     <div class="rounded-lg border border-info/30 bg-info/5 p-3 flex items-start gap-3">
                       <.icon name="hero-information-circle" class="size-5 text-info shrink-0 mt-0.5" />
@@ -279,7 +289,7 @@ defmodule EvoDashWeb.SettingsLive do
                                   </li>
                                 </ul>
 
-                                <%!-- Error-final: partial bar + error text + Bootstrap (retry) --%>
+                                <%!-- Error-final: partial bar + error text + Install (retry) --%>
                                 <%= if bootstrap_status == :error do %>
                                   <p
                                     :if={bootstrap_entry.error}
@@ -298,12 +308,12 @@ defmodule EvoDashWeb.SettingsLive do
                                       phx-value-id={target.id}
                                     >
                                       <.icon name="hero-rocket-launch" class="size-3.5" />
-                                      {gettext("Bootstrap")}
+                                      {gettext("Install")}
                                     </button>
                                   </div>
                                 <% end %>
 
-                                <%!-- Success-final: all-green bar + Bootstrap/Connect still visible --%>
+                                <%!-- Success-final: all-green bar + Install/Connect still visible --%>
                                 <%= if bootstrap_status == :success do %>
                                   <div class="flex items-center gap-1 flex-wrap">
                                     <button
@@ -312,7 +322,7 @@ defmodule EvoDashWeb.SettingsLive do
                                       phx-value-id={target.id}
                                     >
                                       <.icon name="hero-rocket-launch" class="size-3.5" />
-                                      {gettext("Bootstrap")}
+                                      {gettext("Install")}
                                     </button>
                                     <button
                                       class="btn btn-xs btn-primary gap-1"
@@ -335,7 +345,7 @@ defmodule EvoDashWeb.SettingsLive do
                                 phx-value-id={target.id}
                               >
                                 <.icon name="hero-rocket-launch" class="size-3.5" />
-                                {gettext("Bootstrap")}
+                                {gettext("Install")}
                               </button>
                               <button
                                 class="btn btn-xs btn-primary gap-1"
@@ -391,7 +401,11 @@ defmodule EvoDashWeb.SettingsLive do
                             {gettext("Add Connection")}
                           <% end %>
                         </h4>
-                        <form phx-submit="save_remote_target" class="space-y-4">
+                        <form
+                          phx-submit="save_remote_target"
+                          phx-change="remote_connections_form_change"
+                          class="space-y-4"
+                        >
                           <input type="hidden" name="_id" value={@remote_form_target[:id]} />
                           <div class="grid grid-cols-2 gap-4">
                             <div class="form-control col-span-2">
@@ -559,7 +573,7 @@ defmodule EvoDashWeb.SettingsLive do
 
                       <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
                         {gettext(
-                          "The remote daemon is already running. Re-bootstrapping will stop it and any tasks running on the remote."
+                          "The remote daemon is already running. Re-installing it will stop the daemon and any tasks running on the remote."
                         )}
                       </p>
                       <p class="text-xs text-base-content/70 mb-5 leading-relaxed font-mono break-all">
@@ -582,8 +596,8 @@ defmodule EvoDashWeb.SettingsLive do
                           phx-value-target_id={@bootstrap_restart_confirm.id}
                         >
                           <.icon name="hero-arrow-path" class="size-4.5" />
-                          <%!-- 停止守护进程并重新执行引导 --%>
-                          {gettext("Stop & re-bootstrap")}
+                          <%!-- 停止守护进程并重新安装（Install） --%>
+                          {gettext("Stop & re-install")}
                         </button>
                       </div>
                     </div>
@@ -905,19 +919,19 @@ defmodule EvoDashWeb.SettingsLive do
           socket
           |> reload_remote_statuses()
           |> freeze_bootstrap_progress(id, :success)
-          |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+          |> flash_remote_lifecycle_result(result, gettext("Install"))
 
         :ok ->
           socket
           |> reload_remote_statuses()
           |> freeze_bootstrap_progress(id, :success)
-          |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+          |> flash_remote_lifecycle_result(result, gettext("Install"))
 
         {:error, reason} ->
           socket
           |> reload_remote_statuses()
           |> freeze_bootstrap_progress(id, :error, bootstrap_error_text(reason))
-          |> flash_remote_lifecycle_result(result, gettext("Bootstrap"))
+          |> flash_remote_lifecycle_result(result, gettext("Install"))
       end
 
     {:noreply, socket}
@@ -1601,7 +1615,10 @@ defmodule EvoDashWeb.SettingsLive do
        remote_form_target: %{
          dist_port: 9000,
          remote_path: "/tmp/genesis_remote",
-         platform: nil
+         platform: nil,
+         # Internal marker: while true, the Name field auto-tracks the SSH
+         # Target (see remote_connections_form_change). Never persisted.
+         auto_name: true
        },
        remote_show_advanced: false
      )}
@@ -1620,6 +1637,9 @@ defmodule EvoDashWeb.SettingsLive do
           target
           |> Map.put_new(:dist_port, 9000)
           |> Map.put_new(:remote_path, "/tmp/genesis_remote")
+          # Editing starts with the saved name shown verbatim — never
+          # auto-track the SSH Target (internal marker, never persisted).
+          |> Map.put(:auto_name, false)
 
         {:error, :not_found} ->
           nil
@@ -1631,6 +1651,61 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("toggle_remote_advanced", _params, socket) do
     {:noreply, update(socket, :remote_show_advanced, &(!&1))}
+  end
+
+  # Form change (every keystroke in the add/edit remote-connection form). The
+  # Name field auto-fills from the SSH Target while the user has not typed a
+  # custom name: the whole form-target assign is rebuilt from the submitted
+  # params so the re-render shows the current values (name == full ssh_target
+  # as it is typed). Once the user types into the Name field, that value is
+  # kept verbatim and never clobbered by later SSH Target edits.
+  @impl true
+  def handle_event("remote_connections_form_change", params, socket) do
+    current = socket.assigns.remote_form_target
+
+    if is_nil(current) do
+      {:noreply, socket}
+    else
+      rendered = current[:name] || ""
+      submitted = params["name"] || ""
+      tracking = Map.get(current, :auto_name, false)
+
+      {name, tracking} =
+        cond do
+          tracking and submitted == rendered ->
+            # Name untouched (its submitted value is the previous render's
+            # auto-filled value) — keep tracking the SSH Target as it is typed.
+            {params["ssh_target"] || "", true}
+
+          tracking and submitted != rendered ->
+            # The user took over the Name field — keep their value verbatim.
+            {submitted, false}
+
+          true ->
+            {submitted, false}
+        end
+
+      form_target = %{
+        name: name,
+        ssh_target: params["ssh_target"] || "",
+        local_binary_path: params["local_binary_path"] || "",
+        platform: params["platform"] || "",
+        dist_port: parse_remote_port(params["dist_port"]),
+        remote_path: params["remote_path"] || "/tmp/genesis_remote",
+        auto_name: tracking
+      }
+
+      # Editing keeps the existing id; adding must NOT generate one here (the
+      # hidden _id input would otherwise carry a frozen "target-<ts>" id into
+      # save_remote_target instead of a slug from the effective name).
+      form_target =
+        case params["_id"] do
+          id when is_binary(id) and id != "" -> Map.put(form_target, :id, id)
+          _ -> form_target
+        end
+
+      {:noreply, assign(socket, remote_form_target: form_target)}
+    end
   end
 
   @impl true
@@ -2174,12 +2249,24 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   defp build_remote_target_from_params(params) do
+    # A blank/absent name falls back to the SSH Target (the Name field
+    # auto-fills from it while untouched) so a new target always persists
+    # name == ssh_target even on a direct submit with no change event.
+    name = params["name"]
+
+    name =
+      if is_binary(name) and name != "" do
+        name
+      else
+        params["ssh_target"] || ""
+      end
+
     id = params["_id"]
-    id = if id && id != "", do: id, else: generate_remote_id(params["name"])
+    id = if id && id != "", do: id, else: generate_remote_id(name)
 
     %{
       id: id,
-      name: params["name"] || "",
+      name: name,
       ssh_target: params["ssh_target"] || "",
       local_binary_path: params["local_binary_path"] || "",
       platform: params["platform"] || "",

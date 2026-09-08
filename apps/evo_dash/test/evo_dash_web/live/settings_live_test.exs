@@ -2728,7 +2728,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert primary_steps(html) == 5
     end
 
-    test "bootstrap completion freezes an all-green bar with Bootstrap/Connect buttons", %{
+    test "bootstrap completion freezes an all-green bar with Install/Connect buttons", %{
       conn: conn
     } do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
@@ -2751,9 +2751,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
              }
 
       assert primary_steps(html) == 5
-      # Bootstrap + Connect stay visible on the frozen success bar
+      # Install + Connect stay visible on the frozen success bar
       assert html =~ ~s(phx-click="bootstrap_remote_target")
       assert html =~ ~s(phx-click="connect_remote_target")
+
+      labels = button_labels(html)
+      assert "Install" in labels
+      assert "Connect" in labels
 
       # Frozen — an unrelated broadcast must NOT reset the bar to buttons
       send(view.pid, {:remote_connection_status, id, %{phase: :disconnected}})
@@ -2985,6 +2989,237 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute Map.has_key?(assigns(view)[:bootstrap_progress], id)
       # and no bootstrap call was made
       assert GenServer.call(manager, :calls) == []
+    end
+  end
+
+  describe "remote-connection Install wording, banner, and Name auto-fill" do
+    # Full form-field param map for the add/edit remote-connection form
+    # (mirrors a submitted DOM — the advanced inputs stay in the page inside a
+    # CSS-hidden container and keep submitting). `overrides` win per-key.
+    defp remote_form_params(overrides \\ %{}) do
+      Map.merge(
+        %{
+          "_id" => "",
+          "name" => "",
+          "ssh_target" => "",
+          "local_binary_path" => "",
+          "platform" => "",
+          "dist_port" => "9000",
+          "remote_path" => "/tmp/genesis_remote"
+        },
+        Map.new(overrides)
+      )
+    end
+
+    # Visible label of every <button> on the page — asserts action-button
+    # wording exactly without tripping over the banner/info-box prose (e.g.
+    # "Connection data is stored..." contains the substring "Connect").
+    defp button_labels(html) do
+      html
+      |> Floki.parse_document!()
+      |> Floki.find("button")
+      |> Enum.map(fn btn -> btn |> Floki.text() |> String.trim() end)
+    end
+
+    test "Remote Connections category renders the two-step Install/Connect explainer", %{
+      conn: conn
+    } do
+      {:ok, _view, html} = live(conn, "/settings?category=remote_connections")
+
+      assert html =~ "Remote Connections"
+      assert html =~ "first install the remote daemon on the server, then connect to it"
+      assert html =~ "keep running even when you close this app"
+    end
+
+    test "disconnected target card action buttons read Install and Connect", %{conn: conn} do
+      save_target!()
+
+      {:ok, _view, html} = live(conn, "/settings?category=remote_connections")
+
+      labels = button_labels(html)
+      assert "Install" in labels
+      assert "Connect" in labels
+      refute "Bootstrap" in labels
+    end
+
+    test "bootstrap completion flashes Install succeeded", %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      send(view.pid, {:bootstrap_complete, id, {:ok, :daemon_started}})
+      html = render(view)
+
+      assert html =~ "Install succeeded."
+      refute html =~ "Bootstrap succeeded."
+    end
+
+    test "Add form auto-fills Name from the SSH Target while Name is untouched", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      html = render_click(view, "add_remote_target", %{})
+      assert html =~ "Add Connection"
+      assert assigns(view)[:remote_form_target][:auto_name] == true
+      assert (assigns(view)[:remote_form_target][:name] || "") == ""
+
+      ssh_target = "gpu-server"
+
+      typed =
+        Enum.reduce(String.graphemes(ssh_target), "", fn char, acc ->
+          acc = acc <> char
+
+          render_change(
+            view,
+            "remote_connections_form_change",
+            remote_form_params(%{
+              # The untouched Name field still holds the previous render's value
+              # (what a browser would submit) — the handler keeps tracking.
+              "name" => assigns(view)[:remote_form_target][:name] || "",
+              "ssh_target" => acc
+            })
+          )
+
+          assert assigns(view)[:remote_form_target][:name] == acc,
+                 "Name must track the full SSH Target as it is typed"
+
+          assert assigns(view)[:remote_form_target][:auto_name] == true
+          acc
+        end)
+
+      assert typed == ssh_target
+      assert assigns(view)[:remote_form_target][:name] == ssh_target
+
+      on_exit(fn -> EvoGit.RemoteConnections.delete("gpu-server") end)
+
+      submit_html =
+        render_submit(
+          view,
+          "save_remote_target",
+          remote_form_params(%{"name" => ssh_target, "ssh_target" => ssh_target})
+        )
+
+      assert submit_html =~ "Connection saved."
+      {:ok, saved} = EvoGit.RemoteConnections.get("gpu-server")
+      assert saved.name == "gpu-server"
+      assert saved.ssh_target == "gpu-server"
+    end
+
+    test "direct submit with a blank Name persists Name == SSH Target", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      render_click(view, "add_remote_target", %{})
+
+      html =
+        render_submit(
+          view,
+          "save_remote_target",
+          remote_form_params(%{"ssh_target" => "user@build-host"})
+        )
+
+      assert html =~ "Connection saved."
+
+      on_exit(fn -> EvoGit.RemoteConnections.delete("user-build-host") end)
+
+      {:ok, saved} = EvoGit.RemoteConnections.get("user-build-host")
+      assert saved.name == "user@build-host"
+      assert saved.ssh_target == "user@build-host"
+    end
+
+    test "custom Name is kept verbatim once typed, never clobbered by SSH Target edits", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      render_click(view, "add_remote_target", %{})
+
+      # Type into SSH Target while Name is untouched → Name auto-tracks.
+      render_change(
+        view,
+        "remote_connections_form_change",
+        remote_form_params(%{"name" => "", "ssh_target" => "gpu-server"})
+      )
+
+      assert assigns(view)[:remote_form_target][:name] == "gpu-server"
+      assert assigns(view)[:remote_form_target][:auto_name] == true
+
+      # The user types a custom Name → taken over verbatim, auto-tracking stops.
+      render_change(
+        view,
+        "remote_connections_form_change",
+        remote_form_params(%{"name" => "My GPU Box", "ssh_target" => "gpu-server"})
+      )
+
+      assert assigns(view)[:remote_form_target][:name] == "My GPU Box"
+      assert assigns(view)[:remote_form_target][:auto_name] == false
+
+      # Later SSH Target edits never clobber the custom name.
+      render_change(
+        view,
+        "remote_connections_form_change",
+        remote_form_params(%{"name" => "My GPU Box", "ssh_target" => "gpu-server-2"})
+      )
+
+      assert assigns(view)[:remote_form_target][:name] == "My GPU Box"
+      assert assigns(view)[:remote_form_target][:auto_name] == false
+
+      on_exit(fn -> EvoGit.RemoteConnections.delete("my-gpu-box") end)
+
+      render_submit(
+        view,
+        "save_remote_target",
+        remote_form_params(%{"name" => "My GPU Box", "ssh_target" => "gpu-server-2"})
+      )
+
+      {:ok, saved} = EvoGit.RemoteConnections.get("my-gpu-box")
+      assert saved.name == "My GPU Box"
+      assert saved.ssh_target == "gpu-server-2"
+    end
+
+    test "editing an existing target preserves the saved Name when only the SSH Target changes",
+         %{
+           conn: conn
+         } do
+      id = "settings-edit-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          id: id,
+          name: "My Server",
+          ssh_target: "user@host-a"
+        })
+
+      on_exit(fn -> EvoGit.RemoteConnections.delete(id) end)
+
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "edit_remote_target", %{"id" => id})
+      assert assigns(view)[:remote_form_target][:name] == "My Server"
+      assert assigns(view)[:remote_form_target][:auto_name] == false
+
+      # Only the SSH Target changes; the prefilled Name is untouched.
+      render_change(
+        view,
+        "remote_connections_form_change",
+        remote_form_params(%{
+          "_id" => id,
+          "name" => assigns(view)[:remote_form_target][:name],
+          "ssh_target" => "user@host-b"
+        })
+      )
+
+      assert assigns(view)[:remote_form_target][:name] == "My Server"
+      assert assigns(view)[:remote_form_target][:auto_name] == false
+
+      render_submit(
+        view,
+        "save_remote_target",
+        remote_form_params(%{
+          "_id" => id,
+          "name" => assigns(view)[:remote_form_target][:name],
+          "ssh_target" => "user@host-b"
+        })
+      )
+
+      {:ok, saved} = EvoGit.RemoteConnections.get(id)
+      assert saved.name == "My Server"
+      assert saved.ssh_target == "user@host-b"
     end
   end
 
