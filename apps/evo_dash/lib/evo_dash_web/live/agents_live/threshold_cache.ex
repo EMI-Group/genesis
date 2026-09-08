@@ -4,7 +4,7 @@ defmodule EvoDashWeb.AgentsLive.ThresholdCache do
   compression % bars.
 
   The threshold lives at `[:llm, :compression_threshold_tokens]` in the FULL
-  resolved config (`EvoGit.Config.resolve/0`, default 100_000). The scheduler
+  resolved config (`EvoGit.Config.resolve/0`, default 180_000). The scheduler
   config (`EvoGit.AgentScheduler.get_config/0` — what
   `EvoDash.NodeContext.get_remote_config/1` returns) has NO `:llm` section, so
   the old remote branch of `safe_compression_threshold/1` always fell back to
@@ -19,7 +19,7 @@ defmodule EvoDashWeb.AgentsLive.ThresholdCache do
   """
 
   @refresh_interval_ms 30_000
-  @default_threshold 100_000
+  @default_threshold 180_000
 
   @doc "The fallback threshold when the config value is absent."
   @spec default_threshold() :: pos_integer()
@@ -50,7 +50,7 @@ defmodule EvoDashWeb.AgentsLive.ThresholdCache do
   Accepts the `{:ok, config} | {:error, reason}` shape returned by
   `EvoDash.NodeContext.get_resolved_config/1`. `config` is the atom-keyed full
   resolved config; the threshold is read at `[:llm, :compression_threshold_tokens]`
-  (default 100_000).
+  (default 180_000).
   """
   @spec threshold_from_config({:ok, map()} | {:error, term()}) :: pos_integer()
   def threshold_from_config({:ok, config}) do
