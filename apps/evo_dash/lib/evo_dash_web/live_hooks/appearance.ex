@@ -77,11 +77,13 @@ defmodule EvoDashWeb.LiveHooks.Appearance do
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
   import Phoenix.LiveView, only: [attach_hook: 4]
 
-  # The ten accent names the `[data-accent-color="<name>"]` override rules in
-  # app.css understand. Anything else (including nil from an unset/absent key,
-  # or an unknown value from an older remote config) normalizes to the schema
-  # default "blue".
-  @known_accents ~w(blue teal green yellow orange red pink purple brown slate)
+  # The accent names the `[data-accent-color="<name>"]` override rules in
+  # app.css understand, taken from the config-schema validation list
+  # (`EvoGit.Config.Schema.Definitions.accent_palette/0` — the single source of
+  # truth, referenced here at compile time). Anything else (including nil from
+  # an unset/absent key, or an unknown value from an older remote config)
+  # normalizes to the schema default "blue".
+  @known_accents EvoGit.Config.Schema.Definitions.accent_palette()
 
   @doc """
   Seeds the `@accent_color` assign (via `assign_new`) and attaches the
