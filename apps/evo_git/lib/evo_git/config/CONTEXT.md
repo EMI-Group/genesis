@@ -121,7 +121,7 @@ max_retries = 15                  # Max total LLM API retries
 
 [llm]
 model = "provider:model"          # REQUIRED, e.g. "anthropic:claude-sonnet-4-20250514"
-compression_threshold_tokens = 100_000  # Token limit before context compression
+compression_threshold_tokens = 180_000  # Token limit before context compression
 
 [user]
 github_username = "..."           # For PR creation

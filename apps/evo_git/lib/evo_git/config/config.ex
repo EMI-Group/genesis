@@ -19,8 +19,8 @@ defmodule EvoGit.Config do
       agent_max_retries = 3
       max_agent_depth = 8
       max_retries = 15
-      max_turns = 128
-      max_turns_root = 128
+      max_turns = 100
+      max_turns_root = 1000
 
       [llm]
       # REQUIRED: LLM model identifier (format: "provider:model")
@@ -29,7 +29,7 @@ defmodule EvoGit.Config do
       # - "google:gemini-2.0-flash-exp"
       # - "zai:glm-5.1"
       model = "your-model-here"
-      compression_threshold_tokens = 100_000
+      compression_threshold_tokens = 180_000
 
       [user]
       github_username = "your-username"
