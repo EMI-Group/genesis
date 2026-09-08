@@ -289,6 +289,24 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # state (same pattern as welcome_live_test.exs / settings_live_test.exs).
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
+  # Bounded poll on the LiveView assigns (async remote-project activation runs
+  # in a supervised Task and lands a frame later via handle_info). `predicate`
+  # receives the assigns map; flunks after ~3s so a wedged async flow fails
+  # loudly instead of hanging.
+  defp wait_assigns(view, predicate, attempts \\ 300) do
+    cond do
+      predicate.(assigns(view)) ->
+        :ok
+
+      attempts <= 0 ->
+        flunk("wait_assigns timed out. Last assigns: #{inspect(assigns(view))}")
+
+      true ->
+        Process.sleep(10)
+        wait_assigns(view, predicate, attempts - 1)
+    end
+  end
+
   describe "dashboard without active project" do
     setup do
       # Clear all recent projects so auto-load doesn't activate a stale project
@@ -2294,6 +2312,178 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, _view, html} = live(conn, ~p"/projects")
 
       assert html =~ ~s(data-node-id="local")
+    end
+  end
+
+  describe "remote URL-driven project activation (local node as remote target)" do
+    # Regression coverage for the remote `?project=`/`?resume_from=` URL
+    # landing (e5c5e0ebf): a `?project=` URL naming a remote path must be
+    # routed through the async remote-activation machinery
+    # (`ProjectFlow.spawn_remote_project_activation/2` + the resume-aware
+    # `/3` variant) instead of the local expansion/file-existence branch.
+    #
+    # Seam mechanism: every test registers a fake ConnectionManager in
+    # `EvoGit.RemoteConnection.Registry` reporting phase `:connected` with
+    # `node: to_string(node())`. NodeAware then resolves `?node=<id>` to a
+    # NON-NIL `current_node_id` (so handle_params takes the REMOTE branch)
+    # while `current_node == node()` makes every NodeContext call
+    # (dir?/get_task/add_recent_project/...) short-circuit to the real LOCAL
+    # implementation — the only way to run the real supervised activation task
+    # (incl. the NodeContext.get_task resume restore) end-to-end
+    # deterministically.
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "resume landing URL activates the remote project, restores the previous task's foreign repos, and keeps the resume form state (regression)",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      root = Path.join(tmp_dir, "orig-repo")
+
+      task =
+        insert_task_fixture!(
+          opts: [
+            foreign_repos: [
+              %{
+                "id" => "orig",
+                "root" => root,
+                "description" => "d",
+                "writable" => "true",
+                "base_sha" => "abc123"
+              }
+            ]
+          ]
+        )
+
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
+      )
+
+      {:ok, view, _html} =
+        live(
+          conn,
+          "/projects?project=" <>
+            URI.encode(tmp_dir) <>
+            "&resume_from=" <> task.id <> "&starting_commit=deadbeef&node=" <> id
+        )
+
+      # The activation runs in a supervised Task; wait for it to land.
+      wait_assigns(view, &(&1[:active_project_path] == tmp_dir))
+
+      # Remote branch routed + activation continuation applied remote_project_load.
+      assert assigns(view)[:current_node_id] == id
+      assert assigns(view)[:task_mode] == "genesis_new"
+      assert assigns(view)[:active_project] == %{path: tmp_dir, name: Path.basename(tmp_dir)}
+
+      # Resume params preserved — the continuation's push_patch re-runs
+      # handle_params WITHOUT resume_from/starting_commit, which must NOT
+      # clobber the state the initial landing assigned.
+      assert assigns(view)[:task_resume_from] == task.id
+      assert assigns(view)[:task_starting_commit] == "deadbeef"
+      assert assigns(view)[:show_advanced] == true
+
+      # Task foreign repos restored (resume-aware activation override ran
+      # inside the activation task via NodeContext.get_task + repos_from_task_data).
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
+
+      assert %ForeignRepo{root: ^root, writable: true, base_sha: "abc123", description: "d"} =
+               repo
+
+      # The continuation flagged the one-shot guard so the AsyncLoad
+      # remote_extras reload the push_patch triggers cannot clobber the
+      # task-restored repos with genesis.toml values.
+      assert assigns(view)[:resume_foreign_repos_guard] == true
+
+      # AsyncLoad remote_extras reload (what the push_patch re-run spawns; with
+      # node == node() the real spawn carries no :foreign_repos key, so the
+      # guard-drop must be exercised via an injected message) — the guard must
+      # drop the genesis.toml foreign_repos once (regression).
+      cur = assigns(view)
+      toml_repo = %ForeignRepo{id: "toml", root: "/Source/toml-repo", description: "t"}
+
+      send(
+        view.pid,
+        {:async_project_load, node(), cur[:current_node_id], tmp_dir,
+         %{model_profiles: cur[:model_profiles], foreign_repos: [toml_repo]}}
+      )
+
+      wait_assigns(view, &(&1[:resume_foreign_repos_guard] == false))
+      refute Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "toml"))
+      assert Enum.any?(assigns(view)[:foreign_repos], &(&1.id == "orig"))
+
+      # A second such reload applies normally — the guard is one-shot.
+      send(
+        view.pid,
+        {:async_project_load, node(), assigns(view)[:current_node_id], tmp_dir,
+         %{model_profiles: assigns(view)[:model_profiles], foreign_repos: [toml_repo]}}
+      )
+
+      wait_assigns(view, &Enum.any?(&1[:foreign_repos], fn r -> r.id == "toml" end))
+    end
+
+    test "plain remote ?project= URL activates the project through the remote normalize path", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
+      )
+
+      {:ok, view, _html} =
+        live(conn, "/projects?project=" <> URI.encode(tmp_dir) <> "&node=" <> id)
+
+      wait_assigns(view, &(&1[:active_project_path] == tmp_dir))
+
+      assert assigns(view)[:current_node_id] == id
+      # Only the activation continuation assigns task_mode (remote_project_load);
+      # the empty dir auto-detects as a new codebase.
+      assert assigns(view)[:task_mode] == "genesis_new"
+      assert assigns(view)[:active_project_path] == tmp_dir
+      assert assigns(view)[:task_resume_from] == ""
+    end
+
+    test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      remote_home = Path.join(tmp_dir, "remote-home")
+      File.mkdir_p!(remote_home)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.remove_recent_project(remote_home)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      # The remote_path_expand_runner seam is read at call time (both in the
+      # dead render's handle_params and inside the activation task).
+      Application.put_env(:evo_dash, :remote_path_expand_runner, fn _node, _path ->
+        {:ok, remote_home}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :remote_path_expand_runner) end)
+
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
+      )
+
+      {:ok, view, _html} =
+        live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
+
+      wait_assigns(view, &(&1[:active_project_path] == remote_home))
+      assert assigns(view)[:active_project_path] == remote_home
     end
   end
 

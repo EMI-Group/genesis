@@ -79,6 +79,15 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   current node id), the carried selection is kept only when it names a
   profile that exists on the (new) node, otherwise the node's default
   selection is used; same-node runs keep the current selection.
+
+  Resume-restore guard: when the socket carries
+  `:resume_foreign_repos_guard` (set by the remote activation continuation in
+  `ProjectsLive.handle_info/2` after a resume-aware activation restored the
+  previous task's foreign repos) AND this result carries `:foreign_repos`
+  (a remote_extras reload), the `:foreign_repos` key is NOT applied — the
+  genesis.toml reload must not clobber the task-restored repos the activation
+  just applied. The flag is cleared on that application, so subsequent
+  navigations refresh foreign repos from genesis.toml as usual.
   """
   def handle_result(socket, node, prev_node_id, path, results) do
     %{active_project_path: active_path, current_node: current_node} = socket.assigns
@@ -95,11 +104,28 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
           resolve_selected_model_id(socket, prev_node_id, results)
         )
 
+      {skip_foreign_repos?, socket} =
+        if socket.assigns[:resume_foreign_repos_guard] == true and
+             Map.has_key?(results, :foreign_repos) do
+          {true, assign(socket, :resume_foreign_repos_guard, false)}
+        else
+          {false, socket}
+        end
+
       # Apply every remaining key the task included. Remote-only keys
       # (`project_config`, `worktree_script`, `commands`,
       # `foreign_repos`, `task_mode`, `task_mode_info`) are absent from the
       # results map for local nodes and are skipped here — the local
-      # activate_project flow owns those assigns.
+      # activate_project flow owns those assigns. `:foreign_repos` is dropped
+      # when the resume-restore guard above fired (its task-derived value must
+      # win over the genesis.toml reload).
+      results =
+        if skip_foreign_repos? do
+          Map.delete(results, :foreign_repos)
+        else
+          results
+        end
+
       Enum.reduce(results, socket, fn
         {:model_profiles, _}, sock -> sock
         {:default_selected_model_id, _}, sock -> sock

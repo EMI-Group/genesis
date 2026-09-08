@@ -594,6 +594,7 @@ defmodule EvoDashWeb.ProjectsLive do
         socket
         |> assign(:file_pick_bases, %{})
         |> assign(:remote_project_loading, nil)
+        |> assign(:resume_foreign_repos_guard, false)
         |> assign(:github_status, nil)
         |> assign(:github_modal_open, false)
         |> assign(:github_issues, GitHub.idle_issues())
@@ -606,13 +607,58 @@ defmodule EvoDashWeb.ProjectsLive do
 
     socket =
       if socket.assigns[:current_node_id] != nil do
-        # Any remote context (connected OR pending): never activate or
-        # auto-load a LOCAL project — skip `params["project"]` expansion,
-        # `File.dir?` checks, and auto-load-most-recent entirely. A
-        # display-only remote project selection made via the palette must
-        # survive same-node handle_params runs; the node-switch clear above is
-        # what resets it.
-        socket
+        # Remote context. A `?project=` URL param — a plain remote open
+        # (`/projects?project=<remote path>&node=<id>`) or the Review-page
+        # "continue task" resume landing (`...&resume_from=<id>&starting_commit=<sha>`,
+        # which appends `project` + `node` via a manual `&node=` suffix) — is
+        # routed through the SAME async remote-activation machinery the
+        # palette remote open/select uses: `ProjectFlow.spawn_remote_project_activation/2`,
+        # or the resume-aware `/3` variant when `resume_from` is present (it
+        # additionally restores the previous task's foreign repos INSIDE the
+        # activation task). Remote paths NEVER touch the local filesystem:
+        # normalization is remote-aware (`ProjectFlow.normalize_remote_project_path/2`
+        # — no local `Path.expand`) and existence is validated via the
+        # `NodeContext.dir?/2` RPC in the activation task.
+        #
+        # Gating: while the selected target is pending/connecting (gate
+        # active) `@current_node` is still the LOCAL BEAM node, so nothing is
+        # activated — the connecting gate chrome renders instead. A URL
+        # project that already equals the active project (the push_patch after
+        # a successful activation re-runs handle_params with the normalized
+        # path) is a no-op — no activate→patch→activate loop (the
+        # same-path-in-flight guard in `spawn_remote_project_activation` covers
+        # double-Enter within one frame). All other remote handle_params runs
+        # (no project param) keep skipping local expansion / `File.dir?` /
+        # auto-load-most-recent entirely: a display-only remote project
+        # selection made via the palette must survive same-node handle_params
+        # runs; the node-switch clear above is what resets it.
+        cond do
+          not EvoDashWeb.RemoteGateComponents.gate_active?(socket.assigns) and
+            is_binary(project_path) and project_path != "" and
+              project_path != socket.assigns[:active_project_path] ->
+            case ProjectFlow.normalize_remote_project_path(
+                   socket.assigns[:current_node],
+                   project_path
+                 ) do
+              {:ok, expanded} ->
+                case params["resume_from"] do
+                  task_id when is_binary(task_id) and task_id != "" ->
+                    ProjectFlow.spawn_remote_project_activation(socket, expanded, task_id)
+
+                  _ ->
+                    ProjectFlow.spawn_remote_project_activation(socket, expanded)
+                end
+
+              # Blank/relative project params (stale/legacy URLs) are silently
+              # ignored — never Path.expand against the VM cwd, same as the
+              # local branch.
+              _ ->
+                socket
+            end
+
+          true ->
+            socket
+        end
       else
         if is_binary(project_path) do
           case ProjectFlow.normalize_project_path(project_path) do
@@ -1806,7 +1852,11 @@ defmodule EvoDashWeb.ProjectsLive do
   # patched so handle_params re-runs in the same remote context. On
   # `{:error, :not_a_directory}` the loading flag clears and the error flash
   # fires (the one RPC-derived error of the sequence — it must run in this
-  # continuation, not in the event handler).
+  # continuation, not in the event handler). When the applied activation was
+  # resume-aware (a non-empty `task_resume_from` was pending), the restored
+  # task foreign repos are additionally guarded against the AsyncLoad
+  # remote_extras reload the push_patch triggers (see
+  # `maybe_flag_resume_foreign_repos/1`).
   @impl true
   def handle_info({:async_remote_project, node, path, result}, socket) do
     cond do
@@ -1834,6 +1884,7 @@ defmodule EvoDashWeb.ProjectsLive do
               |> assign(:commands, results.commands)
               |> assign(:foreign_repos, results.foreign_repos)
               |> assign(:show_add_foreign_repo_form, false)
+              |> maybe_flag_resume_foreign_repos()
               |> maybe_reset_github_state(project_changed?)
               |> GitHub.maybe_check()
 
@@ -1850,6 +1901,26 @@ defmodule EvoDashWeb.ProjectsLive do
 
             {:noreply, socket}
         end
+    end
+  end
+
+  # When a resume-aware remote activation (see
+  # `ProjectFlow.spawn_remote_project_activation/3` — the URL-driven `?project=`
+  # + `resume_from` landing) just applied, `results.foreign_repos` already
+  # holds the RESUMED task's repos, restored node-aware inside the activation
+  # task. The continuation's push_patch below re-runs handle_params, whose
+  # AsyncLoad remote_extras reload would otherwise replace them with the
+  # project's genesis.toml repos a frame later — the same clobber the LOCAL
+  # resume flow avoids by running its task-repos restore AFTER the
+  # genesis.toml load. Flag the socket so the next AsyncLoad result skips the
+  # `:foreign_repos` key (and clears the flag). Plain activations (no pending
+  # resume) set nothing — their genesis.toml values are identical anyway, so
+  # the follow-up AsyncLoad refresh stays exactly as before.
+  defp maybe_flag_resume_foreign_repos(socket) do
+    if is_binary(socket.assigns[:task_resume_from]) and socket.assigns[:task_resume_from] != "" do
+      assign(socket, :resume_foreign_repos_guard, true)
+    else
+      socket
     end
   end
 
