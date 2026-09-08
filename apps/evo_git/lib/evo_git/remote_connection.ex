@@ -1145,19 +1145,19 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # The dashboard accent palette (mirrors the single source of truth in
-  # `EvoGit.Config.Schema.Definitions` — the `[appearance] accent_color`
-  # schema's `in:` validation list).
-  @accent_palette ~w(blue teal green yellow orange red pink purple brown slate)
-
   @doc false
   # Picks the accent color a freshly-bootstrapped remote should carry: the
   # palette minus the local node's accent, deterministically indexed by a
   # stable hash of the `ssh_target` string — so the remote always differs
   # from the local node, and distinct targets tend to differ from each other.
+  # The palette comes from `EvoGit.Config.Schema.Definitions.accent_palette/0`
+  # (the single source of truth — the `[appearance] accent_color` schema's
+  # `in:` validation whitelist).
   @spec remote_accent_for(String.t(), String.t()) :: String.t()
   def remote_accent_for(ssh_target, local_accent) do
-    candidates = @accent_palette -- [local_accent]
+    candidates =
+      EvoGit.Config.Schema.Definitions.accent_palette() -- [local_accent]
+
     Enum.at(candidates, :erlang.phash2(ssh_target, length(candidates)))
   end
 
