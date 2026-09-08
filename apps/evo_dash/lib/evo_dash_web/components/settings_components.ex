@@ -185,7 +185,7 @@ defmodule EvoDashWeb.SettingsComponents do
                               "btn btn-sm rounded-xl font-medium transition-all duration-200",
                               @selected_model_string == model_string && "btn-primary shadow-md",
                               @selected_model_string != model_string &&
-                                "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                                "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary-standalone"
                             ]}
                           >
                             <%= if current_model == model_string do %>
@@ -472,7 +472,7 @@ defmodule EvoDashWeb.SettingsComponents do
                       </form>
                     <% end %>
                   <% :testing -> %>
-                    <span class="loading loading-spinner loading-sm text-primary"></span>
+                    <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
                     <span class="text-sm text-base-content/80">{gettext("Testing LLM connection...")}</span>
                   <% {:ok, data} -> %>
                     <% profile_id_val = selected_test_profile_id(@model_profiles, @test_profile_id) %>

@@ -56,7 +56,7 @@
                       <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
                         <.icon
                           name="hero-server-stack"
-                          class="size-5 text-primary p-1.5 rounded-lg bg-primary"
+                          class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
                         />
                         <span class="font-bold text-base text-base-content">{repo_name}</span>
                         <span class="text-xs text-base-content/70">({length(tree_nodes)} {gettext(
@@ -437,7 +437,7 @@
                             <div class="text-xs text-base-content/70">
                               {gettext("Total Cost")}
                             </div>
-                            <div class="text-sm font-semibold text-primary">
+                            <div class="text-sm font-semibold text-primary-standalone">
                               ${format_cost(agent.usage.total_cost)}
                             </div>
                           </div>

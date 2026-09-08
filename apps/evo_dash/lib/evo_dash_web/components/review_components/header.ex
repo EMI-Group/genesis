@@ -199,7 +199,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
     <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
       <%!-- header strip --%>
       <div class="flex items-center gap-3 px-4 py-3 border-b border-base-300 bg-base-200/40 min-w-0">
-        <div class="size-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+        <div class="size-8 rounded-lg bg-primary/10 text-primary-standalone flex items-center justify-center shrink-0">
           <.icon name="hero-sparkles" class="size-4" />
         </div>
         <span class="font-semibold text-base-content/85 shrink-0">
@@ -549,7 +549,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                   <%!-- zh_CN: 总费用（美元） --%>
                   {gettext("Total Cost")}
                 </dt>
-                <dd class="text-sm font-medium text-primary">
+                <dd class="text-sm font-medium text-primary-standalone">
                   ${format_cost(Map.get(@usage, :total_cost, 0))}
                 </dd>
               </div>

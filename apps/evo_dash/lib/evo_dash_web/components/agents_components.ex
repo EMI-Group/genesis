@@ -80,8 +80,8 @@ defmodule EvoDashWeb.AgentsComponents do
                     agent_status_bg(agent.status),
                     agent_status_border(agent.status),
                     @selected_id == agent.id &&
-                      "ring-2 ring-primary ring-offset-1 ring-offset-base-100",
-                    @selected_id != agent.id && "hover:ring-1 hover:ring-primary/40",
+                      "ring-2 ring-primary-standalone ring-offset-1 ring-offset-base-100",
+                    @selected_id != agent.id && "hover:ring-1 hover:ring-primary-standalone/40",
                     agent.status == :running && "agent-card-running",
                     agent.status == :running && "animate-pulse-glow",
                     MapSet.member?(@new_agent_ids, agent.id) && "animate-agent-spawn"

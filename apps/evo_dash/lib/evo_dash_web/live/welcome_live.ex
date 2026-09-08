@@ -122,7 +122,7 @@ defmodule EvoDashWeb.WelcomeLive do
                   class={[
                     "btn btn-xs rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-1.5",
                     selected && "btn-primary shadow-md",
-                    !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                    !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary-standalone"
                   ]}
                 >
                   <%!-- zh: provider names — see t_provider/1 for Chinese references --%>
@@ -221,7 +221,8 @@ defmodule EvoDashWeb.WelcomeLive do
                       class={[
                         "btn btn-xs rounded-xl font-medium transition-all duration-200 text-left flex flex-col items-start gap-0.5 h-auto py-1.5",
                         selected && "btn-primary shadow-md",
-                        !selected && "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary"
+                        !selected &&
+                          "btn-ghost bg-primary/10 hover:bg-primary/20 text-primary-standalone"
                       ]}
                     >
                       <span class="font-semibold text-xs">{entry.model_display_name}</span>
@@ -263,7 +264,7 @@ defmodule EvoDashWeb.WelcomeLive do
                   EvoGit.Config.LLMCatalog.requires_base_url?(@selected_entry.provider_id) %>
 
                 <div class="flex items-center gap-2 mb-4">
-                  <.icon name="hero-key" class="size-4 text-primary" />
+                  <.icon name="hero-key" class="size-4 text-primary-standalone" />
                   <span class="text-sm font-semibold">
                     {gettext("Enter your API key")}
                   </span>
@@ -374,7 +375,7 @@ defmodule EvoDashWeb.WelcomeLive do
                       </button>
                     <% :testing -> %>
                       <div class="flex items-center justify-center gap-2 text-sm text-base-content/80">
-                        <span class="loading loading-spinner loading-sm text-primary"></span>
+                        <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
                         <span>{gettext("Testing LLM connection...")}</span>
                       </div>
                     <% {:ok, _data} -> %>

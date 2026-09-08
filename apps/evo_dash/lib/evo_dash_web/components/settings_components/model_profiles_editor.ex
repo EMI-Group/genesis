@@ -89,7 +89,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     <div class="group relative flex items-start gap-4 p-4 pb-9 rounded-lg border border-base-200 bg-base-100 hover:bg-base-200/30 transition-colors">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1.5">
-          <.icon name="hero-cpu-chip" class="size-4 text-primary shrink-0" />
+          <.icon name="hero-cpu-chip" class="size-4 text-primary-standalone shrink-0" />
           <code class="font-mono text-sm font-bold text-base-content">{profile_id_string(@profile)}</code>
           <%= if profile_concurrency(@profile) do %>
             <span class="badge badge-ghost badge-sm gap-1 font-mono text-xs">
@@ -99,7 +99,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <% end %>
         </div>
         <div class="flex items-center gap-2 mb-1.5">
-          <code class="font-mono text-xs text-primary/80 break-all">{model_display(
+          <code class="font-mono text-xs text-primary-standalone/80 break-all">{model_display(
             @profile[:model] || @profile["model"]
           )}</code>
         </div>
@@ -172,7 +172,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     <form
       phx-submit="save_model_profile"
       phx-change="model_profile_form_change"
-      class="p-4 rounded-lg border-2 border-primary/40 bg-base-100 space-y-4"
+      class="p-4 rounded-lg border-2 border-primary-standalone/40 bg-base-100 space-y-4"
     >
       <input
         type="hidden"
@@ -181,7 +181,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       />
 
       <div class="flex items-center gap-2 mb-1">
-        <.icon name="hero-pencil-square" class="size-5 text-primary" />
+        <.icon name="hero-pencil-square" class="size-5 text-primary-standalone" />
         <h4 class="font-bold text-sm text-base-content">{gettext("Edit Profile")}</h4>
       </div>
 

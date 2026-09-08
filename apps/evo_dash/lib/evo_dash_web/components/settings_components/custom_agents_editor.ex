@@ -88,7 +88,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
     <div class="flex items-start gap-4 p-4 rounded-lg border border-base-200 bg-base-100 hover:bg-base-200/30 transition-colors">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1.5">
-          <.icon name="hero-user-circle" class="size-4 text-primary shrink-0" />
+          <.icon name="hero-user-circle" class="size-4 text-primary-standalone shrink-0" />
           <span class="text-sm font-bold text-base-content">{agent_name(@agent)}</span>
           <code class="font-mono text-xs text-base-content/60 badge badge-ghost badge-sm">
             {agent_id_string(@agent)}
@@ -150,12 +150,12 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
     ~H"""
     <form
       phx-submit="save_custom_agent"
-      class="p-4 rounded-lg border-2 border-primary/40 bg-base-100 space-y-4"
+      class="p-4 rounded-lg border-2 border-primary-standalone/40 bg-base-100 space-y-4"
     >
       <input type="hidden" name="agent_id" value={agent_id_string(@agent)} />
 
       <div class="flex items-center gap-2 mb-1">
-        <.icon name="hero-pencil-square" class="size-5 text-primary" />
+        <.icon name="hero-pencil-square" class="size-5 text-primary-standalone" />
         <h4 class="font-bold text-sm text-base-content">
           {if agent_id_string(@agent) == "",
             do: gettext("New Agent"),

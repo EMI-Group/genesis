@@ -42,7 +42,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
           <div class="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none">
             <.icon
               name="hero-magnifying-glass"
-              class="size-4 text-base-content/70 group-focus-within:text-primary transition-colors"
+              class="size-4 text-base-content/70 group-focus-within:text-primary-standalone transition-colors"
             />
           </div>
           <form id="settings-search" class="contents" phx-submit="noop">
@@ -94,7 +94,7 @@ defmodule EvoDashWeb.SettingsComponents.Sidebar do
               <span class={[
                 "text-xs font-bold tabular-nums px-2.5 py-1 rounded-lg relative z-10 transition-colors",
                 category == @active_category && "bg-primary-content/20 text-primary-content",
-                category != @active_category && "bg-primary/10 text-primary"
+                category != @active_category && "bg-primary/10 text-primary-standalone"
               ]}>{match_count}/{total}</span>
             <% else %>
               <span class={[

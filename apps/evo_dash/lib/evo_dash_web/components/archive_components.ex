@@ -22,7 +22,7 @@ defmodule EvoDashWeb.ArchiveComponents do
       <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
         <div class="flex items-center justify-between mb-4">
           <h4 class="text-sm font-bold flex items-center gap-2">
-            <.icon name="hero-archive-box" class="size-4.5 text-primary" />
+            <.icon name="hero-archive-box" class="size-4.5 text-primary-standalone" />
             <%!-- zh_CN: Agent → "智能体" --%>{gettext("Archived Agent Details")}
           </h4>
           <%= if @task_id do %>

@@ -61,7 +61,7 @@ defmodule EvoDashWeb.RemoteGateComponents do
     ~H"""
     <%= if connecting_state?(@remote_status) do %>
       <div class="flex flex-col items-center justify-center gap-4 py-16">
-        <span class="loading loading-spinner loading-lg text-primary"></span>
+        <span class="loading loading-spinner loading-lg text-primary-standalone"></span>
         <p class="text-sm text-base-content/60">
           {gettext("Connecting to %{name}…", name: @name)}
         </p>

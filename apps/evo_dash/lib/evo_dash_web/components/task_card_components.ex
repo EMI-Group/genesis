@@ -223,7 +223,10 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <div class="flex items-center justify-between mb-4">
                     <h4 class="text-sm font-bold flex items-center gap-2">
-                      <.icon name="hero-chat-bubble-left-ellipsis" class="size-4.5 text-primary" />
+                      <.icon
+                        name="hero-chat-bubble-left-ellipsis"
+                        class="size-4.5 text-primary-standalone"
+                      />
                       {gettext("Objective")}
                     </h4>
                     <div class="flex items-center gap-2">
@@ -286,7 +289,7 @@ defmodule EvoDashWeb.TaskCardComponents do
               <%= if Map.get(@task, :usage) do %>
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary" />
+                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary-standalone" />
                     <%!-- zh_CN: Token → "词元" --%>{gettext("Token & Cost Usage")}
                   </h4>
                   <div class="grid grid-cols-3 gap-3">
@@ -377,7 +380,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                       </div>
                       <div>
                         <div class="text-xs text-base-content/70 mb-1">{gettext("Total Cost")}</div>
-                        <div class="text-sm font-semibold text-primary">
+                        <div class="text-sm font-semibold text-primary-standalone">
                           ${format_cost(@task.usage.total_cost)}
                         </div>
                       </div>
@@ -390,7 +393,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                   <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
                     <span class="flex items-center gap-2">
-                      <.icon name="hero-user-group" class="size-4.5 text-primary" />
+                      <.icon name="hero-user-group" class="size-4.5 text-primary-standalone" />
                       <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
                     </span>
                     <%= if @task.model_id do %>
@@ -400,7 +403,9 @@ defmodule EvoDashWeb.TaskCardComponents do
                     <% end %>
                   </h4>
                   <div class="flex items-center gap-3">
-                    <span class="text-2xl font-bold text-primary">{format_number(@task.agent_count)}</span>
+                    <span class="text-2xl font-bold text-primary-standalone">{format_number(
+                      @task.agent_count
+                    )}</span>
                     <span class="text-xs text-base-content/70"><%!-- zh_CN: agent → "智能体" --%>{gettext(
                       "total agents (incl. subagents)"
                     )}</span>
@@ -420,7 +425,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
                     <.icon
                       name="hero-command-line"
-                      class="size-4.5 text-base-content/70 group-hover/logs:text-primary transition-colors"
+                      class="size-4.5 text-base-content/70 group-hover/logs:text-primary-standalone transition-colors"
                     />
                     {gettext("Execution Logs")}
                     <span class="text-xs font-medium bg-base-200 text-base-content/70 px-2 py-0.5 rounded-md ml-2">
