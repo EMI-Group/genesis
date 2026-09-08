@@ -36,7 +36,7 @@ defmodule EvoGit.MixProject do
       # time — no runtime updater
       {:tz, "~> 0.28"},
       {:yaml_elixir, "~> 2.11"},
-      {:xqlite, "~> 0.10"},
+      {:xqlite, "~> 0.12"},
       {:jason, "~> 1.2"}
     ]
   end
