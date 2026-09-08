@@ -990,6 +990,13 @@ defmodule EvoGit.RemoteConnection do
   # Best-effort: missing local files are skipped; copy errors are logged but
   # do not fail the bootstrap (the daemon boots fine without config).
   # Files that already exist on the remote are NOT overwritten.
+  #
+  # When config.toml is copied to a remote that has none, a locally-staged
+  # variant is uploaded instead (see `copy_config_file/3`): its
+  # [appearance] accent_color is set to a palette color that differs from the
+  # local node's effective accent, so a freshly-bootstrapped remote node is
+  # visually distinguishable from the local node in the dashboard. The accent
+  # tweak is strictly best-effort and never changes bootstrap behavior.
   defp copy_config_to_remote(ssh_target, os) do
     remote_config_dir = remote_config_dir(os)
 
@@ -1004,12 +1011,7 @@ defmodule EvoGit.RemoteConnection do
           # The remote already has this file; don't overwrite.
           :ok
         else
-          cmd = "scp #{path} #{ssh_target}:#{remote_file}"
-
-          case run_cmd(cmd, @cmd_timeout_ms) do
-            {:ok, _output, 0} -> :ok
-            _ -> Logger.warning("Failed to copy #{Path.basename(path)} to remote; continuing.")
-          end
+          copy_config_file(ssh_target, path, remote_file)
         end
       end
     end
@@ -1036,6 +1038,217 @@ defmodule EvoGit.RemoteConnection do
          ) do
       {:ok, output, 0} -> String.trim(output) == "yes"
       _ -> false
+    end
+  end
+
+  # ── Accent-variant config.toml copy ───────────────────────────────
+  #
+  # The remote does NOT already have `remote_file` (checked by the caller).
+  # For config.toml a locally-staged variant whose [appearance] accent_color
+  # differs from the local node's effective accent is uploaded first, so a
+  # freshly-bootstrapped remote node is visually distinguishable from the
+  # local node in the dashboard. Strictly best-effort: any failure in the
+  # variant path (config read, rewrite, temp write, variant scp) logs a
+  # warning and falls back to the plain scp of the unmodified local file —
+  # bootstrap never fails or changes behavior because of the accent tweak.
+  defp copy_config_file(ssh_target, path, remote_file) do
+    display = Path.basename(path)
+
+    case maybe_stage_accent_variant(path, ssh_target) do
+      {:ok, tmp_path} ->
+        result =
+          case scp_config_file(ssh_target, tmp_path, remote_file) do
+            :ok ->
+              :ok
+
+            :error ->
+              Logger.warning(
+                "Failed to copy accent variant of #{display} to remote; copying the original instead."
+              )
+
+              scp_original_config(ssh_target, path, remote_file, display)
+          end
+
+        File.rm(tmp_path)
+        result
+
+      :error ->
+        scp_original_config(ssh_target, path, remote_file, display)
+    end
+  end
+
+  # Stages the accent variant of the local config.toml at a local temp path
+  # when `path` IS config.toml; returns :error for any other file and for any
+  # failure along the way (read/rewrite/temp write), never raising.
+  defp maybe_stage_accent_variant(path, ssh_target) do
+    if path == EvoGit.Config.config_path() do
+      stage_accent_variant(path, ssh_target)
+    else
+      :error
+    end
+  end
+
+  # Reads the local config.toml, rewrites its accent color to the remote's
+  # chosen one (see `remote_accent_for/2`), and writes the result to a fresh
+  # temp file. Returns {:ok, tmp_path} or :error (with a logged warning).
+  defp stage_accent_variant(path, ssh_target) do
+    case File.read(path) do
+      {:ok, contents} ->
+        variant = rewrite_config_accent(contents, remote_accent_for(ssh_target, local_accent()))
+
+        tmp_path =
+          Path.join(
+            System.tmp_dir!(),
+            "genesis-remote-config-#{System.unique_integer([:positive])}.toml"
+          )
+
+        case File.write(tmp_path, variant) do
+          :ok ->
+            {:ok, tmp_path}
+
+          {:error, reason} ->
+            Logger.warning(
+              "Failed to write remote accent variant of config.toml to #{tmp_path} " <>
+                "(#{inspect(reason)}); copying the original instead."
+            )
+
+            :error
+        end
+
+      {:error, reason} ->
+        Logger.warning(
+          "Failed to read config.toml for remote accent variant " <>
+            "(#{inspect(reason)}); copying the original instead."
+        )
+
+        :error
+    end
+  end
+
+  # SCPs `source` to the remote config file. Returns :ok on success, :error
+  # on scp failure/timeout (never raises).
+  defp scp_config_file(ssh_target, source, remote_file) do
+    cmd = "scp #{source} #{ssh_target}:#{remote_file}"
+
+    case run_cmd(cmd, @cmd_timeout_ms) do
+      {:ok, _output, 0} -> :ok
+      _ -> :error
+    end
+  end
+
+  # SCPs the unmodified local file, logging (but never propagating) failures —
+  # the original best-effort behavior: the daemon boots fine without config.
+  defp scp_original_config(ssh_target, path, remote_file, display) do
+    case scp_config_file(ssh_target, path, remote_file) do
+      :ok -> :ok
+      :error -> Logger.warning("Failed to copy #{display} to remote; continuing.")
+    end
+  end
+
+  @doc false
+  # Picks the accent color a freshly-bootstrapped remote should carry: the
+  # palette minus the local node's accent, deterministically indexed by a
+  # stable hash of the `ssh_target` string — so the remote always differs
+  # from the local node, and distinct targets tend to differ from each other.
+  # The palette comes from `EvoGit.Config.Schema.Definitions.accent_palette/0`
+  # (the single source of truth — the `[appearance] accent_color` schema's
+  # `in:` validation whitelist).
+  @spec remote_accent_for(String.t(), String.t()) :: String.t()
+  def remote_accent_for(ssh_target, local_accent) do
+    candidates =
+      EvoGit.Config.Schema.Definitions.accent_palette() -- [local_accent]
+
+    Enum.at(candidates, :erlang.phash2(ssh_target, length(candidates)))
+  end
+
+  # The local node's effective accent color — absent/unset falls back to the
+  # schema default "blue". Never returns nil.
+  defp local_accent do
+    case EvoGit.Config.resolve([:appearance, :accent_color]) do
+      accent when is_binary(accent) and accent != "" -> accent
+      _ -> "blue"
+    end
+  end
+
+  @doc false
+  # Rewrites config.toml text so its [appearance] section carries the given
+  # accent_color, preserving everything else verbatim: an existing
+  # `accent_color = "..."` line inside the [appearance] section has only its
+  # value replaced; an [appearance] section without such a line gets one
+  # inserted right after the section header; when no [appearance] section
+  # exists at all, a new one is appended at the end of the file. Matching is
+  # confined to the [appearance] section region so `accent_color` keys in
+  # other sections are never touched.
+  @spec rewrite_config_accent(String.t(), String.t()) :: String.t()
+  def rewrite_config_accent(contents, accent) do
+    lines = String.split(contents, "\n")
+
+    lines =
+      case appearance_header_index(lines) do
+        nil ->
+          append_appearance_section(lines, accent)
+
+        header_index ->
+          region_end = next_table_header_index(lines, header_index + 1) || length(lines)
+
+          case accent_line_index(lines, header_index + 1, region_end) do
+            nil ->
+              List.insert_at(lines, header_index + 1, ~s(accent_color = "#{accent}"))
+
+            line_index ->
+              List.replace_at(
+                lines,
+                line_index,
+                replace_accent_value(Enum.at(lines, line_index), accent)
+              )
+          end
+      end
+
+    Enum.join(lines, "\n")
+  end
+
+  @accent_header_re ~r/^[ \t]*\[[ \t]*appearance[ \t]*\][ \t]*(?:#.*)?$/
+  @table_header_re ~r/^[ \t]*\[/
+  @accent_value_re ~r/^([ \t]*)accent_color([ \t]*=[ \t]*)"[^"]*"/
+
+  # Index of the first `[appearance]` table-header line, or nil.
+  defp appearance_header_index(lines) do
+    Enum.find_index(lines, &Regex.match?(@accent_header_re, &1))
+  end
+
+  # Index of the next table-header line at or after `from`, or nil (EOF).
+  defp next_table_header_index(lines, from) do
+    case Enum.find_index(Enum.drop(lines, from), &Regex.match?(@table_header_re, &1)) do
+      nil -> nil
+      offset -> from + offset
+    end
+  end
+
+  # Index of the first accent_color line within [start_idx, end_idx), or nil.
+  defp accent_line_index(lines, start_idx, end_idx) do
+    case Enum.find_index(
+           Enum.slice(lines, start_idx, end_idx - start_idx),
+           &Regex.match?(@accent_value_re, &1)
+         ) do
+      nil -> nil
+      offset -> start_idx + offset
+    end
+  end
+
+  # Replaces the quoted value of an `accent_color = "..."` line, preserving
+  # its leading whitespace and any trailing comment.
+  defp replace_accent_value(line, accent) do
+    Regex.replace(@accent_value_re, line, ~s(\\1accent_color\\2"#{accent}"), global: false)
+  end
+
+  # Appends a fresh `[appearance]` section with the accent_color line,
+  # separated from any prior content by a blank line.
+  defp append_appearance_section(lines, accent) do
+    tail = ["[appearance]", ~s(accent_color = "#{accent}")]
+
+    case List.last(lines) do
+      nil -> tail
+      last -> if String.trim(last) == "", do: lines ++ tail, else: lines ++ ["" | tail]
     end
   end
 

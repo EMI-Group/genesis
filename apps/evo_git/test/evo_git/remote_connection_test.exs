@@ -9,6 +9,12 @@ defmodule EvoGit.RemoteConnectionTest do
 
   use ExUnit.Case, async: false
 
+  # Mirrors `EvoGit.RemoteConnection`'s private accent palette (which in turn
+  # mirrors the `[appearance] accent_color` `in:` list in the config schema —
+  # `EvoGit.Config.Schema.Definitions`), used to assert remote accents are
+  # valid members that always differ from the local accent.
+  @accent_palette ~w(blue teal green yellow orange red pink purple brown slate)
+
   # --- Setup: isolate config dir ---
 
   setup do
@@ -307,6 +313,194 @@ defmodule EvoGit.RemoteConnectionTest do
     end
   end
 
+  describe "remote_accent_for/2 — accent-variant picker" do
+    # Distinct ssh_target shapes: user@host, host:port, dotted/internal hosts,
+    # an IPv6 literal and a non-ASCII user — the picker must be stable across
+    # all of them.
+    @ssh_targets [
+      "dev@example.com",
+      "ops@10.0.0.5",
+      "staging@genesis.internal",
+      "user@[2001:db8::1]",
+      "üñïçødé@täst.de"
+    ]
+
+    test "always returns a palette member that differs from the local accent" do
+      for local_accent <- @accent_palette, ssh_target <- @ssh_targets do
+        result = EvoGit.RemoteConnection.remote_accent_for(ssh_target, local_accent)
+
+        assert result in @accent_palette,
+               "expected #{result} (target #{ssh_target}, local #{local_accent}) " <>
+                 "to be a palette member"
+
+        refute result == local_accent,
+               "expected the remote accent for #{ssh_target} to differ from local #{local_accent}"
+      end
+    end
+
+    test "is deterministic for the same (ssh_target, local_accent) pair" do
+      for local_accent <- @accent_palette, ssh_target <- @ssh_targets do
+        first = EvoGit.RemoteConnection.remote_accent_for(ssh_target, local_accent)
+        second = EvoGit.RemoteConnection.remote_accent_for(ssh_target, local_accent)
+
+        assert first == second,
+               "expected a stable pick for target #{ssh_target}, local #{local_accent} " <>
+                 "(got #{first} then #{second})"
+      end
+    end
+
+    test "never returns a non-palette local_accent (still yields a valid palette member)" do
+      # A local accent outside the palette is not removed from the candidates,
+      # but the result must still be a palette color — and can never equal the
+      # non-palette local accent.
+      for local_accent <- ["chartreuse", "neon", "midnight"], ssh_target <- @ssh_targets do
+        result = EvoGit.RemoteConnection.remote_accent_for(ssh_target, local_accent)
+
+        assert result in @accent_palette,
+               "expected #{result} (target #{ssh_target}, local #{local_accent}) " <>
+                 "to be a palette member"
+
+        refute result == local_accent
+      end
+    end
+  end
+
+  describe "rewrite_config_accent/2 — [appearance] accent rewrite" do
+    test "replaces an existing accent_color value inside [appearance], preserving everything else verbatim" do
+      input = """
+      # Genesis user configuration
+
+      [node]
+      cookie = "abc123"
+
+      [appearance]
+      accent_color = "blue"
+      # UI density preference
+      ui_density = "comfortable"
+
+      [[llm.models]]
+      id = "deepseek"
+      provider = "deepseek"
+      model = "deepseek-chat"
+      concurrency = 3
+
+      [sandbox]
+      backend = "auto"
+      """
+
+      expected = """
+      # Genesis user configuration
+
+      [node]
+      cookie = "abc123"
+
+      [appearance]
+      accent_color = "teal"
+      # UI density preference
+      ui_density = "comfortable"
+
+      [[llm.models]]
+      id = "deepseek"
+      provider = "deepseek"
+      model = "deepseek-chat"
+      concurrency = 3
+
+      [sandbox]
+      backend = "auto"
+      """
+
+      assert EvoGit.RemoteConnection.rewrite_config_accent(input, "teal") == expected
+    end
+
+    test "inserts an accent_color line right after an [appearance] header that lacks one" do
+      input = """
+      [node]
+      cookie = "abc123"
+
+      [appearance]
+      # picked by the dashboard at first run
+      ui_density = "comfortable"
+
+      [data]
+      dir = "/tmp/genesis-data"
+      """
+
+      expected = """
+      [node]
+      cookie = "abc123"
+
+      [appearance]
+      accent_color = "teal"
+      # picked by the dashboard at first run
+      ui_density = "comfortable"
+
+      [data]
+      dir = "/tmp/genesis-data"
+      """
+
+      assert EvoGit.RemoteConnection.rewrite_config_accent(input, "teal") == expected
+    end
+
+    test "appends a new [appearance] section at EOF (blank separator) when none exists" do
+      input = """
+      [node]
+      cookie = "abc123"
+
+      [[llm.models]]
+      id = "deepseek"
+      provider = "deepseek"
+      model = "deepseek-chat"
+      """
+
+      expected = """
+      [node]
+      cookie = "abc123"
+
+      [[llm.models]]
+      id = "deepseek"
+      provider = "deepseek"
+      model = "deepseek-chat"
+
+      [appearance]
+      accent_color = "teal"
+      """
+
+      result = EvoGit.RemoteConnection.rewrite_config_accent(input, "teal")
+
+      # The appended section terminates the file (no trailing newline is added
+      # after the new accent_color line), so the heredoc expected (which always
+      # ends with a newline) is compared trimmed.
+      assert result == String.trim_trailing(expected, "\n")
+    end
+
+    test "never touches an accent_color line inside a different section" do
+      input = """
+      [some.other]
+      accent_color = "blue"
+
+      [node]
+      cookie = "abc123"
+      """
+
+      expected = """
+      [some.other]
+      accent_color = "blue"
+
+      [node]
+      cookie = "abc123"
+
+      [appearance]
+      accent_color = "teal"
+      """
+
+      result = EvoGit.RemoteConnection.rewrite_config_accent(input, "teal")
+
+      # Same trailing-newline note as the append test above.
+      assert result == String.trim_trailing(expected, "\n")
+      assert result =~ "[some.other]\naccent_color = \"blue\""
+    end
+  end
+
   # The dummy live/dying Port commands (`sleep`, `false`) are POSIX — Windows
   # has no equivalent `sh -c` builtins, so these unit tests of the tunnel
   # readiness helper are skipped there.
@@ -540,7 +734,13 @@ defmodule EvoGit.RemoteConnectionTest do
       # :daemon_active_after (N — the fake reports the daemon active only
       # once the is-active / launchctl-list call count exceeds N; used to
       # simulate the race where a daemon starts between the pre-flight check
-      # and the launch point).
+      # and the launch point), :remote_config_exists? (the fake reports the
+      # remote config.toml/credentials.toml as already present, so the
+      # :copying_config stage skips their upload). The fake `scp` captures
+      # every uploaded payload into the tmp dir under its DESTINATION basename
+      # (config.toml / credentials.toml / genesis_remote.tar.xz) — the tmp dir
+      # is returned as `:scp_dir` — so tests can assert what actually "landed
+      # on the remote" (e.g. the accent-variant config.toml content).
       defp with_fake_ssh_tools(opts, fun) do
         tmp =
           Path.join(
@@ -581,7 +781,11 @@ defmodule EvoGit.RemoteConnectionTest do
             *"test -d /etc/nixos"*) printf '__DETECT__\n'; exit 0 ;;
             *nix-build*) printf '%s\n' '__PATCH_OUTPUT__'; exit __PATCH_EXIT__ ;;
             *"curl"*|*"wget"*) exit 0 ;;
-            *"mkdir"*|*"tar"*|*"chmod"*|*"test -f"*) exit 0 ;;
+            # The only `test -f` command issued is the config-existence check
+            # (remote_file_exists?) — :remote_config_exists? makes the fake
+            # report the remote already has the file.
+            *"test -f"*) printf '__CONFIG_EXISTS__\n'; exit 0 ;;
+            *"mkdir"*|*"tar"*|*"chmod"*) exit 0 ;;
             *) exit 0 ;;
           esac
           """
@@ -605,6 +809,10 @@ defmodule EvoGit.RemoteConnectionTest do
             "__PATCH_EXIT__",
             Integer.to_string(Keyword.get(opts, :patch_exit, 0))
           )
+          |> String.replace(
+            "__CONFIG_EXISTS__",
+            if(Keyword.get(opts, :remote_config_exists?, false), do: "yes", else: "no")
+          )
 
         ssh_path = Path.join(tmp, "ssh")
         scp_path = Path.join(tmp, "scp")
@@ -614,7 +822,17 @@ defmodule EvoGit.RemoteConnectionTest do
 
         # The local-tarball path shells out to real `scp` via run_cmd
         # ({:spawn, "scp ..."} → /bin/sh -c) — a fake scp on PATH intercepts it.
-        File.write!(scp_path, "#!/bin/sh\nexit 0\n")
+        # It also copies the uploaded source into the shared tmp dir, named by
+        # the DESTINATION basename, so tests can inspect what was uploaded.
+        scp_script =
+          ~S"""
+          #!/bin/sh
+          cp "$1" "__SCP_DIR__/$(basename "$2")"
+          exit 0
+          """
+          |> String.replace("__SCP_DIR__", tmp)
+
+        File.write!(scp_path, scp_script)
         File.chmod!(scp_path, 0o755)
 
         original_path = System.get_env("PATH")
@@ -639,7 +857,7 @@ defmodule EvoGit.RemoteConnectionTest do
         tarball = Path.join(tmp, "local.tar.xz")
         File.write!(tarball, "fake tarball")
 
-        fun.(%{log: log, marker: marker, tarball: tarball})
+        fun.(%{log: log, marker: marker, tarball: tarball, scp_dir: tmp})
       end
 
       # Drains all {:remote_connection_status, target_id, status} broadcasts
@@ -680,6 +898,40 @@ defmodule EvoGit.RemoteConnectionTest do
         config_dir = EvoGit.Config.config_dir()
         File.mkdir_p!(config_dir)
         File.write!(Path.join(config_dir, "config.toml"), "[node]\ncookie = \"#{cookie}\"\n")
+      end
+
+      # Like write_test_config_cookie/1 but additionally carries an
+      # [appearance] accent_color (plus a representative [[llm.models]] body) —
+      # the accent-variant copy tests need a local config.toml that EXISTS and
+      # carries an accent at the :copying_config stage so the variant path
+      # triggers and the local accent is well-defined.
+      defp write_config_with_accent(cookie, accent) do
+        config_dir = EvoGit.Config.config_dir()
+        File.mkdir_p!(config_dir)
+
+        File.write!(
+          Path.join(config_dir, "config.toml"),
+          """
+          [node]
+          cookie = "#{cookie}"
+
+          [appearance]
+          accent_color = "#{accent}"
+
+          [[llm.models]]
+          id = "deepseek"
+          provider = "deepseek"
+          model = "deepseek-chat"
+          """
+        )
+      end
+
+      # Extracts the value of the first `accent_color = "..."` line.
+      defp fetch_accent_from(contents) do
+        case Regex.run(~r/^accent_color = "([^"]*)"/m, contents) do
+          [_, accent] -> {:ok, accent}
+          _ -> :error
+        end
       end
 
       test "NixOS detected → patch issued + :patching_binaries broadcast before :starting_daemon" do
@@ -1025,6 +1277,85 @@ defmodule EvoGit.RemoteConnectionTest do
             :patching_binaries,
             :starting_daemon
           ])
+
+          cleanup_connections()
+        end)
+      end
+
+      test "existing remote config.toml is never overwritten by bootstrap" do
+        ensure_registry_and_supervisor()
+
+        # A local config.toml must exist for the :copying_config stage to reach
+        # the remote-existence check; the fake reports the remote ALREADY has
+        # config.toml (and credentials.toml), so no config upload may happen.
+        write_test_config_cookie("known-cookie")
+
+        with_fake_ssh_tools(
+          [os: "Linux", remote_config_exists?: true],
+          fn %{log: log, tarball: tarball, scp_dir: scp_dir} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+            # The remote-existence probe was actually issued for the config...
+            assert File.read!(log) =~ "test -f ~/.config/genesis/config.toml"
+
+            # ...but the ONLY scp payload that landed is the tarball: the
+            # remote keeps its existing config file untouched.
+            assert File.exists?(Path.join(scp_dir, "genesis_remote.tar.xz"))
+            refute File.exists?(Path.join(scp_dir, "config.toml"))
+            refute File.exists?(Path.join(scp_dir, "credentials.toml"))
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "fresh remote without config.toml receives an accent variant differing from the local accent" do
+        ensure_registry_and_supervisor()
+
+        write_config_with_accent("fresh-remote-cookie", "red")
+        local_contents = File.read!(EvoGit.Config.config_path())
+
+        with_fake_ssh_tools([os: "Linux"], fn %{tarball: tarball, scp_dir: scp_dir} ->
+          unique = System.unique_integer([:positive])
+          ssh_target = "accent#{unique}@example.com"
+
+          {:ok, target} =
+            EvoGit.RemoteConnections.save(%{
+              ssh_target: ssh_target,
+              dist_port: 9999,
+              local_binary_path: tarball
+            })
+
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target.id)
+
+          # The accent variant was uploaded in place of the plain config.toml.
+          captured = Path.join(scp_dir, "config.toml")
+          assert File.exists?(captured), "expected an accent-variant config.toml on the remote"
+
+          uploaded = File.read!(captured)
+
+          local_accent = EvoGit.Config.resolve([:appearance, :accent_color])
+          assert local_accent == "red"
+
+          # The uploaded content is exactly the deterministic rewrite: local
+          # file re-accented with remote_accent_for(ssh_target, local_accent).
+          expected =
+            EvoGit.RemoteConnection.rewrite_config_accent(
+              local_contents,
+              EvoGit.RemoteConnection.remote_accent_for(ssh_target, local_accent)
+            )
+
+          assert uploaded == expected
+
+          # ...and the accent it carries is a palette member != the local one.
+          assert {:ok, remote_accent} = fetch_accent_from(uploaded)
+          refute remote_accent == local_accent
+          assert remote_accent in @accent_palette
 
           cleanup_connections()
         end)

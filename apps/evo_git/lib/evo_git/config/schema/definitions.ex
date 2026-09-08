@@ -11,6 +11,15 @@ defmodule EvoGit.Config.Schema.Definitions do
   @spec search_providers() :: [atom()]
   def search_providers, do: @search_providers
 
+  # The dashboard UI accent palette — single source of truth for the
+  # `[appearance] accent_color` schema's `in:` validation whitelist and for
+  # the accent variants chosen for freshly-bootstrapped remote nodes.
+  @accent_palette ~w(blue teal green yellow orange red pink purple brown slate)
+
+  @doc "The dashboard UI accent palette (valid values for [:appearance, :accent_color])."
+  @spec accent_palette() :: [String.t()]
+  def accent_palette, do: @accent_palette
+
   @doc """
   Returns all configuration key schemas as a flat list of maps.
 
@@ -672,7 +681,7 @@ defmodule EvoGit.Config.Schema.Definitions do
           key_path: [:appearance, :accent_color],
           type: :string,
           default: "blue",
-          validation: [in: ~w(blue teal green yellow orange red pink purple brown slate)],
+          validation: [in: @accent_palette],
           category: :appearance,
           sub_category: nil,
           description:
