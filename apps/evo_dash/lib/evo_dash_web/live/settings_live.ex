@@ -402,6 +402,7 @@ defmodule EvoDashWeb.SettingsLive do
                           <% end %>
                         </h4>
                         <form
+                          id="remote-connections-form"
                           phx-submit="save_remote_target"
                           phx-change="remote_connections_form_change"
                           class="space-y-4"
