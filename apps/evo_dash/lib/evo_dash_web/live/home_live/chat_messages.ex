@@ -57,28 +57,28 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
         <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
           <.icon
             name="hero-light-bulb"
-            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
           />
         </.suggestion_chip>
         <%!-- zh_CN: "任务取消是如何工作的？" --%>
         <.suggestion_chip message={gettext("How does task cancellation work?")}>
           <.icon
             name="hero-magnifying-glass"
-            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
           />
         </.suggestion_chip>
         <%!-- zh_CN: "你能帮我做什么？" --%>
         <.suggestion_chip message={gettext("What can you help me with?")}>
           <.icon
             name="hero-puzzle-piece"
-            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
           />
         </.suggestion_chip>
         <%!-- zh_CN: "引导我使用仪表盘" --%>
         <.suggestion_chip message={gettext("Guide me through the dashboard")}>
           <.icon
             name="hero-map"
-            class="size-4 mt-0.5 shrink-0 text-primary/80 group-hover:text-primary"
+            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
           />
         </.suggestion_chip>
       </div>
@@ -168,7 +168,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       type="button"
       phx-click="send_message"
       phx-value-message={@message}
-      class="group flex items-start gap-2.5 rounded-xl border border-base-300 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
+      class="group flex items-start gap-2.5 rounded-xl border border-base-300 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary-standalone/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
     >
       {render_slot(@inner_block)}
       {@message}

@@ -42,7 +42,7 @@ defmodule EvoDashWeb.ReviewLive do
           <%= if @loading do %>
             <!-- Loading state -->
             <div class="flex items-center justify-center py-20">
-              <span class="loading loading-spinner loading-lg text-primary"></span>
+              <span class="loading loading-spinner loading-lg text-primary-standalone"></span>
               <span class="ml-3 text-base-content/60">{gettext("Loading review data...")}</span>
             </div>
           <% else %>

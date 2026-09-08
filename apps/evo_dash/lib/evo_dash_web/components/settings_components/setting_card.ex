@@ -9,31 +9,26 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
   # Appearance accent-color palette ([:appearance, :accent_color])
   # ───────────────────────────────────────────────────────────────────────────
   #
-  # The ten GNOME/libadwaita accent names + hexes. The NAMES are the config
-  # values (schema `validation: [in: [...]]` in the core schema definition);
-  # the HEXES must stay in sync with the same palette rendered in
-  # `assets/css/app.css` (app.css is the read-only source of truth — this table
-  # only drives the swatch BACKGROUNDS and tooltips). Order = schema validation
-  # order = app.css order.
-  @accent_palette [
-    {"blue", "#3584e4"},
-    {"teal", "#2190a4"},
-    {"green", "#2ec27e"},
-    {"yellow", "#f5c211"},
-    {"orange", "#ff7800"},
-    {"red", "#e01b24"},
-    {"pink", "#ff61a8"},
-    {"purple", "#9141ac"},
-    {"brown", "#986a44"},
-    {"slate", "#3d3846"}
-  ]
+  # The ten GNOME/libadwaita accent NAMES, delegated to the core schema
+  # definition (the same list backs the schema's `validation: [in: [...]]`
+  # whitelist) — the single source of truth; this module carries NO copy and
+  # NO hexes. Every visual comes from the tuned `[data-accent-color="<name>"]`
+  # rules in assets/css/app.css: each swatch chip carries
+  # `data-accent-color={name}`, so its fill (`bg-primary`), check glyph
+  # (`text-primary-content` — the per-accent contrast-safe on-fill color, which
+  # is what made the old yellow→text-black special case unnecessary), and
+  # focus ring all resolve in CSS and inherit the page's `data-theme` (set on
+  # `<html>`) for the dark-mode variants.
+  defmacrop accent_palette_list do
+    quote do: EvoGit.Config.Schema.Definitions.accent_palette()
+  end
 
   # Public so SettingsLive can whitelist-validate the `select_appearance_accent`
   # payload against the palette (untrusted client input) and tests can pin it.
-  def accent_palette, do: @accent_palette
+  def accent_palette, do: accent_palette_list()
 
   # Whitelist membership check for a single accent name (see accent_palette/0).
-  def accent_name?(name), do: Enum.any?(@accent_palette, fn {n, _hex} -> n == name end)
+  def accent_name?(name), do: is_binary(name) and name in accent_palette()
 
   # Resolves the ACTIVE accent name: the current value when it is one of the
   # palette names, else the schema default when that is in the palette, else
@@ -46,7 +41,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
   def accent_active(_value, schema_default), do: accent_in_palette(schema_default)
 
   defp accent_in_palette(name) do
-    if Enum.any?(@accent_palette, fn {n, _hex} -> n == name end), do: name, else: "blue"
+    if name in accent_palette(), do: name, else: "blue"
   end
 
   # Localized display labels for the swatches (aria-label / tooltip text).
@@ -65,11 +60,6 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
   def accent_label("slate"), do: gettext("Slate")
   def accent_label(_), do: gettext("Accent")
 
-  # Yellow is a light swatch — its active check glyph must be dark for contrast;
-  # every other swatch gets a white check.
-  defp accent_check_class("yellow"), do: "text-black"
-  defp accent_check_class(_name), do: "text-white"
-
   # ───────────────────────────────────────────────────────────────────────────
   # setting_card/1 — Single config key card
   # ───────────────────────────────────────────────────────────────────────────
@@ -87,12 +77,15 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
     ]}>
       <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
-          <code class="font-mono text-xs font-medium text-primary">{Enum.join(@schema.key_path, ".")}</code>
+          <code class="font-mono text-xs font-medium text-primary-standalone">{Enum.join(
+            @schema.key_path,
+            "."
+          )}</code>
           <button
             type="button"
             phx-click="reset_key"
             phx-value-key_path={Enum.join(@schema.key_path, ".")}
-            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-xs text-base-content/70 hover:text-primary transition-opacity"
+            class="opacity-0 group-hover:opacity-100 btn btn-ghost btn-xs text-base-content/70 hover:text-primary-standalone transition-opacity"
             title={gettext("Reset to default")}
           >
             <.icon name="hero-arrow-path" class="size-3.5" />
@@ -114,33 +107,44 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
         <div class="form-control w-full">
           <%= if @schema.key_path == [:appearance, :accent_color] do %>
             <%!-- Accent-color swatch picker (appearance.accent_color). A row of
-                 round swatch buttons mirroring the GNOME/libadwaita palette in
-                 app.css; the ACTIVE color (config value, nil → schema default
-                 "blue", or the pending draft threaded from SettingsLive) gets a
-                 ring + check glyph. A hidden input named `appearance.accent_color`
-                 carries the active selection so the generic save_category flow
-                 persists it. The visible swatch buttons are type="button" with
+                 round swatch chips mirroring the GNOME/libadwaita palette; the
+                 ACTIVE color (config value, nil → schema default "blue", or
+                 the pending draft threaded from SettingsLive) gets a ring +
+                 check glyph. The chip itself carries data-accent-color={name},
+                 so EVERYTHING visual resolves in CSS from the tuned
+                 [data-accent-color] rules in app.css: fill = bg-primary (that
+                 accent's own --color-primary), check glyph =
+                 text-primary-content (per-accent contrast-safe on-fill color —
+                 this is what replaced the old yellow→text-black special case),
+                 and the active/focus rings — including the dark-theme variants
+                 for free (the chip inherits data-theme from <html>). A hidden
+                 input named `appearance.accent_color` carries the active
+                 selection so the generic save_category flow persists it. The
+                 visible swatch buttons are type="button" with
                  phx-click="select_appearance_accent" — a server-driven draft
                  update that never submits the enclosing form and never wipes
                  unsaved edits in sibling cards. --%>
             <% active = accent_active(@value, @schema.default) %>
             <input type="hidden" name={Enum.join(@schema.key_path, ".")} value={active} />
             <div class="flex flex-wrap items-center gap-2">
-              <%= for {name, hex} <- accent_palette() do %>
+              <%= for name <- accent_palette() do %>
                 <button
                   type="button"
                   phx-click="select_appearance_accent"
                   phx-value-accent={name}
+                  data-accent-color={name}
                   aria-label={accent_label(name)}
-                  title={"#{accent_label(name)} (#{hex})"}
-                  style={"background-color: #{hex}"}
+                  title={accent_label(name)}
                   class={[
-                    "size-7 rounded-full border-2 border-white/40 shadow-sm flex items-center justify-center transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary/60",
+                    "size-7 rounded-full border-2 border-white/40 shadow-sm flex items-center justify-center bg-primary transition-transform hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-primary-standalone",
                     active == name && "ring-2 ring-offset-2 ring-base-content/70 scale-110"
                   ]}
                 >
                   <%= if active == name do %>
-                    <.icon name="hero-check" class={"size-3.5 " <> accent_check_class(name)} />
+                    <%!-- text-primary-content = THIS accent's contrast-safe
+                         on-fill color (CSS-resolved; yellow is dark-on-yellow,
+                         blue white-on-blue, …). --%>
+                    <.icon name="hero-check" class="size-3.5 text-primary-content" />
                   <% end %>
                 </button>
               <% end %>
@@ -312,7 +316,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       type="button"
                       phx-click="add_list_entry"
                       phx-value-key_path={key}
-                      class="btn btn-ghost btn-xs gap-1 mt-1.5 text-primary hover:bg-primary/10"
+                      class="btn btn-ghost btn-xs gap-1 mt-1.5 text-primary-standalone hover:bg-primary/10"
                     >
                       <.icon name="hero-plus" class="size-3.5" />
                       {gettext("Add path")}

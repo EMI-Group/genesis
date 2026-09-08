@@ -1788,7 +1788,7 @@ defmodule EvoDashWeb.SystemLive do
         id="view-changelog"
         type="button"
         phx-click="open_changelog"
-        class="link link-hover text-xs text-primary"
+        class="link link-hover text-xs text-primary-standalone"
       >
         {gettext("View changelog")} <% # zh_CN: "查看更新日志" %>
       </button>

@@ -40,7 +40,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
             <button
               class={[
                 "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-                is_nil(@current_node_id) && "bg-primary/10 text-primary",
+                is_nil(@current_node_id) && "bg-primary/10 text-primary-standalone",
                 not is_nil(@current_node_id) && "hover:bg-base-200 text-base-content/70"
               ]}
               phx-click={JS.push("select_node", target: @myself, value: %{node: "local"})}
@@ -50,7 +50,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
               <.icon
                 :if={is_nil(@current_node_id)}
                 name="hero-check-solid"
-                class="size-4 text-primary shrink-0"
+                class="size-4 text-primary-standalone shrink-0"
               />
             </button>
 
@@ -64,7 +64,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
               :for={target <- @remote_targets}
               class={[
                 "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
-                @current_node_id == target.id && "bg-primary/10 text-primary",
+                @current_node_id == target.id && "bg-primary/10 text-primary-standalone",
                 @current_node_id != target.id && "hover:bg-base-200 text-base-content/70"
               ]}
               phx-click={JS.push("select_node", target: @myself, value: %{node: target.id})}
@@ -80,7 +80,7 @@ defmodule EvoDashWeb.NodeSelectorComponent do
               <.icon
                 :if={@current_node_id == target.id}
                 name="hero-check-solid"
-                class="size-4 text-primary shrink-0"
+                class="size-4 text-primary-standalone shrink-0"
               />
             </button>
 

@@ -48,7 +48,7 @@ defmodule EvoDashWeb.ReviewComponents do
         phx-value-tab="conversation"
         class={[
           "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
-          (@active_tab == :conversation && "border-primary text-base-content font-semibold") ||
+          (@active_tab == :conversation && "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
       >
@@ -61,7 +61,7 @@ defmodule EvoDashWeb.ReviewComponents do
         phx-value-tab="objective"
         class={[
           "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
-          (@active_tab == :objective && "border-primary text-base-content font-semibold") ||
+          (@active_tab == :objective && "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
       >
@@ -74,7 +74,8 @@ defmodule EvoDashWeb.ReviewComponents do
         phx-value-tab="files_changed"
         class={[
           "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
-          (@active_tab == :files_changed && "border-primary text-base-content font-semibold") ||
+          (@active_tab == :files_changed &&
+             "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
       >
@@ -89,7 +90,7 @@ defmodule EvoDashWeb.ReviewComponents do
         phx-value-tab="commits"
         class={[
           "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
-          (@active_tab == :commits && "border-primary text-base-content font-semibold") ||
+          (@active_tab == :commits && "border-primary-standalone text-base-content font-semibold") ||
             "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
         ]}
       >
@@ -106,7 +107,7 @@ defmodule EvoDashWeb.ReviewComponents do
           phx-value-tab="archive"
           class={[
             "flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm whitespace-nowrap border-b-2 transition-colors",
-            (@active_tab == :archive && "border-primary text-base-content font-semibold") ||
+            (@active_tab == :archive && "border-primary-standalone text-base-content font-semibold") ||
               "border-transparent text-base-content/70 hover:text-base-content hover:border-base-content/30"
           ]}
         >

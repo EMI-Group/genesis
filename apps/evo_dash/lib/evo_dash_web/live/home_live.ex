@@ -77,7 +77,7 @@ defmodule EvoDashWeb.HomeLive do
               name="model_id"
               phx-change="select_chat_model"
               aria-label={gettext("Chat model")}
-              class="shrink-0 max-w-44 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/70 hover:border-primary/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary/20"
+              class="shrink-0 max-w-44 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/70 hover:border-primary-standalone/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary-standalone/20"
             >
               <%!-- zh_CN: 自动选择模型 — 配置了模型选择脚本时按规则/脚本自动选择，否则使用默认模型 --%>
               <option value="" selected={@selected_model_id in [nil, ""]}>

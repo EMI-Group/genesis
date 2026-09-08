@@ -70,7 +70,7 @@ defmodule EvoDashWeb.ProjectComponents do
         class="project-palette-trigger flex items-center gap-2 w-full min-w-0 bg-base-200/50 hover:bg-base-200 rounded-lg px-4 py-2 cursor-pointer transition-colors text-left"
       >
         <%= if @active_project do %>
-          <.icon name="hero-folder" class="size-4 text-primary shrink-0" />
+          <.icon name="hero-folder" class="size-4 text-primary-standalone shrink-0" />
           <span class="text-base font-bold text-base-content truncate leading-tight">
             {@active_project.name}
           </span>

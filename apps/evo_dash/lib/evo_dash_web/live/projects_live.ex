@@ -207,7 +207,10 @@ defmodule EvoDashWeb.ProjectsLive do
                         open
                       >
                         <summary class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
-                          <.icon name="hero-sparkles" class="size-4 shrink-0 text-primary/70" />
+                          <.icon
+                            name="hero-sparkles"
+                            class="size-4 shrink-0 text-primary-standalone/70"
+                          />
                           <span>{gettext("New to Genesis? Start with an example")}</span>
                           <span class="ml-auto text-xs font-normal text-base-content/60">
                             <span class="group-open:hidden">{gettext("Show example")}</span>
@@ -307,7 +310,7 @@ defmodule EvoDashWeb.ProjectsLive do
                        The path shown is the one being loaded. --%>
                   <%= if @remote_project_loading != nil do %>
                     <div class="mb-2 rounded-lg border border-base-300 bg-base-200/50 px-3 py-2 flex items-center gap-2">
-                      <span class="loading loading-spinner loading-sm text-primary"></span>
+                      <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
                       <%!-- 正在通过远程节点加载所选项目，加载完成前任务表单保持禁用 --%>
                       <span class="text-sm text-base-content/70">{gettext("Loading project…")}</span>
                       <code class="text-xs text-base-content/70 font-mono truncate min-w-0">

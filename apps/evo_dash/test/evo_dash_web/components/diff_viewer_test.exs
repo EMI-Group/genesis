@@ -621,10 +621,12 @@ defmodule EvoDashWeb.DiffViewerTest do
                ["README.md"]
              ]
 
-      # Only the selected row carries the highlight classes.
+      # Only the selected row carries the highlight classes (tint stays on the
+      # fill token bg-primary/10; the text color is the standalone primary —
+      # the accent role-split keeps it readable over the tint).
       assert Enum.map(buttons, &Floki.attribute(&1, "class")) == [
                [
-                 ~s(w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors bg-primary/10 text-primary)
+                 ~s(w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors bg-primary/10 text-primary-standalone)
                ],
                [
                  "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors hover:bg-base-200/60"

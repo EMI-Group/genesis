@@ -385,7 +385,7 @@ defmodule EvoDashWeb.Layouts do
       <%= if @guide do %>
         <div class="fixed top-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] bg-base-100 border border-base-300 rounded-xl shadow-lg p-4">
           <div class="flex items-center gap-2 mb-2">
-            <.icon name="hero-sparkles" class="w-4 h-4 text-primary shrink-0" />
+            <.icon name="hero-sparkles" class="w-4 h-4 text-primary-standalone shrink-0" />
             <%!-- 自省智能体向导 — 由运行中的 reflect 任务推送的引导提示 --%>
             <h3 class="text-sm font-semibold flex-1 min-w-0">{gettext("Genesis Guide")}</h3>
             <%= if @guide.dismissible do %>
@@ -503,7 +503,7 @@ defmodule EvoDashWeb.Layouts do
       navigate={@navigate}
       class={[
         "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 w-full",
-        @current && "bg-primary/10 text-primary shadow-sm",
+        @current && "bg-primary/10 text-primary-standalone shadow-sm",
         !@current &&
           "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"
       ]}
@@ -513,7 +513,7 @@ defmodule EvoDashWeb.Layouts do
         name={@icon}
         class={
         "size-5 transition-colors " <>
-        if(@current, do: "text-primary", else: "text-base-content/60")
+        if(@current, do: "text-primary-standalone", else: "text-base-content/60")
       }
       />
       <span class="sidebar-label">{render_slot(@inner_block)}</span>
@@ -747,7 +747,7 @@ defmodule EvoDashWeb.Layouts do
             class={[
               "flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer",
               @locale == code &&
-                "bg-primary/10 text-primary",
+                "bg-primary/10 text-primary-standalone",
               @locale != code &&
                 "hover:bg-base-200 text-base-content/80"
             ]}
@@ -757,7 +757,7 @@ defmodule EvoDashWeb.Layouts do
             <.icon
               :if={@locale == code}
               name="hero-check-solid"
-              class="size-4 text-primary shrink-0"
+              class="size-4 text-primary-standalone shrink-0"
             />
           </button>
         </div>

@@ -50,7 +50,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
     ~H"""
     <div class="flex justify-start gap-3 w-full">
       <div class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-base-200 ring-1 ring-base-300/60">
-        <.icon name="hero-sparkles" class="size-3.5 text-primary" />
+        <.icon name="hero-sparkles" class="size-3.5 text-primary-standalone" />
       </div>
       <div class="min-w-0 flex-1 pt-0.5">
         <div class={[
@@ -310,7 +310,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp card_border(_status), do: "border-base-200/60"
 
   defp type_color("user"), do: "text-info"
-  defp type_color("assistant"), do: "text-primary"
+  defp type_color("assistant"), do: "text-primary-standalone"
   defp type_color("tool"), do: "text-success"
   defp type_color(_type), do: "text-base-content/60"
 

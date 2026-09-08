@@ -241,18 +241,46 @@ defmodule EvoDashWeb.SettingCardTest do
       assert accent_active?(html, "blue")
     end
 
-    test "yellow active swatch gets a dark check glyph for contrast" do
+    test "check glyph color is CSS-driven via text-primary-content (no per-accent Elixir class)" do
+      # The old accent_check_class/1 helper (yellow → text-black special case)
+      # is GONE: every visual now resolves in CSS from the chip's
+      # data-accent-color attribute. The glyph carries the SAME
+      # text-primary-content class for EVERY accent; app.css's
+      # [data-accent-color="yellow"] rule retargets --color-primary-content to
+      # a dark value there (contrast handled in CSS, not in Elixir).
       html =
         render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: "yellow")
 
       [yellow] = accent_swatch(html, "yellow")
       assert accent_active?(html, "yellow")
 
-      # Yellow is a light swatch — its check glyph must be dark (text-black);
-      # every other active swatch gets a white check.
-      [glyph] = Floki.find(yellow, "span.hero-check")
-      assert attr(glyph, "class") |> hd() =~ "text-black"
+      # The chip carries data-accent-color — the CSS hook the app.css
+      # [data-accent-color="<name>"] rules key off.
+      assert attr(yellow, "data-accent-color") == ["yellow"]
 
+      # Fill is the accent's own bg-primary; the glyph is text-primary-content
+      # (the per-accent contrast-safe on-fill color).
+      assert attr(yellow, "class") |> hd() =~ "bg-primary"
+      [glyph] = Floki.find(yellow, "span.hero-check")
+      assert attr(glyph, "class") == ["hero-check size-3.5 text-primary-content"]
+
+      # The same single class serves every accent — no accent-conditional
+      # Elixir markup anywhere.
+      for name <- SettingCard.accent_palette() do
+        active_html =
+          render_component(&SettingCard.setting_card/1, schema: accent_schema(), value: name)
+
+        assert accent_active?(active_html, name)
+        [swatch] = accent_swatch(active_html, name)
+        assert attr(swatch, "data-accent-color") == [name]
+        assert attr(swatch, "class") |> hd() =~ "bg-primary"
+
+        [glyph] = Floki.find(swatch, "span.hero-check")
+        assert attr(glyph, "class") == ["hero-check size-3.5 text-primary-content"]
+      end
+
+      # Inactive swatches carry no glyph at all (only the active one renders
+      # the check).
       [blue] = accent_swatch(html, "blue")
       assert Floki.find(blue, "span.hero-check") == []
     end

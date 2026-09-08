@@ -3279,8 +3279,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       swatches = Floki.find(doc, ~s(button[phx-click="select_appearance_accent"]))
       assert length(swatches) == 10
 
-      # Every palette name is present as a phx-value-accent on its swatch.
-      for {name, _hex} <- EvoDashWeb.SettingsComponents.SettingCard.accent_palette() do
+      # Every palette name is present as a phx-value-accent on its swatch
+      # (accent_palette/0 returns a plain list of name strings).
+      for name <- EvoDashWeb.SettingsComponents.SettingCard.accent_palette() do
         assert html =~ ~s(phx-value-accent="#{name}")
       end
     end

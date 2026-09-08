@@ -18,7 +18,7 @@ defmodule EvoDashWeb.SettingsComponents.SectionHeader do
     ~H"""
     <div class="sticky top-0 z-10 bg-base-100/90 backdrop-blur-xl border-b border-base-200/60 px-8 py-6">
       <div class="flex items-center gap-3 mb-1">
-        <div class="text-primary/60">
+        <div class="text-primary-standalone/60">
           <.icon name={@icon} class="size-5" />
         </div>
         <h2 class="text-lg font-bold tracking-tight text-base-content">

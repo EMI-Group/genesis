@@ -349,7 +349,7 @@ defmodule EvoDashWeb.TasksLive do
         <%= if @selected_options do %>
           <EvoDashWeb.Helpers.modal on_close="close_options_modal">
             <:title>
-              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary" />
+              <.icon name="hero-chat-bubble-left-ellipsis" class="size-5 text-primary-standalone" />
               {gettext("Full Objective")}
             </:title>
             <pre class="text-sm whitespace-pre-wrap break-words"><%= @selected_options %></pre>

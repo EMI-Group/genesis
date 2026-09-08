@@ -64,7 +64,7 @@ defmodule EvoDashWeb.SettingsComponents.SearchResults do
             <%= if matching != [] do %>
               <div class="mb-10">
                 <div class="flex items-center gap-4 mb-6">
-                  <div class="p-2 bg-primary/10 text-primary rounded-xl">
+                  <div class="p-2 bg-primary/10 text-primary-standalone rounded-xl">
                     <.icon name={category_icon(category)} class="size-5" />
                   </div>
                   <h3 class="text-lg font-bold tracking-tight text-base-content">

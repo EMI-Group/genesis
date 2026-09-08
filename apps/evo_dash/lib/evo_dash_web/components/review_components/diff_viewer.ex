@@ -185,7 +185,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       phx-value-path={@path}
       class={[
         "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs transition-colors",
-        (@selected_file == @path && "bg-primary/10 text-primary") || "hover:bg-base-200/60"
+        (@selected_file == @path && "bg-primary/10 text-primary-standalone") || "hover:bg-base-200/60"
       ]}
       style={"padding-left: #{0.75 + @depth * 0.75}rem"}
     >
