@@ -89,7 +89,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:scheduler, :max_turns],
         type: :pos_integer,
-        default: 128,
+        default: 100,
         validation: [min: 1],
         category: :scheduler,
         sub_category: nil,
@@ -99,7 +99,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:scheduler, :max_turns_root],
         type: :pos_integer,
-        default: 128,
+        default: 1000,
         validation: [min: 1],
         category: :scheduler,
         sub_category: nil,
@@ -168,7 +168,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:llm, :compression_threshold_tokens],
         type: :pos_integer,
-        default: 100_000,
+        default: 180_000,
         validation: [min: 1],
         category: :llm,
         sub_category: nil,
