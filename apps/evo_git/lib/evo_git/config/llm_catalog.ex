@@ -54,6 +54,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "openai_api_key",
       variants: nil,
       models: [
+        %{id: "gpt-6-astra", display_name: "GPT-6 Astra"},
         %{id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol"},
         %{id: "gpt-5.6-terra", display_name: "GPT-5.6 Terra"},
         %{id: "gpt-5.6-luna", display_name: "GPT-5.6 Luna"},
