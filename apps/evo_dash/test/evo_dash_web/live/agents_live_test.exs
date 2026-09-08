@@ -462,12 +462,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
                {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
              ) == 42_000
 
-      assert ThresholdCache.threshold_from_config({:ok, %{}}) == 100_000
-      assert ThresholdCache.threshold_from_config({:error, :timeout}) == 100_000
+      assert ThresholdCache.threshold_from_config({:ok, %{}}) == 180_000
+      assert ThresholdCache.threshold_from_config({:error, :timeout}) == 180_000
     end
 
-    test "default_threshold/0 falls back to 100_000" do
-      assert ThresholdCache.default_threshold() == 100_000
+    test "default_threshold/0 falls back to 180_000" do
+      assert ThresholdCache.default_threshold() == 180_000
     end
 
     test "compression percentage uses the configured node threshold", %{conn: conn} do
