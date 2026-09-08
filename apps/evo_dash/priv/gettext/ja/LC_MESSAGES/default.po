@@ -1119,7 +1119,7 @@ msgstr "生成パラメーター"
 #: lib/evo_dash_web/components/layouts/root.html.heex:18
 #, elixir-autogen, elixir-format
 msgid "Genesis"
-msgstr "Genesis"
+msgstr "啓元"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:24
 #, elixir-autogen, elixir-format
@@ -1259,7 +1259,7 @@ msgstr "接続を管理..."
 #: lib/evo_dash_web/live/settings_live.ex:230
 #, elixir-autogen, elixir-format
 msgid "Manage SSH connections to remote Genesis daemons."
-msgstr "リモートのGenesisデーモンへのSSH接続を管理します。"
+msgstr "リモートの啓元デーモンへのSSH接続を管理します。"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:87
 #, elixir-autogen, elixir-format
@@ -2654,7 +2654,7 @@ msgstr "ツール実行のデフォルトタイムアウト（ミリ秒）。エ
 #.key_path: llm.model
 #: lib/evo_git/config/schema.ex
 msgid "The LLM model identifier in 'provider:model' format. Examples: 'anthropic:claude-sonnet-4-20250514', 'google:gemini-2.0-flash-exp', 'zai:glm-5.1'. The provider portion determines which API key is used. This setting is required for Genesis to function. Alternatively, a map may be used for OpenAI-compatible providers: {provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}."
-msgstr "'プロバイダー:モデル' 形式のLLMモデル識別子。例：'anthropic:claude-sonnet-4-20250514'、'google:gemini-2.0-flash-exp'、'zai:glm-5.1'。プロバイダー部分によって使用されるAPIキーが決まります。この設定はGenesisの動作に必須です。または、OpenAI互換プロバイダーにはマップを使用することもできます：{provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}。"
+msgstr "'プロバイダー:モデル' 形式のLLMモデル識別子。例：'anthropic:claude-sonnet-4-20250514'、'google:gemini-2.0-flash-exp'、'zai:glm-5.1'。プロバイダー部分によって使用されるAPIキーが決まります。この設定は啓元の動作に必須です。または、OpenAI互換プロバイダーにはマップを使用することもできます：{provider = \"openai\", id = \"my-model\", base_url = \"https://...\"}。"
 
 #.key_path: llm.compression_threshold_tokens
 #: lib/evo_git/config/schema.ex
@@ -2719,7 +2719,7 @@ msgstr "全サンドボックスプロセスを合わせた総CPUクォータ。
 #.key_path: sandbox.resources.cpu_weight
 #: lib/evo_git/config/schema.ex
 msgid "CPU allocation weight for the sandbox slice relative to other system workloads (1-10000). Higher values give Genesis processes more CPU time when the system is under contention. Default of 30 provides moderate priority."
-msgstr "他のシステムワークロードに対するサンドボックススライスのCPU割り当て重み（1〜10000）。システムが競合状態にある場合、値が高いほどGenesisプロセスにより多くのCPU時間が割り当てられます。デフォルトの30は中程度の優先度を提供します。"
+msgstr "他のシステムワークロードに対するサンドボックススライスのCPU割り当て重み（1〜10000）。システムが競合状態にある場合、値が高いほど啓元プロセスにより多くのCPU時間が割り当てられます。デフォルトの30は中程度の優先度を提供します。"
 
 #.key_path: sandbox.resources.memory_max
 #: lib/evo_git/config/schema.ex
@@ -2814,7 +2814,7 @@ msgstr "CONTEXT.mdファイルのコンテンツの最大サイズ（バイト�
 #.key_path: task_history.max_tasks
 #: lib/evo_git/config/schema.ex
 msgid "Maximum number of recent tasks retained in the dashboard history. Older tasks beyond this limit are automatically purged to manage storage. Each task represents one top-level Genesis run."
-msgstr "ダッシュボード履歴に保持される最近のタスクの最大数。この制限を超えた古いタスクはストレージ管理のために自動的に削除されます。各タスクは1回のトップレベルGenesis実行を表します。"
+msgstr "ダッシュボード履歴に保持される最近のタスクの最大数。この制限を超えた古いタスクはストレージ管理のために自動的に削除されます。各タスクは1回のトップレベル啓元実行を表します。"
 
 #.key_path: task_history.max_age_days
 #: lib/evo_git/config/schema.ex
@@ -2914,7 +2914,7 @@ msgstr "サイドバーを折りたたむ"
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:108
 #, elixir-autogen, elixir-format
 msgid "Configure the local Genesis node identity and distribution settings."
-msgstr "ローカルのGenesisノードのIDと配信設定を構成します。"
+msgstr "ローカルの啓元ノードのIDと配信設定を構成します。"
 
 #: lib/evo_dash_web/components/layouts.ex:588
 #, elixir-autogen, elixir-format
@@ -2944,12 +2944,12 @@ msgstr "Extra Config は有効な JSON である必要があります。"
 #: lib/evo_dash_web/live/welcome_live.ex:435
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version}"
-msgstr "Genesis %{version}"
+msgstr "啓元 %{version}"
 
 #: lib/evo_dash_web/live/welcome_live.ex:64
 #, elixir-autogen, elixir-format
 msgid "Genesis is an AI-powered software development framework. Let's set up your first LLM to get started."
-msgstr "GenesisはAIを活用したソフトウェア開発フレームワークです。まずは最初のLLMを設定して始めましょう。"
+msgstr "啓元はAIを活用したソフトウェア開発フレームワークです。まずは最初のLLMを設定して始めましょう。"
 
 #: lib/evo_dash_web/live/welcome_complete_live.ex:74
 #: lib/evo_dash_web/live/welcome_live.ex:88
@@ -3022,7 +3022,7 @@ msgstr "ナビゲーションの切り替え"
 #: lib/evo_dash_web/live/welcome_live.ex:55
 #, elixir-autogen, elixir-format
 msgid "Welcome to Genesis"
-msgstr "Genesisへようこそ"
+msgstr "啓元へようこそ"
 
 #: lib/evo_dash_web/live/welcome_live.ex:54
 #, elixir-autogen, elixir-format
@@ -3032,7 +3032,7 @@ msgstr "準備完了！"
 #: lib/evo_dash_web/live/welcome_live.ex:60
 #, elixir-autogen, elixir-format
 msgid "Your LLM is configured and ready. You can now start building and evolving codebases with Genesis."
-msgstr "LLMの設定が完了し、使用可能です。これでGenesisを使ってコードベースの構築と進化を始められます。"
+msgstr "LLMの設定が完了し、使用可能です。これで啓元を使ってコードベースの構築と進化を始められます。"
 
 #: lib/evo_dash_web/live/welcome_live.ex:81
 #, elixir-autogen, elixir-format
@@ -3505,7 +3505,7 @@ msgstr "これらの変更を%{target}にマージしますか？"
 #: lib/evo_dash_web/live/projects_live.ex:214
 #, elixir-autogen, elixir-format
 msgid "New to Genesis? Start with an example"
-msgstr "Genesisは初めてですか？例から始めましょう"
+msgstr "啓元は初めてですか？例から始めましょう"
 
 #: lib/evo_dash_web/live/system_live/status.ex:150
 #, elixir-autogen, elixir-format
@@ -3600,7 +3600,7 @@ msgstr "上記でプロバイダーとモデルを選択して、APIキーを入
 #: lib/evo_dash_web/live/projects_live.ex:222
 #, elixir-autogen, elixir-format
 msgid "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
-msgstr "最終目標を設定して起動すると、Genesisがアーキテクチャを考え、エージェントに指示を出し、コードを書いて構築します。"
+msgstr "最終目標を設定して起動すると、啓元がアーキテクチャを考え、エージェントに指示を出し、コードを書いて構築します。"
 
 #: lib/evo_dash_web/helpers.ex:516
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:71
@@ -3682,7 +3682,7 @@ msgstr "必要な設定（LLMプロバイダー、モデル、APIキー）が構
 #: lib/evo_dash_web/live/welcome_complete_live.ex:63
 #, elixir-autogen, elixir-format
 msgid "You only need to describe the end goal like this — Genesis figures out the architecture, delegates agents, and writes the code."
-msgstr "このように最終目標を説明するだけでOKです — Genesis がアーキテクチャを考え、エージェントに指示を委譲し、コードを書きます。"
+msgstr "このように最終目標を説明するだけでOKです — 啓元がアーキテクチャを考え、エージェントに指示を委譲し、コードを書きます。"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:298
 #, elixir-autogen, elixir-format
@@ -3702,7 +3702,7 @@ msgstr "https://..."
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:42
 #, elixir-autogen, elixir-format
 msgid "EvoX Genesis"
-msgstr "EvoX Genesis"
+msgstr "EvoX 啓元"
 
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:305
 #, elixir-autogen, elixir-format
@@ -3739,7 +3739,7 @@ msgstr "プロジェクトパス"
 #: lib/evo_dash_web/live/welcome_complete_live.ex:38
 #, elixir-autogen, elixir-format
 msgid "In Genesis you only write high-level prompts: describe the end goal, the features you want, and the framework to use. Genesis figures out the architecture, delegates agents, and writes the code."
-msgstr "Genesisでは、高水準のプロンプトだけを書きます。最終目標、欲しい機能、使用するフレームワークを記述するだけで、Genesisがアーキテクチャを設計し、エージェントに指示を出し、コードを書いてくれます。"
+msgstr "啓元では、高水準のプロンプトだけを書きます。最終目標、欲しい機能、使用するフレームワークを記述するだけで、啓元がアーキテクチャを設計し、エージェントに指示を出し、コードを書いてくれます。"
 
 #: lib/evo_dash_web/live/welcome_complete_live.ex:35
 #, elixir-autogen, elixir-format
@@ -3976,7 +3976,7 @@ msgstr "終了"
 #: lib/evo_dash_web/components/layouts.ex:341
 #, elixir-autogen, elixir-format
 msgid "Quit Genesis?"
-msgstr "Genesis を終了しますか？"
+msgstr "啓元を終了しますか？"
 
 #: lib/evo_dash_web/components/layouts.ex:350
 #, elixir-autogen, elixir-format
@@ -4087,7 +4087,7 @@ msgstr "チェックに失敗しました"
 #: lib/evo_dash_web/live/system_live.ex:60
 #, elixir-autogen, elixir-format
 msgid "Check for and install the latest Genesis release."
-msgstr "最新のGenesisリリースを確認してインストールします。"
+msgstr "最新の啓元リリースを確認してインストールします。"
 
 #: lib/evo_dash_web/live/system_live.ex:84
 #, elixir-autogen, elixir-format
@@ -4274,7 +4274,7 @@ msgstr "自由形式の説明"
 #: lib/evo_dash_web/live/system_live.ex:110
 #, elixir-autogen, elixir-format
 msgid "Genesis %{version} is up to date"
-msgstr "Genesis %{version} は最新です"
+msgstr "啓元 %{version} は最新です"
 
 #: lib/evo_dash_web/components/github_components.ex:42
 #: lib/evo_dash_web/components/github_components.ex:62
@@ -4669,17 +4669,17 @@ msgstr "明示的なオーバーライドが有効です"
 #: lib/evo_dash_web/live/home_live.ex:70
 #, elixir-autogen, elixir-format
 msgid "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
-msgstr "Genesis について質問し、ソースを確認し、タスクを管理し、ダッシュボードの操作を案内してもらえます。"
+msgstr "啓元について質問し、ソースを確認し、タスクを管理し、ダッシュボードの操作を案内してもらえます。"
 
 #: lib/evo_dash_web/live/home_live.ex:67
 #, elixir-autogen, elixir-format
 msgid "Chat with Genesis"
-msgstr "Genesis とチャット"
+msgstr "啓元とチャット"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:51
 #, elixir-autogen, elixir-format
 msgid "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
-msgstr "Genesis アシスタントとチャット: コードベースについて質問したり、ソースを探索したり、実行中のタスクを管理したり、ダッシュボードの操作案内を受けたりできます。"
+msgstr "啓元アシスタントとチャット: コードベースについて質問したり、ソースを探索したり、実行中のタスクを管理したり、ダッシュボードの操作案内を受けたりできます。"
 
 #: lib/evo_dash_web/live/system_live/source_card.ex:184
 #, elixir-autogen, elixir-format
@@ -4709,7 +4709,7 @@ msgstr "ガイドを閉じる"
 #: lib/evo_dash_web/live/system_live.ex:1698
 #, elixir-autogen, elixir-format
 msgid "Failed to clone the Genesis source."
-msgstr "Genesis ソースのクローンに失敗しました。"
+msgstr "啓元ソースのクローンに失敗しました。"
 
 #: lib/evo_dash_web/live/home_live.ex:779
 #, elixir-autogen, elixir-format
@@ -4729,38 +4729,38 @@ msgstr "停止に失敗しました: %{reason}"
 #: lib/evo_dash_web/live/system_live.ex:1699
 #, elixir-autogen, elixir-format
 msgid "Failed to update the Genesis source."
-msgstr "Genesis ソースの更新に失敗しました。"
+msgstr "啓元ソースの更新に失敗しました。"
 
 #: lib/evo_dash_web/components/layouts.ex:390
 #, elixir-autogen, elixir-format
 msgid "Genesis Guide"
-msgstr "Genesis ガイド"
+msgstr "啓元ガイド"
 
 #: lib/evo_dash_web/live/system_live/source_card.ex:81
 #, elixir-autogen, elixir-format
 msgid "Genesis Source"
-msgstr "Genesis ソース"
+msgstr "啓元ソース"
 
 #: lib/evo_dash_web/live/system_live/source_card.ex:92
 #, elixir-autogen, elixir-format
 msgid "Genesis source checkout used by the self-reflective agent."
-msgstr "自己内省エージェントが使用する Genesis ソースのチェックアウト。"
+msgstr "自己内省エージェントが使用する啓元ソースのチェックアウト。"
 
 #: lib/evo_dash_web/live/system_live.ex:1695
 #, elixir-autogen, elixir-format
 msgid "Genesis source cloned."
-msgstr "Genesis ソースをクローンしました。"
+msgstr "啓元ソースをクローンしました。"
 
 #: lib/evo_dash_web/live/system_live.ex:1684
 #: lib/evo_dash_web/live/system_live/source_card.ex:105
 #, elixir-autogen, elixir-format
 msgid "Genesis source is not available in this version"
-msgstr "Genesis ソースはこのバージョンでは利用できません"
+msgstr "啓元ソースはこのバージョンでは利用できません"
 
 #: lib/evo_dash_web/live/system_live.ex:1696
 #, elixir-autogen, elixir-format
 msgid "Genesis source updated."
-msgstr "Genesis ソースを更新しました。"
+msgstr "啓元ソースを更新しました。"
 
 #: lib/evo_dash_web/components/layouts.ex:411
 #, elixir-autogen, elixir-format
@@ -4775,7 +4775,7 @@ msgstr "読み込み中…"
 #: lib/evo_dash_web/live/home_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Message Genesis…"
-msgstr "Genesis にメッセージを送る…"
+msgstr "啓元にメッセージを送る…"
 
 #: lib/evo_dash_web/live/home_live.ex:106
 #, elixir-autogen, elixir-format
@@ -4805,7 +4805,7 @@ msgstr "停止しました。"
 #: lib/evo_dash_web/live/system_live/source_card.ex:133
 #, elixir-autogen, elixir-format
 msgid "The Genesis source has not been cloned yet."
-msgstr "Genesis ソースはまだクローンされていません。"
+msgstr "啓元ソースはまだクローンされていません。"
 
 #: lib/evo_dash_web/live/home_live.ex:930
 #: lib/evo_dash_web/live/home_live.ex:954
@@ -4948,7 +4948,7 @@ msgstr "Enter で送信・Shift+Enter で改行"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:57
 #, elixir-autogen, elixir-format
 msgid "Explain the Genesis architecture"
-msgstr "Genesis のアーキテクチャについて説明する"
+msgstr "啓元のアーキテクチャについて説明する"
 
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:294
 #, elixir-autogen, elixir-format
@@ -4958,7 +4958,7 @@ msgstr "確定中"
 #: lib/evo_dash_web/live/home_live.ex:187
 #, elixir-autogen, elixir-format
 msgid "Genesis can make mistakes. Verify important information."
-msgstr "Genesis は間違うことがあります。重要な情報は必ずご確認ください。"
+msgstr "啓元は間違うことがあります。重要な情報は必ずご確認ください。"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:78
 #, elixir-autogen, elixir-format
@@ -5328,7 +5328,7 @@ msgstr "タイプ"
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:93
 #, elixir-autogen, elixir-format
 msgid "Configure the directory where Genesis stores its runtime data, logs, and caches."
-msgstr "Genesis がランタイムデータ、ログ、キャッシュを保存するディレクトリを設定します。"
+msgstr "啓元がランタイムデータ、ログ、キャッシュを保存するディレクトリを設定します。"
 
 #: lib/evo_dash_web/components/settings_components/category_metadata.ex:30
 #, elixir-autogen, elixir-format
@@ -5348,7 +5348,7 @@ msgstr "インストール"
 #: lib/evo_dash_web/live/settings_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "Running Genesis on a remote server takes two steps: first install the remote daemon on the server, then connect to it. Once connected, tasks run on the server and keep running even when you close this app."
-msgstr "リモートサーバーでGenesisを実行するには2つのステップがあります。まずサーバーにリモートデーモンをインストールし、次にそれに接続します。接続すると、タスクはサーバー上で実行され、このアプリを閉じても実行を続けます。"
+msgstr "リモートサーバーで啓元を実行するには2つのステップがあります。まずサーバーにリモートデーモンをインストールし、次にそれに接続します。接続すると、タスクはサーバー上で実行され、このアプリを閉じても実行を続けます。"
 
 #: lib/evo_dash_web/live/settings_live.ex:640
 #, elixir-autogen, elixir-format
