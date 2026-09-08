@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.5] - 2026-09-08
+
+### Added
+
+- Add GPT-6 Astra to the predefined OpenAI model catalog.
+- Freshly bootstrapped remote nodes now receive a distinct accent color in their copied config so they are visually distinguishable in the dashboard.
+
+### Changed
+
+- Split accent color roles into a new standalone "primary-standalone" token and made the accent picker and all text/outline accent styling CSS-driven, improving contrast for several accent/theme combinations.
+- Unify the Settings save-bar into a compact bar using the form attribute and pin the LLM category save bar at the pane bottom.
+- Change built-in config defaults: max scheduler turns reduced to 100 (root to 1000) and LLM compression threshold raised to 180,000 tokens.
+- Rename the remote-connection 'Bootstrap' UI to 'Install' with a two-step explainer, auto-fill the connection Name from the SSH Target, and add the missing id to the connection form.
+- Remove the legacy inline running-agents display from the Projects remote view; running agents now appear only in the sidebar Active Tasks list.
+- Omit foreign-repo structure from the subagent objective schema.
+
+### Fixed
+
+- Fix remote URL-driven project activation and resume-aware foreign-repo restore when resuming tasks from connected targets.
+- Suppress the task-launch placeholder text when no project is open and the task form is disabled, removing the duplicated hint state.
+
 ## [0.12.4] - 2026-09-07
 
 ### Added
