@@ -82,7 +82,9 @@ defmodule EvoDashWeb.SettingsComponents do
              save_custom_model, save_model_profile). They must NOT be nested
              inside a save_category form (invalid HTML). Only the flat cards
              (compression_threshold_tokens) are wrapped in the save_category
-             form below. --%>
+             form inside the scroll body below. The pinned save bar sits
+             OUTSIDE that form and submits it via the HTML `form`
+             association attribute (see the bar after the scroll body). --%>
         <div class="flex-1 overflow-y-auto px-8 py-8 relative">
           <div class="">
             <%!-- LLM Provider Quick Setup --%>
@@ -557,8 +559,9 @@ defmodule EvoDashWeb.SettingsComponents do
             </div>
 
             <%!-- Flat LLM setting cards (only compression_threshold_tokens
-                 remains after filtering). Wrapped in its own save_category
-                 form so the Save button submits these flat fields. --%>
+                 remains after filtering). Wrapped in their own save_category
+                 form (id settings-form-llm); the pinned save bar below the
+                 scroll body submits them via the HTML `form` attribute. --%>
             <.form
               for={%{}}
               phx-submit="save_category"
@@ -579,14 +582,19 @@ defmodule EvoDashWeb.SettingsComponents do
                   <% end %>
                 </div>
               <% end %>
-
-              <%!-- Sticky Footer --%>
-              <.save_bar label={
-                gettext("Save %{category} Settings", category: category_display_name(@category))
-              } />
             </.form>
           </div>
         </div>
+
+        <%!-- Pinned bottom-right save bar. Submits the flat save_category form
+             (id settings-form-llm, inside the scroll body) via the HTML `form`
+             association attribute: the bar sits OUTSIDE the form and outside
+             the scroll body, so it stays pinned at the pane bottom while the
+             config content scrolls above it. --%>
+        <.save_bar
+          form={"settings-form-#{@category}"}
+          label={gettext("Save %{category} Settings", category: category_display_name(@category))}
+        />
       <% else %>
         <%!-- All other categories: wrap the full content + footer in a single
              save_category form (these categories have only plain fields, no
