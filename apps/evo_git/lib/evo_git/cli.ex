@@ -634,8 +634,8 @@ defmodule EvoGit.CLI do
         default_llm_max_concurrency = 3   # or per-profile [[llm.models]] concurrency
         max_tool_concurrency = 4
         max_retries = 3
-        max_turns = 128
-        max_turns_root = 128
+        max_turns = 100
+        max_turns_root = 1000
 
     Getting Started:
       Quick setup (recommended):
