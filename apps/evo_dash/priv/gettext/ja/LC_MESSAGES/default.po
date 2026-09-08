@@ -4948,7 +4948,7 @@ msgstr "Enter で送信・Shift+Enter で改行"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:57
 #, elixir-autogen, elixir-format
 msgid "Explain the Genesis architecture"
-msgstr "啓元のアーキテクチャについて説明する"
+msgstr "啓元のアーキテクチャについて説明してください"
 
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:294
 #, elixir-autogen, elixir-format
@@ -4963,7 +4963,7 @@ msgstr "啓元は間違うことがあります。重要な情報は必ずご確
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:78
 #, elixir-autogen, elixir-format
 msgid "Guide me through the dashboard"
-msgstr "ダッシュボードの使い方を案内する"
+msgstr "ダッシュボードの使い方を案内してください"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:48
 #, elixir-autogen, elixir-format
@@ -4988,7 +4988,7 @@ msgstr "思考プロセス"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "何についてお手伝いできますか？"
+msgstr "何を手伝ってくれますか？"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

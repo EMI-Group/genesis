@@ -5012,7 +5012,7 @@ msgstr "مسار التفكير"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "بمَ يمكنني مساعدتك؟"
+msgstr "بمَ يمكنك مساعدتي؟"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

@@ -4988,7 +4988,7 @@ msgstr "Proceso de razonamiento"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "¿En qué puedo ayudarte?"
+msgstr "¿En qué puedes ayudarme?"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

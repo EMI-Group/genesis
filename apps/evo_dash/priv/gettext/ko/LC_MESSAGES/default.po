@@ -4948,7 +4948,7 @@ msgstr "Enter로 전송 · 새 줄은 Shift+Enter"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:57
 #, elixir-autogen, elixir-format
 msgid "Explain the Genesis architecture"
-msgstr "Genesis 아키텍처 설명"
+msgstr "Genesis 아키텍처를 설명해 주세요"
 
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:294
 #, elixir-autogen, elixir-format
@@ -4963,7 +4963,7 @@ msgstr "Genesis는 실수할 수 있습니다. 중요한 정보는 확인하세�
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:78
 #, elixir-autogen, elixir-format
 msgid "Guide me through the dashboard"
-msgstr "대시보드 사용법 안내"
+msgstr "대시보드 사용법을 안내해 주세요"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:48
 #, elixir-autogen, elixir-format
@@ -4988,7 +4988,7 @@ msgstr "사고 과정"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "무엇을 도와드릴 수 있나요?"
+msgstr "무엇을 도와줄 수 있나요?"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

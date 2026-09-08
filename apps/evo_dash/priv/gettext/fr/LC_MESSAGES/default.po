@@ -4948,7 +4948,7 @@ msgstr "Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:57
 #, elixir-autogen, elixir-format
 msgid "Explain the Genesis architecture"
-msgstr "Expliquer l'architecture de Genesis"
+msgstr "Explique-moi l'architecture de Genesis"
 
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:294
 #, elixir-autogen, elixir-format
@@ -4963,7 +4963,7 @@ msgstr "Genesis peut faire des erreurs. Vérifiez les informations importantes."
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:78
 #, elixir-autogen, elixir-format
 msgid "Guide me through the dashboard"
-msgstr "Guidez-moi à travers le tableau de bord"
+msgstr "Guide-moi à travers le tableau de bord"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:48
 #, elixir-autogen, elixir-format
@@ -4988,7 +4988,7 @@ msgstr "Processus de réflexion"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "En quoi pouvez-vous m'aider ?"
+msgstr "En quoi peux-tu m'aider ?"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

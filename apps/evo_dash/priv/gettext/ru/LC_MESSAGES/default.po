@@ -4954,7 +4954,7 @@ msgstr "Enter — отправить · Shift+Enter — новая строка"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:57
 #, elixir-autogen, elixir-format
 msgid "Explain the Genesis architecture"
-msgstr "Объясните архитектуру Genesis"
+msgstr "Объясни архитектуру Genesis"
 
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:294
 #, elixir-autogen, elixir-format
@@ -4969,7 +4969,7 @@ msgstr "Genesis может ошибаться. Проверяйте важную
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:78
 #, elixir-autogen, elixir-format
 msgid "Guide me through the dashboard"
-msgstr "Проведите меня по приборной панели"
+msgstr "Проведи меня по панели управления"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:48
 #, elixir-autogen, elixir-format
@@ -4994,7 +4994,7 @@ msgstr "Ход мыслей"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "С чем вы можете помочь?"
+msgstr "Чем ты можешь мне помочь?"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

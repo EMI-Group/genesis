@@ -4988,7 +4988,7 @@ msgstr "思考過程"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "您能幫我什麼？"
+msgstr "你能幫我什麼？"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format

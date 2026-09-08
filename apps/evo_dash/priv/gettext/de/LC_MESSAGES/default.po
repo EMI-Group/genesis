@@ -4963,7 +4963,7 @@ msgstr "Genesis kann Fehler machen. Überprüfen Sie wichtige Informationen."
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:78
 #, elixir-autogen, elixir-format
 msgid "Guide me through the dashboard"
-msgstr "Führen Sie mich durch das Dashboard"
+msgstr "Führe mich durch das Dashboard"
 
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:48
 #, elixir-autogen, elixir-format
@@ -4988,7 +4988,7 @@ msgstr "Gedankengang"
 #: lib/evo_dash_web/live/home_live/chat_messages.ex:71
 #, elixir-autogen, elixir-format
 msgid "What can you help me with?"
-msgstr "Wobei kann ich Ihnen helfen?"
+msgstr "Wobei kannst du mir helfen?"
 
 #: lib/evo_dash_web/components/settings_components/setting_card.ex:61
 #, elixir-autogen, elixir-format
