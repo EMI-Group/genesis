@@ -222,8 +222,9 @@ defmodule Mix.Tasks.Translate do
       "Context window" => "コンテキストウィンドウ",
       # TODO: verify
       "Evolve" => "進化",
-      "Genesis" => "Genesis",
-      "EvoX Genesis" => "EvoX Genesis",
+      # product name 启元 Genesis → 啓元
+      "Genesis" => "啓元",
+      "EvoX Genesis" => "EvoX 啓元",
       # TODO: verify
       "Genesis (command)" => "生成",
       "Graceful restart" => "グレースフルリスタート",
