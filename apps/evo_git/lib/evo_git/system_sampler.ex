@@ -59,9 +59,10 @@ defmodule EvoGit.SystemSampler do
 
   Capacity totals (`llm_capacity`, `tool_capacity`) come from the RESOLVED
   scheduler config, cached in state and refreshed every 10th tick on the
-  dashboard's `rem(tick, 10) != 1` rule (tick 1 always loads; a cache miss
-  refetches on any tick; zero capacities from the dead-scheduler branch are
-  NEVER cached).
+  dashboard's `rem(tick, 10) != 1` rule (tick 1 always loads; an unloaded
+  cache refetches on any tick until the first FAILED attempt records a
+  failed-refresh marker that defers further retries to the refresh cadence;
+  zero capacities from the dead-scheduler branch are NEVER cached).
 
   The per-model `llm_slots` map is NOT part of that cache: it is fetched LIVE
   every tick via `EvoGit.AgentScheduler.get_llm_slot_status/0` so holder and
@@ -72,24 +73,50 @@ defmodule EvoGit.SystemSampler do
   the aggregate `llm_capacity` key keeps its cached Σ-profiled-concurrency
   value.
 
-  **Config source — `RemoteAPI.get_config/0` (a scheduler `GenServer.call`).**
-  Chosen because the chart must reflect the LIVE runtime config (including
-  runtime overrides such as CLI `-c` and dashboard saves), and the scheduler's
-  resolved config lives only in the GenServer state — it is not mirrored to
-  ETS. `Config.resolve/0` would re-read disk and miss runtime overrides, and
-  there is no cheaper in-process read; a cached call every 10 ticks is the
-  same cost profile the dashboard's `chart_totals/3` had.
+  **Config source — a direct, bounded scheduler `GenServer.call` for
+  `:get_config`** (what `RemoteAPI.get_config/0` wraps, minus its implicit
+  5000 ms timeout — see "Graceful degradation"). Chosen because the chart must
+  reflect the LIVE runtime config (including runtime overrides such as CLI
+  `-c` and dashboard saves), and the scheduler's resolved config lives only in
+  the GenServer state — it is not mirrored to ETS. `Config.resolve/0` would
+  re-read disk and miss runtime overrides, and there is no cheaper in-process
+  read; a cached call every 10 ticks is the same cost profile the dashboard's
+  `chart_totals/3` had.
 
   ## Graceful degradation
 
   When the scheduler/ETS is absent (`scheduler_alive?/0` false) the sample has
   zero agent counts, zero capacities, and `llm_slots: %{}` with
   `scheduler_alive: false` — mirrors the dashboard's dead branch. Broadcasts
-  continue (the dashboard rendered zero samples in the dead branch too). The
-  sampler never calls into a dead scheduler: the config refetch and the live
-  `llm_slots` fetch are additionally gated on
-  `Process.whereis(EvoGit.AgentScheduler) != nil`, so no `GenServer.call`
-  exits (and no try/rescue — project policy).
+  continue (the dashboard rendered zero samples in the dead branch too).
+
+  The sampler must also survive an ALIVE-but-busy scheduler, not just a dead
+  one. Both scheduler reads are cross-process `GenServer.call`s, so the
+  `Process.whereis(EvoGit.AgentScheduler) != nil` fast-path guard alone cannot
+  prevent exits: a scheduler blocked in a long handler (e.g. a config update)
+  makes the call time out and would kill the sampler — crash-looping it via
+  the supervisor for as long as the scheduler stays wedged. The calls
+  therefore use an explicit bounded timeout (`@scheduler_call_timeout_ms`,
+  2 s — shorter than the 3 s tick cadence, so a wedged scheduler costs at most
+  one degraded sample) and catch the `:exit` (timeout, the `:noproc` race
+  between the whereis check and the call, or any other call exit) — a
+  justified `try/catch :exit` at a cross-GenServer boundary, mirroring
+  `EvoGit.PeakHourEngine.safe_get_config/2`. A failure degrades the sample
+  only:
+
+  * Config refresh failure → the last cached capacity totals are retained
+    (10-tick staleness is already by design). When there is NO cache yet
+    (e.g. tick 1 after a restart), a failed-refresh marker defers the next
+    retry to the regular refresh cadence — the wedged scheduler is never
+    re-attempted on every tick — and the capacity keys take the zero
+    fallback. Sampling continues.
+  * `llm_slots` fetch failure → `llm_slots: %{}` for that tick (the
+    documented scheduler-dead shape). Sampling continues.
+
+  Recovery is automatic: the next successful call restores live data on the
+  following tick. Failures log a rate-limited `Logger.warning` — at most once
+  per ~10 ticks (~30 s) per failure kind, never once per tick — naming the
+  scheduler and the failing call.
 
   ## API
 
@@ -102,11 +129,18 @@ defmodule EvoGit.SystemSampler do
 
   use GenServer
 
-  alias EvoGit.AgentScheduler.RemoteAPI
+  require Logger
 
   @topic "system"
   @sample_capacity 60
   @config_refresh_divisor 10
+  # Scheduler RPC bound and warning rate limit — see the moduledoc's "Graceful
+  # degradation" section for the rationale. 2 s is deliberately shorter than
+  # the 3 s tick cadence: a wedged scheduler costs at most one degraded sample
+  # instead of a 5 s default-timeout crash (the production failure this guards).
+  @scheduler_call_timeout_ms 2_000
+  # At most one warning per failure kind per this many ticks (~30 s at 3 s).
+  @warn_min_interval_ticks 10
 
   # ── Public API ───────────────────────────────────────────────────
 
@@ -129,8 +163,10 @@ defmodule EvoGit.SystemSampler do
   `{:error, :not_found}` when the sampler process is not running. A
   `GenServer.call` to a dead process would exit the caller with `:noproc`, so
   the process is looked up first — the guard converts that exit into a
-  returned error value (the failure is surfaced to the caller, not swallowed;
-  this is the project's no-try/rescue policy at a process boundary).
+  returned error value (the failure is surfaced to the caller, not swallowed).
+  This fast, well-behaved boundary needs no catch; the one justified
+  `try/catch :exit` in this module is reserved for the sampler's OWN bounded
+  scheduler calls (see the moduledoc's "Graceful degradation").
   """
   @spec get_recent_samples() :: {:ok, [map()]} | {:error, :not_found}
   def get_recent_samples do
@@ -270,7 +306,11 @@ defmodule EvoGit.SystemSampler do
       seq: 0,
       tick: 0,
       config_cache: nil,
-      interval_ms: interval
+      interval_ms: interval,
+      # Last tick a rate-limited scheduler-failure warning was logged, per
+      # failure kind (nil = never; reset on restart is fine).
+      last_config_warn_tick: nil,
+      last_llm_slots_warn_tick: nil
     }
 
     schedule_next_tick(state)
@@ -305,13 +345,14 @@ defmodule EvoGit.SystemSampler do
     state = %{state | tick: state.tick + 1}
 
     if scheduler_alive?() do
+      {state, llm_slots} = fetch_llm_slots(state)
       state = maybe_refresh_config(state)
 
       sample =
         build_sample(
           status_counts(read_sched_metas()),
           cached_totals(state),
-          fetch_llm_slots(),
+          llm_slots,
           true
         )
 
@@ -327,21 +368,36 @@ defmodule EvoGit.SystemSampler do
 
   # Per-tick live read of the per-model LLM slot status from the scheduler
   # GenServer state (`get_llm_slot_status/0` — cheap pure in-state reads).
-  # The whereis guard mirrors maybe_refresh_config: NEVER GenServer.call a dead
-  # scheduler (a call would exit the sampler with :noproc; no try/rescue —
-  # project policy). scheduler_alive?/0 can be true while the scheduler
-  # process is down (ETS table still exists, crash-restart window) — in that
-  # window the live data is unavailable and the dead shape (%{}) is reported.
-  defp fetch_llm_slots do
+  # The whereis guard is the DEAD-scheduler fast path (never call a process
+  # that is not registered); it cannot protect against an alive-but-busy
+  # scheduler, so the call itself is bounded and exit-contained — a justified
+  # cross-GenServer catch, see the moduledoc's "Graceful degradation" and
+  # safe_scheduler_call/1. `scheduler_alive?/0` can be true while the
+  # scheduler process is down (ETS table still exists, crash-restart window)
+  # — in that window (whereis miss) and on any call failure the dead shape
+  # (%{}) is reported for the tick and sampling continues.
+  defp fetch_llm_slots(state) do
     if Process.whereis(EvoGit.AgentScheduler) != nil do
-      EvoGit.AgentScheduler.get_llm_slot_status()
+      case safe_scheduler_call(llm_slots_fun()) do
+        {:ok, slots} ->
+          {state, slots}
+
+        {:failed, reason} ->
+          state =
+            warn_rate_limited(state, :last_llm_slots_warn_tick, "get_llm_slot_status", reason)
+
+          {state, %{}}
+      end
     else
-      %{}
+      {state, %{}}
     end
   end
 
   # 10-tick config-cache rule (dashboard's `rem(tick, 10) != 1`): use the
-  # cache except on ticks 1, 11, 21…; a missing cache refetches on any tick.
+  # cache (valid totals OR a failed-refresh marker — both 2-tuples) except on
+  # ticks 1, 11, 21…; a cache that has never loaded (nil) refetches on any
+  # tick until the first attempt succeeds or fails (the marker then defers
+  # further retries to the refresh cadence).
   defp maybe_refresh_config(%{tick: tick, config_cache: {_totals, _loaded_tick}} = state)
        when rem(tick, @config_refresh_divisor) != 1 do
     state
@@ -349,10 +405,32 @@ defmodule EvoGit.SystemSampler do
 
   defp maybe_refresh_config(state) do
     if Process.whereis(EvoGit.AgentScheduler) != nil do
-      # Config source: RemoteAPI.get_config/0 (scheduler GenServer call) — the
-      # same resolved config (incl. runtime overrides) the dashboard's chart
-      # capacities used; see moduledoc for the choice rationale.
-      %{state | config_cache: {config_totals(RemoteAPI.get_config()), state.tick}}
+      case safe_scheduler_call(config_fun()) do
+        {:ok, config} ->
+          # Config source: the resolved scheduler config (incl. runtime
+          # overrides) — the same the dashboard's chart capacities used; see
+          # the moduledoc for the choice rationale.
+          %{state | config_cache: {config_totals(config), state.tick}}
+
+        {:failed, reason} ->
+          state = warn_rate_limited(state, :last_config_warn_tick, "get_config", reason)
+
+          case state.config_cache do
+            # Valid stale totals exist — keep them (never nil the cache;
+            # 10-tick staleness is already by design). The next refresh
+            # attempt falls on the next refresh tick.
+            {totals, _loaded} when is_map(totals) ->
+              state
+
+            # No cache yet (e.g. tick 1 after a restart): record a
+            # failed-refresh marker so the next retry falls on the regular
+            # refresh cadence instead of re-attempting a wedged scheduler on
+            # every tick. cached_totals/1 maps the marker to the zero
+            # fallback (the documented dead-branch capacity shape).
+            _ ->
+              %{state | config_cache: {:failed_at, state.tick}}
+          end
+      end
     else
       # Scheduler process down (ETS may still exist): keep the last-known
       # totals without re-caching. Never cache zero/stale totals — the
@@ -361,7 +439,7 @@ defmodule EvoGit.SystemSampler do
     end
   end
 
-  defp cached_totals(%{config_cache: {totals, _loaded_tick}}), do: totals
+  defp cached_totals(%{config_cache: {totals, _loaded_tick}}) when is_map(totals), do: totals
   defp cached_totals(_state), do: zero_totals()
 
   defp zero_totals, do: %{llm_capacity: 0, tool_capacity: 0}
@@ -375,6 +453,72 @@ defmodule EvoGit.SystemSampler do
     case :ets.whereis(:evogit_sched_meta) do
       :undefined -> []
       _ -> for {_agent_id, meta} <- :ets.tab2list(:evogit_sched_meta), do: meta
+    end
+  end
+
+  # ── Scheduler-call seams & exit containment ──────────────────────
+
+  # Test seams, named after the `:peak_hours_now_fun` convention: 0-arity funs
+  # returning the full resolved config map / the per-model slot map, read from
+  # app env PER CALL (tests flip them mid-run; recovery on restore is
+  # instant). Defaults are the real scheduler reads performed with the
+  # sampler's own bounded timeout — the AgentScheduler module wrappers
+  # (`RemoteAPI.get_config/0`, `get_llm_slot_status/0`) use GenServer.call's
+  # implicit 5000 ms, which is exactly the unbounded-ish crash this module
+  # must not inherit.
+  defp config_fun do
+    Application.get_env(:evo_git, :system_sampler_config_fun, &config_fetch/0)
+  end
+
+  defp config_fetch do
+    GenServer.call(EvoGit.AgentScheduler, :get_config, @scheduler_call_timeout_ms)
+  end
+
+  defp llm_slots_fun do
+    Application.get_env(:evo_git, :system_sampler_llm_slots_fun, &llm_slots_fetch/0)
+  end
+
+  defp llm_slots_fetch do
+    GenServer.call(EvoGit.AgentScheduler, :get_llm_slot_status, @scheduler_call_timeout_ms)
+  end
+
+  # Justified try/catch :exit at a cross-GenServer boundary. The whereis
+  # guards elsewhere detect a DEAD scheduler before any call is made; an
+  # alive-but-busy scheduler (e.g. blocked in a long config-update handler)
+  # cannot be detected that way and makes the bounded GenServer.call time
+  # out — an uncaught exit would crash this sampler and crash-loop it via the
+  # supervisor for as long as the scheduler stays wedged. Precedent:
+  # `EvoGit.PeakHourEngine.safe_get_config/2` ("a transient scheduler restart
+  # must never kill the engine"). Any `:exit` (timeout, the `:noproc` race
+  # between whereis and the call, or a server crash mid-call) is contained;
+  # genuine raises (a broken test seam or a scheduler bug) still surface.
+  defp safe_scheduler_call(fun) when is_function(fun, 0) do
+    try do
+      {:ok, fun.()}
+    catch
+      :exit, reason -> {:failed, reason}
+    end
+  end
+
+  # Rate-limited clear warning: at most once per @warn_min_interval_ticks
+  # (~30 s at the 3 s cadence) per failure kind. The sampler is a health
+  # source — a silent data gap is worse than a clearly-worded warning, but one
+  # warning per tick would spam the log during a scheduler stall. Last-warn
+  # ticks live in state; a restart resets them (fine — a fresh sampler warns
+  # once more before rate-limiting).
+  defp warn_rate_limited(state, warn_field, call_name, reason) do
+    last = Map.get(state, warn_field)
+
+    if last == nil or state.tick - last >= @warn_min_interval_ticks do
+      Logger.warning(
+        "SystemSampler: AgentScheduler #{call_name} call failed: #{inspect(reason)} — " <>
+          "the scheduler GenServer is busy or down; sampling continues with stale/empty " <>
+          "data and recovers automatically once the scheduler responds"
+      )
+
+      Map.put(state, warn_field, state.tick)
+    else
+      state
     end
   end
 
