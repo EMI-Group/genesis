@@ -3331,14 +3331,27 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                }
              ]
 
-      # NOTE: the chip row (div#staged-attachments) is NOT asserted here — the
-      # task_form component renders it only when the caller forwards the
-      # @staged_attachments assign, and neither task_form call site in
-      # projects_live.ex does so yet (component-level chip rendering with the
-      # assign passed is covered in task_form_components_test.exs). The raw
-      # bytes must never leak into the rendered HTML regardless.
+      # The chip row now renders in the LiveView's re-rendered HTML — both
+      # task_form call sites in projects_live.ex forward @staged_attachments.
+      # Assert the chip appears with its metadata (basename + one remove
+      # button); the raw "data" binary must never leak into the rendered HTML
+      # regardless.
       html = render(view)
+      doc = Floki.parse_document!(html)
+
+      assert [row] = Floki.find(doc, "div#staged-attachments")
+      assert Floki.text(row) =~ "pic.png"
+
+      assert [
+               {"button", _, _}
+             ] =
+               Floki.find(
+                 doc,
+                 ~s(div#staged-attachments button[phx-click="remove_staged_attachment"])
+               )
+
       refute html =~ Base.encode64(png_bytes)
+      refute html =~ png_bytes
     end
 
     test "audio pick stages symmetric to image on the audio channel", %{
@@ -3370,6 +3383,24 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                  "data" => mp3_bytes
                }
              ]
+
+      # The staged chip row renders in the LiveView's re-rendered HTML (both
+      # task_form call sites forward @staged_attachments): the audio chip shows
+      # its basename + one remove button, and the raw bytes never leak.
+      html = render(view)
+      doc = Floki.parse_document!(html)
+
+      assert [row] = Floki.find(doc, "div#staged-attachments")
+      assert Floki.text(row) =~ "note.mp3"
+
+      assert length(
+               Floki.find(
+                 doc,
+                 ~s(div#staged-attachments button[phx-click="remove_staged_attachment"])
+               )
+             ) == 1
+
+      refute html =~ mp3_bytes
     end
 
     test "remove_staged_attachment removes a staged attachment by index down to empty", %{
@@ -3406,9 +3437,23 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                }
              ]
 
+      # The chip row tracks removals in the LiveView's re-rendered HTML (both
+      # task_form call sites forward @staged_attachments): after dropping the
+      # image, only the audio chip remains.
+      html = render(view)
+      doc = Floki.parse_document!(html)
+
+      assert [row] = Floki.find(doc, "div#staged-attachments")
+      assert Floki.text(row) =~ "note.mp3"
+      refute Floki.text(row) =~ "pic.png"
+
       # Removing the remaining index 0 empties the staged list.
       render_hook(view, "remove_staged_attachment", %{"index" => "0"})
       assert assigns(view)[:staged_attachments] == []
+
+      # With nothing staged the whole chip row disappears from the HTML.
+      refute render(view) =~ "staged-attachments"
+      assert Floki.find(Floki.parse_document!(render(view)), "div#staged-attachments") == []
     end
 
     test "staging a 5th attachment is rejected by the per-task count cap", %{
@@ -3507,6 +3552,22 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                  "data" => png_bytes
                }
              ]
+
+      # The manual fallback routes through the same handle_binary_attach_result
+      # pipeline, so the staged chip row renders in the LiveView's re-rendered
+      # HTML too (both task_form call sites forward @staged_attachments).
+      html = render(view)
+      doc = Floki.parse_document!(html)
+
+      assert [row] = Floki.find(doc, "div#staged-attachments")
+      assert Floki.text(row) =~ "pic.png"
+
+      assert length(
+               Floki.find(
+                 doc,
+                 ~s(div#staged-attachments button[phx-click="remove_staged_attachment"])
+               )
+             ) == 1
     end
 
     test "image pick with a missing file shows the file-not-found error flash", %{
