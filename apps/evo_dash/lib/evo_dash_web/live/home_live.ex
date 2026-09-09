@@ -964,7 +964,7 @@ defmodule EvoDashWeb.HomeLive do
               case status do
                 :completed -> finalize_completed(socket, Map.get(task, :result))
                 :cancelled -> finalize_cancelled(socket, Map.get(task, :result))
-                :failed -> finalize_streaming(socket, gettext("The task failed."))
+                :failed -> finalize_failed(socket, Map.get(task, :error))
               end
 
             socket
@@ -1005,6 +1005,18 @@ defmodule EvoDashWeb.HomeLive do
     case AgentStream.extract_final_text(result) do
       {:ok, text} -> finalize_streaming(socket, text)
       _ -> finalize_streaming(socket, gettext("Stopped."))
+    end
+  end
+
+  # Finalizes a :failed task (the fetched-task terminal path). When the decoded
+  # TaskInfo carries a structured error payload, its `error.message` (e.g.
+  # "Task force-killed by user") is the explanation shown to the user; a nil /
+  # non-map / blank error falls back to the generic failure placeholder.
+  # Total: AgentStream.extract_failed_message/1 never raises on malformed data.
+  defp finalize_failed(socket, error) do
+    case AgentStream.extract_failed_message(error) do
+      nil -> finalize_streaming(socket, gettext("The task failed."))
+      message -> finalize_streaming(socket, message)
     end
   end
 
