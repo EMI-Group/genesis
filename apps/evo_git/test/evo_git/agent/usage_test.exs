@@ -187,4 +187,111 @@ defmodule EvoGit.Agent.UsageTest do
       assert Usage.cache_hit_rate(Usage.zero()) == 0.0
     end
   end
+
+  # ==========================================================================
+  # archive_usage_keys/0
+  # ==========================================================================
+  describe "archive_usage_keys/0" do
+    test "returns exactly the 9 canonical archive usage-map keys" do
+      assert Usage.archive_usage_keys() == [
+               :input_tokens,
+               :output_tokens,
+               :total_tokens,
+               :input_cost,
+               :output_cost,
+               :total_cost,
+               :cached_tokens,
+               :cache_creation_tokens,
+               :cache_hit_rate
+             ]
+    end
+  end
+
+  # ==========================================================================
+  # from_archive_map/1
+  # ==========================================================================
+  describe "from_archive_map/1" do
+    test "returns zero usage for nil" do
+      assert Usage.from_archive_map(nil) == Usage.zero()
+    end
+
+    test "returns an existing %Usage{} unchanged" do
+      usage = %Usage{input_tokens: 7, total_cost: 1.5}
+      assert Usage.from_archive_map(usage) == usage
+    end
+
+    test "parses an atom-keyed archive usage map (live ETS shape)" do
+      usage =
+        Usage.from_archive_map(%{
+          input_tokens: 100,
+          output_tokens: 50,
+          total_tokens: 150,
+          input_cost: 0.005,
+          output_cost: 0.01,
+          total_cost: 0.015,
+          cached_tokens: 40,
+          cache_creation_tokens: 20,
+          cache_hit_rate: 40.0
+        })
+
+      assert usage == %Usage{
+               input_tokens: 100,
+               output_tokens: 50,
+               total_tokens: 150,
+               input_cost: 0.005,
+               output_cost: 0.01,
+               total_cost: 0.015,
+               cached_tokens: 40,
+               cache_creation_tokens: 20
+             }
+    end
+
+    test "parses a string-keyed archive usage map (post-JSON round-trip shape)" do
+      usage =
+        Usage.from_archive_map(%{
+          "input_tokens" => 100,
+          "output_tokens" => 50,
+          "total_tokens" => 150,
+          "input_cost" => 0.005,
+          "output_cost" => 0.01,
+          "total_cost" => 0.015,
+          "cached_tokens" => 40,
+          "cache_creation_tokens" => 20,
+          "cache_hit_rate" => 40.0
+        })
+
+      assert usage == %Usage{
+               input_tokens: 100,
+               output_tokens: 50,
+               total_tokens: 150,
+               input_cost: 0.005,
+               output_cost: 0.01,
+               total_cost: 0.015,
+               cached_tokens: 40,
+               cache_creation_tokens: 20
+             }
+    end
+
+    test "defaults missing keys and nil values to zero (legacy/partial records)" do
+      usage = Usage.from_archive_map(%{"input_tokens" => 10, "output_cost" => nil})
+
+      assert usage.input_tokens == 10
+      assert usage.output_tokens == 0
+      assert usage.output_cost == 0.0
+      assert usage.total_cost == 0.0
+      assert usage.cached_tokens == 0
+    end
+
+    test "ignores the derived cache_hit_rate key (recomputed via cache_hit_rate/1)" do
+      usage =
+        Usage.from_archive_map(%{
+          input_tokens: 100,
+          cached_tokens: 40,
+          cache_hit_rate: 40.0
+        })
+
+      refute Map.has_key?(Map.from_struct(usage), :cache_hit_rate)
+      assert Usage.cache_hit_rate(usage) == 40.0
+    end
+  end
 end
