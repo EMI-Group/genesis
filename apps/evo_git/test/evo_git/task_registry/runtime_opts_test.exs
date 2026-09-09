@@ -164,6 +164,58 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
       refute Keyword.has_key?(runtime_opts, :model_id_locked)
     end
 
+    test "forwards :attachments on an evolve valid path" do
+      attachments = [%{"type" => "image", "name" => "a.png", "media_type" => "image/png", "data" => Base.encode64("abc")}]
+
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", attachments: attachments],
+          "task-att-1",
+          :evolve
+        )
+
+      assert Keyword.get(runtime_opts, :attachments) == attachments
+    end
+
+    test "forwards :attachments on a genesis valid path" do
+      attachments = [%{"type" => "audio", "name" => "a.mp3", "media_type" => "audio/mpeg", "data" => Base.encode64("abc")}]
+
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", mode: "new", attachments: attachments],
+          "task-att-2",
+          :genesis
+        )
+
+      assert Keyword.get(runtime_opts, :attachments) == attachments
+    end
+
+    test "omits :attachments when nil or []" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts([path: "/tmp/repo"], "task-att-3", :evolve)
+
+      refute Keyword.has_key?(runtime_opts, :attachments)
+
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", attachments: []],
+          "task-att-4",
+          :evolve
+        )
+
+      refute Keyword.has_key?(runtime_opts, :attachments)
+    end
+
+    test "raises a descriptive ArgumentError for a malformed :attachments payload" do
+      assert_raise ArgumentError, ~r/attachments/, fn ->
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", attachments: [%{"type" => "video"}]],
+          "task-att-5",
+          :evolve
+        )
+      end
+    end
+
     test "genesis mode \"new\" maps to :new" do
       {_first, runtime_opts} =
         RuntimeOpts.build_common_runtime_opts(
