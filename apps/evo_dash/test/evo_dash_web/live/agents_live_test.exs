@@ -606,6 +606,58 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "multimodal content part labels in agent detail panel" do
+    test "renders [image: name] / [audio: name] labels instead of an empty-message fallback",
+         %{conn: conn} do
+      # Real %ReqLLM.Message{} histories with %ReqLLM.Message.ContentPart{}
+      # structs: image/audio parts carry no text, so the joined history content
+      # is exactly what content_part_label/1 produces — an image part plus a
+      # text part on one message, and a bare audio part riding as a :file part
+      # with an audio/* media_type on the next.
+      seed_agent(1, [
+        %ReqLLM.Message{
+          role: :user,
+          content: [
+            %ReqLLM.Message.ContentPart{
+              type: :image,
+              data: <<137, 80, 78, 71, 1, 2, 3>>,
+              filename: "pic.png",
+              media_type: "image/png"
+            },
+            %ReqLLM.Message.ContentPart{type: :text, text: " look"}
+          ],
+          metadata: %{turn: 1}
+        },
+        %ReqLLM.Message{
+          role: :user,
+          content: [
+            %ReqLLM.Message.ContentPart{
+              type: :file,
+              data: <<1, 2, 3>>,
+              filename: "clip.mp3",
+              media_type: "audio/mpeg"
+            }
+          ],
+          metadata: %{turn: 2}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-1") |> render_click()
+      # History is fetched asynchronously on selection — wait for it.
+      html = wait_for_text(view, "Turn 2")
+
+      # Image part → "[image: pic.png]" joined (no separator) with the text
+      # part's " look" — the joined content is non-empty, so no empty fallback.
+      assert html =~ "[image: pic.png] look"
+      # Audio :file part with audio/* media_type → "[audio: clip.mp3]".
+      assert html =~ "[audio: clip.mp3]"
+      refute html =~ "<empty message>"
+    end
+  end
+
   describe "inline tool call rendering in agent detail panel" do
     test "renders shell tool call command and non-shell arguments inline", %{conn: conn} do
       seed_agent(1, [
