@@ -113,8 +113,10 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
 
   Called by `EvoDashWeb.ProjectsLive`'s
   `handle_info({:directory_picker_result, <image|audio picker id>, {:ok, path}}, ...)`
-  clauses with kind `:image` / `:audio`; callers wrap the returned socket:
-  `{:noreply, AttachFile.handle_binary_attach_result(socket, path, :image)}`.
+  clauses and the `"file_pick_manual"` image/audio branches with the STRING
+  kind `"image"` / `"audio"` (the event-boundary vocabulary — the same string
+  `EvoDash.AttachedFile.read_kind/2` accepts); callers wrap the returned
+  socket: `{:noreply, AttachFile.handle_binary_attach_result(socket, path, "image")}`.
 
   Enforces the per-task attachment caps declared above (at most
   #{@max_attachments} attachments; the file is never read when the count cap
@@ -130,7 +132,7 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
   The raw bytes live ONLY inside the staged map's `"data"` key — they are
   never rendered, logged, serialized, or sent to the client.
   """
-  def handle_binary_attach_result(socket, path, kind) when kind in [:image, :audio] do
+  def handle_binary_attach_result(socket, path, kind) when kind in ["image", "audio"] do
     staged = socket.assigns[:staged_attachments] || []
 
     if length(staged) >= @max_attachments do
@@ -142,12 +144,7 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
       |> push_event("picker_result:#{picker_id_for(kind)}", %{error: true})
     else
       case EvoDash.AttachedFile.read_kind(path, kind) do
-        {:ok, result} ->
-          # EvoDash.AttachedFile.read_kind/2 returns an atom-keyed map; the
-          # Map.get fallbacks tolerate string-keyed shapes defensively.
-          type = Map.get(result, :type) || Map.get(result, "type")
-          media_type = Map.get(result, :media_type) || Map.get(result, "media_type")
-          bytes = Map.get(result, :bytes) || Map.get(result, "bytes") || Map.get(result, "data")
+        {:ok, %{type: type, media_type: media_type, bytes: bytes}} ->
           name = Path.basename(path)
           entry = %{"type" => type, "name" => name, "media_type" => media_type, "data" => bytes}
 
@@ -173,10 +170,10 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
     end
   end
 
-  # Maps a binary kind to its picker-result channel. Exhaustive over the kinds
-  # accepted by `handle_binary_attach_result/3` (guarded to :image | :audio),
-  # so no catch-all is needed — a wrong kind is a programming error and should
-  # crash loudly rather than silently route to the text channel.
-  defp picker_id_for(:image), do: @attach_picker_id_image
-  defp picker_id_for(:audio), do: @attach_picker_id_audio
+  # Maps a binary kind string to its picker-result channel. Exhaustive over the
+  # kinds accepted by `handle_binary_attach_result/3` (guarded to "image" |
+  # "audio"), so no catch-all is needed — a wrong kind is a programming error
+  # and should crash loudly rather than silently route to the text channel.
+  defp picker_id_for("image"), do: @attach_picker_id_image
+  defp picker_id_for("audio"), do: @attach_picker_id_audio
 end

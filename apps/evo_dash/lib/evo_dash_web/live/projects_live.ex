@@ -1612,10 +1612,10 @@ defmodule EvoDashWeb.ProjectsLive do
             # helper puts a friendly error flash + pushes %{error: true} on the
             # kind's picker channel when the read fails.
             "image" ->
-              AttachFile.handle_binary_attach_result(socket, path, :image)
+              AttachFile.handle_binary_attach_result(socket, path, kind)
 
             "audio" ->
-              AttachFile.handle_binary_attach_result(socket, path, :audio)
+              AttachFile.handle_binary_attach_result(socket, path, kind)
 
             # Text (and any unknown kind, defaulting to text): the original
             # byte-identical text pipeline.
@@ -1760,12 +1760,12 @@ defmodule EvoDashWeb.ProjectsLive do
   # kept as literals in both modules under parallel compilation.
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id_image, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_binary_attach_result(socket, path, :image)}
+    {:noreply, AttachFile.handle_binary_attach_result(socket, path, "image")}
   end
 
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id_audio, {:ok, path}}, socket) do
-    {:noreply, AttachFile.handle_binary_attach_result(socket, path, :audio)}
+    {:noreply, AttachFile.handle_binary_attach_result(socket, path, "audio")}
   end
 
   @impl true
