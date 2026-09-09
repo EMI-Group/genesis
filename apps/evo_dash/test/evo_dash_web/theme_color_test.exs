@@ -119,11 +119,9 @@ defmodule EvoDashWeb.ThemeColorTest do
 
   # Unit tests for `accent_color/1` — the project-name-hash accent used for
   # the top-bar project ring (`--project-ring-accent`). Deterministic per
-  # name; nil/"" fall back to the default indigo; output is "#rrggbb".
-  #
-  # NOTE: hsl_to_hex quantizes the hue to one of six 60° sectors (trunc/1 on
-  # h_prime), so only ~6 distinct colors are produced — pick test names whose
-  # phash2 hues land in different sectors ("alpha" hue 10 vs "gamma" hue 271).
+  # name; nil/"" fall back to the default indigo; output is "#rrggbb". The
+  # phash2 hash maps to a continuous 0-360 hue (no sector quantization), so
+  # different names land on a full spectrum of distinct colors.
   describe "accent_color/1" do
     test "is deterministic: the same name always yields the same color" do
       assert ThemeColor.accent_color("my-project") == ThemeColor.accent_color("my-project")
@@ -145,6 +143,151 @@ defmodule EvoDashWeb.ThemeColorTest do
 
     test "different project names yield different colors" do
       assert ThemeColor.accent_color("alpha") != ThemeColor.accent_color("gamma")
+    end
+
+    test "the palette is spread across the hue range (far more than ~6 distinct colors)" do
+      # A representative spread of project names whose phash2 hues span the
+      # full 0-360 range. Under the old sector-quantized conversion these
+      # collapsed to ~6 colors; the continuous conversion keeps them distinct.
+      names = for i <- 0..39, do: "project-#{i}"
+      hues = Enum.map(names, &:erlang.phash2(&1, 360))
+      assert Enum.min(hues) < 60
+      assert Enum.max(hues) >= 300
+
+      distinct_colors =
+        names
+        |> Enum.map(&ThemeColor.accent_color/1)
+        |> MapSet.new()
+        |> MapSet.size()
+
+      assert distinct_colors >= 25
+    end
+  end
+
+  # Direct unit tests for `hsl_to_hex/3` — the continuous HSL→hex conversion
+  # behind `accent_color/1`. Because the function takes the raw hue, these
+  # pin the fractional (non-quantized) math: adjacent hues stay close but
+  # distinct, and colors change continuously across the 60° sector borders.
+  describe "hsl_to_hex/3" do
+    @sat 70
+    @light 54
+
+    test "hues in different sectors yield different colors" do
+      # Mid-sector hues of each of the six 60° sectors: red, yellow, green,
+      # cyan, blue, magenta families — all mutually distinct.
+      hues = [30, 90, 150, 210, 270, 330]
+      colors = Enum.map(hues, &ThemeColor.hsl_to_hex(&1, @sat, @light))
+      assert length(Enum.uniq(colors)) == 6
+    end
+
+    test "sector boundary hues 0/60/120/180/240/300 are valid and mutually distinct" do
+      hues = [0, 60, 120, 180, 240, 300]
+      colors = Enum.map(hues, &ThemeColor.hsl_to_hex(&1, @sat, @light))
+
+      assert Enum.all?(colors, &Regex.match?(~r/^#[0-9a-f]{6}$/, &1))
+      assert length(Enum.uniq(colors)) == 6
+    end
+
+    test "adjacent-integer hues map to distinct hexes across the whole hue range" do
+      distinct =
+        Enum.map(0..359, &ThemeColor.hsl_to_hex(&1, @sat, @light))
+        |> MapSet.new()
+        |> MapSet.size()
+
+      # A continuous (non-quantized) conversion yields a distinct color for
+      # every one of the 360 integer hues; quantization collapsed these to ~6.
+      assert distinct == 360
+    end
+
+    test "neighbouring hues are close but non-identical" do
+      # Parse "#rrggbb" into channel tuples for perceptual-proximity checks.
+      parse = fn hex ->
+        <<"#", r::binary-size(2), g::binary-size(2), b::binary-size(2)>> = hex
+        {String.to_integer(r, 16), String.to_integer(g, 16), String.to_integer(b, 16)}
+      end
+
+      for h <- [10, 59, 90, 179, 240, 300] do
+        {r1, g1, b1} = parse.(ThemeColor.hsl_to_hex(h, @sat, @light))
+        {r2, g2, b2} = parse.(ThemeColor.hsl_to_hex(h + 1, @sat, @light))
+
+        assert ThemeColor.hsl_to_hex(h, @sat, @light) !=
+                 ThemeColor.hsl_to_hex(h + 1, @sat, @light)
+
+        # One hue step moves each channel by at most a few units.
+        assert abs(r1 - r2) <= 4
+        assert abs(g1 - g2) <= 4
+        assert abs(b1 - b2) <= 4
+      end
+    end
+
+    test "colors are continuous across each 60° sector boundary" do
+      parse = fn hex ->
+        <<"#", r::binary-size(2), g::binary-size(2), b::binary-size(2)>> = hex
+        {String.to_integer(r, 16), String.to_integer(g, 16), String.to_integer(b, 16)}
+      end
+
+      # Hues just below and just above each 60° boundary must be near-identical
+      # (one hue step either way from the boundary), not quantized jumps.
+      for boundary <- [60, 120, 180, 240, 300] do
+        below = parse.(ThemeColor.hsl_to_hex(boundary - 1, @sat, @light))
+        above = parse.(ThemeColor.hsl_to_hex(boundary + 1, @sat, @light))
+
+        {r1, g1, b1} = below
+        {r2, g2, b2} = above
+
+        assert ThemeColor.hsl_to_hex(boundary - 1, @sat, @light) !=
+                 ThemeColor.hsl_to_hex(boundary + 1, @sat, @light)
+
+        assert abs(r1 - r2) <= 3
+        assert abs(g1 - g2) <= 3
+        assert abs(b1 - b2) <= 3
+      end
+
+      # The 360°/0° wrap: hues just below 360 behave like hues just above 0.
+      low = parse.(ThemeColor.hsl_to_hex(359, @sat, @light))
+      high = parse.(ThemeColor.hsl_to_hex(1, @sat, @light))
+
+      {r1, g1, b1} = low
+      {r2, g2, b2} = high
+
+      assert abs(r1 - r2) <= 3
+      assert abs(g1 - g2) <= 3
+      assert abs(b1 - b2) <= 3
+    end
+
+    test "mid-sector hues sit between their two sector boundaries" do
+      # A hue in the middle of a sector must differ from both of the pure
+      # boundary hues that flank it (e.g. hue 30 lies between red 0 and
+      # yellow 60), proving the in-sector ramp is honored.
+      for {mid, lo, hi} <- [
+            {30, 0, 60},
+            {90, 60, 120},
+            {150, 120, 180},
+            {210, 180, 240},
+            {270, 240, 300},
+            {330, 300, 360}
+          ] do
+        color = ThemeColor.hsl_to_hex(mid, @sat, @light)
+        assert color != ThemeColor.hsl_to_hex(lo, @sat, @light)
+        assert color != ThemeColor.hsl_to_hex(hi, @sat, @light)
+      end
+    end
+
+    test "the original alpha/gamma colors are no longer the two quantized wheel colors" do
+      # "alpha" hashes to hue 10 (sector 0) and "gamma" to hue 271 (sector 4).
+      # Under quantization these were two of the six pure wheel colors; with
+      # continuous conversion they are distinct, non-pure, in-between colors.
+      alpha = ThemeColor.accent_color("alpha")
+      gamma = ThemeColor.accent_color("gamma")
+
+      assert alpha != gamma
+      # Hue 10 → mostly-red with a noticeable green component (orange-ish),
+      # i.e. NOT a pure primary/secondary wheel color like "#ff0000"-family.
+      assert alpha != ThemeColor.hsl_to_hex(0, @sat, @light)
+      assert alpha != ThemeColor.hsl_to_hex(60, @sat, @light)
+      # Hue 271 → blue-violet, not the pure sector-4 wheel color.
+      assert gamma != ThemeColor.hsl_to_hex(240, @sat, @light)
+      assert gamma != ThemeColor.hsl_to_hex(300, @sat, @light)
     end
   end
 end

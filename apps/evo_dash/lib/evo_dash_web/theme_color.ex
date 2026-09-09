@@ -117,13 +117,27 @@ defmodule EvoDashWeb.ThemeColor do
   @spec default_color :: String.t()
   def default_color, do: @default_color
 
-  # Converts HSL (h: 0-360, s/l: 0-100) to a hex color string.
-  defp hsl_to_hex(h, s, l) do
+  @doc """
+  Converts HSL (h: 0-360, s/l: 0-100) to a hex color string like `"#dc8a38"`.
+
+  Uses the standard fractional HSL→RGB conversion: the intermediate `x`
+  component is computed from the fractional position of `h / 60` within its
+  60° sector pair (`mod(h_prime, 2)`, float remainder) rather than an integer
+  truncation of the sector, so any hue in the 0-360 range maps to a
+  continuous color (no quantization to six pure wheel colors).
+  """
+  @spec hsl_to_hex(number, number, number) :: String.t()
+  def hsl_to_hex(h, s, l) do
     s_norm = s / 100.0
     l_norm = l / 100.0
     c = (1 - abs(2 * l_norm - 1)) * s_norm
     h_prime = h / 60.0
-    x = c * (1 - abs(rem(trunc(h_prime), 2) - 1))
+    # Fractional (non-quantized) HSL: `x` ramps linearly within each 60°
+    # sector instead of snapping to the sector corners. `hue` is always in
+    # the non-negative 0-360 range (phash2 mod 360), so `:math.fmod/2` here
+    # yields the in-[0, 2) fractional position of h_prime within its sector
+    # pair — same math as `Float.mod(h_prime, 2.0)` where available.
+    x = c * (1 - abs(:math.fmod(h_prime, 2.0) - 1))
 
     {r1, g1, b1} =
       cond do
