@@ -396,7 +396,7 @@ defmodule EvoDashWeb.ReviewComponents do
                 {gettext("Cost")}
               </p>
               <p class="text-sm font-mono font-semibold text-base-content/80">
-                ${format_cost(@agent[:usage][:cost])}
+                ${format_cost(@agent[:usage][:total_cost] || 0)}
               </p>
             </div>
           </div>

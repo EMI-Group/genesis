@@ -170,7 +170,9 @@ defmodule EvoDashWeb.ArchiveComponents do
             </div>
             <div>
               <div class="text-xs text-base-content/60">{gettext("Cost")}</div>
-              <div class="text-sm font-semibold">${format_cost(@agent[:usage][:cost] || 0)}</div>
+              <div class="text-sm font-semibold">
+                ${format_cost(@agent[:usage][:total_cost] || 0)}
+              </div>
             </div>
           </div>
         <% end %>
