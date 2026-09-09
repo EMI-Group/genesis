@@ -240,6 +240,17 @@ defmodule EvoGit.Store.QueriesTest do
       assert Jason.decode!(encoded) == [%{"id" => "a"}]
     end
 
+    test "encodes :error via Codec.encode_error/1" do
+      assert Queries.encode_column_value(:error, nil) == nil
+
+      error = %{kind: :exit, source: :result_handler, message: "boom", stacktrace: nil}
+      encoded = Queries.encode_column_value(:error, error)
+      decoded = Jason.decode!(encoded)
+      assert decoded["kind"] == "exit"
+      assert decoded["source"] == "result_handler"
+      assert decoded["message"] == "boom"
+    end
+
     test "passes through scalar columns as-is" do
       assert Queries.encode_column_value(:project_path, "/repo") == "/repo"
       assert Queries.encode_column_value(:branch_name, "genesis/agent_1") == "genesis/agent_1"

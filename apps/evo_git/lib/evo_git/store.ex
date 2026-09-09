@@ -67,15 +67,17 @@ defmodule EvoGit.Store do
 
   ## Summary projection
 
-  # The 15-column SELECT projection shared by the summary handlers
+  # The 16-column SELECT projection shared by the summary handlers
   # (select_tasks_summary, select_tasks_summary_by_path, and
   # select_tasks_changed_since). `updated_at` is store-internal bookkeeping —
   # the raw fixed-precision ISO string is returned as-is (NOT decoded to a
   # DateTime). `result` is deliberately excluded: no summary consumer reads it
   # (the dashboard's review button uses the denormalized `branch_name` column),
   # and its JSON blob (usage + archive_records) is the heaviest per-row decode.
+  # `error` IS included (16th, after `updated_at`) — only :failed rows carry a
+  # non-nil value, and it is a cheap lenient decode.
   # No heavy JSON fields (logs, usage, archive_metadata) are read.
-  @summary_columns "id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at"
+  @summary_columns "id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error"
   @summary_select_sql "SELECT #{@summary_columns} FROM tasks"
 
   ## Child spec & start
@@ -261,7 +263,7 @@ defmodule EvoGit.Store do
   @doc """
   Returns the decoded logs list for a single task (or nil if the row is
   absent). Reads only the `logs` column — no heavy JSON decode of other
-  fields. Used by TaskRegistry.append_log to avoid a full 18-column decode
+  fields. Used by TaskRegistry.append_log to avoid a full 19-column decode
   just to read the existing logs.
   """
   def select_task_logs(store \\ __MODULE__, task_id) do
@@ -352,7 +354,7 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns lightweight task summaries (same 15-key projection as
+  Returns lightweight task summaries (same 16-key projection as
   select_tasks_summary/1, including the raw `updated_at` string) for all tasks
   whose `updated_at` is strictly newer than the given fixed-precision ISO
   string. No heavy JSON fields (logs, usage, archive_metadata) are decoded.
@@ -479,7 +481,7 @@ defmodule EvoGit.Store do
 
           # Always null the ref before persistence — it is runtime-only.
           task = %{task | ref: nil}
-          # 18 values from encode_task + 19th `updated_at` value (store-internal
+          # 19 values from encode_task + 20th `updated_at` value (store-internal
           # bookkeeping, not part of %TaskInfo{}/Codec.task_columns).
           values = Codec.encode_task(task) ++ [Codec.encode_datetime(DateTime.utc_now())]
 
@@ -490,8 +492,8 @@ defmodule EvoGit.Store do
             INSERT OR REPLACE INTO tasks
             (id, type, status, opts, started_at, finished_at, logs,
              result, review_status, usage, agent_count, base_sha, commit_sha,
-             archive_metadata, lease_expires_at, model_id, project_path, branch_name, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+             archive_metadata, lease_expires_at, model_id, project_path, branch_name, error, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             """,
             values
           )
@@ -814,7 +816,7 @@ defmodule EvoGit.Store do
     {:reply, q1_ids ++ q2_ids, state}
   end
 
-  # Lightweight query: reads the 15 summary columns (see @summary_columns) —
+  # Lightweight query: reads the 16 summary columns (see @summary_columns) —
   # no heavy JSON fields (logs, usage, archive_metadata) are decoded. Status
   # filtering is pushed into SQL when `statuses` is non-empty; the optional
   # `since` filter is pushed into SQL as `updated_at > ?N` (string comparison).
@@ -840,7 +842,7 @@ defmodule EvoGit.Store do
     end)
   end
 
-  # Lightweight query: same 15-column summary projection as above, filtered by
+  # Lightweight query: same 16-column summary projection as above, filtered by
   # `updated_at > ?1` (string comparison — fixed-precision 24-char ISO format
   # sorts chronologically). No heavy JSON fields are decoded.
   #
@@ -1186,13 +1188,14 @@ defmodule EvoGit.Store do
     {" AND updated_at > ?" <> Integer.to_string(start_idx), [since]}
   end
 
-  # Decodes one row of the 15-column summary projection (@summary_columns).
+  # Decodes one row of the 16-column summary projection (@summary_columns).
   # `result` is intentionally not selected or decoded — no summary consumer
   # reads it (the denormalized `branch_name` column covers the dashboard's
   # review-button need), and `Codec.decode_result/1` is the heaviest per-row
   # decode (parses the full result blob: usage + archive_records).
   # `updated_at` is store-internal bookkeeping — returned as the RAW
   # fixed-precision ISO string from the DB (NOT decoded to a DateTime).
+  # `error` (last column) is a cheap lenient decode — nil except on :failed.
   defp decode_summary_row([
          id,
          status,
@@ -1208,7 +1211,8 @@ defmodule EvoGit.Store do
          base_sha,
          commit_sha,
          lease_expires_at,
-         updated_at
+         updated_at,
+         error
        ]) do
     %{
       id: id,
@@ -1225,7 +1229,8 @@ defmodule EvoGit.Store do
       base_sha: base_sha,
       commit_sha: commit_sha,
       lease_expires_at: lease_expires_at,
-      updated_at: updated_at
+      updated_at: updated_at,
+      error: Codec.decode_error(error)
     }
   end
 
