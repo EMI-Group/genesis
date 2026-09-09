@@ -39,7 +39,7 @@ None — leaf directory (modules: `runtime.ex` (parent dir `../runtime.ex`), `he
 3. Custom mode requires an `agent:` opt — nil/empty raises `ArgumentError` ("custom mode requires an agent id; pass agent: <id> (defined in agents.toml)") BEFORE repo/git I/O; unknown ids raise in `Helpers.resolve_root_agent/2`.
 4. Register foreign repos; ensure repo + HEAD (same as Genesis).
 5. `validate_node_path/2`: path relative, dir exists, contains `CONTEXT.md` (root `"./"` always passes).
-6. Dispatch: `:simple` → `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents); `:custom` → `EvoGit.Agents.Custom` root bound to the `agent:` id. Both modes share one private flow `run_resolved_root_agent/7` parameterized by the resolved root-agent module/opts.
+6. Dispatch: `:simple` → `Manager` agent (plans, delegates to Executor/TaskScheduler/Investigator subagents); `:custom` → `EvoGit.Agents.Custom` root bound to the `agent:` id. Both modes share one private flow `run_mode/7` (evolution.ex:93) parameterized by the resolved root-agent module/opts — the spec itself is assembled by `Helpers.build_root_agent_spec/7`.
 7. Post-processing: same `merge_and_report/4` pattern.
 
 ### `starting_commit` Opt — Evolution Only (Genesis Ignores It)
