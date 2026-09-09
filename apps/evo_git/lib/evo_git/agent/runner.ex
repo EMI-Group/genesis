@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.Runner do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.LoopState
-  import ReqLLM.Context, only: [user: 1, system: 1]
+  import ReqLLM.Context, only: [user: 1]
 
   @complete_tool "complete_task"
 
@@ -133,7 +133,21 @@ defmodule EvoGit.Agent.Runner do
         |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
         |> Enum.join("\n\n---\n\n")
 
-      context = ReqLLM.Context.new([system(agent_module.system_prompt()), user(combined_prompt)])
+      # Assemble the first two messages ([system, user]) via the pure
+      # ContextBuilder helper. Media attachments (images/audio) ride on the
+      # ROOT agent's first user message ONLY — the helper gates on
+      # `parent_id == nil`; repo-less agents (self-reflective chat) never get
+      # them even with a stray spec opt, so the plain-text path is preserved
+      # (no reflect entry point sends the key).
+      messages =
+        EvoGit.Agent.ContextBuilder.build_initial_messages(
+          agent_module.system_prompt(),
+          combined_prompt,
+          agent_state.parent_id,
+          if(Process.get(:repo_less) == true, do: nil, else: Process.get(:attachments))
+        )
+
+      context = ReqLLM.Context.new(messages)
       # Tag initial messages (system + user prompt) with turn 0
       context = EvoGit.Agent.ContextBuilder.tag_context_messages_with_turn(context, 0)
 
@@ -209,6 +223,12 @@ defmodule EvoGit.Agent.Runner do
     # from this process-dict key, set from the spec before the agent loop starts
     # (their callbacks are zero-arity, so the spec cannot be passed directly).
     Process.put(:custom_agent_id, Keyword.get(spec.opts, :custom_agent_id))
+
+    # Media attachments (images/audio) for the initial objective — surfaced
+    # from the spec opts exactly like :custom_agent_id. The Runner's do_run/2
+    # materializes them into the ROOT agent's first user message (root-only
+    # gate); subagent specs never carry the key, so this is nil for them.
+    Process.put(:attachments, Keyword.get(spec.opts, :attachments))
 
     repo_less = Keyword.get(ctx, :repo_less)
 
