@@ -27,7 +27,7 @@ None — leaf directory (all modules at this level).
 - **`:reflect` is repo-less**: `execute_task(:reflect, opts, task_id)` routes to `EvoGit.Runtime.SelfReflective.run(opts ++ [task_id: task_id])` WITHOUT `RuntimeOpts.build_common_runtime_opts` — that builder does `Keyword.fetch!(opts, :path)` → `KeyError` (reflect opts carry `:objective`, optional `:model_id`/`:source_root`, no `:path`). Runtime returns `{:ok, %{result: ..., commit_sha: nil, branch_name: nil, tag: nil}}`; TaskInfo rows persist `commit_sha`/`branch_name`/`project_path` nil.
 - All modules are pure functions or ETS-only — no GenServer state, no I/O (except `Cleanup` → `EvoGit.Store` deletion).
 - `Lease`: all ETS access uses `:ets.info/1` first (returns `:undefined` for missing tables), no `try/rescue`.
-- `Diagnostics`: logging only — never modifies state or raises.
+- `Diagnostics`: pure Logger/Process.info functions + the `failure_error/3,4` payload builder — never modifies state or raises; TaskRegistry persists the payload it builds into the `error` column.
 - `TaskExecutor`: runs OUTSIDE the GenServer process (under `Task.Supervisor`).
 - `RuntimeOpts` and `ResumeContext`: pure builders — no side effects.
 - **`task_registry.ex` stays long by design**: the main `EvoGit.TaskRegistry` GenServer at `lib/evo_git/task_registry.ex` (~1577 lines) is the task-lifecycle state machine — status transitions, lease/heartbeat, graceful cancel + force kill, startup reconciliation, review-status handlers — deliberately kept cohesive as one module (same policy as the long `remote_api.ex`/`remote_node.ex` RPC wrappers); the reusable pure/ETS logic extracted out of it lives in this `task_registry/` directory.
