@@ -10,10 +10,11 @@ defmodule EvoDash.NodeContext do
        list/get/save/delete of target definitions.
 
     2. **`EvoGit.RemoteConnection`** — connection *lifecycle* (a GenServer that
-       manages the live SSH tunnel + Erlang distribution). Because this GenServer
-       ships as parallel Phase 2 work, it may not be compiled or started yet.
-       All lifecycle calls degrade gracefully when the module or process is
-       unavailable (see `with_remote_connection/4`).
+       manages the live SSH tunnel + Erlang distribution; `connect/1` is
+       event-driven and async at the core — terminal outcomes arrive via
+       `"remote_connections"` PubSub broadcasts, see its docstring below). All
+       lifecycle calls degrade gracefully when the module or its manager process
+       is unavailable (see `with_remote_connection/4`).
 
     3. **Cross-node RPC helpers** — delegates to `EvoGit.RemoteNode` (the
        core-runtime RPC helper), which wraps `:erpc.call/5` to let the dashboard
@@ -22,7 +23,10 @@ defmodule EvoDash.NodeContext do
        `EvoGit.AgentScheduler.RemoteAPI` / `EvoGit.AgentScheduler`; remote calls
        are routed through `:erpc` with a bounded timeout.
 
-  All functions are safe to call from a LiveView process.
+  All functions are safe (non-crashing) to call from a LiveView process; note
+  however that `connect/1` can still block for a while behind a long-running
+  bootstrap and must be invoked from an `EvoDash.TaskSupervisor` task — never
+  inline in a LiveView process (see its docstring).
   """
 
   require Logger
@@ -75,18 +79,37 @@ defmodule EvoDash.NodeContext do
   # ── Connection lifecycle ─────────────────────────────────────────
   #
   # These delegate to EvoGit.RemoteConnection, a GenServer that manages the live
-  # SSH tunnel and Erlang distribution. Because that module ships as parallel
-  # Phase 2 work, it may not be compiled or the process may not be started yet.
-  # Every call degrades to a safe value via with_remote_connection/4.
+  # SSH tunnel and Erlang distribution. connect/1 is event-driven at the core
+  # (returns {:ok, :connecting} promptly; terminal outcomes arrive via
+  # "remote_connections" PubSub broadcasts — see the connect/1 docstring below).
+  # Every call degrades to a safe value via with_remote_connection/4 when the
+  # module is unavailable or a GenServer.call exits.
 
   @doc """
   Initiates a connection to the given target.
 
-  Delegates to `EvoGit.RemoteConnection.connect/1`. Returns
-  `{:error, :remote_connection_unavailable}` when the connection subsystem is
-  not compiled or its process is not started.
+  Delegates to `EvoGit.RemoteConnection.connect/1`, which is event-driven at
+  the core: it returns promptly with `{:ok, :connecting}` once the connect is
+  initiated (a duplicate connect while already `:connecting`/`:connected` is an
+  idempotent no-op) or `{:ok, :connected}` when the target is already
+  connected. Returns `{:error, :remote_connection_unavailable}` when the
+  connection subsystem is not compiled or its manager process is not started.
+
+  Terminal connect outcomes are NOT returned synchronously — the blocking SSH
+  tunnel + `Node.connect` work runs in a core worker and the outcome arrives on
+  the `"remote_connections"` PubSub topic as
+  `{:remote_connection_status, target_id, status_map}` (`:connecting` on start,
+  `:connected` on success, `:error` with `last_error` on failure). Callers must
+  watch that broadcast rather than inspect this call's return value.
+
+  ⚠️ This wrapper is still a synchronous `GenServer.call`, so a connect can
+  queue behind a long-running bootstrap and hit the call timeout — the
+  `catch :exit` in `with_remote_connection/4` then returns the fallback while
+  the core keeps working. Invoke `connect/1` from a supervised task
+  (`EvoDash.TaskSupervisor`) — never inline in a LiveView/LiveComponent
+  process.
   """
-  @spec connect(String.t()) :: term() | {:error, :remote_connection_unavailable}
+  @spec connect(String.t()) :: {:ok, :connecting | :connected} | {:error, term()}
   def connect(target_id) do
     with_remote_connection(
       EvoGit.RemoteConnection,
@@ -988,17 +1011,16 @@ defmodule EvoDash.NodeContext do
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning
-  # `fallback` when the module is not compiled or the process is not started.
+  # `fallback` when the module is unavailable or the process is not started.
   #
-  # `Code.ensure_loaded?/1` is non-crashing (returns false for missing
-  # modules). `apply/3` keeps the call dynamic so the compiler does not warn
-  # about the not-yet-existing EvoGit.RemoteConnection module at compile time
-  # (it ships as parallel Phase 2 work). The `catch :exit` covers the
+  # `Code.ensure_loaded?/1` is non-crashing (returns false when the module is
+  # absent). `apply/3` keeps the call dynamic so the compiler never couples to
+  # the remote module at compile time. The `catch :exit` covers the
   # GenServer-not-started case — a GenServer call to a dead process raises an
   # exit, not a rescue-able exception (per the codebase's accepted catch :exit
   # pattern for cross-app GenServer calls to a possibly-dead process). This is
   # the single guard point so the degradation logic is not duplicated across
-  # the six lifecycle functions.
+  # the lifecycle functions.
   defp with_remote_connection(module, function, args, fallback) do
     if Code.ensure_loaded?(module) do
       try do
