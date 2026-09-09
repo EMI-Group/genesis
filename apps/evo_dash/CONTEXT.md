@@ -241,7 +241,7 @@ EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash
 
 ## Research Notes — ReqLLM-Native Multimodal (Image/Audio) File Attachments (survey addendum)
 
-Refines the "ReqLLM-native file attachment alternative" discussion of the root `./CONTEXT.md` research note ("Research Notes: PDF/DOCX → Plain Text Extraction", which routes detail here); the implemented plain-text pipeline (`EvoDash.AttachedFile` + `ex_pdf`) is unchanged.
+Refines the "ReqLLM-native file attachment alternative" discussion of the root `./CONTEXT.md` research note ("Research Notes: PDF/DOCX → Plain Text Extraction", which routes detail here); the plain-text pipeline (`EvoDash.AttachedFile.read/1` + `ex_pdf`) is unchanged, and image/audio attachments are additionally implemented as server-side-staged raw-binary content parts (`EvoDash.AttachedFile.read_kind/2` — image/audio kinds, extension allowlist, 15 MiB per-file cap) staged into the Projects page's `:staged_attachments` assign and submitted as the `:attachments` task opt (base64 `"data"`, string-keyed maps; contract + lifecycle: `lib/evo_dash/CONTEXT.md` + `lib/evo_dash_web/live/projects_live/CONTEXT.md`).
 Survey facts below are current as of the vendored `:req_llm` v1.22.0 and `:llm_db` deps (`./deps/req_llm/`, `./deps/llm_db/`).
 `ReqLLM.Message.ContentPart` types are `:text | :image_url | :video_url | :image | :file | :thinking`; there is no canonical `input_image`/`input_audio` chat-part type, those names exist only at the provider wire level.
 Images ride in `:image` (inline bytes), `:image_url`, or `:file` parts, where `:file` carries raw bytes or a provider-uploaded `file_id`/`owned_file_id` reference.
