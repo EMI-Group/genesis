@@ -13,10 +13,11 @@ defmodule EvoGit.Config.EctoTypes do
 
   These types are invoked through Ecto's own type system —
   `Ecto.Type.cast(module, value)` dispatches straight to `module.cast/1`
-  (no base-type coercion), and `EctoValidation` additionally routes scalar
-  keys through a real single-field `Ecto.Changeset.cast/4` (with
-  `empty_values: []`) so casting decisions flow through Ecto's changeset
-  pipeline.
+  (no base-type coercion). `EctoValidation` routes every scalar DSL-type
+  pass/fail decision through `EctoTypes.valid?/2` (a `match?({:ok, _},
+  cast(type, value))`). Ecto is used strictly as a casting oracle — no
+  `Ecto.Changeset` is ever built and the config map is never rebuilt or
+  transformed by Ecto (see `EctoValidation`'s moduledoc).
 
   The 10-atom DSL vocabulary maps onto these modules as follows:
 
@@ -50,14 +51,20 @@ defmodule EvoGit.Config.EctoTypes do
 
   @doc "Returns the custom Ecto.Type module implementing the given scalar DSL type."
   @spec type_for(scalar_type()) :: module()
-  def type_for(:pos_integer), do: PosInteger
-  def type_for(:non_neg_integer), do: NonNegInteger
-  def type_for(:integer), do: Integer
-  def type_for(:string), do: String
-  def type_for(:list_of_strings), do: ListOfStrings
-  def type_for(:float), do: Float
-  def type_for(:atom), do: Atom
-  def type_for(:boolean), do: Boolean
+  # NOTE: the nested `defmodule`s below are declared AFTER this function, so a
+  # bare `PosInteger` reference here would NOT be alias-expanded to
+  # `EvoGit.Config.EctoTypes.PosInteger` (Elixir only establishes the nested
+  # alias for code lexically after the nested `defmodule`). `__MODULE__.X` is
+  # expanded at compile time regardless of order — Ecto's runtime module
+  # dispatch needs the fully-qualified atom.
+  def type_for(:pos_integer), do: __MODULE__.PosInteger
+  def type_for(:non_neg_integer), do: __MODULE__.NonNegInteger
+  def type_for(:integer), do: __MODULE__.Integer
+  def type_for(:string), do: __MODULE__.String
+  def type_for(:list_of_strings), do: __MODULE__.ListOfStrings
+  def type_for(:float), do: __MODULE__.Float
+  def type_for(:atom), do: __MODULE__.Atom
+  def type_for(:boolean), do: __MODULE__.Boolean
 
   @doc """
   Casts `value` through the custom Ecto.Type for the scalar DSL `type`.
