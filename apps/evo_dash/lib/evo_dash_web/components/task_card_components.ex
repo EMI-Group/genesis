@@ -119,6 +119,28 @@ defmodule EvoDashWeb.TaskCardComponents do
           <% end %>
         <% end %>
 
+        <!-- Compact structured-failure line — COLLAPSED failed card only (the
+             expanded view shows the full-detail block instead). Renders the
+             truncated error.message in an error-tinted strip. Guarded: fires
+             ONLY for status == :failed with a map `error` record (see
+             task_error/1) — legacy failed rows (`error` nil/non-map) and all
+             non-failed statuses render nothing, byte-identical to the
+             pre-feature card. -->
+        <%= if !@show_details do %>
+          <% error = task_error(@task) %>
+          <%= if error do %>
+            <div class="flex items-center gap-2 bg-error/10 border border-error/20 rounded-lg px-3 py-2 min-w-0">
+              <.icon name="hero-x-circle" class="size-4 text-error shrink-0" />
+              <span
+                class="text-xs font-medium text-error truncate min-w-0"
+                title={error_message(error) || ""}
+              >
+                {collapsed_error_text(error)}
+              </span>
+            </div>
+          <% end %>
+        <% end %>
+
         <!-- Bottom row: Time, Actions, Menu -->
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-base-200/60">
           <div class="flex items-center gap-4 text-xs font-medium text-base-content/70">
@@ -218,6 +240,47 @@ defmodule EvoDashWeb.TaskCardComponents do
         <%= if @show_details do %>
           <div class="border-t border-base-200 pt-3 mt-1">
             <div class="space-y-4">
+              <!-- Full-detail structured failure block — EXPANDED failed card
+                   only (the collapsed card shows the compact line instead).
+                   Caption chips = kind + source labels (Helpers
+                   task_error_kind_label/1 / task_error_source_label/1), then
+                   the full untruncated error.message and the LAST ≤8
+                   stacktrace frames as monospace lines. Same guard as the
+                   collapsed line: status == :failed AND a map `error` record;
+                   anything else renders nothing. The legacy `{:error, _}` /
+                   `{:exit, _}` RESULT (if any) renders separately in the
+                   Agent Message card below — both records may coexist and are
+                   both legitimately informative. -->
+              <% error = task_error(@task) %>
+              <%= if error do %>
+                <div class="bg-error/10 border border-error/20 rounded-lg p-4">
+                  <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3">
+                    <span class="inline-flex items-center gap-1.5 text-xs font-bold text-error uppercase tracking-wide">
+                      <.icon name="hero-x-circle" class="size-4" />
+                      {task_error_kind_label(error_field(error, :kind))}
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 text-xs font-medium text-base-content/70">
+                      <.icon name="hero-bolt" class="size-3.5" />
+                      <%!-- zh_CN: 失败错误的来源（检测到失败的位置） --%>{gettext(
+                        "Source"
+                      )}: {task_error_source_label(error_field(error, :source))}
+                    </span>
+                  </div>
+                  <% message = error_message(error) %>
+                  <%= if message do %>
+                    <pre class="text-xs whitespace-pre-wrap break-words max-h-48 overflow-y-auto"><%= message %></pre>
+                  <% end %>
+                  <% frames = error_stacktrace(error) %>
+                  <%= if frames do %>
+                    <div class="mt-3 bg-base-100 border border-error/20 rounded-md p-3 overflow-x-auto">
+                      <div class="text-xs font-bold uppercase tracking-wide text-error mb-1.5">
+                        <%!-- zh_CN: 堆栈跟踪 --%>{gettext("Stacktrace")}
+                      </div>
+                      <pre class="text-xs font-mono leading-relaxed whitespace-pre-wrap break-words"><%= Enum.join(frames, "\n") %></pre>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <!-- Objective card — full objective text (scrollable) + mode/path badges -->
                 <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
@@ -474,6 +537,74 @@ defmodule EvoDashWeb.TaskCardComponents do
       </div>
     </div>
     """
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — structured failure record (`error`) guarded reads
+  # ---------------------------------------------------------------------------
+  #
+  # Failed tasks persist a structured error record on the decoded TaskInfo
+  # `error` field: `%{kind:, source:, message:, stacktrace:}` — ATOM keys after
+  # the lenient Store Codec decode (`Codec.decode_error/1`, applied to BOTH the
+  # full `%TaskInfo{}` path and the 16-key summary projection); nil unless
+  # `status == :failed`. This is a NEW record SEPARATE from the legacy
+  # `{:error, _}` task RESULT rendered by render_result/2 — a failed task may
+  # carry either, both, or neither. Every read below is guarded and
+  # atom/string-key tolerant: legacy failed rows (`error` nil/non-map) and all
+  # non-failed statuses return nil, so every render site stays byte-identical
+  # to the pre-feature behavior for them.
+
+  # Returns the structured error map only when the task is failed AND the
+  # `error` value is a map; nil otherwise (legacy rows, non-failed statuses,
+  # bad shapes — summary maps and full structs both safe).
+  defp task_error(task) do
+    with true <- is_map(task),
+         true <- Map.get(task, :status) in [:failed, "failed"],
+         error when is_map(error) <- Map.get(task, :error) do
+      error
+    else
+      _ -> nil
+    end
+  end
+
+  # Atom/string-key tolerant read of one error-record field (the Codec emits
+  # atom keys, but some consumer paths may hand string-keyed maps).
+  defp error_field(error, key) do
+    Map.get(error, key) || Map.get(error, to_string(key))
+  end
+
+  # `message` is a String.t() by contract, but decoded data is untrusted —
+  # only non-empty binaries are usable; nil otherwise (graceful fallback).
+  defp error_message(error) do
+    case error_field(error, :message) do
+      message when is_binary(message) and message != "" -> message
+      _ -> nil
+    end
+  end
+
+  # `stacktrace` is [String.t()] by contract; defensively keep only binary
+  # frames and show the LAST ≤8 (most recent) frames in the expanded block.
+  defp error_stacktrace(error) do
+    case error_field(error, :stacktrace) do
+      frames when is_list(frames) ->
+        case Enum.filter(frames, &is_binary/1) do
+          [] -> nil
+          frames -> Enum.take(frames, -8)
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # Collapsed-line text: the truncated error.message (~160 chars); when the
+  # message is not a usable binary, fall back to the kind label so a failed
+  # card without a message still communicates why it failed.
+  defp collapsed_error_text(error) do
+    case error_message(error) do
+      nil -> task_error_kind_label(error_field(error, :kind))
+      message -> truncate_string(message, 160)
+    end
   end
 
   # ---------------------------------------------------------------------------
