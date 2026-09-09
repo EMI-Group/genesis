@@ -960,7 +960,7 @@ defmodule EvoDashWeb.SettingsLive do
       socket
       |> assign(
         :remote_connect_pending,
-        Map.delete(socket.assigns.remote_connect_pending, target_id)
+        Map.delete(Map.get(socket.assigns, :remote_connect_pending, %{}), target_id)
       )
       |> flash_remote_lifecycle_result({:error, reason}, gettext("Connect"))
 
@@ -1882,15 +1882,13 @@ defmodule EvoDashWeb.SettingsLive do
     # terminal outcome (:connected | :error | :disconnected) will arrive via
     # the "remote_connections" PubSub broadcast and be flashed by
     # consume_remote_connect_pending (which clears the marker).
-    if socket.assigns.remote_connect_pending[id] do
+    pending = Map.get(socket.assigns, :remote_connect_pending, %{})
+
+    if Map.get(pending, id) == true do
       {:noreply, socket}
     else
       socket =
-        assign(
-          socket,
-          :remote_connect_pending,
-          Map.put(socket.assigns.remote_connect_pending, id, true)
-        )
+        assign(socket, :remote_connect_pending, Map.put(pending, id, true))
 
       # Async connect: connect/1 returns promptly ({:ok, :connecting} |
       # {:ok, :connected}); terminal outcomes arrive ONLY via broadcast.
@@ -2404,14 +2402,17 @@ defmodule EvoDashWeb.SettingsLive do
   defp consume_remote_connect_pending(socket, target_id, status) do
     phase = if is_map(status), do: Map.get(status, :phase), else: nil
 
-    if socket.assigns.remote_connect_pending[target_id] and
+    # Read the pending marker defensively: broadcasts for connects initiated
+    # elsewhere (bootstrap, node selector, another page) never set the marker,
+    # so the map may legitimately lack the key — bare dot-access would KeyError
+    # only if the assign itself were missing, and a nil marker must not crash
+    # `and` with a BadBooleanError.
+    pending = Map.get(socket.assigns, :remote_connect_pending, %{})
+
+    if Map.get(pending, target_id) == true and
          phase in [:connected, :error, :disconnected] do
       socket =
-        assign(
-          socket,
-          :remote_connect_pending,
-          Map.delete(socket.assigns.remote_connect_pending, target_id)
-        )
+        assign(socket, :remote_connect_pending, Map.delete(pending, target_id))
 
       case phase do
         :connected ->
