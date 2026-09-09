@@ -29,9 +29,10 @@ defmodule EvoGit.MigrateStoreTest do
     test "brings an old-format database up to the current schema", %{db_path: path} do
       build_legacy_db!(path)
 
-      # Pre-migration sanity: the legacy table has no updated_at column and
-      # none of the new indexes; the DETS-era quarantine tables are present.
+      # Pre-migration sanity: the legacy table has no error/updated_at columns
+      # and none of the new indexes; the DETS-era quarantine tables are present.
       refute "updated_at" in columns(path)
+      refute "error" in columns(path)
       refute "idx_tasks_updated_at" in indexes(path)
       refute "idx_tasks_started_at" in indexes(path)
       assert quarantine_tables(path) == ["projects_quarantine", "tasks_quarantine"]
@@ -40,8 +41,9 @@ defmodule EvoGit.MigrateStoreTest do
 
       # --- Steps 1/2: schema (tables, indexes, missing columns) ---
       cols = columns(path)
-      assert length(cols) == 19
+      assert length(cols) == 20
       assert "updated_at" in cols
+      assert "error" in cols
 
       idxs = indexes(path)
 
@@ -156,8 +158,9 @@ defmodule EvoGit.MigrateStoreTest do
       assert File.exists?(path)
 
       cols = columns(path)
-      assert length(cols) == 19
+      assert length(cols) == 20
       assert "updated_at" in cols
+      assert "error" in cols
 
       idxs = indexes(path)
       assert "idx_tasks_updated_at" in idxs
@@ -168,7 +171,7 @@ defmodule EvoGit.MigrateStoreTest do
 
       # A second run is equally harmless.
       run_task!(path)
-      assert length(columns(path)) == 19
+      assert length(columns(path)) == 20
     end
   end
 
@@ -233,9 +236,10 @@ defmodule EvoGit.MigrateStoreTest do
 
   # --- legacy DB builder ---
 
-  # The 18-column tasks table as written by older builds (current
-  # `EvoGit.Store.Codec.task_columns/0`, WITHOUT the store-internal
-  # `updated_at` column), plus the DETS-era quarantine tables.
+  # The 18-column tasks table as written by older builds — the current
+  # `EvoGit.Store.Codec.task_columns/0` WITHOUT the `error` column AND without
+  # the store-internal `updated_at` column — plus the DETS-era quarantine
+  # tables. The migration must add both columns (→ 20 total).
   defp build_legacy_db!(path) do
     conn = open_conn!(path)
 

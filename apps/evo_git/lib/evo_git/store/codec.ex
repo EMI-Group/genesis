@@ -38,7 +38,7 @@ defmodule EvoGit.Store.Codec do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error)
   @project_columns ~w(path name last_opened_at)
 
   @usage_fields [
@@ -62,6 +62,20 @@ defmodule EvoGit.Store.Codec do
 
   # Precomputed string set for O(1) membership checks in decode_result_data/1.
   @result_data_field_strings MapSet.new(@result_data_fields, &Atom.to_string/1)
+
+  # Known keys inside the canonical `error` payload (see encode_error/1 below).
+  # Atomized on decode via this whitelist — application-controlled, not user
+  # input, so String.to_atom/1 is safe (mirrors the decode_atom/1 rationale).
+  @error_keys ~w(kind source message stacktrace)a
+  @error_key_strings MapSet.new(@error_keys, &Atom.to_string/1)
+
+  # Closed set of atom values for the `kind` field (atomized on decode).
+  @error_kinds ~w(error exit down force_kill timeout restart lease_expired recheck)a
+  @error_kind_strings MapSet.new(@error_kinds, &Atom.to_string/1)
+
+  # Closed set of atom values for the `source` field (atomized on decode).
+  @error_sources ~w(result_handler down_handler force_kill_task finalizing_watchdog startup_reconcile lease_sweep recheck_resolve)a
+  @error_source_strings MapSet.new(@error_sources, &Atom.to_string/1)
 
   ## Public — column lists
 
@@ -92,7 +106,8 @@ defmodule EvoGit.Store.Codec do
       task.lease_expires_at,
       task.model_id,
       task.project_path || extract_project_path(task.opts),
-      task.branch_name || extract_branch_name(task.result)
+      task.branch_name || extract_branch_name(task.result),
+      encode_error(task.error)
     ]
   end
 
@@ -144,7 +159,8 @@ defmodule EvoGit.Store.Codec do
       lease_expires_at,
       model_id,
       project_path,
-      branch_name
+      branch_name,
+      error
     ] = row
 
     %TaskInfo{
@@ -157,6 +173,7 @@ defmodule EvoGit.Store.Codec do
       finished_at: decode_datetime(finished_at),
       logs: decode_logs(logs),
       result: decode_result(result),
+      error: decode_error(error),
       review_status: decode_atom(review_status),
       usage: decode_usage(usage),
       agent_count: agent_count,
@@ -603,4 +620,94 @@ defmodule EvoGit.Store.Codec do
       _ -> nil
     end
   end
+
+  # --- error (canonical failed-task error payload) ---
+  # Dedicated informational column recording WHY a task failed. This is NOT the
+  # `result` field: force-kill deliberately nils result, startup reconciliation
+  # writes plain strings into it, and decode_result/1 is strictly canonical +
+  # heavy (dropped from the summary projection). The `error` payload is a map
+  # with a FIXED key set — `kind` (:error | :exit | :down | :force_kill |
+  # :timeout | :restart | :lease_expired | :recheck), `source` (:result_handler
+  # | :down_handler | :force_kill_task | :finalizing_watchdog |
+  # :startup_reconcile | :lease_sweep | :recheck_resolve), `message`
+  # (String.t(), always present) and `stacktrace` ([String.t()] | nil) — stored
+  # as a JSON OBJECT with STRING keys.
+  #
+  # Encode is TOTAL (mirrors encode_usage/encode_archive): the map is converted
+  # to a string-keyed object and Jason-encoded; the closed-set atom values of
+  # the `kind`/`source` fields are stringified first (JSON cannot hold atoms —
+  # call sites keep the canonical atom form in %TaskInfo{}), and any other
+  # Jason failure logs a warning and stores nil. Decode is LENIENT (NOT the
+  # strict decode_result style — this informational column must never break row
+  # decode): nil and non-object JSON decode to nil, the four known keys are
+  # atomized via the whitelist, `kind`/`source` string values are restored to
+  # their closed-set atoms, unknown keys keep their string keys, and all other
+  # values pass through unchanged.
+  def encode_error(nil), do: nil
+
+  def encode_error(map) when is_map(map) do
+    json_map =
+      Map.new(map, fn {key, value} ->
+        key_str = to_string(key)
+
+        value =
+          if error_atom_field?(key) and is_atom(value) do
+            Atom.to_string(value)
+          else
+            value
+          end
+
+        {key_str, value}
+      end)
+
+    case Jason.encode(json_map) do
+      {:ok, json} ->
+        json
+
+      {:error, e} ->
+        Logger.warning("Codec: failed to encode error: #{Exception.message(e)}")
+        nil
+    end
+  end
+
+  # Only the two atom-typed fields (kind/source) are stringified — message and
+  # stacktrace are strings/lists by contract and pass through untouched.
+  defp error_atom_field?(key), do: key in [:kind, :source] or key in ["kind", "source"]
+
+  def decode_error(nil), do: nil
+
+  def decode_error(str) when is_binary(str) do
+    case Jason.decode(str) do
+      {:ok, map} when is_map(map) and not is_struct(map) -> decode_error_map(map)
+      _ -> nil
+    end
+  end
+
+  defp decode_error_map(map) do
+    Enum.reduce(map, %{}, fn {key, value}, acc ->
+      atom_key = decode_error_key(key)
+      Map.put(acc, atom_key, decode_error_value(atom_key, value))
+    end)
+  end
+
+  defp decode_error_key(key) when is_atom(key), do: key
+
+  defp decode_error_key(key) when is_binary(key) do
+    if MapSet.member?(@error_key_strings, key), do: String.to_atom(key), else: key
+  end
+
+  defp decode_error_key(other), do: other
+
+  # Restores the closed-set atom values of `kind`/`source` (safe String.to_atom
+  # — bounded, application-controlled sets). Unknown/corrupt values stay as-is
+  # (strings) — lenient, never raises.
+  defp decode_error_value(:kind, value) when is_binary(value) do
+    if MapSet.member?(@error_kind_strings, value), do: String.to_atom(value), else: value
+  end
+
+  defp decode_error_value(:source, value) when is_binary(value) do
+    if MapSet.member?(@error_source_strings, value), do: String.to_atom(value), else: value
+  end
+
+  defp decode_error_value(_key, value), do: value
 end

@@ -14,9 +14,11 @@ defmodule EvoGit.Store.Schema do
 
   Tables:
     * `tasks` — one row per task, column per field. Includes the
-      store-internal `updated_at` column (19th, after `branch_name`), which is
+      store-internal `updated_at` column (20th, after `error`), which is
       deliberately NOT in `Codec.task_columns/0` / `%TaskInfo{}` — it is
-      written/updated via targeted `update_task_columns` calls only.
+      written/updated via targeted `update_task_columns` calls only. `error`
+      (19th) is the dedicated failed-task error JSON column — it IS part of
+      `Codec.task_columns/0` / `%TaskInfo{}`.
     * `projects` — one row per project.
 
   Indexes (idempotent — `IF NOT EXISTS`):
@@ -52,6 +54,7 @@ defmodule EvoGit.Store.Schema do
           model_id TEXT,
           project_path TEXT,
           branch_name TEXT,
+          error TEXT,
           updated_at TEXT
         )
         """,
@@ -123,9 +126,11 @@ defmodule EvoGit.Store.Schema do
   Since `EvoGit.Store.init/1` no longer auto-migrates, this is the upgrade
   path for OLD databases: the `mix migrate.store` Mix task invokes this
   function to bring an existing DB up to the current schema (including the
-  `updated_at` column). `updated_at` is deliberately NOT in
+  `error` and `updated_at` columns). `updated_at` is deliberately NOT in
   `EvoGit.Store.Codec.@task_columns` — it is store-internal bookkeeping, so
-  only the DDL/ALTER here knows about it.
+  only the DDL/ALTER here knows about it. `error` IS in `@task_columns` (a
+  `%TaskInfo{}` field), but old databases still need the ALTER to add the
+  column before full-row SELECTs/INSERTs can reference it.
   """
   def migrate_schema(conn) do
     columns = existing_columns(conn, "tasks")
@@ -148,6 +153,10 @@ defmodule EvoGit.Store.Schema do
     if "branch_name" not in columns do
       {:ok, _} =
         XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN branch_name TEXT", [])
+    end
+
+    if "error" not in columns do
+      {:ok, _} = XqliteNIF.execute(conn, "ALTER TABLE tasks ADD COLUMN error TEXT", [])
     end
 
     if "updated_at" not in columns do
