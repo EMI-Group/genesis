@@ -98,7 +98,7 @@ All data access goes through `EvoDash.NodeContext` → `EvoGit.RemoteNode` (loca
 direct call or `:erpc`) → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`:
 
 - **`list_tasks_paginated/2`** — page data; opts `[limit: 25, offset: (page-1)*25, filters: [status:, project_path:, review_status:, search:]]` (`build_filters_from_assigns`; `"all"`/`""` passthrough handled in `EvoGit.Store.Queries.build_where`). Returns FULL `%TaskInfo{}` structs + total_count.
-  - **Search surface**: the `search:` filter (the page's search box) is executed in `EvoGit.Store.Queries.build_where/1` (evo_git-owned, sibling app) as a case-insensitive raw-JSON SQL LIKE over the `id`, `opts`, `project_path`, and `result` columns — so the search box also matches the agent response message (the result's `"result"` data key). Fields consumed by `task_card_components.ex`: `type`, `opts`, `id`, `review_status`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `usage`, `model_id`, `logs`, `archive_metadata`. NOT consumed: `project_path`, `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`. Heavy fields are transferred for all 25 rows even when every card is collapsed (known future optimization: summary projection + `get_task` on expand — not implemented).
+  - **Search surface**: the `search:` filter (the page's search box) is executed in `EvoGit.Store.Queries.build_where/1` (evo_git-owned, sibling app) as a case-insensitive raw-JSON SQL LIKE over the `id`, `opts`, `project_path`, and `result` columns — so the search box also matches the agent response message (the result's `"result"` data key). Fields consumed by `task_card_components.ex`: `type`, `opts`, `id`, `review_status`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `error`, `usage`, `model_id`, `logs`, `archive_metadata` — `error` is the structured failure record map read for failed-task display (`nil` unless the task is `:failed`). NOT consumed: `project_path`, `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`. Heavy fields are transferred for all 25 rows even when every card is collapsed (known future optimization: summary projection + `get_task` on expand — not implemented).
 - **Multi-repo `repos` result key** — task results may carry a top-level `repos` map (STRING keys): `%{repo_id => %{"commit_sha" => sha, "branch_name" => branch | nil}}` — `"primary"` ALWAYS present (branch_name nil when the primary produced no changes), each writable foreign repo that produced commits present, read-only repos ABSENT. Top-level `commit_sha`/`branch_name` remain the PRIMARY repo's. Legacy tasks have NO `repos` key — rendered unchanged. TasksLive does not touch `repos` itself: it loads the full `result` via `list_tasks_paginated/2` (Codec round trip keeps the top-level `"repos"` key STRING-keyed — unknown result keys are never atomized) and `task_card_components.ex` renders it (`result_repos/1` + `result_repos_badges/1`).
 - **`get_unique_paths/1`** — re-fetched inside every page apply (second RPC per load beyond the paginated query; not cached across reloads). Fully consumed as `@project_paths` → filter-dropdown labels + active-filter badge.
 - **`cancel_task/2` / `force_kill_task/2` / `delete_task/2` / `clear_finished_tasks/1`** — phx-event triggered; return `:ok | {:error, reason}` — only the status consumed (`:ok` → collapse card + sync reload; error → gettext flash with `inspect(reason)`); delete/clear ignore the return.
@@ -106,7 +106,7 @@ direct call or `:erpc`) → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRe
 - **`list_tasks_changed_since/2`** — not called anywhere in the dashboard (change detection is broadcast-driven).
 
 **Store projections (3 shapes)** — `EvoGit.Store` summary queries never decode the result blob:
-- *Summary* (15 keys, no result): `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at` — consumed by the NodeAware sidebar loader and `show_review_button?/1` (column-based on `branch_name`).
+- *Summary* (16 keys, no result): `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error` — `error` is the structured failure record map (ATOM-keyed after decode, `nil` unless the task is `:failed`; see "Failed-task error rendering"); consumed by the NodeAware sidebar loader and `show_review_button?/1` (column-based on `branch_name`).
 - *Id-only*: `list_task_ids/2` — id+status+updated_at, no result/opts decode.
 - *Full*: `list_tasks_paginated/2` / `get_task/1` — `Codec.decode_result` (rebuilds `%Usage{}` + archive_records) runs per row.
 
@@ -124,16 +124,85 @@ Two two-step server-side confirmation-modal flows (SystemLive warning-modal patt
 
 `EvoDashWeb.ModalHelpers` (`live/modal_helpers.ex`) — a `__using__` macro injecting shared modal event handlers (`view_full_result/2`, `close_result_modal/1`, `view_full_options/2`, `close_options_modal/1`) into a host LiveView. **Only TasksLive uses it** (ProjectsLive does not). The injected helpers read `socket.assigns.tasks` (the full TaskInfo page list). The two zoom modals (Full Result `gettext("Task Result")`, Full Objective `gettext("Full Objective")`) each carry a ClipboardCopy button in the `<:actions>` slot (`id="full-result-copy"` → `TaskCardComponents.result_copy_text(@selected_result)`; `id="full-options-copy"` → `@selected_options`), and TasksLive implements the required `handle_event("copied", ...)` → "Copied to clipboard" flash handler.
 
-## Failed-task result rendering (how an error reaches the user)
+## Failed-task error rendering (legacy error result + structured failure record)
 
-- tasks_live.ex NEVER reads `task.result` itself — every row is delegated whole to `EvoDashWeb.TaskCardComponents.task_card task={task} show_details=... current_node_id=...` (`tasks_live.ex:250-254`); all result reading/rendering lives in the component.
-- Collapsed card for `:failed`: status badge via `Helpers.task_status_badge(:failed)` = `bg-error/10 text-error` (helpers.ex:108-109); accent bar `task_accent_color/1` → `Helpers.task_status_dot_class(:failed)` = `bg-error` (task_card_components.ex:27/489; helpers.ex:134); card tint `task_card_tint/1` → `Helpers.task_status_tint(:failed)` = `bg-error/5 shadow-error/10 border-error/20` (task_card_components.ex:23/506; helpers.ex:149); badge text = raw atom `{@task.status}` → "failed" (task_card_components.ex:77-84). No error text is visible in the collapsed state.
-- Expanded card: the "Agent Message" section is gated on truthiness `Map.get(@task, :result)` (task_card_components.ex:252) — an `{:error, _}` tuple is truthy so the section renders; body = `render_result(@task.result)` (task_card_components.ex:281), which dispatches to the `render_result({:error, reason}, opts)` clause (task_card_components.ex:688-715): a red `bg-error/10 border border-error/20` box headed `gettext("Error")` (hero-x-circle icon) with `<pre>` `inspect(reason, limit: :infinity)`. `{:exit, reason}` renders a "Crashed" box (task_card_components.ex:717-744). `:failed` with nil result (the force-killed shape) → section hidden.
-- Full Result modal: `view_full_result/2` (ModalHelpers — finds the task in `socket.assigns.tasks`, assigns `selected_result = Map.get(task, :result)`); the modal (gated `if @selected_result`, tasks_live.ex:327-346) renders via `TaskCardComponents.render_result_full(@selected_result)` (tasks_live.ex:333 → task_card_components.ex:982-984, the `truncate: false` variant); the Copy button payload = `result_copy_text/1` — for `{:error, reason}` that is `inspect(reason, limit: :infinity)` (task_card_components.ex:995). The only UI entry to the modal is the "Full" button inside an EXPANDED card's Agent Message section (task_card_components.ex:270-278).
-- `show_review_button?/1` (task_card_components.ex:1012-1022, private) only matches `:completed`/`:cancelled` with `{:ok, %{branch_name: non-empty binary}}` or `{:ok, %{no_changes: true}}` — a `:failed` task NEVER gets a Review link/navigation on this page (test-pinned `tasks_live_test.exs:859-873`). Error text is reachable only via the Details toggle and the modal.
-- Decoded-shape note (evo_git codec contract, codec.ex): `{:error, reason}` persists tagged `{"__result_tag__":"error","reason":...}`; when `reason` is not JSON-safe (e.g. a tuple `{128, "fatal: ..."}`) the encode falls back to storing `inspect(reason)` as the reason string (codec.ex:413-424) and `decode_reason/1` keeps unknown strings as-is (codec.ex:532-540) → the dashboard sees `{:error, "{128, \"fatal: ...\"}"}` and displays that inspected string verbatim in the Error box. An improved core error message reaches the user verbatim as long as it ends up inside the persisted error reason.
-- Test pin: `tasks_live_test.exs:1184-1200` asserts an `{:error, "explosion happened"}` result renders "Agent Message" + "Error" + the reason text, with the copy payload containing the reason. No test covers tuple-shaped reasons (they render as their inspect-string after the codec round trip).
-- render_result clause safety: the catch-all `render_result(result, opts)` (task_card_components.ex:956-976) pretty-inspects any non-tuple/non-map shape, so no stored result shape can crash a task card.
+A `:failed` task can surface its failure through TWO separate records: the legacy
+`{:error, reason}` / `{:exit, reason}` task RESULT shape and the structured
+`error` map field on the decoded TaskInfo.
+Both records may coexist, and a `:failed` task may carry either, both, or neither
+(the structured record may be nil on legacy failed rows).
+`error` (ATOM keys after decode) is `%{kind: atom, source: atom, message: String.t(), stacktrace: [String.t()] | nil}` —
+`kind` ∈ `:error | :exit | :down | :force_kill | :timeout | :restart | :lease_expired | :recheck`,
+`source` ∈ `:result_handler | :down_handler | :force_kill_task | :finalizing_watchdog | :startup_reconcile | :lease_sweep | :recheck_resolve`.
+It is `nil` on every non-`:failed` row and rides on BOTH read paths: the full
+`%TaskInfo{}` decode and the 16-key summary projection.
+
+- tasks_live.ex NEVER reads `task.result` / `task.error` itself — every row is
+  delegated whole to `EvoDashWeb.TaskCardComponents.task_card task={task} show_details=... current_node_id=...`
+  (`tasks_live.ex:250-254`); all failure reading/rendering lives in the component.
+- COLLAPSED `:failed` card (legacy shape): status badge via
+  `Helpers.task_status_badge(:failed)` = `bg-error/10 text-error` (helpers.ex:108-109);
+  accent bar `task_accent_color/1` → `Helpers.task_status_dot_class(:failed)` = `bg-error`
+  (task_card_components.ex:27/489; helpers.ex:134);
+  card tint `task_card_tint/1` → `Helpers.task_status_tint(:failed)` = `bg-error/5 shadow-error/10 border-error/20`
+  (task_card_components.ex:23/506; helpers.ex:149);
+  badge text = raw atom `{@task.status}` → "failed" (task_card_components.ex:77-84).
+  For this shape no error text is visible in the collapsed state.
+- COLLAPSED `:failed` card WITH a structured `error` map: additionally renders a
+  compact error-tinted failure line visible without expanding — the truncated
+  `error.message` (`Helpers.truncate_string/2`, ~160 chars), styled consistently
+  with the failed-task tint/badge conventions.
+  `error` nil/non-map → nothing extra (legacy cards unchanged).
+- EXPANDED card (legacy result shape): the "Agent Message" section is gated on
+  truthiness `Map.get(@task, :result)` (task_card_components.ex:252) — an
+  `{:error, _}` tuple is truthy so the section renders; body =
+  `render_result(@task.result)` (task_card_components.ex:281), which dispatches to
+  the `render_result({:error, reason}, opts)` clause (task_card_components.ex:688-715):
+  a red `bg-error/10 border border-error/20` box headed `gettext("Error")`
+  (hero-x-circle icon) with `<pre>` `inspect(reason, limit: :infinity)`.
+  `{:exit, reason}` renders a "Crashed" box (task_card_components.ex:717-744).
+  `:failed` with nil result (the legacy force-killed shape) → section hidden.
+- EXPANDED card WITH a structured `error` map: renders a full-detail error block —
+  the kind label + source label caption via `Helpers.task_error_kind_label/1` +
+  `Helpers.task_error_source_label/1` (human gettext labels; unknown atoms → safe
+  generic fallback), the full untruncated `error.message`, and when `stacktrace`
+  is a non-empty list its last ≤8 frames as monospace (`<pre>`-style) lines.
+  The container is error-tinted, consistent with the legacy
+  `render_result({:error, _}, ...)` "Error" box styling.
+- Guards are read-only (`status == :failed and is_map(error)` + `Map.get`) and
+  tolerant of nil/non-map/legacy shapes on BOTH the 16-key summary projection
+  and full `%TaskInfo{}` rows.
+- Full Result modal (legacy result shape): `view_full_result/2` (ModalHelpers —
+  finds the task in `socket.assigns.tasks`, assigns `selected_result = Map.get(task, :result)`);
+  the modal (gated `if @selected_result`, tasks_live.ex:327-346) renders via
+  `TaskCardComponents.render_result_full(@selected_result)` (tasks_live.ex:333 →
+  task_card_components.ex:982-984, the `truncate: false` variant);
+  the Copy button payload = `result_copy_text/1` — for `{:error, reason}` that is
+  `inspect(reason, limit: :infinity)` (task_card_components.ex:995).
+  The only UI entry to the modal is the "Full" button inside an EXPANDED card's
+  Agent Message section (task_card_components.ex:270-278).
+- `show_review_button?/1` (task_card_components.ex:1012-1022, private) only
+  matches `:completed`/`:cancelled` with `{:ok, %{branch_name: non-empty binary}}`
+  or `{:ok, %{no_changes: true}}` — a `:failed` task NEVER gets a Review
+  link/navigation on this page (test-pinned `tasks_live_test.exs:859-873`).
+  Legacy error text is reachable only via the Details toggle and the modal.
+- Legacy result decoded-shape note (evo_git codec contract, codec.ex):
+  `{:error, reason}` persists tagged `{"__result_tag__":"error","reason":...}`;
+  when `reason` is not JSON-safe (e.g. a tuple `{128, "fatal: ..."}`) the encode
+  falls back to storing `inspect(reason)` as the reason string (codec.ex:413-424)
+  and `decode_reason/1` keeps unknown strings as-is (codec.ex:532-540) → the
+  dashboard sees `{:error, "{128, \"fatal: ...\"}"}` and displays that inspected
+  string verbatim in the Error box.
+  An improved core error message reaches the user verbatim as long as it ends up
+  inside the persisted error reason.
+- Test pin: `tasks_live_test.exs:1184-1200` asserts an `{:error, "explosion happened"}`
+  result renders "Agent Message" + "Error" + the reason text, with the copy payload
+  containing the reason.
+  No test covers tuple-shaped reasons (they render as their inspect-string after
+  the codec round trip).
+- render_result clause safety (legacy result path): the catch-all
+  `render_result(result, opts)` (task_card_components.ex:956-976) pretty-inspects
+  any non-tuple/non-map shape, so no stored result shape can crash a task card.
 
 ## Test idioms
 
