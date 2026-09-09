@@ -33,7 +33,18 @@ defmodule EvoDashWeb.ProjectsLive do
   # literal in the AttachFile support module (kept as a literal in both
   # modules — a compile-time function call in a module attribute is fragile
   # under parallel compilation).
+  #
+  # Image/audio picker ids follow the same literal-duplication contract — they
+  # pair with the @attach_picker_id_image / @attach_picker_id_audio literals in
+  # the AttachFile support module (its handle_binary_attach_result/3 pushes on
+  # the kind's picker channel), which is edited in parallel.
   @attach_picker_id "objective_file"
+  @attach_picker_id_image "objective_file_image"
+  @attach_picker_id_audio "objective_file_audio"
+
+  # Keep in sync with EvoGit.Attachments in :evo_git (the authoritative validation)
+  @max_attachments 4
+  @max_attachment_bytes 15 * 1024 * 1024
 
   @impl true
   def render(assigns) do
@@ -524,6 +535,13 @@ defmodule EvoDashWeb.ProjectsLive do
           # file's text can be appended even if the user keeps typing while
           # the dialog is open.
           file_pick_bases: %{},
+          # Server-side-only in-memory staging of RAW attachment binaries
+          # (image/audio). Never persisted (StatePersistence keeps a fixed key
+          # list) and never restored across remounts/refresh/resume (a
+          # documented limitation); each entry's "data" is raw binary and must
+          # never be rendered, logged, or serialized — base64 encoding happens
+          # only when building the task opt at submit.
+          staged_attachments: [],
           # GitHub issue integration: async-detected upstream status, issues
           # modal state, and the issue number whose markdown is being fetched
           # (per-row "Fix" spinner). All GitHub data access is async via
@@ -596,6 +614,10 @@ defmodule EvoDashWeb.ProjectsLive do
       if prev_node_id != socket.assigns[:current_node_id] do
         socket
         |> assign(:file_pick_bases, %{})
+        # Staged raw attachment binaries are per-node client state too — drop
+        # them alongside the other state on node switches (raw "data" bytes
+        # must never leak across node contexts).
+        |> assign(:staged_attachments, [])
         |> assign(:remote_project_loading, nil)
         |> assign(:resume_foreign_repos_guard, false)
         |> assign(:github_status, nil)
@@ -1500,12 +1522,25 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   @impl true
-  def handle_event("file_pick", %{"picker_id" => picker_id, "prompt" => prompt}, socket) do
+  def handle_event("file_pick", params, socket) do
     # Attach-file flow for the objective editor: same server-side picker as
     # "directory_pick" but in :file mode (the parallel DirectoryPicker work
     # adds pick/3 with a kind argument). The current DOM textarea value is
     # passed along and snapshotted as the base so the picked file's text can
     # be appended even if the user keeps typing while the dialog is open.
+    #
+    # Params are read defensively (Map.get) so this event tolerates the new
+    # "kind" key carried by the image/audio attach buttons AND legacy callers
+    # / tests that send only picker_id + prompt.
+    picker_id = Map.get(params, "picker_id", @attach_picker_id)
+    prompt = Map.get(params, "prompt", "")
+
+    # The pick flow itself is kind-agnostic — the kind is implied by the
+    # picker id when the directory_picker_result arrives (the text clause
+    # routes to handle_attach_result, image/audio to the binary flow) — so
+    # the key is read only to tolerate its presence.
+    _kind = Map.get(params, "kind", "text")
+
     if socket.assigns.current_node == node() do
       # wx dialogs must only ever pop on the local node. The picker module is
       # resolved from the app env so there is no hard compile-time dependency.
@@ -1547,6 +1582,11 @@ defmodule EvoDashWeb.ProjectsLive do
     prompt = Map.get(params, "prompt")
     prompt = if is_binary(prompt), do: prompt, else: ""
 
+    # Kind ("text" | "image" | "audio") selects the attachment pipeline in the
+    # `true` branch below; absent in legacy callers/tests → text. The two
+    # path-validation branches above apply to ALL kinds.
+    kind = Map.get(params, "kind", "text")
+
     cond do
       not is_binary(path) or path == "" ->
         # zh_CN: 手动输入为空 → "请输入文件路径。"
@@ -1564,10 +1604,58 @@ defmodule EvoDashWeb.ProjectsLive do
         socket =
           socket
           |> assign(:file_pick_bases, bases)
-          |> AttachFile.handle_attach_result(path)
+
+        socket =
+          case kind do
+            # Image/audio files route to the binary staging flow: raw bytes are
+            # staged in-memory (base64 encoding happens only at submit); the
+            # helper puts a friendly error flash + pushes %{error: true} on the
+            # kind's picker channel when the read fails.
+            "image" ->
+              AttachFile.handle_binary_attach_result(socket, path, :image)
+
+            "audio" ->
+              AttachFile.handle_binary_attach_result(socket, path, :audio)
+
+            # Text (and any unknown kind, defaulting to text): the original
+            # byte-identical text pipeline.
+            _ ->
+              AttachFile.handle_attach_result(socket, path)
+          end
 
         {:noreply, socket}
     end
+  end
+
+  @impl true
+  def handle_event("remove_staged_attachment", %{"index" => index}, socket)
+      when is_binary(index) do
+    # Remove one staged binary attachment by list index (the chip's
+    # phx-value-index). The index arrives as a string; parse it with a
+    # rescue-free safe parse (never String.to_atom, never a bare raise) and
+    # bounds-check against the current staged list. Invalid indices are a
+    # no-op — the staged list only shrinks via valid removes.
+    i =
+      case Integer.parse(index) do
+        {i, ""} when i >= 0 -> i
+        _ -> nil
+      end
+
+    staged = socket.assigns[:staged_attachments] || []
+
+    socket =
+      if is_integer(i) and i < length(staged) do
+        assign(socket, :staged_attachments, List.delete_at(staged, i))
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  # Missing/non-string "index" payload → no-op (never raise on odd shapes).
+  def handle_event("remove_staged_attachment", _params, socket) do
+    {:noreply, socket}
   end
 
   @impl true
@@ -1663,6 +1751,21 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_info({:directory_picker_result, @attach_picker_id, {:ok, path}}, socket) do
     {:noreply, AttachFile.handle_attach_result(socket, path)}
+  end
+
+  # Image/audio picker results route to the binary attach flow. These picker
+  # ids are the literal counterparts of the @attach_picker_id_image /
+  # @attach_picker_id_audio attrs in the AttachFile support module (its
+  # handle_binary_attach_result/3 pushes the result on the same id's channel),
+  # kept as literals in both modules under parallel compilation.
+  @impl true
+  def handle_info({:directory_picker_result, @attach_picker_id_image, {:ok, path}}, socket) do
+    {:noreply, AttachFile.handle_binary_attach_result(socket, path, :image)}
+  end
+
+  @impl true
+  def handle_info({:directory_picker_result, @attach_picker_id_audio, {:ok, path}}, socket) do
+    {:noreply, AttachFile.handle_binary_attach_result(socket, path, :audio)}
   end
 
   @impl true
@@ -2508,42 +2611,95 @@ defmodule EvoDashWeb.ProjectsLive do
         opts
       end
 
-    start_result =
-      if socket.assigns.remote? do
-        NodeContext.start_task(socket.assigns.current_node, task_type, opts)
-      else
-        TaskRegistry.start_task(task_type, opts)
-      end
+    # Staged binary attachments (image/audio) → the `:attachments` task opt.
+    # Raw bytes are staged in-memory only; the task-opts layer must carry
+    # BASE64 (the core Store.Codec Jason-encodes opts — raw non-UTF-8 binaries
+    # would abort the encode and silently drop the key). Leave opts untouched
+    # when nothing is staged (byte-identical old behavior).
+    staged = socket.assigns[:staged_attachments] || []
 
-    case start_result do
-      {:ok, task} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :info,
-           gettext("%{type} task started with ID: %{id}",
-             type: String.capitalize(to_string(task_type)),
-             id: task.id
-           )
+    # Belt-and-braces cap re-check (staging already enforces the caps, so this
+    # should be unreachable): refuse to start — WITHOUT clearing the staged
+    # state — so the user can trim attachments and retry.
+    over_cap? =
+      length(staged) > @max_attachments or
+        Enum.any?(staged, fn entry ->
+          is_map(entry) and is_binary(entry["data"]) and
+            byte_size(entry["data"]) > @max_attachment_bytes
+        end)
+
+    if over_cap? do
+      # zh_CN: 附件超过数量/大小上限，任务未启动，已暂存的附件保留，用户可删除后重试。
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext(
+           "Too many attachments or an attachment is too large — remove some and try again."
          )
-         |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
-         # The prompt is intentionally cleared after a successful launch.
-         # assign_form_defaults/1 resets @task_prompt to "" (so the server
-         # re-seeds data-layout="compact"), and the "clear_prompt" push_event
-         # empties the visible textarea — which morphdom skips under
-         # phx-update="ignore" — and removes the persisted draft, so neither
-         # the DOM nor a reload can resurrect the submitted prompt.
-         |> Assigns.assign_form_defaults()
-         |> StatePersistence.maybe_persist_state()
-         |> push_event("clear_prompt", %{})}
+       )}
+    else
+      opts =
+        if staged != [] do
+          attachments =
+            Enum.map(staged, fn entry ->
+              # Entries are built by the staging flow with all four keys;
+              # Map.get defaults keep this defensive against odd shapes.
+              %{
+                "type" => Map.get(entry, "type", "image"),
+                "name" => Map.get(entry, "name", ""),
+                "media_type" => Map.get(entry, "media_type", "application/octet-stream"),
+                "data" => Base.encode64(Map.get(entry, "data", ""))
+              }
+            end)
 
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Failed to start task: %{reason}", reason: inspect(reason))
-         )}
+          Keyword.put(opts, :attachments, attachments)
+        else
+          opts
+        end
+
+      start_result =
+        if socket.assigns.remote? do
+          NodeContext.start_task(socket.assigns.current_node, task_type, opts)
+        else
+          TaskRegistry.start_task(task_type, opts)
+        end
+
+      case start_result do
+        {:ok, task} ->
+          {:noreply,
+           socket
+           |> put_flash(
+             :info,
+             gettext("%{type} task started with ID: %{id}",
+               type: String.capitalize(to_string(task_type)),
+               id: task.id
+             )
+           )
+           |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
+           # The prompt is intentionally cleared after a successful launch.
+           # assign_form_defaults/1 resets @task_prompt to "" (so the server
+           # re-seeds data-layout="compact"), and the "clear_prompt" push_event
+           # empties the visible textarea — which morphdom skips under
+           # phx-update="ignore" — and removes the persisted draft, so neither
+           # the DOM nor a reload can resurrect the submitted prompt.
+           |> Assigns.assign_form_defaults()
+           # Staged binary attachments must survive mode changes but NOT a
+           # successful launch — cleared here (after assign_form_defaults,
+           # which keeps a fixed key list and has no knowledge of staging)
+           # rather than inside assign_form_defaults/1.
+           |> assign(:staged_attachments, [])
+           |> StatePersistence.maybe_persist_state()
+           |> push_event("clear_prompt", %{})}
+
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to start task: %{reason}", reason: inspect(reason))
+           )}
+      end
     end
   end
 end
