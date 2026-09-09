@@ -66,6 +66,34 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       assert fetched.lease_expires_at == nil
     end
 
+    test "watchdog resolution persists the timeout error payload (kind :timeout, source :finalizing_watchdog)" do
+      set_grace(3)
+      task_id = "watchdog_error_#{System.unique_integer([:positive])}"
+      seed_task(task_id, :finalizing)
+
+      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert fetched.status == :failed
+      assert fetched.result == "Finalization did not complete within 3 minutes"
+
+      # The canonical watchdog error payload rides the same write (no
+      # stacktrace — the failure is a wall-clock timeout, not a crash site).
+      assert fetched.error == %{
+               kind: :timeout,
+               source: :finalizing_watchdog,
+               message: "Finalization did not complete within 3 minutes",
+               stacktrace: nil
+             }
+
+      # Column round-trip via the raw Store read agrees.
+      store_fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      assert store_fetched.status == :failed
+      assert store_fetched.result == fetched.result
+      assert store_fetched.error == fetched.error
+    end
+
     test "terminal tasks (:completed/:failed) are left untouched by a recheck" do
       # Explicit 0-minute grace: even an immediate-fire watchdog must not touch
       # terminal rows (the recheck handler no-ops on completed/failed/cancelled).

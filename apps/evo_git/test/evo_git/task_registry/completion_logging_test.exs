@@ -84,6 +84,70 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
     assert fetched.status == :completed
   end
 
+  # --- wrapper {ref, result} failures persist the structured error payload ---
+
+  test "a wrapper {:error, _} result persists :failed with a result_handler error payload" do
+    task_id = "wrapper_error_#{System.unique_integer([:positive])}"
+    seed_task(task_id, :running)
+
+    wrapper_pid = spawn(fn -> Process.sleep(:infinity) end)
+    ref = make_ref()
+    inject_task_ref(task_id, wrapper_pid, ref)
+
+    send(EvoGit.TaskRegistry, {ref, {:error, "boom"}})
+
+    # Mailbox flush: the {ref, result} handler self-casts the terminal status
+    # update, but that self-cast is queued AFTER the first call already in the
+    # mailbox — so the first call returns before the update is processed. A
+    # second read (queued after the self-cast) guarantees the terminal write.
+    TaskRegistry.list_tasks()
+    TaskRegistry.get_task(task_id)
+
+    # Full decode via the registry (Codec.decode_task) — the error round-trips.
+    fetched = TaskRegistry.get_task(task_id)
+    assert fetched.status == :failed
+    assert fetched.error.kind == :error
+    assert fetched.error.source == :result_handler
+    assert is_binary(fetched.error.message)
+    assert is_list(fetched.error.stacktrace)
+
+    # Column round-trip via the raw Store read — same persisted payload.
+    store_fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+    assert store_fetched.status == :failed
+    assert store_fetched.error.kind == :error
+    assert store_fetched.error.source == :result_handler
+    assert store_fetched.error.message == fetched.error.message
+    assert store_fetched.error.stacktrace == fetched.error.stacktrace
+
+    state = :sys.get_state(EvoGit.TaskRegistry)
+    refute Map.has_key?(state.task_refs, task_id)
+
+    cleanup_process(wrapper_pid)
+  end
+
+  test "a wrapper {:exit, _} result persists :failed with kind :exit" do
+    task_id = "wrapper_exit_#{System.unique_integer([:positive])}"
+    seed_task(task_id, :running)
+
+    wrapper_pid = spawn(fn -> Process.sleep(:infinity) end)
+    ref = make_ref()
+    inject_task_ref(task_id, wrapper_pid, ref)
+
+    send(EvoGit.TaskRegistry, {ref, {:exit, {:shutdown, :crashed}}})
+
+    TaskRegistry.list_tasks()
+    TaskRegistry.get_task(task_id)
+
+    fetched = TaskRegistry.get_task(task_id)
+    assert fetched.status == :failed
+    assert fetched.error.kind == :exit
+    assert fetched.error.source == :result_handler
+    assert is_binary(fetched.error.message)
+    assert is_list(fetched.error.stacktrace)
+
+    cleanup_process(wrapper_pid)
+  end
+
   # --- lost-result guards (unknown refs) ---
 
   test "an unknown-ref {ref, result} message logs a warning and does not crash the registry" do
