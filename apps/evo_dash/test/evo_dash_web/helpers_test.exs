@@ -199,6 +199,49 @@ defmodule EvoDashWeb.HelpersTest do
     end
   end
 
+  describe "task_error_kind_label/1" do
+    test "returns the exact label for every known error kind" do
+      assert task_error_kind_label(:error) == "Failed"
+      assert task_error_kind_label(:exit) == "Failed"
+      assert task_error_kind_label(:down) == "Agent crashed"
+      assert task_error_kind_label(:force_kill) == "Force-killed"
+      assert task_error_kind_label(:timeout) == "Timed out"
+      assert task_error_kind_label(:restart) == "Runtime restarted"
+      assert task_error_kind_label(:lease_expired) == "Lease expired"
+      assert task_error_kind_label(:recheck) == "Recheck"
+    end
+
+    test "error and exit share the generic Failed label" do
+      assert task_error_kind_label(:error) == task_error_kind_label(:exit)
+    end
+
+    test "falls back to Unknown for unknown atoms, nil, and non-atoms" do
+      assert task_error_kind_label(:unknown) == "Unknown"
+      assert task_error_kind_label(nil) == "Unknown"
+      assert task_error_kind_label("timeout") == "Unknown"
+      assert task_error_kind_label(42) == "Unknown"
+    end
+  end
+
+  describe "task_error_source_label/1" do
+    test "returns the exact label for every known error source" do
+      assert task_error_source_label(:result_handler) == "Result handler"
+      assert task_error_source_label(:down_handler) == "Agent monitor"
+      assert task_error_source_label(:force_kill_task) == "Force kill"
+      assert task_error_source_label(:finalizing_watchdog) == "Finalization watchdog"
+      assert task_error_source_label(:startup_reconcile) == "Startup reconcile"
+      assert task_error_source_label(:lease_sweep) == "Lease sweep"
+      assert task_error_source_label(:recheck_resolve) == "Recheck"
+    end
+
+    test "falls back to Unknown for unknown atoms, nil, and non-atoms" do
+      assert task_error_source_label(:unknown) == "Unknown"
+      assert task_error_source_label(nil) == "Unknown"
+      assert task_error_source_label("lease_sweep") == "Unknown"
+      assert task_error_source_label(%{}) == "Unknown"
+    end
+  end
+
   describe "connection_status_dot_class/1" do
     test "returns correct dot class for known phases" do
       assert connection_status_dot_class(:local) == "bg-info"
