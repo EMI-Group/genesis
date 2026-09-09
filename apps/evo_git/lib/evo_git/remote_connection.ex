@@ -430,7 +430,13 @@ defmodule EvoGit.RemoteConnection do
     connecting = %{state | phase: :connecting, last_error: nil}
     broadcast_status(state.target, connecting)
 
-    {:ok, worker} = Task.start_link(fn -> connect_worker(self(), connecting) end)
+    # Capture the GenServer pid BEFORE the Task closure: inside the anonymous
+    # function self() would be the WORKER process, and connect_worker/2 sends
+    # its {:connect_result, ...} to the server argument — a worker sending to
+    # itself would lose the result when it exits, leaving only the :DOWN
+    # (misreported as "connect worker crashed").
+    server = self()
+    {:ok, worker} = Task.start_link(fn -> connect_worker(server, connecting) end)
     ref = Process.monitor(worker)
 
     {:reply, {:ok, :connecting}, %{connecting | connect_worker: {worker, ref}}}

@@ -336,7 +336,8 @@ defmodule EvoGit.RemoteConnectionTest do
           # a tunnel_not_ready failure broadcast — but NOT distribution_failed
           # (that would mean the worker never reached the already-distributed
           # branch).
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :error, last_error: le}},
+          assert_receive {:remote_connection_status, ^target_id,
+                          %{phase: :error, last_error: le}},
                          5_000
 
           assert is_binary(le) and le != ""
@@ -398,12 +399,16 @@ defmodule EvoGit.RemoteConnectionTest do
           assert elapsed < 5_000_000
 
           refute EvoGit.RemoteConnection.connected?(target_id)
-          assert %{^target_id => %{phase: :connecting}} = EvoGit.RemoteConnection.list_connections()
+
+          assert %{^target_id => %{phase: :connecting}} =
+                   EvoGit.RemoteConnection.list_connections()
 
           # disconnect/1 during the in-flight connect: prompt, kills the worker
           # (closing its ssh port) and ends with a terminal :disconnected
           # broadcast reflecting the intent.
-          {elapsed_disc, disc} = :timer.tc(fn -> EvoGit.RemoteConnection.disconnect(target_id) end)
+          {elapsed_disc, disc} =
+            :timer.tc(fn -> EvoGit.RemoteConnection.disconnect(target_id) end)
+
           assert disc == :ok
           assert elapsed_disc < 5_000_000
 
@@ -456,7 +461,8 @@ defmodule EvoGit.RemoteConnectionTest do
           # The fake ssh exits immediately → wait_for_tunnel fails fast → the
           # worker reports the failure → the manager BROADCASTS :error with the
           # detail populated (this failure arm was silent before the refactor).
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :error, last_error: le}},
+          assert_receive {:remote_connection_status, ^target_id,
+                          %{phase: :error, last_error: le}},
                          5_000
 
           assert is_binary(le) and le != ""
@@ -496,7 +502,8 @@ defmodule EvoGit.RemoteConnectionTest do
           listener_pid = spawn_link(fn -> accept_close_loop(open_listener(local_port)) end)
           on_exit(fn -> send(listener_pid, :stop) end)
 
-          assert_receive {:remote_connection_status, ^target_id, %{phase: :error, last_error: le}},
+          assert_receive {:remote_connection_status, ^target_id,
+                          %{phase: :error, last_error: le}},
                          10_000
 
           assert is_binary(le) and le != ""
@@ -1598,13 +1605,23 @@ defmodule EvoGit.RemoteConnectionTest do
   defp restore_env(app, key, nil), do: Application.delete_env(app, key)
   defp restore_env(app, key, value), do: Application.put_env(app, key, value)
 
-  # Puts a fake `ssh` executable that exits immediately (no tunnel, no network)
-  # first on PATH, restoring both on exit. Used by the already-distributed
-  # connect test so the tunnel Port dies fast and deterministically — a real
-  # ssh to the fake target (example.com) can hang for the whole tunnel budget
-  # in offline environments. POSIX-only (`#!/bin/sh`); callers must gate on
-  # non-Windows.
-  defp with_fake_ssh_immediate_exit(fun) do
+  # ── Async-connect test helpers ─────────────────────────────────────
+
+  # Puts a fake `ssh` executable first on PATH that emulates the connect
+  # worker's tunnel invocation, restoring PATH on exit (same PATH-prepend +
+  # on_exit pattern as with_fake_ssh/1 above). The fake logs its full argv to
+  # the file handed to `fun` (one line per invocation) and then either exits
+  # immediately ([mode: :exit]) or sleeps 30s ([mode: :sleep]) so the tunnel
+  # Port stays alive while the test exercises the in-flight connect. With
+  # [write_port_to: path] the fake additionally extracts the local port from
+  # its `-L <local_port>:127.0.0.1:<remote_port>` spec and writes it to that
+  # file — used by the node-connect-failure test to stand up an
+  # accept-and-close listener that makes Node.connect fail deterministically.
+  # POSIX-only (`#!/bin/sh`); callers must gate on non-Windows.
+  defp with_fake_ssh_connect(opts, fun) do
+    mode = Keyword.get(opts, :mode, :exit)
+    write_port_to = Keyword.get(opts, :write_port_to)
+
     tmp =
       Path.join(
         System.tmp_dir!(),
@@ -1612,9 +1629,54 @@ defmodule EvoGit.RemoteConnectionTest do
       )
 
     File.mkdir_p!(tmp)
+    log = Path.join(tmp, "ssh.log")
+
+    port_extract =
+      case write_port_to do
+        nil ->
+          ""
+
+        port_file ->
+          # `-L` and its `<port>:127.0.0.1:<remote>` spec arrive as separate
+          # argv words (build_tunnel_command joins its parts with spaces and
+          # Port.open {:spawn, cmd} goes through the shell), so handle both
+          # that shape and an attached `-L<port>:...` defensively.
+          """
+          prev=""
+          for a in "$@"; do
+            case "$a" in
+              -L) prev="-L" ;;
+              -L*)
+                p="${a#-L}"
+                p="${p# }"
+                echo "${p%%:*}" > "#{port_file}"
+                ;;
+              *)
+                if [ "$prev" = "-L" ]; then
+                  echo "${a%%:*}" > "#{port_file}"
+                  prev=""
+                fi
+                ;;
+            esac
+          done
+          """
+      end
+
+    sleep =
+      case mode do
+        :sleep -> "sleep 30"
+        _ -> ""
+      end
+
+    script = """
+    #!/bin/sh
+    printf '%s\\n' "$*" >> "#{log}"
+    #{port_extract}#{sleep}
+    exit 0
+    """
 
     ssh_path = Path.join(tmp, "ssh")
-    File.write!(ssh_path, "#!/bin/sh\nexit 0\n")
+    File.write!(ssh_path, script)
     File.chmod!(ssh_path, 0o755)
 
     original_path = System.get_env("PATH")
@@ -1631,6 +1693,179 @@ defmodule EvoGit.RemoteConnectionTest do
       File.rm_rf!(tmp)
     end)
 
-    fun.()
+    fun.(log)
+  end
+
+  # Starts an EPMD-less distributed test node (`genesis@127.0.0.1`, longnames,
+  # listen 9100–9200, EpmdDist epmd_module — mirroring how the app enables
+  # distribution on demand) so connect workers take the already-distributed
+  # branch and reach the tunnel flow. Returns :ok when distribution is
+  # available — either already running on this VM (not ours to stop), or
+  # successfully started here, in which case an on_exit stops it again and
+  # restores the kernel env — or :error when the environment cannot run
+  # distribution (callers skip their distributed-connect assertions).
+  defp start_distributed_test_node do
+    if node() != :nonode@nohost do
+      :ok
+    else
+      original_epmd = Application.get_env(:kernel, :epmd_module)
+      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
+      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
+
+      Application.put_env(:kernel, :inet_dist_listen_min, 9100)
+      Application.put_env(:kernel, :inet_dist_listen_max, 9200)
+      Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
+
+      case :net_kernel.start([:"genesis@127.0.0.1", :longnames]) do
+        {:ok, _pid} ->
+          on_exit(fn ->
+            if node() != :nonode@nohost do
+              :net_kernel.stop()
+            end
+
+            # EpmdDist.register_node/3 persists the local name in its
+            # persistent-term registry at net_kernel start; erase the entry
+            # this helper created (erase/1 raises on a missing key, hence the
+            # guard).
+            if :persistent_term.get({:evogit_epmd, :genesis}, :absent) != :absent do
+              :persistent_term.erase({:evogit_epmd, :genesis})
+            end
+
+            restore_env(:kernel, :epmd_module, original_epmd)
+            restore_env(:kernel, :inet_dist_listen_min, original_min)
+            restore_env(:kernel, :inet_dist_listen_max, original_max)
+          end)
+
+          :ok
+
+        _other ->
+          # Environment cannot run distribution — put the kernel env back so
+          # nothing leaks into sibling tests, and report :error.
+          restore_env(:kernel, :epmd_module, original_epmd)
+          restore_env(:kernel, :inet_dist_listen_min, original_min)
+          restore_env(:kernel, :inet_dist_listen_max, original_max)
+          :error
+      end
+    end
+  end
+
+  # Number of ssh invocations recorded in the fake ssh's log (one line per
+  # invocation) — used to prove duplicate connects spawn no second tunnel.
+  defp ssh_invocation_count(log) do
+    case File.read(log) do
+      {:ok, contents} -> contents |> String.split("\n", trim: true) |> length()
+      {:error, _} -> 0
+    end
+  end
+
+  # Waits (bounded) for the fake ssh's log to contain its first argv line and
+  # returns it — proves the tunnel command reached ssh with the expected args.
+  defp await_ssh_argv_line(log, timeout \\ 5_000) do
+    wait_until(
+      fn ->
+        case File.read(log) do
+          {:ok, contents} ->
+            case String.split(contents, "\n", trim: true) do
+              [line | _] -> {:ok, line}
+              [] -> :retry
+            end
+
+          {:error, _} ->
+            :retry
+        end
+      end,
+      timeout,
+      "fake ssh never logged an argv line"
+    )
+  end
+
+  # Waits (bounded) for the fake ssh (write_port_to: ...) to write the tunnel's
+  # local port and returns it as an integer.
+  defp await_tunnel_port_file(port_file, timeout \\ 5_000) do
+    wait_until(
+      fn ->
+        case File.read(port_file) do
+          {:ok, contents} ->
+            case Integer.parse(String.trim(contents)) do
+              {port, ""} -> {:ok, port}
+              _ -> :retry
+            end
+
+          {:error, _} ->
+            :retry
+        end
+      end,
+      timeout,
+      "fake ssh never wrote the tunnel port file"
+    )
+  end
+
+  # Polls `fun` every 20ms until it returns {:ok, value} (returned as value) or
+  # the timeout elapses (flunk with `label`).
+  defp wait_until(fun, timeout, label) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline, timeout, label)
+  end
+
+  defp do_wait_until(fun, deadline, timeout, label) do
+    case fun.() do
+      {:ok, value} ->
+        value
+
+      :retry ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk("#{label} (timed out after #{timeout}ms)")
+        else
+          Process.sleep(20)
+          do_wait_until(fun, deadline, timeout, label)
+        end
+    end
+  end
+
+  # Opens a TCP listener on 127.0.0.1:<port> — standing in for the remote
+  # daemon's distribution port in the node-connect-failure test.
+  defp open_listener(local_port) do
+    case :gen_tcp.listen(local_port, [
+           :inet,
+           {:ip, {127, 0, 0, 1}},
+           {:active, false},
+           {:reuseaddr, true}
+         ]) do
+      {:ok, socket} ->
+        socket
+
+      {:error, reason} ->
+        flunk(
+          "could not bind accept-close listener on 127.0.0.1:#{local_port}: " <>
+            inspect(reason)
+        )
+    end
+  end
+
+  # Accepts-and-closes every inbound connection in a loop (an absent remote
+  # daemon: TCP connects succeed, so the tunnel-readiness probe passes, but the
+  # Erlang distribution handshake that follows cannot complete). The 500ms
+  # accept timeout lets a :stop message interrupt the blocking accept, so the
+  # test's on_exit can shut the listener down cleanly.
+  defp accept_close_loop(listener) do
+    case :gen_tcp.accept(listener, 500) do
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        accept_close_loop(listener)
+
+      {:error, :timeout} ->
+        receive do
+          :stop ->
+            :gen_tcp.close(listener)
+            :ok
+        after
+          0 ->
+            accept_close_loop(listener)
+        end
+
+      {:error, _reason} ->
+        # Listener closed underneath us (process shutdown) — bail out.
+        :ok
+    end
   end
 end
