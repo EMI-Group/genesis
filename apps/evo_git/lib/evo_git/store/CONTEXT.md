@@ -86,12 +86,12 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 - Undecodable rows are SKIPPED + `Logger.warning` (no INSERT-into-quarantine + DELETE-from-live pair).
 - The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub at init.
 
-## Schema: `updated_at` column (store-internal bookkeeping)
+## Schema: `error` + `updated_at` columns
 
-- `tasks` has a 19th column `updated_at TEXT` (after `branch_name`), written via targeted `update_task_columns` with `Queries.encode_column_value(:updated_at, dt)` → `Codec.encode_datetime/1` (fixed-precision ISO, same as `started_at`/`finished_at`).
-- Deliberately NOT in `Codec.@task_columns` nor `%TaskInfo{}` (changed-since poll tracking); positional `encode_task`/`decode_task` and `Queries.task_select_sql/0` never touch it.
+- `tasks` has 20 columns: 19 in `Codec.@task_columns` (the 19th is `error TEXT`, after `branch_name`) plus a 20th store-internal `updated_at TEXT` (after `error`). `encode_task`/`decode_task` are positional over `@task_columns` (19 values incl. the `error` cell via `encode_error`/`decode_error`); the `put_task` INSERT adds `updated_at` as a literal 20th value (store.ex:484-499, VALUES ?1..?20).
+- `updated_at` is deliberately NOT in `Codec.@task_columns` nor `%TaskInfo{}` (changed-since poll tracking); it is written by `put_task` and via targeted `update_task_columns` with `Queries.encode_column_value(:updated_at, dt)` → `Codec.encode_datetime/1` (fixed-precision ISO, same as `started_at`/`finished_at`).
 - Indexes (idempotent `IF NOT EXISTS`): `idx_tasks_updated_at ON tasks(updated_at)` (backs the changed-since poll query) and `idx_tasks_started_at ON tasks(started_at)` (backs `safe_select_paginated_tasks`'s `ORDER BY started_at DESC`).
-- Migration: `Schema.migrate_schema/1` adds it (`ALTER TABLE tasks ADD COLUMN updated_at TEXT` when missing, same pattern as lease_expires_at/model_id/project_path/branch_name clauses); fresh DBs get it from `create_tables/1` DDL directly.
+- Migration: `Schema.migrate_schema/1` adds `error` and `updated_at` (`ALTER TABLE tasks ADD COLUMN ... WHEN missing, same pattern as lease_expires_at/model_id/project_path/branch_name clauses); fresh DBs get both from `create_tables/1` DDL directly. Existing pre-`error` deployments need `mix migrate.store` — `Store.init/1` does not auto-migrate.
 
 ## Canonical result encoding
 
