@@ -67,6 +67,30 @@ defmodule EvoGit.AgentSchedulerTest do
     end
   end
 
+  # Runs `fun` with a LIVE `EvoGit.SandboxSlice` GenServer registered. The app
+  # only starts it on Linux (EvoGit.Application), so mirroring
+  # sandbox_slice_test.exs a missing instance is started here and stopped
+  # afterwards. The stop is resume-guarded: a slice still suspended by the fun
+  # (assertion-failure path) would wedge the synchronous GenServer.stop forever.
+  defp with_live_sandbox_slice(fun) do
+    case Process.whereis(EvoGit.SandboxSlice) do
+      nil ->
+        {:ok, pid} = EvoGit.SandboxSlice.start_link([])
+
+        try do
+          fun.()
+        after
+          if Process.alive?(pid) do
+            :sys.resume(pid)
+            GenServer.stop(pid, :normal)
+          end
+        end
+
+      pid when is_pid(pid) ->
+        fun.()
+    end
+  end
+
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
 
@@ -506,6 +530,65 @@ defmodule EvoGit.AgentSchedulerTest do
                    entry
                  )
              end)
+    end
+  end
+
+  # --- update_config(sandbox_resources:) — async-cast slice regression ---
+
+  describe "update_config with sandbox_resources" do
+    test "returns :ok promptly — sandbox_resources update never blocks on slice work" do
+      # `State.do_update_config/2` propagates sandbox_resources to the live
+      # slice ONLY on Linux (the branch is `EvoGit.Platform.linux?()`-gated),
+      # so the sync-blocking regression cannot reproduce off-Linux — skip.
+      if not EvoGit.Platform.linux?() do
+        :ok
+      else
+        # Restore the scheduler's prior in-memory sandbox_resources override
+        # (update_config writes are in-memory only, but later tests in this
+        # file/suite share the live scheduler state).
+        previous_resources = AgentScheduler.get_config(:sandbox_resources)
+        on_exit(fn -> AgentScheduler.update_config(sandbox_resources: previous_resources) end)
+
+        # Keys the slice schema accepts (sandbox_slice.ex resource_properties:
+        # cpu_weight → CPUWeight, memory_max → MemoryMax, tasks_max → TasksMax;
+        # cpu_quota is intentionally absent to prove partial maps are fine).
+        resources = %{cpu_weight: 30, memory_max: "2G", tasks_max: 512}
+
+        with_live_sandbox_slice(fn ->
+          # ALWAYS resume the slice on the way out — also on assertion failure
+          # — and register BEFORE suspending so the suspended window is bounded.
+          on_exit(fn ->
+            if Process.whereis(EvoGit.SandboxSlice), do: :sys.resume(EvoGit.SandboxSlice)
+          end)
+
+          :sys.suspend(EvoGit.SandboxSlice)
+
+          # Discriminator: the FIXED path casts (fire-and-forget) and replies
+          # :ok immediately. The OLD synchronous path issued a 10s
+          # GenServer.call to the suspended slice INSIDE the scheduler's
+          # handle_call — the call would still be blocked at 1s (and the
+          # caller's default 5s GenServer.call timeout would blow through).
+          task =
+            Task.async(fn ->
+              AgentScheduler.update_config(sandbox_resources: resources)
+            end)
+
+          try do
+            assert Task.yield(task, 1_000) == {:ok, :ok}
+          after
+            Task.shutdown(task, :brutal_kill)
+          end
+
+          # The scheduler carried the new resources in its config state...
+          assert AgentScheduler.get_config(:sandbox_resources) == resources
+
+          # ...and the cast reached the slice: it was enqueued BEFORE the
+          # scheduler replied to the caller, and once resumed the slice's FIFO
+          # mailbox applies it before answering this get_state system message.
+          :sys.resume(EvoGit.SandboxSlice)
+          assert %{resources: ^resources} = :sys.get_state(EvoGit.SandboxSlice)
+        end)
+      end
     end
   end
 end

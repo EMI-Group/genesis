@@ -25,6 +25,8 @@ defmodule EvoGit.SystemSamplerTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.RemoteAPI
   alias EvoGit.AgentScheduler.SchedMeta
@@ -53,6 +55,14 @@ defmodule EvoGit.SystemSamplerTest do
     :tool_used,
     :tool_waiting
   ]
+
+  # App-env test seams read PER CALL by the sampler (the lib's
+  # "Scheduler-call seams & exit containment"; `:peak_hours_now_fun`
+  # convention). Defaults are the real bounded scheduler reads; tests inject
+  # failing funs and MUST delete both keys in on_exit so the defaults (and the
+  # sibling async: false files sharing this app env) are unaffected.
+  @config_seam_key :system_sampler_config_fun
+  @llm_slots_seam_key :system_sampler_llm_slots_fun
 
   # --- Shared fixtures (same shape as remote_api_test.exs) ---
 
@@ -142,6 +152,53 @@ defmodule EvoGit.SystemSamplerTest do
     %{llm_capacity: sample.llm_capacity, tool_capacity: sample.tool_capacity}
   end
 
+  # --- Scheduler-call failure seam helpers ---
+
+  # Injects a failing seam fun under `key` and guarantees the env key is
+  # deleted when the test finishes (the sampler reads the env per call, so
+  # deleting restores the default real bounded scheduler read instantly).
+  defp put_seam(key, fun) do
+    Application.put_env(:evo_git, key, fun)
+    on_exit(fn -> Application.delete_env(:evo_git, key) end)
+    :ok
+  end
+
+  # Public ETS counter (owned by the test process, writable from the sampler
+  # process) counting how many times a seam fun was actually invoked.
+  defp new_seam_counter do
+    tid = :ets.new(:sys_sampler_seam_calls, [:set, :public, write_concurrency: true])
+    on_exit(fn -> if :ets.info(tid) != :undefined, do: :ets.delete(tid) end)
+    tid
+  end
+
+  defp seam_calls(tid) do
+    :ets.lookup_element(tid, :calls, 2)
+  end
+
+  # A config-fetch seam that fails like a wedged scheduler: exits with the
+  # same {:timeout, {GenServer, :call, ...}} shape a bounded call would raise
+  # (`safe_scheduler_call/1` catches ANY :exit). Optionally counts calls.
+  defp failing_config_fun(tid \\ nil) do
+    fn ->
+      unless is_nil(tid), do: :ets.update_counter(tid, :calls, {2, 1}, {:calls, 0})
+      exit({:timeout, {GenServer, :call, [EvoGit.AgentScheduler, :get_config, 5000]}})
+    end
+  end
+
+  # Same, for the per-tick llm_slots read.
+  defp failing_llm_slots_fun(tid \\ nil) do
+    fn ->
+      unless is_nil(tid), do: :ets.update_counter(tid, :calls, {2, 1}, {:calls, 0})
+
+      exit({:timeout, {GenServer, :call, [EvoGit.AgentScheduler, :get_llm_slot_status, 5000]}})
+    end
+  end
+
+  # Counts how many times `substring` appears in a captured log body.
+  defp occurrences(log, substring) do
+    log |> String.split(substring) |> length() |> Kernel.-(1)
+  end
+
   # Registers an on_exit that restores the scheduler config to a pre-mutation
   # baseline cfg. Every test in this file that mutates the global scheduler
   # config via `AgentScheduler.update_config/1` MUST restore it (the scheduler
@@ -174,6 +231,11 @@ defmodule EvoGit.SystemSamplerTest do
   setup do
     clear_sched_meta()
     on_exit(fn -> clear_sched_meta() end)
+
+    # Defensive: never let a scheduler-call seam survive into another test
+    # (each seam test also cleans up via put_seam/2's own on_exit).
+    Application.delete_env(:evo_git, @config_seam_key)
+    Application.delete_env(:evo_git, @llm_slots_seam_key)
     :ok
   end
 
@@ -536,6 +598,215 @@ defmodule EvoGit.SystemSamplerTest do
       :ok = GenServer.call(pid, :tick)
       assert capacities_of(last_sample(pid)) == %{llm_capacity: 7, tool_capacity: 5}
       assert last_sample(pid).llm_slots == live_llm_slots
+    end
+  end
+
+  # ── Scheduler-call failure resilience (seams) ────────────────────
+  #
+  # Regression tests for the busy/wedged-AgentScheduler hardening (commit
+  # db0889d7a): the sampler's two scheduler reads (config refresh + per-tick
+  # llm_slots) must never crash it, must degrade the sample only, must not
+  # hammer a wedged scheduler, must recover automatically once it responds,
+  # and must not spam the log. The failing seams exit with the same
+  # {:timeout, {GenServer, :call, ...}} shape a bounded call raises — what
+  # `safe_scheduler_call/1` catches.
+
+  describe "scheduler-call failure resilience (seams)" do
+    test "(a) a failed config fetch degrades to a zero-capacity sample, logs a warning, and never crashes the sampler" do
+      put_seam(@config_seam_key, failing_config_fun())
+
+      :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, "system")
+      on_exit(fn -> Phoenix.PubSub.unsubscribe(EvoGit.PubSub, "system") end)
+      current_node = node()
+
+      pid = start_unregistered_sampler()
+
+      log =
+        capture_log(fn ->
+          :ok = GenServer.call(pid, :tick)
+          Process.sleep(20)
+        end)
+
+      # The sampler survives the cross-GenServer :exit...
+      assert Process.alive?(pid)
+
+      # ...logs a clear warning naming the failing call...
+      assert log =~ "SystemSampler: AgentScheduler get_config call failed"
+
+      # ...and still broadcasts the exact 13-key contract map with the zero
+      # capacity fallback (no cache yet → {:failed_at, _} marker).
+      assert_receive {:system_sample, ^current_node, 1, sample}, 1_000
+
+      assert Map.keys(sample) |> Enum.sort() == @sorted_keys
+      assert sample.scheduler_alive == true
+      assert capacities_of(sample) == %{llm_capacity: 0, tool_capacity: 0}
+
+      # Sampling continues afterwards: tick 2 is served from the failed-refresh
+      # marker (no further scheduler call on a non-refresh tick).
+      :ok = GenServer.call(pid, :tick)
+      assert_receive {:system_sample, ^current_node, 2, sample2}, 1_000
+      assert capacities_of(sample2) == %{llm_capacity: 0, tool_capacity: 0}
+      assert Process.alive?(pid)
+    end
+
+    test "(b) a persistently failing config fetch is retried at the 10-tick refresh cadence, never per tick" do
+      counter = new_seam_counter()
+      put_seam(@config_seam_key, failing_config_fun(counter))
+
+      pid = start_unregistered_sampler()
+
+      # Ticks 1..10: the tick-1 failure records a {:failed_at, _} marker, so
+      # ticks 2..10 skip the scheduler entirely — exactly ONE seam call.
+      for _ <- 1..10 do
+        :ok = GenServer.call(pid, :tick)
+      end
+
+      assert seam_calls(counter) == 1
+
+      # Tick 11 (rem(11, 10) == 1) is the next refresh tick → second attempt.
+      :ok = GenServer.call(pid, :tick)
+      assert seam_calls(counter) == 2
+      assert Process.alive?(pid)
+    end
+
+    test "(c) removing the failing config seam restores live capacity totals on the next refresh tick" do
+      # Deterministic post-recovery totals (baseline restored on exit).
+      cfg = RemoteAPI.get_config()
+      restore_config_on_exit(cfg)
+
+      :ok =
+        AgentScheduler.update_config(
+          model_profiles: [%{id: "sys-sampler-recovery", concurrency: 7}],
+          max_tool_concurrency: 5
+        )
+
+      expected_totals = %{llm_capacity: 7, tool_capacity: 5}
+
+      put_seam(@config_seam_key, failing_config_fun())
+      pid = start_unregistered_sampler()
+
+      # Tick 1 fails with no cache yet → zero fallback + failed-refresh marker.
+      :ok = GenServer.call(pid, :tick)
+      assert capacities_of(last_sample(pid)) == %{llm_capacity: 0, tool_capacity: 0}
+
+      # Ticks 2..10 keep serving the zero fallback from the marker (no retry).
+      for _ <- 2..10 do
+        :ok = GenServer.call(pid, :tick)
+        assert capacities_of(last_sample(pid)) == %{llm_capacity: 0, tool_capacity: 0}
+      end
+
+      # Heal the scheduler BEFORE the next refresh tick: deleting the env key
+      # restores the default bounded real read from tick 11 on (the seam is
+      # read per call).
+      Application.delete_env(:evo_git, @config_seam_key)
+
+      :ok = GenServer.call(pid, :tick)
+      assert capacities_of(last_sample(pid)) == expected_totals
+      assert Process.alive?(pid)
+    end
+
+    test "(d) an llm_slots fetch failure degrades that tick to %{} and recovers once the scheduler responds" do
+      # Deterministic per-model slot map (baseline restored on exit).
+      cfg = RemoteAPI.get_config()
+      restore_config_on_exit(cfg)
+
+      expected_llm_slots = %{
+        "sys-sampler-llm-slots-a" => %{used: 0, waiting: 0, capacity: 2},
+        "sys-sampler-llm-slots-b" => %{used: 0, waiting: 0, capacity: 5}
+      }
+
+      :ok =
+        AgentScheduler.update_config(
+          model_profiles: [
+            %{id: "sys-sampler-llm-slots-a", concurrency: 2},
+            %{id: "sys-sampler-llm-slots-b", concurrency: 5}
+          ],
+          max_tool_concurrency: 4
+        )
+
+      put_seam(@llm_slots_seam_key, failing_llm_slots_fun())
+      pid = start_unregistered_sampler()
+
+      log =
+        capture_log(fn ->
+          :ok = GenServer.call(pid, :tick)
+          Process.sleep(20)
+        end)
+
+      # Failure → %{} for that tick (the documented scheduler-dead shape) + a
+      # clear warning naming the failing call; the sampler survives.
+      assert Process.alive?(pid)
+      assert log =~ "SystemSampler: AgentScheduler get_llm_slot_status call failed"
+      assert last_sample(pid).llm_slots == %{}
+
+      # Heal: the default bounded real read is restored for the next tick, and
+      # live per-model data comes back immediately (llm_slots is fetched per
+      # tick, never cached).
+      Application.delete_env(:evo_git, @llm_slots_seam_key)
+
+      :ok = GenServer.call(pid, :tick)
+      assert last_sample(pid).llm_slots == expected_llm_slots
+      assert Process.alive?(pid)
+    end
+
+    test "(e) config-fetch warnings are rate-limited to at most one per 10 ticks" do
+      put_seam(@config_seam_key, failing_config_fun())
+      pid = start_unregistered_sampler()
+
+      # @warn_min_interval_ticks = 10: across a 10-tick window of a
+      # persistently wedged scheduler the warning fires at most once (tick 1;
+      # the failed-refresh marker defers both the retry AND the next warning
+      # to the next refresh tick) — never one per tick.
+      log =
+        capture_log(fn ->
+          for _ <- 1..10 do
+            :ok = GenServer.call(pid, :tick)
+          end
+
+          Process.sleep(20)
+        end)
+
+      assert occurrences(log, "SystemSampler: AgentScheduler get_config call failed") == 1
+      assert Process.alive?(pid)
+    end
+
+    test "(f) llm_slots failures are rate-limited even though the read is attempted every tick" do
+      counter = new_seam_counter()
+      put_seam(@llm_slots_seam_key, failing_llm_slots_fun(counter))
+      pid = start_unregistered_sampler()
+
+      # Unlike the config refresh (deferred by its marker), the llm_slots read
+      # IS attempted every tick — 10 failing attempts in ticks 1..10 — yet
+      # warn_rate_limited/3 (@warn_min_interval_ticks = 10) still yields
+      # exactly ONE warning, not one per failing tick.
+      log =
+        capture_log(fn ->
+          for _ <- 1..10 do
+            :ok = GenServer.call(pid, :tick)
+          end
+
+          Process.sleep(20)
+        end)
+
+      assert seam_calls(counter) == 10
+
+      assert occurrences(log, "SystemSampler: AgentScheduler get_llm_slot_status call failed") ==
+               1
+
+      # Tick 11 is the next warn window (11 - 1 == 10): the 11th failing
+      # attempt logs a second warning.
+      log2 =
+        capture_log(fn ->
+          :ok = GenServer.call(pid, :tick)
+          Process.sleep(20)
+        end)
+
+      assert seam_calls(counter) == 11
+
+      assert occurrences(log2, "SystemSampler: AgentScheduler get_llm_slot_status call failed") ==
+               1
+
+      assert Process.alive?(pid)
     end
   end
 

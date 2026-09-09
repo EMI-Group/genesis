@@ -384,23 +384,27 @@ defmodule EvoGit.AgentScheduler.State do
       |> maybe_update(:sandbox_process_resources, opts)
       |> maybe_update(:llm_generation_params, opts)
 
-    # Propagate sandbox resource changes to the live slice (Linux only)
-    state =
-      if Keyword.has_key?(opts, :sandbox_resources) and EvoGit.Platform.linux?() do
-        resources = Keyword.get(opts, :sandbox_resources)
+    # Propagate sandbox resource changes to the live slice (Linux only).
+    #
+    # FIRE-AND-FORGET — never synchronous. A synchronous systemctl slice
+    # update here blocked every scheduler caller (a wedged systemd user bus
+    # stalled ~7s in production: `SystemSampler`'s :get_config GenServer.call
+    # timed out and crashed, and the update_resources GenServer.call timeout
+    # could exit the scheduler itself). The async cast is enqueued by
+    # SandboxSlice BEFORE this handler replies to the update_config caller, so
+    # subsequent sandboxed runs calling ensure_slice (queued behind the cast
+    # in SandboxSlice's mailbox) observe the updated slice in the common case.
+    # Slice property updates are idempotent last-write-wins, so reordering is
+    # harmless. SandboxSlice logs its own update failures. The value must be a
+    # map (config-reload opts reject nil; the is_map check keeps a defensive
+    # nil from ever reaching the strict update_resources_async/1 guard).
+    if Keyword.has_key?(opts, :sandbox_resources) and EvoGit.Platform.linux?() do
+      resources = Keyword.get(opts, :sandbox_resources)
 
-        case EvoGit.SandboxSlice.update_resources(resources) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning("Failed to update sandbox slice resources: #{inspect(reason)}")
-        end
-
-        state
-      else
-        state
+      if is_map(resources) do
+        EvoGit.SandboxSlice.update_resources_async(resources)
       end
+    end
 
     # Grant any newly-available slots to waiting agents. This sweep runs for
     # EVERY update (including :model_concurrency replacements), so a capacity

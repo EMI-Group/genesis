@@ -24,6 +24,12 @@ defmodule EvoGit.SandboxSlice do
   # creation entirely in the test environment.
   @mix_env Mix.env()
 
+  # Hard bound for systemctl property-update subprocesses. A wedged systemd
+  # user bus must never block the SandboxSlice GenServer (and thus every
+  # ensure_slice/update_resources caller) indefinitely. Overridable at runtime
+  # via the app-env seam :sandbox_slice_systemctl_timeout_ms (read per call).
+  @systemctl_timeout_ms 5_000
+
   # --- Client API ---
 
   def start_link(opts \\ []) do
@@ -46,6 +52,31 @@ defmodule EvoGit.SandboxSlice do
   @spec update_resources(map()) :: :ok | {:error, term()}
   def update_resources(resources) when is_map(resources) do
     GenServer.call(__MODULE__, {:update_resources, resources}, 10_000)
+  end
+
+  @doc """
+  Fire-and-forget update of resource limits on the running slice.
+
+  Like `update_resources/1` but non-blocking: the update is enqueued as a cast
+  and applied asynchronously by the SandboxSlice GenServer (which logs its own
+  successes/failures, so errors remain visible). Intended for callers that must
+  never block on slice work — notably the `AgentScheduler` config-update path.
+
+  Never raises: when the SandboxSlice GenServer is not running the update is
+  silently dropped and `:ok` is returned. Property updates are idempotent
+  last-write-wins, so an async update converges even if a later update
+  overwrites it before the slice applies this one.
+  """
+  @spec update_resources_async(map()) :: :ok
+  def update_resources_async(resources) when is_map(resources) do
+    case Process.whereis(__MODULE__) do
+      nil ->
+        :ok
+
+      pid when is_pid(pid) ->
+        GenServer.cast(pid, {:update_resources, resources})
+        :ok
+    end
   end
 
   @doc """
@@ -150,6 +181,20 @@ defmodule EvoGit.SandboxSlice do
   end
 
   @impl true
+  def handle_cast({:update_resources, resources}, state) do
+    new_state = %{state | resources: resources}
+
+    # Fire-and-forget property update. do_update_slice_properties/1 logs its
+    # own success/failure (bounded — it can never block this GenServer past
+    # the systemctl timeout), so no result is surfaced to the caller.
+    if state.slice_active do
+      do_update_slice_properties(resources)
+    end
+
+    {:noreply, new_state}
+  end
+
+  @impl true
   def terminate(_reason, state) do
     if state.slice_active do
       do_stop_slice()
@@ -228,15 +273,114 @@ defmodule EvoGit.SandboxSlice do
     # systemctl --user set-property evogit.slice CPUWeight=30 ...
     args = ["--user", "set-property", "#{@slice_name}.slice"] ++ property_args
 
-    case Helpers.system_cmd("systemctl", args) do
+    # Bounded execution: a wedged systemd user bus must never block the
+    # SandboxSlice GenServer (and thus every ensure_slice/update_resources
+    # caller) indefinitely. On timeout the client-side systemctl is killed —
+    # safe: set-property is a single DBus invocation, last-write-wins, no
+    # partial-limit corruption.
+    case run_systemctl_bounded("systemctl", args, systemctl_timeout_ms()) do
       {:ok, _output} ->
         Logger.info("SandboxSlice: Updated resource limits on slice '#{@slice_name}'")
         :ok
 
-      {:error, output} ->
+      {:error, :timeout} ->
+        Logger.warning(
+          "SandboxSlice: Timed out after #{systemctl_timeout_ms()}ms updating slice properties; " <>
+            "systemctl may be unresponsive"
+        )
+
+        {:error, :timeout}
+
+      {:error, output} when is_binary(output) ->
         Logger.warning("SandboxSlice: Failed to update slice properties: #{String.trim(output)}")
         {:error, String.trim(output)}
+
+      {:error, other} ->
+        Logger.warning("SandboxSlice: Failed to update slice properties: #{inspect(other)}")
+        {:error, other}
     end
+  end
+
+  # Runs a `systemctl`-style command through `runner` with a hard time bound.
+  #
+  # The runner executes in a separate (unlinked, monitored) process so a wedged
+  # systemd user bus can never block the SandboxSlice GenServer — or any
+  # caller — indefinitely. When `timeout_ms` elapses without a result, the
+  # runner process is killed; killing it closes its OS ports, terminating the
+  # client-side subprocess.
+  #
+  # The default runner is `EvoGit.Sandbox.Helpers.system_cmd/2`, overridable
+  # per call via `runner` (tests inject slow/failing fns) or via the app-env
+  # seam `:sandbox_slice_systemctl_fun` (read at call time by the default).
+  #
+  # Returns whatever `runner` returns (`{:ok, output}` | `{:error, output}`),
+  # `{:error, :timeout}` when the bound elapses, or
+  # `{:error, {:runner_crashed, reason}}` when the runner process dies.
+  #
+  # `@doc false`: public only so tests can drive the bounded-runner behavior
+  # directly with tiny timeouts; an implementation detail of the slice
+  # lifecycle.
+  @doc false
+  @spec run_systemctl_bounded(
+          String.t(),
+          [String.t()],
+          non_neg_integer(),
+          (String.t(), [String.t()] -> {:ok, String.t()} | {:error, String.t()})
+        ) :: {:ok, String.t()} | {:error, term()}
+  def run_systemctl_bounded(cmd, args, timeout_ms, runner \\ default_systemctl_runner()) do
+    parent = self()
+    ref = make_ref()
+
+    pid =
+      spawn(fn ->
+        # Rescue/catch inside the runner process: a raised exception becomes a
+        # normal `{:error, {:runner_crashed, e}}` result (delivered as a
+        # message) instead of a noisy uncaught-exception crash report. The
+        # monitor below still catches uncatchable exits (e.g. a runner calling
+        # `Process.exit(self(), :kill)`).
+        result =
+          try do
+            runner.(cmd, args)
+          rescue
+            e -> {:error, {:runner_crashed, e}}
+          catch
+            kind, reason -> {:error, {:runner_crashed, {kind, reason}}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    mon_ref = Process.monitor(pid)
+
+    receive do
+      {^ref, result} ->
+        Process.demonitor(mon_ref, [:flush])
+        result
+
+      {:DOWN, ^mon_ref, :process, ^pid, reason} ->
+        {:error, {:runner_crashed, reason}}
+    after
+      timeout_ms ->
+        Process.demonitor(mon_ref, [:flush])
+        Process.exit(pid, :kill)
+
+        # The runner may have completed just as the deadline fired — drain any
+        # straggler reply so the caller's mailbox stays clean and a genuine
+        # result wins over a spurious timeout.
+        receive do
+          {^ref, result} -> result
+        after
+          0 -> {:error, :timeout}
+        end
+    end
+  end
+
+  defp default_systemctl_runner do
+    Application.get_env(:evo_git, :sandbox_slice_systemctl_fun, &Helpers.system_cmd/2)
+  end
+
+  defp systemctl_timeout_ms do
+    Application.get_env(:evo_git, :sandbox_slice_systemctl_timeout_ms, @systemctl_timeout_ms)
   end
 
   defp do_stop_slice do
