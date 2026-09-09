@@ -593,8 +593,8 @@ defmodule EvoGit.RemoteConnection do
   # {:connect_result, self(), result} message (see moduledoc). The result is
   # {:ok, %{port:, local_port:, node_name:}} on success or {:error, message}.
   #
-  # The worker is LINKED to the manager (Task.start) and MONITORED by it: if
-  # the manager dies the worker dies with it (closing any port it owns); if
+  # The worker is LINKED to the manager (Task.start_link) and MONITORED by it:
+  # if the manager dies the worker dies with it (closing any port it owns); if
   # the worker crashes the manager's :DOWN handler broadcasts :error.
   defp connect_worker(server, %__MODULE__{} = state) do
     target = state.target
