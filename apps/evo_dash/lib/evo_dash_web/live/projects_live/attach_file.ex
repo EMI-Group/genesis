@@ -142,8 +142,9 @@ defmodule EvoDashWeb.ProjectsLive.AttachFile do
       |> push_event("picker_result:#{picker_id_for(kind)}", %{error: true})
     else
       case EvoDash.AttachedFile.read_kind(path, kind) do
-        {:ok, result} when is_map(result) ->
-          # Tolerate both atom-keyed (documented) and string-keyed maps.
+        {:ok, result} ->
+          # EvoDash.AttachedFile.read_kind/2 returns an atom-keyed map; the
+          # Map.get fallbacks tolerate string-keyed shapes defensively.
           type = Map.get(result, :type) || Map.get(result, "type")
           media_type = Map.get(result, :media_type) || Map.get(result, "media_type")
           bytes = Map.get(result, :bytes) || Map.get(result, "bytes") || Map.get(result, "data")
