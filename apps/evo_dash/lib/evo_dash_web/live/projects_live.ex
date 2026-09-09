@@ -193,6 +193,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     show_auto_model_option={@model_selection_enabled}
                     build_systems={@build_systems}
                     selected_build_system={@task_build_system}
+                    staged_attachments={@staged_attachments}
                   />
 
                   <%= if is_nil(@active_project) do %>
@@ -347,6 +348,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     show_auto_model_option={@model_selection_enabled}
                     build_systems={@build_systems}
                     selected_build_system={@task_build_system}
+                    staged_attachments={@staged_attachments}
                   />
                 </div>
               <% phase in [:connecting, :bootstrapping, :disconnecting] -> %>
