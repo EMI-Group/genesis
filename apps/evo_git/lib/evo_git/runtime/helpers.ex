@@ -575,6 +575,12 @@ defmodule EvoGit.Runtime.Helpers do
       ) do
     {agent_module, agent_opts} = resolve_root_agent(opts, default_module)
 
+    # Media attachments (images/audio) for the initial objective — validated at
+    # the RuntimeOpts layer; forwarded here when present (omit-when-nil so the
+    # no-attachment spec_opts stay byte-identical). The Runner materializes
+    # them into the ROOT agent's first user message.
+    attachments = Keyword.get(opts, :attachments)
+
     spec_opts =
       [
         foreign_repos: foreign_repos,
@@ -583,8 +589,16 @@ defmodule EvoGit.Runtime.Helpers do
         task_id: Keyword.get(opts, :task_id),
         model_id: Keyword.get(opts, :model_id),
         model_id_locked: model_id_locked?(opts)
-      ] ++ agent_opts
+      ]
+      |> maybe_put_attachments(attachments)
+      |> Kernel.++(agent_opts)
 
     AgentSpec.new(context_node, phylo_node, agent_module, objective, spec_opts)
   end
+
+  defp maybe_put_attachments(spec_opts, attachments)
+       when is_list(attachments) and attachments != [],
+       do: Keyword.put(spec_opts, :attachments, attachments)
+
+  defp maybe_put_attachments(spec_opts, _attachments), do: spec_opts
 end

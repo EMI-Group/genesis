@@ -51,6 +51,15 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     # into the runtime opts for genesis tasks.
     build_system = Keyword.get(opts, :build_system)
 
+    # Multi-modal data input (images/audio) for the initial objective —
+    # see EvoGit.Attachments. Validated here (spec-error style: malformed
+    # payloads fail the task start with a descriptive ArgumentError, exactly
+    # like the mode validation above). Deliberately NO model-capability
+    # checking. The key is omitted when nil/[] (mirrors the :model_id
+    # omit-when-absent pattern).
+    attachments = Keyword.get(opts, :attachments)
+    EvoGit.Attachments.validate(attachments)
+
     runtime_opts =
       runtime_opts
       |> put_if(:node_path, node_path)
@@ -61,6 +70,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if(:agent, agent, fn value -> is_binary(value) and value != "" end)
       |> put_if_true(:model_id_locked, model_id_locked)
       |> put_if(:build_system, build_system)
+      |> put_if(:attachments, attachments, fn value -> value not in [nil, []] end)
 
     {nil, runtime_opts}
   end

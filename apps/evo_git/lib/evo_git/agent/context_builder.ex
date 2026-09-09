@@ -133,6 +133,37 @@ defmodule EvoGit.Agent.ContextBuilder do
     if blank?(body), do: "", else: "<objective>\n#{body}\n</objective>"
   end
 
+  @doc """
+  Assembles the two initial messages (`[system, user]`) for an agent run.
+
+  Pure — never reads the process dictionary. `combined_prompt` is the already
+  joined context/objective block text (a plain `String.t()`); the objective
+  stays a string end-to-end. Media attachments (images/audio, see
+  `EvoGit.Attachments`) ride on the ROOT agent's first user message ONLY: when
+  `parent_id` is nil (this agent is the task root — exactly equivalent to
+  SchedMeta depth 0) AND `attachments` is a non-empty list, the user message
+  is built as a content-part list —
+  `ReqLLM.Context.user([ContentPart.text(combined_prompt) | image/file parts])`
+  with parts in input order. Otherwise the legacy binary fast path
+  `ReqLLM.Context.user(combined_prompt)` is used, producing a byte-identical
+  message shape. Subagents (non-nil `parent_id`) never inherit attachments;
+  pass `nil` for `attachments` to force the plain-text path.
+  """
+  @spec build_initial_messages(String.t(), String.t(), integer() | nil, term()) ::
+          [ReqLLM.Message.t()]
+  def build_initial_messages(system_prompt, combined_prompt, parent_id, attachments) do
+    user_message =
+      case {is_nil(parent_id), attachments} do
+        {true, [_ | _]} ->
+          ReqLLM.Context.user(EvoGit.Attachments.to_content_parts(combined_prompt, attachments))
+
+        _ ->
+          ReqLLM.Context.user(combined_prompt)
+      end
+
+    [ReqLLM.Context.system(system_prompt), user_message]
+  end
+
   # --- ETS Sync Helpers ---
 
   def sync_context_to_ets(agent_id, context) do

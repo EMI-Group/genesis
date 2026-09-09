@@ -653,6 +653,84 @@ defmodule EvoGit.StoreTest do
       assert Codec.encode_opts(nil) == nil
       assert Codec.decode_opts(nil) == nil
     end
+
+    test ":attachments opts round-trip with the ATOM key and exact value (base64 string)" do
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64("raw1")
+        },
+        %{
+          "type" => "audio",
+          "name" => "b.mp3",
+          "media_type" => "audio/mpeg",
+          "data" => Base.encode64("raw2")
+        }
+      ]
+
+      opts = [path: "/tmp/p", attachments: attachments]
+
+      decoded = Codec.decode_opts(Codec.encode_opts(opts))
+
+      # The JSON object round-trip sorts keys (opts is a keyword list, decode
+      # iterates the object's keys), so compare via Keyword.get.
+      assert Keyword.has_key?(decoded, :attachments)
+      assert decoded[:attachments] == attachments
+      assert is_list(decoded[:attachments])
+      assert hd(decoded[:attachments])["type"] == "image"
+    end
+
+    test ":attachments full task put/get round-trip keeps the atom key and base64 value" do
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64("raw-bytes")
+        }
+      ]
+
+      task = %TaskInfo{
+        id: "rt-attachments",
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/tmp/proj", objective: "do it", attachments: attachments],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil
+      }
+
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-attachments")
+
+      assert Keyword.get(fetched.opts, :attachments) == attachments
+      assert hd(fetched.opts[:attachments])["data"] == Base.encode64("raw-bytes")
+    end
+
+    test "essential-keys fallback drops :attachments for a deliberately non-Jason-safe payload" do
+      # Base64 data is Jason-safe by contract, so the full encode normally
+      # succeeds. When an UNRELATED opt carries a non-Jason-safe term (a pid),
+      # the fallback encodes only path/mode/prompt/objective and :attachments
+      # is dropped — pinning the existing fallback behavior.
+      opts = [
+        path: "/tmp/p",
+        objective: "obj",
+        attachments: [
+          %{"type" => "image", "name" => "a.png", "media_type" => "image/png", "data" => "aGk="}
+        ],
+        bad_term: self()
+      ]
+
+      encoded = Codec.encode_opts(opts)
+      refute encoded =~ "attachments"
+      decoded = Codec.decode_opts(encoded)
+      refute Keyword.has_key?(decoded, :attachments)
+      assert Keyword.get(decoded, :path) == "/tmp/p"
+      assert Keyword.get(decoded, :objective) == "obj"
+    end
   end
 
   describe "project put/get round-trip" do

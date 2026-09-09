@@ -132,6 +132,18 @@ The `:evolve` task type supports a `"custom"` mode opt (task type stays `:evolve
 
 Detail: `runtime/CONTEXT.md` + `task_registry/CONTEXT.md` (RuntimeOpts/TaskExecutor).
 
+## Multi-Modal Objective Attachments (`:attachments` opt)
+
+Initial objectives may carry image/audio data so the ROOT agent's first LLM user message is real multimodal req_llm content. The opt-contract single source of truth is `EvoGit.Attachments` (`lib/evo_git/attachments.ex`).
+
+- **Opt shape**: task opt `:attachments` = a list of STRING-keyed maps `%{"type" => "image"|"audio", "name" => <basename>, "media_type" => <IANA type e.g. "image/png"/"audio/mpeg">, "data" => <base64-encoded file bytes (ASCII string)>}`. Base64 is MANDATORY in the opts layer — Store.Codec Jason-encodes whole opts and raw non-UTF-8 binaries abort Jason (the encode fallback would silently drop the key); raw bytes are decoded ONLY at LLM-message materialization (`Attachments.to_content_parts/2`: `"image"` → `ReqLLM.ContentPart.image(raw, media_type)`, `"audio"` rides as a `:file` part `ContentPart.file(raw, name, media_type)` — req_llm has no audio part type). The text objective stays a plain `String.t()` end-to-end (leading `ContentPart.text`), never made non-string.
+- **Caps (core-enforced, authoritative raise)**: at most 4 attachments per task, each ≤ 15 MiB RAW bytes — `EvoGit.Attachments` module attributes are the single core source. Malformed payloads fail task start with a descriptive `ArgumentError` via `RuntimeOpts` → `Attachments.validate/1` (spec-error style).
+- **Root-only semantics**: media parts ride the ROOT agent's FIRST user message only (`ContextBuilder.build_initial_messages/4`, gated on `parent_id == nil` AND a non-empty list; subagents never inherit). Genesis Mode A root, Genesis Mode B BOTH sequential roots (Architect + phase-2 Manager — the shared runtime opts are forwarded verbatim into the phase spec), and the Evolve root all receive them. Reflect never receives the key (no attachment UI; a stray key degrades to the plain-text path, never a crash).
+- **No model-capability check** (no llm_db modality gating, no codec-capability gating — per product decision): if the chosen provider cannot handle the attached modality, the provider erroring is the user's concern.
+- **Known limitation**: resume / merge-auto-resolve / GitHub-fix follow-up tasks do NOT re-carry `:attachments` (they build fresh text objectives; the user can re-attach). `ResumeContext`/`MergeContext` never inherit the previous task's key.
+
+Detail: `lib/evo_git/agent/CONTEXT.md` (first-message materialization + compression cost) + `lib/evo_git/task_registry/CONTEXT.md` (RuntimeOpts validation chain) + `lib/evo_git/store/CONTEXT.md` (Codec known-opt-key atomization) + `lib/evo_git/runtime/CONTEXT.md` (Mode B forwarding).
+
 ## Multi-Repo Read-Write Foreign Repos
 
 Foreign repos may be **writable** — a task still has exactly ONE primary repo and one final report; foreign repos are additional working repos whose agent modifications are tracked but NEVER merged back by the task itself (merge/reject happens later via the dashboard review page).

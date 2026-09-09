@@ -282,4 +282,79 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       refute section =~ "You MAY spawn write-capable"
     end
   end
+
+  describe "build_initial_messages/4" do
+    # Mirrors the native-struct content-part test idiom at
+    # test/evo_git/agent_scheduler/remote_api_test.exs:427-447.
+    @system_prompt "You are the manager."
+    @objective "Build the parser."
+
+    defp attachment(type, name, media_type, raw) do
+      %{
+        "type" => type,
+        "name" => name,
+        "media_type" => media_type,
+        "data" => Base.encode64(raw)
+      }
+    end
+
+    test "no attachments -> exact legacy 2-message shape [system, user(text)]" do
+      [system_msg, user_msg] =
+        ContextBuilder.build_initial_messages(@system_prompt, @objective, nil, nil)
+
+      assert %ReqLLM.Message{role: :system} = system_msg
+      assert system_msg.content == [ReqLLM.Message.ContentPart.text(@system_prompt)]
+
+      # Byte-identical to the legacy `ReqLLM.Context.new([system(...), user(binary)])`
+      # construction — same struct equality as the plain user/1 fast path.
+      assert %ReqLLM.Message{role: :user} = user_msg
+      assert user_msg == ReqLLM.Context.user(@objective)
+      assert user_msg.content == [ReqLLM.Message.ContentPart.text(@objective)]
+    end
+
+    test "no attachments ([]) -> same plain-text shape" do
+      [_, user_msg] = ContextBuilder.build_initial_messages(@system_prompt, @objective, nil, [])
+      assert user_msg == ReqLLM.Context.user(@objective)
+    end
+
+    test "root with attachments -> text part first, then image/file parts in input order" do
+      attachments = [
+        attachment("image", "a.png", "image/png", <<1, 2, 3>>),
+        attachment("audio", "b.mp3", "audio/mpeg", <<4, 5, 6>>),
+        attachment("image", "c.png", "image/png", <<7, 8, 9>>)
+      ]
+
+      [system_msg, user_msg] =
+        ContextBuilder.build_initial_messages(@system_prompt, @objective, nil, attachments)
+
+      assert system_msg.role == :system
+
+      assert user_msg.role == :user
+      assert [text, a, b, c] = user_msg.content
+      assert text == ReqLLM.Message.ContentPart.text(@objective)
+      assert a == ReqLLM.Message.ContentPart.image(<<1, 2, 3>>, "image/png")
+      assert b == ReqLLM.Message.ContentPart.file(<<4, 5, 6>>, "b.mp3", "audio/mpeg")
+      assert c == ReqLLM.Message.ContentPart.image(<<7, 8, 9>>, "image/png")
+    end
+
+    test "non-root (parent_id set) with attachments -> plain text (root-only gate)" do
+      attachments = [
+        attachment("image", "a.png", "image/png", <<1, 2, 3>>)
+      ]
+
+      [_, user_msg] =
+        ContextBuilder.build_initial_messages(@system_prompt, @objective, 7, attachments)
+
+      assert user_msg == ReqLLM.Context.user(@objective)
+    end
+
+    test "system prompt is preserved verbatim in every path" do
+      [system_msg, _] =
+        ContextBuilder.build_initial_messages(@system_prompt, @objective, 7, [
+          attachment("image", "a.png", "image/png", <<1, 2, 3>>)
+        ])
+
+      assert system_msg.content == [ReqLLM.Message.ContentPart.text(@system_prompt)]
+    end
+  end
 end

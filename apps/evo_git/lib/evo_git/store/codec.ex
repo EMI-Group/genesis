@@ -275,7 +275,11 @@ defmodule EvoGit.Store.Codec do
   # Known opt keys that the application accesses — atomized safely on decode
   # via the @known_opt_keys whitelist. Unknown keys remain as strings to avoid
   # blind atomization.
-  @known_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from)a
+  # NOTE: :attachments carries base64-encoded file data (ASCII strings by
+  # contract — see EvoGit.Attachments), so Jason-encoding the opts map cannot
+  # fail on it; the essential-keys fallback below would drop the key for a
+  # deliberately non-Jason-safe payload, which is the pinned behavior.
+  @known_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments)a
   @known_opt_key_strings MapSet.new(@known_opt_keys, &Atom.to_string/1)
 
   def encode_opts(nil), do: nil
