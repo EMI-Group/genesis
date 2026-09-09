@@ -234,4 +234,63 @@ defmodule EvoGit.TaskRegistry.DiagnosticsTest do
       assert Diagnostics.format_location([{"src/app.ex", 42}]) == ""
     end
   end
+
+  describe "failure_error/3,4" do
+    test "builds the canonical failed-task error map with the fixed key set" do
+      assert Diagnostics.failure_error(:error, :result_handler, "Task failed: boom") == %{
+               kind: :error,
+               source: :result_handler,
+               message: "Task failed: boom",
+               stacktrace: nil
+             }
+    end
+
+    test "defaults stacktrace to nil (3-arity)" do
+      assert %{stacktrace: nil} =
+               Diagnostics.failure_error(
+                 :force_kill,
+                 :force_kill_task,
+                 "Task force-killed by user"
+               )
+    end
+
+    test "preserves a provided list-of-strings stacktrace (4-arity)" do
+      trace = ["(elixir) lib/foo.ex:1: Foo.bar/0"]
+
+      assert Diagnostics.failure_error(:exit, :result_handler, "Task exited: killed", trace) ==
+               %{
+                 kind: :exit,
+                 source: :result_handler,
+                 message: "Task exited: killed",
+                 stacktrace: trace
+               }
+    end
+
+    test "accepts every closed-set kind/source atom the Codec can decode" do
+      for kind <- [
+            :error,
+            :exit,
+            :down,
+            :force_kill,
+            :timeout,
+            :restart,
+            :lease_expired,
+            :recheck
+          ] do
+        for source <- [
+              :result_handler,
+              :down_handler,
+              :force_kill_task,
+              :finalizing_watchdog,
+              :startup_reconcile,
+              :lease_sweep,
+              :recheck_resolve
+            ] do
+          payload = Diagnostics.failure_error(kind, source, "m")
+          assert payload.kind == kind
+          assert payload.source == source
+        end
+      end
+    end
+  end
 end

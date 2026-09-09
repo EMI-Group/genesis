@@ -53,6 +53,7 @@ defmodule EvoGit.Store.Queries do
   def encode_column_value(:updated_at, value), do: Codec.encode_datetime(value)
   def encode_column_value(:logs, value), do: Codec.encode_logs(value)
   def encode_column_value(:result, value), do: Codec.encode_result(value)
+  def encode_column_value(:error, value), do: Codec.encode_error(value)
   def encode_column_value(:usage, value), do: Codec.encode_usage(value)
   def encode_column_value(:opts, value), do: Codec.encode_opts(value)
   def encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)

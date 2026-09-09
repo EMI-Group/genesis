@@ -105,6 +105,17 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
              "task with expired lease should be swept to :failed, got #{inspect(found.status)}"
 
       assert found.lease_expires_at == nil
+
+      # The sweep records the canonical lease-expired error payload on the
+      # full-struct put_task write.
+      assert found.result == "Lease expired; owning instance no longer renewing"
+
+      assert found.error == %{
+               kind: :lease_expired,
+               source: :lease_sweep,
+               message: "Lease expired; owning instance no longer renewing",
+               stacktrace: nil
+             }
     end
 
     test "heartbeat renews the lease of an owned :cancelling task" do

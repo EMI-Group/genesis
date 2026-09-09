@@ -7,13 +7,14 @@ defmodule EvoGit.StoreSummaryTest do
   alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
 
-  # The exact 15 keys returned by the summary API (select_tasks_summary/0,1,2,
+  # The exact 16 keys returned by the summary API (select_tasks_summary/0,1,2,
   # select_tasks_summary_by_path/2,3,4 and select_tasks_changed_since/1,2).
   # `result` is deliberately NOT in the projection — no summary consumer reads
   # it (the dashboard's review button uses the denormalized `branch_name`
   # column), and dropping it avoids the heaviest per-row decode.
   # `updated_at` is store-internal bookkeeping — returned as the raw
   # fixed-precision ISO string, NOT a DateTime.
+  # `error` IS included (nil except on :failed rows) — a cheap lenient decode.
   @summary_keys [
     :id,
     :status,
@@ -29,15 +30,16 @@ defmodule EvoGit.StoreSummaryTest do
     :base_sha,
     :commit_sha,
     :lease_expires_at,
-    :updated_at
+    :updated_at,
+    :error
   ]
 
   @insert_task_sql """
   INSERT OR REPLACE INTO tasks
   (id, type, status, opts, started_at, finished_at, logs,
    result, review_status, usage, agent_count, base_sha, commit_sha,
-   archive_metadata, lease_expires_at, model_id, project_path, branch_name)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+   archive_metadata, lease_expires_at, model_id, project_path, branch_name, error)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
   """
 
   # Same isolation pattern as store_test.exs: stop the app's Store/TaskRegistry,
@@ -109,7 +111,7 @@ defmodule EvoGit.StoreSummaryTest do
   end
 
   describe "select_tasks_summary/1" do
-    test "returns maps with exactly the 15 contract keys and decoded values" do
+    test "returns maps with exactly the 16 contract keys and decoded values" do
       put_task!(
         make_task("sum-1",
           status: :completed,
@@ -141,6 +143,7 @@ defmodule EvoGit.StoreSummaryTest do
       assert summary.base_sha == "base123"
       assert summary.commit_sha == "commit456"
       assert summary.lease_expires_at == 1_234_567_890
+      assert summary.error == nil
       assert DateTime.compare(summary.started_at, ~U[2026-06-26 07:19:44Z]) == :eq
       assert DateTime.compare(summary.finished_at, ~U[2026-06-26 08:00:00Z]) == :eq
 
@@ -148,6 +151,30 @@ defmodule EvoGit.StoreSummaryTest do
       # string written by put_task (Codec.encode_datetime(DateTime.utc_now())).
       assert is_binary(summary.updated_at)
       assert summary.updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    end
+
+    test "a :failed task's error map IS present in the summary projection" do
+      error = %{
+        kind: :exit,
+        source: :result_handler,
+        message: "Task crashed: boom",
+        stacktrace: ["(elixir) lib/runtime.ex:42: EvoGit.Runtime.Helpers.merge_and_report/3"]
+      }
+
+      put_task!(make_task("sum-fail", status: :failed, error: error))
+      put_task!(make_task("sum-ok", status: :completed))
+
+      by_id = Map.new(Store.select_tasks_summary(Store), &{&1.id, &1})
+
+      assert by_id["sum-fail"].status == :failed
+      assert by_id["sum-fail"].error == error
+      assert by_id["sum-fail"].error.kind == :exit
+      assert by_id["sum-fail"].error.source == :result_handler
+      assert by_id["sum-fail"].error.message == "Task crashed: boom"
+
+      # Non-failed rows carry nil.
+      assert by_id["sum-ok"].status == :completed
+      assert by_id["sum-ok"].error == nil
     end
 
     test "nil scalar columns stay nil" do
@@ -281,7 +308,7 @@ defmodule EvoGit.StoreSummaryTest do
       assert Enum.map(summaries, & &1.id) |> Enum.sort() == ["nil-since-a", "nil-since-b"]
     end
 
-    test "select_tasks_changed_since/2 returns only newer rows with the 15-key projection", %{
+    test "select_tasks_changed_since/2 returns only newer rows with the 16-key projection", %{
       sqlite_path: sqlite_path
     } do
       put_task!(make_task("cs-old", status: :completed))

@@ -6,9 +6,10 @@ defmodule EvoGit.StoreTest do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  # The 15 summary keys returned by select_tasks_changed_since/2 (same
+  # The 16 summary keys returned by select_tasks_changed_since/2 (same
   # projection as select_tasks_summary, plus the raw `updated_at` string;
-  # `result` is deliberately excluded — no summary consumer reads it).
+  # `result` is deliberately excluded — no summary consumer reads it). `error`
+  # IS included (nil except on :failed rows).
   @summary_keys [
     :id,
     :status,
@@ -24,7 +25,8 @@ defmodule EvoGit.StoreTest do
     :base_sha,
     :commit_sha,
     :lease_expires_at,
-    :updated_at
+    :updated_at,
+    :error
   ]
 
   # Terminate production children (TaskRegistry depends on Store) and start
@@ -423,7 +425,8 @@ defmodule EvoGit.StoreTest do
         logs: [],
         result: nil,
         usage: nil,
-        archive_metadata: nil
+        archive_metadata: nil,
+        error: nil
       }
 
       :ok = Store.put_task(Store, task)
@@ -433,6 +436,43 @@ defmodule EvoGit.StoreTest do
       assert fetched.result == nil
       assert fetched.usage == nil
       assert fetched.archive_metadata == nil
+      assert fetched.error == nil
+    end
+
+    test "error map survives put/get round-trip with canonical atom keys" do
+      error = %{
+        kind: :force_kill,
+        source: :force_kill_task,
+        message: "Task force-killed by user",
+        stacktrace: ["(elixir) lib/foo.ex:1: Foo.bar/0"]
+      }
+
+      task = %TaskInfo{
+        id: "rt-err",
+        type: :genesis,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        result: nil,
+        error: error
+      }
+
+      :ok = Store.put_task(Store, task)
+      fetched = Store.get_task(Store, "rt-err")
+
+      assert fetched.status == :failed
+      assert fetched.error == error
+      assert fetched.error.kind == :force_kill
+      assert fetched.error.source == :force_kill_task
+      assert fetched.error.message == "Task force-killed by user"
+
+      # A fetched (decoded) task re-puts cleanly — the canonical atom payload
+      # round-trips (the error is never dropped by a re-encode).
+      assert :ok = Store.put_task(Store, fetched)
+      fetched2 = Store.get_task(Store, "rt-err")
+      assert fetched2.error == error
     end
 
     test "ref is always nulled before persistence" do
@@ -588,11 +628,12 @@ defmodule EvoGit.StoreTest do
       # Far-future since → empty.
       assert Store.select_tasks_changed_since(Store, "2099-01-01T00:00:00.000Z") == []
 
-      # 15-key summary projection contract, with raw updated_at string.
+      # 16-key summary projection contract, with raw updated_at string.
       [row] = rows
       assert Map.keys(row) |> Enum.sort() == Enum.sort(@summary_keys)
       assert row.updated_at == "2026-01-03T00:00:00.000Z"
       assert row.status == :completed
+      assert row.error == nil
     end
   end
 
@@ -730,6 +771,100 @@ defmodule EvoGit.StoreTest do
       refute Keyword.has_key?(decoded, :attachments)
       assert Keyword.get(decoded, :path) == "/tmp/p"
       assert Keyword.get(decoded, :objective) == "obj"
+    end
+  end
+
+  describe "Codec error encode/decode" do
+    # The canonical failed-task error payload: fixed key set, atom kind/source
+    # (closed sets), string message, list-of-strings stacktrace or nil.
+    defp canonical_error do
+      %{
+        kind: :force_kill,
+        source: :force_kill_task,
+        message: "Task force-killed by user",
+        stacktrace: [
+          "(elixir) lib/foo.ex:1: Foo.bar/0",
+          "(stdlib) erl_eval.erl:1: :erl_eval.do_apply/6"
+        ]
+      }
+    end
+
+    test "nil encodes and decodes to nil" do
+      assert Codec.encode_error(nil) == nil
+      assert Codec.decode_error(nil) == nil
+      assert Codec.decode_error(Codec.encode_error(nil)) == nil
+    end
+
+    test "full canonical map round-trips with atom keys and atom kind/source" do
+      assert Codec.decode_error(Codec.encode_error(canonical_error())) == canonical_error()
+    end
+
+    test "storage JSON uses string keys and string kind/source values" do
+      json = Codec.encode_error(canonical_error())
+      assert is_binary(json)
+
+      decoded = Jason.decode!(json)
+      assert Map.keys(decoded) |> Enum.sort() == ["kind", "message", "source", "stacktrace"]
+      assert decoded["kind"] == "force_kill"
+      assert decoded["source"] == "force_kill_task"
+      assert decoded["message"] == "Task force-killed by user"
+      assert decoded["stacktrace"] |> length() == 2
+    end
+
+    test "kind/source values outside the closed set stay strings (lenient decode)" do
+      json = Jason.encode!(%{"kind" => "exploded", "source" => "mystery", "message" => "m"})
+      assert Codec.decode_error(json) == %{kind: "exploded", source: "mystery", message: "m"}
+    end
+
+    test "unknown keys keep their string keys, values pass through" do
+      map = %{"extra" => "x", "num" => 42, kind: :error, source: :result_handler, message: "m"}
+      decoded = Codec.decode_error(Codec.encode_error(map))
+      assert decoded.kind == :error
+      assert decoded.source == :result_handler
+      assert decoded.message == "m"
+      assert decoded["extra"] == "x"
+      assert decoded["num"] == 42
+      refute Map.has_key?(decoded, :extra)
+      refute Map.has_key?(decoded, :num)
+    end
+
+    test "garbage and non-object JSON decode to nil (never raises)" do
+      assert Codec.decode_error("not json {") == nil
+      assert Codec.decode_error("[1,2,3]") == nil
+      assert Codec.decode_error("42") == nil
+      assert Codec.decode_error("null") == nil
+      assert Codec.decode_error("\"just a string\"") == nil
+    end
+
+    test "encode_task/decode_task round-trip includes error" do
+      with_error = %TaskInfo{
+        id: "codec-err",
+        type: :genesis,
+        status: :failed,
+        opts: [path: "/tmp/test"],
+        logs: [],
+        result: nil,
+        error: canonical_error()
+      }
+
+      row = Codec.encode_task(with_error)
+      assert length(row) == 19
+      assert Codec.decode_task(row).error == canonical_error()
+
+      without_error = %TaskInfo{
+        id: "codec-no-err",
+        type: :genesis,
+        status: :completed,
+        opts: [path: "/tmp/test"],
+        logs: [],
+        result: nil
+      }
+
+      row2 = Codec.encode_task(without_error)
+      assert length(row2) == 19
+      decoded2 = Codec.decode_task(row2)
+      assert decoded2.error == nil
+      assert decoded2.id == "codec-no-err"
     end
   end
 

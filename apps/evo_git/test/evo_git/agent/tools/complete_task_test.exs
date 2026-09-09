@@ -641,6 +641,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert arc_usage.cache_creation_tokens == 20
       assert arc_usage.cache_hit_rate == 40.0
 
+      # The archive usage map is the canonical per-agent cost contract: exactly
+      # the keys of Usage.archive_usage_keys/0 — nothing more, and NEVER a
+      # legacy note-style `cost` key.
+      assert MapSet.new(Map.keys(arc_usage)) ==
+               MapSet.new(EvoGit.Agent.Usage.archive_usage_keys())
+
       :ets.delete(:evogit_sched_meta, "agent_arc3")
       :ets.delete(:evogit_agent_state, "agent_arc3")
       :ets.delete(:evogit_archive_records, {"3", "agent_arc3"})

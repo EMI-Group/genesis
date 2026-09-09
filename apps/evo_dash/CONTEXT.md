@@ -108,7 +108,7 @@ When a task is started with the **archive** checkbox, the core collects per-agen
 - **Threading**: `:archive` opt (built inline in `ProjectsLive.do_task_submit/4`) → core; on completion `archive_records` extracted from the result map → `update_task_status/4` → persisted.
 - **Mode resolution**: UI combined-mode strings `"genesis_new"`/`"genesis_existing"`/`"evolve_simple"`/`"custom_agent"` → `{task_type, core_mode_string}` in `do_task_submit/4` (`{:genesis, "new"\|"existing"}`, `{:evolve, "simple"\|"custom"}`; unknown strings fall back to `{:evolve, "simple"}`). Core `RuntimeOpts.mode_atom/2` accepts `"custom"` for evolution; unknown evolution modes raise `ArgumentError`; `:genesis` + `"custom"` raises "custom mode is evolve-only".
 - **JSON export**: `GET /tasks/:task_id/export` → `TaskExportController` (normalizes structs to plain maps).
-- Archive UI render sites + known gotchas (string-keyed usage, missing `cost` key, crashed agents absent from metadata): `lib/evo_dash_web/CONTEXT.md` → "Known Issues — Task Archive Display".
+- Archive UI render sites + known gotchas (crashed agents absent from metadata): `lib/evo_dash_web/CONTEXT.md` → "Known Issues — Task Archive Display".
 
 ### Self-Reflective Task Mode & Guide Overlay
 

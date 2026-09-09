@@ -214,4 +214,87 @@ defmodule EvoGit.StoreSchemaMigrationTest do
       assert task.finished_at.microsecond == {0, 3}
     end
   end
+
+  describe "error column schema + migration" do
+    test "fresh DDL includes the error column (and a raw NULL row decodes leniently)", %{
+      sqlite_path: path
+    } do
+      conn = open_schema!(path)
+      cols = Schema.existing_columns(conn, "tasks")
+      assert "error" in cols
+      # error sits between branch_name and updated_at in the DDL.
+      assert Enum.find_index(cols, &(&1 == "branch_name")) <
+               Enum.find_index(cols, &(&1 == "error"))
+
+      assert Enum.find_index(cols, &(&1 == "error")) <
+               Enum.find_index(cols, &(&1 == "updated_at"))
+
+      # A row inserted without touching error (SQL NULL) decodes to nil — the
+      # lenient informational-column decode never breaks full-row decode.
+      {:ok, _} =
+        XqliteNIF.execute(
+          conn,
+          "INSERT INTO tasks (id, status, result) VALUES (?1, ?2, ?3)",
+          ["err-null", "failed", nil]
+        )
+
+      {:ok, %{rows: [[encoded] | _]}} =
+        XqliteNIF.query(conn, "SELECT error FROM tasks WHERE id = ?1", ["err-null"])
+
+      assert encoded == nil
+
+      :ok = XqliteNIF.close(conn)
+    end
+
+    test "migrate_schema adds the error column to a legacy table that predates it", %{
+      sqlite_path: path
+    } do
+      {:ok, conn} = Xqlite.open(path)
+
+      # Legacy 18-column tasks table (current task_columns minus error, minus
+      # the store-internal updated_at column).
+      {:ok, _} =
+        XqliteNIF.execute(
+          conn,
+          """
+          CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            type TEXT,
+            status TEXT NOT NULL,
+            opts TEXT,
+            started_at TEXT,
+            finished_at TEXT,
+            logs TEXT,
+            result TEXT,
+            review_status TEXT,
+            usage TEXT,
+            agent_count INTEGER,
+            base_sha TEXT,
+            commit_sha TEXT,
+            archive_metadata TEXT,
+            lease_expires_at INTEGER,
+            model_id TEXT,
+            project_path TEXT,
+            branch_name TEXT
+          )
+          """,
+          []
+        )
+
+      refute "error" in Schema.existing_columns(conn, "tasks")
+
+      :ok = Schema.migrate_schema(conn)
+
+      cols = Schema.existing_columns(conn, "tasks")
+      assert "error" in cols
+      assert "updated_at" in cols
+      assert length(cols) == 20
+
+      # Idempotent — a second run changes nothing.
+      :ok = Schema.migrate_schema(conn)
+      assert Schema.existing_columns(conn, "tasks") == cols
+
+      :ok = XqliteNIF.close(conn)
+    end
+  end
 end

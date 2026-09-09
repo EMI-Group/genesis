@@ -127,4 +127,28 @@ defmodule EvoGit.TaskRegistry.Diagnostics do
     do: " at #{List.to_string(file)}:#{line}"
 
   def format_location(_), do: ""
+
+  @doc """
+  Builds the canonical failed-task error payload persisted on `%TaskInfo{error: _}`.
+
+  The returned map has the FIXED key set consumed by `EvoGit.Store.Codec`:
+  `%{kind: atom(), source: atom(), message: String.t(), stacktrace: [String.t()] | nil}`.
+
+  ## Parameters
+    - `kind`       — the failure kind, one of the closed set
+                     `:error | :exit | :down | :force_kill | :timeout | :restart |
+                     :lease_expired | :recheck`
+    - `source`     — the code path that recorded the failure, one of the closed
+                     set `:result_handler | :down_handler | :force_kill_task |
+                     :finalizing_watchdog | :startup_reconcile | :lease_sweep |
+                     :recheck_resolve`
+    - `message`    — the human-readable failure message (must mirror the result
+                     string written for the same transition)
+    - `stacktrace` — optional list of already-formatted frame strings
+                     (`[String.t()]`, e.g. `Enum.map(capture_stacktrace(n),
+                     &format_stacktrace_frame/1)`); defaults to `nil`
+  """
+  def failure_error(kind, source, message, stacktrace \\ nil) do
+    %{kind: kind, source: source, message: message, stacktrace: stacktrace}
+  end
 end
