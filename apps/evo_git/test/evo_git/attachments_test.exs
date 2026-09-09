@@ -17,14 +17,24 @@ defmodule EvoGit.AttachmentsTest do
 
   defp image_attachment(overrides \\ %{}) do
     Map.merge(
-      %{"type" => "image", "name" => "diagram.png", "media_type" => "image/png", "data" => @png_b64},
+      %{
+        "type" => "image",
+        "name" => "diagram.png",
+        "media_type" => "image/png",
+        "data" => @png_b64
+      },
       overrides
     )
   end
 
   defp audio_attachment(overrides \\ %{}) do
     Map.merge(
-      %{"type" => "audio", "name" => "note.mp3", "media_type" => "audio/mpeg", "data" => @audio_b64},
+      %{
+        "type" => "audio",
+        "name" => "note.mp3",
+        "media_type" => "audio/mpeg",
+        "data" => @audio_b64
+      },
       overrides
     )
   end

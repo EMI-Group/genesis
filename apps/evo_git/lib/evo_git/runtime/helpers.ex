@@ -596,8 +596,9 @@ defmodule EvoGit.Runtime.Helpers do
     AgentSpec.new(context_node, phylo_node, agent_module, objective, spec_opts)
   end
 
-  defp maybe_put_attachments(spec_opts, attachments) when is_list(attachments) and attachments != [],
-    do: Keyword.put(spec_opts, :attachments, attachments)
+  defp maybe_put_attachments(spec_opts, attachments)
+       when is_list(attachments) and attachments != [],
+       do: Keyword.put(spec_opts, :attachments, attachments)
 
   defp maybe_put_attachments(spec_opts, _attachments), do: spec_opts
 end

@@ -165,7 +165,14 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
     end
 
     test "forwards :attachments on an evolve valid path" do
-      attachments = [%{"type" => "image", "name" => "a.png", "media_type" => "image/png", "data" => Base.encode64("abc")}]
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64("abc")
+        }
+      ]
 
       {_first, runtime_opts} =
         RuntimeOpts.build_common_runtime_opts(
@@ -178,7 +185,14 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
     end
 
     test "forwards :attachments on a genesis valid path" do
-      attachments = [%{"type" => "audio", "name" => "a.mp3", "media_type" => "audio/mpeg", "data" => Base.encode64("abc")}]
+      attachments = [
+        %{
+          "type" => "audio",
+          "name" => "a.mp3",
+          "media_type" => "audio/mpeg",
+          "data" => Base.encode64("abc")
+        }
+      ]
 
       {_first, runtime_opts} =
         RuntimeOpts.build_common_runtime_opts(

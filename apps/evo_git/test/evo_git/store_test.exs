@@ -656,8 +656,18 @@ defmodule EvoGit.StoreTest do
 
     test ":attachments opts round-trip with the ATOM key and exact value (base64 string)" do
       attachments = [
-        %{"type" => "image", "name" => "a.png", "media_type" => "image/png", "data" => Base.encode64("raw1")},
-        %{"type" => "audio", "name" => "b.mp3", "media_type" => "audio/mpeg", "data" => Base.encode64("raw2")}
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64("raw1")
+        },
+        %{
+          "type" => "audio",
+          "name" => "b.mp3",
+          "media_type" => "audio/mpeg",
+          "data" => Base.encode64("raw2")
+        }
       ]
 
       opts = [path: "/tmp/p", attachments: attachments]
@@ -674,7 +684,12 @@ defmodule EvoGit.StoreTest do
 
     test ":attachments full task put/get round-trip keeps the atom key and base64 value" do
       attachments = [
-        %{"type" => "image", "name" => "a.png", "media_type" => "image/png", "data" => Base.encode64("raw-bytes")}
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64("raw-bytes")
+        }
       ]
 
       task = %TaskInfo{
