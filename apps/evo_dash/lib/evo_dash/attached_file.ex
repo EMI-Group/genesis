@@ -11,6 +11,10 @@ defmodule EvoDash.AttachedFile do
       reader (`Pdf.Reader`). Each page becomes a `## Page N` heading; a note
       explaining the conversion is prepended so LLM agents can account for
       extraction artifacts.
+    * image attachments (`.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`, `.bmp`) —
+      read via `read_kind/2` as raw binary bytes, never transformed
+    * audio attachments (`.mp3`, `.wav`, `.ogg`, `.m4a`, `.flac`) — read via
+      `read_kind/2` as raw binary bytes, never transformed
 
   Known .docx limitations:
     * Only `word/document.xml` is read — headers, footers, footnotes and
@@ -29,6 +33,19 @@ defmodule EvoDash.AttachedFile do
     * Opened with `recover: true`, so recoverable xref/page-tree corruption is
       tolerated; unrecoverable corruption returns `{:invalid, reason}`.
 
+  Image/audio attachments (`read_kind/2`) are capped at 15 MiB of raw bytes
+  per file (the per-task cap of 4 attachments is enforced by the caller when
+  staging). Raw bytes are returned to the caller only — this module never
+  renders, logs, or sends them to the client.
+
+  Error shapes from `read_kind/2`:
+    * bare POSIX atom (`:enoent`, `:eacces`, ...) — file read failed
+      (propagated from `File.read/1`)
+    * `{:unsupported_extension, ext}` — extension not allowed for the kind
+      (ext = the lowercase extension including the dot)
+    * `{:file_too_large, byte_size}` — raw bytes exceed the 15 MiB cap
+    * `{:unsupported_kind, kind}` — `kind` is not `"image"` or `"audio"`
+
   Error shapes from `read/1`:
     * bare POSIX atom (`:enoent`, `:eacces`, ...) — plain file/PDF read failed
       (propagated from `File.read/1`; a defensive `{:io_error, posix}` from
@@ -42,6 +59,10 @@ defmodule EvoDash.AttachedFile do
       image-only .pdf without OCR)
   """
 
+  # Keep in sync with EvoGit.Attachments in :evo_git (the authoritative validation)
+  @max_attachments 4
+  @max_attachment_bytes 15 * 1024 * 1024
+
   @doc """
   Reads an attached objective file.
 
@@ -54,11 +75,14 @@ defmodule EvoDash.AttachedFile do
     case path |> Path.extname() |> String.downcase() do
       ".docx" -> read_docx(path)
       ".pdf" -> read_pdf(path)
+      # TRAP: this catch-all treats ANY unknown extension as plain text, so
+      # the UI must gate by dropdown kind — binary image/audio files must
+      # never reach read/1 (they go through read_kind/2 instead).
       _ -> read_text(path)
     end
   end
 
-  @doc "Builds a user-ready error message for a `read/1` error."
+  @doc "Builds a user-ready error message for a `read/1`/`read_kind/2` error."
   def describe_error(error, path) do
     case error do
       :enoent ->
@@ -82,6 +106,16 @@ defmodule EvoDash.AttachedFile do
       {:empty, reason} ->
         "No text found in file: #{reason_str(reason)}"
 
+      {:unsupported_extension, ext} ->
+        "Unsupported file type for attachment: #{ext}"
+
+      {:file_too_large, byte_size} ->
+        "File is too large (max #{div(@max_attachment_bytes, 1024 * 1024)} MiB): " <>
+          "#{Path.basename(path)} (#{byte_size} bytes)"
+
+      {:unsupported_kind, kind} ->
+        "Unsupported attachment kind: #{inspect(kind)}"
+
       reason when is_atom(reason) ->
         "Failed to read file: #{path} (#{inspect(reason)})"
 
@@ -89,6 +123,83 @@ defmodule EvoDash.AttachedFile do
         "Failed to read file: #{path} (#{inspect(reason)})"
     end
   end
+
+  ## Image/audio attachments
+
+  # Pinned image/audio extension → IANA media type allowlists (also kept in
+  # sync with EvoGit.Attachments in :evo_git).
+  @image_media_types %{
+    ".png" => "image/png",
+    ".jpg" => "image/jpeg",
+    ".jpeg" => "image/jpeg",
+    ".gif" => "image/gif",
+    ".webp" => "image/webp",
+    ".bmp" => "image/bmp"
+  }
+
+  @audio_media_types %{
+    ".mp3" => "audio/mpeg",
+    ".wav" => "audio/wav",
+    ".ogg" => "audio/ogg",
+    ".m4a" => "audio/mp4",
+    ".flac" => "audio/flac"
+  }
+
+  @media_types Map.merge(@image_media_types, @audio_media_types)
+
+  @doc """
+  Maps a lowercase file extension (with or without the leading dot) to the
+  pinned IANA media type; `nil` when unknown.
+  """
+  def media_type_for(ext) when is_binary(ext) do
+    Map.get(@media_types, normalize_ext(ext))
+  end
+
+  def media_type_for(_ext), do: nil
+
+  @doc """
+  Reads an image or audio attachment file (binary kind `"image"`/`"audio"`)
+  into a raw binary payload for server-side staging — the extension is checked
+  against the kind's pinned allowlist and the file is read verbatim (raw bytes
+  are never trimmed or otherwise transformed; callers must not render, log, or
+  send them to the client).
+
+  Returns `{:ok, %{type: kind, media_type: media_type, bytes: raw_binary}}`.
+  Errors: bare POSIX atom from `File.read/1`; `{:unsupported_extension, ext}`
+  (ext = the lowercase extension incl. dot); `{:file_too_large, byte_size}`
+  (raw bytes over the 15 MiB per-file cap); `{:unsupported_kind, kind}`. The
+  per-task cap of #{@max_attachments} attachments is caller-enforced.
+  """
+  def read_kind(path, kind) when kind in ["image", "audio"] do
+    ext = path |> Path.extname() |> String.downcase()
+
+    case Map.fetch(media_types_for(kind), ext) do
+      {:ok, media_type} -> read_kind_file(path, kind, media_type)
+      :error -> {:error, {:unsupported_extension, ext}}
+    end
+  end
+
+  def read_kind(_path, kind), do: {:error, {:unsupported_kind, kind}}
+
+  defp read_kind_file(path, kind, media_type) do
+    case File.read(path) do
+      {:ok, bytes} when byte_size(bytes) <= @max_attachment_bytes ->
+        {:ok, %{type: kind, media_type: media_type, bytes: bytes}}
+
+      {:ok, bytes} ->
+        {:error, {:file_too_large, byte_size(bytes)}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp media_types_for("image"), do: @image_media_types
+  defp media_types_for("audio"), do: @audio_media_types
+
+  # Lowercases and guarantees the leading dot for allowlist lookups.
+  defp normalize_ext("." <> rest), do: "." <> String.downcase(rest)
+  defp normalize_ext(ext), do: "." <> String.downcase(ext)
 
   ## Plain text
 

@@ -86,7 +86,13 @@ Desktop-mode Tauri-shell lifetime watcher (TCP pipe): the Rust shell binds a `Tc
 
 ### `EvoDash.AttachedFile` (`attached_file.ex`)
 
-Reads attached objective files picked from the objective editor's attach-file '+' button (local files on the dashboard node). `read/1` dispatches on extension: plain text (`.txt`/`.md`/any) read verbatim and trimmed; `.docx` extracted to plain text with OTP stdlib only (`:zip` + regexes — only `word/document.xml` is read; headers/footers/footnotes/comments ignored, field codes stripped); `.pdf` extracted to Markdown via the pure-BEAM `ex_pdf` reader (each page → `## Page N`, a conversion note prepended; scanned/image-only PDFs → `{:empty, _}`, password-protected → `{:invalid, ...}`, opened with `recover: true`). Error shapes: bare POSIX atom (file read failure), `{:invalid, reason}` (malformed input), `{:empty, reason}` (valid but no text). `describe_error/2` builds user-ready messages.
+Reads attached objective files picked from the objective editor's attach-file '+' button (local files on the dashboard node).
+`read/1` dispatches on extension: plain text (`.txt`/`.md`/any) read verbatim and trimmed; `.docx` extracted to plain text with OTP stdlib only (`:zip` + regexes — only `word/document.xml` is read; headers/footers/footnotes/comments ignored, field codes stripped); `.pdf` extracted to Markdown via the pure-BEAM `ex_pdf` reader (each page → `## Page N`, a conversion note prepended; scanned/image-only PDFs → `{:empty, _}`, password-protected → `{:invalid, ...}`, opened with `recover: true`).
+Text-pipeline error shapes: bare POSIX atom (file read failure), `{:invalid, reason}` (malformed input), `{:empty, reason}` (valid but no text).
+`read_kind/2` reads image/audio attachments (binary kinds `"image"`/`"audio"`) — the extension is validated against the kind's pinned allowlist (image `.png`/`.jpg`/`.jpeg`/`.gif`/`.webp`/`.bmp`; audio `.mp3`/`.wav`/`.ogg`/`.m4a`/`.flac`), the 15 MiB raw per-file cap is enforced (the per-task cap of 4 attachments is caller-enforced), and the raw bytes are returned verbatim — never rendered, logged, or sent to the client.
+`media_type_for/1` maps a normalized lowercase extension to its pinned IANA media type (`nil` when unknown).
+`read_kind/2` returns `{:ok, %{type:, media_type:, bytes:}}`; error shapes: bare POSIX atom, `{:unsupported_extension, ext}`, `{:file_too_large, byte_size}`, `{:unsupported_kind, kind}`.
+`describe_error/2` builds user-ready messages for all error shapes.
 
 ### `EvoDash.MarkdownRender` (`markdown_render.ex`)
 
