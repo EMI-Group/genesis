@@ -205,14 +205,28 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   end
 
   describe "SpawnInvestigator" do
-    test "returns the placeholder message mentioning the future release and read-only tools" do
-      output =
-        SpawnInvestigator.execute(%{"path" => "./", "objective" => "investigate"}, nil, nil)
+    test "runs a bounded read-only investigation over a git repo and returns a report",
+         %{tmp_dir: tmp_dir} do
+      repo = create_git_repo_fixture!(tmp_dir)
 
-      assert output =~ "not available in this release"
-      assert output =~ "future release"
-      assert output =~ "read-only"
-      assert output =~ "read_file"
+      output =
+        SpawnInvestigator.execute(
+          %{"path" => repo, "objective" => "frobnicator module"},
+          nil,
+          nil
+        )
+
+      assert is_binary(output)
+      # Report carries the repo facts (path + ref from .git/HEAD), the
+      # CONTEXT.md chain, and the objective-keyword hit.
+      assert output =~ repo
+      assert output =~ "Git repository: yes"
+      assert output =~ "refs/heads/"
+      assert output =~ "CONTEXT.md"
+      assert output =~ "lib/frobnicator.ex:1"
+      assert output =~ "defmodule Frobnicator"
+      # ...and is not the old placeholder text.
+      refute output =~ "not available in this release"
     end
 
     test "missing required args return a descriptive error without raising" do
@@ -223,6 +237,29 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
 
       assert {:error, message} = SpawnInvestigator.execute(%{"objective" => "x"}, nil, nil)
       assert message == "Missing required argument 'path'. Please provide a valid value."
+    end
+
+    test "rejects a non-existent path with a descriptive error naming the path" do
+      assert {:error, message} =
+               SpawnInvestigator.execute(
+                 %{"path" => "/nonexistent/spawn_investigator/path", "objective" => "x"},
+                 nil,
+                 nil
+               )
+
+      assert message == "Path does not exist: /nonexistent/spawn_investigator/path"
+    end
+
+    test "rejects a non-git directory with a descriptive error naming the path",
+         %{tmp_dir: tmp_dir} do
+      plain = Path.join(tmp_dir, "plain_dir_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(plain)
+
+      assert {:error, message} =
+               SpawnInvestigator.execute(%{"path" => plain, "objective" => "x"}, nil, nil)
+
+      assert message ==
+               "Path is not a git repository (no .git directory or gitdir pointer): #{plain}"
     end
   end
 
@@ -393,6 +430,35 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   end
 
   # --- Helpers -------------------------------------------------------------
+
+  # Creates a real git repo fixture under tmp_root with an initial commit, a
+  # CONTEXT.md, and a source file whose content matches an objective keyword.
+  # Returns the repo path.
+  defp create_git_repo_fixture!(tmp_root) do
+    repo = Path.join(tmp_root, "fixture_repo_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(repo)
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["config", "user.email", "test@example.com"], cd: repo)
+    {_, 0} = System.cmd("git", ["config", "user.name", "Test User"], cd: repo)
+    {_, 0} = System.cmd("git", ["config", "commit.gpgsign", "false"], cd: repo)
+
+    File.write!(Path.join(repo, "CONTEXT.md"), """
+    # Fixture Repo
+
+    Intent: a tiny fixture repository used by SpawnInvestigator tests.
+    """)
+
+    File.mkdir_p!(Path.join(repo, "lib"))
+
+    File.write!(
+      Path.join([repo, "lib", "frobnicator.ex"]),
+      "defmodule Frobnicator do\n  def run, do: :ok\nend\n"
+    )
+
+    {_, 0} = System.cmd("git", ["add", "."], cd: repo)
+    {_, 0} = System.cmd("git", ["commit", "-q", "-m", "initial commit"], cd: repo)
+    repo
+  end
 
   # Seeds a task row directly into the isolated Store (bypassing the registry).
   # Returns the %TaskInfo{} so callers can use task.id. Defaults to a pending

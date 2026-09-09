@@ -79,7 +79,7 @@ defmodule EvoGit.Agents.SelfReflective do
     suffix = ~S"""
     # Important notes
 
-    - `SpawnInvestigator.spawn_investigator` is a PLACEHOLDER in v1 — it does NOT spawn a real subagent. Do NOT try to spawn subagents; investigate the Genesis source directly with your read tools.
+    - `SpawnInvestigator.spawn_investigator <path> <objective>` runs a bounded, strictly READ-ONLY investigation of the given codebase path (a deterministic probe: repo facts, CONTEXT.md chain, top-level inventory, objective-keyword hits) and returns a report string. It does NOT spawn a subagent and makes no LLM calls, and it never writes to the target repo — safe to run on any path the user names.
     - Task-control and guide commands (start/cancel/force-kill/delete a task, `GuideUser.guide_user`) execute ONLY after the user confirms them interactively in this chat — they pause waiting for approval. Ask for confirmation before invoking them.
     - You have NO shell access (no `run_bash`), and write tools are disabled — you can never modify files. You are strictly read-only over the system itself.
 

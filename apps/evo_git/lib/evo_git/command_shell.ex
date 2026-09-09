@@ -7,7 +7,8 @@ defmodule EvoGit.CommandShell do
   and dispatches it through a declarative, compile-time registry of the existing
   task-control tool modules (`EvoGit.Agent.Tools.*`). Each registered handler is
   invoked as `apply(module, :execute, [parsed_args, nil, nil])`; the handlers
-  never raise and return a plain string.
+  never raise and return a plain string (or an `{:error, message}` tuple for a
+  handler-level validation failure, which is propagated as a shell error).
 
   This is a core-domain utility (a sibling of `EvoGit.PeakHours`) — it does NOT
   own a `tools/` subdirectory.
@@ -164,7 +165,7 @@ defmodule EvoGit.CommandShell do
     "SpawnInvestigator.spawn_investigator" => %{
       module: SpawnInvestigator,
       level: 1,
-      summary: "Investigates a codebase path (v1 placeholder — does NOT spawn a subagent).",
+      summary: "Runs a bounded read-only investigation of a codebase path and returns a report.",
       args: [
         %{key: "path", type: :string, required: true, positional: 1, default: nil},
         %{key: "objective", type: :string, required: true, positional: 2, default: nil}
@@ -364,14 +365,14 @@ defmodule EvoGit.CommandShell do
     with {:ok, args_map} <- parse_args(path, entry.args, tokens),
          :ok <- approval_gate(path, entry, args_map, approval) do
       # The module/function atoms come from the compile-time registry literal —
-      # never derived from input. The handler returns a plain string and never
-      # raises; wrap it defensively anyway.
-      output = apply(entry.module, :execute, [args_map, nil, nil])
-
-      if is_binary(output) do
-        {:ok, output}
-      else
-        {:error, "Unexpected handler output: #{inspect(output)}"}
+      # never derived from input. Handlers return a plain string (wrapped as
+      # {:ok, output}) or an {:error, message} tuple (propagated as a shell
+      # error, e.g. a handler's own validation failure); anything else is a
+      # contract violation. Wrap defensively anyway.
+      case apply(entry.module, :execute, [args_map, nil, nil]) do
+        output when is_binary(output) -> {:ok, output}
+        {:error, message} when is_binary(message) -> {:error, message}
+        other -> {:error, "Unexpected handler output: #{inspect(other)}"}
       end
     end
   end

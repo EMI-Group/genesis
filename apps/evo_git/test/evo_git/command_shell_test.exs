@@ -66,17 +66,23 @@ defmodule EvoGit.CommandShellTest do
       assert output =~ "status: pending"
     end
 
-    test "double-quoted tokens preserve spaces" do
+    test "double-quoted tokens preserve spaces", %{tmp_dir: tmp_dir} do
       # Quoted tokens with spaces (and an escaped quote) parse as one argument.
       assert {:ok, output} = CommandShell.execute(~s(GetTask.get_task "some id"))
       assert output == "Task some id not found."
 
+      # spawn_investigator takes two positional args; both arrive whole despite
+      # the spaces, so the handler runs the probe over the real fixture path.
+      repo = create_git_repo_fixture!(tmp_dir, "path with spaces")
+
       assert {:ok, output} =
                CommandShell.execute(
-                 ~s(SpawnInvestigator.spawn_investigator "./path with spaces" "objective here")
+                 ~s(SpawnInvestigator.spawn_investigator "#{repo}" "objective here")
                )
 
-      assert output =~ "not available in this release"
+      assert output =~ repo
+      assert output =~ "Git repository: yes"
+      assert output =~ "CONTEXT.md"
     end
 
     test "unknown keys are treated as positional tokens, not kv pairs" do
@@ -582,14 +588,30 @@ defmodule EvoGit.CommandShellTest do
   end
 
   describe "execute/1 - SpawnInvestigator.spawn_investigator" do
-    test "returns the v1 placeholder message (does NOT spawn)" do
-      assert {:ok, output} =
-               CommandShell.execute("SpawnInvestigator.spawn_investigator ./ investigate")
+    test "runs a bounded read-only investigation and returns the report", %{tmp_dir: tmp_dir} do
+      repo = create_git_repo_fixture!(tmp_dir)
 
-      assert output =~ "not available in this release"
-      assert output =~ "future release"
-      assert output =~ "read-only"
-      assert output =~ "read_file"
+      assert {:ok, output} =
+               CommandShell.execute(
+                 "SpawnInvestigator.spawn_investigator #{repo} \"investigate the code\""
+               )
+
+      assert output =~ repo
+      assert output =~ "Git repository: yes"
+      assert output =~ "refs/heads/"
+      assert output =~ "CONTEXT.md"
+      refute output =~ "not available in this release"
+    end
+
+    test "handler-level path validation errors surface as shell errors", %{tmp_dir: tmp_dir} do
+      missing = Path.join(tmp_dir, "does_not_exist")
+
+      assert {:error, message} =
+               CommandShell.execute(
+                 "SpawnInvestigator.spawn_investigator #{missing} \"investigate\""
+               )
+
+      assert message == "Path does not exist: #{missing}"
     end
   end
 
@@ -639,6 +661,37 @@ defmodule EvoGit.CommandShellTest do
   end
 
   # --- Helpers -------------------------------------------------------------
+
+  # Creates a real git repo fixture under tmp_root (dir name `name`, defaults
+  # to a unique fixture_repo dir) with an initial commit, a CONTEXT.md, and a
+  # source file. Returns the repo path.
+  defp create_git_repo_fixture!(tmp_root, name \\ nil) do
+    repo =
+      Path.join(tmp_root, name || "fixture_repo_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(repo)
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["config", "user.email", "test@example.com"], cd: repo)
+    {_, 0} = System.cmd("git", ["config", "user.name", "Test User"], cd: repo)
+    {_, 0} = System.cmd("git", ["config", "commit.gpgsign", "false"], cd: repo)
+
+    File.write!(Path.join(repo, "CONTEXT.md"), """
+    # Fixture Repo
+
+    Intent: a tiny fixture repository used by command-shell tests.
+    """)
+
+    File.mkdir_p!(Path.join(repo, "lib"))
+
+    File.write!(
+      Path.join([repo, "lib", "frobnicator.ex"]),
+      "defmodule Frobnicator do\n  def run, do: :ok\nend\n"
+    )
+
+    {_, 0} = System.cmd("git", ["add", "."], cd: repo)
+    {_, 0} = System.cmd("git", ["commit", "-q", "-m", "initial commit"], cd: repo)
+    repo
+  end
 
   # Seeds a task row directly into the isolated Store (bypassing the registry).
   # Returns the %TaskInfo{} so callers can use task.id. Defaults to a pending
