@@ -130,6 +130,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:show_auto_model_option, :boolean, default: false)
   attr(:build_systems, :list, default: [])
   attr(:selected_build_system, :string, default: nil)
+  attr(:staged_attachments, :list, default: [])
 
   def task_form(assigns) do
     ~H"""
