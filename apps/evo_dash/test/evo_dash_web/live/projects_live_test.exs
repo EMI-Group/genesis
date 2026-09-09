@@ -3630,11 +3630,18 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       id = cleanup_launched_task(html)
 
+      # cancel_task/1 is graceful+async: the wrapper runs its grace turns and
+      # only then persists the terminal status. Wait for the terminal status so
+      # the wrapper has stopped writing under tmp_dir/.genesis/ before the
+      # setup's on_exit File.rm_rf!(tmp_dir) runs.
+      wait_for_task_terminal(id)
+
       # The persisted task opts carry the attachment as BASE64 (raw bytes never
       # cross the task-opts boundary — this is the whole point of encoding at
       # submit). The :attachments opt key is not codec-whitelisted, so it
       # round-trips as the STRING "attachments" — read tolerantly for either
-      # key shape.
+      # key shape. Re-fetch AFTER the wait — the wrapper's final-status
+      # persistence may rewrite the row.
       task = EvoGit.TaskRegistry.get_task(id)
       opts_map = Map.new(task.opts || [])
       attachments = Map.get(opts_map, "attachments") || Map.get(opts_map, :attachments)
