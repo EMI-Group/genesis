@@ -268,6 +268,33 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   """
   def assign_active_tasks(socket), do: request_tasks_load(socket)
 
+  @doc """
+  Initiates a remote-node connect asynchronously on EvoDash.TaskSupervisor —
+  never blocks the LiveView/LiveComponent process.
+
+  Terminal outcomes arrive via "remote_connections" broadcasts handled by
+  handle_connection_status/2; connect results therefore need no socket action.
+  Only synchronous connect errors (arms that never broadcast: subsystem
+  unavailable, unknown target, manager-start failure) are sent back as a
+  self-message `{:remote_connect_result, target_id, {:error, reason}}` so the
+  page can surface them (the remote-connection gate would otherwise never
+  reconcile). Pages must handle that message (narrow clause or catch-all).
+  """
+  def initiate_remote_connect(socket, target_id) when is_binary(target_id) do
+    view_pid = self()
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      case EvoDash.NodeContext.connect(target_id) do
+        {:ok, _phase} -> :ok
+        {:error, reason} -> send(view_pid, {:remote_connect_result, target_id, {:error, reason}})
+      end
+    end)
+
+    socket
+  end
+
+  def initiate_remote_connect(socket, nil), do: socket
+
   # Shared async sidebar-load spawner for `load_running_and_pending_tasks/1`,
   # `assign_active_tasks/1`, and `reload_tasks/1` (via the former). Captures
   # the view pid, node context, and the next `:tasks_load_seq` BEFORE spawning,
