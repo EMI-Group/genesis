@@ -268,12 +268,14 @@ defmodule EvoGit.TaskRegistry do
       |> Enum.reduce(state, fn %{id: task_id, status: status}, acc ->
         case status do
           :finalizing ->
+            message = "Runtime restarted during task finalization"
+
             handle_update_status(
               acc,
               task_id,
               :failed,
-              "Runtime restarted during task finalization",
-              [],
+              message,
+              [error: Diagnostics.failure_error(:restart, :startup_reconcile, message)],
               {:startup_reconcile, :finalizing}
             )
 
@@ -442,7 +444,13 @@ defmodule EvoGit.TaskRegistry do
                          status: :failed,
                          finished_at: DateTime.utc_now(),
                          lease_expires_at: nil,
-                         result: nil
+                         result: nil,
+                         error:
+                           Diagnostics.failure_error(
+                             :force_kill,
+                             :force_kill_task,
+                             "Task force-killed by user"
+                           )
                        ) do
                     :ok ->
                       :ok
@@ -814,9 +822,10 @@ defmodule EvoGit.TaskRegistry do
     agent_count = Keyword.get(opts, :agent_count)
     commit_sha = Keyword.get(opts, :commit_sha)
     archive_records = Keyword.get(opts, :archive_records)
+    error = Keyword.get(opts, :error)
 
     # Narrow-column read: only status, opts, finished_at, lease_expires_at are
-    # fetched (no full 18-column task_get decode) — exactly the fields this
+    # fetched (no full 19-column task_get decode) — exactly the fields this
     # handler needs for the stale-guard, preservation, and project_path.
     state =
       case EvoGit.Store.select_task_update_info(state.task_store, task_id) do
@@ -876,6 +885,12 @@ defmodule EvoGit.TaskRegistry do
 
             # Build a keyword list of exactly what changed — only these columns
             # are written, avoiding re-encoding opts/logs/json blobs.
+            # Graceful-cancel guard: an error payload is persisted ONLY when
+            # the FINAL status (after the :cancelling force-map above) is
+            # :failed AND an error opt was provided. A cancelling task whose
+            # wrapper fails during the grace period is force-mapped to
+            # :cancelled here — its status variable is :cancelled by this
+            # point, so the error is never written.
             update_cols =
               [
                 status: status,
@@ -885,6 +900,7 @@ defmodule EvoGit.TaskRegistry do
                 project_path: project_path,
                 branch_name: branch_name
               ] ++
+                if(status == :failed and error != nil, do: [error: error], else: []) ++
                 if(usage, do: [usage: usage], else: []) ++
                 if(agent_count, do: [agent_count: agent_count], else: []) ++
                 if(commit_sha, do: [commit_sha: commit_sha], else: []) ++
@@ -1019,6 +1035,16 @@ defmodule EvoGit.TaskRegistry do
       %TaskInfo{status: s} -> s
       nil -> nil
     end
+  end
+
+  # Captures and formats the current process stacktrace as the persisted
+  # `TaskInfo.error.stacktrace` shape — a list of one formatted frame string
+  # per frame (`[String.t()]`, via Diagnostics.format_stacktrace_frame/1).
+  # Used by the in-handler failure paths (wrapper result handler, wrapper
+  # :DOWN handler) when a backtrace is available at the failure site.
+  defp stacktrace_lines do
+    Diagnostics.capture_stacktrace(8)
+    |> Enum.map(&Diagnostics.format_stacktrace_frame/1)
   end
 
   # Extracts an optional typed field from a `{:ok, map}` task result. `validator`
@@ -1198,7 +1224,14 @@ defmodule EvoGit.TaskRegistry do
     )
 
     state =
-      handle_update_status(state, task_id, :failed, result, [], {:finalizing_watchdog, task_id})
+      handle_update_status(
+        state,
+        task_id,
+        :failed,
+        result,
+        [error: Diagnostics.failure_error(:timeout, :finalizing_watchdog, result)],
+        {:finalizing_watchdog, task_id}
+      )
 
     {:noreply, state}
   end
@@ -1319,25 +1352,39 @@ defmodule EvoGit.TaskRegistry do
     task_id = task_id_for_ref(state, ref)
 
     if task_id do
-      status =
+      # Map the wrapper result to a terminal status. For :failed the arm ALSO
+      # builds the persisted error payload (same arm → the reason and its human
+      # message stay in lockstep): {:error, reason} records kind :error,
+      # {:exit, reason} records kind :exit, and any other shape records
+      # kind :error with an "unexpected result shape" message.
+      {status, error} =
         case result do
           {:ok, _} ->
-            :completed
+            {:completed, nil}
 
           {:error, reason} ->
             Logger.warning("TaskRegistry: Task #{task_id} returned error: #{inspect(reason)}")
-            :failed
+            message = "Task failed: #{inspect(reason)}"
+
+            {:failed,
+             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
 
           {:exit, reason} ->
             Logger.warning("TaskRegistry: Task #{task_id} exited: #{inspect(reason)}")
-            :failed
+            message = "Task exited: #{inspect(reason)}"
+
+            {:failed,
+             Diagnostics.failure_error(:exit, :result_handler, message, stacktrace_lines())}
 
           other ->
             Logger.warning(
               "TaskRegistry: Task #{task_id} returned unexpected result shape: #{inspect(other)}"
             )
 
-            :failed
+            message = "Task returned unexpected result shape: #{inspect(other)}"
+
+            {:failed,
+             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
         end
 
       # Log the failed transition with the result value and current stacktrace.
@@ -1358,7 +1405,8 @@ defmodule EvoGit.TaskRegistry do
         usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
         agent_count: result_field(result, :agent_count, &is_integer/1),
         commit_sha: result_field(result, :commit_sha, &is_binary/1),
-        archive_records: result_field(result, :archive_records, &is_list/1)
+        archive_records: result_field(result, :archive_records, &is_list/1),
+        error: error
       )
     else
       # The result cannot be persisted — no matching in-memory task_refs entry
@@ -1415,11 +1463,10 @@ defmodule EvoGit.TaskRegistry do
               ]
             )
 
-            update_task_status_with_caller(
-              task_id,
-              :failed,
-              "Task process exited: #{inspect(reason)}",
-              []
+            message = "Task process exited: #{inspect(reason)}"
+
+            update_task_status_with_caller(task_id, :failed, message,
+              error: Diagnostics.failure_error(:down, :down_handler, message, stacktrace_lines())
             )
           end
       end
@@ -1508,12 +1555,15 @@ defmodule EvoGit.TaskRegistry do
           # struct) — there should be very few of these (0-1 in normal use).
           case task_get(state, id) do
             %TaskInfo{} = task ->
+              message = "Lease expired; owning instance no longer renewing"
+
               updated = %{
                 task
                 | status: :failed,
                   lease_expires_at: nil,
                   finished_at: DateTime.utc_now(),
-                  result: "Lease expired; owning instance no longer renewing"
+                  result: message,
+                  error: Diagnostics.failure_error(:lease_expired, :lease_sweep, message)
               }
 
               case EvoGit.Store.put_task(state.task_store, updated) do
