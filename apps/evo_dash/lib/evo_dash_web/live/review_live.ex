@@ -463,7 +463,7 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("retry_remote_connection", _params, socket) do
-    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    EvoDashWeb.LiveHooks.NodeAware.initiate_remote_connect(socket, socket.assigns.current_node_id)
     {:noreply, socket}
   end
 
@@ -1132,6 +1132,24 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_info({:remote_connection_status, _, _} = msg, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+  end
+
+  @impl true
+  def handle_info({:remote_connect_result, _target_id, {:error, reason}}, socket) do
+    # Sync-error fallback for the async remote-connect retry: these failures
+    # (unknown target / subsystem unavailable / manager-start failure) never
+    # emit a "remote_connections" broadcast, so the gate cannot reconcile on
+    # its own — the error flash is the surfacing mechanism.
+    message =
+      case reason do
+        :remote_connection_unavailable ->
+          gettext("Remote connect unavailable — the remote connection subsystem is not running.")
+
+        _ ->
+          gettext("Remote connect failed: %{reason}", reason: inspect(reason))
+      end
+
+    {:noreply, put_flash(socket, :error, message)}
   end
 
   @impl true

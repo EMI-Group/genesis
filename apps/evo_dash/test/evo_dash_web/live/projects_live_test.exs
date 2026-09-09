@@ -307,6 +307,27 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  # Bounded poll on the fake connection manager's recorded `:connect` caller
+  # list: keeps polling until `predicate` returns a truthy value over the
+  # callers, then returns it. `predicate` returns nil to keep polling. Flunks
+  # after ~3s so a connect that never lands fails loudly instead of hanging.
+  defp wait_for_fake_callers(fake, predicate, attempts \\ 150) do
+    case predicate.(GenServer.call(fake, :callers)) do
+      nil ->
+        if attempts <= 0 do
+          flunk(
+            "wait_for_fake_callers timed out. Callers: #{inspect(GenServer.call(fake, :callers))}"
+          )
+        else
+          Process.sleep(20)
+          wait_for_fake_callers(fake, predicate, attempts - 1)
+        end
+
+      result ->
+        result
+    end
+  end
+
   describe "dashboard without active project" do
     setup do
       # Clear all recent projects so auto-load doesn't activate a stale project
@@ -1690,6 +1711,134 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       html = render_click(view, "retry_remote_connection", %{})
       assert html =~ "boom"
       assert html =~ ~s(phx-click="retry_remote_connection")
+    end
+
+    test "sidebar select_node on a disconnected target returns immediately; the connect runs off-process",
+         %{conn: conn} do
+      id = save_target!()
+
+      # A 300ms connect answer means any SYNCHRONOUS connect in the LiveView
+      # process would stall the click for that long — an off-process connect
+      # (EvoDash.TaskSupervisor) returns immediately.
+      fake =
+        start_supervised!(
+          {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+           {id, %{phase: :disconnected, node: nil, last_error: nil},
+            [connect_result: {:ok, :connecting}, connect_delay_ms: 300]}}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # The dropdown items live in the sidebar DOM (Layouts.app renders the
+      # NodeSelectorComponent on every full page; the `<details>` open state is
+      # client-side only). Drive the remote-target button's
+      # `JS.push("select_node", target: @myself, ...)` via its DOM element —
+      # select_node targets the component's cid, so it is unreachable through
+      # a bare `render_click(view, "select_node", ...)`. The only other
+      # `#node-selector button` is "Local", so the "Test Target" text filter
+      # is unambiguous.
+      view
+      |> element("#node-selector button", "Test Target")
+      |> render_click()
+
+      # select_node never blocks the LiveView: the click returned promptly
+      # (despite the 300ms fake connect) and the parent navigated to the
+      # target's pending context via {:node_selected, _} → push_patch. One
+      # extra render flushes the {:node_selected, _} self-message so the
+      # push_patch lands before assert_patch polls.
+      render(view)
+      assert_patch(view, "/projects?node=" <> id)
+      wait_assigns(view, &(&1[:current_node_id] == id))
+
+      # The :connect call landed on the fake from a process that is NEITHER the
+      # LiveView process NOR the test process — i.e. it ran on
+      # EvoDash.TaskSupervisor.
+      caller =
+        wait_for_fake_callers(fake, fn callers ->
+          Enum.find(callers, fn pid -> pid not in [view.pid, self()] end)
+        end)
+
+      refute caller in [view.pid, self()]
+      assert GenServer.call(fake, :calls) >= 1
+    end
+
+    test "remote_connections broadcast reconciles the gate from connecting to error (async re-read)",
+         %{conn: conn} do
+      id = save_target!()
+
+      fake =
+        start_supervised!(
+          {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+           {id, %{phase: :connecting, node: nil, last_error: nil}}}
+        )
+
+      {:ok, view, html} = live(conn, "/projects?node=" <> id)
+
+      # The pending gate renders first (spinner + target name)
+      assert assigns(view)[:current_node_id] == id
+      assert html =~ ~s(class="loading loading-spinner loading-lg text-info")
+      assert html =~ "Connecting to Test Target"
+
+      # Mid-session phase change: the manager's STORED status flips to :error,
+      # then the broadcast arrives. NodeAware.handle_connection_status
+      # recomputes @remote_status from the LIVE manager (never from the
+      # broadcast payload), so the gate must flip to the error state without
+      # any page reload — distinct from the static-error mount tests above.
+      GenServer.call(
+        fake,
+        {:set_status, %{phase: :error, last_error: "tunnel refused", node: nil}}
+      )
+
+      send(
+        view.pid,
+        {:remote_connection_status, id, %{phase: :error, last_error: "tunnel refused", node: nil}}
+      )
+
+      wait_assigns(view, fn a ->
+        match?(%{phase: :error, last_error: "tunnel refused"}, a[:remote_status])
+      end)
+
+      html = render(view)
+
+      assert html =~ "Cannot connect to Test Target"
+      assert html =~ "tunnel refused"
+      assert html =~ ~s(phx-click="retry_remote_connection")
+      assert html =~ ~s(phx-click="switch_to_local")
+      refute html =~ ~s(id="prompt")
+    end
+
+    test "retry from the gate delegates to the shared connect helper and flashes the sync error",
+         %{conn: conn} do
+      id = save_target!()
+
+      fake =
+        start_supervised!(
+          {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+           {id, %{phase: :error, last_error: "boom", node: nil},
+            [connect_result: {:error, :retry_bomb}]}}
+        )
+
+      {:ok, view, _html} = live(conn, "/projects?node=" <> id)
+
+      # retry_remote_connection returns immediately (never blocks the LiveView):
+      # it delegates to NodeAware.initiate_remote_connect/2, which spawns the
+      # connect on EvoDash.TaskSupervisor. No crash, gate stays rendered.
+      html = render_click(view, "retry_remote_connection", %{})
+      assert html =~ "Cannot connect to Test Target"
+      assert html =~ ~s(phx-click="retry_remote_connection")
+
+      # The helper's spawned connect lands on the fake...
+      wait_for_fake_callers(fake, fn callers ->
+        if callers == [], do: nil, else: :ok
+      end)
+
+      # ...and its {:error, :retry_bomb} result is self-messaged back as
+      # {:remote_connect_result, id, {:error, :retry_bomb}} and flashed by
+      # projects_live.ex's sync-error fallback (no "remote_connections"
+      # broadcast ever arrives on this arm).
+      wait_assigns(view, fn a -> match?(%{"error" => _}, a[:flash]) end)
+
+      assert assigns(view)[:flash]["error"] == "Remote connect failed: :retry_bomb"
     end
 
     test "saved target with no connection manager shows the generic error", %{conn: conn} do
@@ -4604,9 +4753,23 @@ end
 # `EvoGit.RemoteConnection.Registry` (same pattern as
 # EvoDashWeb.NodeAwareTest.ConnectionManager). `connect/1` on the real manager
 # resolves the registered pid via the Registry and calls `:connect`; the fake
-# answers with an error so `retry_remote_connection` never starts real SSH
-# machinery. The process dies (and its Registry entry is auto-removed) at test
-# end via `start_supervised!`.
+# answers with a configurable result so `retry_remote_connection` /
+# `select_node` never start real SSH machinery. The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+#
+# Startup shapes (preserving the original 2-tuple for existing call sites):
+#   * `{target_id, status}` — `:connect` answers `{:ok, :connecting}`
+#   * `{target_id, status, opts}` — `opts` may set `:connect_result` (the
+#     `:connect` reply, default `{:ok, :connecting}`) and `:connect_delay_ms`
+#     (sleep before replying, to prove the caller runs off-process).
+#
+# Extra calls used by the event-driven async-connect tests:
+#   * `{:set_status, status}` — test-driven phase mutation (the broadcast →
+#     gate reconciliation path re-reads the LIVE manager, so the stored status
+#     must flip before the broadcast is sent)
+#   * `:calls` / `:callers` — recorded `:connect` invocation count / caller
+#     pids (a caller that is neither the LiveView process nor the test process
+#     proves the connect ran on `EvoDash.TaskSupervisor`).
 defmodule EvoDashWeb.ProjectsLiveTest.ConnectionManager do
   use GenServer
 
@@ -4616,13 +4779,42 @@ defmodule EvoDashWeb.ProjectsLiveTest.ConnectionManager do
 
   @impl true
   def init({target_id, status}) do
+    init({target_id, status, []})
+  end
+
+  def init({target_id, status, opts}) do
     Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
+
+    {:ok,
+     %{
+       status: status,
+       connect_result: Keyword.get(opts, :connect_result, {:ok, :connecting}),
+       connect_delay_ms: Keyword.get(opts, :connect_delay_ms),
+       connect_callers: []
+     }}
   end
 
   @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
+  def handle_call(:status, _from, state), do: {:reply, state.status, state}
 
   @impl true
-  def handle_call(:connect, _from, status), do: {:reply, {:error, :fake_connect}, status}
+  def handle_call(:connect, from, state) do
+    # The delay sleeps INSIDE the fake (a GenServer handle_call) so any caller
+    # that blocks on the connect synchronously would stall; recording the
+    # caller pid lets the test prove the connect ran on a separate process.
+    if delay = state.connect_delay_ms, do: Process.sleep(delay)
+
+    {:reply, state.connect_result,
+     %{state | connect_callers: [elem(from, 0) | state.connect_callers]}}
+  end
+
+  @impl true
+  def handle_call({:set_status, status}, _from, state),
+    do: {:reply, :ok, %{state | status: status}}
+
+  @impl true
+  def handle_call(:calls, _from, state), do: {:reply, length(state.connect_callers), state}
+
+  @impl true
+  def handle_call(:callers, _from, state), do: {:reply, state.connect_callers, state}
 end

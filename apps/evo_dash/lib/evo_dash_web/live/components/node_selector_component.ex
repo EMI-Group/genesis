@@ -115,13 +115,17 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   @impl true
   def handle_event("select_node", %{"node" => node_id}, socket) do
-    # For a remote target that isn't connected yet, initiate the connection
-    # asynchronously. The GenServer handles it in the background; the page
-    # shows "connecting" status until the status broadcast triggers re-resolution.
-    if node_id != "local" do
-      unless EvoDash.NodeContext.connected?(node_id) do
+    # Fire-and-forget async connect initiation — never block the parent
+    # LiveView process (LiveComponent events run in the parent). The
+    # destination page's remote-connection gate renders the :connecting
+    # spinner and the "remote_connections" broadcasts (forwarded to
+    # NodeAware.handle_connection_status/2) drive status reconciliation.
+    # No result self-message: host pages differ and some have no catch-all;
+    # the gate surfaces unavailable/disconnected state via safe status reads.
+    if node_id != "local" and not EvoDash.NodeContext.connected?(node_id) do
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
         EvoDash.NodeContext.connect(node_id)
-      end
+      end)
     end
 
     # The parent LiveView handles navigation via :node_selected, which triggers

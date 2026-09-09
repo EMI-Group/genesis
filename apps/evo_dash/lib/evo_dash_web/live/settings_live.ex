@@ -807,6 +807,12 @@ defmodule EvoDashWeb.SettingsLive do
         remote_config: false,
         remote_config_error: nil,
         bootstrap_progress: %{},
+        # Per-target pending-connect markers (id → true) set by
+        # connect_remote_target while the async connect is in flight. Cleared
+        # by the terminal "remote_connections" broadcast handler (or the
+        # {:remote_connect_result, ...} sync-error fallback); doubles as the
+        # duplicate-click guard.
+        remote_connect_pending: %{},
         bootstrap_restart_confirm: nil,
         remote_targets: EvoDash.NodeContext.list_targets(),
         remote_statuses: EvoDash.NodeContext.connection_status(),
@@ -937,7 +943,28 @@ defmodule EvoDashWeb.SettingsLive do
     bootstrap_progress =
       update_bootstrap_progress(socket.assigns.bootstrap_progress, target_id, status)
 
-    {:noreply, assign(socket, :bootstrap_progress, bootstrap_progress)}
+    socket = assign(socket, :bootstrap_progress, bootstrap_progress)
+
+    {:noreply, consume_remote_connect_pending(socket, target_id, status)}
+  end
+
+  # Sync-error fallback for an async connect initiated via
+  # connect_remote_target/retry_remote_connection: connect/1 returned an error
+  # on an arm that never broadcasts (e.g. the remote-connection subsystem is
+  # unavailable) — the flash is the surfacing mechanism. The pending marker is
+  # also cleared so the Connect button is not wedged by the duplicate guard
+  # (no terminal broadcast will ever arrive for this attempt).
+  @impl true
+  def handle_info({:remote_connect_result, target_id, {:error, reason}}, socket) do
+    socket =
+      socket
+      |> assign(
+        :remote_connect_pending,
+        Map.delete(Map.get(socket.assigns, :remote_connect_pending, %{}), target_id)
+      )
+      |> flash_remote_lifecycle_result({:error, reason}, gettext("Connect"))
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -1055,7 +1082,14 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("retry_remote_connection", _params, socket) do
-    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    # Async connect — connect/1 returns promptly; terminal outcomes arrive via
+    # the "remote_connections" PubSub broadcast, and sync errors (subsystem
+    # unavailable etc.) via {:remote_connect_result, ...}.
+    EvoDashWeb.LiveHooks.NodeAware.initiate_remote_connect(
+      socket,
+      socket.assigns.current_node_id
+    )
+
     {:noreply, socket}
   end
 
@@ -1844,18 +1878,33 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("connect_remote_target", %{"id" => id}, socket) do
-    result = EvoDash.NodeContext.connect(id)
+    # Duplicate guard — a connect is already in flight for this target; its
+    # terminal outcome (:connected | :error | :disconnected) will arrive via
+    # the "remote_connections" PubSub broadcast and be flashed by
+    # consume_remote_connect_pending (which clears the marker).
+    pending = Map.get(socket.assigns, :remote_connect_pending, %{})
 
-    socket =
-      socket
-      |> reload_remote_statuses()
-      |> flash_remote_lifecycle_result(result, gettext("Connect"))
+    if Map.get(pending, id) == true do
+      {:noreply, socket}
+    else
+      socket =
+        assign(socket, :remote_connect_pending, Map.put(pending, id, true))
 
-    {:noreply, socket}
+      # Async connect: connect/1 returns promptly ({:ok, :connecting} |
+      # {:ok, :connected}); terminal outcomes arrive ONLY via broadcast.
+      # Synchronous errors (subsystem unavailable — never broadcast) are
+      # surfaced via {:remote_connect_result, ...}. No premature flash, no
+      # status reload here — the broadcast handler re-reads statuses.
+      {:noreply, EvoDashWeb.LiveHooks.NodeAware.initiate_remote_connect(socket, id)}
+    end
   end
 
   @impl true
   def handle_event("disconnect_remote_target", %{"id" => id}, socket) do
+    # Deliberately SYNCHRONOUS: disconnect is a fast GenServer.call (normally
+    # <5s) and the Disconnect button renders only when the phase is :connected
+    # (no bootstrap can be queued on that manager), so it cannot block the
+    # LiveView meaningfully. Its terminal outcome is the sync result below.
     result = EvoDash.NodeContext.disconnect(id)
 
     socket =
@@ -2340,6 +2389,51 @@ defmodule EvoDashWeb.SettingsLive do
       "target-#{System.system_time(:second)}"
     else
       slug
+    end
+  end
+
+  # Consumes the per-target pending-connect marker (set by
+  # connect_remote_target) and flashes the FIRST terminal outcome broadcast of
+  # an initiation made from THIS page. NodeAware.handle_connection_status has
+  # already recomputed @connection_statuses/@remote_status by the time this
+  # runs, so the gate reconciles automatically. Broadcasts for connects
+  # initiated elsewhere (node selector, another page) never set the marker →
+  # no flash. `:connecting` (non-terminal) neither clears nor flashes.
+  defp consume_remote_connect_pending(socket, target_id, status) do
+    phase = if is_map(status), do: Map.get(status, :phase), else: nil
+
+    # Read the pending marker defensively: broadcasts for connects initiated
+    # elsewhere (bootstrap, node selector, another page) never set the marker,
+    # so the map may legitimately lack the key — bare dot-access would KeyError
+    # only if the assign itself were missing, and a nil marker must not crash
+    # `and` with a BadBooleanError.
+    pending = Map.get(socket.assigns, :remote_connect_pending, %{})
+
+    if Map.get(pending, target_id) == true and
+         phase in [:connected, :error, :disconnected] do
+      socket =
+        assign(socket, :remote_connect_pending, Map.delete(pending, target_id))
+
+      case phase do
+        :connected ->
+          flash_remote_lifecycle_result(socket, :ok, gettext("Connect"))
+
+        :error ->
+          reason =
+            case Map.get(status, :last_error) do
+              nil -> gettext("Unknown error")
+              msg when is_binary(msg) -> msg
+              msg -> inspect(msg)
+            end
+
+          put_flash(socket, :error, gettext("Connect failed: %{reason}", reason: reason))
+
+        :disconnected ->
+          # Some other flow disconnected the target — nothing useful to flash.
+          socket
+      end
+    else
+      socket
     end
   end
 

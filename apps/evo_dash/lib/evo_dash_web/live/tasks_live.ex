@@ -607,6 +607,25 @@ defmodule EvoDashWeb.TasksLive do
     end
   end
 
+  # Sync-error fallback for initiate_remote_connect/2: the subsystem is
+  # unavailable / the target is unknown / the manager failed to start — NO
+  # "remote_connections" broadcast ever arrives on these arms, so the gate can
+  # never reconcile; the flash is the surfacing mechanism. Terminal outcomes
+  # arrive only via PubSub broadcasts handled by NodeAware.handle_connection_status/2.
+  @impl true
+  def handle_info({:remote_connect_result, _target_id, {:error, reason}}, socket) do
+    message =
+      case reason do
+        :remote_connection_unavailable ->
+          gettext("Remote connect unavailable — the remote connection subsystem is not running.")
+
+        _ ->
+          gettext("Remote connect failed: %{reason}", reason: inspect(reason))
+      end
+
+    {:noreply, put_flash(socket, :error, message)}
+  end
+
   @impl true
   def handle_info(_msg, socket) do
     {:noreply, socket}
@@ -662,7 +681,12 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("retry_remote_connection", _params, socket) do
-    EvoDash.NodeContext.connect(socket.assigns.current_node_id)
+    # Async: initiate_remote_connect/2 spawns a supervised Task on
+    # EvoDash.TaskSupervisor that runs the remote connect (NodeContext's
+    # connect/1); terminal outcomes arrive via "remote_connections" PubSub
+    # broadcasts, sync errors via {:remote_connect_result, target_id, {:error,
+    # reason}}. Return immediately — no blocking.
+    EvoDashWeb.LiveHooks.NodeAware.initiate_remote_connect(socket, socket.assigns.current_node_id)
     {:noreply, socket}
   end
 

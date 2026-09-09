@@ -20,6 +20,9 @@ A LiveComponent that renders a compact dropdown for switching between local and 
 - **Manage-Connections link node param**: the link's `navigate` builds the URL as `~p"/settings?category=remote_connections" <> (if @current_node_id, do: "&node=#{@current_node_id}", else: "")` — the `&node=` suffix is a RAW string append AFTER the `~p` sigil. Interpolating the suffix INSIDE the `~p` sigil percent-encodes it (`%26node%3D...`) and the node param never survives; `EvoDashWeb.Helpers.with_node_param/2` would append with `?` and is also wrong for URLs that already have a query string.
 - **Delegation**: All domain operations delegate to `EvoDash.NodeContext` (`list_targets/0`, `connection_status/0`).
 - **Events**: Sends `{:node_selected, node_id}` to the parent LiveView; the parent calls `NodeAware.handle_node_selected/2` to build a `push_patch` updating the URL.
+- **`select_node` connect initiation is async fire-and-forget** (`node_selector_component.ex`): when a remote target is picked and `connected?/1` is false, `handle_event("select_node", ...)` spawns a supervised Task (`EvoDash.TaskSupervisor`) that calls `EvoDash.NodeContext.connect(node_id)` — the parent LiveView process is never blocked (connect now returns promptly `{:ok, :connecting}` / `{:ok, :connected}`).
+  `{:node_selected, node_id}` is sent to the parent immediately.
+  Status reconciliation is broadcast-driven: the destination page's remote-connection gate renders the `:connecting` spinner, and `"remote_connections"` broadcasts (forwarded to `NodeAware.handle_connection_status/2`) drive the transition to `:connected`; unavailable/disconnected state is surfaced via the gate's safe status reads.
 - **Lifecycle**: `update/2` (assigns, also self-loads `@remote_targets`/`@connection_statuses`), `render/1` (HEEx markup), `handle_event/3` (node selection dropdown toggle).
 
 ## Constraints

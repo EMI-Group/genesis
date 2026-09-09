@@ -199,6 +199,29 @@ defmodule EvoDashWeb.NodeAwareTest do
     :ok
   end
 
+  # Polls `fun` every 10ms until it returns truthy or the timeout (default
+  # 2000ms) elapses. Used to observe the fake ConnectionManager's recorded
+  # calls without fixed sleeps — the spawned connect Task's timing is
+  # nondeterministic.
+  defp await_until(fun, timeout \\ 2000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    await_until_loop(fun, deadline, timeout)
+  end
+
+  defp await_until_loop(fun, deadline, timeout) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("await_until/2 did not become true within #{timeout}ms")
+
+      true ->
+        Process.sleep(10)
+        await_until_loop(fun, deadline, timeout)
+    end
+  end
+
   describe "handle_connection_status/2 — meaningful transitions trigger push_patch" do
     test "local → remote: :connected for the selected node triggers push_patch" do
       # current_node is local (node()) — a :connected broadcast for the
@@ -1377,6 +1400,131 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert pending == []
     end
   end
+
+  describe "initiate_remote_connect/2 — shared async connect helper" do
+    # initiate_remote_connect/2 (node_aware.ex) spawns the connect resolution
+    # on EvoDash.TaskSupervisor and returns the socket UNCHANGED — it never
+    # blocks the LiveView/LiveComponent process. The spawned Task runs the real
+    # resolution chain (EvoDash.NodeContext.connect/1 →
+    # EvoGit.RemoteConnection.connect/1 → fetch_target → ensure_started →
+    # GenServer.call(manager, :connect)), so the config dir is isolated and a
+    # test target saved per test (same convention as the assign_node remote
+    # describes) while the fake ConnectionManager stands in for the real
+    # manager in EvoGit.RemoteConnection.Registry. The isolated registry keeps
+    # the global TaskRegistry/Store out of play for the connect round-trip.
+    setup :setup_isolated_registry
+    setup :isolate_config_dir
+
+    test "spawns the connect off-process on EvoDash.TaskSupervisor and returns the socket unchanged" do
+      id = "conn-spawn"
+      save_target!(id)
+
+      # delay_ms 150: the fake holds the :connect call open briefly, so the
+      # recorded caller can be observed before the supervised Task exits.
+      manager =
+        start_supervised!(
+          {EvoDashWeb.NodeAwareTest.ConnectionManager,
+           {id, %{phase: :disconnected}, {:ok, :connecting}, 150}}
+        )
+
+      sock = socket(%{})
+      assert NodeAware.initiate_remote_connect(sock, id) == sock
+
+      # The connect resolution is ASYNC: poll the fake until its :connect call
+      # is recorded (the spawned Task reached the manager)...
+      await_until(fn -> GenServer.call(manager, :calls) != [] end)
+
+      # ...then assert the recorded caller is a different process than the test
+      # process — the GenServer.call never runs inline in the caller of
+      # initiate_remote_connect/2.
+      assert [caller] = GenServer.call(manager, :callers)
+      assert is_pid(caller)
+      refute caller == self()
+
+      # The delay elapses, the {:ok, :connecting} reply is delivered, and the
+      # supervised Task exits normally — wait for it so teardown never stops
+      # the fake mid-call.
+      await_until(fn -> not Process.alive?(caller) end)
+    end
+
+    test "{:ok, :connecting} connect result → NO {:remote_connect_result, ...} self-message" do
+      id = "conn-ok-connecting"
+      save_target!(id)
+
+      manager =
+        start_supervised!(
+          {EvoDashWeb.NodeAwareTest.ConnectionManager,
+           {id, %{phase: :disconnected}, {:ok, :connecting}}}
+        )
+
+      sock = socket(%{})
+      assert NodeAware.initiate_remote_connect(sock, id) == sock
+
+      # Wait for the connect to be recorded — the spawned Task reached the fake.
+      await_until(fn -> GenServer.call(manager, :calls) != [] end)
+
+      # {:ok, :connecting} is a terminal-enough reply for the helper: only the
+      # {:error, reason} arm sends the view a message, so none may arrive.
+      refute_receive {:remote_connect_result, ^id, _}, 100
+    end
+
+    test "{:ok, :connected} connect result → NO {:remote_connect_result, ...} self-message" do
+      id = "conn-ok-connected"
+      save_target!(id)
+
+      manager =
+        start_supervised!(
+          {EvoDashWeb.NodeAwareTest.ConnectionManager,
+           {id, %{phase: :connected, node: "genesis_remote@127.0.0.1"}, {:ok, :connected}}}
+        )
+
+      sock = socket(%{})
+      assert NodeAware.initiate_remote_connect(sock, id) == sock
+
+      await_until(fn -> GenServer.call(manager, :calls) != [] end)
+
+      # Same contract as {:ok, :connecting} — an already-connected idempotent
+      # no-op still sends no self-message.
+      refute_receive {:remote_connect_result, ^id, _}, 100
+    end
+
+    test "{:error, reason} connect result → the {:remote_connect_result, ...} self-message is delivered" do
+      id = "conn-error"
+      save_target!(id)
+
+      start_supervised!(
+        {EvoDashWeb.NodeAwareTest.ConnectionManager,
+         {id, %{phase: :disconnected}, {:error, :fake_connect}}}
+      )
+
+      sock = socket(%{})
+      assert NodeAware.initiate_remote_connect(sock, id) == sock
+
+      # The spawned Task resolves the connect to {:error, :fake_connect} and
+      # sends the view (the test process) the sync-error self-message.
+      assert_receive {:remote_connect_result, ^id, {:error, :fake_connect}}, 1000
+    end
+
+    test "nil target_id → no spawn, socket unchanged, no :connect reaches any fake" do
+      id = "conn-nil-sentinel"
+      save_target!(id)
+
+      manager =
+        start_supervised!(
+          {EvoDashWeb.NodeAwareTest.ConnectionManager,
+           {id, %{phase: :disconnected}, {:error, :should_never_connect}}}
+        )
+
+      sock = socket(%{})
+      assert NodeAware.initiate_remote_connect(sock, nil) == sock
+
+      # The nil clause returns the socket and spawns nothing — give any buggy
+      # spawn time to land, then assert no self-message arrived and no :connect
+      # call reached the registered fake.
+      refute_receive {:remote_connect_result, _, _}, 150
+      assert GenServer.call(manager, :calls) == []
+    end
+  end
 end
 
 # A minimal GenServer that stands in for a real connection manager in
@@ -1384,6 +1532,20 @@ end
 # resolves a configured status for a target id without starting any SSH
 # machinery. The process dies (and its Registry entry is auto-removed) at
 # test end via `start_supervised!`.
+#
+# Start args: `{target_id, status}` (status-only manager, kept for existing
+# call sites), `{target_id, status, connect_result}` where `connect_result` is
+# what `handle_call(:connect, ...)` replies with (default `{:ok, :connecting}`,
+# e.g. `{:ok, :connected}` or `{:error, reason}`), or
+# `{target_id, status, connect_result, delay_ms}` which additionally holds the
+# `:connect` reply open for `delay_ms` milliseconds (recorded first, so a
+# polling test observes the call while the caller is still in-flight).
+#
+# `:connect` records `{:connect, caller_pid}` (`elem(from, 0)`) in a `calls`
+# list and leaves the stored status untouched — tests drive phase transitions
+# explicitly via `{:set_status, status}` (no broadcast). Getters: `:status`
+# (current stored status), `:calls` (recorded `{:connect, pid}` entries), and
+# `:callers` (just the recorded pids).
 defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
   use GenServer
 
@@ -1393,10 +1555,48 @@ defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
 
   @impl true
   def init({target_id, status}) do
+    init({target_id, status, {:ok, :connecting}})
+  end
+
+  def init({target_id, status, connect_result}) do
+    init({target_id, status, connect_result, nil})
+  end
+
+  def init({target_id, status, connect_result, delay_ms}) do
     Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
+
+    {:ok,
+     %{
+       target_id: target_id,
+       status: status,
+       connect_result: connect_result,
+       delay_ms: delay_ms,
+       calls: []
+     }}
   end
 
   @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
+  def handle_call(:status, _from, state), do: {:reply, state.status, state}
+
+  def handle_call(:connect, from, state) do
+    caller = elem(from, 0)
+    state = %{state | calls: [{:connect, caller} | state.calls]}
+
+    if state.delay_ms do
+      Process.sleep(state.delay_ms)
+    end
+
+    {:reply, state.connect_result, state}
+  end
+
+  def handle_call({:set_status, status}, _from, state) do
+    {:reply, :ok, %{state | status: status}}
+  end
+
+  def handle_call(:calls, _from, state), do: {:reply, Enum.reverse(state.calls), state}
+
+  def handle_call(:callers, _from, state) do
+    callers = Enum.map(state.calls, fn {_call, pid} -> pid end)
+    {:reply, Enum.reverse(callers), state}
+  end
 end

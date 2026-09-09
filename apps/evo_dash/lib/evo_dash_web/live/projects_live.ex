@@ -943,15 +943,19 @@ defmodule EvoDashWeb.ProjectsLive do
   # --- Remote Node Events ---
 
   # Re-initiates a connection to the currently selected (failed/disconnected)
-  # remote target. The connection manager runs asynchronously; the status
-  # broadcast triggers handle_connection_status → push_patch once connected.
+  # remote target. The connection is spawned on EvoDash.TaskSupervisor via the
+  # shared NodeAware.initiate_remote_connect/2 helper — never blocks the
+  # LiveView. Terminal outcomes arrive via "remote_connections" PubSub
+  # broadcasts → handle_connection_status → push_patch once connected; only
+  # synchronous errors are self-messaged back ({:remote_connect_result, ...}).
   @impl true
   def handle_event("retry_remote_connection", _params, socket) do
     if node_id = socket.assigns[:current_node_id] do
-      EvoDash.NodeContext.connect(node_id)
+      EvoDashWeb.LiveHooks.NodeAware.initiate_remote_connect(socket, node_id)
+    else
+      socket
     end
-
-    {:noreply, socket}
+    |> then(&{:noreply, &1})
   end
 
   # Switches back to the local node from a failed/disconnected remote context.
@@ -1793,6 +1797,25 @@ defmodule EvoDashWeb.ProjectsLive do
   @impl true
   def handle_info({:remote_connection_status, _, _} = msg, socket) do
     EvoDashWeb.LiveHooks.NodeAware.handle_connection_status(socket, msg)
+  end
+
+  # Sync-error fallback for NodeAware.initiate_remote_connect/2: the subsystem
+  # is unavailable / the target is unknown / the manager failed to start — NO
+  # "remote_connections" broadcast ever arrives on these arms, so the gate can
+  # never reconcile; the flash is the surfacing mechanism. Terminal outcomes
+  # arrive only via PubSub broadcasts handled by NodeAware.handle_connection_status/2.
+  @impl true
+  def handle_info({:remote_connect_result, _target_id, {:error, reason}}, socket) do
+    message =
+      case reason do
+        :remote_connection_unavailable ->
+          gettext("Remote connect unavailable — the remote connection subsystem is not running.")
+
+        _ ->
+          gettext("Remote connect failed: %{reason}", reason: inspect(reason))
+      end
+
+    {:noreply, put_flash(socket, :error, message)}
   end
 
   @impl true
