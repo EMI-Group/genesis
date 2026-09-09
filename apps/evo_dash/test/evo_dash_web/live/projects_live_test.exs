@@ -3246,6 +3246,344 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert render(view) =~ "File not found"
       assert assigns(view)[:task_prompt] == before
     end
+
+    # --- Staged image/audio attachment tests (binary attach flow) ---
+
+    # Installs the fake directory picker module (test/support) for the binary
+    # attach flow and restores the prior app env on exit — mirrors the inline
+    # per-test idiom of the text file_pick tests above.
+    defp install_fake_picker! do
+      original = Application.get_env(:evo_dash, :directory_picker_module)
+      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker_module, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker_module)
+        end
+      end)
+
+      :ok
+    end
+
+    # Opens `tmp_dir` as the active project through the command palette
+    # (open-path mode). The task form's launch panel + staged-attachment chip
+    # row render ONLY when a project is active (@disabled == false), so the
+    # staging tests that launch a task (or exercise the enabled-form flow)
+    # open a project first — exactly like the existing task_submit /
+    # custom-agent tests.
+    defp open_staging_project(view, tmp_dir) do
+      clear_recent_projects()
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      assert assigns(view)[:active_project_path] == tmp_dir
+      view
+    end
+
+    # Runs the native binary attach pick ("file_pick" on the given image/audio
+    # picker channel) against `path`, re-setting the fake's file-mode result
+    # first (the fake's default "/fake/picked/file.txt" would fail image/audio
+    # extension validation).
+    defp pick_staged(view, picker_id, kind, path) do
+      EvoDash.DirectoryPicker.Fake.set_file_result({:ok, path})
+      render_hook(view, "file_pick", %{picker_id: picker_id, prompt: "", kind: kind})
+      view
+    end
+
+    test "image pick stages a raw-bytes attachment and pushes the image channel", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      png_path = Path.join(tmp_dir, "pic.png")
+      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13>>
+      File.write!(png_path, png_bytes)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_staging_project(view, tmp_dir)
+
+      pick_staged(view, "objective_file_image", "image", png_path)
+
+      assert_push_event(view, "picker_result:objective_file_image", %{
+        attached: true,
+        name: "pic.png",
+        kind: "image"
+      })
+
+      # Staged entries are STRING-keyed maps; "data" holds the raw binary
+      # (server-side only — never rendered, so reading the written bytes back
+      # for the comparison is fine).
+      assert assigns(view)[:staged_attachments] == [
+               %{
+                 "type" => "image",
+                 "name" => "pic.png",
+                 "media_type" => "image/png",
+                 "data" => png_bytes
+               }
+             ]
+
+      # NOTE: the chip row (div#staged-attachments) is NOT asserted here — the
+      # task_form component renders it only when the caller forwards the
+      # @staged_attachments assign, and neither task_form call site in
+      # projects_live.ex does so yet (component-level chip rendering with the
+      # assign passed is covered in task_form_components_test.exs). The raw
+      # bytes must never leak into the rendered HTML regardless.
+      html = render(view)
+      refute html =~ Base.encode64(png_bytes)
+    end
+
+    test "audio pick stages symmetric to image on the audio channel", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      mp3_path = Path.join(tmp_dir, "note.mp3")
+      mp3_bytes = <<255, 251, 144, 64>>
+      File.write!(mp3_path, mp3_bytes)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_staging_project(view, tmp_dir)
+
+      pick_staged(view, "objective_file_audio", "audio", mp3_path)
+
+      assert_push_event(view, "picker_result:objective_file_audio", %{
+        attached: true,
+        name: "note.mp3",
+        kind: "audio"
+      })
+
+      assert assigns(view)[:staged_attachments] == [
+               %{
+                 "type" => "audio",
+                 "name" => "note.mp3",
+                 "media_type" => "audio/mpeg",
+                 "data" => mp3_bytes
+               }
+             ]
+    end
+
+    test "remove_staged_attachment removes a staged attachment by index down to empty", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      png_path = Path.join(tmp_dir, "pic.png")
+      mp3_path = Path.join(tmp_dir, "note.mp3")
+      mp3_bytes = <<255, 251, 144, 64>>
+      File.write!(png_path, <<137, 80, 78, 71>>)
+      File.write!(mp3_path, mp3_bytes)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_staging_project(view, tmp_dir)
+
+      pick_staged(view, "objective_file_image", "image", png_path)
+      assert_push_event(view, "picker_result:objective_file_image", %{attached: true})
+      pick_staged(view, "objective_file_audio", "audio", mp3_path)
+      assert_push_event(view, "picker_result:objective_file_audio", %{attached: true})
+
+      assert length(assigns(view)[:staged_attachments]) == 2
+
+      # Removing index 0 drops the image and keeps the audio.
+      render_hook(view, "remove_staged_attachment", %{"index" => "0"})
+
+      assert assigns(view)[:staged_attachments] == [
+               %{
+                 "type" => "audio",
+                 "name" => "note.mp3",
+                 "media_type" => "audio/mpeg",
+                 "data" => mp3_bytes
+               }
+             ]
+
+      # Removing the remaining index 0 empties the staged list.
+      render_hook(view, "remove_staged_attachment", %{"index" => "0"})
+      assert assigns(view)[:staged_attachments] == []
+    end
+
+    test "staging a 5th attachment is rejected by the per-task count cap", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      png_path = Path.join(tmp_dir, "pic.png")
+      File.write!(png_path, <<137, 80, 78, 71>>)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Four identical valid image picks reach the cap. Each pick's push is
+      # consumed so the staged assign is settled before the next pick.
+      for _ <- 1..4 do
+        pick_staged(view, "objective_file_image", "image", png_path)
+        assert_push_event(view, "picker_result:objective_file_image", %{attached: true})
+      end
+
+      assert length(assigns(view)[:staged_attachments]) == 4
+
+      # The count-cap check runs BEFORE the file is read, so a 5th pick fails
+      # fast and the staged list stays at 4.
+      pick_staged(view, "objective_file_image", "image", png_path)
+      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+      assert render(view) =~ "Maximum of 4 attachments per task"
+      assert length(assigns(view)[:staged_attachments]) == 4
+    end
+
+    test "image pick with an unsupported extension shows an error flash and stages nothing", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      txt_path = Path.join(tmp_dir, "notes.txt")
+      File.write!(txt_path, "plain text is not an image")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      pick_staged(view, "objective_file_image", "image", txt_path)
+      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+      assert render(view) =~ "Unsupported file type for attachment: .txt"
+      assert assigns(view)[:staged_attachments] == []
+    end
+
+    test "image pick with an oversized file shows an error flash and stages nothing", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      big_path = Path.join(tmp_dir, "huge.png")
+      File.write!(big_path, :binary.copy(<<0>>, 15 * 1024 * 1024 + 1))
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      pick_staged(view, "objective_file_image", "image", big_path)
+      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+      assert render(view) =~ "File is too large (max 15 MiB)"
+      assert assigns(view)[:staged_attachments] == []
+    end
+
+    test "file_pick_manual with kind image stages the file like the native pick", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      png_path = Path.join(tmp_dir, "pic.png")
+      png_bytes = <<137, 80, 78, 71>>
+      File.write!(png_path, png_bytes)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_staging_project(view, tmp_dir)
+
+      # The manual fallback routes through the same handle_binary_attach_result
+      # pipeline, so the push payload is identical to the native pick's.
+      render_hook(view, "file_pick_manual", %{
+        picker_id: "objective_file_image",
+        path: png_path,
+        prompt: "x",
+        kind: "image"
+      })
+
+      assert_push_event(view, "picker_result:objective_file_image", %{
+        attached: true,
+        name: "pic.png",
+        kind: "image"
+      })
+
+      assert assigns(view)[:staged_attachments] == [
+               %{
+                 "type" => "image",
+                 "name" => "pic.png",
+                 "media_type" => "image/png",
+                 "data" => png_bytes
+               }
+             ]
+    end
+
+    test "image pick with a missing file shows the file-not-found error flash", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      install_fake_picker!()
+
+      missing = Path.join(tmp_dir, "missing.png")
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      pick_staged(view, "objective_file_image", "image", missing)
+      assert_push_event(view, "picker_result:objective_file_image", %{error: true})
+      assert render(view) =~ "File not found:"
+      assert assigns(view)[:staged_attachments] == []
+    end
+
+    test "submitting with a staged attachment threads base64 attachments and clears the staged list",
+         %{
+           conn: conn,
+           tmp_dir: tmp_dir
+         } do
+      install_fake_picker!()
+
+      png_path = Path.join(tmp_dir, "pic.png")
+      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>>
+      File.write!(png_path, png_bytes)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_staging_project(view, tmp_dir)
+
+      pick_staged(view, "objective_file_image", "image", png_path)
+
+      assert assigns(view)[:staged_attachments] == [
+               %{
+                 "type" => "image",
+                 "name" => "pic.png",
+                 "media_type" => "image/png",
+                 "data" => png_bytes
+               }
+             ]
+
+      # Launch an evolve task with a nonexistent node_path — the task launches
+      # successfully but the worker fails fast before any agent/LLM work (see
+      # the "task_submit clears the prompt" describe).
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+
+      # A successful launch clears the staged attachments.
+      assert assigns(view)[:staged_attachments] == []
+
+      id = cleanup_launched_task(html)
+
+      # The persisted task opts carry the attachment as BASE64 (raw bytes never
+      # cross the task-opts boundary — this is the whole point of encoding at
+      # submit). The :attachments opt key is not codec-whitelisted, so it
+      # round-trips as the STRING "attachments" — read tolerantly for either
+      # key shape.
+      task = EvoGit.TaskRegistry.get_task(id)
+      opts_map = Map.new(task.opts || [])
+      attachments = Map.get(opts_map, "attachments") || Map.get(opts_map, :attachments)
+
+      assert [%{} = att] = attachments
+      assert att["type"] == "image"
+      assert att["name"] == "pic.png"
+      assert att["media_type"] == "image/png"
+      assert att["data"] == Base.encode64(png_bytes)
+    end
   end
 
   describe "custom agent selection" do
