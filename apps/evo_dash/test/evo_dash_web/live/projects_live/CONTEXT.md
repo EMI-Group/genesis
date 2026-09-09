@@ -26,5 +26,3 @@ Only `project_test.exs` consumes the config subsystem; the other two files have 
 - Sentinel contract: no script → first profile's id; script enabled → `""`; no profiles → `nil` (no script) / `""` (script).
 - Remote degradation pinned: unreachable node → `{[], nil}` via `NodeContext.get_resolved_config/1` returning `{:error, _}`.
 - `project_flow_test.exs` references `EvoGit.Platform.absolute_path?/1` once (path predicate — only relevant if Platform is refactored alongside Config).
-
-Details: the audit report of 2026-? (config-subsystem Ecto refactor inventory) in this directory's git history.
