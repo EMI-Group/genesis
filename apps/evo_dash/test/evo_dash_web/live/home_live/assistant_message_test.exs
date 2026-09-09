@@ -2,12 +2,15 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
   use ExUnit.Case, async: true
   import Phoenix.LiveViewTest
 
+  alias EvoDashWeb.HomeLive.AgentStream
   alias EvoDashWeb.HomeLive.AssistantMessage
 
   # Rendered-HTML tests for the assistant mini task-card (the private
   # status_label/card_border/type_color helpers have no public API — the
   # rendered card IS the contract). All assigns are passed explicitly so the
   # component's total payload access (Map.get-guarded) is what is exercised.
+  # Also carries the pure-unit describe for AgentStream.extract_failed_message/1
+  # (the failed-message fallback helper behind HomeLive's terminal render).
 
   # The HEEx template emits whitespace inside the Task header span, so the
   # literal ">Task<" never matches — match with a whitespace-tolerant regex.
@@ -261,6 +264,48 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       # data-content is an attribute → HTML-escaped so the attribute value stays
       # intact (the ClipboardCopy hook reads it back verbatim).
       assert html =~ ~s(data-content="a &lt;b&gt; &amp; &quot;quote&quot;")
+    end
+  end
+
+  # Pure unit coverage of AgentStream.extract_failed_message/1 — the total
+  # helper behind the Home chat's failed-task message fallback (HomeLive
+  # finalize_failed/2 shows the structured error.message when present, else the
+  # generic "The task failed." placeholder). Rendered-card tests above cannot
+  # reach it (finalize_failed is private to HomeLive), so the helper contract is
+  # pinned directly here.
+  describe "AgentStream.extract_failed_message/1" do
+    test "returns nil for nil and non-map payloads" do
+      assert AgentStream.extract_failed_message(nil) == nil
+      assert AgentStream.extract_failed_message({:error, :boom}) == nil
+      assert AgentStream.extract_failed_message("legacy string error") == nil
+      assert AgentStream.extract_failed_message(42) == nil
+    end
+
+    test "returns nil when the message key is absent or not a binary" do
+      assert AgentStream.extract_failed_message(%{kind: :boom}) == nil
+      assert AgentStream.extract_failed_message(%{message: nil}) == nil
+      assert AgentStream.extract_failed_message(%{message: :boom}) == nil
+    end
+
+    test "returns nil for empty / blank-only messages" do
+      assert AgentStream.extract_failed_message(%{message: ""}) == nil
+      assert AgentStream.extract_failed_message(%{message: "   "}) == nil
+      # The map-form payload without :message but with a "message" key.
+      assert AgentStream.extract_failed_message(%{"message" => " \t "}) == nil
+    end
+
+    test "returns the message for atom-key and string-key shapes" do
+      assert AgentStream.extract_failed_message(%{message: "Task force-killed by user"}) ==
+               "Task force-killed by user"
+
+      assert AgentStream.extract_failed_message(%{"message" => "Task force-killed by user"}) ==
+               "Task force-killed by user"
+    end
+
+    test "returns a non-blank message verbatim (no trimming)" do
+      # Only the blank check trims; a padded non-blank message is returned as-is.
+      assert AgentStream.extract_failed_message(%{message: "  partial note  "}) ==
+               "  partial note  "
     end
   end
 end
