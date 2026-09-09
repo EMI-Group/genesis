@@ -107,7 +107,7 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       refute button_class(html) =~ "mx-auto"
     end
 
-    test "toolbar DOM order is attach + | mode | model | send (pins real order)" do
+    test "toolbar DOM order is attach dropdown | mode | model | send (pins real order)" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "Short",
@@ -117,24 +117,33 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       doc = parse(html)
       [controls] = Floki.find(doc, ".input-controls")
 
-      # Interactive controls in document order: attach "+" first (bottom-left),
-      # mode select, model select, circular send button LAST (rightmost member
-      # of the right-aligned cluster). The hidden .file-manual fallback div is
-      # a sibling in the same row but is not an interactive control.
+      # Interactive controls in document order: the attach-kind dropdown's "+"
+      # <summary> trigger first (bottom-left — inside the wrapping
+      # <details#objective-file-attach>), then mode select, model select,
+      # circular send button LAST (rightmost member of the right-aligned
+      # cluster). The hidden .file-manual fallback div is a sibling in the same
+      # row but is not an interactive control.
       found =
         Floki.find(
           controls,
-          "button#objective-file-button, select[name=mode], select[name=model_id], button#task-launch-button"
+          "summary#objective-file-button, select[name=mode], select[name=model_id], button#task-launch-button"
         )
 
       assert [
-               {"button", attach_attrs, _},
+               {"summary", attach_attrs, _},
                {"select", mode_attrs, _},
                {"select", model_attrs, _},
                {"button", launch_attrs, _}
              ] = found
 
       assert {"id", "objective-file-button"} in attach_attrs
+
+      # The summary is the visual trigger of the attach-kind <details
+      # class="dropdown"> — the FilePicker hook lives on that wrapping element.
+      [details] = Floki.find(controls, "details#objective-file-attach")
+      details_class = details |> Floki.attribute("class") |> List.first() |> to_string()
+      assert details_class =~ "dropdown"
+
       assert {"name", "mode"} in mode_attrs
       assert {"name", "model_id"} in model_attrs
       assert {"id", "task-launch-button"} in launch_attrs
@@ -417,45 +426,87 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       refute html =~ ~s(phx-debounce="200")
     end
 
-    test "attach-file button renders when a project is active (default)" do
+    test "attach-file dropdown renders when a project is active (default)" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+      doc = parse(html)
 
-      [btn] = Floki.find(parse(html), "button#objective-file-button")
+      # The attach control is now an attach-kind <details class="dropdown">
+      # whose <summary> is the visual "+" trigger. The FilePicker JS hook lives
+      # on the <details> (click-delegating on the [data-picker-kind] menu
+      # items); a <summary> is the native details toggle and carries NO type
+      # attribute — type="button" lives on the three menu buttons instead.
+      [details] = Floki.find(doc, "details#objective-file-attach")
+      assert details |> Floki.attribute("phx-hook") |> List.first() == "FilePicker"
+      details_class = details |> Floki.attribute("class") |> List.first() |> to_string()
+      assert details_class =~ "dropdown"
+      assert details_class =~ "dropdown-top"
 
-      # FilePicker hook wiring + picker id used by the JS hook to correlate
-      # the server's "picker_result:<id>" push.
-      assert btn |> Floki.attribute("phx-hook") |> List.first() == "FilePicker"
-      assert btn |> Floki.attribute("data-picker-id") |> List.first() == "objective_file"
+      [summary] = Floki.find(doc, "summary#objective-file-button")
+      assert summary |> Floki.attribute("aria-label") |> List.first() == "Attach file"
+      assert summary |> Floki.attribute("title") |> List.first() == "Attach file"
 
-      # type="button" is critical: inside the task form a button without it
-      # would submit the form.
-      assert btn |> Floki.attribute("type") |> List.first() == "button"
-
-      assert btn |> Floki.attribute("aria-label") |> List.first() == "Attach file"
-      assert btn |> Floki.attribute("title") |> List.first() == "Attach file"
-
-      # Bottom-toolbar "+" button (bottom-LEFT of the row): square ghost
+      # Bottom-toolbar "+" trigger (bottom-LEFT of the row): square ghost
       # button — no absolute top-right floating over the textarea anymore.
-      assert btn_class = btn |> Floki.attribute("class") |> List.first() |> to_string()
-      refute btn_class =~ "absolute"
-      refute btn_class =~ "top-2"
-      assert btn_class =~ "btn-square"
+      summary_class = summary |> Floki.attribute("class") |> List.first() |> to_string()
+      refute summary_class =~ "absolute"
+      refute summary_class =~ "top-2"
+      assert summary_class =~ "btn-square"
 
-      # "+" icon inside the button (the paper-clip was the old top-right design).
+      # "+" icon inside the trigger (the paper-clip was the old top-right design).
       assert html =~ "hero-plus"
       refute html =~ "hero-paper-clip"
+
+      # The dropdown menu holds exactly three pick-kind items, each a plain
+      # type="button" carrying NO phx-click (a bare button without type would
+      # submit the task form; the FilePicker hook click-delegates on these
+      # items itself).
+      items = Floki.find(doc, "details#objective-file-attach ul button[data-picker-kind]")
+      assert length(items) == 3
+
+      for {"button", attrs, _} <- items do
+        assert {"type", "button"} in attrs
+        refute List.keyfind(attrs, "phx-click", 0)
+      end
     end
 
-    test "attach-file button is the first element inside the controls row" do
+    test "attach-kind menu items pair kind → picker id and render their labels" do
+      html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+      doc = parse(html)
+
+      items = Floki.find(doc, "details#objective-file-attach ul button[data-picker-kind]")
+
+      assert [
+               {"button", text_attrs, _},
+               {"button", image_attrs, _},
+               {"button", audio_attrs, _}
+             ] = items
+
+      # kind → picker id pairing drives the FilePicker hook's per-kind
+      # "file_pick" event ids (text = the existing objective_file pipeline;
+      # image/audio are staged server-side).
+      assert {"data-picker-kind", "text"} in text_attrs
+      assert {"data-picker-id", "objective_file"} in text_attrs
+      assert {"data-picker-kind", "image"} in image_attrs
+      assert {"data-picker-id", "objective_file_image"} in image_attrs
+      assert {"data-picker-kind", "audio"} in audio_attrs
+      assert {"data-picker-id", "objective_file_audio"} in audio_attrs
+
+      # Menu labels in document order (gettext msgids in the test locale).
+      labels = Enum.map(items, fn item -> item |> Floki.text() |> String.trim() end)
+      assert labels == ["Text / PDF", "Image", "Audio"]
+    end
+
+    test "attach-file dropdown is the first element inside the controls row" do
       html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
 
       doc = parse(html)
       [controls] = Floki.find(doc, ".input-controls")
 
       # Placement contract (INVERTED vs the old top-right design): the attach
-      # "+" button now lives INSIDE .input-controls as its FIRST element child
-      # (bottom-left of the toolbar), followed by the hidden .file-manual
-      # fallback div — both direct children of the toolbar row.
+      # <details class="dropdown"> (id objective-file-attach) now lives INSIDE
+      # .input-controls as its FIRST element child (bottom-left of the
+      # toolbar), followed by the hidden .file-manual fallback div — both
+      # direct children of the toolbar row.
       element_children =
         controls
         |> Floki.children()
@@ -464,19 +515,146 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
           _ -> false
         end)
 
-      assert [{"button", first_attrs, _}, {"div", manual_attrs, _} | _] = element_children
-      assert {"id", "objective-file-button"} in first_attrs
+      assert [{"details", first_attrs, _}, {"div", manual_attrs, _} | _] = element_children
+      assert {"id", "objective-file-attach"} in first_attrs
       assert {"id", "objective-file-manual"} in manual_attrs
+
+      # The "<summary id=objective-file-button>" "+" trigger is the details'
+      # own first child, so the dropdown remains the row's visual lead.
+      [summary] = Floki.find(doc, "details#objective-file-attach > summary#objective-file-button")
+      assert summary |> Floki.attribute("id") |> List.first() == "objective-file-button"
     end
 
-    test "attach-file button is not rendered in the disabled (no-project) state" do
+    test "attach-file dropdown is not rendered in the disabled (no-project) state" do
       html =
         render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
           prompt: "",
           disabled: true
         )
 
-      assert Floki.find(parse(html), "button#objective-file-button") == []
+      doc = parse(html)
+
+      # With no project open the whole toolbar row is suppressed: neither the
+      # old bare button nor the new <details>/<summary> attach control renders,
+      # and no staged-attachments chip row can appear either.
+      assert Floki.find(doc, "button#objective-file-button") == []
+      assert Floki.find(doc, "summary#objective-file-button") == []
+      assert Floki.find(doc, "details#objective-file-attach") == []
+      assert Floki.find(doc, ".input-controls") == []
+      refute html =~ "staged-attachments"
+    end
+
+    test "staged attachment chips render metadata only (kind + basename) with remove buttons" do
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "pic.png",
+          "media_type" => "image/png",
+          "data" => <<1, 2, 3>>
+        },
+        %{
+          "type" => "audio",
+          "name" => "clip.mp3",
+          "media_type" => "audio/mpeg",
+          "data" => <<4, 5>>
+        }
+      ]
+
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          staged_attachments: attachments
+        )
+
+      doc = parse(html)
+      [chips] = Floki.find(doc, "div#staged-attachments")
+
+      # Metadata only: the kind label + basename of each staged attachment are
+      # rendered (scoped to the chips row — the dropdown menu also carries
+      # "Image"/"Audio" labels), never the raw "data" binary.
+      chips_text = chips |> Floki.text()
+      assert chips_text =~ "Image"
+      assert chips_text =~ "pic.png"
+      assert chips_text =~ "Audio"
+      assert chips_text =~ "clip.mp3"
+
+      # Raw byte content of the staged "data" keys must never leak into the
+      # rendered HTML (byte-level check — no metadata attribute holds them).
+      assert :binary.match(html, <<1, 2, 3>>) == :nomatch
+      assert :binary.match(html, <<4, 5>>) == :nomatch
+    end
+
+    test "staged attachment remove buttons carry type/aria-label and integer indexes" do
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "pic.png",
+          "media_type" => "image/png",
+          "data" => <<1, 2, 3>>
+        },
+        %{
+          "type" => "audio",
+          "name" => "clip.mp3",
+          "media_type" => "audio/mpeg",
+          "data" => <<4, 5>>
+        }
+      ]
+
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          staged_attachments: attachments
+        )
+
+      doc = parse(html)
+
+      remove_buttons =
+        Floki.find(doc, "div#staged-attachments button[phx-click=\"remove_staged_attachment\"]")
+
+      assert length(remove_buttons) == 2
+
+      for {"button", attrs, _} <- remove_buttons do
+        assert {"type", "button"} in attrs
+        assert {"aria-label", "Remove attachment"} in attrs
+      end
+
+      # phx-value-index is the integer chip index in the list (0, 1) — the
+      # remove_staged_attachment server event indexes into the staged list.
+      indexes =
+        Enum.map(remove_buttons, fn btn ->
+          btn |> Floki.attribute("phx-value-index") |> List.first()
+        end)
+
+      assert indexes == ["0", "1"]
+    end
+
+    test "no staged-attachments row renders when the assign is absent" do
+      html = render_component(&EvoDashWeb.TaskFormComponents.task_form/1, prompt: "")
+
+      # Regression: the component gates on Map.get(assigns, :staged_attachments)
+      # so a render without the assign (all existing callers) emits no chips row.
+      assert Floki.find(parse(html), "div#staged-attachments") == []
+      refute html =~ "staged-attachments"
+    end
+
+    test "disabled state hides the chips row even when staged attachments are passed" do
+      html =
+        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+          prompt: "",
+          disabled: true,
+          staged_attachments: [
+            %{
+              "type" => "image",
+              "name" => "pic.png",
+              "media_type" => "image/png",
+              "data" => <<1, 2, 3>>
+            }
+          ]
+        )
+
+      assert Floki.find(parse(html), "div#staged-attachments") == []
+      refute html =~ "staged-attachments"
+      refute html =~ "pic.png"
     end
   end
 
