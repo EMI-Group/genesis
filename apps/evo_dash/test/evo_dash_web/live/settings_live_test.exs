@@ -3223,6 +3223,216 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
+  describe "remote-connection async connect flow (event-driven flash)" do
+    # Saves a unique remote target and registers a fake ConnectManager in
+    # EvoGit.RemoteConnection.Registry answering the GenServer :connect call
+    # that EvoGit.RemoteConnection.connect/1 routes to it. `connect_result`
+    # (default {:ok, :connecting}) is the canned reply; `delay_ms` optionally
+    # holds the reply back so a test can keep the connect "in flight" (the
+    # double-click guard). The manager starts at `status` (default
+    # disconnected) and records every :connect call in `calls` (read back via
+    # GenServer.call(manager, :calls)). Returns {id, manager}.
+    defp connect_target!(opts \\ []) do
+      id = "settings-connect-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Connect Test Target"
+        })
+
+      status =
+        Keyword.get(
+          opts,
+          :status,
+          %{phase: :disconnected, node: nil, last_error: nil, target: nil, bootstrap_stage: nil}
+        )
+
+      manager =
+        start_supervised!(
+          {EvoDashWeb.SettingsLiveTest.ConnectManager,
+           {id, status, Keyword.get(opts, :connect_result, {:ok, :connecting}),
+            Keyword.get(opts, :delay_ms, 0)}},
+          id: {:settings_connect_manager, id}
+        )
+
+      on_exit(fn ->
+        EvoGit.RemoteConnections.delete(id)
+      end)
+
+      {id, manager}
+    end
+
+    # The terminal :connected status map. Realistic ordering in these tests:
+    # the fake manager's state is mutated FIRST ({:set_status, ...}), then the
+    # same map is broadcast — mirroring the real core (manager state changes,
+    # then it broadcasts). The target ROW's phase (dot/badge/label) is
+    # recomputed from the manager via NodeContext.connection_status/0, NOT from
+    # the broadcast payload.
+    defp connect_status_connected do
+      %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}
+    end
+
+    defp connect_status_error(last_error) do
+      %{phase: :error, node: nil, last_error: last_error}
+    end
+
+    defp connect_status_connecting do
+      %{phase: :connecting, node: nil, last_error: nil}
+    end
+
+    # Number of literal occurrences of `text` in `html` — the flash message
+    # renders exactly once per put_flash (a re-put on the same kind would
+    # overwrite the map entry, so a repeated terminal broadcast must leave the
+    # count unchanged).
+    defp html_occurrences(html, text) do
+      html |> String.split(text) |> length() |> Kernel.-(1)
+    end
+
+    test "no premature flash on Connect click; info flash exactly once on the :connected broadcast",
+         %{conn: conn} do
+      {id, manager} = connect_target!()
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      html = render_click(view, "connect_remote_target", %{"id" => id})
+
+      # Async contract: the click only sets the per-target pending marker and
+      # spawns the supervised connect task — NO synchronous flash.
+      refute html =~ "Connect succeeded."
+      assert assigns(view)[:remote_connect_pending][id] == true
+
+      # Terminal outcomes arrive ONLY via the broadcast. Realistic ordering:
+      # manager state changes first, then the broadcast fires.
+      GenServer.call(manager, {:set_status, connect_status_connected()})
+      send(view.pid, {:remote_connection_status, id, connect_status_connected()})
+      html = render(view)
+
+      assert html_occurrences(html, "Connect succeeded.") == 1
+      assert assigns(view)[:flash] == %{"info" => "Connect succeeded."}
+      # the marker was consumed — the flash is one-shot per initiation
+      assert assigns(view)[:remote_connect_pending] == %{}
+    end
+
+    test "duplicate :connected broadcast does not flash a second time (marker consumed)",
+         %{conn: conn} do
+      {id, manager} = connect_target!()
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "connect_remote_target", %{"id" => id})
+
+      GenServer.call(manager, {:set_status, connect_status_connected()})
+      send(view.pid, {:remote_connection_status, id, connect_status_connected()})
+      html = render(view)
+
+      assert html_occurrences(html, "Connect succeeded.") == 1
+      assert assigns(view)[:remote_connect_pending] == %{}
+
+      # Same terminal broadcast again — the marker is gone, so consume must NOT
+      # re-add the flash: the rendered page still carries exactly one alert and
+      # the flash assign is unchanged.
+      send(view.pid, {:remote_connection_status, id, connect_status_connected()})
+      html = render(view)
+
+      assert html_occurrences(html, "Connect succeeded.") == 1
+      assert assigns(view)[:flash] == %{"info" => "Connect succeeded."}
+      assert assigns(view)[:remote_connect_pending] == %{}
+    end
+
+    test ":connecting broadcast neither flashes nor consumes the marker; the later terminal still flashes",
+         %{conn: conn} do
+      {id, manager} = connect_target!()
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "connect_remote_target", %{"id" => id})
+
+      # Intermediate :connecting broadcast (manager state then broadcast) — the
+      # non-terminal phase must not flash AND must leave the marker in place so
+      # the eventual terminal outcome is still surfaced.
+      GenServer.call(manager, {:set_status, connect_status_connecting()})
+      send(view.pid, {:remote_connection_status, id, connect_status_connecting()})
+      html = render(view)
+
+      refute html =~ "Connect succeeded."
+      refute html =~ "Connect failed:"
+      assert assigns(view)[:remote_connect_pending][id] == true
+
+      # The later terminal broadcast still flashes — the marker survived the
+      # :connecting broadcast.
+      GenServer.call(manager, {:set_status, connect_status_connected()})
+      send(view.pid, {:remote_connection_status, id, connect_status_connected()})
+      html = render(view)
+
+      assert html_occurrences(html, "Connect succeeded.") == 1
+      assert assigns(view)[:remote_connect_pending] == %{}
+    end
+
+    test "error broadcast flashes the last_error once; a duplicate error broadcast is silent",
+         %{conn: conn} do
+      {id, manager} = connect_target!()
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "connect_remote_target", %{"id" => id})
+
+      GenServer.call(manager, {:set_status, connect_status_error("ssh refused")})
+      send(view.pid, {:remote_connection_status, id, connect_status_error("ssh refused")})
+      html = render(view)
+
+      assert html_occurrences(html, "Connect failed: ssh refused") == 1
+      assert assigns(view)[:flash] == %{"error" => "Connect failed: ssh refused"}
+      assert assigns(view)[:remote_connect_pending] == %{}
+
+      # Marker consumed — a duplicate terminal broadcast adds no second flash.
+      send(view.pid, {:remote_connection_status, id, connect_status_error("ssh refused")})
+      html = render(view)
+
+      assert html_occurrences(html, "Connect failed: ssh refused") == 1
+      assert assigns(view)[:flash] == %{"error" => "Connect failed: ssh refused"}
+    end
+
+    test "a second Connect click while the first connect is in flight is a no-op", %{conn: conn} do
+      # 200ms reply delay keeps the first connect in flight while the second
+      # click lands — the per-target pending marker must block the duplicate.
+      {id, manager} = connect_target!(delay_ms: 200)
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "connect_remote_target", %{"id" => id})
+      render_click(view, "connect_remote_target", %{"id" => id})
+
+      # Only the FIRST click reaches the fake manager.
+      assert wait_until(view, fn -> GenServer.call(manager, :calls) == [:connect] end)
+      assert GenServer.call(manager, :calls) == [:connect]
+    end
+
+    test "sync connect error (never broadcast) clears the marker and flashes via the self-message",
+         %{conn: conn} do
+      {id, _manager} = connect_target!(connect_result: {:error, :subsystem_down})
+      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+
+      render_click(view, "connect_remote_target", %{"id" => id})
+
+      # The async task's connect call returned {:error, :subsystem_down} — an
+      # arm that never broadcasts — so initiate_remote_connect self-messages
+      # {:remote_connect_result, ...}; the narrow handler clears the marker and
+      # flashes the inspected reason.
+      assert wait_until(view, fn ->
+               assigns(view)[:remote_connect_pending] == %{} and
+                 assigns(view)[:flash]["error"] == "Connect failed: :subsystem_down"
+             end)
+
+      html = render(view)
+      assert html =~ "Connect failed: :subsystem_down"
+
+      # The marker is gone: a later terminal broadcast for this target is
+      # silent (no second flash carrying the new last_error).
+      send(view.pid, {:remote_connection_status, id, connect_status_error("late error")})
+      html = render(view)
+
+      refute html =~ "Connect failed: late error"
+      assert assigns(view)[:flash]["error"] == "Connect failed: :subsystem_down"
+    end
+  end
+
   describe "copy-to-clipboard" do
     test "config-path copy button renders with the ClipboardCopy hook", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/settings")
@@ -3508,4 +3718,51 @@ defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
     if state.delay_ms > 0, do: Process.sleep(state.delay_ms)
     {:reply, state.result, %{state | calls: state.calls ++ [call]}}
   end
+end
+
+# A fake manager for the async remote-connection connect flow. Registered in
+# `EvoGit.RemoteConnection.Registry` under the target id, it answers the
+# GenServer `:connect` call that `EvoGit.RemoteConnection.connect/1` routes to
+# it with `connect_result` (default `{:ok, :connecting}`) after `delay_ms`,
+# records every call in `calls` (read back via `GenServer.call(manager,
+# :calls)`), and serves `:status` — used by `NodeContext.connection_status/0`
+# when the page recomputes `@remote_statuses` after a broadcast. Tests drive
+# the row's phase with `{:set_status, status}` (mirroring the real core:
+# manager state changes first, THEN the broadcast fires).
+defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
+  use GenServer
+
+  def start_link({target_id, status, connect_result, delay_ms}) do
+    GenServer.start_link(__MODULE__, {target_id, status, connect_result, delay_ms})
+  end
+
+  @impl true
+  def init({target_id, status, connect_result, delay_ms}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, %{status: status, connect_result: connect_result, delay_ms: delay_ms, calls: []}}
+  end
+
+  @impl true
+  def handle_call(:connect, _from, state) do
+    if state.delay_ms > 0, do: Process.sleep(state.delay_ms)
+    {:reply, state.connect_result, %{state | calls: state.calls ++ [:connect]}}
+  end
+
+  @impl true
+  def handle_call({:set_status, status}, _from, state) do
+    {:reply, :ok, %{state | status: status}}
+  end
+
+  @impl true
+  def handle_call(:status, _from, state) do
+    {:reply, state.status, state}
+  end
+
+  @impl true
+  def handle_call(:calls, _from, state) do
+    {:reply, state.calls, state}
+  end
+
+  @impl true
+  def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
 end
