@@ -1212,7 +1212,12 @@ defmodule EvoDashWeb.AgentsLive do
       data: %{
         content:
           msg.content
-          |> Enum.map(&Map.get(&1, :text))
+          |> Enum.map(fn part ->
+            case content_part_label(part) do
+              nil -> Map.get(part, :text)
+              label -> label
+            end
+          end)
           |> Enum.reject(&is_nil/1)
           |> Enum.join(),
         tool_calls: msg.tool_calls,
@@ -1222,6 +1227,50 @@ defmodule EvoDashWeb.AgentsLive do
       }
     }
   end
+
+  # Renders a short metadata label for image/audio content parts so multimodal
+  # history isn't blank, e.g. "[image: foo.png]" / "[audio: track.mp3]". Every
+  # other part type (text/image_url/video_url/thinking/unknown) returns nil —
+  # those contribute nothing beyond what the text extraction already yields.
+  # Handles %ReqLLM.Message.ContentPart{} structs and atom/string-keyed maps.
+  # TOTAL: never raises, never touches the part's `data` binary.
+  defp content_part_label(part) when is_map(part) do
+    type = pget(part, :type)
+
+    cond do
+      type in [:image, "image"] -> "[image#{part_name_suffix(part)}]"
+      audio_part?(part, type) -> "[audio#{part_name_suffix(part)}]"
+      true -> nil
+    end
+  end
+
+  defp content_part_label(_part), do: nil
+
+  # Audio rides as type :audio or as type :file with an audio/* media_type
+  # (is_binary guard keeps it total on non-string media_type values).
+  defp audio_part?(_part, type) when type in [:audio, "audio"], do: true
+
+  defp audio_part?(part, type) when type in [:file, "file"] do
+    case pget(part, :media_type) do
+      mt when is_binary(mt) -> String.starts_with?(mt, "audio/")
+      _ -> false
+    end
+  end
+
+  defp audio_part?(_part, _type), do: false
+
+  # ": <filename>" when a filename is available, else "" — never a bare
+  # binary; prefers the real schema `filename` field, falls back to a `name`
+  # key (string or atom) for defensive map shapes.
+  defp part_name_suffix(part) do
+    case pget(part, :filename) || pget(part, :name) do
+      name when is_binary(name) and name != "" -> ": " <> name
+      _ -> ""
+    end
+  end
+
+  # Atom-or-string-key tolerant getter (total on any map shape).
+  defp pget(part, key), do: Map.get(part, key) || Map.get(part, to_string(key))
 
   # Merges an agent's real history with its pending optimistic user messages
   # (see OptimisticMessages). Optimistic entries are appended AFTER the real
