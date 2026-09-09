@@ -151,6 +151,51 @@ defmodule EvoDashWeb.Helpers do
   def task_status_tint(:cancelled), do: "bg-base-200/40 border-base-300/20"
   def task_status_tint(_), do: "bg-base-200/40 border-base-300/20"
 
+  # zh_CN: 任务失败错误记录 kind/source 标签语义, 供 release 时 AI 翻译参考:
+  #   kind:   :error/:exit → 任务因异常或退出而失败(通用"Failed"); :down → 智能体进程崩溃;
+  #           :force_kill → 被用户强制终止; :timeout → 终结阶段看门狗超时;
+  #           :restart → 运行时(服务)重启, 启动对账将中断的任务判为失败;
+  #           :lease_expired → 任务租约过期(心跳丢失); :recheck → 包装进程死亡后的重查解析失败
+  #   source: :result_handler → 处理执行结果时失败; :down_handler → 智能体 down 事件监控;
+  #           :force_kill_task → force kill 强制终止动作; :finalizing_watchdog → 终结阶段看门狗;
+  #           :startup_reconcile → 启动对账(重启恢复); :lease_sweep → 租约清扫(过期检测);
+  #           :recheck_resolve → 重查解析(包装进程死亡后的结果恢复)
+  @doc """
+  Returns a human-readable localized label for a failed-task error `kind`
+  (closed set `:error | :exit | :down | :force_kill | :timeout | :restart |
+  :lease_expired | :recheck`), e.g. "Agent crashed" / "Lease expired".
+
+  Total function: unknown atoms, `nil`, and non-atom input fall back to
+  gettext("Unknown") — never raises.
+  """
+  def task_error_kind_label(:error), do: gettext("Failed")
+  def task_error_kind_label(:exit), do: gettext("Failed")
+  def task_error_kind_label(:down), do: gettext("Agent crashed")
+  def task_error_kind_label(:force_kill), do: gettext("Force-killed")
+  def task_error_kind_label(:timeout), do: gettext("Timed out")
+  def task_error_kind_label(:restart), do: gettext("Runtime restarted")
+  def task_error_kind_label(:lease_expired), do: gettext("Lease expired")
+  def task_error_kind_label(:recheck), do: gettext("Recheck")
+  def task_error_kind_label(_), do: gettext("Unknown")
+
+  @doc """
+  Returns a human-readable localized label for the `source` of a failed-task
+  error record (closed set `:result_handler | :down_handler |
+  :force_kill_task | :finalizing_watchdog | :startup_reconcile |
+  :lease_sweep | :recheck_resolve`), e.g. "Finalization watchdog".
+
+  Total function: unknown atoms, `nil`, and non-atom input fall back to
+  gettext("Unknown") — never raises.
+  """
+  def task_error_source_label(:result_handler), do: gettext("Result handler")
+  def task_error_source_label(:down_handler), do: gettext("Agent monitor")
+  def task_error_source_label(:force_kill_task), do: gettext("Force kill")
+  def task_error_source_label(:finalizing_watchdog), do: gettext("Finalization watchdog")
+  def task_error_source_label(:startup_reconcile), do: gettext("Startup reconcile")
+  def task_error_source_label(:lease_sweep), do: gettext("Lease sweep")
+  def task_error_source_label(:recheck_resolve), do: gettext("Recheck")
+  def task_error_source_label(_), do: gettext("Unknown")
+
   @doc """
   Returns the dot background class for a remote-connection phase (`:local`,
   `:connected`, `:connecting`, `:disconnecting`, `:error`, `:disconnected`).

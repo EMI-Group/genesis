@@ -74,4 +74,27 @@ defmodule EvoDashWeb.HomeLive.AgentStream do
   def extract_final_text({:error, _reason}), do: :error
   def extract_final_text({:exit, _reason}), do: :error
   def extract_final_text(_result), do: :error
+
+  @doc """
+  Extracts the user-facing explanation from a failed task's structured `error`
+  payload (the decoded `%EvoGit.TaskInfo{}.error` field — a plain map with ATOM
+  keys, e.g. `%{kind: :force_kill, source: :force_kill_task,
+  message: "Task force-killed by user", stacktrace: nil}`). Handles both
+  `:message` and `"message"` key shapes; returns the message when it is a
+  binary that is non-empty after trimming. Returns `nil` for a nil / non-map /
+  blank-message payload — the caller falls back to its generic failure text.
+  Never raises.
+  """
+  @spec extract_failed_message(term()) :: String.t() | nil
+  def extract_failed_message(error) when is_map(error) do
+    case Map.get(error, :message) || Map.get(error, "message") do
+      message when is_binary(message) ->
+        if String.trim(message) == "", do: nil, else: message
+
+      _ ->
+        nil
+    end
+  end
+
+  def extract_failed_message(_error), do: nil
 end
