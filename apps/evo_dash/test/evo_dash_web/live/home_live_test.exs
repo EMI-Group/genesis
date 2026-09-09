@@ -1004,7 +1004,7 @@ defmodule EvoDashWeb.HomeLiveTest do
   describe "completion / error rendering" do
     # Each test drives finalize_terminal via an injected {:chat_task_loaded, ...}
     # with the CURRENT chat_task_fetch_seq (read dynamically). The handler only
-    # reads Map.get(task, :status)/:result, so a plain map works.
+    # reads Map.get(task, :status)/:result/:error, so a plain map works.
     test "completed task with a result renders the final answer", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
       seq = assigns(view)[:chat_task_fetch_seq]
@@ -1139,6 +1139,98 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert html =~ "The task failed."
       assert assigns(view).chat_status == :idle
       assert assigns(view).chat_task_id == nil
+    end
+
+    test "failed task whose error record carries a message renders that message", %{conn: conn} do
+      # The fetched-task :failed terminal path (finalize_terminal → finalize_failed):
+      # the decoded TaskInfo error record (atom-keyed %{kind:, source:, message:,
+      # stacktrace:}) drives the final text via
+      # AgentStream.extract_failed_message/1.
+      {:ok, view, _html} = live(conn, "/help")
+      seq = assigns(view)[:chat_task_fetch_seq]
+      seed_running_chat(view)
+
+      send(
+        view.pid,
+        {:chat_task_loaded, node(), seq, "t1",
+         %{
+           status: :failed,
+           error: %{
+             kind: :force_kill,
+             source: :force_kill_task,
+             message: "Task force-killed by user",
+             stacktrace: nil
+           }
+         }}
+      )
+
+      html = render(view)
+      assert html =~ "Task force-killed by user"
+      # The structured message REPLACES the generic placeholder.
+      refute html =~ "The task failed."
+      assert assigns(view).chat_status == :idle
+      assert assigns(view).chat_task_id == nil
+      # clear_task_refs keeps the :failed badge on the final assistant card.
+      assert assigns(view).chat_task_status == :failed
+
+      assert [
+               %{role: :user, text: "hello"},
+               %{role: :assistant, text: "Task force-killed by user", streaming: false}
+             ] = assigns(view).transcript
+    end
+
+    test "failed task without a usable error message falls back to The task failed", %{conn: conn} do
+      # error absent / nil / empty / blank-only message — extract_failed_message/1
+      # returns nil for each, so finalize_failed shows the generic gettext
+      # fallback. Each payload needs its own view (one terminal injection per
+      # chat), so iterate with a fresh mount per payload.
+      payloads = [
+        %{status: :failed},
+        %{status: :failed, error: nil},
+        %{status: :failed, error: %{kind: :boom, message: ""}},
+        %{status: :failed, error: %{kind: :boom, message: "   "}}
+      ]
+
+      for payload <- payloads do
+        {:ok, view, _html} = live(conn, "/help")
+        seq = assigns(view)[:chat_task_fetch_seq]
+        seed_running_chat(view)
+        send(view.pid, {:chat_task_loaded, node(), seq, "t1", payload})
+        html = render(view)
+        assert html =~ "The task failed.", "expected the fallback for #{inspect(payload)}"
+        assert assigns(view).chat_status == :idle
+        assert assigns(view).chat_task_id == nil
+        GenServer.stop(view.pid)
+      end
+    end
+
+    test "legacy failed rows without a structured error render the fallback, no crash", %{
+      conn: conn
+    } do
+      # Pre-feature failed rows carry no decoded error field (only the legacy
+      # {:error, _} result tuple) — and an error value that is not a map must
+      # degrade exactly like an absent one. extract_failed_message/1 never
+      # raises, so each payload finalizes to the generic placeholder.
+      payloads = [
+        # Legacy row: result {:error, reason}, NO error key.
+        %{status: :failed, result: {:error, :boom}},
+        # error key present but the value is not a map.
+        %{status: :failed, error: {:error, :boom}},
+        %{status: :failed, error: "legacy string error"}
+      ]
+
+      for payload <- payloads do
+        {:ok, view, _html} = live(conn, "/help")
+        seq = assigns(view)[:chat_task_fetch_seq]
+        seed_running_chat(view)
+        send(view.pid, {:chat_task_loaded, node(), seq, "t1", payload})
+        html = render(view)
+        assert html =~ "The task failed.", "expected the fallback for #{inspect(payload)}"
+        assert assigns(view).chat_status == :idle
+        assert assigns(view).chat_task_id == nil
+        assert assigns(view).chat_task_status == :failed
+        GenServer.stop(view.pid)
+      end
     end
 
     test "task deleted event finalizes the transcript", %{conn: conn} do
@@ -1901,7 +1993,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     } do
       # Pre-warm the shared hub for the local context with a reflect-style
       # :running summary map (the shape an applied fetch result writes — the
-      # 15-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). The hub
+      # 16-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). The hub
       # seed is SYNCHRONOUS (node_aware.ex on_mount), so the VERY FIRST render
       # already carries the sidebar — no task_updated broadcast, no 300ms
       # debounce sleep: the exact no-blink contract. (The connected-mount
@@ -1927,7 +2019,8 @@ defmodule EvoDashWeb.HomeLiveTest do
             base_sha: nil,
             commit_sha: nil,
             lease_expires_at: nil,
-            updated_at: nil
+            updated_at: nil,
+            error: nil
           }
         ],
         []
