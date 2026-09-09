@@ -4,8 +4,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   "pageless editor".
 
   One card contains the objective textarea AND a bottom toolbar
-  (`.input-controls` — attach "+" | mode select | (custom-agent select) |
-  model select | circular icon-only send button) as its last element. The
+  (`.input-controls` — attach-kind dropdown | mode select | (custom-agent
+  select) | model select | circular icon-only send button) as its last
+  element. The
   layout is server-seeded at render time via `layout_for/1` and client-driven
   by the
   AdaptiveInput JS hook (which adds a height-based trigger on top of the
@@ -32,9 +33,10 @@ defmodule EvoDashWeb.TaskFormComponents do
       viewport height.
 
   Both layouts share the same bottom toolbar (`.input-controls`) — the card's
-  last element, ChatGPT/Gemini input-box style: attach "+" (bottom-left) →
-  mode select → (custom-agent select) → model select → circular icon-only
-  send button (far right). Only the textarea size differs. The accent
+  last element, ChatGPT/Gemini input-box style: the attach-kind dropdown
+  (text / image / audio, bottom-left) → mode select → (custom-agent select)
+  → model select → circular icon-only send button (far right). Only the
+  textarea size differs. The accent
   decorations (accent border-color, layered box-shadow glow, top-edge
   gradient) are defined on the base `.input-card` CSS rule and are shared by
   both layouts.
@@ -154,13 +156,13 @@ defmodule EvoDashWeb.TaskFormComponents do
              MutationObserver on .input-layout catches any server re-render,
              e.g. toggling mode/model, converging with no loop):
                "compact"  → Layout A — unified box: the bottom toolbar is the
-                            card's last line (attach "+" | mode | model | send).
+                            card's last line (attach dropdown | mode | model | send).
                "expanded" → Layout B — large objective area with an in-flow
-                            bottom toolbar (attach "+" | mode | model | send).
-             Both layouts share the same bottom toolbar — attach "+"
-             (bottom-left) → mode select → (custom-agent select) → model
-             select → circular icon-only send button (far right); only the
-             textarea size differs. -->
+                            bottom toolbar (attach dropdown | mode | model | send).
+             Both layouts share the same bottom toolbar — the attach-kind
+             dropdown (text / image / audio, bottom-left) → mode select →
+             (custom-agent select) → model select → circular icon-only send
+             button (far right); only the textarea size differs. -->
         <div
           class="input-layout mx-auto w-full max-w-3xl px-4 flex-1 flex flex-col min-h-0"
           data-layout={layout}
@@ -195,22 +197,28 @@ defmodule EvoDashWeb.TaskFormComponents do
             <%!-- Bottom toolbar (.input-controls) — the card's LAST element, in
                  normal document flow (never position: fixed). ChatGPT/Gemini
                  input-box style: ALL controls live in ONE toolbar row pinned to
-                 the card's bottom — attach "+" (bottom-left), then free space,
-                 then a RIGHT-ALIGNED cluster: mode select → (custom-agent
-                 select) → model select → circular icon-only send button (the
-                 cluster's LAST element = the row's far right, no auto margin of
-                 its own). The row's auto-margin lives on the MODE select's
-                 ml-auto — it absorbs the free space, packing the cluster at the
-                 right edge with the uniform flex gap between members. DOM order
-                 == visual order (no order-* overrides). The attach button and
-                 its hidden manual-fallback panel are DIRECT children of the
+                 the card's bottom — the ATTACH-KIND DROPDOWN (text / image /
+                 audio; bottom-LEFT; a <details class="dropdown"> whose <summary>
+                 is the visual "+" trigger — see below), then free space, then a
+                 RIGHT-ALIGNED cluster: mode select → (custom-agent select) →
+                 model select → circular icon-only send button (the cluster's
+                 LAST element = the row's far right, no auto margin of its own).
+                 The row's auto-margin lives on the MODE select's ml-auto — it
+                 absorbs the free space, packing the cluster at the right edge
+                 with the uniform flex gap between members. DOM order == visual
+                 order (no order-* overrides). The attach dropdown and its
+                 hidden manual-fallback panel are DIRECT children of the
                  toolbar; .file-manual is positioned absolutely just above the
-                 toolbar's left side, near the "+" button (see app.css), so it
-                 never takes part in the flex row. The row is guaranteed ONE
-                 LINE (flex-nowrap — never wraps): the selects use min-w-0 +
-                 truncate + max-w so long labels (agent names, mode names, model
-                 profile ids) are clipped with an ellipsis instead of forcing
-                 the row wider than its container. --%>
+                 toolbar's left side, near the "+" trigger (see app.css), so it
+                 never takes part in the flex row. The dropdown menu opens
+                 UPWARD (daisyUI dropdown-top) so .input-card's overflow
+                 containment (expanded layout) never clips it below the card.
+                 The row is guaranteed ONE LINE (flex-nowrap — never wraps): the
+                 selects use min-w-0 + truncate + max-w so long labels (agent
+                 names, mode names, model profile ids) are clipped with an
+                 ellipsis instead of forcing the row wider than its container.
+                 Staged media attachments (@staged_attachments) render as a chip
+                 row directly ABOVE this toolbar, inside the card. --%>
 
             <%!-- The launch panel renders ONLY when a project is open
                  (@disabled == false). When no project is active the row is
@@ -219,35 +227,132 @@ defmodule EvoDashWeb.TaskFormComponents do
                  the faded textarea (wrapper opacity) + the centered "Open a
                  project to get started" hint overlay. --%>
             <%= unless @disabled do %>
-              <div class="input-controls flex-nowrap">
-                <%!-- Attach-file "+" button — bottom-LEFT of the toolbar. The
-                     FilePicker JS hook owns the click: it pushes a "file_pick"
-                     event to the server (ProjectsLive runs the native file
-                     dialog and appends the picked file's text to the objective)
-                     and writes the returned prompt back into the textarea — the
-                     server cannot do it, because the textarea is
-                     phx-update="ignore" (the DOM is authoritative). type="button"
-                     is CRITICAL: inside the task form, a button without it
-                     would submit. --%>
-                <%!-- zh_CN: Attach file → "附加文件" --%>
-                <button
-                  type="button"
-                  id="objective-file-button"
-                  phx-hook="FilePicker"
-                  data-picker-id="objective_file"
-                  aria-label={gettext("Attach file")}
-                  title={gettext("Attach file")}
-                  class="btn btn-ghost btn-sm btn-square shrink-0"
+              <%!-- Staged media attachments — image/audio files picked via the
+                   attach-kind dropdown above are staged server-side by
+                   ProjectsLive into the @staged_attachments assign: a list of
+                   STRING-keyed maps %{"type" => "image"|"audio", "name" =>
+                   basename, "media_type" => IANA string, "data" => RAW binary}.
+                   This chip row renders METADATA ONLY (kind + basename + remove
+                   button) — the "data" key is a raw server-side binary and is
+                   NEVER rendered nor encoded into any attribute/event. The row
+                   is a normal (non-phx-update="ignore") re-render region so
+                   staging appears immediately, and it is a sibling ABOVE
+                   .input-controls — it never disturbs the toolbar's
+                   first-child/DOM-order contract. Removal is
+                   remove_staged_attachment by integer index (phx-value-index).
+                   The assign is optional (the component renders without it) —
+                   normalized via Map.get before reading. --%>
+              <% staged_attachments = Map.get(assigns, :staged_attachments) || [] %>
+              <%= if staged_attachments != [] do %>
+                <div
+                  id="staged-attachments"
+                  class="flex flex-wrap items-center gap-1.5 px-4 pt-1 pb-0 shrink-0"
                 >
-                  <.icon name="hero-plus" class="size-4" />
-                </button>
+                  <%= for {att, index} <- Enum.with_index(staged_attachments) do %>
+                    <div
+                      class="flex items-center gap-1.5 max-w-full rounded-lg border border-base-300 bg-base-200/70 py-0.5 pl-2 pr-0.5"
+                      title={attachment_attr(att, :name)}
+                    >
+                      <span class="shrink-0 text-xs font-semibold uppercase tracking-wide text-base-content/60">
+                        {staged_kind_label(attachment_attr(att, :type))}
+                      </span>
+                      <span class="min-w-0 max-w-[12rem] truncate text-xs font-medium text-base-content/80">
+                        {attachment_attr(att, :name)}
+                      </span>
+                      <%!-- zh_CN: 移除暂存的附件 → "移除附件" --%>
+                      <button
+                        type="button"
+                        phx-click="remove_staged_attachment"
+                        phx-value-index={index}
+                        aria-label={gettext("Remove attachment")}
+                        title={gettext("Remove attachment")}
+                        class="btn btn-ghost btn-xs btn-square rounded-md shrink-0 hover:bg-error/10 hover:text-error"
+                      >
+                        <.icon name="hero-x-mark" class="size-3.5" />
+                      </button>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
 
-                <%!-- Manual path fallback for the attach-file "+" button —
+              <div class="input-controls flex-nowrap">
+                <%!-- Attach-kind dropdown — bottom-LEFT of the toolbar. A
+                     native <details class="dropdown"> whose <summary> is the
+                     visual "+" trigger (id objective-file-button — stable
+                     test/UI marker). The FilePicker JS hook owns the whole
+                     control (phx-hook lives on the <details>; it click-delegates
+                     on the [data-picker-kind] menu items — NO phx-click and NO
+                     submit anywhere in the menu, every button is
+                     type="button"): on pick it pushes a "file_pick" event with
+                     the item's data-picker-id (text = objective_file — the
+                     EXISTING text pipeline, unchanged: ProjectsLive runs the
+                     native file dialog and appends the file's text to the
+                     objective; image = objective_file_image; audio =
+                     objective_file_audio — both staged server-side into
+                     @staged_attachments) and closes the details. The <summary>
+                     cannot be a <button> — it is the native details toggle
+                     (type="button" is meaningless on a summary); the old
+                     data-picker-id="objective_file" on the trigger is GONE
+                     (the hook derives the per-kind ids from the menu items).
+                     dropdown-top opens the menu UPWARD so .input-card's
+                     overflow containment (expanded layout) never clips it. --%>
+                <%!-- zh_CN: Attach file → "附加文件" --%>
+                <details
+                  id="objective-file-attach"
+                  class="dropdown dropdown-top"
+                  phx-hook="FilePicker"
+                >
+                  <summary
+                    id="objective-file-button"
+                    aria-label={gettext("Attach file")}
+                    title={gettext("Attach file")}
+                    class="btn btn-ghost btn-sm btn-square shrink-0"
+                  >
+                    <.icon name="hero-plus" class="size-4" />
+                  </summary>
+                  <ul class="menu menu-sm dropdown-content z-50 mb-2 p-1 shadow-lg bg-base-100 rounded-lg w-44 border border-base-300">
+                    <li>
+                      <button
+                        type="button"
+                        data-picker-kind="text"
+                        data-picker-id="objective_file"
+                      >
+                        <.icon name="hero-document-text" class="size-4" />
+                        <%!-- zh_CN: Text / PDF → "文字/PDF 文档类附件" --%>
+                        {gettext("Text / PDF")}
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        type="button"
+                        data-picker-kind="image"
+                        data-picker-id="objective_file_image"
+                      >
+                        <.icon name="hero-photo" class="size-4" />
+                        <%!-- zh_CN: Image → "图片"（图片类附件，服务端暂存） --%>
+                        {gettext("Image")}
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        type="button"
+                        data-picker-kind="audio"
+                        data-picker-id="objective_file_audio"
+                      >
+                        <.icon name="hero-musical-note" class="size-4" />
+                        <%!-- zh_CN: Audio → "音频"（音频类附件，服务端暂存） --%>
+                        {gettext("Audio")}
+                      </button>
+                    </li>
+                  </ul>
+                </details>
+
+                <%!-- Manual path fallback for the attach dropdown's TEXT kind —
                      rendered hidden; the FilePicker JS hook reveals it when the
                      native picker is unavailable (headless server, remote node,
                      picker disabled) and submits the typed path via the
                      "file_pick_manual" event. Anchored just above the toolbar's
-                     left side, near the "+" button (position: absolute in
+                     left side, near the "+" trigger (position: absolute in
                      app.css — the exact pixel offset lives there, not in
                      markup).
                      phx-update="ignore" is CRITICAL (same contract as the
@@ -477,6 +582,25 @@ defmodule EvoDashWeb.TaskFormComponents do
   defp agent_attr(agent, key) do
     Map.get(agent, key) || Map.get(agent, Atom.to_string(key))
   end
+
+  # Defensive accessor for staged-attachment maps (STRING-keyed per the
+  # @staged_attachments contract; atom keys tolerated for safety).
+  defp attachment_attr(att, key) do
+    Map.get(att, key) || Map.get(att, Atom.to_string(key))
+  end
+
+  # Kind label for a staged-attachment chip: "image"/"audio" map to gettext
+  # labels (same msgids as the attach dropdown menu items); anything unknown
+  # falls back to the raw type string — never a dynamic gettext call.
+  defp staged_kind_label(type) when is_binary(type) do
+    case type do
+      "image" -> gettext("Image")
+      "audio" -> gettext("Audio")
+      _ -> type
+    end
+  end
+
+  defp staged_kind_label(_), do: ""
 
   # Custom Agent mode is evolve-family: it runs an :evolve task (existing
   # repo, reviewable result) with the chosen custom agent as the root agent.
