@@ -37,7 +37,10 @@ defmodule EvoGit.MixProject do
       {:tz, "~> 0.28"},
       {:yaml_elixir, "~> 2.11"},
       {:xqlite, "~> 0.12"},
-      {:jason, "~> 1.2"}
+      {:jason, "~> 1.2"},
+      # Ecto — schema-less config validation/casting/defaults (no ecto_sql,
+      # no database adapter; plain :ecto only)
+      {:ecto, "~> 3.14"}
     ]
   end
 
