@@ -20,9 +20,24 @@ defmodule EvoDashWeb.ArchiveHelpers do
     "input_tokens" => :input_tokens,
     "output_tokens" => :output_tokens,
     "total_tokens" => :total_tokens,
-    "cost" => :cost,
     "model" => :model,
     "spec" => :spec
+  }
+
+  # Real keys the core writes into each per-agent archive record's nested usage
+  # map (EvoGit agent/tools/complete_task.ex `format_usage_for_archive/1`).
+  # There is deliberately NO plain "cost" key — cost lives in
+  # input_cost/output_cost/total_cost (cache_hit_rate is also written).
+  @usage_keys %{
+    "input_tokens" => :input_tokens,
+    "output_tokens" => :output_tokens,
+    "total_tokens" => :total_tokens,
+    "cached_tokens" => :cached_tokens,
+    "cache_creation_tokens" => :cache_creation_tokens,
+    "input_cost" => :input_cost,
+    "output_cost" => :output_cost,
+    "total_cost" => :total_cost,
+    "cache_hit_rate" => :cache_hit_rate
   }
 
   @doc "Read a value from an agent map regardless of whether keys are atoms or strings."
@@ -36,12 +51,36 @@ defmodule EvoDashWeb.ArchiveHelpers do
   @doc "Normalize top-level string keys to atoms using the known keys whitelist."
   def normalize_agent_keys(agent) when is_map(agent) do
     Map.new(agent, fn
-      {key, value} when is_atom(key) -> {key, value}
-      {key, value} when is_binary(key) -> {Map.get(@known_agent_keys, key, key), value}
+      {key, value} when is_atom(key) ->
+        {key, normalize_usage_value(key, value)}
+
+      {key, value} when is_binary(key) ->
+        {Map.get(@known_agent_keys, key, key), normalize_usage_value(key, value)}
     end)
   end
 
   def normalize_agent_keys(agent), do: agent
+
+  # The nested per-agent `usage` sub-map also arrives string-keyed after the DB
+  # round-trip (plain Jason encode/decode, no key re-atomization in the core).
+  # Atomize its keys via the usage whitelist so render sites can read
+  # `usage[:input_tokens]` / `usage[:total_cost]` etc.; unknown keys are
+  # preserved as-is (never bare `String.to_atom`). Atom-keyed and non-map
+  # usage values pass through unchanged.
+  defp normalize_usage_value(key, value) when key in [:usage, "usage"] and is_map(value),
+    do: normalize_usage_keys(value)
+
+  defp normalize_usage_value(_key, value), do: value
+
+  @doc "Normalize a usage sub-map's string keys to atoms via the usage whitelist."
+  def normalize_usage_keys(usage) when is_map(usage) do
+    Map.new(usage, fn
+      {key, value} when is_atom(key) -> {key, value}
+      {key, value} when is_binary(key) -> {Map.get(@usage_keys, key, key), value}
+    end)
+  end
+
+  def normalize_usage_keys(usage), do: usage
 
   @doc "Build nested tree for dashboard components (returns %{agent:, children:} maps)"
   def build_archive_tree(agents) when is_list(agents) do

@@ -51,6 +51,32 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     }
   ]
 
+  # A record whose NESTED usage sub-map is string-keyed — exactly as it looks
+  # after the DB round-trip (encode_archive/decode_archive is plain
+  # Jason.encode/decode, no key re-atomization). Includes a bogus legacy
+  # "cost" string key that must NOT become an atom (there is no :cost in the
+  # core's usage contract — cost lives in input_cost/output_cost/total_cost).
+  @string_key_usage_archive [
+    %{
+      "agent_id" => "agent-usage",
+      "parent_id" => nil,
+      "objective" => "Root with usage",
+      "depth" => 0,
+      "usage" => %{
+        "input_tokens" => 1000,
+        "output_tokens" => 500,
+        "total_tokens" => 1500,
+        "cached_tokens" => 200,
+        "cache_creation_tokens" => 50,
+        "input_cost" => 0.001,
+        "output_cost" => 0.002,
+        "total_cost" => 0.003,
+        "cache_hit_rate" => 0.2,
+        "cost" => 0.999
+      }
+    }
+  ]
+
   describe "ReviewComponents.archive_review_section with string keys" do
     test "renders without hanging and shows agent ids" do
       html =
@@ -171,6 +197,102 @@ defmodule EvoDashWeb.ArchiveTreeTest do
 
       assert html =~ "agent-1"
       assert html =~ "agent-2"
+    end
+  end
+
+  describe "normalize_agent_keys/1 with string-keyed nested usage (DB round-trip)" do
+    test "atomizes the nested usage sub-map via the real core usage keys" do
+      agent = EvoDashWeb.ArchiveHelpers.normalize_agent_keys(hd(@string_key_usage_archive))
+
+      usage = agent[:usage]
+      assert is_map(usage)
+      # Atom keys the render tiles read are now present with the real values.
+      assert usage[:input_tokens] == 1000
+      assert usage[:output_tokens] == 500
+      assert usage[:total_tokens] == 1500
+      assert usage[:cached_tokens] == 200
+      assert usage[:cache_creation_tokens] == 50
+      assert usage[:input_cost] == 0.001
+      assert usage[:output_cost] == 0.002
+      assert usage[:total_cost] == 0.003
+      assert usage[:cache_hit_rate] == 0.2
+      # The bogus top-level "cost" key never becomes an atom (no :cost exists in
+      # the core usage contract); unknown keys are preserved string-keyed.
+      refute Map.has_key?(usage, :cost)
+      assert Map.get(usage, "cost") == 0.999
+    end
+
+    test "is idempotent — atom-keyed nested usage (in-memory shape) passes through" do
+      agent = EvoDashWeb.ArchiveHelpers.normalize_agent_keys(hd(@string_key_usage_archive))
+      again = EvoDashWeb.ArchiveHelpers.normalize_agent_keys(agent)
+
+      # Whitelisted keys stay atom-keyed with the real values on re-normalization.
+      assert again[:usage][:total_tokens] == 1500
+      assert again[:usage][:total_cost] == 0.003
+      assert again[:usage][:cache_hit_rate] == 0.2
+      # The preserved unknown "cost" string key also survives untouched.
+      assert Map.get(again[:usage], "cost") == 0.999
+    end
+
+    test "nil and non-map usage values pass through unchanged" do
+      assert EvoDashWeb.ArchiveHelpers.normalize_agent_keys(%{"agent_id" => "x", "usage" => nil})[
+               :usage
+             ] == nil
+
+      agent =
+        EvoDashWeb.ArchiveHelpers.normalize_agent_keys(%{
+          "agent_id" => "x",
+          "usage" => "not-a-map"
+        })
+
+      assert agent[:usage] == "not-a-map"
+    end
+
+    test "tree builders produce atom-keyed nested usage maps" do
+      [node] = EvoDashWeb.ArchiveHelpers.build_archive_tree(@string_key_usage_archive)
+      assert node.agent[:usage][:total_tokens] == 1500
+      assert node.agent[:usage][:total_cost] == 0.003
+
+      [{agent, _children}] =
+        EvoDashWeb.ArchiveHelpers.build_archive_tree_for_review(@string_key_usage_archive)
+
+      assert agent[:usage][:total_tokens] == 1500
+      assert agent[:usage][:total_cost] == 0.003
+    end
+  end
+
+  describe "ArchiveComponents.archive_tree renders usage tiles from string-keyed usage" do
+    test "shows real token counts and total cost (not 0 / $0.000000)" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_tree/1,
+          agents: @string_key_usage_archive
+        )
+        |> rendered_to_string()
+
+      # Token tiles — formatted with thousands separators.
+      assert html =~ "1,000"
+      assert html =~ "500"
+      assert html =~ "1,500"
+      # Cost tile — the real total_cost flows through, formatted to 6 decimals.
+      assert html =~ "0.003000"
+      refute html =~ "0.000000"
+    end
+  end
+
+  describe "ReviewComponents.archive_review_section renders usage tiles from string-keyed usage" do
+    test "shows real token counts and total cost (not 0 / $0.000000)" do
+      html =
+        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
+          archive_metadata: @string_key_usage_archive,
+          task_id: "test-task"
+        )
+        |> rendered_to_string()
+
+      assert html =~ "1,000"
+      assert html =~ "500"
+      assert html =~ "1,500"
+      assert html =~ "0.003000"
+      refute html =~ "0.000000"
     end
   end
 end
