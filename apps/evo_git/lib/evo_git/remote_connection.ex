@@ -80,11 +80,63 @@ defmodule EvoGit.RemoteConnection do
   target (looked up / started on demand via the `EvoGit.RemoteConnection.Registry`
   and the `EvoGit.RemoteConnection.Supervisor` DynamicSupervisor).
 
+  ## Async connect (event-driven, non-blocking)
+
+  `connect/1` is NON-BLOCKING: it replies `{:ok, :connecting}` (or
+  `{:ok, :connected}` when already connected) as soon as the connect is
+  initiated and returns control to the caller immediately. The blocking I/O —
+  `Distribution.enable_for_remote/1`, the ssh spawn, the tunnel-readiness poll
+  (`wait_for_tunnel/4`) and `Node.connect/1` — runs in a MONITORED worker
+  process started by the GenServer, so the manager stays responsive
+  (`status/1`/`connected?/1`/`disconnect/1`/`list_connections/0`) for the whole
+  connect. The GenServer remains the SINGLE owner of phase state: every phase
+  transition happens in the GenServer process, which broadcasts it on
+  `"remote_connections"` as `{:remote_connection_status, target_id, status_map}`.
+
+  Lifecycle broadcasts (same topic/shape as bootstrap):
+
+    * `:connecting` — emitted when a connect starts (in `handle_call(:connect)`)
+    * `:connected` — emitted on success (existing behavior)
+    * `:error` with `last_error` populated — emitted on EVERY failure arm
+      (distribution failed, no free port, tunnel not ready / ssh exited,
+      node connect failed, worker crash)
+    * `:disconnected` — emitted when `disconnect/1` aborts an in-flight connect
+
+  Duplicate connects are idempotent: a second `connect/1` while the target is
+  already `:connecting` (or `:connected`) is a no-op that acks promptly and
+  never spawns a second tunnel.
+
+  ### Internal message protocol
+
+  Connect worker → GenServer:
+
+    * `{:connect_result, worker_pid, {:ok, %{port:, local_port:, node_name:}}}`
+      — connect succeeded. The worker transfers the tunnel `Port` to the
+      GenServer (`Port.connect/2`) BEFORE sending this message, so the tunnel
+      survives the worker's exit; the GenServer records the port, arms the
+      heartbeat and broadcasts `:connected`.
+    * `{:connect_result, worker_pid, {:error, message}}` — connect failed. The
+      worker already closed the tunnel port itself. The GenServer stores
+      `message` as `last_error` and broadcasts `:error`.
+
+  The GenServer monitors the worker (`Process.monitor/1`, stored in
+  `state.connect_worker`); a `:DOWN` for the current worker with no result
+  having arrived means the worker crashed → `:error` broadcast.
+
+  GenServer → worker: none required — the worker exits on its own after
+  reporting. Killing the worker (`Process.exit(pid, :kill)`) is how
+  `disconnect/1` aborts an in-flight connect: the worker owns the tunnel port
+  until success, so killing it closes the ssh tunnel; if the worker already
+  transferred the port, the GenServer's own termination (disconnect stops the
+  manager) closes it.
+
   ## Port monitoring
 
-  The SSH tunnel is an OS `Port` linked to this process. With
-  `Process.flag(:trap_exit, true)` set in `init/1`, tunnel death arrives as a
-  `{:EXIT, port, reason}` message, triggering a transition to `:error`.
+  While `:connected`, the SSH tunnel `Port` is owned by this (GenServer)
+  process. With `Process.flag(:trap_exit, true)` set in `init/1`, tunnel death
+  arrives as a `{:EXIT, port, reason}` message, triggering a transition to
+  `:error`. During `:connecting` the port is owned by the connect worker (see
+  above); the GenServer only takes ownership once the connect succeeds.
 
   No `try/rescue` blocks are used — all fallible operations use `case`/`with`
   with non-crashing variants.
@@ -104,11 +156,11 @@ defmodule EvoGit.RemoteConnection do
   # Node.connect fail instantly with econnrefused on slower tunnels.
   @tunnel_wait_timeout_ms 10_000
   @tunnel_poll_interval_ms 100
-  # The :connect handler can legitimately block for up to @tunnel_wait_timeout_ms
-  # while the tunnel becomes ready, so the GenServer.call in connect/1 must
-  # allow that budget plus headroom (a default 5s call timeout would exit with
-  # :timeout while the handler is still waiting for the tunnel).
-  @connect_call_timeout_ms @tunnel_wait_timeout_ms + 15_000
+  # SSH's own connection-establishment timeout (-o ConnectTimeout), kept
+  # consistent with (slightly under) the @tunnel_wait_timeout_ms tunnel budget
+  # so an unreachable/dead host fails inside the budget instead of hanging on
+  # the OS TCP timeout. The tunnel wait budget itself is the hard cap either way.
+  @ssh_connect_timeout_ms 8_000
   @launch_receive_timeout_ms 5_000
   # 900s — bootstrap now stages the release either by uploading a local tarball
   # (scp) OR by probing the remote platform and downloading the release tarball
@@ -147,7 +199,8 @@ defmodule EvoGit.RemoteConnection do
             tunnel_local_port: nil,
             last_error: nil,
             heartbeat_ref: nil,
-            bootstrap_stage: nil
+            bootstrap_stage: nil,
+            connect_worker: nil
 
   @type phase :: :disconnected | :bootstrapping | :connecting | :connected | :error
 
@@ -173,7 +226,8 @@ defmodule EvoGit.RemoteConnection do
           tunnel_local_port: non_neg_integer() | nil,
           last_error: String.t() | nil,
           heartbeat_ref: reference() | nil,
-          bootstrap_stage: bootstrap_stage() | nil
+          bootstrap_stage: bootstrap_stage() | nil,
+          connect_worker: {pid(), reference()} | nil
         }
 
   # ── Public API ─────────────────────────────────────────────────────
@@ -212,13 +266,26 @@ defmodule EvoGit.RemoteConnection do
   Looks up the target via `EvoGit.RemoteConnections.get/1`, finds-or-starts the
   connection manager GenServer, then requests a connection.
 
-  Returns `{:ok, :connected}` on success or `{:error, reason}`.
+  NON-BLOCKING: replies promptly once the connect is initiated. The blocking
+  work (ssh tunnel + `Node.connect`) runs in a monitored worker, and the
+  terminal outcome is delivered via `{:remote_connection_status, ...}`
+  broadcasts on `"remote_connections"` (`:connecting` on start, `:connected`
+  on success, `:error` with `last_error` on failure, `:disconnected` when
+  cancelled) — callers should watch those (or poll `status/1`) rather than
+  block on this call.
+
+  Returns:
+
+    * `{:ok, :connecting}` — connect initiated (or already in progress; a
+      duplicate connect while `:connecting` is an idempotent no-op)
+    * `{:ok, :connected}` — the target is already connected (idempotent no-op)
+    * `{:error, reason}` — target not found / manager could not be started
   """
-  @spec connect(String.t()) :: {:ok, :connected} | {:error, term()}
+  @spec connect(String.t()) :: {:ok, :connecting | :connected} | {:error, term()}
   def connect(target_id) do
     with {:ok, target} <- fetch_target(target_id),
          {:ok, pid} <- ensure_started(target) do
-      GenServer.call(pid, :connect, @connect_call_timeout_ms)
+      GenServer.call(pid, :connect)
     end
   end
 
@@ -347,14 +414,26 @@ defmodule EvoGit.RemoteConnection do
   end
 
   @impl true
-  def handle_call(:connect, _from, %__MODULE__{} = state) do
-    case do_connect(state) do
-      {:ok, new_state} ->
-        {:reply, {:ok, :connected}, new_state}
+  def handle_call(:connect, _from, %__MODULE__{phase: phase} = state)
+      when phase in [:connecting, :connected] do
+    # Idempotent duplicate-connect guard: an in-flight (:connecting) or
+    # established (:connected) connection must not spawn a second tunnel or
+    # clobber state. Ack promptly with the actual phase.
+    {:reply, {:ok, phase}, state}
+  end
 
-      {:error, reason, new_state} ->
-        {:reply, {:error, reason}, new_state}
-    end
+  def handle_call(:connect, _from, %__MODULE__{} = state) do
+    # Initiate an async connect: broadcast :connecting, then hand the blocking
+    # I/O (distribution setup, ssh spawn, tunnel wait, Node.connect) to a
+    # monitored worker so this GenServer stays responsive. The worker reports
+    # back via {:connect_result, ...} messages (see moduledoc).
+    connecting = %{state | phase: :connecting, last_error: nil}
+    broadcast_status(state.target, connecting)
+
+    {:ok, worker} = Task.start_link(fn -> connect_worker(self(), connecting) end)
+    ref = Process.monitor(worker)
+
+    {:reply, {:ok, :connecting}, %{connecting | connect_worker: {worker, ref}}}
   end
 
   def handle_call({:bootstrap, opts}, _from, %__MODULE__{} = state) do
@@ -369,6 +448,24 @@ defmodule EvoGit.RemoteConnection do
 
   def handle_call(:status, _from, %__MODULE__{} = state) do
     {:reply, status_map(state), state}
+  end
+
+  def handle_call(:disconnect, _from, %__MODULE__{phase: :connecting} = state) do
+    # Disconnect during an in-flight connect: terminate the connect worker
+    # (it owns the tunnel port until success, so killing it closes the ssh
+    # tunnel; if it already transferred the port to us, our own termination
+    # below closes it), then run the normal teardown + :disconnected broadcast.
+    state =
+      case state.connect_worker do
+        {worker, _ref} ->
+          Process.exit(worker, :kill)
+          clear_connect_worker(state)
+
+        nil ->
+          state
+      end
+
+    {:stop, :normal, :ok, cleanup(state)}
   end
 
   def handle_call(:disconnect, _from, %__MODULE__{} = state) do
@@ -419,6 +516,61 @@ defmodule EvoGit.RemoteConnection do
     {:noreply, state}
   end
 
+  # ── Connect-worker result / death (async connect protocol, see moduledoc) ──
+
+  def handle_info(
+        {:connect_result, worker, {:ok, %{port: port} = details}},
+        %__MODULE__{connect_worker: {worker, _ref}} = state
+      ) do
+    state = clear_connect_worker(state)
+
+    if Port.info(port) == nil do
+      # The tunnel died after the worker's success report but before we could
+      # record it (e.g. ssh exited in the transfer window) — fail rather than
+      # arm a :connected state on a dead port.
+      {:noreply, fail_connect(state, "ssh tunnel closed before connect completed")}
+    else
+      ref = schedule_heartbeat()
+
+      new_state = %{
+        state
+        | phase: :connected,
+          ssh_tunnel_port: port,
+          tunnel_local_port: details.local_port,
+          node: details.node_name,
+          heartbeat_ref: ref,
+          last_error: nil
+      }
+
+      broadcast_status(state.target, new_state)
+      {:noreply, new_state}
+    end
+  end
+
+  def handle_info(
+        {:connect_result, worker, {:error, message}},
+        %__MODULE__{connect_worker: {worker, _ref}} = state
+      ) do
+    # Connect failed — the worker already closed its tunnel port. Broadcast
+    # :error with the failure detail populated.
+    {:noreply, fail_connect(state, message)}
+  end
+
+  def handle_info(
+        {:DOWN, ref, :process, worker, reason},
+        %__MODULE__{connect_worker: {worker, ref}} = state
+      ) do
+    # The connect worker died without reporting a result (crash) — surface it
+    # as a connect failure. Killing it via disconnect/1 never reaches here: the
+    # disconnect handler clears connect_worker before stopping the manager.
+    Logger.error("RemoteConnection: connect worker crashed: #{inspect(reason)}")
+    {:noreply, fail_connect(state, "connect worker crashed: #{inspect(reason)}")}
+  end
+
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state) do
+    {:noreply, state}
+  end
+
   def handle_info({:EXIT, _port, _reason}, state) do
     {:noreply, state}
   end
@@ -429,22 +581,70 @@ defmodule EvoGit.RemoteConnection do
 
   # ── Connection ─────────────────────────────────────────────────────
 
-  defp do_connect(%__MODULE__{} = state) do
-    if node() == :nonode@nohost do
-      # Auto-enable distribution on-demand instead of failing.
-      case EvoGit.Distribution.enable_for_remote(state.target) do
+  # Entry point of the async connect worker (spawned by handle_call(:connect),
+  # runs in a DEDICATED process — never the GenServer). Runs the blocking
+  # connect I/O and reports the outcome to the manager via a
+  # {:connect_result, self(), result} message (see moduledoc). The result is
+  # {:ok, %{port:, local_port:, node_name:}} on success or {:error, message}.
+  #
+  # The worker is LINKED to the manager (Task.start) and MONITORED by it: if
+  # the manager dies the worker dies with it (closing any port it owns); if
+  # the worker crashes the manager's :DOWN handler broadcasts :error.
+  defp connect_worker(server, %__MODULE__{} = state) do
+    target = state.target
+
+    result =
+      case ensure_connect_distribution(target) do
         :ok ->
-          do_connect_distributed(state)
+          case establish_tunnel_and_node(target) do
+            {:ok, %{port: port} = details} ->
+              # Transfer the tunnel Port to the manager BEFORE reporting
+              # success: from this instant the Port is owned by the manager and
+              # survives this worker's exit (an owner-exiting port would close
+              # the tunnel with us). All subsequent port messages (data,
+              # exit_status, EXIT) route to the manager.
+              Port.connect(port, server)
+              {:ok, details}
+
+            {:error, _message} = error ->
+              error
+          end
+
+        {:error, _message} = error ->
+          error
+      end
+
+    send(server, {:connect_result, self(), result})
+  end
+
+  # Auto-enables distribution on-demand when the local node is not distributed
+  # yet. Runs in the connect worker — never blocks the GenServer.
+  defp ensure_connect_distribution(target) do
+    if node() == :nonode@nohost do
+      case EvoGit.Distribution.enable_for_remote(target) do
+        :ok ->
+          :ok
 
         {:error, reason} ->
-          {:error, {:distribution_failed, reason}, state}
+          message = format_error({:distribution_failed, reason})
+          Logger.error("Remote connection distribution setup failed: #{message}")
+          {:error, message}
       end
     else
-      do_connect_distributed(state)
+      :ok
     end
   end
 
-  defp do_connect_distributed(%__MODULE__{} = state) do
+  # The blocking connect flow, run inside the connect worker: ensure the
+  # outbound EpmdDist resolution, set the cookie, open the ssh tunnel, poll
+  # its local port until ready, register the tunnel port with EpmdDist and
+  # Node.connect to the remote daemon.
+  #
+  # Returns {:ok, %{port: port, local_port: local_port, node_name: node_name}}
+  # (the worker STILL owns `port` at this point — the caller transfers it to
+  # the manager) or {:error, message} (the worker has already closed the port
+  # on every failure arm, so no tunnel is left behind).
+  defp establish_tunnel_and_node(target) do
     # Outbound tunnel connects must resolve the remote daemon's port through
     # EvoGit.EpmdDist's persistent-term registry (register_target below feeds
     # exactly that registry). When the local node booted distributed via
@@ -459,9 +659,6 @@ defmodule EvoGit.RemoteConnection do
     # registration with the real epmd daemon for inbound discovery; only the
     # outbound resolution of tunnel-registered names needs EpmdDist.
     EvoGit.Distribution.ensure_epmd_module()
-
-    target = state.target
-    connecting = %{state | phase: :connecting}
 
     # Set the distribution cookie to match the remote daemon.
     # Read from the persisted config; auto-generated during bootstrap.
@@ -515,44 +712,27 @@ defmodule EvoGit.RemoteConnection do
 
             case Node.connect(remote_node) do
               true ->
-                ref = schedule_heartbeat()
-
-                new_state = %__MODULE__{
-                  connecting
-                  | phase: :connected,
-                    ssh_tunnel_port: port,
-                    tunnel_local_port: local_port,
-                    node: Atom.to_string(remote_node),
-                    heartbeat_ref: ref,
-                    last_error: nil
-                }
-
-                broadcast_status(state.target, new_state)
-                {:ok, new_state}
+                {:ok, %{port: port, local_port: local_port, node_name: node_name}}
 
               result when result in [false, :ignored] ->
                 EvoGit.EpmdDist.unregister_target(node_name)
                 close_port(port)
-                reason = {:node_connect_failed, inspect(remote_node)}
 
                 diagnostics =
                   node_connect_failed_diagnostics(node_name, local_port, remote_port, node_cookie)
 
                 Logger.error("Remote connection to #{node_name} failed: #{diagnostics}")
-                new_state = %{connecting | phase: :error, last_error: diagnostics}
-                {:error, reason, new_state}
+                {:error, diagnostics}
             end
 
           {:error, reason} ->
             close_port(port)
             error = {:tunnel_not_ready, reason}
-            new_state = %{connecting | phase: :error, last_error: format_error(error)}
-            {:error, error, new_state}
+            {:error, format_error(error)}
         end
 
       {:error, reason} ->
-        new_state = %{connecting | phase: :error, last_error: format_error(reason)}
-        {:error, reason, new_state}
+        {:error, format_error(reason)}
     end
   end
 
@@ -1737,6 +1917,33 @@ defmodule EvoGit.RemoteConnection do
     new_state
   end
 
+  # Clears the connect-worker bookkeeping ({pid, monitor_ref}) from state,
+  # demonitoring the worker and flushing any already-delivered :DOWN so a late
+  # crash report can't double-fire after a result was processed.
+  defp clear_connect_worker(%__MODULE__{connect_worker: nil} = state), do: state
+
+  defp clear_connect_worker(%__MODULE__{connect_worker: {_worker, ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    %{state | connect_worker: nil}
+  end
+
+  # GenServer-side handling of a failed connect (error result or worker crash):
+  # clears the worker bookkeeping, disconnects any half-established remote node
+  # (harmless no-op when never connected), sets phase :error with the failure
+  # detail and BROADCASTS it — every connect failure arm must surface on
+  # "remote_connections" so the UI can leave the connecting state.
+  #
+  # During :connecting the GenServer owns no tunnel Port (the worker does, and
+  # either closed it on the error path or died with it on the crash path), so
+  # there is nothing else to tear down here.
+  defp fail_connect(%__MODULE__{} = state, error_msg) do
+    state = clear_connect_worker(state)
+    disconnect_node(state.node)
+    new_state = %{state | phase: :error, last_error: error_msg}
+    broadcast_status(state.target, new_state)
+    new_state
+  end
+
   # ── Command runner ─────────────────────────────────────────────────
 
   # Runs a command via Port.open and collects stdout output, waiting for the
@@ -1803,7 +2010,9 @@ defmodule EvoGit.RemoteConnection do
 
   defp build_tunnel_command(target, local_port, remote_port) do
     ssh_target = target.ssh_target
-
+    # ConnectTimeout bounds ssh's own connection-establishment phase so an
+    # unreachable/dead host fails inside the @tunnel_wait_timeout_ms tunnel
+    # budget instead of hanging on the OS TCP timeout (seconds...minutes).
     parts =
       [
         "ssh",
@@ -1811,6 +2020,7 @@ defmodule EvoGit.RemoteConnection do
         "-N",
         "-o ServerAliveInterval=30",
         "-o ServerAliveCountMax=3",
+        "-o ConnectTimeout=#{div(@ssh_connect_timeout_ms, 1000)}",
         ssh_target
       ]
 
@@ -1856,7 +2066,8 @@ defmodule EvoGit.RemoteConnection do
   #   * `{:timeout, ssh_output}` — budget exhausted, port still alive
   #
   # `@doc false`: public only so tests can drive it directly with tiny
-  # timeouts; it is an implementation detail of `do_connect_distributed/1`.
+  # timeouts; it is an implementation detail of the connect worker's
+  # `establish_tunnel_and_node/1`.
   @doc false
   @spec wait_for_tunnel(port(), :inet.port_number(), non_neg_integer(), keyword()) ::
           :ok | {:error, term()}
